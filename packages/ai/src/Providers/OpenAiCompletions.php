@@ -35,6 +35,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
 use Throwable;
@@ -66,6 +67,9 @@ final class OpenAiCompletions
     private const int MISTRAL_ID_LENGTH = 9;
 
     private const string MISTRAL_PADDING = 'ABCDEFGHI';
+
+    /** OpenAI's ceiling on a chat-completions tool call id. */
+    private const int MAX_ID_LENGTH = 40;
 
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
@@ -556,7 +560,9 @@ final class OpenAiCompletions
 
         $previous = null;
 
-        foreach (TransformMessages::apply($context->messages, $model) as $message) {
+        $normalizeToolCallId = fn (string $id): string => $this->normalizeToolCallId($id, $model);
+
+        foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
             if ($compat->assistantAfterToolResult
                 && $previous instanceof ToolResultMessage
                 && $message instanceof UserMessage
@@ -635,7 +641,8 @@ final class OpenAiCompletions
             // Some endpoints have no field for it, so reasoning goes back as text rather than
             // being dropped. Upstream's `requiresThinkingAsText` arm, literally: every thought
             // joined by a blank line into **one** part, in front of the text parts, with no tags
-            // so the model does not learn to mimic them — and always as parts, Copilot or not.
+            // so the model does not learn to mimic them — and as parts, the one arm upstream
+            // does not send as a plain string.
             $out['content'] = [
                 ['type' => 'text', 'text' => implode("\n\n", array_map(
                     static fn (ThinkingContent $block): string => Utf8::sanitize($block->thinking),
@@ -645,11 +652,10 @@ final class OpenAiCompletions
             ];
             $thinking = [];
         } elseif ($text !== []) {
-            // Copilot answers an array by re-answering every earlier prompt, so its text
-            // goes as one string.
-            $out['content'] = $model->provider === 'github-copilot'
-                ? implode('', $text)
-                : array_map(static fn (string $one): array => ['type' => 'text', 'text' => $one], $text);
+            // Always a plain string, for every endpoint — upstream's comment: the array of
+            // `{type: "text"}` parts is non-standard, and some models (DeepSeek V3.2 via NVIDIA
+            // NIM) mirror the structure in their output, nesting it deeper every turn.
+            $out['content'] = implode('', $text);
         }
 
         foreach ($thinking as $block) {
@@ -742,6 +748,44 @@ final class OpenAiCompletions
         $out[] = ['role' => 'user', 'content' => $parts];
 
         return $out;
+    }
+
+    /**
+     * Upstream's `normalizeToolCallId` for this API: another model's call id, made into one
+     * chat completions takes. Handed to `TransformMessages`, so this model's own ids never pass
+     * through it, and a result follows its call.
+     *
+     * A Responses API id is `call_id|item_id`, the item part 400 characters and more with `+`, `/`
+     * and `=` in it — from openai, openai-codex, opencode, or Copilot's other API. Two calls in
+     * one turn can share a `call_id` and differ by item, and this API wants distinct ids, so both
+     * halves are kept: sanitised, joined by `_`, and if that runs past 40 the call id's head and
+     * a hash of the whole id. Anything without a `|` is left alone, except that OpenAI itself
+     * gets it cut to 40.
+     */
+    private function normalizeToolCallId(string $id, Model $model): string
+    {
+        $separatorIndex = strpos($id, '|');
+
+        if ($separatorIndex !== false) {
+            $callId = (string) preg_replace('/[^a-zA-Z0-9_-]/', '_', substr($id, 0, $separatorIndex));
+            $itemId = (string) preg_replace('/[^a-zA-Z0-9_-]/', '_', substr($id, $separatorIndex + 1));
+            $combinedId = $itemId !== '' ? "{$callId}_{$itemId}" : $callId;
+
+            if (strlen($combinedId) <= self::MAX_ID_LENGTH) {
+                return $combinedId;
+            }
+
+            $hash = substr(ShortHash::of($id), 0, 8);
+            $prefix = substr($callId, 0, max(1, self::MAX_ID_LENGTH - strlen($hash) - 1));
+
+            return "{$prefix}_{$hash}";
+        }
+
+        if ($model->provider === 'openai') {
+            return strlen($id) > self::MAX_ID_LENGTH ? substr($id, 0, self::MAX_ID_LENGTH) : $id;
+        }
+
+        return $id;
     }
 
     /**

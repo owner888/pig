@@ -23,18 +23,25 @@ use Pig\Ai\UserMessage;
  */
 final class TransformMessages
 {
-    /** Copilot's own ids come back 450 characters long; other APIs cap at 40. */
-    private const int COPILOT_ID_LENGTH = 40;
-
     private const string NO_RESULT = 'No result provided';
 
     /**
+     * Upstream's `transformMessages(messages, model, normalizeToolCallId?)`.
+     *
+     * **Tool call ids are each provider's business, not this file's.** One API mints ids another
+     * refuses — the Responses API's `call_id|item_id` runs past 450 characters with `|`, `+`, `/`
+     * and `=` in it, and Anthropic accepts only `^[a-zA-Z0-9_-]+$` up to 64 — so every provider
+     * passes its own rule in, and it is applied to the calls of any message that is not from this
+     * very model (`isSameModel`). A result addressed to a renamed call follows it.
+     *
      * @param list<mixed> $messages
+     * @param (\Closure(string, Model, AssistantMessage): string)|null $normalizeToolCallId
+     *        the id, the model being sent to, and the message the call came from
      * @return list<mixed>
      */
-    public static function apply(array $messages, Model $model): array
+    public static function apply(array $messages, Model $model, ?\Closure $normalizeToolCallId = null): array
     {
-        return self::fillOrphanedCalls(self::retarget($messages, $model));
+        return self::fillOrphanedCalls(self::retarget($messages, $model, $normalizeToolCallId));
     }
 
     /**
@@ -48,9 +55,10 @@ final class TransformMessages
      * them), a text block loses its signature, and a tool call loses its thought signature.
      *
      * @param list<mixed> $messages
+     * @param (\Closure(string, Model, AssistantMessage): string)|null $normalizeToolCallId
      * @return list<mixed>
      */
-    private static function retarget(array $messages, Model $model): array
+    private static function retarget(array $messages, Model $model, ?\Closure $normalizeToolCallId): array
     {
         $renamedIds = [];
         $out = [];
@@ -81,13 +89,9 @@ final class TransformMessages
                 && $message->api === $model->api
                 && $message->model === $model->id;
 
-            // One provider, two of its own APIs: Copilot serves both, and the ids its
-            // responses API mints are rejected by its own completions API. Upstream does this
-            // through the `normalizeToolCallId` callback each provider passes in; pig keeps
-            // the one rule here.
-            $renameIds = $message->provider === 'github-copilot'
-                && $model->provider === 'github-copilot'
-                && $message->api !== $model->api;
+            // Upstream's `!isSameModel && normalizeToolCallId`: a model's own ids go back to it
+            // untouched, and anything else goes through the target provider's rule.
+            $normalize = !$sameModel ? $normalizeToolCallId : null;
 
             $content = [];
             $changed = false;
@@ -96,7 +100,7 @@ final class TransformMessages
                 $next = match (true) {
                     $block instanceof ThinkingContent => self::thinking($block, $sameModel),
                     $block instanceof TextContent => $sameModel ? $block : new TextContent($block->text),
-                    $block instanceof ToolCall => self::toolCall($block, $sameModel, $renameIds, $renamedIds),
+                    $block instanceof ToolCall => self::toolCall($block, $sameModel, $normalize, $message, $model, $renamedIds),
                     default => $block,
                 };
 
@@ -135,13 +139,22 @@ final class TransformMessages
         return $sameModel ? $block : new TextContent($block->thinking);
     }
 
-    /** @param array<string, string> $renamedIds */
-    private static function toolCall(ToolCall $block, bool $sameModel, bool $renameIds, array &$renamedIds): ToolCall
-    {
+    /**
+     * @param (\Closure(string, Model, AssistantMessage): string)|null $normalize
+     * @param array<string, string> $renamedIds
+     */
+    private static function toolCall(
+        ToolCall $block,
+        bool $sameModel,
+        ?\Closure $normalize,
+        AssistantMessage $source,
+        Model $model,
+        array &$renamedIds,
+    ): ToolCall {
         $signature = !$sameModel && $block->thoughtSignature !== null && $block->thoughtSignature !== ''
             ? null
             : $block->thoughtSignature;
-        $id = $renameIds ? self::copilotId($block->id) : $block->id;
+        $id = $normalize !== null ? $normalize($block->id, $model, $source) : $block->id;
 
         if ($id !== $block->id) {
             $renamedIds[$block->id] = $id;
@@ -251,10 +264,5 @@ final class TransformMessages
         $flush();
 
         return $out;
-    }
-
-    private static function copilotId(string $id): string
-    {
-        return substr((string) preg_replace('/[^a-zA-Z0-9_-]/', '', $id), 0, self::COPILOT_ID_LENGTH);
     }
 }

@@ -376,8 +376,8 @@ final class OpenAiResponsesTest extends TestCase
     public function testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone(): void
     {
         // Escape after the reasoning item finished and before the answer started leaves a turn
-        // that is nothing but a signed reasoning item. The guard above is for `Error` only, so
-        // pig sent this one back on the next prompt, followed by the user turn — OpenAI's
+        // that is nothing but a signed reasoning item. `OpenAiResponses` used to guard `Error`
+        // only, so pig sent this one back on the next prompt, followed by the user turn — OpenAI's
         // "reasoning was provided without its required following item" 400, upstream's reason for
         // skipping a failed turn in `transformMessages()`, which `TransformMessages` now does.
         $context = new Context([
@@ -478,6 +478,93 @@ final class OpenAiResponsesTest extends TestCase
 
         // The result is addressed by `call_id` alone in both cases, so it is unaffected.
         $this->assertSame('toolu_abc', $input[2]['call_id']);
+    }
+
+    public function testAnotherProvidersPairKeepsItsCallIdAndGetsAnItemIdOfItsOwn(): void
+    {
+        // Upstream's `normalizeToolCallId` in `convertResponsesMessages()`. `/model` from
+        // `github-copilot/gpt-5` to `openai/gpt-5`: the pair is a Responses pair, but its item id
+        // was minted by another provider, so it is replaced by `fc_` and a hash of itself rather
+        // than sent as it came — pig sent it as it came, `+`, `/`, `=` and all, and OpenAI
+        // validates the shape of `id`. The call id is what the result is addressed by, and both
+        // sides of the pair agree on it.
+        $id = 'call_1|' . str_repeat('Zm9v+/=', 70);
+        $this->send(new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall($id, 'read', [])],
+                Api::OpenAiResponses,
+                'github-copilot',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($id, 'read', [new TextContent('ok')]),
+        ]));
+
+        $input = $this->server->receivedJson()['input'];
+
+        $this->assertSame('call_1', $input[1]['call_id']);
+        $this->assertStringStartsWith('fc_', $input[1]['id']);
+        $this->assertLessThanOrEqual(64, strlen($input[1]['id']));
+        $this->assertSame(1, preg_match('/^[a-zA-Z0-9_-]+$/', $input[1]['id']));
+        $this->assertSame('call_1', $input[2]['call_id']);
+    }
+
+    public function testAnotherModelOfThisProviderSendsNoItemIdAndNeitherDoesOneNotStartingFc(): void
+    {
+        // Upstream's `isDifferentModel`: same provider, same API, another model. OpenAI pairs a
+        // call's item id with the `rs_…` reasoning item before it, and another model's reasoning
+        // is not sent back (`TransformMessages` makes it text), so a paired id would arrive
+        // without its reasoning item. Upstream leaves the id out, as it does for a foreign call;
+        // pig sent it. An item id that is not `fc_…` is left out too — OpenAI refuses the shape.
+        $this->send(new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall('call_1|fc_1', 'read', [])],
+                Api::OpenAiResponses,
+                'openai',
+                'gpt-5-mini',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage('call_1|fc_1', 'read', [new TextContent('ok')]),
+            $this->assistant([new ToolCall('call_2|ctc_2', 'read', [])]),
+            new ToolResultMessage('call_2|ctc_2', 'read', [new TextContent('ok')]),
+        ]));
+
+        $input = $this->server->receivedJson()['input'];
+
+        $this->assertSame('call_1', $input[1]['call_id']);
+        $this->assertArrayNotHasKey('id', $input[1], 'another model of this provider');
+        $this->assertSame('call_2', $input[3]['call_id']);
+        $this->assertArrayNotHasKey('id', $input[3], 'not an fc_ id');
+    }
+
+    public function testCopilotIsSentAnotherModelsPairAsOneCallIdAndNoItemId(): void
+    {
+        // Copilot is not among upstream's `OPENAI_TOOL_CALL_PROVIDERS`, so another model's pair
+        // is sanitised whole for it: the `|` becomes `_`, and with no `|` left there is no item
+        // id to send. The result is renamed to match. (pig's old rule renamed only
+        // Copilot-to-Copilot crossings, and only for chat completions' sake.)
+        $this->sendAsCopilot(new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall('call_1|fc_1', 'read', [])],
+                Api::OpenAiResponses,
+                'openai',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage('call_1|fc_1', 'read', [new TextContent('ok')]),
+        ]));
+
+        $input = $this->server->receivedJson()['input'];
+
+        $this->assertSame('call_1_fc_1', $input[1]['call_id']);
+        $this->assertArrayNotHasKey('id', $input[1]);
+        $this->assertSame('call_1_fc_1', $input[2]['call_id']);
     }
 
     public function testToolResultImagesFollowAsAUserTurnOfTheirOwn(): void

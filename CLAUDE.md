@@ -952,8 +952,7 @@ whichever delta they arrive in.
 
 `Ai\OpenAiCompat` is the table of ways an "OpenAI-compatible" endpoint is not one. Mistral
 wants tool ids of exactly nine alphanumeric characters, Grok rejects `reasoning_effort`,
-Cerebras rejects `store`, Copilot re-answers every earlier prompt if assistant text arrives as
-an array. None of that is documented anywhere as a difference; it is what a 400 looks like
+Cerebras rejects `store`. None of that is documented anywhere as a difference; it is what a 400 looks like
 after you have sent it. A table per endpoint rather than one rule, for the same reason the tool
 archive names are a table — see that note above.
 
@@ -973,6 +972,19 @@ dangling call and every provider rejects the whole conversation rather than igno
 all. Upstream also holds back a `system` message that lands between a call and its results; pig's
 message union has no system message, so there is nothing to hold.
 
+**Tool call ids are each provider's rule, passed in.** `TransformMessages::apply()` takes upstream's
+optional `normalizeToolCallId` closure and runs it on every call of a message that is not from this
+very model, renaming the result to match. Anthropic: `[^a-zA-Z0-9_-]` → `_`, cut to 64. Chat
+completions: a `call_id|item_id` becomes `call_item` (sanitised), or the call id's head and a hash
+when that passes 40; no `|`, unchanged — except `openai`, cut to 40. Responses: each part sanitised,
+cut to 64, trailing `_` stripped; the pair survives only for openai, openai-codex and opencode, with
+another provider's item id replaced by `fc_` + hash — everywhere else, Copilot included, the whole id
+is one sanitised call id. Gemini: Anthropic's rule, only for a `requiresToolCallId()` model. There is
+no Copilot special case: Copilot's ids crossing between its two APIs are covered by the general rules.
+Upstream's `shortHash()` (`utils/hash.ts`) is ported to the digit as `Pig\Ai\Utils\ShortHash` (UTF-16
+code units, `Math.imul` arithmetic), so a rebuilt id is the one pi would build; `ShortHashTest` holds
+values taken from Node.
+
 `Providers\OpenAiResponses` is upstream's `openai-responses.ts` — what gpt-5 and codex speak,
 and the third shape in three providers. A response is a list of *items* and the stream says
 when each opens and closes, which after `openai-completions` is a relief. Two things in it have
@@ -984,8 +996,10 @@ no counterpart anywhere else:
   as it came — which is what `TextContent::$textSignature` and the builder's `setSignature()`
   are for. Asking for it at all needs `include: ["reasoning.encrypted_content"]`.
 - **A tool call has two ids.** `call_id` addresses the result, `id` is the item's own, and both
-  have to go back, so they travel joined as `call_id|id` and are split on the way out. A call
-  from another provider has one id, which is then used for both.
+  have to go back, so they travel joined as `call_id|id` and are split on the way out. The `id` is
+  left out — as upstream's `undefined` is — for a call with no `|`, one whose item id does not start
+  `fc_`, and one from another model of the same provider and API (upstream's `isDifferentModel`:
+  its reasoning item is not sent back, and OpenAI refuses an `fc_` paired with a missing `rs_`).
 
 `# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
 that developer message is what upstream found works.
@@ -1039,8 +1053,10 @@ out) **and only when it is base64** — Gemini declares the field `TYPE_BYTES`, 
 400 for the whole request. A text block's `textSignature` goes back as that part's
 `thoughtSignature`, and an empty text part is kept when it carries one. A thought from the same
 model is `thought: true` with or without a signature; from another model it is plain text, no
-tags. pig always sends a call's `id`, where upstream sends it only for `requiresToolCallId()`
-models.
+tags. A call's `id`, on `functionCall` and `functionResponse` alike, goes only to a
+`requiresToolCallId()` model — `claude-`, `gpt-oss-`, or a Gemini major version of 3 or more — and a
+tool result's images go inside its `functionResponse` unless the model is a Gemini older than 3
+(upstream's `supportsMultimodalFunctionResponse()`: not Gemini at all counts as yes).
 
 It was an extraction and nothing else, which is what `GoogleTest`'s thirty-one cases passing
 unchanged is the evidence for. A move that needed a test changed would have been a rewrite.
@@ -5891,10 +5907,6 @@ is never sent. Had it invented one first, the request would carry a `function_ca
 addressed to a `call_id` that was never sent — which OpenAI rejects outright, so the conversation
 could not be continued at all.
 
-`OpenAiResponses::input()` keeps its own guard as well: it records the calls it actually emitted
-and drops a result whose call is not among them, which still covers a result left behind after a
-dropped turn. Both halves of a dropped turn go, or neither.
-
 Regression test: `OpenAiResponsesTest::testAnAbortedTurnsThinkingAndCallsAreNotSentBack`.
 
 ### A token count measured before a compaction describes a conversation that no longer exists
@@ -6578,21 +6590,15 @@ the end of the list is exactly where an interrupted turn leaves one. Escape duri
 conversation with two interrupted turns re-flushes the first turn's call on every later turn —
 three invented results for one call by the end of a four-message conversation.
 
-**The Copilot cross-API id rename had no coverage at all**: all of lines 86–110 survived, including
-the `$renamedIds` map that keeps the tool *result* pointing at the call it was renamed from. The
-rule is real — Copilot serves both OpenAI shapes and the ids its Responses API mints are refused by
-its own Completions API, so crossing between them an id is stripped to `[a-zA-Z0-9_-]` and cut to
-forty characters. `/model` from `github-copilot/gpt-5` to a Copilot model on the other shape,
-mid-tool-use, is the whole scenario, and nothing checked any of it: not the rename, not the
-truncation, not the result following it, not that the call is renamed *rather than duplicated*, not
-that the rest of the message survives the crossing, and not that a crossing which is **not**
-Copilot-to-Copilot leaves the id alone.
+**The id rename had no coverage at all**: all of its lines survived, including the `$renamedIds`
+map that keeps the tool *result* pointing at the call it was renamed from — nothing checked the
+rename, the truncation, the result following it, or that the call is renamed *rather than
+duplicated*.
 
 Regression tests: `AnthropicTest::testAConversationThatEndsOnADanglingCallGetsOneToo`,
 `testTwoInterruptedTurnsGetOneInventedResultEach`,
-`OpenAiCompletionsTest::testCopilotsOwnIdsAreRemadeForItsOtherApiAndTheResultFollows` and
-`testOnlyCopilotsOwnTwoApisRenameAnything`. The second of those had to be sent by hand rather than
-through the `send()` helper, and the reason is on it: with a non-empty key `endpoint()` asks
+`OpenAiCompletionsTest::testCopilotsOwnIdsAreRemadeForItsOtherApiAndTheResultFollows`. That one
+had to be sent by hand rather than through the `send()` helper, and the reason is on it: with a non-empty key `endpoint()` asks
 `GithubCopilot::baseUrl()` where to go and the request leaves for the real Copilot API — which the
 first version did, then failed reading a body nothing had received.
 
@@ -11121,6 +11127,18 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 失败轮在 `TransformMessages` 里过滤，顺序照 upstream：先 `$flush()`，再跳过；provider 拿到的历史里已经没有失败轮，新 provider 不要靠自己再判断。
 - 失败轮的工具调用不进 `$pending`，不会为它编造结果。
 - 测试：`AnthropicTest::testAFailedTurnIsNotReplayedAndNeitherAreItsCalls`、`testCallsPendingFromBeforeAFailedTurnAreStillAnswered`，`OpenAiResponsesTest::testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone`。
+
+### 跨模型的工具调用 id 形状不对，整个请求 400
+
+**症状**：会话中途 `/model` 切模型、历史里有工具调用时，下一次请求被拒：gpt-5 → Claude，`call_…|fc_…` 超过 64 字符（Anthropic 只收 `^[a-zA-Z0-9_-]+$` 且不超过 64）；gpt-5 → Groq 等 chat completions 端点，带 `|` 的长 id 原样发出；Copilot → `openai/gpt-5`，Copilot 自己铸的 item id（含 `+` `/` `=`）被当成 `id` 发回，OpenAI 要求 `fc_` 开头；同一 provider 换型号（gpt-5 → gpt-5-mini），`fc_` id 发回但配对的 `rs_` 推理项没发，OpenAI 拒绝。
+
+**根因**：upstream `transformMessages()` 收一个各 provider 自己的 `normalizeToolCallId` 回调，对非同一模型的调用改 id、结果跟着改；pig 只写死了 Copilot 两个 API 之间的一条改名规则，Anthropic 在发送时只替换字符不截断，`OpenAiResponses` 也没有 upstream 的 `isDifferentModel` / `fc_` 前缀判断。
+
+**避坑规则**：
+- id 规则只放在各 provider 里，以 closure 传给 `TransformMessages::apply()`；`TransformMessages` 里不写任何 provider 名字。
+- 同一模型（provider、API、model 三者相同）的 id 原样发回，不在发送时再清洗。
+- Responses 的 `id` 只在以 `fc_` 开头、且不是同 provider 同 API 的另一个型号时才发。
+- 测试：`AnthropicTest::testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows`，`OpenAiCompletionsTest::testAResponsesIdIsRemadeForChatCompletionsWhoeverMintedIt`，`OpenAiResponsesTest::testAnotherProvidersPairKeepsItsCallIdAndGetsAnItemIdOfItsOwn`、`testAnotherModelOfThisProviderSendsNoItemIdAndNeitherDoesOneNotStartingFc`，`GoogleTest::testAnotherModelsIdIsMadeSafeOnlyForAModelThatIsSentIt`。
 
 ## Version floor: PHP >= 8.3
 

@@ -334,7 +334,7 @@ final class AnthropicTest extends TestCase
             $context = new Context(
                 [
                     new UserMessage('first'),
-                    new ToolResultMessage('call_a!b', 'read', [new TextContent('file body')]),
+                    new ToolResultMessage('call_a', 'read', [new TextContent('file body')]),
                     new ToolResultMessage('call_c', 'read', [new TextContent('other body')]),
                 ],
                 'be brief',
@@ -362,12 +362,14 @@ final class AnthropicTest extends TestCase
         $this->assertSame('read', $body['tools'][0]['name']);
         $this->assertSame(['path'], $body['tools'][0]['input_schema']['required']);
 
-        // Consecutive tool results collapse into one user turn, and ids are scrubbed to
-        // the character set Anthropic accepts.
+        // Consecutive tool results collapse into one user turn. (This case used to send `call_a!b`
+        // and expect it scrubbed here; ids are now made safe by `TransformMessages`, for another
+        // model's calls, and a result with no call is not one of those — see
+        // `testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows`.)
         $this->assertCount(2, $body['messages']);
         $this->assertSame('user', $body['messages'][1]['role']);
         $this->assertCount(2, $body['messages'][1]['content']);
-        $this->assertSame('call_a_b', $body['messages'][1]['content'][0]['tool_use_id']);
+        $this->assertSame('call_a', $body['messages'][1]['content'][0]['tool_use_id']);
         $this->assertSame('file body', $body['messages'][1]['content'][0]['content']);
 
         // The final block carries the cache breakpoint for the next turn.
@@ -845,6 +847,49 @@ final class AnthropicTest extends TestCase
         // learn to write them into its own answers.
         $this->assertSame(['type' => 'text', 'text' => 'mine'], $assistant['content'][0]);
         $this->assertStringNotContainsString('GEMINI-SIG', (string) json_encode($body));
+    }
+
+    public function testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows(): void
+    {
+        // `/model` from gpt-5 to sonnet mid-tool-use. A Responses API id is `call_id|item_id`, the
+        // item half hundreds of characters with `|`, `+`, `/` and `=` in it, and Anthropic refuses
+        // anything outside `^[a-zA-Z0-9_-]+$` or over 64 — the whole request, not the one call.
+        // pig used to scrub the characters at send time and never cut the length, so a long
+        // OpenAI id still went out over the limit. Upstream's `normalizeToolCallId()`: replace,
+        // then cut to 64, and the result is renamed to match through `TransformMessages`' map.
+        $long = 'call_abc|fc_' . str_repeat('x+/=', 30);
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall($long, 'read', ['path' => 'a.php'])],
+                Api::OpenAiResponses,
+                'openai',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($long, 'read', [new TextContent('contents')]),
+        ]));
+
+        $sent = $body['messages'][1]['content'][0]['id'];
+
+        $this->assertSame(substr('call_abc_fc_' . str_repeat('x___', 30), 0, 64), $sent);
+        $this->assertSame($sent, $body['messages'][2]['content'][0]['tool_use_id'], 'the result follows its call');
+    }
+
+    public function testThisModelsOwnToolCallIdGoesBackExactlyAsItCame(): void
+    {
+        // The rule runs only on another model's calls — upstream's `!isSameModel` guard — since
+        // an id this model minted is one it accepts. Sending it back changed would address the
+        // result to a call the model does not remember making.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ToolCall('toolu_01AbC-d_9', 'read', ['path' => 'a.php'])]),
+            new ToolResultMessage('toolu_01AbC-d_9', 'read', [new TextContent('contents')]),
+        ]));
+
+        $this->assertSame('toolu_01AbC-d_9', $body['messages'][1]['content'][0]['id']);
+        $this->assertSame('toolu_01AbC-d_9', $body['messages'][2]['content'][0]['tool_use_id']);
     }
 
     public function testACallLeftWithoutAResultGetsOneInventedForIt(): void

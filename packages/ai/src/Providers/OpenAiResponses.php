@@ -34,6 +34,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
 use Throwable;
@@ -62,6 +63,12 @@ final class OpenAiResponses
 {
     /** OpenAI rejects an id over this, and its own ids can arrive longer. */
     private const int MAX_ID_LENGTH = 64;
+
+    /**
+     * Upstream's `OPENAI_TOOL_CALL_PROVIDERS`: the providers whose `call_id|item_id` pair is kept
+     * as a pair when it comes from another model. Copilot is not one of them.
+     */
+    private const array TOOL_CALL_PROVIDERS = ['openai', 'openai-codex', 'opencode'];
 
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
@@ -611,14 +618,11 @@ final class OpenAiResponses
         }
 
         $position = 0;
+        $normalizeToolCallId = fn (string $id, Model $target, AssistantMessage $source): string
+            => $this->normalizeToolCallId($id, $model, $source);
 
-        // Which calls actually went out. An aborted turn's calls are dropped below, and
-        // a result addressed to a call this never sent is rejected outright — see the
-        // note in CLAUDE.md.
-        $sent = [];
-
-        foreach (TransformMessages::apply($context->messages, $model) as $message) {
-            foreach ($this->convert($message, $model, $position, $sent) as $item) {
+        foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
+            foreach ($this->convert($message, $model, $position) as $item) {
                 $items[] = $item;
             }
 
@@ -628,16 +632,13 @@ final class OpenAiResponses
         return $items;
     }
 
-    /**
-     * @param array<string, true> $sent the calls emitted so far, added to as they are
-     * @return list<array<string, mixed>>
-     */
-    private function convert(mixed $message, Model $model, int $position, array &$sent): array
+    /** @return list<array<string, mixed>> */
+    private function convert(mixed $message, Model $model, int $position): array
     {
         return match (true) {
             $message instanceof UserMessage => $this->user($message, $model),
-            $message instanceof AssistantMessage => $this->assistant($message, $position, $sent),
-            $message instanceof ToolResultMessage => $this->toolResult($message, $model, $sent),
+            $message instanceof AssistantMessage => $this->assistant($message, $model, $position),
+            $message instanceof ToolResultMessage => $this->toolResult($message, $model),
             default => [],
         };
     }
@@ -678,20 +679,25 @@ final class OpenAiResponses
     }
 
     /**
-     * @param array<string, true> $sent
+     * Upstream's assistant arm of `convertResponsesMessages()`.
+     *
+     * A turn that errored or was aborted never reaches here — `TransformMessages` drops it whole,
+     * calls and all — so nothing in this arm asks how the turn ended.
+     *
      * @return list<array<string, mixed>>
      */
-    private function assistant(AssistantMessage $message, int $position, array &$sent): array
+    private function assistant(AssistantMessage $message, Model $model, int $position): array
     {
         $items = [];
 
-        // A turn that failed produced blocks that were never completed. Sending a half
-        // reasoning item back asks the model to continue from something it never finished.
-        $failed = $message->stopReason === StopReason::Error;
+        // Upstream's `isDifferentModel`: this provider and API, another model.
+        $differentModel = $message->provider === $model->provider
+            && $message->api === $model->api
+            && $message->model !== $model->id;
 
         foreach ($message->content as $block) {
             if ($block instanceof ThinkingContent) {
-                if (!$failed && $block->thinkingSignature !== null && $block->thinkingSignature !== '') {
+                if ($block->thinkingSignature !== null && $block->thinkingSignature !== '') {
                     $item = json_decode($block->thinkingSignature, true);
 
                     if (is_array($item)) {
@@ -714,9 +720,16 @@ final class OpenAiResponses
                 continue;
             }
 
-            if ($block instanceof ToolCall && !$failed) {
+            if ($block instanceof ToolCall) {
                 [$callId, $itemId] = $this->splitIds($block->id);
-                $sent[$callId] = true;
+
+                // Upstream's comment: OpenAI tracks which item ids were paired with an `rs_…`
+                // reasoning item, and another model's reasoning is not sent back — so for a
+                // different model the id is left out, which avoids that pairing check the way a
+                // foreign call does. And an id that is not `fc_…` is refused outright.
+                if ($differentModel || $itemId === null || !str_starts_with($itemId, 'fc_')) {
+                    $itemId = null;
+                }
 
                 $items[] = [
                     'type' => 'function_call',
@@ -733,19 +746,10 @@ final class OpenAiResponses
         return $items;
     }
 
-    /**
-     * @param array<string, true> $sent
-     * @return list<array<string, mixed>>
-     */
-    private function toolResult(ToolResultMessage $message, Model $model, array $sent): array
+    /** @return list<array<string, mixed>> */
+    private function toolResult(ToolResultMessage $message, Model $model): array
     {
         [$callId] = $this->splitIds($message->toolCallId);
-
-        // A result for a call that was not sent is rejected, and it is not the result
-        // that was wrong — the call it answers was dropped for being half-finished.
-        if (!isset($sent[$callId])) {
-            return [];
-        }
 
         $text = [];
         $images = [];
@@ -793,7 +797,53 @@ final class OpenAiResponses
 
         return strlen($signature) <= self::MAX_ID_LENGTH
             ? $signature
-            : 'msg_' . substr(hash('xxh128', $signature), 0, 24);
+            : 'msg_' . ShortHash::of($signature);
+    }
+
+    /**
+     * Upstream's `normalizeToolCallId` in `convertResponsesMessages()`: another model's call id,
+     * made into one this API takes. Handed to `TransformMessages`, so this model's own ids never
+     * pass through it, and a result follows its call.
+     *
+     * Each part is sanitised to `[a-zA-Z0-9_-]`, cut to 64 and stripped of trailing `_`. Only for
+     * openai, openai-codex and opencode is a `call_id|item_id` pair kept as a pair — and then a
+     * call from another provider or API gets an item id of `fc_` and a hash, since the one it
+     * carries was minted elsewhere, and any item id is made to start `fc_`. For every other
+     * provider, Copilot included, the whole id is sanitised as one, so its `|` becomes `_` and
+     * no item id is sent.
+     */
+    private function normalizeToolCallId(string $id, Model $model, AssistantMessage $source): string
+    {
+        if (!in_array($model->provider, self::TOOL_CALL_PROVIDERS, true) || !str_contains($id, '|')) {
+            return self::normalizeIdPart($id);
+        }
+
+        // `id.split("|")` destructured into two: a third part, if any, is dropped.
+        [$callId, $itemId] = explode('|', $id, 3);
+        $normalizedCallId = self::normalizeIdPart($callId);
+        $isForeignToolCall = $source->provider !== $model->provider || $source->api !== $model->api;
+        $normalizedItemId = $isForeignToolCall ? self::foreignItemId($itemId) : self::normalizeIdPart($itemId);
+
+        // OpenAI Responses API requires item id to start with "fc" (upstream's comment).
+        if (!str_starts_with($normalizedItemId, 'fc_')) {
+            $normalizedItemId = self::normalizeIdPart("fc_{$normalizedItemId}");
+        }
+
+        return "{$normalizedCallId}|{$normalizedItemId}";
+    }
+
+    /** Upstream's `normalizeIdPart()`. */
+    private static function normalizeIdPart(string $part): string
+    {
+        $sanitized = (string) preg_replace('/[^a-zA-Z0-9_-]/', '_', $part);
+
+        return rtrim(substr($sanitized, 0, self::MAX_ID_LENGTH), '_');
+    }
+
+    /** Upstream's `buildForeignResponsesItemId()`: `fc_` and upstream's `shortHash()`, cut to 64. */
+    private static function foreignItemId(string $itemId): string
+    {
+        return substr('fc_' . ShortHash::of($itemId), 0, self::MAX_ID_LENGTH);
     }
 
     /** The two ids a tool call has, as one that pig can carry. */

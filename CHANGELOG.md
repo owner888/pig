@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.25] - 2026-10-08
+
+### Fixed
+
+- **Provider-Driven Tool Call ID Normalization (`TransformMessages`, `ShortHash`)**:
+  - Fully ported upstream pi's per-provider `normalizeToolCallId` architecture: decoupled call ID rewriting from `TransformMessages` and delegated rule definitions to each target provider.
+  - Aligned Anthropic ID sanitation: restricted IDs to `[a-zA-Z0-9_-]` and truncated to 64 characters, renaming the corresponding `toolResult` to match.
+  - Aligned Chat Completions ID sanitation: transformed Responses API `call_id|item_id` pairs into `call_item` (with 40-character prefix + 8-char short hash fallback), preserving distinct call references across turn boundaries.
+  - Aligned Responses API ID sanitation: converted foreign item IDs to `fc_<hash>` for supported providers (`openai`, `openai-codex`, `opencode`) and omitted `id` when switching models of the same provider to avoid OpenAI 400 errors.
+  - Aligned Google / Gemini tool call ID requirements: included `id` in `functionCall` and `functionResponse` only for models that require tool call IDs (`requiresToolCallId()`: Claude, gpt-oss, and Gemini 3+).
+  - Ported upstream pi's 32-bit UTF-16 deterministic `ShortHash` utility with dedicated unit test suite `ShortHashTest`.
+
 ## [0.4.24] - 2026-10-08
 
 ### Fixed

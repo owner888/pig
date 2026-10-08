@@ -63,7 +63,12 @@ final class GoogleShared
     {
         $contents = [];
 
-        foreach (TransformMessages::apply($context->messages, $model) as $message) {
+        // Upstream's local `normalizeToolCallId`: only a model that is sent ids has them made safe.
+        $normalizeToolCallId = static fn (string $id): string => self::requiresToolCallId($model->id)
+            ? substr((string) preg_replace('/[^a-zA-Z0-9_-]/', '_', $id), 0, 64)
+            : $id;
+
+        foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
             if ($message instanceof UserMessage) {
                 $parts = self::parts($message->content, $model);
 
@@ -90,6 +95,37 @@ final class GoogleShared
         }
 
         return $contents;
+    }
+
+    /**
+     * Upstream's `requiresToolCallId()`: the models behind Google's APIs that need a call's `id`
+     * on its `functionCall` and `functionResponse` — Claude, gpt-oss, and Gemini 3 and later.
+     */
+    public static function requiresToolCallId(string $modelId): bool
+    {
+        $geminiMajorVersion = self::geminiMajorVersion($modelId);
+
+        return str_starts_with($modelId, 'claude-')
+            || str_starts_with($modelId, 'gpt-oss-')
+            || ($geminiMajorVersion !== null && $geminiMajorVersion >= 3);
+    }
+
+    /** Upstream's `getGeminiMajorVersion()`: `gemini-3.8-flash` is 3, `gemini-live-2.5-…` is 2, `claude-…` is null. */
+    private static function geminiMajorVersion(string $modelId): ?int
+    {
+        return preg_match('/^gemini(?:-live)?-(\d+)/', strtolower($modelId), $match) === 1 ? (int) $match[1] : null;
+    }
+
+    /**
+     * Upstream's `supportsMultimodalFunctionResponse()`: Gemini 3 and later take a tool result's
+     * images inside the `functionResponse`; older Gemini needs them in a user turn of their own.
+     * **A model that is not Gemini at all is true** — upstream's choice, read off its code.
+     */
+    private static function supportsMultimodalFunctionResponse(string $modelId): bool
+    {
+        $geminiMajorVersion = self::geminiMajorVersion($modelId);
+
+        return $geminiMajorVersion !== null ? $geminiMajorVersion >= 3 : true;
     }
 
     /**
@@ -468,11 +504,7 @@ final class GoogleShared
      *
      * A thought from this same model goes back as a thought even without a signature, and a
      * thought from any other model as plain text — no `<thinking>` tags, so the model does not
-     * learn to mimic them.
-     *
-     * Where pig differs: the call's `id` is always sent. Upstream sends it only where
-     * `requiresToolCallId()` says so (Claude, gpt-oss, Gemini 3+), and pig has no
-     * `normalizeToolCallId` to go with that.
+     * learn to mimic them. A call's `id` goes only to a model `requiresToolCallId()` names.
      *
      * @return list<array<string, mixed>>
      */
@@ -530,10 +562,13 @@ final class GoogleShared
 
             if ($block instanceof ToolCall) {
                 $part = ['functionCall' => [
-                    'id' => $block->id,
                     'name' => $block->name,
                     'args' => $block->arguments === [] ? new stdClass() : $block->arguments,
                 ]];
+
+                if (self::requiresToolCallId($model->id)) {
+                    $part['functionCall']['id'] = $block->id;
+                }
 
                 $signature = self::resolveThoughtSignature($sameProviderAndModel, $block->thoughtSignature);
 
@@ -591,18 +626,21 @@ final class GoogleShared
 
         $value = $text !== [] ? Utf8::sanitize(implode("\n", $text)) : ($images !== [] ? '(see attached image)' : '');
 
-        // Gemini 3 takes images inside the response; older models have nowhere to put
-        // them and need a user turn of their own.
-        $nested = str_contains($model->id, 'gemini-3');
+        // Gemini 3+ takes images inside the response; older Gemini has nowhere to put them and
+        // needs a user turn of their own.
+        $nested = self::supportsMultimodalFunctionResponse($model->id);
 
         $response = [
-            'id' => $message->toolCallId,
             'name' => $message->toolName,
             'response' => $message->isError ? ['error' => $value] : ['output' => $value],
         ];
 
         if ($images !== [] && $nested) {
             $response['parts'] = $images;
+        }
+
+        if (self::requiresToolCallId($model->id)) {
+            $response['id'] = $message->toolCallId;
         }
 
         $last = $contents[count($contents) - 1] ?? null;

@@ -56,8 +56,10 @@ final class Anthropic
 
     private const string INTERLEAVED_THINKING = 'interleaved-thinking-2025-05-14';
 
-    /** Anthropic wants tool ids matching ^[a-zA-Z0-9_-]+$ and rejects the request otherwise. */
+    /** Anthropic wants tool ids matching ^[a-zA-Z0-9_-]+$, at most 64 long, and rejects the request otherwise. */
     private const string ID_PATTERN = '/[^a-zA-Z0-9_-]/';
+
+    private const int MAX_ID_LENGTH = 64;
 
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
@@ -532,7 +534,7 @@ final class Anthropic
     private function messages(Context $context, Model $model, bool $isOAuth = false): array
     {
         $out = [];
-        $messages = TransformMessages::apply($context->messages, $model);
+        $messages = TransformMessages::apply($context->messages, $model, self::normalizeToolCallId(...));
         $count = count($messages);
 
         for ($i = 0; $i < $count; $i++) {
@@ -644,7 +646,7 @@ final class Anthropic
             if ($content instanceof ToolCall) {
                 $blocks[] = [
                     'type' => 'tool_use',
-                    'id' => $this->toolCallId($content->id),
+                    'id' => $content->id,
                     // The name the model saw it declared under, or it answers "unknown tool".
                     'name' => $isOAuth ? ClaudeCode::nameOut($content->name) : $content->name,
                     'input' => $content->arguments === [] ? new \stdClass() : $content->arguments,
@@ -660,7 +662,7 @@ final class Anthropic
     {
         return [
             'type' => 'tool_result',
-            'tool_use_id' => $this->toolCallId($message->toolCallId),
+            'tool_use_id' => $message->toolCallId,
             'content' => $this->resultContent($message),
             'is_error' => $message->isError,
         ];
@@ -707,9 +709,16 @@ final class Anthropic
         ];
     }
 
-    private function toolCallId(string $id): string
+    /**
+     * Upstream's `normalizeToolCallId()`: another model's call id, made into one Anthropic takes.
+     *
+     * Handed to `TransformMessages`, so it reaches only calls from some other model — this
+     * model's own ids already fit — and the result addressed to the call is renamed with it.
+     * Anything outside `[a-zA-Z0-9_-]` becomes `_`, then it is cut to 64.
+     */
+    private static function normalizeToolCallId(string $id): string
     {
-        return preg_replace(self::ID_PATTERN, '_', $id) ?? $id;
+        return substr((string) preg_replace(self::ID_PATTERN, '_', $id), 0, self::MAX_ID_LENGTH);
     }
 
     /**

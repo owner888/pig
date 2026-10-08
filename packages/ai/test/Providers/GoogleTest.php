@@ -688,6 +688,76 @@ final class GoogleTest extends TestCase
         $this->assertSame('Tool result image:', $contents[count($contents) - 1]['parts'][0]['text']);
     }
 
+    public function testGeminiThreeAndLaterAndEveryModelThatIsNotGeminiTakeImagesInsideTheResult(): void
+    {
+        // Upstream's `supportsMultimodalFunctionResponse()` reads the Gemini major version and
+        // answers `>= 3`, and answers **true for a model that is not Gemini at all** — Claude
+        // behind Cloud Code Assist. pig asked `str_contains($id, 'gemini-3')`, which sent Claude's
+        // images, and a later Gemini's, as a separate user turn instead.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'shot', [])]),
+            new ToolResultMessage('c1', 'shot', [new ImageContent('AAA', 'image/png')]),
+        ]);
+
+        foreach (['claude-sonnet-4-5', 'gemini-4-pro'] as $id) {
+            $this->server = new CannedServer();
+            $this->send($context, $this->model(images: true, id: $id));
+            $contents = $this->server->receivedJson()['contents'];
+
+            $this->assertCount(1, $contents[count($contents) - 1]['parts'][0]['functionResponse']['parts'] ?? [], $id);
+        }
+    }
+
+    public function testACallsIdIsSentOnlyToAModelThatRequiresOne(): void
+    {
+        // Upstream's `requiresToolCallId()`: Claude, gpt-oss and Gemini 3+ behind Google's APIs
+        // need the `id` on a `functionCall` and its `functionResponse`; for the rest upstream
+        // leaves it off, and pig sent it to every model.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+        ]);
+
+        foreach (['gemini-3-pro-preview' => true, 'claude-sonnet-4-5' => true, 'gpt-oss-120b-medium' => true,
+            'gemini-2.5-pro' => false, 'test-model' => false] as $id => $wanted) {
+            $this->server = new CannedServer();
+            $this->send($context, $this->model(id: $id));
+            $contents = $this->server->receivedJson()['contents'];
+
+            $this->assertSame($wanted, isset($contents[1]['parts'][0]['functionCall']['id']), "{$id}: the call");
+            $this->assertSame($wanted, isset($contents[2]['parts'][0]['functionResponse']['id']), "{$id}: the result");
+        }
+    }
+
+    public function testAnotherModelsIdIsMadeSafeOnlyForAModelThatIsSentIt(): void
+    {
+        // Upstream's `normalizeToolCallId` here does nothing unless `requiresToolCallId()` — an id
+        // that is never sent needs no shape. Where it is sent, a Responses API `call_id|item_id`
+        // from `/model` gpt-5 to Gemini 3 becomes `[a-zA-Z0-9_-]`, at most 64, on both halves.
+        $long = 'call_abc|fc_' . str_repeat('x+/=', 30);
+        $context = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall($long, 'read', ['path' => 'a.php'])],
+                Api::OpenAiResponses,
+                'openai',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($long, 'read', [new TextContent('ok')]),
+        ]);
+
+        $this->send($context, $this->model(id: 'gemini-3-pro-preview'));
+        $contents = $this->server->receivedJson()['contents'];
+        $safe = substr('call_abc_fc_' . str_repeat('x___', 30), 0, 64);
+
+        $this->assertSame($safe, $contents[1]['parts'][0]['functionCall']['id']);
+        $this->assertSame($safe, $contents[2]['parts'][0]['functionResponse']['id']);
+    }
+
     public function testToolsGoOutAsFunctionDeclarations(): void
     {
         $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
