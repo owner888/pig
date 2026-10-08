@@ -49,6 +49,11 @@ final readonly class OpenAiCompat
      *        a value `{"$var": "thinking.enabled"|"thinking.effort"|"thinking.budget", "omitWhenOff"?: bool}`
      *        is filled in per request
      * @param array<string, mixed>|null $chatTemplateArgs the same, sent as `chat_template_args`, for `baseten`
+     * @param array<string, mixed>|null $openRouterRouting upstream's `openRouterRouting`: OpenRouter's
+     *        provider-routing preferences (`order`, `only`, `ignore`, `allow_fallbacks`, `sort`,
+     *        `max_price`, …), sent as the request's `provider` field. Passed through as written
+     * @param array<string, mixed>|null $vercelGatewayRouting upstream's `vercelGatewayRouting`:
+     *        `only` and `order`, sent as `providerOptions.gateway`
      */
     public function __construct(
         public ?bool $store = null,
@@ -64,6 +69,8 @@ final readonly class OpenAiCompat
         public ?string $thinkingFormat = null,
         public ?array $chatTemplateKwargs = null,
         public ?array $chatTemplateArgs = null,
+        public ?array $openRouterRouting = null,
+        public ?array $vercelGatewayRouting = null,
     ) {
     }
 
@@ -102,6 +109,10 @@ final readonly class OpenAiCompat
             thinkingFormat: $explicit->thinkingFormat ?? $detected->thinkingFormat,
             chatTemplateKwargs: $explicit->chatTemplateKwargs ?? $detected->chatTemplateKwargs,
             chatTemplateArgs: $explicit->chatTemplateArgs ?? $detected->chatTemplateArgs,
+            // Upstream: `model.compat.openRouterRouting ?? {}` — the one key not taken from
+            // detection, which says `{}` anyway — and `vercelGatewayRouting ?? detected…`.
+            openRouterRouting: $explicit->openRouterRouting ?? [],
+            vercelGatewayRouting: $explicit->vercelGatewayRouting ?? $detected->vercelGatewayRouting,
         );
     }
 
@@ -210,6 +221,8 @@ final readonly class OpenAiCompat
             },
             chatTemplateKwargs: [],
             chatTemplateArgs: [],
+            openRouterRouting: [],
+            vercelGatewayRouting: [],
         );
     }
 }

@@ -231,13 +231,23 @@ const EXCLUDED = [
 ];
 
 /**
- * Which OpenAI API a Copilot model speaks.
+ * Which API a Copilot model speaks.
  *
- * Upstream's rule, by id prefix, because Copilot serves both shapes and the catalogue does not
- * say which. `oswe` is VS Code's own preview model.
+ * Upstream's rule, by id, because Copilot serves three shapes and the catalogue does not say
+ * which. **Claude 4.x and 5.x go to Anthropic's Messages API** — upstream's `isCopilotClaude`,
+ * `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/`, copied — so they get Anthropic's thinking
+ * and caching, and no OpenAI `strict` on their tools. `oswe` is VS Code's own preview model.
+ *
+ * The Responses half is still pig's older prefix list (`gpt-5`, `oswe`): upstream's is now
+ * `gpt-`, `grok-`, `oswe`, `mai-`, which would move `gpt-6…`, `grok-…` and `mai-…` off completions.
+ * Left as it is on purpose — this change is about Claude, and moving those is its own decision.
  */
 function copilotApi(string $id): Api
 {
+    if (preg_match('/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/', $id) === 1) {
+        return Api::AnthropicMessages;
+    }
+
     return str_starts_with($id, 'gpt-5') || str_starts_with($id, 'oswe')
         ? Api::OpenAiResponses
         : Api::OpenAiCompletions;

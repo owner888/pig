@@ -19,9 +19,9 @@ use Pig\CodingAgent\Hooks\HookContext;
  * than captured once, because the model changes mid-session and a tool asking which one
  * is answering should not be told about the one that was replaced.
  *
- * Nothing else is added. The definition, the label and the progress callback pass through
- * unchanged, so a custom tool and a built-in one are the same thing to the loop — and to
- * the hooks, which wrap this in turn.
+ * Nothing else is added. The definition (with its `constrainedSampling`), the label and the
+ * progress callback pass through unchanged, so a custom tool and a built-in one are the same
+ * thing to the loop — and to the hooks, which wrap this in turn.
  */
 final readonly class WrappedCustomTool implements AgentTool
 {
@@ -51,9 +51,20 @@ final readonly class WrappedCustomTool implements AgentTool
         return $this->tool;
     }
 
+    /**
+     * Upstream's `wrapToolDefinition()`: `constrainedSampling: definition.constrainedSampling`
+     * travels with the name, description and schema. Dropping it — what this did — sent every
+     * extension tool non-strict whatever it asked for, so a tool declared like the built-in four
+     * never got strict sampling on any provider.
+     */
     public function definition(): Tool
     {
-        return new Tool($this->tool->name, $this->tool->description, $this->tool->parameters);
+        return new Tool(
+            $this->tool->name,
+            $this->tool->description,
+            $this->tool->parameters,
+            $this->tool->constrainedSampling,
+        );
     }
 
     public function label(): string

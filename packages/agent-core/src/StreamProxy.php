@@ -263,6 +263,8 @@ final class StreamProxy
                 // `{}` and not `[]` when empty: the server reads an object.
                 'chatTemplateKwargs' => $model->compat->chatTemplateKwargs === [] ? new \stdClass() : $model->compat->chatTemplateKwargs,
                 'chatTemplateArgs' => $model->compat->chatTemplateArgs === [] ? new \stdClass() : $model->compat->chatTemplateArgs,
+                'openRouterRouting' => $model->compat->openRouterRouting === [] ? new \stdClass() : $model->compat->openRouterRouting,
+                'vercelGatewayRouting' => $model->compat->vercelGatewayRouting === [] ? new \stdClass() : $model->compat->vercelGatewayRouting,
             ], static fn (mixed $value): bool => $value !== null);
         }
 

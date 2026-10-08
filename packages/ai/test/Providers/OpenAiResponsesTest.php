@@ -795,7 +795,48 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame('call_1_fc_1', $input[2]['call_id']);
     }
 
-    public function testToolResultImagesFollowAsAUserTurnOfTheirOwn(): void
+    /**
+     * Upstream's `convertToolResultOutput()` puts a result's images **inside its
+     * `function_call_output`**: `output` becomes a content list — the text as `input_text` when
+     * there is any, then each image as `input_image` with `detail: "auto"`. pig used to send
+     * "(see attached image)" there and the images after it as a user turn of their own, which put
+     * a user message where the model's next turn belongs and presented the screenshot as
+     * something a person said. This test asserted that old shape; it now asserts upstream's.
+     */
+    public function testToolResultImagesGoInsideTheFunctionCallOutput(): void
+    {
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('call_1|fc_1', 'shot', [])]),
+            new ToolResultMessage('call_1|fc_1', 'shot', [
+                new TextContent('took it'),
+                new ImageContent('AAA', 'image/png'),
+                new ImageContent('BBB', 'image/jpeg'),
+            ]),
+        ]);
+
+        $this->send($context, $this->model(images: true));
+
+        $input = $this->server->receivedJson()['input'];
+        $last = $input[count($input) - 1];
+
+        // The output is the last item: no user turn follows it.
+        $this->assertSame('function_call_output', $last['type']);
+        $this->assertSame('call_1', $last['call_id']);
+        $this->assertSame([
+            ['type' => 'input_text', 'text' => 'took it'],
+            ['type' => 'input_image', 'detail' => 'auto', 'image_url' => 'data:image/png;base64,AAA'],
+            ['type' => 'input_image', 'detail' => 'auto', 'image_url' => 'data:image/jpeg;base64,BBB'],
+        ], $last['output']);
+    }
+
+    /**
+     * The other two cases: an image-only result leaves out the `input_text` altogether (no
+     * placeholder inside the list), and a model that takes no images still gets a plain string —
+     * `TransformMessages` has already replaced the image with its note by then, as upstream's
+     * `transformMessages()` does, so no list is built for a model that could not read it.
+     */
+    public function testAnImageOnlyResultHasNoTextPartAndATextOnlyModelStillGetsAString(): void
     {
         $context = new Context([
             new UserMessage('hi'),
@@ -804,13 +845,16 @@ final class OpenAiResponsesTest extends TestCase
         ]);
 
         $this->send($context, $this->model(images: true));
-
         $input = $this->server->receivedJson()['input'];
-        $last = $input[count($input) - 1];
+        $this->assertSame(
+            [['type' => 'input_image', 'detail' => 'auto', 'image_url' => 'data:image/png;base64,AAA']],
+            $input[count($input) - 1]['output'],
+        );
 
-        $this->assertSame('(see attached image)', $input[count($input) - 2]['output']);
-        $this->assertSame('user', $last['role']);
-        $this->assertSame('input_image', $last['content'][1]['type']);
+        $this->server = new CannedServer();
+        $this->send($context, $this->model(images: false));
+        $input = $this->server->receivedJson()['input'];
+        $this->assertSame('(tool image omitted: model does not support images)', $input[count($input) - 1]['output']);
     }
 
     /**

@@ -12,6 +12,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
@@ -630,7 +631,8 @@ final class AnthropicTest extends TestCase
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096, effort: 'medium'),
         );
 
-        $this->assertSame(['type' => 'adaptive'], $body['thinking']);
+        // `display: "summarized"` is upstream's default on both arms (see the test below).
+        $this->assertSame(['type' => 'adaptive', 'display' => 'summarized'], $body['thinking']);
         $this->assertSame(['effort' => 'medium'], $body['output_config']);
         $this->assertStringNotContainsString('interleaved-thinking', $head);
     }
@@ -649,7 +651,7 @@ final class AnthropicTest extends TestCase
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096),
         );
 
-        $this->assertSame(['type' => 'enabled', 'budget_tokens' => 4096], $body['thinking']);
+        $this->assertSame(['type' => 'enabled', 'budget_tokens' => 4096, 'display' => 'summarized'], $body['thinking']);
         $this->assertStringContainsString('interleaved-thinking', $head);
 
         // And the built-in Opus 4.6 carries the flag, so it is sent adaptive.
@@ -662,7 +664,7 @@ final class AnthropicTest extends TestCase
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096),
         );
 
-        $this->assertSame(['type' => 'adaptive'], $body['thinking']);
+        $this->assertSame(['type' => 'adaptive', 'display' => 'summarized'], $body['thinking']);
     }
 
     /**
@@ -682,8 +684,154 @@ final class AnthropicTest extends TestCase
                 new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 2048),
             );
 
-            $this->assertSame(['type' => 'enabled', 'budget_tokens' => 2048], $body['thinking'], $compat::class);
+            $this->assertSame(['type' => 'enabled', 'budget_tokens' => 2048, 'display' => 'summarized'], $body['thinking'], $compat::class);
             $this->assertArrayNotHasKey('strict', $body['tools'][0], $compat::class);
+        }
+    }
+
+    /**
+     * Upstream's `thinkingDisplay ?? "summarized"`, on the adaptive and the budget arm alike: Opus
+     * 4.7 and later default to omitting the thinking text, and without this a thinking turn on them
+     * streamed an empty block. A caller's own `omitted` is sent as asked.
+     */
+    public function testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise(): void
+    {
+        [, $body] = $this->capture(
+            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingDisplay: 'omitted'),
+        );
+
+        $this->assertSame(['type' => 'adaptive', 'display' => 'omitted'], $body['thinking']);
+
+        $this->server = new CannedServer();
+        [, $body] = $this->capture(
+            $this->model(),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 3000),
+        );
+
+        $this->assertSame('summarized', $body['thinking']['display']);
+    }
+
+    /**
+     * Upstream: `thinkingEnabled === false && model.thinkingLevelMap?.off !== null` sends
+     * `thinking: {type: "disabled"}`. pig sent nothing, which an adaptive model reads as "think
+     * as you like" — so a turn with thinking switched off still thought, and was billed for it.
+     */
+    public function testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi(): void
+    {
+        [, $body] = $this->capture(
+            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false),
+        );
+
+        $this->assertSame(['type' => 'disabled'], $body['thinking']);
+        $this->assertArrayNotHasKey('output_config', $body);
+    }
+
+    /**
+     * The three states of the option and of the map, each where upstream has it: `off: null` in
+     * the map means the model cannot be switched off and nothing is sent; a model that does not
+     * reason is told nothing; and `thinkingEnabled` left unsaid (upstream's undefined) sends
+     * nothing either — only `false` is "off".
+     */
+    public function testNothingIsSaidWhereOffIsNotALevelOrNothingWasAsked(): void
+    {
+        $model = $this->model();
+        $cannotStop = new Model($model->id, $model->name, $model->api, $model->provider, $model->baseUrl, $model->contextWindow, $model->maxTokens, true, thinkingLevelMap: ['off' => null]);
+        $cannotThink = new Model($model->id, $model->name, $model->api, $model->provider, $model->baseUrl, $model->contextWindow, $model->maxTokens, false);
+
+        foreach ([
+            'off is not a level' => [$cannotStop, new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false)],
+            'not a reasoning model' => [$cannotThink, new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false)],
+            'nothing asked' => [$model, new AnthropicOptions(apiKey: 'test-key')],
+        ] as $case => [$subject, $options]) {
+            $this->server = new CannedServer();
+            [, $body] = $this->capture($subject, new Context([new UserMessage('hi')]), $options);
+
+            $this->assertArrayNotHasKey('thinking', $body, $case);
+        }
+    }
+
+    /**
+     * Upstream routes Copilot's Claude through this API with the Copilot token as a **bearer**
+     * (`authToken`), never `x-api-key` and never the Claude Code identity, and adds Copilot's
+     * dynamic headers after the model's own — the same three the OpenAI providers send.
+     */
+    public function testACopilotClaudeAuthenticatesWithItsTokenAsABearerAndSendsCopilotsHeaders(): void
+    {
+        $model = Models::find(Models::COPILOT, 'claude-sonnet-4.6');
+        $this->assertNotNull($model);
+        $this->assertSame(Api::AnthropicMessages, $model->api);
+
+        // An empty key keeps the model's own base URL (see `endpoint()`), so the canned server
+        // sees the request; the header logic does not depend on the key's content.
+        [$head, $body] = $this->capture(
+            $model,
+            new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])]),
+            new AnthropicOptions(apiKey: '', thinkingEnabled: true, effort: 'high'),
+        );
+        $head = strtolower($head);
+
+        $this->assertStringContainsString("authorization: bearer \r\n", $head);
+        $this->assertStringNotContainsString('x-api-key', $head);
+        $this->assertStringContainsString('copilot-integration-id: vscode-chat', $head);
+        $this->assertStringContainsString('x-initiator: user', $head);
+        $this->assertStringContainsString('openai-intent: conversation-edits', $head);
+        $this->assertStringContainsString('copilot-vision-request: true', $head);
+
+        // Anthropic's thinking, which the completions route could not carry: Sonnet 4.6 is on
+        // upstream's adaptive list, so its compat says so.
+        $this->assertSame(['type' => 'adaptive', 'display' => 'summarized'], $body['thinking']);
+        $this->assertSame(['effort' => 'high'], $body['output_config']);
+    }
+
+    /**
+     * With a token, the host comes from its `proxy-ep=` claim, as for the two OpenAI providers:
+     * the registry's `api.individual…` is only the default. Asserted on the URL rather than by
+     * sending, since a real host cannot be served here.
+     */
+    public function testACopilotTokenDecidesWhereTheMessagesGo(): void
+    {
+        $model = Models::find(Models::COPILOT, 'claude-sonnet-4.6');
+        $this->assertNotNull($model);
+
+        $request = (new \ReflectionMethod(Anthropic::class, 'request'))->invoke(
+            new Anthropic(),
+            $model,
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'tid=1;proxy-ep=proxy.business.githubcopilot.com;exp=9'),
+        );
+
+        $this->assertSame('https://api.business.githubcopilot.com/v1/messages', $request->url);
+        $this->assertSame('Bearer tid=1;proxy-ep=proxy.business.githubcopilot.com;exp=9', $request->headers['authorization']);
+    }
+
+    /**
+     * Upstream gives an extension-registered model the `compat` its definition wrote and nothing
+     * else (`{ ...definition, api, provider, baseUrl }`) — no id rule. So an adaptive id with no
+     * compat gets a budget, and the same id with `forceAdaptiveThinking` gets adaptive thinking:
+     * the registry passes the object through untouched.
+     */
+    public function testAnExtensionsAnthropicModelThinksAsItsOwnCompatSays(): void
+    {
+        $plain = new Model('claude-opus-4-7', 'Proxy Opus', Api::AnthropicMessages, 'my-ext', 'http://127.0.0.1:1', 200_000, 64_000, true);
+        $adaptive = new Model('claude-opus-4-8', 'Proxy Opus', Api::AnthropicMessages, 'my-ext', 'http://127.0.0.1:1', 200_000, 64_000, true, compat: new AnthropicCompat(forceAdaptiveThinking: true));
+        \Pig\Ai\Extension\ProviderRegistry::register(new \Pig\Ai\Extension\Provider('my-ext', 'My extension', [$plain, $adaptive]));
+
+        try {
+            foreach (['claude-opus-4-7' => 'enabled', 'claude-opus-4-8' => 'adaptive'] as $id => $type) {
+                $registered = Models::find('my-ext', $id);
+                $this->assertNotNull($registered);
+                $this->server = new CannedServer();
+                [, $body] = $this->capture($registered, new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true));
+
+                $this->assertSame($type, $body['thinking']['type'], $id);
+            }
+        } finally {
+            \Pig\Ai\Extension\ProviderRegistry::forget();
         }
     }
 

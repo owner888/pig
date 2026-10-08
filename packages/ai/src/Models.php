@@ -40,7 +40,8 @@ namespace Pig\Ai;
  * `ANTHROPIC_MODELS` has no images column, because everything Anthropic sells takes images — an
  * assumption the generator **checks and complains about** rather than leaving to be wrong one day;
  * `COPILOT_MODELS` carries an api per row and no prices, because a subscription is not metered per
- * token and Copilot serves both OpenAI shapes; the other six carry the full nine columns.
+ * token and Copilot serves three APIs (Anthropic's for its Claude models); the other six carry
+ * the full nine columns.
  *
  * Adding a provider is adding a table, one line in `table()` and one row in the generator's
  * `DIRECT` — not changing the rest.
@@ -327,9 +328,10 @@ final class Models
     /**
      * id => [name, which API it speaks, context window, max tokens, reasoning, images]
      *
-     * A column for the API, which none of the other tables needs: Copilot serves ten of these
-     * through the completions shape and nine through the Responses one, and which it is is a
-     * fact about the model rather than about the provider.
+     * A column for the API, which none of the other tables needs: Copilot serves its Claude models
+     * through Anthropic's Messages API, `gpt-5…` through the Responses one and the rest through the
+     * completions shape, and which it is is a fact about the model rather than about the provider
+     * — the generator's `copilotApi()`, upstream's rule.
      *
      * **No pricing column.** Copilot is a subscription, so upstream's table is zeroes all the
      * way across and so is this — `/session` says $0.00 for a Copilot conversation, which is
@@ -339,16 +341,16 @@ final class Models
      */
     private const array COPILOT_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'claude-fable-5' => ['Claude Fable 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
-        'claude-fable-5.1' => ['Claude Fable 5.1', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
-        'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::OpenAiCompletions, 200_000, 64_000, true, true],
-        'claude-opus-4.7' => ['Claude Opus 4.7', Api::OpenAiCompletions, 1_000_000, 32_000, true, true],
-        'claude-opus-4.8' => ['Claude Opus 4.8', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
-        'claude-opus-5' => ['Claude Opus 5', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
-        'claude-opus-5.5' => ['Claude Opus 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
-        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::OpenAiCompletions, 1_000_000, 32_000, true, true],
-        'claude-sonnet-5' => ['Claude Sonnet 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
-        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
+        'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
+        'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::AnthropicMessages, 200_000, 64_000, true, true],
+        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true],
+        'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true],
+        'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true],
+        'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
+        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true],
+        'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
+        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true],
         'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
@@ -557,6 +559,7 @@ final class Models
                     forceAdaptiveThinking: AnthropicCompat::isAdaptiveThinkingModel($id) ? true : null,
                     strictTools: true,
                 ),
+                thinkingLevelMap: self::anthropicThinkingLevelMap(self::ANTHROPIC, $id),
             );
         }
 
@@ -639,7 +642,19 @@ final class Models
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing(),
                 self::COPILOT_HEADERS,
-                $api === Api::OpenAiCompletions ? self::copilotCompat() : null,
+                match ($api) {
+                    Api::OpenAiCompletions => self::copilotCompat(),
+                    // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`): its
+                    // `applyThinkingLevelMetadata()` writes `forceAdaptiveThinking` by the same id
+                    // list as on Anthropic's own models, and nothing else of `AnthropicCompat` that
+                    // pig has — `supportsStrictTools` is `provider === "anthropic"` only, so a
+                    // Copilot Claude's tools go out non-strict, as they do upstream.
+                    Api::AnthropicMessages => AnthropicCompat::isAdaptiveThinkingModel($id)
+                        ? new AnthropicCompat(forceAdaptiveThinking: true)
+                        : null,
+                    default => null,
+                },
+                thinkingLevelMap: $api === Api::AnthropicMessages ? self::anthropicThinkingLevelMap(self::COPILOT, $id) : [],
             );
         }
 
@@ -655,6 +670,35 @@ final class Models
         }
 
         return self::$models = $models;
+    }
+
+    /**
+     * The `off` half of what upstream's generator writes into an `anthropic-messages` model's
+     * `thinkingLevelMap`: `{off: null}` — "this model cannot be told not to think" — on the ids it
+     * names, and nothing for the rest.
+     *
+     * Ported because `Anthropic` now sends `thinking: {type: "disabled"}` for a turn without
+     * thinking unless the map says `off` is not a level, which is upstream's rule, and the rule is
+     * only safe with the metadata it reads. Upstream's sources, all three: `applyThinkingLevelMetadata()`
+     * (`id.includes("fable-5")`), `applyAnthropicMessagesCompatMetadata()` (`supportsMidConvoEffort`,
+     * i.e. `anthropic` or `openrouter` with `supportsAnthropicMidConvoEffort(id)`), and the temporary
+     * overrides for `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and Copilot's
+     * `claude-opus-5.5`. **Only `off` is ported**: the rest of those maps (`minimal`, `xhigh`, `max`)
+     * says which effort names each model takes, which pig's Anthropic tables have never carried and
+     * which this change does not need.
+     *
+     * @return array<string, null>
+     */
+    private static function anthropicThinkingLevelMap(string $provider, string $id): array
+    {
+        $midConvoEffort = in_array($provider, [self::ANTHROPIC, 'openrouter'], true)
+            && (preg_match('/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/', $id) === 1
+                || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $id) === 1
+                || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/', $id) === 1);
+        $override = ($provider === self::ANTHROPIC && in_array($id, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], true))
+            || ($provider === self::COPILOT && $id === 'claude-opus-5.5');
+
+        return str_contains($id, 'fable-5') || $midConvoEffort || $override ? ['off' => null] : [];
     }
 
     /**

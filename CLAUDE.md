@@ -942,8 +942,9 @@ output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a r
 provider rejects, from a flag that looked like it had worked.
 
 `Providers\OpenAiCompletions` is upstream's `openai-completions.ts`, and it is worth more than
-the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot all answer
-this shape. Structurally it differs from `Anthropic` in one way that matters — **Anthropic
+the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot's non-Claude,
+non-`gpt-5` models all answer this shape (Copilot's Claude speaks `anthropic-messages`, as upstream
+routes it). Structurally it differs from `Anthropic` in one way that matters — **Anthropic
 numbers its content blocks and says when each opens and closes; this does not.** A block runs
 until something of a different kind arrives, so the boundaries are worked out in the provider,
 and that is the only real complexity in the file. `AssistantMessageBuilder` grew `nextWire()`
@@ -958,13 +959,21 @@ archive names are a table — see that note above. `detect()` is upstream's `det
 flag (provider name or URL; only DeepSeek's URL check ignores case), plus the Mistral rules upstream
 dropped when Mistral moved to its own API, and a model's own `compat` is laid over it **key by key**
 by `resolve()` — upstream's `getCompat()`. Every field is nullable and null means "not said".
+`openRouterRouting` and `vercelGatewayRouting` are upstream's two routing objects: read off the
+model's own compat (not the resolved one), sent as `provider` and `providerOptions.gateway`, and
+merged provider → model one level deep in `models.json` like the template values.
 `thinkingFormat` decides how thinking is switched on and how hard — `reasoning_effort` (`openai`),
 `thinking: {type}` (`zai`, `deepseek`), `reasoning: {effort}` (`openrouter`), `enable_thinking`
 (`qwen`), `chat_template_kwargs` / `chat_template_args` with `$var` placeholders (`chat-template`,
 `qwen-chat-template`, `baseten`) and the rest of upstream's list — in `OpenAiCompletions::thinking()`,
 arm for arm. An `anthropic-messages` model carries `AnthropicCompat` instead (`forceAdaptiveThinking`,
 `supportsStrictTools`), which is metadata `Models` writes on the built-ins as upstream's generator
-does; nothing at request time looks at a Claude model's id.
+does; nothing at request time looks at a Claude model's id. An extension's models carry the compat
+the extension wrote and nothing derived from the id — upstream spreads the definition. A thinking
+turn sends `display: "summarized"` unless `AnthropicOptions::$thinkingDisplay` says otherwise, and a
+turn without thinking (`thinkingEnabled: false`, which `Stream::simple()` always says) sends
+`thinking: {type: "disabled"}` unless the model's `thinkingLevelMap` has `off: null` — which `Models`
+writes on Fable 5, the managed-effort Claudes and the 5.5 overrides, as upstream's generator does.
 
 `Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
 safe across models. Three things get cleaned up before any provider sees the history. First,
@@ -1017,6 +1026,10 @@ no counterpart anywhere else:
   left out — as upstream's `undefined` is — for a call with no `|`, one whose item id does not start
   `fc_`, and one from another model of the same provider and API (upstream's `isDifferentModel`:
   its reasoning item is not sent back, and OpenAI refuses an `fc_` paired with a missing `rs_`).
+- **A tool result's images go inside its `function_call_output`** — upstream's
+  `convertToolResultOutput()`: `output` is then a list, an `input_text` when there is text and an
+  `input_image` (`detail: "auto"`, data URL) per image; without images, or for a model that takes
+  none, it is the string (text, else `(see attached image)`, else `(no tool output)`).
 
 `# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
 that developer message is what upstream found works.
@@ -1556,8 +1569,8 @@ Four things about it:
   `proxy-ep=proxy.individual.githubcopilot.com`, which becomes `api.individual.…`; a business
   account says something else and an enterprise install answers at `copilot-api.<domain>`. So
   the `api.individual…` in `Ai\Models` is a default and never the answer once there is a token —
-  `Providers\OpenAiCompletions` and `OpenAiResponses` both ask `GithubCopilot::baseUrl()`
-  instead, which is where the token and the request meet. Upstream rewrites it in its model
+  `Providers\OpenAiCompletions`, `OpenAiResponses` and `Anthropic` (Copilot's Claude models, with
+  the token as a bearer) all ask `GithubCopilot::baseUrl()` instead, which is where the token and the request meet. Upstream rewrites it in its model
   registry, which pig has no equivalent of because pig's registry knows nothing about
   credentials.
 - **Some models are off until the account accepts them**, Claude's and Grok's among them, so
@@ -2021,8 +2034,13 @@ them).
 **Before the schema, a null for an optional parameter is dropped** — upstream's
 `normalizeOptionalNulls()`: present, null, not required, not a `$ref`, and its own schema rejects
 null. Strict sampling sends every optional parameter as null when the model leaves it out, and the
-tool's own schema still says `number`. pig does not port the rest of upstream's coercion
-(`Value.Convert`, `coerceWithJsonSchema()`): a `"10"` for a number is still refused.
+tool's own schema still says `number`. **Then the arguments are coerced** — upstream's
+`coerceWithJsonSchema()`, ported line for line in `ToolArguments`: `"10"` for a number is 10, `"true"`
+for a boolean is true, `5` for a string is `"5"`, a null for a required primitive is that type's zero
+(`""`, 0, false), through `allOf`/`anyOf`/`oneOf`, properties, `additionalProperties` and items. The
+error still prints the arguments the model sent. Upstream also runs TypeBox's `Value.Convert` first;
+pig has no TypeBox, so that step is not ported, and every pig schema — the built-in tools' too, which
+are TypeBox upstream and so only get `Value.Convert` there — goes through `coerceWithJsonSchema()`.
 
 **An unknown keyword is ignored, never a failure.** That is the most important line in the file: a
 schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the
@@ -7963,8 +7981,9 @@ an agent follow-up after a tool result was billed and rate-limited as though a p
 it, and **an image was refused outright**, which is the whole of `/paste`-a-screenshot on Copilot.
 
 **Nothing covered those headers in either provider**, which is how the one that mattered ended up
-empty. They live in `Providers\Copilot` now — one implementation, two call sites, a test on each
-side — for the reason this audit keeps arriving at. The call goes *after* `$model->headers` in both,
+empty. They live in `Providers\Copilot` now — one implementation, three call sites (`Anthropic`
+too, since Copilot's Claude models speak it), a test on each — for the reason this audit keeps
+arriving at. The call goes *after* `$model->headers` in all three,
 which is upstream's order: a registry entry must not be able to turn off the headers that make the
 request acceptable at all.
 
@@ -11333,6 +11352,70 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - `Model::$compat` 按 API 分类型，provider 读之前先 `instanceof`，别的 API 的 compat 当作没有。
 - `models.json` 里代理的新 Claude 要 adaptive 得写 `"forceAdaptiveThinking": true`，和 upstream 一样。
 - 测试：`AnthropicTest::testAModelWhoseCompatSaysAdaptiveThinksAdaptively`、`testWithoutTheFlagEvenAnAdaptiveIdGetsABudget`、`testAnAnthropicModelCarryingACompatBlockDoesNotWarn`、`testATurnThatDoesNotThinkAsksForNoInterleavedThinking`，`ModelsTest::testTheAnthropicModelsThatThinkAdaptivelySaySo`。
+
+### Anthropic 关思考时什么都不发，思考摘要被省略
+
+**症状**：思考级别设为 off 时，adaptive 的 Claude（Opus 4.6+、Sonnet 4.6+ 等）照样思考、照样计费；Opus 4.7 及之后开思考时思考块是空的。
+
+**根因**：upstream `buildParams()` 在 `thinkingEnabled === false` 且 `thinkingLevelMap.off !== null` 时发 `thinking: {type: "disabled"}`，开思考时两个分支（adaptive / budget）都带 `display: options.thinkingDisplay ?? "summarized"`；pig 关思考时不发 `thinking`，开思考时不带 `display`（新模型的 API 默认是 omitted）。
+
+**避坑规则**：
+- `AnthropicOptions::$thinkingEnabled` 是三态：true 开、false 明说关、null 什么都不说；只有 false 才发 disabled。
+- 发 disabled 依赖 `off: null` 元数据：Fable 5、managed-effort 的 Claude、5.5 系列在 `Models::anthropicThinkingLevelMap()` 里标了，加新 Claude 时照 upstream 生成器补。
+- 测试：`AnthropicTest::testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi`、`testNothingIsSaidWhereOffIsNotALevelOrNothingWasAsked`、`testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise`，`ModelsTest::testTheClaudeModelsThatCannotStopThinkingSaySo`，`StreamTest::testReasoningBecomesAThinkingBudget`。
+
+### models.json 的 OpenRouter / Vercel 路由偏好被丢掉
+
+**症状**：pi 的 `models.json` 里写了 `openRouterRouting`（`order`、`only`、`allow_fallbacks`…）或 `vercelGatewayRouting`，pig 读进来后请求里没有，路由由网关自己决定。
+
+**根因**：upstream compat 有这两个键，`buildParams()` 读模型自己的 compat 发 `provider` 和 `providerOptions.gateway`，`mergeCompat()` 把它们和模板参数一起按键合并；pig 的 `OpenAiCompat` 没有这两个字段。
+
+**避坑规则**：
+- 读 `$model->compat`（模型自己说的），不读 `OpenAiCompat::resolve()` 的结果；`{}` 也算说了，发 `{}` 不发 `[]`。
+- 新增 compat 对象键时，`CustomModels::mergeCompat()` 的列表、`StreamProxy` 的编码一起改。
+- 测试：`OpenAiCompletionsTest::testOpenRouterRoutingIsSentAsTheProviderField`、`testVercelGatewayRoutingIsSentAsTheGatewayOptions`，`CustomModelsTest::testRoutingObjectsAreReadAndMergedFromProviderToModelKeyByKey`，`StreamProxyTest::testRoutingPreferencesTravelUnderUpstreamsKeyNames`。
+
+### Copilot 的 Claude 走了 chat completions
+
+**症状**：`github-copilot/claude-*` 的工具带 OpenAI 的 `strict` 字段发出，思考和缓存不是 Anthropic 的方式（没有 adaptive、没有 `cache_control`）。
+
+**根因**：upstream 生成器用 `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/` 把 Copilot 的 Claude 路由到 `anthropic-messages`（token 作 bearer、带 Copilot 的静态头和动态头、`forceAdaptiveThinking` 按 id 列表写、不写 `supportsStrictTools`）；pig 的 `copilotApi()` 只分 Responses 和 completions。
+
+**避坑规则**：
+- Copilot 的 API 由 `scripts/generate-models.php` 的 `copilotApi()` 决定，改规则时生成器和 `Models.php` 的表一起改。
+- `Anthropic` 对 `github-copilot`：`authorization: Bearer <token>`，不发 `x-api-key`、不当 Claude Code 订阅；地址照 token 的 `proxy-ep`（`GithubCopilot::baseUrl()`）；`Copilot::headers()` 放在模型头之后。
+- 测试：`AnthropicTest::testACopilotClaudeAuthenticatesWithItsTokenAsABearerAndSendsCopilotsHeaders`、`testACopilotTokenDecidesWhereTheMessagesGo`，`ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`、`testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt`，`GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`。
+
+### Responses API 工具结果的图片变成一条用户消息
+
+**症状**：OpenAI Responses 模型（gpt-5 等）看截图类工具结果时，图片以一条单独的用户消息（"Attached image(s) from tool result:"）出现，模型把它当成用户说的话。
+
+**根因**：upstream `convertToolResultOutput()` 把图片放进 `function_call_output.output` 的内容列表（`input_text` + `input_image`，`detail: "auto"`）；pig 只在 output 里写 `(see attached image)`，图片另起一条用户消息。
+
+**避坑规则**：
+- 只有 chat completions 才需要另起用户消息放图（它的 tool 消息装不了图）；Responses 放在 output 里。
+- 测试：`OpenAiResponsesTest::testToolResultImagesGoInsideTheFunctionCallOutput`、`testAnImageOnlyResultHasNoTextPartAndATextOnlyModelStillGetsAString`。
+
+### 模型把数字写成字符串，工具调用被拒
+
+**症状**：模型发 `"limit": "10"`、`"recursive": "true"` 之类，工具被拒（`must be number` / `must be boolean`），多一轮往返。
+
+**根因**：upstream `validateToolArguments()` 在 `normalizeOptionalNulls()` 之后、校验之前用 schema 做转换（`Value.Convert`，普通 JSON schema 再走 `coerceWithJsonSchema()`）；pig 只做了 null 归一化。
+
+**避坑规则**：
+- 顺序固定：先 null 归一化，再转换，再校验；报错信息里打印模型原始参数。
+- 转换照 `coercePrimitiveByType()` 逐条抄：必填参数的 null 会变成该类型的零值（`""`、0、false），不再报错。
+- 测试：`ToolArgumentsTest` 的 coercion 一节。
+
+### 扩展工具的 constrainedSampling 被丢掉
+
+**症状**：扩展或自定义工具声明了 `constrainedSampling`（strict: prefer），发给支持 strict 的模型时仍是非 strict。
+
+**根因**：upstream `wrapToolDefinition()` 把 `constrainedSampling` 和名字、描述、schema 一起带上；pig 的 `CustomTool` 没这个字段，`WrappedCustomTool::definition()` 只构造三个字段。MCP 工具 upstream 不设，pig 也不设。
+
+**避坑规则**：
+- `Tool` 的新字段要检查所有 `new Tool(...)`，包括 `WrappedCustomTool`。
+- 测试：`CustomToolsTest::testAWrappedToolKeepsTheConstrainedSamplingItAskedFor`。
 
 ## Version floor: PHP >= 8.3
 

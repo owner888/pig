@@ -703,8 +703,46 @@ final class OpenAiCompletions
         }
 
         $this->thinking($body, $model, $compat, $options?->reasoning?->value);
+        $this->routing($body, $model);
 
         return $body;
+    }
+
+    /**
+     * Upstream's two routing blocks in `buildParams()`, after the thinking fields and read off
+     * **the model's own compat**, not the resolved one — `model.compat?.openRouterRouting` — so
+     * only a model that says it sends it.
+     *
+     * The JS test is truthiness, and an object is truthy even when empty: a `models.json` block
+     * with `"openRouterRouting": {}` sends `provider: {}`, and that is kept — `!== null` here, and
+     * `{}` rather than `[]` on the wire. Vercel's goes out only when `only` or `order` is there
+     * (an empty list counts, as an empty JS array is truthy too), with just those two keys.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function routing(array &$body, Model $model): void
+    {
+        $compat = $model->compat instanceof OpenAiCompat ? $model->compat : null;
+
+        if ($compat?->openRouterRouting !== null) {
+            $body['provider'] = $compat->openRouterRouting === [] ? new \stdClass() : $compat->openRouterRouting;
+        }
+
+        $routing = $compat?->vercelGatewayRouting;
+
+        if ($routing !== null && (isset($routing['only']) || isset($routing['order']))) {
+            $gateway = [];
+
+            if (isset($routing['only'])) {
+                $gateway['only'] = $routing['only'];
+            }
+
+            if (isset($routing['order'])) {
+                $gateway['order'] = $routing['order'];
+            }
+
+            $body['providerOptions'] = ['gateway' => $gateway];
+        }
     }
 
     /**

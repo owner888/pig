@@ -861,29 +861,50 @@ final class OpenAiResponses
             }
         }
 
-        // Upstream's `convertToolResultOutput()`: `hasText ? textResult : images.length > 0 ?
-        // "(see attached image)" : "(no tool output)"`, `hasText` being the joined text non-empty.
-        // pig said "(see attached image)" for every result without text, image or not.
         $joined = implode("\n", $text);
 
-        $items = [[
+        return [[
             'type' => 'function_call_output',
             'call_id' => $callId,
-            'output' => Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)')),
+            'output' => self::toolResultOutput($joined, $images, $model),
         ]];
+    }
 
-        $parts = $this->parts($images, $model);
+    /**
+     * Upstream's `convertToolResultOutput()`.
+     *
+     * With no image, or a model that takes none, the output is a string: the joined text, else
+     * `(see attached image)` when there were images, else `(no tool output)` — `hasText` being the
+     * joined text non-empty. Otherwise it is a **content list inside the `function_call_output`
+     * itself**: an `input_text` when there is text, then one `input_image` per image, `detail:
+     * "auto"`, as a data URL. pig used to send the text alone there and the images after it as a
+     * separate user turn ("Attached image(s) from tool result:"), which put a user message between a
+     * call's output and the next turn and showed the model the image as something a person said.
+     *
+     * @param list<ImageContent> $images
+     * @return string|list<array<string, string>>
+     */
+    private static function toolResultOutput(string $joined, array $images, Model $model): string|array
+    {
+        if ($images === [] || !$model->acceptsImages()) {
+            return Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)'));
+        }
 
-        if ($parts !== []) {
-            // A function call output has nowhere to put an image, so they follow as a
-            // user turn of their own.
-            $items[] = [
-                'role' => 'user',
-                'content' => [['type' => 'input_text', 'text' => 'Attached image(s) from tool result:'], ...$parts],
+        $output = [];
+
+        if ($joined !== '') {
+            $output[] = ['type' => 'input_text', 'text' => Utf8::sanitize($joined)];
+        }
+
+        foreach ($images as $image) {
+            $output[] = [
+                'type' => 'input_image',
+                'detail' => 'auto',
+                'image_url' => "data:{$image->mimeType};base64,{$image->data}",
             ];
         }
 
-        return $items;
+        return $output;
     }
 
     /**

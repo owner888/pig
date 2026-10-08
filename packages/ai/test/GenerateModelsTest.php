@@ -71,6 +71,10 @@ final class GenerateModelsTest extends TestCase
 
         self::assertStringContainsString("'gpt-5' => ['GPT-5', Api::OpenAiResponses,", $output);
         self::assertStringContainsString("'oswe-thing' => ['OSWE Thing', Api::OpenAiResponses,", $output);
+        // Upstream's `isCopilotClaude`, `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/`: a
+        // Claude 4.x or 5.x speaks Anthropic's Messages API on Copilot. An id the pattern does not
+        // name (`claude-x`) stays on completions, as anything else does.
+        self::assertStringContainsString("'claude-sonnet-4.6' => ['Sonnet 4.6', Api::AnthropicMessages,", $output);
         self::assertStringContainsString("'claude-x' => ['Claude X', Api::OpenAiCompletions,", $output);
     }
 
@@ -94,7 +98,7 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString('github-copilot/claude-sonnet-4.6 corrected', $output);
         self::assertStringContainsString('GitHub gives it the extended window', $output);
         self::assertStringContainsString(
-            "'claude-sonnet-4.6' => ['Sonnet 4.6', Api::OpenAiCompletions, 1_000_000, 16_000, true, true],",
+            "'claude-sonnet-4.6' => ['Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 16_000, true, true],",
             $output,
         );
     }

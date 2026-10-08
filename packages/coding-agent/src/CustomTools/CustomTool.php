@@ -69,6 +69,10 @@ final readonly class CustomTool
      *        which is enough for most tools and not for one the model has to be told to prefer
      * @param list<string> $promptGuidelines rules for the system prompt's "Guidelines" while the
      *        tool is active — upstream's `promptGuidelines`
+     * @param array<string, mixed>|false|null $constrainedSampling upstream's `ToolDefinition.constrainedSampling`
+     *        (`false | ConstrainedSamplingConfig`): e.g. `['type' => 'json_schema', 'strict' => 'prefer']`
+     *        asks for strict sampling where the provider has it, as the built-in bash, edit, read and
+     *        write do. Null and false both mean no — see `Ai\Tool::$constrainedSampling`
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -82,6 +86,7 @@ final readonly class CustomTool
         public ?Closure $renderResult = null,
         public ?string $promptSnippet = null,
         public array $promptGuidelines = [],
+        public array|false|null $constrainedSampling = null,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

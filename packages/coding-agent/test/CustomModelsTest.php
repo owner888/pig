@@ -385,6 +385,35 @@ final class CustomModelsTest extends TestCase
     }
 
     /**
+     * Upstream's `openRouterRouting` and `vercelGatewayRouting`, read under its names and merged
+     * provider → model one level deep by `mergeCompat()` (both are on its list of object keys), so
+     * a provider-wide preference and a model's own order both reach the request. These keys were
+     * read as nothing before: a pi `models.json` routing OpenRouter lost its routing here.
+     */
+    public function testRoutingObjectsAreReadAndMergedFromProviderToModelKeyByKey(): void
+    {
+        $model = $this->load(self::provider([
+            'compat' => [
+                'openRouterRouting' => ['allow_fallbacks' => false, 'order' => ['a']],
+                'vercelGatewayRouting' => ['only' => ['bedrock']],
+            ],
+            'models' => [self::model(['compat' => ['openRouterRouting' => ['order' => ['anthropic']]]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertSame(['allow_fallbacks' => false, 'order' => ['anthropic']], $model->compat->openRouterRouting);
+        $this->assertSame(['only' => ['bedrock']], $model->compat->vercelGatewayRouting);
+
+        // Not said is null — not sent — and a list is not an object.
+        $plain = $this->load(self::provider([
+            'compat' => ['supportsStore' => false, 'openRouterRouting' => ['a', 'b']],
+        ]))->models[0];
+        $this->assertInstanceOf(OpenAiCompat::class, $plain->compat);
+        $this->assertNull($plain->compat->openRouterRouting);
+        $this->assertNull($plain->compat->vercelGatewayRouting);
+    }
+
+    /**
      * An `anthropic-messages` model's block is upstream's `AnthropicMessagesCompat`: the way to say
      * a proxied Claude takes adaptive thinking only, now that nothing at request time reads the id.
      */

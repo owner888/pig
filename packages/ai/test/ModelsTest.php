@@ -354,26 +354,85 @@ final class ModelsTest extends TestCase
         }
     }
 
-    public function testCopilotSpeaksBothOpenAiShapesAndTheIdDecidesWhich(): void
+    public function testCopilotSpeaksThreeApisAndTheIdDecidesWhich(): void
     {
         $apis = [];
 
         foreach (self::of(Models::COPILOT) as $model) {
             $apis[$model->api->value] = true;
 
-            // The generator's rule, because Copilot's catalogue does not say which shape a
-            // model speaks: `gpt-5…` and `oswe…` are on Responses and the rest on completions.
-            $expected = str_starts_with($model->id, 'gpt-5') || str_starts_with($model->id, 'oswe')
-                ? Api::OpenAiResponses
-                : Api::OpenAiCompletions;
+            // The generator's rule, because Copilot's catalogue does not say which shape a model
+            // speaks: Claude 4.x/5.x on Anthropic's Messages API (upstream's `isCopilotClaude`),
+            // `gpt-5…` and `oswe…` on Responses, the rest on completions. The Claude arm is new:
+            // they were on completions, where their tools went out with OpenAI's `strict` and
+            // their thinking and caching were not Anthropic's.
+            $expected = match (true) {
+                preg_match('/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/', $model->id) === 1 => Api::AnthropicMessages,
+                str_starts_with($model->id, 'gpt-5') || str_starts_with($model->id, 'oswe') => Api::OpenAiResponses,
+                default => Api::OpenAiCompletions,
+            };
 
             $this->assertSame($expected, $model->api, $model->id);
         }
 
-        // Both shapes present, which is why that table has an API column and none of the
-        // others does. Counted as "both" rather than to a number — see the class docblock.
+        // All three present, which is why that table has an API column and none of the others
+        // does. Counted as "all three" rather than to a number — see the class docblock.
+        $this->assertArrayHasKey('anthropic-messages', $apis);
         $this->assertArrayHasKey('openai-completions', $apis);
         $this->assertArrayHasKey('openai-responses', $apis);
+    }
+
+    /**
+     * A Copilot Claude carries what upstream's generator gives one: `forceAdaptiveThinking` by the
+     * same id list as Anthropic's own models, no `supportsStrictTools` (that is `provider ===
+     * "anthropic"` only), and Copilot's headers like every Copilot row.
+     */
+    public function testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt(): void
+    {
+        $sonnet = Models::find(Models::COPILOT, 'claude-sonnet-4.6');
+        $haiku = Models::find(Models::COPILOT, 'claude-haiku-4.5');
+
+        $this->assertNotNull($sonnet);
+        $this->assertNotNull($haiku);
+        $this->assertInstanceOf(AnthropicCompat::class, $sonnet->compat);
+        $this->assertTrue($sonnet->compat->forceAdaptiveThinking);
+        $this->assertNull($sonnet->compat->strictTools);
+        // Haiku 4.5 thinks on a budget, so upstream writes no compat at all.
+        $this->assertNull($haiku->compat);
+        $this->assertSame('vscode-chat', $sonnet->headers['Copilot-Integration-Id'] ?? null);
+    }
+
+    /**
+     * Upstream's generator marks `off` as no level at all — `{off: null}` — on the Claude models
+     * that cannot be told not to think: every `fable-5` id, the managed-effort ones
+     * (`supportsAnthropicMidConvoEffort`, `anthropic` provider), and the 5.5 overrides. Needed now
+     * that a turn without thinking says `{type: "disabled"}`: without the mark Fable would be sent
+     * an off it does not have. Everything else keeps an empty map, so `off` stays offered.
+     */
+    public function testTheClaudeModelsThatCannotStopThinkingSaySo(): void
+    {
+        foreach ([
+            [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'],
+            [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-opus-5-5'],
+            [Models::ANTHROPIC, 'claude-sonnet-5-5'],
+            [Models::COPILOT, 'claude-fable-5'], [Models::COPILOT, 'claude-fable-5.1'],
+            [Models::COPILOT, 'claude-opus-5.5'],
+        ] as [$provider, $id]) {
+            $model = Models::find($provider, $id);
+            $this->assertNotNull($model, "{$provider}/{$id}");
+            $this->assertFalse($model->hasThinkingLevel('off'), "{$provider}/{$id}");
+        }
+
+        foreach ([
+            [Models::ANTHROPIC, 'claude-sonnet-4-6'], [Models::ANTHROPIC, 'claude-sonnet-5'],
+            [Models::ANTHROPIC, 'claude-haiku-4-5'],
+            // Copilot is not a managed-effort provider upstream, so its Opus 5 can be switched off.
+            [Models::COPILOT, 'claude-opus-5'], [Models::COPILOT, 'claude-sonnet-5.5'],
+        ] as [$provider, $id]) {
+            $model = Models::find($provider, $id);
+            $this->assertNotNull($model, "{$provider}/{$id}");
+            $this->assertTrue($model->hasThinkingLevel('off'), "{$provider}/{$id}");
+        }
     }
 
     public function testCopilotsCompletionsModelsSayWhatCopilotRejects(): void

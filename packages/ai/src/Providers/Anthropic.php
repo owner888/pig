@@ -38,6 +38,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
 use Throwable;
@@ -425,9 +426,13 @@ final class Anthropic
     private function request(Model $model, Context $context, ?AnthropicOptions $options): Request
     {
         $apiKey = $options?->apiKey ?? '';
+        // Upstream's `createClient()` tries Copilot first: its Claude models speak this API, and
+        // the key is a Copilot token sent as a bearer — never a Claude Code subscription, whatever
+        // it happens to look like.
+        $isCopilot = $model->provider === 'github-copilot';
         // A subscription token authenticates as Claude Code: a bearer header, Claude Code's
         // user agent, and the two betas in front — see `ClaudeCode`.
-        $isOAuth = ClaudeCode::isToken($apiKey);
+        $isOAuth = !$isCopilot && ClaudeCode::isToken($apiKey);
 
         $beta = [self::FINE_GRAINED_STREAMING];
 
@@ -452,16 +457,41 @@ final class Anthropic
             'content-type' => 'application/json',
             'anthropic-version' => self::VERSION,
             'anthropic-beta' => implode(',', $beta),
-            ...($isOAuth ? ClaudeCode::headers($apiKey) : ['x-api-key' => $apiKey]),
+            // Copilot: upstream's `authToken: apiKey`, which the SDK sends as a bearer.
+            ...match (true) {
+                $isCopilot => ['authorization' => 'Bearer ' . $apiKey],
+                $isOAuth => ClaudeCode::headers($apiKey),
+                default => ['x-api-key' => $apiKey],
+            },
             ...$model->headers,
+            // After the model's own, as upstream merges them (`model.headers, dynamicHeaders`):
+            // `X-Initiator`, `Openai-Intent` and `Copilot-Vision-Request`, the same three the two
+            // OpenAI providers send. Empty for every other provider.
+            ...Copilot::headers($model, $context),
         ];
 
         return new Request(
             'POST',
-            rtrim($model->baseUrl, '/') . '/v1/messages',
+            $this->endpoint($model, $apiKey) . '/v1/messages',
             $headers,
             $this->encode($this->body($model, $context, $options, $isOAuth)),
         );
+    }
+
+    /**
+     * Where to send it, which for Copilot the token decides — the rule `OpenAiCompletions` and
+     * `OpenAiResponses` already follow, and for the reason written there: the token's
+     * `proxy-ep=` claim names the host a business or enterprise account answers at, and the
+     * registry's base URL is only the default. Upstream rewrites the model's `baseUrl` from the
+     * token in its registry; pig's registry knows nothing about credentials, so the provider asks.
+     */
+    private function endpoint(Model $model, string $apiKey): string
+    {
+        $base = $model->provider === 'github-copilot' && $apiKey !== ''
+            ? GithubCopilot::baseUrl($apiKey)
+            : $model->baseUrl;
+
+        return rtrim($base, '/');
     }
 
     /** @param array<string, mixed> $body */
@@ -507,20 +537,39 @@ final class Anthropic
             );
         }
 
-        if (($options?->thinkingEnabled ?? false) && $model->reasoning) {
-            // Upstream's `model.compat?.forceAdaptiveThinking === true`, and nothing else: no model id
-            // is looked at here. This used to read the flag off an `OpenAiCompat`, which has no such
-            // property — a PHP warning for any Anthropic model carrying a compat, and never true —
-            // and decided by four id fragments instead, missing Opus 4.6, Sonnet 4.6, Opus 5 and
-            // Haiku 5. The ids are now upstream's generator list, applied once where the built-in
-            // models are made (`AnthropicCompat::isAdaptiveThinkingModel()`, `Models`).
-            if ($compat?->forceAdaptiveThinking === true) {
-                $body['thinking'] = ['type' => 'adaptive'];
-                if ($options->effort !== null) {
-                    $body['output_config'] = ['effort' => $options->effort];
+        // Upstream's `buildParams()` thinking block, arm for arm (its `supportsMidConvoEffort` arm in
+        // front of these is not ported: pig has no managed-effort models). Only a reasoning model is
+        // told anything about thinking at all.
+        if ($model->reasoning) {
+            if ($options?->thinkingEnabled === true) {
+                // "Default to "summarized" so Opus 4.7 and Mythos Preview behave like older Claude 4
+                // models (whose API default is also "summarized")" — on both arms, adaptive and budget.
+                $display = $options->thinkingDisplay ?? 'summarized';
+
+                // Upstream's `model.compat?.forceAdaptiveThinking === true`, and nothing else: no
+                // model id is looked at here. The ids are upstream's generator list, applied once
+                // where the built-in models are made (`AnthropicCompat::isAdaptiveThinkingModel()`,
+                // `Models`).
+                if ($compat?->forceAdaptiveThinking === true) {
+                    $body['thinking'] = ['type' => 'adaptive', 'display' => $display];
+                    if ($options->effort !== null) {
+                        $body['output_config'] = ['effort' => $options->effort];
+                    }
+                } else {
+                    $body['thinking'] = [
+                        'type' => 'enabled',
+                        'budget_tokens' => $options->thinkingBudgetTokens ?: 1024,
+                        'display' => $display,
+                    ];
                 }
-            } else {
-                $body['thinking'] = ['type' => 'enabled', 'budget_tokens' => $options->thinkingBudgetTokens];
+            } elseif ($options?->thinkingEnabled === false && $model->hasThinkingLevel('off')) {
+                // Upstream: `options?.thinkingEnabled === false && model.thinkingLevelMap?.off !==
+                // null`. Off is said, not left to the API's default — a model that thinks unless
+                // told otherwise (the adaptive ones) thought and billed for it on every turn pig
+                // meant to have no thinking. A map whose `off` is null means the model cannot be
+                // switched off, and then nothing is sent; `hasThinkingLevel()` is that test, absent
+                // key and no map both counting as "has it".
+                $body['thinking'] = ['type' => 'disabled'];
             }
         }
 

@@ -173,8 +173,9 @@ final class Stream
                 $maxTokens,
                 $options?->signal,
                 $apiKey,
-                // No reasoning asked for means thinking off, stated rather than left to
-                // the provider's default — Anthropic's is off, but Gemini's is not.
+                // No reasoning asked for means thinking off, stated rather than left to the
+                // provider's default — upstream's `streamSimple()` passes `thinkingEnabled: false`,
+                // which `Anthropic` sends as `thinking: {type: "disabled"}`.
                 thinkingEnabled: $options?->reasoning !== null,
                 thinkingBudgetTokens: self::anthropicBudget($options?->reasoning),
                 effort: self::anthropicEffort($model, $options?->reasoning),
@@ -195,6 +196,11 @@ final class Stream
                 $options->thinkingEnabled,
                 $options->thinkingBudgetTokens,
                 $options->interleavedThinking,
+                // These two were dropped here, so a caller's own effort never reached an adaptive
+                // model through `start()`; everything else is kept whole, as the comment on
+                // `google()` says this helper does.
+                $options->effort,
+                $options->thinkingDisplay,
             );
         }
 

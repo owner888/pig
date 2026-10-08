@@ -888,6 +888,62 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('system', $body['messages'][0]['role']);
     }
 
+    /**
+     * Upstream's `openRouterRouting`, sent as the request's `provider` field exactly as written —
+     * and read off the model's own compat, so only a model that says it sends it. pig had no such
+     * key: a `models.json` written for pi with OpenRouter routing preferences was read and its
+     * routing silently dropped, so requests went wherever OpenRouter chose.
+     */
+    public function testOpenRouterRoutingIsSentAsTheProviderField(): void
+    {
+        $routing = ['order' => ['anthropic', 'amazon-bedrock'], 'allow_fallbacks' => false, 'max_price' => ['prompt' => 3]];
+        $this->send(new Context([new UserMessage('hi')]), $this->model(compat: new OpenAiCompat(openRouterRouting: $routing)));
+
+        $this->assertSame($routing, $this->server->receivedJson()['provider']);
+
+        // Not said, not sent — detection's `{}` is the resolved default and never goes out.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $this->model());
+        $this->assertArrayNotHasKey('provider', $this->server->receivedJson());
+
+        // An empty object is said, and JS sends it (`{}` is truthy): as `{}`, not `[]`.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $this->model(compat: new OpenAiCompat(openRouterRouting: [])));
+        $this->assertStringContainsString('"provider":{}', $this->server->received());
+    }
+
+    /**
+     * Upstream's `vercelGatewayRouting`: `providerOptions.gateway` with `only` and `order` and
+     * nothing else, and only when one of the two is there.
+     */
+    public function testVercelGatewayRoutingIsSentAsTheGatewayOptions(): void
+    {
+        $this->send(new Context([new UserMessage('hi')]), $this->model(compat: new OpenAiCompat(
+            vercelGatewayRouting: ['only' => ['bedrock'], 'order' => ['anthropic', 'bedrock'], 'other' => true],
+        )));
+
+        $this->assertSame(
+            ['gateway' => ['only' => ['bedrock'], 'order' => ['anthropic', 'bedrock']]],
+            $this->server->receivedJson()['providerOptions'],
+        );
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $this->model(compat: new OpenAiCompat(vercelGatewayRouting: ['other' => true])));
+        $this->assertArrayNotHasKey('providerOptions', $this->server->receivedJson());
+    }
+
+    /** Upstream's `getCompat()`: `openRouterRouting ?? {}` and `vercelGatewayRouting ?? detected`. */
+    public function testTheRoutingKeysResolveLikeUpstreamsGetCompat(): void
+    {
+        $resolved = OpenAiCompat::resolve($this->model(compat: new OpenAiCompat(store: false)));
+        $this->assertSame([], $resolved->openRouterRouting);
+        $this->assertSame([], $resolved->vercelGatewayRouting);
+
+        $resolved = OpenAiCompat::resolve($this->model(compat: new OpenAiCompat(openRouterRouting: ['zdr' => true], vercelGatewayRouting: ['only' => ['x']])));
+        $this->assertSame(['zdr' => true], $resolved->openRouterRouting);
+        $this->assertSame(['only' => ['x']], $resolved->vercelGatewayRouting);
+    }
+
     public function testDeepSeekIsDetectedByNameOrHostAsNeedingReasoningContentOnEveryAssistantTurn(): void
     {
         // Upstream's `isDeepSeek`: the provider called `deepseek`, or `deepseek.com` anywhere in

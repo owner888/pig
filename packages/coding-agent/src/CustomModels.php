@@ -405,8 +405,10 @@ final readonly class CustomModels
 
     /**
      * Upstream's `mergeCompat(base, override)`: the override's keys over the base's, and the
-     * object-valued ones (`chatTemplateKwargs`, `chatTemplateArgs` — upstream also lists the two
-     * routing objects pig does not have) merged a level deeper rather than replaced.
+     * object-valued ones (`openRouterRouting`, `vercelGatewayRouting`, `chatTemplateKwargs`,
+     * `chatTemplateArgs`, upstream's list in its order) merged a level deeper rather than replaced —
+     * so a provider's `"openRouterRouting": {"allow_fallbacks": false}` and a model's
+     * `{"order": ["anthropic"]}` both reach the request.
      *
      * @param array<mixed> $base
      * @param array<mixed> $override
@@ -420,7 +422,7 @@ final readonly class CustomModels
 
         $merged = [...$base, ...$override];
 
-        foreach (['chatTemplateKwargs', 'chatTemplateArgs'] as $key) {
+        foreach (['openRouterRouting', 'vercelGatewayRouting', 'chatTemplateKwargs', 'chatTemplateArgs'] as $key) {
             $baseValue = $base[$key] ?? null;
             $overrideValue = $override[$key] ?? null;
 
@@ -499,11 +501,17 @@ final readonly class CustomModels
             thinkingFormat: is_string($compat['thinkingFormat'] ?? null) ? $compat['thinkingFormat'] : null,
             chatTemplateKwargs: self::templateValues($compat['chatTemplateKwargs'] ?? null),
             chatTemplateArgs: self::templateValues($compat['chatTemplateArgs'] ?? null),
+            // Upstream's routing objects, passed through as written: OpenRouter's `provider` field
+            // and Vercel's `only`/`order`. A JSON object, or not said — the same test as the
+            // template values. `{}` is said, and is sent as `{}`, as upstream sends it.
+            openRouterRouting: self::templateValues($compat['openRouterRouting'] ?? null),
+            vercelGatewayRouting: self::templateValues($compat['vercelGatewayRouting'] ?? null),
         );
     }
 
     /**
-     * `chatTemplateKwargs` / `chatTemplateArgs`: a JSON object, or not said. A list is not one.
+     * `chatTemplateKwargs` / `chatTemplateArgs` (and the two routing objects): a JSON object, or
+     * not said. A list is not one.
      *
      * @return array<string, mixed>|null
      */

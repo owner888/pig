@@ -403,6 +403,31 @@ final class CustomToolsTest extends TestCase
         $this->assertSame(['type' => 'object', 'properties' => []], $wrapped->definition()->parameters);
     }
 
+    /**
+     * Upstream's `wrapToolDefinition()` copies `constrainedSampling` from the definition with the
+     * rest. pig's `definition()` built a `Tool` from the name, description and schema only, so an
+     * extension tool that asked for strict sampling, as the built-in four do, never got it on any
+     * provider. And an MCP tool asks for nothing — upstream's `extensions/mcp/tools.ts` sets no
+     * `constrainedSampling` — so it stays null.
+     */
+    public function testAWrappedToolKeepsTheConstrainedSamplingItAskedFor(): void
+    {
+        $strict = ['type' => 'json_schema', 'strict' => 'prefer'];
+        $tool = new CustomTool(
+            name: 'wc',
+            label: 'Count',
+            description: 'Counts things.',
+            parameters: ['type' => 'object', 'properties' => []],
+            execute: static fn () => new AgentToolResult([new TextContent('ran')]),
+            constrainedSampling: $strict,
+        );
+
+        $wrapped = new WrappedCustomTool($tool, static fn () => new HookContext('/work'));
+
+        $this->assertSame($strict, $wrapped->definition()->constrainedSampling);
+        $this->assertNull((new WrappedCustomTool($this->tool('plain'), static fn () => new HookContext('/work')))->definition()->constrainedSampling);
+    }
+
     public function testTheToolIsGivenTheSessionContext(): void
     {
         $seen = null;

@@ -257,6 +257,26 @@ final class StreamProxyTest extends TestCase
         $this->assertSame('zai', $sent['compat']['thinkingFormat']);
     }
 
+    public function testRoutingPreferencesTravelUnderUpstreamsKeyNames(): void
+    {
+        // `openRouterRouting` and `vercelGatewayRouting` are part of `model.compat`, which upstream
+        // sends as it is: dropping them here would route a proxied OpenRouter turn wherever the
+        // server's side chose. An empty one is `{}`, the object the server reads.
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+        $model = self::model(new OpenAiCompat(openRouterRouting: ['order' => ['anthropic']], vercelGatewayRouting: []));
+        $context = new Context([new UserMessage([new TextContent('hi')])]);
+
+        Async::run(static function () use ($proxy, $model, $context): void {
+            foreach ($proxy->stream($model, $context) as $ignored) {
+                // Drain.
+            }
+        });
+
+        $this->assertSame(['order' => ['anthropic']], $this->server->receivedJson()['model']['compat']['openRouterRouting']);
+        $this->assertStringContainsString('"vercelGatewayRouting":{}', $this->server->received());
+    }
+
     public function testAnAnthropicModelsCompatGoesUnderAnthropicsKeyNames(): void
     {
         // Upstream's `AnthropicMessagesCompat` names, and only what the model says. This model is

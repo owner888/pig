@@ -76,7 +76,11 @@ final class StreamTest extends TestCase
         $body = $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k', reasoning: $reasoning));
 
         if (!$enabled) {
-            $this->assertFalse(isset($body['thinking']));
+            // No reasoning asked for is thinking off **said**, as upstream's `streamSimple()`
+            // passes `thinkingEnabled: false` and its provider sends `{type: "disabled"}`. This
+            // used to assert the field was absent — pig left it to the API's default, which an
+            // adaptive model reads as "think as you like".
+            $this->assertSame(['type' => 'disabled'], $body['thinking']);
             $this->restoreEnv();
 
             return;

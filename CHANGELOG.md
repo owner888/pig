@@ -43,6 +43,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.30] - 2026-10-08
+
+### New Features
+
+- **Tool Argument Schema Coercion (`ToolArguments`, upstream `coerceWithJsonSchema`)**:
+  - Implemented upstream pi's `coerceWithJsonSchema()`: automatically coerced stringified numeric arguments (`"10"` -> `10`), string booleans (`"true"`/`"false"` -> `true`/`false`), primitive string conversions, and required null primitives to type zero values (`""`, `0`, `false`) before JSON schema validation, eliminating tool rejections caused by LLM argument type hallucinations.
+- **Anthropic Thinking Control & Summarized Output Parity (`Anthropic`, `AnthropicOptions`, `Models`)**:
+  - Explicitly emitted `thinking: {type: "disabled"}` when reasoning is switched off unless model metadata indicates `off: null` (such as Fable 5 and managed-effort Claudes), preventing adaptive models from silently executing thinking loops and billing.
+  - Defaulted `thinking.display` to `"summarized"` across budget and adaptive modes (overridable via `AnthropicOptions::$thinkingDisplay`), ensuring reasoning text streams consistently on newer Claude models (such as Opus 4.7+).
+- **GitHub Copilot Claude Protocol Routing Alignment (`Models`, `Anthropic`, `generate-models.php`)**:
+  - Routed Copilot Claude 4.x/5.x models to `anthropic-messages` via `copilotApi()` matching upstream pi.
+  - Implemented Bearer token authorization, dynamic host selection from token `proxy-ep`, Copilot dynamic telemetry headers, and adaptive thinking metadata in `Anthropic` provider for `github-copilot`.
+- **OpenRouter & Vercel Gateway Routing Compatibility (`OpenAiCompat`, `CustomModels`, `StreamProxy`)**:
+  - Supported `openRouterRouting` and `vercelGatewayRouting` in `models.json` compat blocks, merging provider and model settings and relaying preferences through proxy and client requests.
+- **Custom & Extension Tools Strict Sampling Propagation (`CustomTool`, `WrappedCustomTool`)**:
+  - Added `$constrainedSampling` to `CustomTool` and forwarded it in `WrappedCustomTool::definition()`, allowing extension tools to leverage strict tool sampling.
+
+### Fixed
+
+- **OpenAI Responses Tool Result Inline Images (`OpenAiResponses`)**:
+  - Aligned `convertToolResultOutput()` with upstream pi by embedding tool result images directly inside `function_call_output.output` (`input_text` + `input_image`), removing separate synthetic user turns that confused models.
+
 ## [0.4.29] - 2026-10-08
 
 ### New Features
