@@ -456,7 +456,7 @@ final class Agent
 
             $this->keepUnfinished($partial);
         } catch (Throwable $error) {
-            $this->recordFailure($model, $error);
+            $this->handleRunFailure($model, $error, $this->controller->signal->aborted(), $emit);
         } finally {
             $this->state->isStreaming = false;
             $this->state->streamMessage = null;
@@ -652,10 +652,26 @@ final class Agent
         }
     }
 
-    private function recordFailure(Model $model, Throwable $error): void
+    /**
+     * A throw that escaped the loop — a listener that threw, a stream that failed before its
+     * first event, a `getApiKey` that could not renew a token — becomes a failed assistant turn.
+     *
+     * Upstream's `handleRunFailure()`: the failure message goes through the **same four events a
+     * streamed error does** — `message_start`, `message_end`, `turn_end`, `agent_end` — so the
+     * session file, the screen, a host on RPC and the retry step all see it the way they see a
+     * provider's `ErrorEvent`. This used to emit `agent_end` alone (the anchor's shape), which is
+     * how a `TypeError` in a TUI listener ended a turn with nothing written and nothing drawn:
+     * every reader of a message is on `message_end`, and the one event that went out has no
+     * message in it that anybody draws. `/debug` was the only place the error existed.
+     *
+     * The events go through the same `$emit` as the loop's own, so `apply()` appends the message
+     * to the state on `message_end` and records the error on `turn_end`, as upstream's
+     * `processEvents()` does.
+     *
+     * @param Closure(AgentEvent): void $emit
+     */
+    private function handleRunFailure(Model $model, Throwable $error, bool $aborted, Closure $emit): void
     {
-        $aborted = $this->controller?->signal->aborted() ?? false;
-
         $message = new AssistantMessage(
             [new TextContent('')],
             $model->api,
@@ -666,9 +682,10 @@ final class Agent
             $error->getMessage(),
         );
 
-        $this->appendMessage($message);
-        $this->state->error = $error->getMessage();
-        $this->emit(new AgentEndEvent([$message]));
+        $emit(new MessageStartEvent($message));
+        $emit(new MessageEndEvent($message));
+        $emit(new TurnEndEvent($message, []));
+        $emit(new AgentEndEvent([$message]));
     }
 
     private function emit(AgentEvent $event): void

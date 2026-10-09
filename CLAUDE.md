@@ -3668,6 +3668,51 @@ said, and nothing has to ask for it.
 | `--mode json` | every event as a JSON line | the same file, its `"json"` branch |
 | `--mode rpc` | JSON lines out, commands in | `modes/rpc/` |
 | `--mode web` / `/web` | a browser chat UI | `Web\WebMode` (Workerman-inspired HTTP/SSE) |
+| `--mode mcp` | an MCP server with one tool, `ask`, over Streamable HTTP | `Mcp\McpMode` — pig's own, upstream has none |
+
+### `--mode mcp`: pig as an MCP server, and why it is one tool over HTTP
+
+**Decided 2026-10-09, with the developer.** The question was "pig has http and websocket; can it do
+SSE and VLESS?" and the answer split in two. SSE as a *server* had no consumer — the Web UI already
+has one WebSocket carrying everything — until the developer named one: pig as an MCP server, where
+MCP's Streamable HTTP transport answers a request as `text/event-stream`. So `Web\Protocols\Sse`
+exists for that and nothing else: `open()` writes the head and switches the connection, `encode()`
+frames one event, the body ends by closing (`Connection: close`), and `TcpConnection::closeAfterSend()`
+is the one new method, because `close()` drops whatever is still in the send buffer and an SSE
+response's last event would have gone with it.
+
+Three choices, each asked rather than assumed:
+
+- **One tool, `ask`**, not the 24 RPC commands as tools and not the built-in tools re-exported.
+  `ask(prompt)` is a turn in this process's one `AgentSession`, answered with the last assistant
+  message's text blocks — `PrintMode::say()`'s reading, as a tool result. Calls are serial; a
+  second `ask` while one runs gets an `isError` result saying so, not a queue.
+- **Streamable HTTP, not stdio.** `POST /mcp`: `initialize` / `ping` / `tools/list` as one JSON
+  document, `tools/call` as an SSE stream — `notifications/progress` per text delta when the caller
+  sent a `progressToken`, a `: keep-alive` comment every 15 s otherwise, the result last. `GET` is
+  405 (nothing server-initiated to stream), `DELETE` forgets the `Mcp-Session-Id`; a stale id is 404,
+  which the spec defines as "re-initialize", so a client outliving a restart recovers on its own.
+- **`--mode mcp`**, not `pig mcp serve`: `pig mcp` is the MCP *client* extension's CLI (`login`,
+  `status`), and a server command under it would be the one word meaning both sides.
+
+What the mode does not do, on purpose: no in-process reuse of `HttpServer` (it carries the page, the
+pool and the WebSocket; `McpServer` is the same `Connection` + `Http` framing with those taken out),
+no batch requests (removed from the spec in 2025-06-18), no `mode` value of its own for hooks —
+`$ctx->mode()` answers `rpc`, since a program drives it, and adding a fifth value to that union is a
+hook-API change nobody asked for. The NoUi hook wiring in `McpMode::start()` is the third copy of
+`PrintMode::start()`'s; extracting it is a refactor to ask about, not do in passing.
+
+**VLESS was declined for core.** The developer's real goal was an Xray-like inbound so a phone could
+proxy through the Mac. Server-side it is feasible in PHP (terminate TLS, read the 16-byte UUID and
+the target, pump bytes), but it is a public-facing proxy server with no relation to the agent, and
+Xray / sing-box already do it with REALITY, UDP and probing resistance pig would never catch up to.
+Agreed: an extension or a separate repository if he wants one in PHP, not `packages/`.
+
+Regression tests: `Mcp\McpServerTest` — a real loopback listener and a real `Async\Socket` into it,
+asserting the bytes an MCP client reads: the session id header, version negotiation, 202 for a
+notification, 404 for a stale id, 405 for GET, the SSE frames of an `ask` with and without a
+progress token, a failed turn as an `isError` result, and two asks landing in one transcript.
+`ArgumentsTest::testMcpModeNeedsNoMessageBecauseItsMessagesArriveAsToolCalls`.
 
 ### The web mode's process model: pi-web's shell over `pig --mode rpc`, not a mirror of the TUI
 
@@ -12468,6 +12513,22 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - faux：`Providers\Faux`（`fauxText()` 等与 `fauxProvider()`）+ `FauxProvider`（`StreamApi`，`provider()` 交给 `ProviderRegistry`）。经 `Stream` 仍要给 key（pig 的扩展协议都要），直接调 `->stream()` 不要。
 - 没移植：`cloudflare-ai-binding.ts` 只有 sentinel 和 `createAiBindingFetch()` 的检查（`StreamOptions` 没有 `fetch`，Worker 外没有 binding）；faux 的 deferred；`pig-codemode` 的 `models` 命名空间；coding-agent 的 llama 扩展；`api/lazy.ts` 与 `*.lazy.ts`（PHP 自动加载，没有可观察的差别：没有异步装载，就没有装载失败的错误流）；1.1.0 才有的 `classifier-shared`、`openai-decisions`、`context.images`。
 - 测试：`SystemOneTest`（上游 `typesafe-system-one.test.ts`、`cloudflare-workers-ai-system-one.test.ts`、`classifier-models.test.ts`）、`LlamaCppClassifyTest`、`OpenRouterImagesTest`、`CloudflareTest`、`FauxProviderTest`，`ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`，`GenerateModelsTest` 的 Workers AI、网关、分类器、图片与读不到时的场景。
+
+### 跑着跑着停了：监听器里的 TypeError 走进 `Agent` 的 catch，整轮消失得无声无息
+
+**现象**：模型调了一个扩展注册的工具后，TUI 上只剩一段 thinking，然后什么都没有——没有红字、会话文件里没有这一轮、没有重试，但 `agent_settled` 照发（自动命名跑了、"任务完成"通知弹了）。`/debug` 是唯一能看到原因的地方：
+`InteractiveMode::toolRenderers(): Argument #2 ($custom) must be of type ?Pig\CodingAgent\Interactive\CustomTool, Pig\CodingAgent\CustomTools\CustomTool given`。
+
+**根因**：两层叠加。
+1. `toolRenderers(string $name, ?CustomTool $custom)` 的签名写了裸的 `CustomTool`，文件 import 了 `CustomTools\` 下的四个类偏偏没有这一个，于是类型解析成当前命名空间下不存在的类——missing-`use` trap 的第五个变种。`$custom` 只有模型调自定义工具时才非 null，所以内置工具一直好好的。同一批扫出来的还有 `PrintMode.php` / `RpcMode.php` 的 `getApiKey: fn (Model $m)`（没 `use Pig\Ai\Model`，`-p`/rpc 下扩展一调 `$ctx->apiKey()` 就炸）、`TcpConnection.php:104` 的 `catch (Throwable $e)`（没 `use Throwable`，web 守护进程那道"故障隔离"从来没接住过任何东西）、`HttpServer.php:231` 的 `Http::class`（没 import，`===` 永远 false）。
+2. 监听器里的 throw 一路抛回 `Agent::run()` 的 catch，旧的 `recordFailure()` 只发 `agent_end`——而写会话文件、画错误组件、`sayError()` 兜底、RPC 的事件都挂在 `message_end` 上，所以这条错误消息谁都看不见。上游 HEAD 的 `handleRunFailure()` 是 message_start → message_end → turn_end → agent_end 四连发（锚点 `d0a4c37` 只有 agent_end，这是从 HEAD 拿的）。
+
+**避坑规则**：
+- `Agent::handleRunFailure()` 照上游四连发，走和 loop 同一个 `$emit`，`apply()` 在 message_end 把消息进 state、turn_end 记 error。不要再回到"只发 agent_end"。
+- `test/lint.php` 的 `unresolvedClassNames()` 现在逐 token 扫类名（`new`、`instanceof`、`extends`/`implements`、`catch (`、参数/属性/返回类型含 `?T`、`A|B`、`...$x`，`::` 前、`#[Attr]`、类体里的 `use Trait;`），按 PHP 的规则解析（import 的目标、否则本文件命名空间；无命名空间的文件才查全局），解析不到就红。函数名、常量、docblock 不算；名字后面跟 `(` 的是调用不是类型（三元 `? f() : g()` 的 `):` 差点全报）。一次扫出 5 处，全部是真的。
+- 新加 `catch`/`instanceof`/类型标注时跑 `php test/lint.php`，别等到跑到那行。
+
+**测试**：`AgentTest::testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees`（改回只发 agent_end 就红）、`InteractiveModeTest::testTheModelCallingACustomToolIsDrawnRatherThanEndingTheTurnInSilence`（去掉 import 就红）、`PrintModeTest::testAHookGetsTheSessionsKeyHereToo`、`RpcModeTest::testAHookGetsTheSessionsKeyHereToo`；lint 的五处 import 各去掉一次都报，合成探针文件 11 种写法全中。
 
 ## Version floor: PHP >= 8.3
 

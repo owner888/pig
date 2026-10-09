@@ -28,6 +28,7 @@ final readonly class Arguments
     public const array TAKES_A_VALUE = [
         'model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models', 'proxy',
         'tools', 'exclude-tools', 'export', 'list-models', 'extension', 'session', 'web-host', 'web-port',
+        'mcp-host', 'mcp-port',
     ];
 
     /**
@@ -46,8 +47,8 @@ final readonly class Arguments
         'v' => 'version',
     ];
 
-    /** The four modes `--mode` accepts. */
-    public const array MODES = ['text', 'json', 'rpc', 'web'];
+    /** The five modes `--mode` accepts. */
+    public const array MODES = ['text', 'json', 'rpc', 'web', 'mcp'];
 
     /**
      * @param array<string, string> $options a flag is present with an empty value
@@ -170,7 +171,7 @@ final readonly class Arguments
      */
     public function needsAMessage(): bool
     {
-        return !$this->isInteractive() && $this->mode() !== 'rpc' && $this->mode() !== 'web';
+        return !$this->isInteractive() && !in_array($this->mode(), ['rpc', 'web', 'mcp'], true);
     }
 
     public function has(string $option): bool

@@ -8,7 +8,11 @@ use Closure;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentError;
+use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
+use Pig\Agent\MessageEndEvent;
+use Pig\Agent\MessageStartEvent;
+use Pig\Agent\TurnEndEvent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\AgentStartEvent;
 use Pig\Agent\AgentState;
@@ -129,6 +133,49 @@ final class AgentTest extends TestCase
 
         $this->assertSame('AgentStartEvent', $seen[0]);
         $this->assertSame('after unsubscribe: 0 more', end($seen));
+    }
+
+    /**
+     * A throw that escapes the loop is a failed turn that goes out through the same four events a
+     * provider's error does — upstream's `handleRunFailure()`. It used to go out as `agent_end`
+     * alone, and every reader of a message (the session file, the screen, a host, the retry step)
+     * is on `message_end`: a `TypeError` in a TUI listener ended the turn with nothing written and
+     * nothing drawn. Red when the three events in front of `agent_end` are taken away again.
+     */
+    public function testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees(): void
+    {
+        $agent = $this->agent(['one']);
+        $seen = [];
+        $thrown = false;
+
+        Async::run(static function () use ($agent, &$seen, &$thrown): void {
+            $agent->subscribe(static function (AgentEvent $event) use (&$seen, &$thrown): void {
+                $seen[] = (new ReflectionClass($event))->getShortName();
+
+                // Once: the failure's own `message_start` comes through this listener too, and a
+                // listener that throws on every message is a different (and upstream's) hazard.
+                if ($event instanceof MessageStartEvent && $event->message instanceof AssistantMessage && !$thrown) {
+                    $thrown = true;
+
+                    throw new RuntimeException('a listener broke');
+                }
+            });
+
+            $agent->prompt('a');
+        });
+
+        $this->assertSame(
+            ['MessageStartEvent', 'MessageEndEvent', 'TurnEndEvent', 'AgentEndEvent'],
+            array_slice($seen, -4),
+            'the failure goes out as a whole turn, not as agent_end alone',
+        );
+
+        $last = end($agent->state->messages);
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertSame(StopReason::Error, $last->stopReason);
+        $this->assertSame('a listener broke', $last->errorMessage);
+        $this->assertSame('a listener broke', $agent->state->error);
+        $this->assertFalse($agent->state->isStreaming);
     }
 
     public function testPromptingWhileWorkingIsRefused(): void

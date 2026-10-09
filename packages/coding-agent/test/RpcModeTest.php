@@ -1114,6 +1114,23 @@ final class RpcModeTest extends TestCase
         $this->assertSame(['b'], $chosen);
     }
 
+    /** The same wire as `PrintModeTest::testAHookGetsTheSessionsKeyHereToo`, through this mode. */
+    public function testAHookGetsTheSessionsKeyHereToo(): void
+    {
+        $key = 'not asked';
+        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$key): mixed {
+            $key = $ctx->apiKey($ctx->model);
+
+            return null;
+        }]);
+
+        $this->start(hooks: $hooks);
+        $this->settle();
+
+        $this->assertSame('k', $key);
+        $this->assertSame([], $this->of('hook_error'));
+    }
+
     public function testTwoQuestionsAtOnceAreAnsweredByIdInAnyOrder(): void
     {
         $seen = [];

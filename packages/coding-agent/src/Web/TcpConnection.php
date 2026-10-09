@@ -8,6 +8,7 @@ use Closure;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\ProtocolInterface;
+use Throwable;
 
 /**
  * Workerman-inspired non-blocking TCP connection with dynamic protocol framing,
@@ -20,6 +21,7 @@ class TcpConnection
     protected ?string $readableWatcher = null;
     protected ?string $writableWatcher = null;
     protected bool $isClosed = false;
+    protected bool $closeWhenDrained = false;
 
     /** @var class-string<ProtocolInterface> */
     protected string $protocol = Http::class;
@@ -156,6 +158,28 @@ class TcpConnection
         if ($written < strlen($data)) {
             $this->sendBuffer = substr($data, $written);
             $this->armWritable();
+        } elseif ($this->closeWhenDrained) {
+            $this->close();
+        }
+    }
+
+    /**
+     * Close once everything queued has been written.
+     *
+     * `close()` closes now, and anything still in the send buffer goes with it — which is right
+     * for an error and wrong for a response whose end *is* the close, an SSE stream above all.
+     * This is the other order: the socket stays until the buffer is empty, then goes.
+     */
+    public function closeAfterSend(): void
+    {
+        if ($this->isClosed) {
+            return;
+        }
+
+        $this->closeWhenDrained = true;
+
+        if ($this->sendBuffer === '') {
+            $this->close();
         }
     }
 
@@ -205,6 +229,10 @@ class TcpConnection
 
             if ($this->sendBuffer === '') {
                 $this->disarmWritable();
+
+                if ($this->closeWhenDrained) {
+                    $this->close();
+                }
             }
         });
     }

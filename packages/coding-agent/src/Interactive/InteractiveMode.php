@@ -49,6 +49,7 @@ use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
+use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;

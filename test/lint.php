@@ -71,6 +71,15 @@ foreach (array_chunk($files, 100) as $chunk) {
     }
 }
 
+// Every class, interface, trait and enum the swept files declare, by fully qualified name —
+// what a bare name in a namespaced file has to resolve against. Built once, before the sweep.
+$declared = [];
+foreach ($files as $file) {
+    foreach (declaredClassNames((string) file_get_contents($file)) as $name) {
+        $declared[strtolower($name)] = true;
+    }
+}
+
 foreach ($files as $file) {
     $source = (string) file_get_contents($file);
 
@@ -100,6 +109,12 @@ foreach ($files as $file) {
         $failed++;
         echo "\033[31m✗\033[0m " . (str_starts_with($file, $root) ? substr($file, strlen($root) + 1) : $file) . ":{$line}\n";
         echo "  \${$name} is read inside a closure that neither takes it as a parameter, captures it with use(), nor assigns it\n";
+    }
+
+    foreach (unresolvedClassNames($source, $declared) as [$line, $name, $resolved]) {
+        $failed++;
+        echo "\033[31m✗\033[0m " . (str_starts_with($file, $root) ? substr($file, strlen($root) + 1) : $file) . ":{$line}\n";
+        echo "  {$name} resolves to {$resolved}, which nothing declares — a `use` is missing\n";
     }
 }
 
@@ -510,6 +525,422 @@ function isInsideListAssign(array $tokens, int $i, int $floor): bool
         }
     }
     return false;
+}
+
+/**
+ * The fully qualified names of everything this file declares — class, interface, trait, enum.
+ *
+ * @return list<string>
+ */
+function declaredClassNames(string $source): array
+{
+    $tokens = PhpToken::tokenize($source);
+    $count = count($tokens);
+    $namespace = '';
+    $names = [];
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+
+        if ($token->is(T_NAMESPACE)) {
+            $next = next_token($tokens, $i);
+            if ($next !== null && $next->is([T_STRING, T_NAME_QUALIFIED])) {
+                $namespace = $next->text . '\\';
+            }
+
+            continue;
+        }
+
+        if (!$token->is([T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM])) {
+            continue;
+        }
+
+        // `Foo::class`, `new class`, and `enum` as a word in a type-hint position are not declarations.
+        $previous = $i > 0 ? prev_token($tokens, $i) : null;
+        $next = next_token($tokens, $i);
+
+        if ($previous?->is([T_DOUBLE_COLON, T_NEW]) || $next === null || !$next->is(T_STRING)) {
+            continue;
+        }
+
+        $names[] = $namespace . $next->text;
+    }
+
+    return $names;
+}
+
+/**
+ * A class name written where PHP will resolve it, that resolves to nothing.
+ *
+ * `php -l` resolves no names, and a class name in a namespaced file never falls back to the
+ * global one: `catch (Throwable $e)` with no `use Throwable` catches `Pig\CodingAgent\Session\Throwable`,
+ * which does not exist, so the catch never fires — the fiber died silently. The same slip has
+ * now had five guises: that catch, an `instanceof Component` that could never match, a
+ * `new Text(...)` in a test that threw where the code under test catches, a `#[DataProvider]`
+ * attribute that resolved to the test's own namespace so no provider was ever found, and the one
+ * that cost a turn with nothing on screen — a parameter typed `?CustomTool` in a file importing
+ * four other things from `CustomTools\` and not that one, so the only call site was a `TypeError`
+ * in a listener. Every one of them was found by reaching the line; this reads them off the tokens.
+ *
+ * Where a name counts: after `new`, `instanceof`, `extends`, `implements`, in `catch (…)`, as a
+ * parameter, property or return type (including `?T`, `A|B` unions and `...$rest`), before `::`,
+ * in an attribute (`#[Name]`), and in a class body's `use Trait;`. Function names, constants and
+ * docblocks are not names here. A bare name is resolved as PHP resolves it — an import's target,
+ * else the file's own namespace — and a qualified `A\B` through the import of `A` or the
+ * namespace. `self`, `static`, `parent` and the scalar/pseudo types are skipped; a name that is
+ * imported is trusted (vendor classes are not in the map, and a wrong import is a different
+ * mistake); in a file with no namespace a global class that PHP already has loaded counts.
+ *
+ * @param array<string, true> $declared lowercased fully qualified names the swept files declare
+ * @return list<array{int, string, string}> line, the name as written, what it resolved to
+ */
+function unresolvedClassNames(string $source, array $declared): array
+{
+    $tokens = PhpToken::tokenize($source);
+    $count = count($tokens);
+    $namespace = '';
+    $imports = [];
+    $depth = 0;
+    $candidates = [];
+    $notClasses = [
+        'self', 'static', 'parent', 'array', 'callable', 'int', 'float', 'bool', 'string', 'void', 'mixed',
+        'iterable', 'object', 'never', 'null', 'false', 'true',
+    ];
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+
+        if ($token->text === '{') {
+            $depth++;
+        } elseif ($token->text === '}') {
+            $depth--;
+        } elseif ($token->is(T_CURLY_OPEN) || $token->is(T_DOLLAR_OPEN_CURLY_BRACES)) {
+            $depth++;
+        }
+
+        if ($token->is(T_NAMESPACE)) {
+            $next = next_token($tokens, $i);
+            if ($next !== null && $next->is([T_STRING, T_NAME_QUALIFIED])) {
+                $namespace = $next->text . '\\';
+            }
+
+            continue;
+        }
+
+        if ($token->is(T_USE)) {
+            $previous = prev_token($tokens, $i);
+            $next = next_token($tokens, $i);
+
+            // A closure's `use (...)` follows a `)`; a trait `use Foo;` sits inside a class body.
+            if ($previous?->text === ')' || $next === null) {
+                continue;
+            }
+
+            if ($depth === 0) {
+                if ($next->is([T_FUNCTION, T_CONST])) {
+                    continue;
+                }
+
+                foreach (importsOf($tokens, $i) as $alias => $target) {
+                    $imports[strtolower($alias)] = $target;
+                }
+            } else {
+                for ($j = $i + 1; $j < $count && $tokens[$j]->text !== ';' && $tokens[$j]->text !== '{'; $j++) {
+                    if ($tokens[$j]->is([T_STRING, T_NAME_QUALIFIED])) {
+                        $candidates[] = $j;
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        if ($token->is(T_ATTRIBUTE)) {
+            $expectName = true;
+            $parens = 0;
+
+            for ($j = $i + 1; $j < $count; $j++) {
+                $t = $tokens[$j];
+
+                if ($t->isIgnorable()) {
+                    continue;
+                }
+
+                if ($t->text === '(') {
+                    $parens++;
+                } elseif ($t->text === ')') {
+                    $parens--;
+                } elseif ($t->text === ']' && $parens === 0) {
+                    break;
+                } elseif ($t->text === ',' && $parens === 0) {
+                    $expectName = true;
+                } elseif ($expectName && $t->is([T_STRING, T_NAME_QUALIFIED])) {
+                    $candidates[] = $j;
+                    $expectName = false;
+                }
+            }
+
+            continue;
+        }
+
+        if ($token->is([T_EXTENDS, T_IMPLEMENTS])) {
+            for ($j = $i + 1; $j < $count && $tokens[$j]->text !== '{' && !$tokens[$j]->is([T_IMPLEMENTS]); $j++) {
+                if ($tokens[$j]->is([T_STRING, T_NAME_QUALIFIED])) {
+                    $candidates[] = $j;
+                }
+            }
+
+            continue;
+        }
+
+        if (!$token->is([T_STRING, T_NAME_QUALIFIED])) {
+            continue;
+        }
+
+        $previous = prev_token($tokens, $i);
+        $next = next_token($tokens, $i);
+
+        if ($previous?->is([T_NEW, T_INSTANCEOF]) || $next?->is(T_DOUBLE_COLON) || isTypePosition($tokens, $i)) {
+            $candidates[] = $i;
+        }
+    }
+
+    $hits = [];
+    $seen = [];
+
+    foreach ($candidates as $i) {
+        $written = $tokens[$i]->text;
+        $parts = explode('\\', $written);
+        $head = strtolower($parts[0]);
+
+        if (count($parts) === 1 && in_array($head, $notClasses, true)) {
+            continue;
+        }
+
+        if (isset($imports[$head])) {
+            if (count($parts) === 1) {
+                continue;
+            }
+
+            $resolved = $imports[$head] . '\\' . implode('\\', array_slice($parts, 1));
+        } else {
+            $resolved = $namespace . $written;
+        }
+
+        $key = strtolower($resolved);
+
+        if (isset($declared[$key]) || isset($seen[$key])) {
+            continue;
+        }
+
+        if ($namespace === '' && (class_exists($resolved, false) || interface_exists($resolved, false) || trait_exists($resolved, false) || enum_exists($resolved, false))) {
+            continue;
+        }
+
+        $seen[$key] = true;
+        $hits[] = [$tokens[$i]->line, $written, $resolved];
+    }
+
+    return $hits;
+}
+
+/**
+ * The aliases a top-level `use` statement at $i brings in, `alias => fully qualified target`.
+ *
+ * `use A\B;`, `use A\B as C;`, `use A\B, A\C;` and the group form `use A\{B, C as D};`.
+ *
+ * @param list<PhpToken> $tokens
+ * @return array<string, string>
+ */
+function importsOf(array $tokens, int $i): array
+{
+    $count = count($tokens);
+    $imports = [];
+    $prefix = '';
+    $current = null;
+    $alias = null;
+    $expectAlias = false;
+
+    for ($j = $i + 1; $j < $count; $j++) {
+        $t = $tokens[$j];
+
+        if ($t->isIgnorable()) {
+            continue;
+        }
+
+        if ($t->text === ';') {
+            break;
+        }
+
+        if ($t->is(T_NAME_QUALIFIED) || $t->is(T_STRING) || $t->is(T_NAME_FULLY_QUALIFIED)) {
+            if ($expectAlias) {
+                $alias = $t->text;
+                $expectAlias = false;
+            } else {
+                $current = ltrim($t->text, '\\');
+            }
+        } elseif ($t->is(T_NS_SEPARATOR) && $current !== null) {
+            // `use A\{...}`: the name before the separator is the group's prefix.
+            $prefix = $current . '\\';
+            $current = null;
+        } elseif ($t->text === '{') {
+            continue;
+        } elseif ($t->is(T_AS)) {
+            $expectAlias = true;
+        } elseif ($t->text === ',' || $t->text === '}') {
+            if ($current !== null) {
+                $target = $prefix . $current;
+                $imports[$alias ?? substr($target, strrpos($target, '\\') !== false ? strrpos($target, '\\') + 1 : 0)] = $target;
+            }
+
+            $current = null;
+            $alias = null;
+        }
+    }
+
+    if ($current !== null) {
+        $target = $prefix . $current;
+        $imports[$alias ?? substr($target, strrpos($target, '\\') !== false ? strrpos($target, '\\') + 1 : 0)] = $target;
+    }
+
+    return $imports;
+}
+
+/**
+ * Whether the name token at $i is a parameter, property, return or catch type.
+ *
+ * Forward: the name — through a `|`/`&` union — is followed by a variable, `...$rest` or `&$ref`.
+ * Backward: it sits after `):` (a return type, possibly `?` or a union member), or in a
+ * `catch (` list. Function arguments that happen to be constants (`f($x, SOME_CONST)`) are not
+ * followed by a variable and so are not types.
+ *
+ * @param list<PhpToken> $tokens
+ */
+function isTypePosition(array $tokens, int $i): bool
+{
+    $count = count($tokens);
+
+    // A call — `$x ? f() : g($y)` puts `g` right after a `):` — and a type is never followed by `(`.
+    if (next_token($tokens, $i)?->text === '(') {
+        return false;
+    }
+
+    // Forward, over a union.
+    $j = $i;
+    while (true) {
+        $next = next_token($tokens, $j);
+        if ($next === null) {
+            break;
+        }
+
+        if ($next->is([T_VARIABLE, T_ELLIPSIS, T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG])) {
+            return true;
+        }
+
+        if ($next->text === '|' || $next->is(T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG)) {
+            $j = indexOfNext($tokens, $j);
+            $name = next_token($tokens, $j);
+            if ($name === null || !$name->is([T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED])) {
+                break;
+            }
+
+            $j = indexOfNext($tokens, $j);
+
+            continue;
+        }
+
+        break;
+    }
+
+    // Backward: `): T`, `): ?T`, `): A|T`, and `catch (T`, `catch (A|T`.
+    $k = $i;
+    while (true) {
+        $previous = prev_token($tokens, $k);
+        if ($previous === null) {
+            return false;
+        }
+
+        if ($previous->text === '|') {
+            $k = indexOfPrev($tokens, $k);
+            $k = indexOfPrev($tokens, $k);
+
+            continue;
+        }
+
+        if ($previous->text === '?') {
+            $k = indexOfPrev($tokens, $k);
+            $previous = prev_token($tokens, $k);
+            if ($previous === null) {
+                return false;
+            }
+        }
+
+        if ($previous->text === ':') {
+            $k = indexOfPrev($tokens, $k);
+
+            return prev_token($tokens, $k)?->text === ')';
+        }
+
+        if ($previous->text === '(') {
+            $k = indexOfPrev($tokens, $k);
+
+            return prev_token($tokens, $k)?->is(T_CATCH) ?? false;
+        }
+
+        return false;
+    }
+
+    return false; // @phpstan-ignore-line — the loops above return
+}
+
+/**
+ * The index of the next token after $i that is not whitespace or a comment, or $i if none.
+ *
+ * @param list<PhpToken> $tokens
+ */
+function indexOfNext(array $tokens, int $i): int
+{
+    $count = count($tokens);
+
+    for ($j = $i + 1; $j < $count; $j++) {
+        if (!$tokens[$j]->isIgnorable()) {
+            return $j;
+        }
+    }
+
+    return $i;
+}
+
+/**
+ * The index of the previous token before $i that is not whitespace or a comment, or $i if none.
+ *
+ * @param list<PhpToken> $tokens
+ */
+function indexOfPrev(array $tokens, int $i): int
+{
+    for ($j = $i - 1; $j >= 0; $j--) {
+        if (!$tokens[$j]->isIgnorable()) {
+            return $j;
+        }
+    }
+
+    return $i;
+}
+
+/**
+ * The token before $i that is not whitespace or a comment.
+ *
+ * @param list<PhpToken> $tokens
+ */
+function prev_token(array $tokens, int $i): ?PhpToken
+{
+    for ($j = $i - 1; $j >= 0; $j--) {
+        if (!$tokens[$j]->isIgnorable()) {
+            return $tokens[$j];
+        }
+    }
+
+    return null;
 }
 
 /**

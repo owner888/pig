@@ -47,6 +47,7 @@ use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
+use Pig\CodingAgent\Mcp\McpMode;
 use Pig\CodingAgent\Migrations;
 use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Session\SessionManager;
@@ -187,10 +188,13 @@ if (isset($options['help'])) {
       --no-extensions   start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
-      --mode <m>        text, json, rpc or web. Any of them leaves the terminal behind:
+      --mode <m>        text, json, rpc, web or mcp. Any of them leaves the terminal behind:
                         text prints the last answer, json prints every event as it
                         happens, rpc reads commands as JSON lines on stdin, web
-                        launches a browser-based chat UI on local HTTP/SSE.
+                        launches a browser-based chat UI, mcp serves this conversation
+                        as an MCP server (one tool, `ask`) over Streamable HTTP.
+      --mcp-host <h>, --mcp-port <n>
+                        where --mode mcp listens (default: 127.0.0.1:8089).
 
     Anything that is not an option is a message, and `@some/file` is read in front of
     the first one — an image goes in as an image. `--` ends the options, for a message
@@ -230,8 +234,8 @@ $fileArgs = $arguments->files;
 
 // Refused rather than ignored, as upstream refuses it: in rpc mode the conversation arrives
 // as commands, so a file read here would be prepended to a prompt that never comes.
-if ($mode === 'rpc' && ($fileArgs !== [] || $messages !== [])) {
-    fwrite(STDERR, Style::red("--mode rpc takes its messages as commands, not as arguments.\n"));
+if (($mode === 'rpc' || $mode === 'mcp') && ($fileArgs !== [] || $messages !== [])) {
+    fwrite(STDERR, Style::red("--mode {$mode} takes its messages over its protocol, not as arguments.\n"));
 
     exit(1);
 }
@@ -780,6 +784,11 @@ if ($mode === 'rpc') {
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
     Async::run(static fn () => $running->run());
+} elseif ($mode === 'mcp') {
+    $mcpPort = isset($options['mcp-port']) && ctype_digit((string) $options['mcp-port']) ? (int) $options['mcp-port'] : 8089;
+    $mcpHost = isset($options['mcp-host']) && $options['mcp-host'] !== '' ? (string) $options['mcp-host'] : '127.0.0.1';
+    $serving = new McpMode($session, $mcpPort, $mcpHost, $hooks, $customTools);
+    $exit = (int) Async::run(static fn (): int => $serving->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));

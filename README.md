@@ -15,7 +15,7 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
 - **Three Interaction Modes**:
   - **Terminal TUI**: Differential rendering ANSI interface with live spinners, visual diff views, keybindings, and IME-safe caret tracking.
   - **Persistent Web UI & PTY Workbench (`pig web start -d` / `/web`)**: Daemonized multi-tab browser interface with embedded xterm.js PTY terminal drawer, SSH node workbench, SFTP remote file explorer, and full-duplex WebSocket streaming.
-  - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), and long-lived JSON-RPC socket mode (`--mode rpc`).
+  - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), long-lived JSON-RPC socket mode (`--mode rpc`), and MCP server mode (`--mode mcp`) so another agent can call pig as a tool.
 - **Comprehensive Built-in Extensions**:
   - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` tool.
   - `pig-web-search`: Real-time web search (`web_search`), readable page extraction (`fetch_web_page`), and headless Chrome DOM rendering (`browse_web_page`).
@@ -193,7 +193,15 @@ pig --mode json -p "explain index.php"
 
 # Long-lived JSON-RPC server over stdio
 pig --mode rpc
+
+# Serve this conversation to another agent as an MCP server (Streamable HTTP, one tool: `ask`)
+pig --mode mcp                            # http://127.0.0.1:8089/mcp
+pig --mode mcp --mcp-host 0.0.0.0 --mcp-port 9000
 ```
+
+Register it where the other agent reads its MCP servers — for Claude Code,
+`claude mcp add --transport http pig http://127.0.0.1:8089/mcp` — and it gets an `ask` tool whose
+calls are turns in one pig conversation, with pig's own tools, hooks and extensions behind it.
 
 ---
 

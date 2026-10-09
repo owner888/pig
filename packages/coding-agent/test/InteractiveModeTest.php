@@ -3706,6 +3706,35 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('[Tools]', $this->screen());
     }
 
+    /**
+     * The model calling a tool somebody wrote, drawn and answered like any other.
+     *
+     * Every custom-tool test above drives `/tools`, the banner or `onSession`; none had the model
+     * *call* one — and `addTool()`'s `toolRenderers($name, $custom)` is only reached with a
+     * non-null `$custom`. Its signature named `CustomTool` without the import, so the one real
+     * call site was a `TypeError` in a listener: the turn ended with nothing drawn and nothing
+     * written, and `/debug` was the only place the error existed. Red if the import goes again:
+     * the tool never runs, so `ran` and `done` never reach the screen. The other half — the
+     * failure being *shown* when a listener throws — is `AgentTest`'s
+     * `testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees`.
+     */
+    public function testTheModelCallingACustomToolIsDrawnRatherThanEndingTheTurnInSilence(): void
+    {
+        $this->start(
+            customTools: $this->tools('wc'),
+            answers: [self::wants('wc', []), 'done'],
+        );
+
+        $this->type('count them');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('ran', $screen);
+        $this->assertStringContainsString('done', $screen);
+        $this->assertStringNotContainsString('must be of type', $screen);
+    }
+
     public function testAToolIsToldTheSessionStartedAndThenSwitched(): void
     {
         $seen = [];

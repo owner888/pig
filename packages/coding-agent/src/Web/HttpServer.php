@@ -16,6 +16,7 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\Node\NodeManager;
+use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\Websocket;
 use Pig\CodingAgent\Web\Pty\PtyManager;
 use Pig\CodingAgent\Logger;

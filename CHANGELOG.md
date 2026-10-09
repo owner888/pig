@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.10] - 2026-10-08
+
+### New Features
+
+- **MCP Server Mode (`--mode mcp`)**:
+  - Implemented standalone MCP server mode exposing an `ask` tool over Streamable HTTP (`Mcp\McpMode`, `McpServer`, `Web\Protocols\Sse`), allowing external MCP clients (Claude Desktop, Cursor) to delegate turns to pig.
+  - Implemented SSE streaming support for `tools/call` progress notifications and pure-PHP HTTP stream termination (`TcpConnection::closeAfterSend`).
+
+### Added
+
+- Added `Web\Protocols\Sse`, the server side of `text/event-stream`, and `TcpConnection::closeAfterSend()` for a response whose end is the close.
+
+### Fixed
+
+- **Turn Failure Broadcast Sequence (`Agent::handleRunFailure`)**:
+  - Aligned loop failure handling with upstream pi HEAD: emitting `message_start` -> `message_end` -> `turn_end` -> `agent_end` sequence upon uncaught loop errors, ensuring failing turns are persisted to session history and rendered in TUI/RPC instead of vanishing silently.
+- **AST Unresolved Class Name Static Linting (`test/lint.php`)**:
+  - Added AST tokenizer analysis checking all class references across `new`, `instanceof`, `catch`, return types, and parameter type hints to catch unimported class names at build time.
+- **Missing Class Imports in Interactive, Print, and Web Modes**:
+  - Fixed missing `use` statements in `InteractiveMode` (`CustomTool`), `PrintMode` / `RpcMode` (`Model`), `TcpConnection` (`Throwable`), and `HttpServer` (`Http`).
+
 ## [0.5.9] - 2026-10-08
 
 ### Fixed

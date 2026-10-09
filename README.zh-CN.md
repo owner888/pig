@@ -15,7 +15,7 @@
 - **三种交互体验**：
   - **终端 TUI 交互模式**：基于差异化增量渲染的高性能 ANSI 终端界面，支持动态动画、可视化 Diff、快捷键自定义与原生输入法（IME）光标防跳。
   - **持久化 Web UI 界面与 PTY 工作台（`pig web start -d` / `/web`）**：常驻后台守护进程，单物理长连接多 Tab 并行会话、内置 xterm.js 原生 PTY 终端抽屉、SSH 远程节点工作台与 SFTP 文件浏览器。
-  - **CLI 命令行与自动化集成**：单次快速回答模式（`-p`）、JSON 事件行流式模式（`--mode json`）与长生命周期标准双向通信管道（`--mode rpc`）。
+  - **CLI 命令行与自动化集成**：单次快速回答模式（`-p`）、JSON 事件行流式模式（`--mode json`）、长生命周期标准双向通信管道（`--mode rpc`）与 MCP server 模式（`--mode mcp`，让别的 agent 把 pig 当工具调用）。
 - **完善的纯 PHP 内置扩展生态**：
   - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板与 `generate_image` 生图工具。
   - `pig-web-search`：DuckDuckGo 实时网络搜索（`web_search`）、网页文本内容提取（`fetch_web_page`）与无头 Chrome 动态渲染（`browse_web_page`）。
@@ -187,7 +187,15 @@ pig --mode json -p "解析 index.php"
 
 # 长生命周期标准双向 RPC 管道模式（适合外部编辑器或宿主调用）
 pig --mode rpc
+
+# MCP server 模式：把当前对话作为 MCP server 提供给别的 agent（Streamable HTTP，唯一工具 `ask`）
+pig --mode mcp                            # http://127.0.0.1:8089/mcp
+pig --mode mcp --mcp-host 0.0.0.0 --mcp-port 9000
 ```
+
+在对方 agent 的 MCP 配置里注册即可——Claude Code 是
+`claude mcp add --transport http pig http://127.0.0.1:8089/mcp`——它会得到一个 `ask` 工具，每次调用都是同一个
+pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展。
 
 ---
 

@@ -447,6 +447,31 @@ final class PrintModeTest extends TestCase
         $this->assertSame(['start', 'shutdown'], $seen);
     }
 
+    /**
+     * The key a hook asks for is the session's — `$ctx->apiKey()` is what a background
+     * completion (a title, a summary) runs on, and here it goes through `PrintMode`'s own
+     * `getApiKey: fn (Model $m)`. That closure named `Model` without the import, so the first
+     * hook to ask got a `TypeError` instead of a key, reported as the hook's own fault. The
+     * terminal had the import and the two modes with no screen did not.
+     */
+    public function testAHookGetsTheSessionsKeyHereToo(): void
+    {
+        $key = 'not asked';
+        $hooks = $this->hooks([
+            'session_start' => static function (mixed $event, mixed $ctx) use (&$key): mixed {
+                $key = $ctx->apiKey($ctx->model);
+
+                return null;
+            },
+        ]);
+
+        $this->answers = ['ok'];
+        $this->execute(['ask'], hooks: $hooks);
+
+        $this->assertSame('k', $key);
+        $this->assertSame('', $this->complained());
+    }
+
     public function testAHookThatAsksIsAnsweredNoWithoutAnybodyBeingAsked(): void
     {
         $answers = [];

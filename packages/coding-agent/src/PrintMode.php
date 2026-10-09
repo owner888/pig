@@ -7,6 +7,7 @@ namespace Pig\CodingAgent;
 use Pig\Agent\AgentEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
+use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;

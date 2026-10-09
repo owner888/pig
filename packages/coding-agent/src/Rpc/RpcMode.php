@@ -8,6 +8,7 @@ use Pig\Agent\QueueMode;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
+use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\Async\Loop;

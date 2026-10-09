@@ -269,6 +269,13 @@ final class ArgumentsTest extends TestCase
         $this->assertFalse($this->parse('--mode', 'web')->needsAMessage());
     }
 
+    public function testMcpModeNeedsNoMessageBecauseItsMessagesArriveAsToolCalls(): void
+    {
+        $this->assertFalse($this->parse('--mode', 'mcp')->needsAMessage());
+        $this->assertTrue($this->parse('--mode', 'mcp')->isKnownMode());
+        $this->assertSame('8089', $this->parse('--mode', 'mcp', '--mcp-port', '8089')->options['mcp-port'], 'takes a value');
+    }
+
     public function testEveryOtherModeStillNeedsOne(): void
     {
         $this->assertTrue($this->parse('--mode', 'text')->needsAMessage());
