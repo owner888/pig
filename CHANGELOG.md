@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.7] - 2026-10-08
+
+### Added
+
+- Added `-e <source>` shorthand for single-run extension package loading (`--extension`).
+
+### Fixed
+
+- **Exclude Quota and Account Limit Errors from Bug Report Prompts (`BugReport::worthReporting`)**:
+  - Excluded provider quota wall, token rate limit, and billing errors (`Retry::isProviderLimitError()`) from triggering `/bug` report prompts, eliminating false alarm bug reports on normal provider usage limits.
+
 ## [0.5.6] - 2026-10-08
 
 ### New Features
@@ -58,11 +69,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Added
 
 - Added `scripts/bench-tui.php` standalone benchmarking script for measuring frame render latencies, byte throughput, and peak memory consumption across real session transcripts.
-  - `npm:` and `composer:` sources are refused by name; pig runs no package manager inside a package and requires a package's own `vendor/autoload.php` when present.
-  - `pig update` without a target updates pig only and says packages were skipped, as upstream does (it used to also refresh the bundled extensions; that is `--extensions` now).
-  - `pig config [-l]` — upstream's resource screen: a package's extensions, skills, prompts and themes switched on and off, in the user's settings or as project overrides (Tab switches), writing `+path` / `-path` filters.
-  - `-e <source>` (`--extension`) takes a package source for one run — `pig -e git:github.com/user/repo` clones it under `tmp/extensions` and writes nothing to the settings — as well as a file or directory as before.
-  - Local package paths are written to the settings relative to the settings file (`../tools`), so a committed `.pig/settings.json` works on every checkout.
+- `npm:` and `composer:` sources are refused by name; pig runs no package manager inside a package and requires a package's own `vendor/autoload.php` when present.
+- `pig update` without a target updates pig only and says packages were skipped, as upstream does (it used to also refresh the bundled extensions; that is `--extensions` now).
+- `pig config [-l]` — upstream's resource screen: a package's extensions, skills, prompts and themes switched on and off, in the user's settings or as project overrides (Tab switches), writing `+path` / `-path` filters.
+- `-e <source>` (`--extension`) takes a package source for one run — `pig -e git:github.com/user/repo` clones it under `tmp/extensions` and writes nothing to the settings — as well as a file or directory as before.
+- Local package paths are written to the settings relative to the settings file (`../tools`), so a committed `.pig/settings.json` works on every checkout.
+
+### Fixed
+
+- A quota wall no longer shows the bug-report hint: `BugReport::worthReporting()` excludes `isProviderLimitError()` as well as the retryable errors, since v0.5.4 classifies "quota reached" as a limit for the fallback models rather than a retryable error.
 
 ## [0.5.5] - 2026-10-08
 

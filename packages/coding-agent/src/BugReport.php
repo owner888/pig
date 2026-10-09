@@ -245,7 +245,13 @@ final class BugReport
      */
     public static function worthReporting(AssistantMessage $message): bool
     {
-        if ($message->stopReason !== StopReason::Error || Retry::isRetryableAssistantError($message)) {
+        // A quota wall is a limit, not a bug: upstream counts it among the retryable carve-outs,
+        // pig classifies it on its own (`isProviderLimitError`) so a fallback model can take over.
+        if (
+            $message->stopReason !== StopReason::Error
+            || Retry::isRetryableAssistantError($message)
+            || Retry::isProviderLimitError($message)
+        ) {
             return false;
         }
 

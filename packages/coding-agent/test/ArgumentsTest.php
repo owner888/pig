@@ -96,13 +96,13 @@ final class ArgumentsTest extends TestCase
         $this->assertTrue($this->parse('-p')->has('print'));
     }
 
-    public function testAllFiveOfUpstreamsShortOptionsAreThere(): void
+    public function testAllSixOfUpstreamsShortOptionsAreThere(): void
     {
         foreach (Arguments::SHORT as $short => $long) {
             $this->assertTrue($this->parse('-' . $short)->has($long), "-{$short} should mean --{$long}");
         }
 
-        $this->assertSame(['c', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
+        $this->assertSame(['c', 'e', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
     }
 
     public function testAShortOptionTakesAValueWhenItsLongFormDoes(): void
