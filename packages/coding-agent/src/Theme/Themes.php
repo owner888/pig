@@ -185,6 +185,9 @@ final class Themes
     /** @var list<string> */
     private static array $extensionThemeDirs = [];
 
+    /** @var list<string> the theme files the packages provide, see `setPackageThemeFiles()` */
+    private static array $packageThemeFiles = [];
+
     /** @var list<string> what the last custom theme listing skipped, and why (pig addition) */
     private static array $customThemeErrors = [];
 
@@ -344,6 +347,18 @@ final class Themes
         self::$extensionThemeDirs = $dirs;
     }
 
+    /**
+     * The theme files the packages resolved to (`PackageManager::resolve()`), listed after the
+     * directories: files rather than directories, because a package's filter can leave one theme
+     * out of a folder, and a directory cannot say that.
+     *
+     * @param list<string> $files
+     */
+    public static function setPackageThemeFiles(array $files): void
+    {
+        self::$packageThemeFiles = array_values($files);
+    }
+
     /** The project whose `.pig/themes` and `.pi/themes` are searched; null searches only the two homes. */
     public static function setCustomThemesCwd(?string $cwd): void
     {
@@ -457,6 +472,20 @@ final class Themes
                 if ($customTheme->name !== null && $customTheme->name !== '') {
                     $result[] = new ThemeInfo($customTheme->name, $themePath);
                 }
+            }
+        }
+
+        // After the directories: a package's theme ranks after every local one, so a name
+        // both have is the person's.
+        foreach (self::$packageThemeFiles as $themePath) {
+            try {
+                $packageTheme = self::loadThemeFromPath($themePath);
+            } catch (Throwable $error) {
+                self::$customThemeErrors[] = "{$themePath}: {$error->getMessage()}";
+                continue;
+            }
+            if ($packageTheme->name !== null && $packageTheme->name !== '') {
+                $result[] = new ThemeInfo($packageTheme->name, $themePath);
             }
         }
 

@@ -30,56 +30,18 @@ final class SelfUpdate
     }
 
     /**
-     * Execute the update command.
+     * `pig update …`, as a method — upstream's parser lives in `PackageCommands`, and this is the
+     * same call `bin/pig` makes, kept so a caller with a `SelfUpdate` in hand needs nothing else.
      *
      * @param list<string> $args CLI arguments following `pig update`
      * @return int exit status code (0 for success)
      */
     public function run(array $args = []): int
     {
-        if (in_array('-h', $args, true) || in_array('--help', $args, true)) {
-            $this->printHelp();
-
-            return 0;
-        }
-
-        $refreshModels = in_array('--models', $args, true);
-        $updateExtensions = in_array('--extensions', $args, true);
-        $updateSelf = in_array('--self', $args, true);
-
-        // Default behavior matching upstream pi: update both self and extensions when no flags given
-        if (!$refreshModels && !$updateExtensions && !$updateSelf) {
-            $updateSelf = true;
-            $updateExtensions = true;
-        }
-
-        $status = 0;
-
-        if ($updateSelf) {
-            $status = $this->updatePig();
-            if ($status !== 0) {
-                return $status;
-            }
-        }
-
-        if ($updateExtensions) {
-            $extStatus = $this->updateExtensions();
-            if ($status === 0) {
-                $status = $extStatus;
-            }
-        }
-
-        if ($refreshModels) {
-            $modelStatus = $this->refreshModels();
-            if ($status === 0) {
-                $status = $modelStatus;
-            }
-        }
-
-        return $status;
+        return PackageCommands::main(['update', ...$args], getcwd() ?: '.', selfUpdate: $this);
     }
 
-    private function updatePig(): int
+    public function updatePig(): int
     {
         $repoRoot = self::repoRoot();
         $isGit = is_dir($repoRoot . '/.git');
@@ -300,7 +262,7 @@ final class SelfUpdate
         rmdir($dir);
     }
 
-    private function refreshModels(): int
+    public function refreshModels(): int
     {
         $generator = self::repoRoot() . '/scripts/generate-models.php';
         if (is_file($generator)) {
@@ -363,24 +325,5 @@ final class SelfUpdate
     public static function repoRoot(): string
     {
         return dirname(__DIR__, 4);
-    }
-
-    private function printHelp(): void
-    {
-        echo <<<TEXT
-        Usage: pig update [options]
-
-        Update pig, installed extensions, and model catalogs.
-
-        Options:
-          --self            Update pig itself
-          --extensions      Update installed extensions (git pull, composer, and core sync)
-          --models          Refresh and update model catalogs
-          -h, --help        Show this help message
-
-        By default, `pig update` updates both pig itself and installed extensions.
-        Changelog: https://pigagent.dev/changelog
-
-        TEXT;
     }
 }

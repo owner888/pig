@@ -39,16 +39,23 @@ final class Settings
     /** @var list<string> files that could not be read, for the caller to complain about */
     private array $problems = [];
 
+    /** @var array<string, mixed> the project's own, written back by the `-l` package commands */
+    private array $project;
+
     /**
      * @param array<string, mixed> $global
      * @param array<string, mixed> $project
+     * @param string|null $projectPath the project's file, for the package commands that write it
      */
     private function __construct(
         private readonly ?string $path,
         array $global,
-        private readonly array $project,
+        array $project,
+        private readonly ?string $projectPath = null,
+        private readonly bool $projectTrusted = true,
     ) {
         $this->global = $global;
+        $this->project = $project;
         $this->merged = self::merge($global, $project);
     }
 
@@ -63,12 +70,13 @@ final class Settings
         $home ??= Config::home();
         $path = $home . '/' . self::FILE;
 
+        $projectPath = rtrim($cwd, '/') . '/.pig/' . self::FILE;
         [$global, $globalProblem] = self::read($path);
         [$project, $projectProblem] = $projectTrusted
-            ? self::read(rtrim($cwd, '/') . '/.pig/' . self::FILE)
+            ? self::read($projectPath)
             : [[], null];
 
-        $settings = new self($path, $global, $project);
+        $settings = new self($path, $global, $project, $projectPath, $projectTrusted);
         $settings->problems = array_values(array_filter([$globalProblem, $projectProblem]));
 
         return $settings;
@@ -88,6 +96,64 @@ final class Settings
     public function problems(): array
     {
         return $this->problems;
+    }
+
+    /** Whether the project's file was read — `ProjectTrust`'s answer, kept for the package commands. */
+    public function isProjectTrusted(): bool
+    {
+        return $this->projectTrusted;
+    }
+
+    // ---- packages ------------------------------------------------------------------------------
+
+    /**
+     * Upstream's `packages` array, per scope: each entry a source string, or an object with
+     * `source` and the resource filters (`autoload`, `extensions`, `skills`, `prompts`, `themes`).
+     * Read per scope rather than merged, because the two lists are reconciled by package identity
+     * (`PackageManager::resolve()`), not by position.
+     *
+     * @param 'user'|'project' $scope
+     * @return list<string|array<string, mixed>>
+     */
+    public function packages(string $scope = 'user'): array
+    {
+        $value = ($scope === 'project' ? $this->project : $this->global)['packages'] ?? null;
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $packages = [];
+
+        foreach ($value as $entry) {
+            if (is_string($entry) && trim($entry) !== '') {
+                $packages[] = $entry;
+            } elseif (is_array($entry) && is_string($entry['source'] ?? null)) {
+                $packages[] = $entry;
+            }
+        }
+
+        return $packages;
+    }
+
+    /**
+     * Upstream's `setPackages()` / `setProjectPackages()`: the list replaced and that scope's file
+     * written.
+     *
+     * @param list<string|array<string, mixed>> $packages
+     * @param 'user'|'project' $scope
+     */
+    public function setPackages(array $packages, string $scope = 'user'): void
+    {
+        if ($scope === 'project') {
+            $this->project['packages'] = array_values($packages);
+            $this->saveProject();
+
+            return;
+        }
+
+        $this->global['packages'] = array_values($packages);
+        $this->save();
     }
 
     // ---- the ones something reads ------------------------------------------------------
@@ -707,6 +773,30 @@ final class Settings
             // Not fatal: someone with an unwritable home directory should still be able
             // to use the thing, just without it remembering.
             $this->problems[] = "Could not write {$this->path}";
+        }
+    }
+
+    /** The project's file, for `-l`. Written only when there is one: in-memory settings have none. */
+    private function saveProject(): void
+    {
+        $this->merged = self::merge($this->global, $this->project);
+
+        if ($this->projectPath === null) {
+            return;
+        }
+
+        $directory = dirname($this->projectPath);
+
+        if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
+            $this->problems[] = "Could not create {$directory}";
+
+            return;
+        }
+
+        $json = json_encode($this->project, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if ($json === false || file_put_contents($this->projectPath, $json . "\n") === false) {
+            $this->problems[] = "Could not write {$this->projectPath}";
         }
     }
 

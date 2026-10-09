@@ -160,6 +160,36 @@ final class Skills
     }
 
     /**
+     * Skills from the files a package resolved to (`PackageManager::resolve()`), under the source
+     * `package`, after every other root — the precedence upstream gives a package's resource. Each
+     * is a `SKILL.md` or a bare `.md`; the settings' `ignoredSkills` and `includeSkills` are not
+     * applied, as `fromDirectories()` does not apply them to an extension's.
+     *
+     * @param list<string> $files
+     * @return array{0: list<Skill>, 1: list<SkillWarning>}
+     */
+    public static function fromFiles(array $files): array
+    {
+        $skills = [];
+        $warnings = [];
+
+        foreach ($files as $file) {
+            [$skill, $complaints] = self::read($file, 'package');
+            $warnings = [...$warnings, ...$complaints];
+
+            if ($skill !== null) {
+                if (isset($skills[$skill->name])) {
+                    $warnings[] = new SkillWarning($skill->path, "name taken: \"{$skill->name}\" overrides the one from {$skills[$skill->name]->path}");
+                }
+
+                $skills[$skill->name] = $skill;
+            }
+        }
+
+        return [array_values($skills), $warnings];
+    }
+
+    /**
      * @param list<array{0: string, 1: string, 2: self::RECURSIVE|self::ONE_LEVEL}> $table
      * @param list<string>        $ignored
      * @param list<string>        $only

@@ -32,7 +32,7 @@ use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
-use Pig\CodingAgent\Cli\SelfUpdate;
+use Pig\CodingAgent\Cli\PackageCommands;
 use Pig\CodingAgent\Cli\WebDaemon;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
@@ -100,9 +100,10 @@ set_exception_handler(static function (Throwable $error) use (&$running, &$sessi
     exit(1);
 });
 
-if (($argv[1] ?? '') === 'update') {
-    $updater = new SelfUpdate();
-    exit($updater->run(array_slice($argv, 2)));
+// `pig install | remove | uninstall | update | list` — the package commands, upstream's
+// `package-manager-cli.ts`. `update` without a target is still the self-update.
+if (in_array($argv[1] ?? '', PackageCommands::COMMANDS, true)) {
+    exit(PackageCommands::main(array_slice($argv, 1), getcwd() ?: '.'));
 }
 
 // `pig web start|stop|status|restart` — the browser UI as a daemon. `start` without `-d` becomes
@@ -133,7 +134,11 @@ if (isset($options['help'])) {
     pig — a coding agent in a terminal.
 
     Commands:
-      update            update pig to the latest version
+      install <source>  install a package (git:github.com/user/repo, https://…, or a path) and add it to settings
+      remove <source>   remove a package and its settings entry (alias: uninstall)
+      update            update pig; --extensions / --all / <source> for packages (pig update --help)
+      list              list the packages in the user and project settings
+      config [-l]       switch a package's extensions, skills, prompts and themes on and off
       mcp               add, remove and check MCP servers (pig mcp --help)
       web               the browser UI as a server: start [-d], stop, status, restart (pig web --help)
 
@@ -177,7 +182,8 @@ if (isset($options['help'])) {
       --no-skills       start without loading any skills, wherever they live
       --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/agent/tools or .pig/tools
-      --extension <p>   load an explicit extension file or directory
+      -e, --extension <s>   load an extension for this run: a file, a directory, or a package
+                        source (git:github.com/user/repo) cloned under tmp/ and not written to settings
       --no-extensions   start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
@@ -367,6 +373,65 @@ Timings::mark('customModels');
 // connected twice.
 $preloadedExtensions = null;
 
+// The packages' resources, resolved once trust is known — a project package is read only
+// once the project is trusted, like its settings. A package that is not installed is cloned
+// here, with a line on standard error, as upstream installs it at startup; offline it is
+// skipped. The extensions go into `ExtensionLoader::load()` below; the skills, prompts and
+// themes into `CodingAgent::session()`.
+$packageResources = null;
+$packageProgress = static function (string $type, string $action, string $source, ?string $message): void {
+    if ($type === 'start' && $message !== null) {
+        fwrite(STDERR, Style::dim("{$message}\n"));
+    } elseif ($type === 'error') {
+        fwrite(STDERR, Style::yellow("package {$source}: {$message}\n"));
+    }
+};
+
+// `-e <source>`: upstream's temporary package. A git source is cloned into `<home>/tmp/extensions`
+// for this run only, nothing written to the settings; a path is read as a package when it has the
+// shapes and as one extension when it does not. Its skills, prompts and themes join the
+// configured packages' below.
+$cliExtensionPaths = [];
+$temporaryResources = null;
+if (isset($options['extension'])) {
+    $manager = new \Pig\CodingAgent\Packages\PackageManager($cwd, $settings);
+    $manager->setProgressCallback($packageProgress);
+
+    try {
+        $temporaryResources = $manager->resolveExtensionSources([$options['extension']], temporary: true);
+        $cliExtensionPaths = $temporaryResources->enabled('extensions');
+    } catch (\Pig\CodingAgent\Packages\PackageError $error) {
+        fwrite(STDERR, Style::red("--extension {$options['extension']}: {$error->getMessage()}\n"));
+
+        exit(1);
+    }
+}
+
+$resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources, $packageProgress, $temporaryResources): \Pig\CodingAgent\Packages\ResolvedPaths {
+    if ($packageResources !== null) {
+        return $packageResources;
+    }
+
+    $manager = new \Pig\CodingAgent\Packages\PackageManager($cwd, Settings::load($cwd, projectTrusted: $trusted));
+    $manager->setProgressCallback($packageProgress);
+
+    try {
+        $resolved = $manager->resolve();
+    } catch (\Pig\CodingAgent\Packages\PackageError $error) {
+        fwrite(STDERR, Style::yellow("packages: {$error->getMessage()}\n"));
+        $resolved = new \Pig\CodingAgent\Packages\ResolvedPaths();
+    }
+
+    // The temporary package's other resources ride along; its extensions went to the loader
+    // as `$cliExtensionPaths`, so they are not listed twice.
+    return $packageResources = $temporaryResources === null ? $resolved : new \Pig\CodingAgent\Packages\ResolvedPaths(
+        $resolved->extensions,
+        [...$resolved->skills, ...$temporaryResources->skills],
+        [...$resolved->prompts, ...$temporaryResources->prompts],
+        [...$resolved->themes, ...$temporaryResources->themes],
+    );
+};
+
 // Once trust is decided, whichever way: the project's settings join the person's, and what was
 // read off the person's alone is read again with them.
 $settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings, $cwd, $options, $configureHttp): void {
@@ -412,11 +477,12 @@ if (!isset($options['no-extensions']) && $mode !== 'web') {
     $preloadedExtensions = \Pig\CodingAgent\Extensions\ExtensionLoader::load(
         $cwd,
         $settings->extensions(),
-        isset($options['extension']) ? [$options['extension']] : [],
+        $cliExtensionPaths,
         auth: $auth,
         projectTrusted: $trustUndecided ? $decideTrust : true,
         disabled: isset($options['no-mcp']) ? ['pig-mcp'] : [],
         projectConfigured: static fn (): array => $settings->extensions(),
+        packageExtensions: static fn (bool $trusted): array => $resolvePackages($trusted)->enabled('extensions'),
     );
 }
 
@@ -641,7 +707,7 @@ try {
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,
         models: $modelPatterns,
-        extensionPaths: isset($options['extension']) ? [$options['extension']] : null,
+        extensionPaths: $cliExtensionPaths === [] ? null : $cliExtensionPaths,
         projectTrusted: $projectTrusted,
         excludeTools: $excludeTools,
         // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`, by pig's directory name.
@@ -652,6 +718,8 @@ try {
         // Loaded above, once, so `--list-models` could see them; their problems come back in
         // `$warnings` with everybody else's.
         preloadedExtensions: $preloadedExtensions,
+        // Resolved above with the extensions, or now — `--no-extensions` skips that loader.
+        packageResources: $resolvePackages($projectTrusted),
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying

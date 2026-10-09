@@ -42,6 +42,9 @@ final class ExtensionLoader
      * @param list<string> $disabled    extension names (their directory or file name) not to load
      * @param (Closure(): list<string>)|null $projectConfigured the project's own `extensions`
      *        setting, asked only once it is trusted
+     * @param (Closure(bool): list<string>)|null $packageExtensions the extensions the configured
+     *        packages provide (`PackageManager::resolve()`), asked once trust is decided and
+     *        loaded last — a package's resource ranks after every local one, as upstream ranks it
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -53,6 +56,7 @@ final class ExtensionLoader
         bool|Closure $projectTrusted = true,
         array $disabled = [],
         ?Closure $projectConfigured = null,
+        ?Closure $packageExtensions = null,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
@@ -120,7 +124,35 @@ final class ExtensionLoader
             $loadAll($project);
         }
 
+        if ($packageExtensions !== null) {
+            $loadAll(self::entryFiles($packageExtensions($projectTrusted)));
+        }
+
         return [array_values($extensions), $errors];
+    }
+
+    /**
+     * A package may name a directory as one extension (a local path with none of the package
+     * shapes, as `-e ./dir` does); its entry is the `index.php` inside, as upstream's is `index.ts`.
+     *
+     * @param list<string> $paths
+     * @return list<string>
+     */
+    private static function entryFiles(array $paths): array
+    {
+        $files = [];
+
+        foreach ($paths as $path) {
+            if (is_dir($path)) {
+                if (is_file("{$path}/index.php")) {
+                    $files[] = "{$path}/index.php";
+                }
+            } else {
+                $files[] = $path;
+            }
+        }
+
+        return $files;
     }
 
     /**
@@ -175,6 +207,16 @@ final class ExtensionLoader
 
         $name = self::nameOf($path);
         $api = new ExtensionApi($cwd, $path, $name, $auth, events: $events);
+
+        // A package that ships its own libraries ships its own `vendor/` — pig runs no composer
+        // (see `PackageManager`). Beside the file, or one level up for a file under `extensions/`.
+        foreach ([dirname($resolved), dirname($resolved, 2)] as $root) {
+            if (is_file("{$root}/vendor/autoload.php")) {
+                require_once "{$root}/vendor/autoload.php";
+
+                break;
+            }
+        }
 
         ob_start();
 

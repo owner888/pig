@@ -39,6 +39,7 @@ final readonly class Arguments
      */
     public const array SHORT = [
         'c' => 'continue',
+        'e' => 'extension',
         'h' => 'help',
         'p' => 'print',
         'r' => 'resume',

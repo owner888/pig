@@ -59,6 +59,33 @@ final class SlashCommands
     }
 
     /**
+     * Prompt templates from the files a package resolved to, under the source `package`. The
+     * name is the file's, as it is for a file in a commands folder; no folder label, because a
+     * package's manifest may have gathered them from anywhere.
+     *
+     * @param list<string> $files
+     * @return list<FileCommand>
+     */
+    public static function fromFiles(array $files): array
+    {
+        $commands = [];
+
+        foreach ($files as $file) {
+            if (!str_ends_with($file, '.md')) {
+                continue;
+            }
+
+            $command = self::read($file, basename($file, '.md'), 'package', '');
+
+            if ($command !== null) {
+                $commands[] = $command;
+            }
+        }
+
+        return $commands;
+    }
+
+    /**
      * What `/name args` should be sent as, or null when no command has that name.
      *
      * @param list<FileCommand> $commands

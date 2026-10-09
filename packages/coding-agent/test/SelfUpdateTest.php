@@ -18,7 +18,9 @@ final class SelfUpdateTest extends TestCase
         $output = ob_get_clean();
 
         $this->assertSame(0, $code);
-        $this->assertStringContainsString('Usage: pig update', $output);
+        // Upstream's shape: `Usage:` on its own line, the command's usage indented under it.
+        $this->assertStringContainsString('Usage:', $output);
+        $this->assertStringContainsString('pig update [source|self|pig]', $output);
         $this->assertStringContainsString('--self', $output);
         $this->assertStringContainsString('--extensions', $output);
         $this->assertStringContainsString('--models', $output);
@@ -34,7 +36,7 @@ final class SelfUpdateTest extends TestCase
         $output = ob_get_clean();
 
         $this->assertSame(0, $code);
-        $this->assertStringContainsString('Usage: pig update', $output);
+        $this->assertStringContainsString('pig update [source|self|pig]', $output);
     }
 
     public function testSyncDirectoryRecursivelySyncsFiles(): void

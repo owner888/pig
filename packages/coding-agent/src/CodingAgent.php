@@ -37,7 +37,9 @@ use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\Packages\ResolvedPaths;
 use Pig\CodingAgent\Prompt\Skills;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\ToolSelection;
@@ -228,6 +230,7 @@ final class CodingAgent
         array $disabledExtensions = [],
         array $flags = [],
         ?array $preloadedExtensions = null,
+        ?ResolvedPaths $packageResources = null,
     ): StartedSession {
         $warnings = [];
 
@@ -246,7 +249,15 @@ final class CodingAgent
         [$loadedExtensions, $extensionProblems] = match (true) {
             !$withExtensions => [[], []],
             $preloadedExtensions !== null => $preloadedExtensions,
-            default => ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions),
+            default => ExtensionLoader::load(
+                $cwd,
+                $settings->extensions(),
+                $cliExtensions,
+                auth: $auth,
+                projectTrusted: $projectTrusted,
+                disabled: $disabledExtensions,
+                packageExtensions: static fn (): array => $packageResources?->enabled('extensions') ?? [],
+            ),
         };
 
         ExtensionApi::applyFlags($flags);
@@ -376,6 +387,30 @@ final class CodingAgent
 
         $fileCommands = SlashCommands::load($cwd, projectTrusted: $projectTrusted);
         Timings::mark('slashCommands');
+
+        // The packages' skills, prompts and themes — after the local ones, which is the rank
+        // upstream gives a package's resource (`ResolvedPaths::rank()`): a skill the person has
+        // under the same name is the one the model hears about.
+        if ($packageResources !== null) {
+            if ($withSkills && $settings->skillsEnabled()) {
+                [$packageSkills, $packageSkillWarnings] = Skills::fromFiles($packageResources->enabled('skills'));
+                $byName = [];
+
+                foreach ([...$skills, ...$packageSkills] as $skill) {
+                    $byName[$skill->name] ??= $skill;
+                }
+
+                $skills = array_values($byName);
+
+                foreach ($packageSkillWarnings as $warning) {
+                    $warnings[] = "skill {$warning->path}: {$warning->message}";
+                }
+            }
+
+            $fileCommands = [...$fileCommands, ...SlashCommands::fromFiles($packageResources->enabled('prompts'))];
+            Themes::setPackageThemeFiles($packageResources->enabled('themes'));
+        }
+        Timings::mark('packages');
 
         // Before the agent as well as before any UI, because the hooks are handed the session file
         // and the agent is handed the hooks.

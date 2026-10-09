@@ -106,4 +106,23 @@ final class Paths
 
         return str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : $path;
     }
+
+    /**
+     * Node's `path.relative(from, to)` for two absolute paths: `..` segments up to the common
+     * ancestor, then down — so a settings file can name a sibling directory as `../tools`.
+     * `relative()` above only strips a prefix, which is what a search root needs and a settings
+     * file does not.
+     */
+    public static function relativeTo(string $from, string $to): string
+    {
+        $fromParts = array_values(array_filter(explode('/', $from), static fn (string $part): bool => $part !== ''));
+        $toParts = array_values(array_filter(explode('/', $to), static fn (string $part): bool => $part !== ''));
+        $common = 0;
+
+        while ($common < count($fromParts) && $common < count($toParts) && $fromParts[$common] === $toParts[$common]) {
+            $common++;
+        }
+
+        return implode('/', [...array_fill(0, count($fromParts) - $common, '..'), ...array_slice($toParts, $common)]);
+    }
 }

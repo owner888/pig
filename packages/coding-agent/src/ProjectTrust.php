@@ -41,8 +41,11 @@ final class ProjectTrust
 {
     public const string FILE = 'trust.json';
 
-    /** What under `<cwd>/.pig/` turns a directory into a project with something to trust. */
-    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'commands'];
+    /**
+     * What under `<cwd>/.pig/` turns a directory into a project with something to trust. `git`
+     * is where `pig install -l` clones a project package, which is code the loader would run.
+     */
+    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'commands', 'git'];
 
     /**
      * Whether this directory has anything a trust decision would apply to.

@@ -55,11 +55,59 @@ composer install
 ### Self Update
 
 ```bash
-pig update               # Self-update pig and all installed extensions (default: --self + --extensions)
-pig update --extensions  # Update installed extensions only (git pull, composer, and core built-ins sync)
+pig update               # Update pig only (packages are skipped, and it says so)
+pig update --extensions  # Update installed packages, and the bundled extensions' copies
+pig update --all         # Update pig and all packages
+pig update <source>      # Update one package
 pig update --models      # Refresh and update model catalogs
-pig update --self        # Update pig core program only
 ```
+
+### Packages
+
+Extensions, skills, prompt templates and themes travel together as a **package** — a git
+repository or a local directory, as in pi, minus npm:
+
+```bash
+pig install git:github.com/user/pig-tools        # cloned under ~/.pig/agent/git/github.com/user/pig-tools
+pig install git:github.com/user/pig-tools@v1     # pinned: updates reconcile to v1 and never past it
+pig install https://github.com/user/pig-tools    # a URL is a git source
+pig install ./my-tools                           # loaded from where it is
+pig install git:github.com/user/pig-tools -l     # into the project's .pig/settings.json (trust required)
+pig list                                         # what is configured, per scope, and where it is installed
+pig remove git:github.com/user/pig-tools
+pig config                                       # switch single resources on and off (Tab: project overrides)
+pig -e git:github.com/user/pig-tools             # try a package for one run, nothing written to settings
+```
+
+A package is a directory with any of `extensions/` (`.php` files, or folders with `index.php`),
+`skills/`, `prompts/` and `themes/`, or a `composer.json` naming them explicitly:
+
+```json
+{
+  "name": "user/pig-tools",
+  "keywords": ["pig-package"],
+  "extra": {
+    "pig": {
+      "extensions": ["./src/Extension.php", "src/more/*.php", "!src/more/legacy.php"],
+      "skills": ["./resources/skills"],
+      "prompts": ["./prompts/*.md"],
+      "themes": ["./themes/*.json"]
+    }
+  }
+}
+```
+
+The settings entry can narrow what loads, with pi's syntax — omit a type to load all of it, `[]`
+for none, `!glob` to exclude, `+path` / `-path` for one exact file:
+
+```json
+{ "packages": [{ "source": "git:github.com/user/pig-tools", "extensions": ["!extensions/legacy.php"], "skills": [] }] }
+```
+
+pig runs no package manager inside a package: a package that needs libraries ships its own
+`vendor/` (pig requires `vendor/autoload.php` when it is there), and `Pig\*` comes from the host —
+do not `require` `pigagent/pig` in a package. Packages are PHP-only; `npm:` and `composer:`
+sources are refused by name.
 
 ---
 

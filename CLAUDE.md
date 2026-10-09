@@ -296,6 +296,74 @@ That was not hypothetical: deleting the read of SOCKS5's bound address makes fou
 `Malformed status line: "  8HTTP/1.1 200 OK"`, which is the bound address arriving where the
 response was meant to be. Asserting only on the bytes pig *sends* would have passed.
 
+### Packages: upstream's package manager, for git and local sources only
+
+`pig install | remove | update | list | config`, `-e <source>` and the `packages` setting are
+upstream's `package-manager.ts` + `package-manager-cli.ts` + `config-selector.ts`, ported into
+`packages/coding-agent/src/Packages/`, `Cli/PackageCommands.php` and `Cli/ConfigSelector.php`,
+with the developer's three decisions on what PHP changes:
+
+- **No `npm:`, and `composer:` reserved.** Both are refused by name in `PackageSource::parse()`
+  rather than read as a local path. Packagist would mean a composer binary at runtime and a
+  `vendor/` per package that could load `Pig\*` twice; git and local paths are where PHP
+  extensions live anyway.
+- **The manifest is `composer.json`'s `extra.pig`**, upstream's `package.json` `pi` key under the
+  place composer keeps what is not its own. Same four fields, same globs and `!` / `+` / `-`
+  patterns. No `composer.json` → the conventional `extensions/ skills/ prompts/ themes/`.
+- **pig runs nothing inside a package.** Upstream runs `npm install` in a cloned package;
+  pig requires `vendor/autoload.php` beside an extension (or one level up) when the author shipped
+  it, and otherwise loads the PHP that is there. `Pig\*` comes from the host and a package's
+  `require` must not name `pigagent/pig` — the docs say so; nothing checks.
+
+What is upstream's to the line: the source grammar (`PackageSource`, `hosted-git-info`'s
+shorthand table replaced by the five hosts a source string can use), the install layout
+(`~/.pig/agent/git/<host>/<path>`, `.pig/git/…` for `-l`, `tmp/extensions/git/<hash>` for
+`-e`), identity (host + path for git, resolved path for local), the two-scope reconciliation with
+`autoload: false` deltas, the filters (`PackageFilter`), `ensureGitRef`'s fetch-then-reset and
+the `@{upstream}` / `origin/HEAD` fallback, the CLI's parser and every refusal, `list`'s output,
+and the startup `ls-remote` check (`PackageUpdateCheck`).
+
+What is not: **`.gitignore` is not read while discovering a package's files** — upstream uses
+the `ignore` package; pig skips dot entries, `vendor` and `node_modules` and stops there (the
+`--ignore-file` trap is why there is no matcher to reuse). **`resolve()` covers the packages
+only**: the top-level `extensions` / `skills` settings and the auto-discovered directories stay
+with the four loaders, which already had them, and a package's resources are appended after
+theirs — `ResolvedPaths::rank()` is upstream's order, and "first wins" in each loader does the
+rest. For the same reason **`pig config` shows package rows only**: upstream's
+`toggleTopLevelResource()` and its built-in extension rows have nothing to stand on here, and the
+`origin === 'top-level'` arms are left out of `ConfigSelector` rather than carried as code nothing
+reaches. What is there is upstream's to the line: the two write scopes on Tab, `+path` / `-path`
+written into the package's entry, the project's inherit → load/unload cycle with an
+`autoload: false` delta made and removed as needed, dimmed inherited rows, the search box.
+**`update` keeps pig's own half**: `--extensions` also refreshes the bundled
+extensions' copies under `~/.pig/agent/extensions` (`SelfUpdate::updateExtensions()`), which are
+not packages and have no other updater.
+
+**Where the resources go in:** `bin/pig` resolves once trust is known (`$resolvePackages`),
+hands the extension files to `ExtensionLoader::load(packageExtensions:)` — loaded last, in the
+same `EventBus` as everything else — and the rest to `CodingAgent::session(packageResources:)`,
+which appends skills (`Skills::fromFiles()`, by name, the local one winning), prompts
+(`SlashCommands::fromFiles()`) and themes (`Themes::setPackageThemeFiles()`, listed after the
+directories).
+
+**`-e <source>` is upstream's temporary package**: every value goes through
+`PackageManager::resolveExtensionSources(temporary: true)` — a git source is cloned under
+`<home>/tmp/extensions/git/<hash>` and refreshed when unpinned, a directory with the package
+shapes is read as a package, a file or a bare extension directory as one extension — and nothing
+is written to the settings. The extensions go to the loader as the CLI paths; the skills, prompts
+and themes join the configured packages' in `bin/pig`'s `$resolvePackages`. `Arguments::SHORT`
+gained `e` for it.
+
+**Local paths in the settings are relative** — `Paths::relativeTo()`, Node's `path.relative()` —
+because a project's `.pig/settings.json` is committed and `../tools` is the same directory on every
+checkout where an absolute path is one machine's. The developer's call, after a first version wrote
+absolute paths for anything outside the settings directory.
+
+Tests: `PackageSourceTest` (upstream's `git.test.ts` cases), `PackageManagerTest` (local
+packages, manifest, filters, both scopes, and git against a bare repository reached through
+`GIT_CONFIG_*` `url.<dir>.insteadOf`, so no network), `PackageCommandsTest` (the parser),
+`ConfigSelectorTest` (what a toggle writes, in each scope).
+
 ## Layout
 
 ```
@@ -4323,6 +4391,8 @@ php test/live.php       # the providers against the real endpoints — costs mon
                         # `… google` for one provider, `… google/<model-id>` for one model
 php scripts/generate-models.php   # rewrite Ai\Models' rows from models.dev
                         # `--dry-run` prints them instead; `--from <file>` reads a saved api.json
+php scripts/bench-tui.php [session.jsonl] [regular|fullscreen] [cols] [rows]
+                        # ms and bytes per frame on a real conversation against a fake terminal
 ```
 
 PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.

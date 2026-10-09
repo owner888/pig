@@ -55,11 +55,53 @@ composer install
 ### 一键升级更新
 
 ```bash
-pig update               # 自动拉取更新 pig 核心及所有已安装扩展（默认包含 --self 与 --extensions）
-pig update --extensions  # 单独只更新扩展（支持 git pull、composer 依赖升级及内置扩展增量同步）
+pig update               # 只更新 pig 本体（包会被跳过，并会提示）
+pig update --extensions  # 更新已安装的包，以及内置扩展的副本
+pig update --all         # 更新 pig 和全部包
+pig update <source>      # 只更新一个包
 pig update --models      # 刷新并重新对齐模型目录
-pig update --self        # 单独只更新 pig 主程序核心
 ```
+
+### 包管理
+
+扩展、技能、提示模板、主题可以打成一个**包**一起分发——和 pi 一样是一个 git 仓库或本地目录，只是没有 npm：
+
+```bash
+pig install git:github.com/user/pig-tools        # 克隆到 ~/.pig/agent/git/github.com/user/pig-tools
+pig install git:github.com/user/pig-tools@v1     # 钉住：update 只对齐到 v1，不会往前走
+pig install https://github.com/user/pig-tools    # URL 按 git 处理
+pig install ./my-tools                           # 原地加载，不拷贝
+pig install git:github.com/user/pig-tools -l     # 写进项目的 .pig/settings.json（需要先信任项目）
+pig list                                         # 两个作用域各配置了什么、装在哪
+pig remove git:github.com/user/pig-tools
+pig config                                       # 逐个开关包里的资源（Tab 切到项目覆盖）
+pig -e git:github.com/user/pig-tools             # 只在这一次运行里试用一个包，不写 settings
+```
+
+一个包就是一个目录，里面有 `extensions/`（`.php` 文件，或带 `index.php` 的文件夹）、`skills/`、`prompts/`、`themes/` 中的任意几个；或者在 `composer.json` 里显式声明：
+
+```json
+{
+  "name": "user/pig-tools",
+  "keywords": ["pig-package"],
+  "extra": {
+    "pig": {
+      "extensions": ["./src/Extension.php", "src/more/*.php", "!src/more/legacy.php"],
+      "skills": ["./resources/skills"],
+      "prompts": ["./prompts/*.md"],
+      "themes": ["./themes/*.json"]
+    }
+  }
+}
+```
+
+settings 里的条目可以收窄要加载的内容，语法与 pi 相同——省略某类=全部加载，`[]`=一个不要，`!glob` 排除，`+path` / `-path` 精确增减一个文件：
+
+```json
+{ "packages": [{ "source": "git:github.com/user/pig-tools", "extensions": ["!extensions/legacy.php"], "skills": [] }] }
+```
+
+pig 不会在包里跑任何包管理器：需要第三方库的包自带 `vendor/`（有 `vendor/autoload.php` pig 会 require），`Pig\*` 由宿主提供——包里不要 `require` `pigagent/pig`。包只支持 PHP；`npm:` 和 `composer:` 来源会被按名拒绝。
 
 ---
 

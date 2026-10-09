@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Packages\GitSource;
+use Pig\CodingAgent\Packages\PackageManager;
+use Pig\CodingAgent\Packages\PackageSource;
+use Pig\CodingAgent\ProjectTrust;
+use Pig\CodingAgent\Settings;
 use Throwable;
 
 /**
@@ -25,10 +30,39 @@ final class PackageUpdateCheck
         }
 
         try {
-            return $this->scanForUpdates($cwd);
+            return [...$this->scanForUpdates($cwd), ...$this->packagesWithUpdates($cwd)];
         } catch (Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Upstream's `checkForPackageUpdates()`: each configured git package whose `origin` has
+     * moved past the checkout, by `git ls-remote`. A pinned package is never reported — its ref
+     * is where it was asked to stay.
+     *
+     * @return list<string>
+     */
+    private function packagesWithUpdates(?string $cwd): array
+    {
+        $cwd ??= getcwd() ?: '.';
+        $settings = Settings::load($cwd, projectTrusted: ProjectTrust::decision($cwd) ?? !ProjectTrust::hasResources($cwd));
+        $manager = new PackageManager($cwd, $settings);
+        $updates = [];
+
+        foreach ($manager->listConfiguredPackages() as $package) {
+            $source = PackageSource::parse($package['source']);
+
+            if (!$source instanceof GitSource || $source->pinned() || $package['installedPath'] === null) {
+                continue;
+            }
+
+            if ($manager->hasAvailableUpdate($package['installedPath'])) {
+                $updates[] = $package['source'];
+            }
+        }
+
+        return $updates;
     }
 
     /**
@@ -104,7 +138,6 @@ final class PackageUpdateCheck
 
     private function hasGitUpdates(string $repoPath): bool
     {
-        // Check if FETCH_HEAD exists and is newer than local HEAD, or git status indicates behind
-        return false;
+        return (new PackageManager(getcwd() ?: '.', Settings::inMemory()))->hasAvailableUpdate($repoPath);
     }
 }
