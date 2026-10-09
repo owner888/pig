@@ -259,9 +259,11 @@ final class UpdateCheckTest extends TestCase
 
         // The two are read together at startup — the version decides which entries are new — so a
         // release whose number is in neither place is a release nobody is told about.
-        $this->assertStringContainsString(
-            '## ' . $version,
-            (string) file_get_contents(dirname(__DIR__, 3) . '/CHANGELOG.md'),
+        // `Changelog::heading()` accepts both `## [0.2.0]` and `## 0.2.0`.
+        $content = (string) file_get_contents(dirname(__DIR__, 3) . '/CHANGELOG.md');
+        $this->assertTrue(
+            str_contains($content, "## [{$version}]") || str_contains($content, "## {$version}"),
+            "CHANGELOG.md has an entry for {$version}",
         );
     }
 }

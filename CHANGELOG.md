@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.8] - 2026-10-08
+
+### Fixed
+
+- **Changelog Release Entry Bracket Assertion in CI (`UpdateCheckTest`)**:
+  - Aligned `testTheChangelogHasAnEntryForAReleasedVersion` to recognize bracketed version headers (`## [x.y.z]`) matching the Keep a Changelog standard format, fixing tag-triggered CI test runner failures.
+
 ## [0.5.7] - 2026-10-08
 
 ### Added
