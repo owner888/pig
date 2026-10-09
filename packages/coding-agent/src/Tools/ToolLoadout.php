@@ -132,7 +132,8 @@ final class ToolLoadout
             fn (AgentTool $tool): bool => $this->active === null || in_array($tool->definition()->name, $this->active, true),
         ));
 
-        $this->agent->setTools(HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn), ...$custom], $this->hooks));
+        $tools = HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn), ...$custom], $this->hooks);
+        $this->agent->setTools($this->prepared($tools));
 
         // Upstream's `_setActiveTools()`: a pending tool that is active now is pending no longer.
         foreach ($this->activeNames() as $name) {
@@ -152,6 +153,58 @@ final class ToolLoadout
             $snippets,
             $guidelines,
         );
+    }
+
+    /**
+     * Upstream's `prepareLoadout` step of `_applyToolLoadout()`: each active custom tool with a
+     * `prepareLoadout` is asked, with the whole active list, what to change — descriptions to
+     * show in place of the tools' own (`DescribedTool`), and tools to keep callable but not
+     * declare (left off what the agent is handed; the asker keeps its own reference). A later
+     * answer wins where two name one tool, which is upstream's `Object.assign` order.
+     *
+     * @param list<AgentTool> $tools
+     * @return list<AgentTool>
+     */
+    private function prepared(array $tools): array
+    {
+        $descriptions = [];
+        $hidden = [];
+
+        foreach ($this->customTools->loaded() as $one) {
+            if ($one->tool->prepareLoadout === null || ($this->active !== null && !in_array($one->tool->name, $this->active, true))) {
+                continue;
+            }
+
+            $changes = ($one->tool->prepareLoadout)($tools);
+
+            foreach ($changes['descriptions'] ?? [] as $name => $description) {
+                $descriptions[$name] = $description;
+            }
+
+            foreach ($changes['hiddenDeclarations'] ?? [] as $name) {
+                $hidden[$name] = true;
+            }
+        }
+
+        if ($descriptions === [] && $hidden === []) {
+            return $tools;
+        }
+
+        $out = [];
+
+        foreach ($tools as $tool) {
+            $name = $tool->definition()->name;
+
+            if (isset($hidden[$name])) {
+                continue;
+            }
+
+            $out[] = isset($descriptions[$name]) && $descriptions[$name] !== $tool->definition()->description
+                ? new DescribedTool($tool, $descriptions[$name])
+                : $tool;
+        }
+
+        return $out;
     }
 
     /**

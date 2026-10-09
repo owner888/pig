@@ -33,7 +33,7 @@ are cancelled.
 |---|---|
 | `$tools->name([...])` | Call a tool. See [Call tools](#call-tools). |
 | `text($value)` | Add a text item to the output. Strings are added as is, other values as JSON. |
-| `image($value)` | Add an image to the output: a base64 `data:` URL, an `['image_url' => ...]` array, or an MCP `ImageContent` block such as `$result['content'][0]`. Remote URLs are not supported. PNG, JPEG, GIF and WebP are accepted. |
+| `image($value)` | Add an image to the output: a base64 `data:` URL, an `['image_url' => ...]` array, or an MCP `ImageContent` block such as `$result['content'][0]`. Remote URLs are not supported. The base64 is checked and the type is read from the bytes: PNG, JPEG, GIF and WebP are accepted, anything else throws `TypeError`. The image is also saved to a temp file, and the result names its path in front of the picture. |
 | `echo` / `print` | Like `text()`. |
 | `return $value` | A top-level `return` adds the value like `text()`. |
 | `exit_script()` | End the script successfully. PHP's `exit` would end the sandbox instead. |
@@ -43,7 +43,13 @@ are cancelled.
 | `ALL_TOOLS` | Every callable tool as `['name' => ..., 'description' => ...]`, including tools the description does not list. |
 | `search_tools($query, ['limit' => 8, 'namespace' => ...])` | Rank callable tools by relevance (BM25, default limit 8). Answers `['name' => ..., 'description' => ...]` entries. |
 | `describe_tool($name)` | A tool's description and PHP declaration, or `null`. |
+| `describe_namespace($name)` | A namespace of tools (one MCP server) as `['name', 'description'?, 'instructions'?, 'tools' => [identifier, ...]]`, or `null`. Its name, its identifier form, or the part after its last `__` all find it. |
 | `$tools->has($name)` | Whether a tool exists, for a script that probes before calling. |
+| `$models` | The model catalogue, classifiers and image generation. See [Models](#models). |
+
+Several `text()` items and a returned value each start with a `==> text N/M <==` line in the
+result, so the model can tell them apart; what `echo` wrote follows everything else in one
+`<console_output>` block.
 
 ## Call tools
 
@@ -78,7 +84,89 @@ The `codemode` description lists tools with their PHP declarations, grouped by n
 example one MCP server). Tools with `codemode-deferred` exposure are not listed, so the
 description stays the same while MCP servers connect. Listed declarations share a budget of
 3000 estimated tokens (`codemode.inlineBudget` in the settings). Scripts find the other tools
-with `search_tools()`, `describe_tool()`, or by filtering `ALL_TOOLS`.
+with `search_tools()`, `describe_tool()`, `describe_namespace()`, or by filtering `ALL_TOOLS`.
+
+`codemode.mode` in the settings decides how the model is shown the tools it already has:
+
+- `on` (the default): each declared tool's description ends with how a script calls it
+  (`Codemode: $tools->read([...]) resolves to a string.`), and the `codemode` description lists
+  only the tools the model cannot otherwise see.
+- `only`: the model is offered `codemode` alone — the other tools' declarations are left out of
+  the request and listed in the `codemode` description instead, so every call goes through a
+  script.
+
+## Models
+
+`$models` reaches the model catalogue and runs non-LLM models with the session's credentials:
+classifiers, which answer typed questions about JSON state, and image models, which generate
+images. Chat models are listed but cannot be run from scripts.
+
+| Method | Answers |
+|---|---|
+| `$models->getModelsOfType($type, $provider = null)` | Every known model of a type (`'chat'`, `'image'`, `'classifier'`), optionally for one provider, as catalogue entries (`provider`, `id`, `name`, `api`, `input`, `cost`, ...; `headers` is never included). |
+| `$models->getAvailableOfType($type, $provider = null)` | The models of a type whose provider has credentials. |
+| `$models->getModelOfType($type, $provider, $id)` | One catalogue entry, or `null`. |
+| `$models->classify($model, $context)` | Answers `$context['questions']` about `$context['state']`; the answers are in `$result['answers']` by question id. |
+| `$models->generateImages($model, $context)` | Generates images from `$context['input']` text and image blocks; show the blocks of `$result['output']` with `image()`. Can take minutes. |
+
+`classify()` and `generateImages()` use only the `provider` and `id` of `$model`, so
+`['provider' => ..., 'id' => ...]` works as well. They do not throw on provider errors: check
+`$result['stopReason']` (`stop`, `error` or `aborted`) and `$result['errorMessage']`. At most
+four such calls run at once per script; more wait for a free slot, so `parallel()` over many
+items is fine. Each call is a row in the result's call list with its cost, and their usage is
+on the result's `details`.
+
+Model ids differ between providers, for example `typesafe/jev-latest` and
+`openrouter/typesafe/jev-1.13`. Use `$models->getAvailableOfType($type)` to find the ids that
+work with the current credentials.
+
+### Classify
+
+The context is `['state' => [...], 'questions' => [id => question, ...]]`. A question is one of:
+
+- `['type' => 'choice', 'instructions' => ..., 'criteria' => [label => meaning, ...]]` — pick
+  one label; answered as `['choice', 'probabilities', 'confidence']`.
+- `['type' => 'score', 'instructions' => ..., 'criteria' => [lowest, ..., highest]]` — score on
+  an ordered scale; answered as `['score', 'confidence']`, `score` being the expected level
+  index from 0.
+- `['type' => 'bool', 'instructions' => ..., 'criteria' => ['true' => ..., 'false' => ...]]` —
+  yes or no; answered as `['probability']`, the probability of `true`.
+
+pig's classifiers take text only; a context with `images` is refused.
+
+```php
+$jev = $models->getModelOfType('classifier', 'typesafe', 'jev-latest');
+$results = parallel(array_map(fn (string $message) => fn () => $models->classify($jev, [
+    'state' => ['message' => $message],
+    'questions' => [
+        'sentiment' => ['type' => 'choice', 'instructions' => 'How does the user feel about the product?',
+            'criteria' => ['positive' => 'Satisfied or happy', 'negative' => 'Unhappy or frustrated', 'neutral' => 'Neither']],
+        'urgency' => ['type' => 'score', 'instructions' => 'How urgently does this need a reply?',
+            'criteria' => ['no reply needed', 'reply this week', 'reply today']],
+    ],
+]), $messages));
+return array_map(fn ($r, $i) => $r['stopReason'] === 'stop'
+    ? ['message' => $messages[$i], 'sentiment' => $r['answers']['sentiment']['choice'], 'urgency' => $r['answers']['urgency']['score']]
+    : ['message' => $messages[$i], 'error' => $r['errorMessage']], $results, array_keys($results));
+```
+
+### Generate images
+
+The context is `['input' => [block, ...]]`: the prompt as `['type' => 'text', 'text' => ...]`
+blocks, plus `['type' => 'image', 'data' => <base64>, 'mimeType' => ...]` blocks to edit or use
+as references. The result's `output` is the same kind of list. Show generated images with
+`image($block)`; do not `text()` or `return` the `data`, it is large and the model cannot read
+it as text. `image()` also saves each image to a temp file and names its path in the result.
+
+```php
+// @options: {"timeout_ms": 300000}
+$painter = $models->getModelOfType('image', 'openrouter', 'google/gemini-2.5-flash-image');
+$result = $models->generateImages($painter, ['input' => [['type' => 'text', 'text' => 'A red fox in the snow, watercolor']]]);
+if ($result['stopReason'] !== 'stop') return $result['errorMessage'];
+foreach ($result['output'] as $block) {
+    if ($block['type'] === 'image') image($block); else text($block['text']);
+}
+```
 
 ## Store values
 
@@ -96,4 +184,7 @@ show images with `image()` or write them to a file with a tool.
 
 - A script has a 256 MB memory limit. Running out fails the script; filter or aggregate large
   data instead of accumulating it.
+- A script may output at most 16 MiB of text and image data, or 100,000 items (`text()`,
+  `image()`, `echo`, the returned value). Past either the script fails with `LengthException`
+  and keeps what it had output; print a summary, or write large data to a file with a tool.
 - Scripts cannot start other `codemode` scripts.

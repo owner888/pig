@@ -186,6 +186,8 @@ final class CodemodeExtensionTest extends TestCase
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 return function ($pi): void {
     $pi->on('tool_call', function ($event) {
+        file_put_contents(getenv('PIG_HOME') . '/seen-call-id', $event->toolCallId);
+
         return $event->toolName === 'bash' ? new ToolCallEventResult(block: true, reason: 'No shells from scripts.') : null;
     });
 };
@@ -193,13 +195,160 @@ PHP);
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine"]);'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('call-7', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine"]);'], null, $started->hooks->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertFalse($value[0]['ok']);
         $this->assertStringContainsString('No shells from scripts.', $value[0]['error'], 'the guard that stops bash stops bash from a script');
         $this->assertSame('fine', $value[1]['value']);
         $this->assertSame('error', $result->details['calls'][0]['status']);
+        // The nested call's id is `<codemode call id>/<n>`, upstream's shape, and it is the id the
+        // hook was handed — not a synthetic one the row alone knew.
+        $this->assertSame('call-7/1', $result->details['calls'][0]['id']);
+        $this->assertSame('call-7/1', file_get_contents($this->home . '/seen-call-id'));
+        $this->stop($started);
+    }
+
+    public function testTextItemsAreNumberedAndWhatEchoWroteFollowsInAConsoleBlock(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'text("first"); echo "printed one\n"; text("second"); echo "printed two"; return "returned";'], null, $started->hooks->context(), null));
+
+        // Upstream's `formatOutput()` then `joinAdjacentText()`: one text block, each item headed.
+        $this->assertCount(2, $result->content, 'the header and one joined text block');
+        $this->assertSame(
+            "==> text 1/3 <==\nfirst\n==> text 2/3 <==\nsecond\n==> text 3/3 <==\nreturned\n<console_output>\nprinted one\nprinted two\n</console_output>",
+            $result->content[1]->text,
+        );
+
+        // One item gets no header, and a script that only returns reads as it did before.
+        $alone = Async::run(static fn () => ($codemode->execute)('2', ['code' => 'return "just this";'], null, $started->hooks->context(), null));
+        $this->assertSame('just this', $alone->content[1]->text);
+        $this->stop($started);
+    }
+
+    public function testOnModeTellsEachToolHowAScriptCallsItAndOnlyModeHidesThemFromTheModel(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+        $read = null;
+
+        foreach ($started->session->agent->tools() as $tool) {
+            if ($tool->definition()->name === 'read') {
+                $read = $tool->definition();
+            }
+        }
+
+        $this->assertNotNull($read);
+        $this->assertStringEndsWith("\n\nCodemode: `\$tools->read([...])` resolves to a string.", $read->description, 'upstream\'s `on` mode: the declared tool says how a script calls it');
+        $codemode = $started->customTools->find('codemode');
+        $this->assertStringNotContainsString('### `read`', $codemode->description, 'in `on` mode the agent\'s own tools are not listed again');
+        $this->stop($started);
+
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true, 'mode' => 'only']]));
+        $started = $this->start();
+        $this->assertSame(['codemode'], self::toolNames($started), 'upstream\'s `only` mode: the model is offered scripts alone');
+        $declared = null;
+
+        foreach ($started->session->agent->tools() as $tool) {
+            $declared = $tool->definition()->description;
+        }
+
+        $this->assertStringContainsString('### `read`', (string) $declared, 'and codemode lists what it hid');
+        $this->assertStringContainsString('### `bash`', (string) $declared);
+
+        // The hidden tools are still callable: the extension kept the list the loadout handed it.
+        file_put_contents($this->cwd . '/note.txt', "hidden but reachable\n");
+        $codemode = $started->customTools->find('codemode');
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return trim($tools->read(["path" => "note.txt"]));'], null, $started->hooks->context(), null));
+        $this->assertSame('hidden but reachable', $result->content[count($result->content) - 1]->text);
+        $this->stop($started);
+    }
+
+    public function testTheCodemodeToolAsksForGrammarSamplingSoAModelCanWriteRawSource(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $this->assertSame('grammar', $codemode->constrainedSampling['type']);
+        $this->assertStringContainsString('@options', $codemode->constrainedSampling['variants']['openai_lark']);
+        $this->assertSame(\Pig\Codemode\Source::GRAMMAR, $codemode->constrainedSampling['variants']['openai_lark']);
+        $this->stop($started);
+    }
+
+    public function testDescribeNamespaceFindsAServerByAnyOfItsNamesAndSearchToolsFiltersByThem(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+        $space = ['name' => 'mcp__dev-radius', 'description' => 'the radius server', 'instructions' => 'be gentle'];
+        Registry::register('mcp__dev-radius__search', 'search radius', ['type' => 'object', 'properties' => []], static fn (): string => 'found', $space, 'codemode');
+        Registry::register('mcp__dev-radius__fetch', 'fetch a radius page', ['type' => 'object', 'properties' => []], static fn (): string => 'page', $space, 'codemode');
+        Registry::register('mcp__other__search', 'search elsewhere', ['type' => 'object', 'properties' => []], static fn (): string => 'x', ['name' => 'mcp__other', 'description' => null], 'codemode');
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
+            return [
+                describe_namespace('dev-radius'),
+                describe_namespace('mcp__dev_radius')['tools'],
+                describe_namespace('dev_radius')['name'],
+                describe_namespace('nowhere'),
+                array_column(search_tools('search', ['namespace' => 'dev_radius']), 'name'),
+                array_column(search_tools('search', ['namespace' => 'mcp__other']), 'name'),
+            ];
+            PHP], null, $started->hooks->context(), null));
+
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertSame(['name' => 'mcp__dev-radius', 'description' => 'the radius server', 'instructions' => 'be gentle', 'tools' => ['mcp__dev_radius__search', 'mcp__dev_radius__fetch']], $value[0]);
+        $this->assertSame(['mcp__dev_radius__search', 'mcp__dev_radius__fetch'], $value[1]);
+        $this->assertSame('mcp__dev-radius', $value[2]);
+        $this->assertNull($value[3]);
+        $this->assertSame(['mcp__dev_radius__search'], $value[4], 'the namespace filter takes the suffix in identifier form');
+        $this->assertSame(['mcp__other__search'], $value[5]);
+        $this->stop($started);
+    }
+
+    public function testTheModelsNamespaceAnswersTheCatalogueAndRefusesABadCallBeforeAnyProviderIsReached(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
+            $chat = $models->getModelOfType('chat', 'anthropic', 'claude-sonnet-4-5');
+            $classifiers = $models->getModelsOfType('classifier');
+            $tries = [];
+            foreach ([
+                fn () => $models->getModelOfType('oops', 'a', 'b'),
+                fn () => $models->getModelOfType('chat', 'anthropic/claude-sonnet-4-5'),
+                fn () => $models->classify(null, []),
+                fn () => $models->classify($chat, ['state' => [], 'questions' => []]),
+                fn () => $models->classify($classifiers[0], ['state' => ['a' => 1], 'questions' => ['q' => ['type' => 'score', 'instructions' => 'rate', 'criteria' => 'bad']]]),
+                fn () => $models->generateImages($models->getModelsOfType('image')[0], ['prompt' => 'a cat']),
+                fn () => $models->Classify(),
+            ] as $try) {
+                try { $try(); $tries[] = 'no error'; } catch (Throwable $e) { $tries[] = $e->getMessage(); }
+            }
+            return ['id' => $chat['id'], 'keys' => array_key_exists('headers', $chat), 'cost' => isset($chat['cost']['input']), 'classifiers' => count($classifiers) > 0, 'available' => $models->getAvailableOfType('chat', 'anthropic') !== [], 'tries' => $tries];
+            PHP], null, $started->hooks->context(), null));
+
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertSame('claude-sonnet-4-5', $value['id']);
+        $this->assertFalse($value['keys'], 'headers can carry credentials and never reach a script');
+        $this->assertTrue($value['cost'], 'the price list goes out under upstream\'s name');
+        $this->assertTrue($value['classifiers']);
+        $this->assertTrue($value['available'], 'the test key for anthropic counts as available');
+        $this->assertStringContainsString('Unknown model type "oops". Use "chat", "image", or "classifier".', $value['tries'][0]);
+        $this->assertStringContainsString('expects three strings', $value['tries'][1]);
+        $this->assertStringContainsString('expects a classifier model as its first argument, got null. $models->getModelOfType() returns null', $value['tries'][2]);
+        $this->assertStringContainsString('"anthropic/claude-sonnet-4-5" is a chat model, not a classifier model.', $value['tries'][3]);
+        $this->assertStringContainsString('context.questions.q is a "score" question, so criteria must list the levels', $value['tries'][4]);
+        $this->assertStringContainsString('context.input must be a non-empty list of blocks, got null', $value['tries'][5]);
+        $this->assertStringContainsString('$models->Classify() does not exist. Did you mean $models->classify()?', $value['tries'][6]);
+        $this->assertSame([], $result->details['calls'], 'nothing reached a provider, so no call row');
         $this->stop($started);
     }
 
@@ -225,6 +374,15 @@ PHP);
         $images = array_values(array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\ImageContent));
         $this->assertCount(1, $images, 'the picture the script showed is on the result');
         $this->assertSame(base64_encode($png), $images[0]->data, 'byte for byte: no re-encoding on the way through the sandbox');
+
+        // Upstream's `saveImages()`: the model has no other way to reach the bytes it is shown.
+        $at = array_search($images[0], $result->content, true);
+        $label = $result->content[$at - 1];
+        $this->assertInstanceOf(\Pig\Ai\TextContent::class, $label);
+        $this->assertMatchesRegularExpression('#^\[Image saved to (\S+\.png) \(image/png, \d+B\)\]$#', $label->text, 'the path line sits right in front of the picture');
+        preg_match('#saved to (\S+\.png)#', $label->text, $m);
+        $this->assertSame($png, file_get_contents($m[1]), 'the file holds the bytes the model was shown');
+        unlink($m[1]);
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertSame(['text', 'images'], $value['keys']);
         $this->assertSame('image/png', $value['mime']);

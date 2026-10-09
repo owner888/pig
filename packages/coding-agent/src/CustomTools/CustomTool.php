@@ -73,6 +73,11 @@ final readonly class CustomTool
      *        (`false | ConstrainedSamplingConfig`): e.g. `['type' => 'json_schema', 'strict' => 'prefer']`
      *        asks for strict sampling where the provider has it, as the built-in bash, edit, read and
      *        write do. Null and false both mean no — see `Ai\Tool::$constrainedSampling`
+     * @param Closure(list<\Pig\Agent\AgentTool>): array{descriptions?: array<string, string>, hiddenDeclarations?: list<string>}|null $prepareLoadout
+     *        upstream's `ToolDefinition.prepareLoadout`: asked by `ToolLoadout::apply()` with every
+     *        active tool (the hooked ones, in the order the model is offered them), it answers the
+     *        descriptions to show in place of the tools' own, by name, and the names of tools to
+     *        keep callable but not declare to the model. The codemode tool is what this exists for
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -87,6 +92,7 @@ final readonly class CustomTool
         public ?string $promptSnippet = null,
         public array $promptGuidelines = [],
         public array|false|null $constrainedSampling = null,
+        public ?Closure $prepareLoadout = null,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

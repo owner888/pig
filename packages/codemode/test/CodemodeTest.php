@@ -116,11 +116,12 @@ final class CodemodeTest extends TestCase
     // ---- the sandbox ----------------------------------------------------------------------------
 
     /** @param list<array{name: string, description?: string, execute: \Closure}> $tools */
-    private function script(string $code, array $tools = [], ?float $timeout = 10.0, array $store = [], ?AbortController $abort = null, int $memory = Sandbox::DEFAULT_MEMORY_LIMIT_BYTES): array
+    private function script(string $code, array $tools = [], ?float $timeout = 10.0, array $store = [], ?AbortController $abort = null, int $memory = Sandbox::DEFAULT_MEMORY_LIMIT_BYTES, array $globals = []): array
     {
         $sandbox = new Sandbox($tools, [
             'search_tools' => static fn (array $args): array => [['name' => 'found_' . $args[0], 'description' => '']],
             'describe_tool' => static fn (array $args): ?string => $args[0] === 'known' ? 'the known tool' : null,
+            ...$globals,
         ], $timeout, $memory);
 
         return Async::run(static fn () => $sandbox->execute($code, $abort?->signal, $store));
@@ -324,7 +325,7 @@ final class CodemodeTest extends TestCase
 
     public function testImagesAndTheGlobalsReachTheOutput(): void
     {
-        $png = base64_encode("\x89PNG");
+        $png = base64_encode("\x89PNG\r\n\x1a\n" . str_repeat("\0", 8));
         $result = $this->script(
             'image("data:image/png;base64,' . $png . '"); image(["type" => "image", "data" => "' . $png . '", "mimeType" => "image/jpeg"]); text(search_tools("weather")); text(describe_tool("known")); text(describe_tool("unknown")); text(ALL_TOOLS); return null;',
             [['name' => 'a-tool', 'description' => 'the a tool', 'execute' => static fn (): string => '']],
@@ -332,11 +333,91 @@ final class CodemodeTest extends TestCase
 
         $this->assertTrue($result['ok'], json_encode($result));
         $this->assertSame(['type' => 'image', 'data' => $png, 'mimeType' => 'image/png'], $result['output'][0]);
-        $this->assertSame('image/jpeg', $result['output'][1]['mimeType']);
+        $this->assertSame('image/png', $result['output'][1]['mimeType'], 'the type comes from the bytes, not from what the block declared');
         $this->assertSame('[{"name":"found_weather","description":""}]', $result['output'][2]['text']);
         $this->assertSame('the known tool', $result['output'][3]['text']);
         $this->assertSame('null', $result['output'][4]['text']);
         $this->assertSame('[{"name":"a_tool","description":"the a tool"}]', $result['output'][5]['text'], 'ALL_TOOLS names the identifier, not the raw name');
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function imagesThatAreNotOnes(): iterable
+    {
+        $png = base64_encode("\x89PNG\r\n\x1a\n" . str_repeat("\0", 8));
+
+        yield 'a remote url' => ['"https://example/a.png"', 'remote image URLs are not supported'];
+        yield 'a data url that is not base64' => ['"data:image/png,' . $png . '"', 'Pass a base64 data URI'];
+        yield 'base64 with a character that is not' => ['"data:image/png;base64,' . substr($png, 0, 10) . '!' . substr($png, 11) . '"', 'not valid base64'];
+        yield 'base64 of something that is no image' => ['"data:image/png;base64,' . base64_encode('hello world, not a picture') . '"', 'not a PNG, JPEG, GIF, or WebP'];
+        yield 'an empty string' => ['""', 'image expects a non-empty image URL'];
+        yield 'a list' => ['[1, 2]', 'image expects a non-empty image URL'];
+        yield 'a block of another type' => ['["type" => "text", "text" => "x"]', 'image only accepts MCP image blocks, got "text"'];
+        yield 'a block with no data' => ['["type" => "image", "data" => ""]', 'image expected MCP image data'];
+    }
+
+    #[DataProvider('imagesThatAreNotOnes')]
+    public function testAnImageThatIsNotOneIsRefusedByName(string $argument, string $complaint): void
+    {
+        $result = $this->script("image({$argument}); return 1;");
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('TypeError', $result['error']['name']);
+        $this->assertStringContainsString($complaint, $result['error']['message']);
+        $this->assertSame([], $result['output'], 'nothing reached the output');
+    }
+
+    public function testWrappedBase64IsStraightenedAndAJpegIsDetectedAsOne(): void
+    {
+        $jpeg = base64_encode("\xff\xd8\xff\xe0" . str_repeat("\0", 20));
+        $wrapped = chunk_split($jpeg, 8, "\n");
+        $result = $this->script('image("data:image/png;base64,' . addcslashes($wrapped, "\n") . '"); return 1;');
+
+        $this->assertTrue($result['ok'], json_encode($result));
+        $this->assertSame(['type' => 'image', 'data' => $jpeg, 'mimeType' => 'image/jpeg'], $result['output'][0]);
+    }
+
+    public function testOutputPastTheLimitFailsTheScriptAndKeepsWhatCameBefore(): void
+    {
+        // Two texts of 9 MiB: the first is under the 16 MiB limit, the second takes the total past it.
+        $result = $this->script('text(str_repeat("x", 9 * 1024 * 1024)); text("second"); text(str_repeat("y", 9 * 1024 * 1024)); text("never"); return 1;');
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('script output exceeded the limit', $result['error']['message']);
+        $this->assertSame([9 * 1024 * 1024, 6], array_map('strlen', self::texts($result)), 'what arrived before the limit is kept, nothing after it');
+
+        // Catching it does not resume output: the failure was reported before the throw.
+        $caught = $this->script('try { text(str_repeat("x", 17 * 1024 * 1024)); } catch (Throwable) {} text("b"); return 1;');
+        $this->assertFalse($caught['ok'], 'a script that caught the limit and returned normally is still a failed one');
+        $this->assertSame([], self::texts($caught), 'the oversized item never reaches the host, and nothing after it does either');
+    }
+
+    public function testWhatEchoWroteIsMarkedAsConsoleOutputAndTextIsNot(): void
+    {
+        $result = $this->script('echo "printed"; text("said"); print "more"; return null;');
+
+        $this->assertTrue($result['ok'], json_encode($result));
+        $this->assertSame([['type' => 'text', 'text' => 'printed', 'console' => true], ['type' => 'text', 'text' => 'said'], ['type' => 'text', 'text' => 'more', 'console' => true]], $result['output']);
+    }
+
+    public function testTheModelsNamespaceAndDescribeNamespaceReachTheHost(): void
+    {
+        $asked = [];
+        $result = $this->script(
+            'return [$models->getModelOfType("chat", "p", "m"), describe_namespace("ns")];',
+            [],
+            globals: [
+                'models.getModelOfType' => static function (array $args) use (&$asked): array { $asked[] = $args; return ['id' => 'm']; },
+                'describe_namespace' => static fn (array $args): array => ['name' => $args[0], 'tools' => []],
+            ],
+        );
+
+        $this->assertTrue($result['ok'], json_encode($result));
+        $this->assertSame([['id' => 'm'], ['name' => 'ns', 'tools' => []]], $result['value']);
+        $this->assertSame([['chat', 'p', 'm']], $asked, 'the arguments cross as a list');
+
+        $missing = $this->script('return $models->generate_images();');
+        $this->assertFalse($missing['ok']);
+        $this->assertStringContainsString('$models->generate_images() does not exist. Did you mean $models->generateImages()?', $missing['error']['message']);
     }
 
     public function testAToolIsReachableUnderItsRawNameToo(): void

@@ -137,7 +137,7 @@ final class Sandbox
      * (`script`, `timeout`, `aborted`, `memory`, `sandbox`).
      *
      * @param array<string, mixed> $store what `load()` sees
-     * @return array{ok: bool, output: list<array{type: 'text', text: string}|array{type: 'image', data: string, mimeType: string}>, value?: mixed, storeWrites: array{set: array<string, mixed>, delete: list<string>}, error?: array{kind: string, name?: string, message: string, stack?: string}}
+     * @return array{ok: bool, output: list<array{type: 'text', text: string, console?: true}|array{type: 'image', data: string, mimeType: string}>, value?: mixed, storeWrites: array{set: array<string, mixed>, delete: list<string>}, error?: array{kind: string, name?: string, message: string, stack?: string}}
      */
     public function execute(string $code, ?AbortSignal $signal = null, array $store = []): array
     {
@@ -219,7 +219,7 @@ final class Sandbox
                 $item = $message['output'];
                 $output[] = ($item['kind'] ?? '') === 'image'
                     ? ['type' => 'image', 'data' => (string) ($item['data'] ?? ''), 'mimeType' => (string) ($item['mimeType'] ?? 'image/png')]
-                    : ['type' => 'text', 'text' => (string) ($item['text'] ?? '')];
+                    : ['type' => 'text', 'text' => (string) ($item['text'] ?? ''), ...(($item['console'] ?? false) === true ? ['console' => true] : [])];
             } elseif (isset($message['done'])) {
                 $done_ = $message['done'];
                 $writes = $done_['writes'] ?? [];

@@ -46,9 +46,54 @@ final class __CodemodeBridge
 
     public const int MAX_STORE_TOTAL_CHARS = 1024 * 1024;
 
+    /**
+     * Output one script may produce with `text()`, `image()`, `echo` and a top-level `return`:
+     * characters of text and base64 image data, and items. The host keeps every item until the
+     * script ends, so without a limit a script that prints in a loop grows the host's memory
+     * until it crashes; the item limit covers a loop printing empty strings. Upstream's two
+     * constants, the same numbers.
+     */
+    public const int MAX_OUTPUT_CHARS = 16 * 1024 * 1024;
+
+    public const int MAX_OUTPUT_ITEMS = 100_000;
+
+    private static int $outputChars = 0;
+
+    private static int $outputItems = 0;
+
     public static function init(): void
     {
         self::$out = STDOUT;
+    }
+
+    /**
+     * One output item. Past the limits the script **fails**: `done()` reports the error before
+     * the throw, so catching the exception does not resume output, and the host ends the script.
+     */
+    public static function output(string $kind, string $data, ?string $mimeType = null, bool $console = false): void
+    {
+        if (self::$finished) {
+            return;
+        }
+
+        self::$outputChars += strlen($data);
+        self::$outputItems++;
+
+        if (self::$outputChars > self::MAX_OUTPUT_CHARS || self::$outputItems > self::MAX_OUTPUT_ITEMS) {
+            $error = new LengthException(
+                'script output exceeded the limit of ' . self::MAX_OUTPUT_CHARS . ' characters or ' . self::MAX_OUTPUT_ITEMS
+                . ' text(), image() and echo calls. Print a summary instead, or write large data to a file with a tool.',
+            );
+            self::done(false, ['kind' => 'script', ...self::describeError($error)]);
+
+            throw $error;
+        }
+
+        // `console` marks what `echo`, `print` and a warning wrote — upstream's `console.*` items —
+        // so the host can set it apart from `text()`.
+        self::send(['output' => $kind === 'image'
+            ? ['kind' => 'image', 'data' => $data, 'mimeType' => $mimeType]
+            : ['kind' => 'text', 'text' => $data, ...($console ? ['console' => true] : [])]]);
     }
 
     public static function send(array $message): void
@@ -294,40 +339,107 @@ final class __CodemodeTools
 /** Appends a text item. Non-strings are JSON-encoded. */
 function text(mixed $value): void
 {
-    __CodemodeBridge::send(['output' => ['kind' => 'text', 'text' => __codemode_format($value)]]);
+    __CodemodeBridge::output('text', __codemode_format($value));
 }
 
-/** Appends an image: a base64 `data:` URL, `['image_url' => ...]`, or an MCP image block. */
-function image(mixed $value): void
+/**
+ * What `image()` accepts, as a `data:` URL: a string as it is, `['image_url' => ...]`, or an MCP
+ * image block (`type`, `data`, `mimeType`) whose data is base64 or already a `data:` URL.
+ */
+function __codemode_image_url(mixed $value): string
 {
-    $url = null;
-    $data = null;
-    $mime = null;
+    $expects = 'image expects a non-empty image URL string, an array with image_url, or a raw MCP image block';
 
     if (is_string($value)) {
-        $url = $value;
-    } elseif (is_array($value)) {
-        if (isset($value['image_url']) && is_string($value['image_url'])) {
-            $url = $value['image_url'];
-        } elseif (($value['type'] ?? null) === 'image' && is_string($value['data'] ?? null)) {
-            $data = $value['data'];
-            $mime = (string) ($value['mimeType'] ?? 'image/png');
-        }
+        return $value;
     }
 
-    if ($url !== null && $url !== '') {
-        if (preg_match('#^data:([^;,]+);base64,(.+)$#s', $url, $m) !== 1) {
-            throw new TypeError('image expects a base64 data: URL');
-        }
-
-        [$mime, $data] = [$m[1], $m[2]];
+    if (!is_array($value) || array_is_list($value)) {
+        throw new TypeError($expects);
     }
 
-    if ($data === null || $data === '') {
+    if (array_key_exists('image_url', $value)) {
+        if (!is_string($value['image_url'])) {
+            throw new TypeError($expects);
+        }
+
+        return $value['image_url'];
+    }
+
+    if (!is_string($value['type'] ?? null)) {
+        throw new TypeError($expects);
+    }
+
+    if ($value['type'] !== 'image') {
+        throw new TypeError('image only accepts MCP image blocks, got "' . $value['type'] . '"');
+    }
+
+    if (!is_string($value['data'] ?? null) || $value['data'] === '') {
+        throw new TypeError('image expected MCP image data');
+    }
+
+    return str_starts_with(strtolower($value['data']), 'data:') ? $value['data'] : 'data:;base64,' . $value['data'];
+}
+
+/**
+ * Appends an image. Upstream's `image()`: only a base64 `data:` URL is taken, the base64 is
+ * checked, and the type comes from the bytes' own signature rather than the declared one —
+ * a provider rejects the whole request over one bad image, and an image block is persisted
+ * and resent on every later turn, so a bad one has to be refused here.
+ */
+function image(mixed $value): void
+{
+    $url = __codemode_image_url($value);
+
+    if ($url === '') {
         throw new TypeError('image expects a non-empty image URL string, an array with image_url, or a raw MCP image block');
     }
 
-    __CodemodeBridge::send(['output' => ['kind' => 'image', 'data' => $data, 'mimeType' => $mime]]);
+    $colon = strpos($url, ':');
+    $scheme = $colon === false ? '' : strtolower(substr($url, 0, $colon));
+
+    if ($scheme === 'http' || $scheme === 'https') {
+        throw new TypeError('remote image URLs are not supported in tool outputs. Pass a base64 data URI instead');
+    }
+
+    $comma = strpos($url, ',');
+    $header = $comma === false || $colon === false ? [] : explode(';', substr($url, $colon + 1, $comma - $colon - 1));
+    $base64 = array_filter(array_slice($header, 1), static fn (string $part): bool => strtolower($part) === 'base64');
+
+    if ($scheme !== 'data' || $comma === false || $base64 === []) {
+        throw new TypeError('invalid image output. Pass a base64 data URI instead');
+    }
+
+    // Line breaks from wrapped base64 are dropped; anything else that is not base64 is refused.
+    $data = preg_replace('/\s+/', '', substr($url, $comma + 1)) ?? '';
+
+    if ($data === '' || strlen($data) % 4 !== 0 || preg_match('#^[A-Za-z0-9+/]+={0,2}$#', $data) !== 1) {
+        throw new TypeError('invalid image output. The image data is not valid base64 (truncated or corrupted?)');
+    }
+
+    // Base64 of the signatures of the formats providers accept inline: PNG, JPEG (not JPEG-LS),
+    // GIF, "RIFF....WEBP". Signatures start at byte 0, so their encodings are prefixes.
+    $signatures = [
+        'image/png' => '#^iVBORw0KGg#',
+        'image/jpeg' => '#^/9j/(?!9)#',
+        'image/gif' => '#^R0lGOD[dl]h#',
+        'image/webp' => '#^UklG.{8}RUJQ#',
+    ];
+    $head = substr($data, 0, 16);
+    $mime = null;
+
+    foreach ($signatures as $type => $pattern) {
+        if (preg_match($pattern, $head) === 1) {
+            $mime = $type;
+            break;
+        }
+    }
+
+    if ($mime === null) {
+        throw new TypeError('invalid image output. The image data is not a PNG, JPEG, GIF, or WebP image');
+    }
+
+    __CodemodeBridge::output('image', $data, $mime);
 }
 
 /** Immediately ends the current script successfully (like an early return from the top level). */
@@ -399,6 +511,43 @@ function search_tools(string $query, array $options = []): array
 function describe_tool(string $name): ?string
 {
     return __CodemodeBridge::ask('global', 'describe_tool', [$name]);
+}
+
+/**
+ * A namespace of nested tools — an MCP server, say — as `['name', 'description'?,
+ * 'instructions'?, 'tools' => [identifier, ...]]`, or null. The name, its identifier form, or
+ * the part after its last `__` all find it.
+ */
+function describe_namespace(string $name): ?array
+{
+    return __CodemodeBridge::ask('global', 'describe_namespace', [$name]);
+}
+
+/**
+ * What `$models` is — upstream's `models` namespace: the catalogue, classifiers and image
+ * generation, each call answered by the host. A member that does not exist names the close
+ * matches, as `$tools` does.
+ */
+final class __CodemodeModels
+{
+    private const array MEMBERS = ['getModelsOfType', 'getAvailableOfType', 'getModelOfType', 'classify', 'generateImages'];
+
+    public function __call(string $name, array $arguments): mixed
+    {
+        if (!in_array($name, self::MEMBERS, true)) {
+            $comparable = static fn (string $n): string => preg_replace('/[^a-z0-9]/', '', strtolower($n)) ?? '';
+            $wanted = $comparable($name);
+            $close = array_values(array_filter(self::MEMBERS, static fn (string $n): bool => $wanted !== '' && (str_contains($comparable($n), $wanted) || str_contains($wanted, $comparable($n)))));
+            $message = "\$models->{$name}() does not exist.";
+            $message .= $close !== []
+                ? ' Did you mean ' . implode(', ', array_map(static fn (string $n): string => '$models->' . $n . '()', $close)) . '?'
+                : ' Available: ' . implode(', ', self::MEMBERS) . '.';
+
+            throw new Error($message);
+        }
+
+        return __CodemodeBridge::ask('global', "models.{$name}", array_values($arguments));
+    }
 }
 
 /**
@@ -563,10 +712,17 @@ define('ALL_TOOLS', array_map(
     is_array($boot['tools'] ?? null) ? $boot['tools'] : [],
 ));
 
-// Output that is not ours — an `echo`, a warning — is output too, as `console.log` is upstream.
+// Output that is not ours — an `echo`, a warning — is output too, as `console.log` is upstream,
+// and is marked as such.
 ob_start(static function (string $buffer): string {
     if ($buffer !== '') {
-        __CodemodeBridge::send(['output' => ['kind' => 'text', 'text' => rtrim($buffer, "\n")]]);
+        // Over the output limit `output()` has already reported the failure and the host is
+        // ending the script; an exception out of an output handler is not something PHP
+        // promises to carry, so it stops here and the kill does the rest.
+        try {
+            __CodemodeBridge::output('text', rtrim($buffer, "\n"), null, true);
+        } catch (LengthException) {
+        }
     }
 
     return '';
@@ -595,12 +751,13 @@ register_shutdown_function(static function (): void {
 });
 
 $code = (string) ($boot['code'] ?? '');
-// The script is the body of a function: `return` works at the top level, and `$tools` is in scope.
+// The script is the body of a function: `return` works at the top level, and `$tools` and
+// `$models` are in scope.
 $body = preg_replace('/^\s*<\?php\s*/', '', $code) ?? $code;
 
 try {
-    $run = eval('return static function ($tools) { ' . $body . "\n};");
-    $value = $run($tools);
+    $run = eval('return static function ($tools, $models) { ' . $body . "\n};");
+    $value = $run($tools, new __CodemodeModels());
     ob_get_level() > 0 && ob_flush();
     __CodemodeBridge::done(true, $value);
 } catch (__CodemodeExit) {

@@ -43,6 +43,32 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.17] - 2026-10-08
+
+### New Features
+
+- **Models Namespace in Codemode Sandbox (`$models`, `__CodemodeModels`)**:
+  - Exposed `$models` in sandbox scripts providing `$models->getModelOfType()`, `$models->classify()`, and `$models->generateImages()`, supporting non-LLM image generation and classification with a 4-slot concurrency limiter and aggregated usage details.
+- **Codemode Tool Exposure Modes (`codemode.mode: on | only`, `prepareLoadout`)**:
+  - Implemented `prepareLoadout` hook support on `CustomTool`:
+    - `on` mode: automatically appends `Codemode: $tools->x([...]) resolves to a string.` to all declared tool descriptions.
+    - `only` mode: hides declared tools completely from the agent, delegating their availability exclusively into codemode script execution.
+- **Namespace Tool Inspection & Search (`describe_namespace`, `search_tools`)**:
+  - Added `describe_namespace($name)` and namespace filtering on `search_tools()`, allowing scripts to inspect and query tools belonging to specific MCP servers or namespaces.
+- **Lark Grammar Sampling for Codemode (`Source::GRAMMAR`)**:
+  - Declared native Lark grammar sampling on the codemode tool, constraining model outputs to syntactically valid PHP on supported endpoints (`supportsOpenAIGrammarTools`).
+
+### Added
+
+- **Script Output Resource Limits & Circuit Breaker (`__CodemodeBridge`)**:
+  - Implemented 16 MiB payload size and 100,000 item thresholds for `text()`, `image()`, and `echo` calls, terminating runaways with `LengthException` while preserving prior output.
+- **Magic Byte Image Type Verification (`image()`)**:
+  - Validated image payloads by sniffing binary magic bytes (PNG, JPEG, GIF, WebP) and stripping whitespace/newlines, preventing corrupted base64 payloads from causing provider 400 errors.
+- **Automated Image Disk Persistence in Results**:
+  - Automatically persisted rendered images to `pig-codemode-*.<ext>` on disk with an `[Image saved to ...]` banner, ensuring models can inspect generated images.
+- **Structured Console & Multiblock Output Formatting**:
+  - Consolidated `echo` outputs into trailing `<console_output>` blocks, joined adjacent text items with blank lines, and labeled multiblocks with `==> text N/M <==` headers.
+
 ## [0.5.16] - 2026-10-08
 
 ### New Features

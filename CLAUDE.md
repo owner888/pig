@@ -3386,6 +3386,55 @@ tool exists and issues one tool call at a time anyway. `CustomTool::$promptSnipp
 `CustomToolSet::promptContributions()`, two parameters on `SystemPrompt::build()`, and the prompt is
 rebuilt in the same `onChange()` that rebuilds the tools.
 
+**Three of upstream's later safeguards are here too** (pi-codemode 0.99.2, 1.0.1, and
+`execute.ts`'s `saveImages()`), found by reading the two trees side by side after the port had
+settled: an **output limit** — `__CodemodeBridge::output()` counts characters and items against
+upstream's 16 MiB / 100,000 and fails the script, reporting `done` *before* the throw so a `catch`
+cannot resume output and the host kills the child; the `ob_start` handler catches its own copy,
+because an exception out of an output handler is not something PHP promises to carry. An
+**`image()` that reads the type off the bytes** — base64 checked, line breaks dropped, the four
+signatures matched as base64 prefixes, the declared mime ignored — because a provider refuses the
+whole request over one bad image and an image block is resent on every later turn. And **every
+shown image saved to `pig-codemode-*.<ext>` with a `[Image saved to …]` line in front of it**,
+after the truncation so a path is never cut, once per distinct image; a write that fails becomes
+the label rather than losing a result whose tool calls already ran, which is upstream's reason and
+the one place in the extension a failure is worded rather than thrown. The signature check is what
+the old `base64_encode("\x89PNG")` fixture tripped over: four bytes is not a PNG signature, and
+the test now carries the eight-byte one. Regression tests: `CodemodeTest::testAnImageThatIsNotOneIsRefusedByName` (eight
+rows), `testWrappedBase64IsStraightenedAndAJpegIsDetectedAsOne`,
+`testOutputPastTheLimitFailsTheScriptAndKeepsWhatCameBefore`, and the path assertions in
+`CodemodeExtensionTest::testAToolResultWithAPictureInItReachesTheScriptAsABlockImageCanShow`.
+
+**The rest of upstream's codemode surface followed in one batch**, the developer's call after a
+side-by-side read. Six items, and where each lives: the **`models` namespace** is `$models` in the
+script (a second parameter of the eval'd function, `__CodemodeModels` bridging to
+`models.<member>` globals on the host) — catalogue, `classify()` and `generateImages()` over
+`Models::findOfType()`/`classify()`/`generateImages()`, upstream's context checks word for word
+(pig's `ClassifierContext` has no images, so `images` is refused by name), a four-slot limiter on
+`Deferred`s, one call row per model call with its cost, and the combined usage on the result's
+`details` because `AgentToolResult` has no `usage` field — the one piece upstream puts on the
+session's bill that pig does not. **`codemode.mode: on|only`** is `CustomTool::$prepareLoadout`
+(upstream's `ToolDefinition.prepareLoadout`), asked by `ToolLoadout::apply()` after the hook wrap
+with the whole active list: it answers descriptions (`DescribedTool` is the tool with its
+description replaced, a decorator for `HookedTool`'s reason) and names to hide from the agent.
+`on` appends `Codemode: $tools->x([...]) resolves to a string.` to every declared tool; `only`
+hides them all and lists them in codemode's description instead — and the extension **keeps the
+list it was handed** (`$callable`), which is the only way a hidden tool is still reachable from a
+script. **`describe_namespace()`** and `search_tools()`'s namespace filter go through
+`isNamespaceName()`, upstream's four spellings. **Output layout** is upstream's `formatOutput()` +
+`joinAdjacentText()`: the sandbox marks what `echo` wrote as `console`, several text items get
+`==> text N/M <==` heads, console lines close the output in one `<console_output>` block. **The
+nested call id** is `<codemode call id>/<n>` and is what the hooked tool, and so the `tool_call`
+hook, is handed. **Grammar sampling** was already in `pig/ai`; `Source::GRAMMAR` is upstream's Lark
+byte for byte and the tool declares it. Two things to keep: `$mode` reads `$settings` **by
+reference** — an arrow function would have captured the null it was built with, since
+`session_start` fills it later — and `prepared()` runs for active custom tools only, so a loadout
+that switched codemode off asks nothing. Regression tests: `CodemodeExtensionTest`'s six new
+cases (`…OnModeTellsEachTool…`, `…TextItemsAreNumbered…`, `…DescribeNamespaceFinds…`,
+`…ModelsNamespaceAnswers…`, `…AsksForGrammarSampling…`, and the id assertions in the hook case)
+and `CodemodeTest::testWhatEchoWroteIsMarkedAsConsoleOutputAndTextIsNot`,
+`testTheModelsNamespaceAndDescribeNamespaceReachTheHost`.
+
 **Two things the first live runs taught.** The model reads `$res['content'][0]['text']` *and*
 `$res['structuredContent']['content']` and does not know which the server fills, so a script
 receives the whole `CallToolResult` (upstream's rule for a tool with an output schema) and the

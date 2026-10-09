@@ -46,10 +46,11 @@ final class CodemodeDescription
 
     private const string GLOBALS = <<<'TEXT'
         Globals:
-        - `text($value)`, `image($dataUrlOrImageBlock)`, `echo`, and top-level `return` add output; `exit_script()` ends the script (not `exit`).
+        - `text($value)`, `image($dataUrlOrImageBlock)`, `echo`, and top-level `return` add output; `exit_script()` ends the script (not `exit`). `image()` also saves the image to a temp file and the result names its path.
         - `parallel([fn () => ..., ...])` runs independent calls at once, keys kept; `parallel_settled([...])` answers `['ok' => bool, 'value' | 'error']` per arm so one failure does not stop the rest.
         - `store($key, $value)` and `load($key)` keep small JSON values across codemode calls.
-        - `ALL_TOOLS`, `search_tools($query, ['limit' => 8, 'namespace' => ...])`, `describe_tool($name)`: find unlisted tools, such as MCP tools.
+        - `ALL_TOOLS`, `search_tools($query, ['limit' => 8, 'namespace' => ...])`, `describe_tool($name)`, `describe_namespace($name)`: find unlisted tools, such as MCP tools.
+        - `$models`: classifiers and image generation.
         TEXT;
 
     private const string DEFERRED_GUIDANCE = 'Some nested tools are not listed here. They are still on `$tools` and in `ALL_TOOLS`; `search_tools($query)` finds them.';

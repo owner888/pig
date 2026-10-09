@@ -24,6 +24,24 @@ final class Source
 
     private const string SUPPORTED_FIELDS_TEXT = '`max_output_tokens` and `timeout_ms`';
 
+    /**
+     * Lark grammar for providers with grammar-constrained tool input — upstream's
+     * `CODEMODE_SOURCE_GRAMMAR`, byte for byte. It only fixes the shape of the options line; the
+     * options JSON and the code are checked by `parse()`. A capable model then writes the script
+     * as raw text instead of a JSON-escaped string.
+     */
+    public const string GRAMMAR = <<<'LARK'
+
+        start: options_source | plain_source
+        options_source: OPTIONS_LINE NEWLINE SOURCE
+        plain_source: SOURCE
+
+        OPTIONS_LINE: /[ \t]*\/\/ @options:[^\r\n]*/
+        NEWLINE: /\r?\n/
+        SOURCE: /[\s\S]+/
+
+        LARK;
+
     /** Upstream's bound, `setTimeout`'s largest delay; kept so the two agree about what is refused. */
     private const int MAX_TIMEOUT_MS = 2_147_483_647;
 
