@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed `pig-vless` from opt-in-by-settings to `/web`'s shape: loading it writes the UUID and listen address into `settings.json` but opens no port; `/vless start | stop | restart | status` control it, and the bare `/vless` is `status` with the share link.
+
+## [0.5.14] - 2026-10-08
+
+### New Features
+
+- **Native VLESS Protocol Inbound Extension (`extensions/pig-vless`)**:
+  - Implemented standalone, pure-PHP VLESS proxy inbound supporting TCP relay via dual asynchronous `Web\TcpConnection` pipelines over `Raw` protocol, allowing mobile clients (Shadowrocket) to proxy traffic.
+  - Supported optional non-blocking TLS server handshake after socket acceptance.
+  - Designed with opt-in configuration (`"vless": {}` in `settings.json`), automatic UUID generation and persistence, silent drop defense on authentication failures, and `/vless` share URL generation.
+
 ## [0.5.13] - 2026-10-08
 
 ### Fixed

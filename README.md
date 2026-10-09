@@ -20,6 +20,7 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
   - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` tool.
   - `pig-web-search`: Real-time web search (`web_search`), readable page extraction (`fetch_web_page`), and headless Chrome DOM rendering (`browse_web_page`).
   - `pig-computer`: Anti-detection headless browser automation with mouse, keyboard, scrolling, clicking, and persistent domain cookies.
+  - `pig-vless`: A minimal VLESS inbound (TCP, optional TLS) so a phone can proxy through the machine pig runs on.
   - `pig-codemode`: Batch multi-tool execution inside an isolated PHP sandbox to minimize context window usage.
   - `pig-mcp`: Native Model Context Protocol (MCP) client supporting stdio and streamable HTTP servers with dynamic OAuth.
 - **Resilient Network & Logging**: Workerman-inspired fault isolation boundaries, auto-retry on transient SSL/socket drops, and a unified 5-tier colored logger (`Pig\Logger`).
@@ -220,6 +221,7 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 | **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
 | **`pig-codemode`** | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
 | **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
+| **`pig-vless`** | `extensions/pig-vless/` | A VLESS inbound beside the agent so a phone (Shadowrocket, v2rayNG) can go through this machine. TCP only, one UUID, TLS when a cert is given. Loading it writes a UUID and listen address into `settings.json`; nothing listens until `/vless start` (`stop`, `restart`, `status`), and `/vless` prints the `vless://` link. |
 
 ### What an extension can do
 

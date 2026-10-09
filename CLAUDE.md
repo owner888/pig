@@ -3719,11 +3719,37 @@ and would have been the fifth copy in `McpMode`; it is **`HookRunner::wire($sess
 and what each mode keeps for itself is `onError()`, since where a broken hook is reported is the
 one thing that differed.
 
-**VLESS was declined for core.** The developer's real goal was an Xray-like inbound so a phone could
-proxy through the Mac. Server-side it is feasible in PHP (terminate TLS, read the 16-byte UUID and
-the target, pump bytes), but it is a public-facing proxy server with no relation to the agent, and
-Xray / sing-box already do it with REALITY, UDP and probing resistance pig would never catch up to.
-Agreed: an extension or a separate repository if he wants one in PHP, not `packages/`.
+**VLESS was declined for core and built as `extensions/pig-vless`.** The developer's real goal was
+an Xray-like inbound so a phone could proxy through the Mac. It is a public-facing proxy server with
+no relation to the agent, and Xray / sing-box already do it with REALITY, UDP and probing resistance
+pig would never catch up to — so not `packages/`, and the smallest version that a phone can use:
+
+- **TCP command only**; UDP (2) and MUX (3) close the connection. UDP over a stream needs
+  per-packet framing on both ends, and Shadowrocket falls back to direct for UDP when the proxy
+  declines it, which is fine for a phone.
+- **The relay is two `Web\Connection`s over a `Raw` protocol** — `TcpConnection`'s buffered,
+  backpressured socket with the framing taken out, one for the phone and one for the far end,
+  each `sendRaw()`ing what the other reads. The outbound connect is `STREAM_CLIENT_ASYNC_CONNECT`
+  plus one writable wakeup, with `stream_socket_get_name(…, true) === false` as "refused". The
+  name lookup inside `stream_socket_client()` is the one blocking call, and the price of simplest.
+- **TLS is optional and done after accept.** The listener is plain `tcp://` even with a cert,
+  and `stream_socket_enable_crypto(STREAM_CRYPTO_METHOD_TLS_SERVER)` is stepped on readable
+  until it returns true — because `stream_socket_accept()` on a `tls://` listener does the
+  whole handshake blocking, and a phone on a slow link would hold the loop for everyone.
+- **Configured on load, opened on request.** `<cwd>/extensions/` loads for anyone running pig
+  in this repository, so the extension writes its settings on `session_start` — listen address
+  and a UUID, made once and kept so the phone's link survives restarts (the developer chose
+  generate-and-save over refuse-and-explain) — and listens on nothing until `/vless start`.
+  `/vless stop | restart | status` as `/web` has them; the bare `/vless` is `status`, not
+  `start` as `/web`'s is, because a proxy port is not something to open by a slip of the
+  fingers. (The first cut gated on a `"vless": {}` key instead; the developer asked for this.)
+  A wrong UUID or a non-VLESS first byte closes the socket without a word, since a reply would
+  tell a scanner what is listening.
+
+Regression tests: `Extensions\VlessServerTest` — an echo server on one loopback port, the inbound
+on another, a hand-built header as the phone: the `\x00\x00` response head then the relayed echo,
+a domain address, a header split across two writes, the wrong UUID and a UDP command and an HTTP
+request all closed silently, the parser over all three address types, and the share link.
 
 Regression tests: `Mcp\McpServerTest` — a real loopback listener and a real `Async\Socket` into it,
 asserting the bytes an MCP client reads: the session id header, version negotiation, 202 for a

@@ -20,6 +20,7 @@
   - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板与 `generate_image` 生图工具。
   - `pig-web-search`：DuckDuckGo 实时网络搜索（`web_search`）、网页文本内容提取（`fetch_web_page`）与无头 Chrome 动态渲染（`browse_web_page`）。
   - `pig-computer`：防检测无头浏览器自动化控制，支持精准鼠标移动、点击、滚动、文本键入、高清截图与按域名持久化 Cookie。
+  - `pig-vless`：最简 VLESS 入站（仅 TCP，可选 TLS），让手机（Shadowrocket、v2rayNG）通过跑 pig 的这台机器上网。
   - `pig-codemode`：PHP 原生沙盒批量执行代码模式（`open_basedir`、`disable_functions`），成倍降低长上下文消耗。
   - `pig-mcp`：原生 Model Context Protocol 客户端，支持标准 stdio 与可流式 HTTP MCP 服务，集成动态 OAuth 授权认证。
 - **工业级故障隔离与日志**：借鉴 Workerman 设计的结构化边界故障隔离（Fault Isolation），底层 Socket/SSL 瞬态断连自动重试，以及统一的五级彩色日志工具（`Pig\Logger`）。
@@ -213,6 +214,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
 | **`pig-codemode`** | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
 | **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
+| **`pig-vless`** | `extensions/pig-vless/` | 挂在 agent 旁边的 VLESS 入站，手机通过这台机器上网。仅 TCP、单 UUID，给了证书就走 TLS。加载时把 UUID 和监听地址写进 `settings.json`，但要 `/vless start` 才监听（`stop`、`restart`、`status`）；`/vless` 打印 `vless://` 链接。 |
 
 ### 扩展能做什么
 
