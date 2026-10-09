@@ -474,7 +474,9 @@ final class AgentLoop
             }
 
             if ($event instanceof DoneEvent || $event instanceof ErrorEvent) {
-                $final = $response->result()->await();
+                // Upstream stamps the level the loop asked for on every response it streams, which
+                // is how a virtual model's router is told what the previous response was asked with.
+                $final = $response->result()->await()->withThinkingLevel(ThinkingLevel::fromReasoning($config->reasoning)->value);
 
                 if ($added) {
                     $context->messages[count($context->messages) - 1] = $final;
@@ -496,7 +498,7 @@ final class AgentLoop
             }
         }
 
-        return $response->result()->await();
+        return $response->result()->await()->withThinkingLevel(ThinkingLevel::fromReasoning($config->reasoning)->value);
     }
 
     /**

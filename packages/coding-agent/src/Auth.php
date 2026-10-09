@@ -577,18 +577,21 @@ final class Auth
             return $credentials;
         }
 
+        // Outside a coroutine (peeking during startup or a session restore, before the loop
+        // runs): the renewal cannot be awaited here, so the stored token is answered as it is and
+        // the first turn renews it inside the loop. Decided *before* the refresh is attempted:
+        // the refresh connects before it first awaits, so letting it run and catching the
+        // "inside a coroutine" error only worked while the connect succeeded — offline, or with no
+        // DNS, startup with an expired token died on the socket error instead.
+        if (\Fiber::getCurrent() === null) {
+            return $credentials;
+        }
+
         $id = $provider instanceof Provider ? $provider->value : $provider->id();
 
         try {
             $renewed = $provider->refresh($credentials);
         } catch (Throwable $problem) {
-            if (\Fiber::getCurrent() === null && str_contains($problem->getMessage(), 'inside a coroutine')) {
-                // Outside a coroutine (e.g. peeking during startup or session restore before the
-                // loop starts): do not crash on the async refresh; return the existing credentials
-                // and let the actual turn refresh properly inside the event loop.
-                return $credentials;
-            }
-
             throw new OauthError(
                 "Could not renew the {$id} token: {$problem->getMessage()}",
                 0,

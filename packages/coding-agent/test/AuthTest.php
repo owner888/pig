@@ -14,6 +14,7 @@ use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\Test\AssertsThrows;
 use Pig\Test\WithoutProviderKeys;
 
@@ -432,10 +433,11 @@ final class AuthTest extends TestCase
 
     public function testARenewalThatFailsIsReportedAndTheCredentialIsKept(): void
     {
-        // Expired, and with nothing to renew it with — refused before a socket is opened.
+        // Expired, and with nothing to renew it with — refused before a socket is opened. Inside
+        // a coroutine, as a turn asks: outside one the stored token is answered as it is.
         $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "", "access": "old", "expires": 1}}');
 
-        $problem = $this->assertThrows(OauthError::class, static fn (): ?string => $auth->apiKey('anthropic'));
+        $problem = $this->assertThrows(OauthError::class, static fn (): ?string => Async::run(static fn (): ?string => $auth->apiKey('anthropic')));
 
         $this->assertStringContainsString('Could not renew', $problem->getMessage());
         // Upstream deletes the stored credential here and carries on to the environment, so
@@ -456,7 +458,7 @@ final class AuthTest extends TestCase
         $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "", "access": "old", "expires": 1}}');
 
         $this->assertSame('old', $auth->credentials(Provider::Anthropic)?->access, 'the raw read is the stale one');
-        $this->assertThrows(OauthError::class, static fn (): mixed => $auth->freshCredentials(Provider::Anthropic), 'Could not renew');
+        $this->assertThrows(OauthError::class, static fn (): mixed => Async::run(static fn (): mixed => $auth->freshCredentials(Provider::Anthropic)), 'Could not renew');
     }
 
     public function testFreshCredentialsIsTheStoredOnesWhileTheyStillHold(): void

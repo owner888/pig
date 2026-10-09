@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\VirtualModels;
+namespace Pig\CodingAgent;
 
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Model;

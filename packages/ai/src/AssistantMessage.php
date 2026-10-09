@@ -41,7 +41,12 @@ final readonly class AssistantMessage
      *        `{provider, modelId, api, id, expiresAt?, pollAfterMs?, data?}`, the provider's token for
      *        the result it will produce later. Carried as written; see `StopReason::Deferred`
      *
-     * The five after `rawStopReason` follow it for the same reason it is last: they are upstream's
+     * @param string|null            $thinkingLevel upstream's "Pi thinking level the agent loop
+     *        requested for this response" — a `ThinkingLevel` value, stamped by the agent loop on
+     *        every response it streams (`AgentLoop::streamAssistantResponse()`). Null outside the
+     *        loop (a summary, a provider called directly) and on responses written before it existed
+     *
+     * The six after `rawStopReason` follow it for the same reason it is last: they are upstream's
      * optional fields, absent from JSON when null, and appended so no positional call changes.
      */
     public function __construct(
@@ -60,8 +65,32 @@ final readonly class AssistantMessage
         public ?array $diagnostics = null,
         public ?string $providerThinkingLevel = null,
         public ?array $deferred = null,
+        public ?string $thinkingLevel = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
+    }
+
+    /** This response with the thinking level it was asked with — upstream's `Object.assign(result, {thinkingLevel})`. */
+    public function withThinkingLevel(string $thinkingLevel): self
+    {
+        return new self(
+            $this->content,
+            $this->api,
+            $this->provider,
+            $this->model,
+            $this->usage,
+            $this->stopReason,
+            $this->errorMessage,
+            $this->timestamp,
+            $this->rawStopReason,
+            $this->responseId,
+            $this->responseModel,
+            $this->endTurn,
+            $this->diagnostics,
+            $this->providerThinkingLevel,
+            $this->deferred,
+            $thinkingLevel,
+        );
     }
 
     /** @return list<ToolCall> */

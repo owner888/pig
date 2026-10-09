@@ -270,6 +270,7 @@ final class TransformMessages
             $message->diagnostics,
             $message->providerThinkingLevel,
             $message->deferred,
+            $message->thinkingLevel,
         );
     }
 

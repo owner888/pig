@@ -40,7 +40,7 @@ enum Api: string
     /**
      * A virtual model — upstream's `VIRTUAL_MODEL_API`: a catalogue entry that routes each request
      * to a physical model and never reaches a provider itself. `Stream` refuses one by name; the
-     * session routes it first (`Pig\CodingAgent\VirtualModels`).
+     * session routes it first (`Pig\CodingAgent\VirtualModelRegistry`).
      */
     case Virtual = 'pi-virtual';
 }

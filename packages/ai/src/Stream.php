@@ -418,7 +418,7 @@ final class Stream
 
     /**
      * Upstream's `unroutedStream()`: a virtual model reaching a provider is a request nobody
-     * routed — the session routes it before streaming (`Pig\CodingAgent\VirtualModels`).
+     * routed — the session routes it before streaming (`Pig\CodingAgent\VirtualModelRegistry`).
      */
     private static function unrouted(Model $model): ProviderError
     {

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\VirtualModels;
+namespace Pig\CodingAgent;
 
 use Closure;
 use InvalidArgumentException;
@@ -133,8 +133,8 @@ final class VirtualModelRegistry
             $model,
             $thinkingLevel,
             $reason,
-            $previousModel === null ? null : new RoutedModel($previousModel),
-            $failedModel === null ? null : new RoutedModel($failedModel, null, $failed),
+            $previousModel === null ? null : new RoutedModel($previousModel, self::levelOf($latest)),
+            $failedModel === null ? null : new RoutedModel($failedModel, self::levelOf($failed), $failed),
             $state,
             $messages,
             $signal,
@@ -156,6 +156,12 @@ final class VirtualModelRegistry
         }
 
         return new ModelRoute($target, ThinkingLevel::clampedFor($target, $route->thinkingLevel), $route->state);
+    }
+
+    /** The level a response was asked with, when it records one pig's agent knows. */
+    private static function levelOf(?AssistantMessage $message): ?ThinkingLevel
+    {
+        return $message?->thinkingLevel === null ? null : ThinkingLevel::tryFrom($message->thinkingLevel);
     }
 
     /** A catalogue model that is not virtual — upstream's `getPhysicalModel()`. */

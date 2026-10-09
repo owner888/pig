@@ -85,10 +85,10 @@ use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
 use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
 use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
 use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
-use Pig\CodingAgent\VirtualModels\ModelRoute;
-use Pig\CodingAgent\VirtualModels\ModelRouteRequest;
-use Pig\CodingAgent\VirtualModels\RoutedModel;
-use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
+use Pig\CodingAgent\ModelRoute;
+use Pig\CodingAgent\ModelRouteRequest;
+use Pig\CodingAgent\RoutedModel;
+use Pig\CodingAgent\VirtualModelRegistry;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -1054,7 +1054,7 @@ final class AgentSession
         $latest = VirtualModelRegistry::latestResponse($this->messages());
         $physical = $latest === null ? null : VirtualModelRegistry::physical($latest->provider, $latest->model);
 
-        return $physical === null ? null : new RoutedModel($physical);
+        return $physical === null ? null : new RoutedModel($physical, $latest?->thinkingLevel === null ? null : ThinkingLevel::tryFrom($latest->thinkingLevel));
     }
 
     /** The model whose limits apply to the conversation — upstream's `_limitsModel()`. */
@@ -2353,10 +2353,6 @@ final class AgentSession
     }
 
     /**
-     * Upstream's `_isRetryableError()`: "Context overflow is handled by compaction, not retry", and
-     * otherwise `isRetryableAssistantError()` — the error's text against upstream's pattern lists.
-     */
-    /**
      * Whether the post-run step will send this run's failed turn again — upstream's
      * `_willRetryAfterAgentEnd()`: not after escape, not with retries off or used up, and otherwise
      * whether the run's last assistant message is a retryable error.
@@ -2382,6 +2378,10 @@ final class AgentSession
         return false;
     }
 
+    /**
+     * Upstream's `_isRetryableError()`: "Context overflow is handled by compaction, not retry", and
+     * otherwise `isRetryableAssistantError()` — the error's text against upstream's pattern lists.
+     */
     private function isRetryableError(AssistantMessage $message): bool
     {
         if (Overflow::happened($message, $this->modelForMessage($message)?->contextWindow)) {

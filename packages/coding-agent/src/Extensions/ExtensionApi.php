@@ -16,8 +16,8 @@ use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\RegisteredMcpServer;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\VirtualModels\VirtualModelDefinition;
-use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
+use Pig\CodingAgent\VirtualModelDefinition;
+use Pig\CodingAgent\VirtualModelRegistry;
 
 /**
  * What an extension factory is handed to register capabilities.

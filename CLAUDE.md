@@ -1623,6 +1623,12 @@ Five things worth keeping straight:
   about half the time.
 - **The new refresh token replaces the old one.** Anthropic rotates them, so a session that
   kept sending the one it signed in with would work exactly once more.
+- **An expired token read outside a coroutine is answered as it is, and the decision is made
+  before the refresh is tried.** `fresh()` used to attempt the renewal and catch `Future::await()`'s
+  "inside a coroutine" error — but the refresh *connects* before it first awaits, so offline or
+  without DNS the socket error came first and `restoreSettings()` crashed startup with an expired
+  token, the one case the catch existed for. `\Fiber::getCurrent() === null` is checked up front
+  now; the first turn renews inside the loop.
 - **Five minutes is taken off every expiry**, which is upstream's margin. A token that expires
   in flight fails the request it was attached to rather than the next one, and that request is
   a whole turn.
@@ -2722,9 +2728,10 @@ arrangement is the thing to know before reading any of them:**
   queued) is refused with upstream's sentence. `outcome` is set from each `turn_end`'s stop reason.
   pig has no `_pendingCustomMessages`: a hook's message during a run is already a follow-up on the
   agent's queue, which is what `pendingMessages` shows. `turn_end` is **not** a boundary here.
-- **Virtual models are `Pig\CodingAgent\VirtualModels`**, the virtual-model half of upstream's
-  `ModelRuntime` on a static `VirtualModelRegistry` (reached through `current()`, `reset()` on
-  `/reload`, like `McpServerRegistry`). `register()` puts an `Api::Virtual` row into `Models`
+- **Virtual models are `VirtualModelRegistry` + `VirtualModelDefinition`, `ModelRouteRequest`,
+  `ModelRoute`, `RoutedModel`**, flat in `Pig\CodingAgent` beside `McpServerRegistry` and
+  `RegisteredMcpServer`: the virtual-model half of upstream's `ModelRuntime` on a static registry
+  (reached through `current()`, `reset()` on `/reload`, like `McpServerRegistry`). `register()` puts an `Api::Virtual` row into `Models`
   (`registerVirtual()`, laid over the table last so it hides a physical model of the same id) and
   keeps the router; `Stream` refuses to stream such a row, and `Stream::envApiKey()` answers the
   ambient marker for a provider of nothing but virtual models, which is how `Auth::hasKeyFor()`,
@@ -2744,9 +2751,11 @@ arrangement is the thing to know before reading any of them:**
   never a selection; `recordSelection()` at the start of each prompt writes the selection down when
   the branch implies another. `routedModel()`, `limitsModel()` and `modelForMessage()` are
   upstream's: the footer, `contextUsage()`, `shouldCompact()` and the overflow checks use the physical
-  model that answered last. **`RoutedModel::$thinkingLevel` is always null**: upstream stamps
-  `thinkingLevel` on every assistant message in the loop and pig's `AssistantMessage` has no such
-  field, so a router is not told the level of the previous response.
+  model that answered last. `RoutedModel::$thinkingLevel` is the response's own
+  `AssistantMessage::$thinkingLevel`, which `AgentLoop::streamAssistantResponse()` stamps on every
+  response (upstream's `Object.assign(result, {thinkingLevel})`) and `MessageJson` writes as
+  `thinkingLevel`; the copies in `Retry`, `TransformMessages`, `FauxProvider` and
+  `SessionManager` carry it, and `withThinkingLevel()` is the one way to set it on a readonly message.
 
 **Not yet ported from upstream's `ExtensionAPI`:** `cache_warming_decision` (the cache warmer),
 the context's `modelRegistry` (pig has `Auth` + the static `Models`), and `ExtensionCommandContext`

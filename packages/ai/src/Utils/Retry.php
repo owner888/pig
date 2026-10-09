@@ -235,6 +235,7 @@ final class Retry
                     $response->diagnostics,
                     $response->providerThinkingLevel,
                     $response->deferred,
+                    $response->thinkingLevel,
                 );
             }
 

@@ -33,10 +33,10 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\VirtualModels\ModelRoute;
-use Pig\CodingAgent\VirtualModels\ModelRouteRequest;
-use Pig\CodingAgent\VirtualModels\VirtualModelDefinition;
-use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
+use Pig\CodingAgent\ModelRoute;
+use Pig\CodingAgent\ModelRouteRequest;
+use Pig\CodingAgent\VirtualModelDefinition;
+use Pig\CodingAgent\VirtualModelRegistry;
 use RuntimeException;
 
 /**
@@ -134,11 +134,14 @@ final class VirtualModelsTest extends TestCase
         $this->assertSame([ModelRouteRequest::USER, ModelRouteRequest::CONTINUATION], array_map(static fn (ModelRouteRequest $r): string => $r->reason, $this->routed));
         $this->assertNull($this->routed[0]->previous);
         $this->assertSame('smart', $this->routed[1]->previous?->model->id, 'the continuation is told what answered last');
+        $this->assertSame(ThinkingLevel::High, $this->routed[1]->previous?->thinkingLevel, 'and the level it was asked with');
+        $this->assertSame(ThinkingLevel::Off, $session->routedModel()?->thinkingLevel, 'the footer sees the latest one, clamped to the fast model');
         $this->assertSame('auto', $session->model()?->id, 'the selection stays virtual');
         $this->assertSame('fast', $session->routedModel()?->model->id);
 
         $responses = array_values(array_filter($session->messages(), static fn (mixed $m): bool => $m instanceof AssistantMessage));
         $this->assertSame(['smart', 'fast'], array_map(static fn (AssistantMessage $m): string => $m->model, $responses));
+        $this->assertSame(['high', 'off'], array_map(static fn (AssistantMessage $m): ?string => $m->thinkingLevel, $responses), 'and the level each was asked with');
     }
 
     public function testARetryIsRoutedAsOneWithTheFailedRequest(): void

@@ -241,6 +241,27 @@ final class Settings
         $this->set('defaultThinkingLevel', $level->value);
     }
 
+    /**
+     * The models a turn moves on to when the current one has run out of quota, in order.
+     *
+     * pig's own key, with no upstream counterpart: `fallbackModels`, a list of patterns in
+     * `--models`' spelling (`google/gemini-3.8-flash:medium`). `defaultModel` and `defaultProvider`
+     * are untouched by it — this is what comes *after* them, not a replacement. Anything that is
+     * not a list of strings reads as none.
+     *
+     * @return list<string>
+     */
+    public function fallbackModels(): array
+    {
+        $patterns = $this->get('fallbackModels');
+
+        if (!is_array($patterns)) {
+            return [];
+        }
+
+        return array_values(array_filter($patterns, static fn (mixed $pattern): bool => is_string($pattern) && trim($pattern) !== ''));
+    }
+
     public function hideThinking(): bool
     {
         return $this->get('hideThinkingBlock') === true;

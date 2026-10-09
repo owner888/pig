@@ -2705,7 +2705,7 @@ final class Models
 
     /**
      * A virtual model (`Api::Virtual`) under any provider, with or without physical models of its
-     * own; the same provider and id again replaces it. `Pig\CodingAgent\VirtualModels` builds the
+     * own; the same provider and id again replaces it. `Pig\CodingAgent\VirtualModelRegistry` builds the
      * row and keeps the router; this end only lists it.
      */
     public static function registerVirtual(Model $model): void

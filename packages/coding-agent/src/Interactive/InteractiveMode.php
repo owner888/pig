@@ -58,7 +58,7 @@ use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\CodingAgent\McpServerRegistry;
-use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
+use Pig\CodingAgent\VirtualModelRegistry;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;

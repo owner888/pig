@@ -43,6 +43,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.3] - 2026-10-08
+
+### New Features
+
+- **Response Thinking Level Tracking (`AssistantMessage::$thinkingLevel`)**:
+  - Added `AssistantMessage::$thinkingLevel` stamped on every streamed response via `AgentLoop::streamAssistantResponse()` matching upstream pi.
+  - Persisted thinking level in `.jsonl` session files via `MessageJson`, allowing virtual model routers to inspect previous response thinking levels on continuation turns (`RoutedModel::$thinkingLevel`).
+- **Quota Exhaustion Fallback Models Setting (`Settings::fallbackModels`)**:
+  - Added `fallbackModels` setting allowing users to configure an ordered list of fallback model patterns (e.g. `google/gemini-3.8-flash:medium`) for automatic switching when a primary model encounters quota depletion.
+
+### Changed
+
+- **Flat Architecture for Virtual Model Contracts**:
+  - Moved `VirtualModelRegistry`, `VirtualModelDefinition`, `ModelRouteRequest`, `ModelRoute`, and `RoutedModel` into the root `Pig\CodingAgent` namespace alongside `McpServerRegistry` for consistent package design.
+
+### Fixed
+
+- **Pre-emptive Offline Guard for Auth Token Renewal (`Auth::fresh`)**:
+  - Added upfront `\Fiber::getCurrent() === null` check before initiating OAuth refresh connections, preventing startup and session restore operations in offline or DNS-less environments from failing with socket connection errors.
+- **Provider Key Isolation for New Built-in Providers (`WithoutProviderKeys`)**:
+  - Added environment variable clearing for DeepSeek, Azure, Mistral, and all newly supported provider endpoints in test isolation fixtures.
+
 ## [0.5.2] - 2026-10-08
 
 ### New Features

@@ -509,6 +509,7 @@ final class SearchToolsTest extends ToolTestCase
     #[DataProvider('bothSearchTools')]
     public function testASearchDoesNotStopTheLoopWhileItRuns(string $tool, array $arguments): void
     {
+        $tool === 'grep' ? $this->needsRipgrep() : $this->needsFd();
         Loop::reset();
 
         $ticks = 0;

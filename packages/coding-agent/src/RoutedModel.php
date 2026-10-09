@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\VirtualModels;
+namespace Pig\CodingAgent;
 
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
@@ -11,8 +11,8 @@ use Pig\Ai\Model;
 /**
  * A physical model a request went to — `ModelRouteRequest::$previous` and `$failed`.
  *
- * `$thinkingLevel` is null until pig's assistant messages record the level they were asked
- * with, which upstream's do (`AssistantMessage.thinkingLevel`) and pig's do not yet.
+ * `$thinkingLevel` is the response's own `AssistantMessage::$thinkingLevel`, which the agent loop
+ * stamps; null for a response written before it existed or made outside the loop.
  */
 final readonly class RoutedModel
 {
