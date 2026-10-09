@@ -59,6 +59,8 @@ final class BashOutputComponent implements Component
     public function __construct(
         private int $rows,
         private readonly ?Closure $note = null,
+        /** Columns left blank on either side — upstream's `outputPad` on `truncateToVisualLines()`. */
+        private readonly int $paddingX = 0,
     ) {
     }
 
@@ -135,7 +137,8 @@ final class BashOutputComponent implements Component
         // widened window stayed blank for half a second. How many rows the dropped head
         // *would* have made is the one thing the note needs, and `TextWrap::rows()` counts
         // without building them.
-        $width = max(1, $width);
+        // The text is wrapped to the width between the pads, and `padded()` puts them on.
+        $width = max(1, $width - $this->paddingX * 2);
         $logical = explode("\n", $this->text);
         $kept = [];
         $dropped = 0;
@@ -152,7 +155,7 @@ final class BashOutputComponent implements Component
         }
 
         if ($dropped === 0 && count($kept) <= $this->rows) {
-            return self::padded($kept, $width);
+            return $this->padded($kept, $width);
         }
 
         $extra = count($kept) - $this->rows;
@@ -171,17 +174,19 @@ final class BashOutputComponent implements Component
             array_unshift($kept, Width::truncate(($this->note)($dropped), $width, ''));
         }
 
-        return self::padded($kept, $width);
+        return $this->padded($kept, $width);
     }
 
     /**
      * @param list<string> $lines
      * @return list<string>
      */
-    private static function padded(array $lines, int $width): array
+    private function padded(array $lines, int $width): array
     {
+        $pad = str_repeat(' ', $this->paddingX);
+
         return array_map(
-            static fn (string $line): string => $line . str_repeat(' ', max(0, $width - Width::visible($line))),
+            static fn (string $line): string => $pad . $line . str_repeat(' ', max(0, $width - Width::visible($line))) . $pad,
             $lines,
         );
     }

@@ -39,10 +39,21 @@ final class Box implements Component, MouseHandler
 
     /** @param Closure(string): string|null $background */
     public function __construct(
-        private readonly int $paddingX = 1,
+        private int $paddingX = 1,
         private readonly int $paddingY = 1,
         private ?Closure $background = null,
     ) {
+    }
+
+    /** Upstream's `setPaddingX()`, for the `outputPad` setting changing under a drawn transcript. */
+    public function setPaddingX(int $paddingX): void
+    {
+        if ($paddingX === $this->paddingX) {
+            return;
+        }
+
+        $this->paddingX = max(0, $paddingX);
+        $this->invalidateSelf();
     }
 
     public function addChild(Component $child): void

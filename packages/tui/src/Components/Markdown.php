@@ -56,7 +56,7 @@ final class Markdown implements Component
 
     public function __construct(
         private string $text = '',
-        private readonly int $paddingX = 1,
+        private int $paddingX = 1,
         private readonly int $paddingY = 0,
         ?MarkdownTheme $theme = null,
         private readonly ?DefaultTextStyle $defaultStyle = null,
@@ -91,6 +91,20 @@ final class Markdown implements Component
     public function text(): string
     {
         return $this->text;
+    }
+
+    /**
+     * Upstream has no setter here — its components make a new `Markdown` when `outputPad`
+     * changes. pig's keep theirs, so the pad is settable, and the cache goes with it.
+     */
+    public function setPaddingX(int $paddingX): void
+    {
+        if ($paddingX === $this->paddingX) {
+            return;
+        }
+
+        $this->paddingX = max(0, $paddingX);
+        $this->invalidate();
     }
 
     #[\Override]

@@ -652,17 +652,10 @@ final class ToolExecutionTest extends TestCase
         $model = $this->tool('bash', ['command' => 'make test']);
         $model->updateResult($this->said($output));
 
-        $typed = new ToolExecutionComponent(
-            'bash',
-            ['command' => 'make test'],
-            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
-        );
-        $typed->updateResult($this->said($output));
-
-        // Upstream's two components, upstream's two numbers: 5 for a command the model ran,
-        // 20 for one the person typed and is looking at.
+        // Upstream's `BASH_PREVIEW_LINES = 5` for a command the model ran. A command the person
+        // typed is `BashExecutionComponent` now, with upstream's 20 — see
+        // `InteractiveModeTest::testATypedCommandKeepsTwentyLinesAndCountsTheRest`.
         $this->assertStringContainsString('... (25 earlier lines)', $this->text($model));
-        $this->assertStringContainsString('... (10 earlier lines)', $this->text($typed));
     }
 
     // ---- a tool that draws itself ------------------------------------------------------

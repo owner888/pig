@@ -79,6 +79,8 @@ final class AssistantMessageComponent extends Container
         private bool $hideThinking = false,
         private readonly array $transformers = [],
         ?string $hiddenThinkingLabel = null,
+        /** Upstream's `outputPad`: the blank column either side of the text. */
+        private int $outputPad = 1,
     ) {
         $this->hiddenThinkingLabel = $hiddenThinkingLabel;
         $this->content = new Container();
@@ -103,6 +105,17 @@ final class AssistantMessageComponent extends Container
         $lines[$last] = self::OSC133_ZONE_END . self::OSC133_ZONE_FINAL . $lines[$last];
 
         return $lines;
+    }
+
+    /** Upstream's `setOutputPad()`: rebuilt, because every text here was made with the old one. */
+    public function setOutputPad(int $outputPad): void
+    {
+        if ($outputPad === $this->outputPad) {
+            return;
+        }
+
+        $this->outputPad = $outputPad;
+        $this->invalidate();
     }
 
     public function setHideThinking(bool $hide): void
@@ -169,7 +182,7 @@ final class AssistantMessageComponent extends Container
                         continue;
                     }
 
-                    $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, Themes::getMarkdownTheme()));
+                    $said = $this->keep('said', fn (): Component => new Markdown('', $this->outputPad, 0, Themes::getMarkdownTheme()));
 
                     if ($said instanceof Markdown) {
                         $said->setText($partText);
@@ -215,7 +228,7 @@ final class AssistantMessageComponent extends Container
         if ($this->hideThinking) {
             $txt = $this->hiddenThinkingLabel ?? 'Thinking...';
             $label = Themes::theme()->fg('thinkingText', "\e[3m{$txt}\e[23m");
-            $this->keep('thought-label', static fn (): Component => new Text($label, 1, 0));
+            $this->keep('thought-label', fn (): Component => new Text($label, $this->outputPad, 0));
 
             if ($textAfter) {
                 $this->keep('thought-gap', static fn (): Component => new Spacer(1));
@@ -226,7 +239,7 @@ final class AssistantMessageComponent extends Container
 
         $thought = $this->keep('thought', fn (): Component => new Markdown(
             '',
-            1,
+            $this->outputPad,
             0,
             Themes::getMarkdownTheme(),
             new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('thinkingText', $text), italic: true),
@@ -254,7 +267,7 @@ final class AssistantMessageComponent extends Container
         }
 
         if ($message->stopReason === StopReason::Aborted) {
-            $aborted = $this->keep('aborted', static fn (): Component => new Text('', 1, 0));
+            $aborted = $this->keep('aborted', fn (): Component => new Text('', $this->outputPad, 0));
 
             if ($aborted instanceof Text) {
                 $abortMessage = $message->errorMessage !== null && $message->errorMessage !== '' && $message->errorMessage !== 'Request was aborted'
@@ -268,7 +281,7 @@ final class AssistantMessageComponent extends Container
 
         if ($message->stopReason === StopReason::Error) {
             $this->keep('error-gap', static fn (): Component => new Spacer(1));
-            $error = $this->keep('error', static fn (): Component => new Text('', 1, 0));
+            $error = $this->keep('error', fn (): Component => new Text('', $this->outputPad, 0));
 
             if ($error instanceof Text) {
                 $error->setText(Themes::theme()->fg('error', 'Error: ' . ($message->errorMessage ?? 'Unknown error')));

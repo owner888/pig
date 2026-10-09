@@ -28,10 +28,21 @@ class Text implements Component
     /** @param Closure(string): string|null $background applied to each line, padding included */
     public function __construct(
         protected string $text = '',
-        private readonly int $paddingX = 1,
+        private int $paddingX = 1,
         private readonly int $paddingY = 1,
         private ?Closure $background = null,
     ) {
+    }
+
+    /** Upstream's `setPaddingX()`, for the `outputPad` setting changing under a drawn transcript. */
+    public function setPaddingX(int $paddingX): void
+    {
+        if ($paddingX === $this->paddingX) {
+            return;
+        }
+
+        $this->paddingX = max(0, $paddingX);
+        $this->invalidate();
     }
 
     /** Not the text it already has: see `Markdown::setText()`, which is where that costs something. */

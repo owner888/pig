@@ -180,6 +180,12 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
         $this->editor->setAutocompleteProvider($provider);
     }
 
+    /** Upstream's `setPaddingX()`, which the `/settings` row for `editorPaddingX` calls. */
+    public function setPaddingX(int $padding): void
+    {
+        $this->editor->setPaddingX($padding);
+    }
+
     public function setClipboard(?Clipboard $clipboard): void
     {
         $this->editor->setClipboard($clipboard);

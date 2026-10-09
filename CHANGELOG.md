@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.5] - 2026-10-08
+
+### Added
+
+- Bound upstream's `app.message.copy` (`ctrl+x`): in fullscreen with `fullscreenCopyOnSelect` off it copies the mouse selection, otherwise the last answer, with a `Copied!` flash in fullscreen.
+
+### Changed
+
+- **Transcript spacing and the two padding settings, as upstream has them**:
+  - A typed `!cmd` / `!!cmd` is drawn by a new `BashExecutionComponent` (upstream's `bash-execution.ts`): rule, bold command, last 20 lines, loader, status parts, rule; `!!` in `dim`. The `Not added to the conversation` note is gone with it.
+  - `/hotkeys` and `/help` draw in the changelog's framed block with a bold *Keyboard Shortcuts* title; `/new` says `✓ New session started` with a blank row under it; *What's New* has upstream's spacer under the title; every overlay list has a blank row under it.
+  - Added the `outputPad` (0/1) and `editorPaddingX` (0–3) settings with their `/settings` rows *Output padding* and *Editor padding*, threaded through every message, tool, command and error component and the editor.
+
 ## [0.5.4] - 2026-10-08
 
 ### New Features

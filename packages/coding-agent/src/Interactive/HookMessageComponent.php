@@ -48,12 +48,13 @@ final class HookMessageComponent extends Container
     public function __construct(
         private readonly HookMessage $message,
         bool $expanded = false,
+        int $outputPad = 1,
     ) {
         // A hook's message is usually output it just captured, so it is no more pig's own
         // words than a tool's result is — and this was the one of the three that had no
         // guard at all: one stray byte from a build log threw out of `render()`.
         $this->text = Shell::sanitize($message->toText());
-        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
+        $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->heading = new Text('', 0, 0);
 
         $this->addChild(new Spacer(1));
@@ -67,6 +68,12 @@ final class HookMessageComponent extends Container
     {
         parent::invalidate();
         $this->setExpanded($this->expanded);
+    }
+
+    /** Upstream's `setOutputPad()`: the box's own padding, which is where the pad lives here. */
+    public function setOutputPad(int $outputPad): void
+    {
+        $this->box->setPaddingX($outputPad);
     }
 
     public function setExpanded(bool $expanded): void

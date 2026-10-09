@@ -241,6 +241,12 @@ final class InteractiveMode
     /** `terminal.showImages` — off names a picture rather than drawing it. */
     private bool $showImages = true;
 
+    /**
+     * Upstream's `outputPad`: the blank column either side of a message, a tool's output and a
+     * command's, 1 or 0 — the `outputPad` setting. Read once at start and again from `/settings`.
+     */
+    private int $outputPad = 1;
+
     /** The easter egg, while it is animating, so its frame timer can be stopped. */
     private ?ArminComponent $armin = null;
 
@@ -373,6 +379,7 @@ final class InteractiveMode
         $this->settings = $settings ?? Settings::inMemory();
         $this->hideThinking = $this->settings->hideThinking();
         $this->showImages = $this->settings->showImages();
+        $this->outputPad = $this->settings->outputPad();
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
         $envMode = getenv('PIG_TUI_MODE') ?: getenv('PI_TUI_MODE');
@@ -410,6 +417,7 @@ final class InteractiveMode
         $this->loadedResourcesContainer = new Container();
         $this->customFooter = new Container();
         $this->defaultEditor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
+        $this->defaultEditor->setPaddingX($this->settings->editorPaddingX());
         $this->editor = $this->defaultEditor;
         $this->editorSlot = new Container();
         $this->editorSlot->addChild($this->editor);
@@ -625,11 +633,13 @@ final class InteractiveMode
                         $skillBlock,
                         $this->expanded,
                         $expandKey,
+                        $this->outputPad,
                     ));
                     if ($skillBlock->userMessage !== null) {
                         $this->chat->addChild(new UserMessageComponent(
                             $skillBlock->userMessage,
                             $this->hooks?->markdownTransformers() ?? [],
+                            $this->outputPad,
                         ));
                     }
 
@@ -639,6 +649,7 @@ final class InteractiveMode
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
                     $this->hooks?->markdownTransformers() ?? [],
+                    $this->outputPad,
                 ));
 
                 continue;
@@ -657,13 +668,13 @@ final class InteractiveMode
             }
 
             if ($message instanceof CompactionSummary) {
-                $this->chat->addChild(new CompactionComponent($message, $this->expanded));
+                $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad));
 
                 continue;
             }
 
             if ($message instanceof BranchSummary) {
-                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded));
+                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad));
 
                 continue;
             }
@@ -674,6 +685,7 @@ final class InteractiveMode
                     $this->hideThinking,
                     $this->hooks?->markdownTransformers() ?? [],
                     $this->hiddenThinkingLabel,
+                    $this->outputPad,
                 ));
 
                 foreach ($message->content as $block) {
@@ -718,18 +730,10 @@ final class InteractiveMode
 
     private function replayBash(BashExecution $execution): void
     {
-        $shown = new ToolExecutionComponent(
-            'bash',
-            ['command' => $execution->command],
-            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
-            showImages: $this->showImages,
-            toolRenderers: $this->toolRenderers('bash'),
-        );
-        $shown->setExpanded($this->expanded);
-        $shown->updateResult(
-            new AgentToolResult([new TextContent($execution->output)]),
-            $execution->cancelled || ($execution->exitCode ?? 0) !== 0,
-        );
+        // Upstream's resume path: the component, the whole output, then `setComplete()`.
+        $shown = $this->bashExecutionComponent($execution->command, excludeFromContext: false);
+        $shown->appendOutput($execution->output);
+        $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->spillPath);
 
         $this->chat->addChild($shown);
     }
@@ -873,6 +877,7 @@ final class InteractiveMode
 
         foreach ($this->chat->children() as $child) {
             if ($child instanceof ToolExecutionComponent
+                || $child instanceof BashExecutionComponent
                 || $child instanceof CompactionComponent
                 || $child instanceof BranchSummaryComponent
                 || $child instanceof HookMessageComponent
@@ -1257,6 +1262,7 @@ final class InteractiveMode
         'app.suspend' => 'suspend',
         'ctrl+v' => 'paste, including an image from the clipboard',
         'app.editor.external' => 'edit the prompt in $VISUAL or $EDITOR',
+        'app.message.copy' => 'copy the selection in fullscreen, otherwise the last answer',
         'app.message.followUp' => 'while the agent works: queue for after the turn (enter steers)',
         'app.message.dequeue' => 'take the queued messages back into the prompt',
         'app.thinking.cycle' => 'cycle the thinking level',
@@ -1345,6 +1351,7 @@ final class InteractiveMode
         // habit to clear the screen did not even do that. Upstream's `onCtrlL` opens its model
         // selector, which is `/model` with nothing after it here.
         $this->editor->on('app.model.select', fn () => $this->showModels(''));
+        $this->editor->on('app.message.copy', fn () => $this->copyLastAnswer(flashConfirmation: true, preferSelection: true));
         $this->editor->on('app.message.followUp', $this->followUp(...));
         $this->editor->on('app.message.dequeue', $this->dequeue(...));
         $this->editor->on('app.editor.external', function (): void {
@@ -1935,9 +1942,9 @@ final class InteractiveMode
     /**
      * Run a `!` command and show it happening.
      *
-     * `!` puts the result in the conversation, `!!` does not. Both show the same thing on
-     * screen — what differs is whether the model sees it afterwards, which is worth being
-     * told rather than left to remember.
+     * `!` puts the result in the conversation, `!!` does not. Both are drawn by
+     * `BashExecutionComponent`, as upstream draws them; `!!` in `dim`, which is how the screen
+     * says the model will not see it.
      */
     private function runCommand(string $typed): void
     {
@@ -1956,69 +1963,55 @@ final class InteractiveMode
             return;
         }
 
-        $shown = new ToolExecutionComponent(
-            'bash',
-            ['command' => $command],
-            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
-            showImages: $this->showImages,
-            toolRenderers: $this->toolRenderers('bash'),
-            startedAt: microtime(true),
-        );
-        $shown->setExpanded($this->expanded);
+        $shown = $this->bashExecutionComponent($command, excludeFromContext: !$remember);
         $this->chat->addChild($shown);
         $this->tui->requestRender();
 
         Async::spawn(function () use ($command, $remember, $shown): void {
-            $running = true;
-            $tick = function () use (&$running, &$tick): void {
-                if ($running) {
-                    $this->tui->requestRender();
-                    Loop::get()->delay(0.5, $tick);
-                }
-            };
-            Loop::get()->delay(0.5, $tick);
-
             try {
+                // `executeBash()` hands over the output so far, whole; the component takes the
+                // piece that is new, as upstream's `appendOutput()` takes a chunk off the pipe.
+                $seen = 0;
                 $execution = $this->session->executeBash(
                     $command,
                     $remember,
-                    function (string $output) use ($shown): void {
-                        $shown->updateResult(new AgentToolResult([new TextContent($output)]), false, true);
+                    function (string $output) use ($shown, &$seen): void {
+                        $shown->appendOutput(substr($output, $seen));
+                        $seen = strlen($output);
                         $this->tui->requestRender();
                     },
                 );
 
-                // The details are what `drawBash()` reads its status line out of: the exit code,
-                // whether escape stopped it, and where the whole output went when it was cut. All
-                // three are on the execution already and none of them reached the screen —
-                // `BashExecution::toText()` was telling the model and nothing was telling the
-                // person. `truncation` and `fullOutputPath` are pi's own key names, the same two
-                // the `bash` tool writes.
-                $shown->updateResult(
-                    new AgentToolResult(
-                        [new TextContent($execution->output)],
-                        details: [
-                            'exitCode' => $execution->exitCode,
-                            'cancelled' => $execution->cancelled,
-                            'truncation' => $execution->truncated ? true : null,
-                            'fullOutputPath' => $execution->spillPath,
-                        ],
-                    ),
-                    $execution->cancelled || ($execution->exitCode ?? 0) !== 0,
-                );
-
-                if (!$remember) {
-                    $this->say('Not added to the conversation');
-                }
+                // Nothing said for `!!`: the block is drawn in `dim`, which is how upstream says
+                // the output stayed out of the conversation.
+                $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->spillPath);
             } catch (Throwable $error) {
-                $shown->fail($error->getMessage());
-            } finally {
-                $running = false;
+                $shown->appendOutput($error->getMessage());
+                $shown->setComplete(1, false);
             }
 
             $this->footer->invalidate();
             $this->tui->requestRender();
         });
+    }
+
+    /**
+     * Upstream's `new BashExecutionComponent(command, ui, excludeFromContext, outputPad)`, with the
+     * two key names it reads from the global keybindings handed in, and the current expansion.
+     */
+    private function bashExecutionComponent(string $command, bool $excludeFromContext): BashExecutionComponent
+    {
+        $shown = new BashExecutionComponent(
+            $command,
+            $this->tui,
+            $excludeFromContext,
+            $this->outputPad,
+            cancelKey: $this->keybindings->keyText('app.interrupt'),
+            expandKey: $this->keybindings->keyText('app.tools.expand'),
+        );
+        $shown->setExpanded($this->expanded);
+
+        return $shown;
     }
 
     /** Green while the line is a command, otherwise the thinking level's colour. */
@@ -2132,7 +2125,7 @@ final class InteractiveMode
 
         // The transcript above is left where it is: it is what was said, and the summary
         // is a note about it, not a replacement for anyone's memory of reading it.
-        $this->chat->addChild(new CompactionComponent($summary, $this->expanded));
+        $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad));
         $this->footer->invalidate();
         $this->tui->requestRender();
     }
@@ -2234,7 +2227,7 @@ final class InteractiveMode
     private function command(string $text, string $name): void
     {
         match ($name) {
-            'help', 'hotkeys' => $this->say($this->commandHelp()),
+            'help', 'hotkeys' => $this->sayHotkeys(),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
@@ -2434,6 +2427,7 @@ final class InteractiveMode
         $cwd = $this->cwd;
         $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', "Trust {$cwd}? — this session: {$now}, {$was}"), 1, 0));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -2655,8 +2649,26 @@ final class InteractiveMode
         $this->say('Debug log written to ' . $path);
     }
 
-    private function copyLastAnswer(): void
+    /**
+     * Upstream's `handleCopyCommand()`. `/copy` calls it bare; ctrl+x calls it as upstream's
+     * `app.message.copy` does — `preferSelection`, so in fullscreen with `fullscreenCopyOnSelect`
+     * off the key copies what the mouse selected (a selection that copied itself on release has
+     * nothing left to copy), and `flashConfirmation`, so the fullscreen flash says so rather than
+     * a line in the transcript.
+     */
+    private function copyLastAnswer(bool $flashConfirmation = false, bool $preferSelection = false): void
     {
+        if (
+            $preferSelection
+            && $this->renderer instanceof TuiAltScreen
+            && !$this->renderer->getCopyOnSelect()
+            && $this->renderer->hasActiveSelection()
+        ) {
+            $this->renderer->copyActiveSelectionToClipboard();
+
+            return;
+        }
+
         $text = $this->session->lastAssistantText();
 
         if ($text === null) {
@@ -2669,6 +2681,12 @@ final class InteractiveMode
             // A machine with no clipboard tool is not a broken machine, but it is worth
             // naming the thing to install rather than saying it did not work.
             $this->sayError('Could not copy. On Linux this needs wl-copy, xclip or xsel.');
+
+            return;
+        }
+
+        if ($flashConfirmation && $this->renderer instanceof TuiAltScreen) {
+            $this->renderer->flash('Copied!');
 
             return;
         }
@@ -2760,10 +2778,23 @@ final class InteractiveMode
         };
     }
 
-    /** @return Closure(): string */
-    private function commandHelp(): Closure
+    /**
+     * `/hotkeys` (and `/help`, which is the same block here) in upstream's frame: a blank row, a
+     * rule, the bold accent title, a blank row, the list padded one row above and below, a rule.
+     *
+     * The rows are pig's column-aligned text rather than upstream's markdown tables, because
+     * `Pig\Tui\Components\Markdown` draws no tables; the frame around them is upstream's to the
+     * line, so the block reads as the same thing in both.
+     */
+    private function sayHotkeys(): void
     {
-        return $this->keysAndCommands();
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
+        $this->chat->addChild(new ThemedText(static fn (): string => Style::bold(Themes::theme()->fg('accent', 'Keyboard Shortcuts')), 1, 0));
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText($this->keysAndCommands(), 1, 1));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
+        $this->tui->requestRender();
     }
 
     private function newSession(): void
@@ -2797,7 +2828,12 @@ final class InteractiveMode
         $this->pending->clear();
         $this->status->clear();
         $this->footer->invalidate();
-        $this->say('New session');
+        // Upstream's line, accent and with a blank row under it (`ThemedText(..., 1, 1)`) — the
+        // one note in the transcript that pads below, because it is the first thing on an
+        // otherwise empty screen.
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('accent', '✓ New session started'), 1, 1));
+        $this->tui->requestRender();
 
         // The `session_start` hook (reason `new`) fired inside `startNew()`, where every mode gets it. What
         // is left here is the custom tools, which this mode holds and the session does not.
@@ -2873,6 +2909,7 @@ final class InteractiveMode
             0,
         ));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
 
         // Focus moves to the list, so arrow keys reach it rather than the editor.
         $this->tui->setFocus($picker);
@@ -3345,6 +3382,7 @@ final class InteractiveMode
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -3478,6 +3516,7 @@ final class InteractiveMode
             0,
         ));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -3893,7 +3932,7 @@ final class InteractiveMode
         $this->say('Went back — anything you say now starts a new branch');
 
         if ($jump->summary !== null) {
-            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded));
+            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad));
         }
 
         // Back in the prompt, to be asked differently — which is what going back to something you
@@ -4006,6 +4045,7 @@ final class InteractiveMode
             $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
         ), 1, 0));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -4359,6 +4399,9 @@ final class InteractiveMode
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('accent', Style::bold('What\'s New')), 1, 0));
+        // Upstream's spacer between the title and the notes, on top of the markdown's own top
+        // padding: two blank rows, as `/changelog` and the post-upgrade block both draw it.
+        $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->tui->requestRender();
@@ -4484,6 +4527,7 @@ final class InteractiveMode
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
     }
@@ -4591,6 +4635,22 @@ final class InteractiveMode
             values: ['on', 'off'],
         );
 
+        // Upstream's two padding rows, with its labels and values.
+        $rows[] = new SettingItem(
+            'editorPaddingX',
+            'Editor padding',
+            (string) $this->settings->editorPaddingX(),
+            'Horizontal padding for input editor (0-3)',
+            values: ['0', '1', '2', '3'],
+        );
+        $rows[] = new SettingItem(
+            'outputPad',
+            'Output padding',
+            (string) $this->outputPad,
+            'Horizontal padding for messages, tool output, and command output',
+            values: ['0', '1'],
+        );
+
         // Upstream's TUI rows. The mode switches renderers in place (`switchTuiMode()`).
         $rows[] = new SettingItem(
             'tuiMode',
@@ -4647,6 +4707,7 @@ final class InteractiveMode
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
         $this->overlay->addChild($list);
+        $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($list);
         $this->tui->requestRender();
@@ -4712,6 +4773,8 @@ final class InteractiveMode
             'queueMode' => $this->session->setQueueMode(
                 QueueMode::tryFrom($value) ?? QueueMode::OneAtATime,
             ),
+            'editorPaddingX' => $this->useEditorPaddingX((int) $value),
+            'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
             'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
@@ -4720,6 +4783,39 @@ final class InteractiveMode
             'fullscreenWheelScrollLines' => $this->useFullscreenWheelScrollLines($value === 'auto' ? 'auto' : (int) $value),
             default => null,
         };
+    }
+
+    /** Upstream's `onEditorPaddingXChange`: saved, and on the editor that is up. */
+    private function useEditorPaddingX(int $padding): void
+    {
+        $this->settings->setEditorPaddingX($padding);
+        $this->defaultEditor->setPaddingX($padding);
+        if ($this->editor !== $this->defaultEditor) {
+            $this->editor->setPaddingX($padding);
+        }
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Upstream's `onOutputPadChange`: saved, remembered for what is drawn next, and told to
+     * everything already on screen that has a `setOutputPad()`.
+     *
+     * @param 0|1 $padding
+     */
+    private function useOutputPad(int $padding): void
+    {
+        $this->settings->setOutputPad($padding);
+        $this->outputPad = $padding;
+
+        foreach ([$this->chat, $this->pending] as $container) {
+            foreach ($container->children() as $child) {
+                if (method_exists($child, 'setOutputPad')) {
+                    $child->setOutputPad($padding);
+                }
+            }
+        }
+
+        $this->tui->requestRender();
     }
 
     /** Upstream's `onTuiModeChange`. */
@@ -4892,17 +4988,20 @@ final class InteractiveMode
                     $skillBlock,
                     $this->expanded,
                     $expandKey,
+                    $this->outputPad,
                 ));
                 if ($skillBlock->userMessage !== null) {
                     $this->chat->addChild(new UserMessageComponent(
                         $skillBlock->userMessage,
                         $this->hooks?->markdownTransformers() ?? [],
+                        $this->outputPad,
                     ));
                 }
             } else {
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
                     $this->hooks?->markdownTransformers() ?? [],
+                    $this->outputPad,
                 ));
             }
             $this->editor->setText('');
@@ -4917,6 +5016,7 @@ final class InteractiveMode
                 $this->hideThinking,
                 $this->hooks?->markdownTransformers() ?? [],
                 $this->hiddenThinkingLabel,
+                $this->outputPad,
             );
             $this->chat->addChild($this->streaming);
         }
@@ -5192,7 +5292,7 @@ final class InteractiveMode
         $this->hideLoader();
 
         if ($event->summary !== null) {
-            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded));
+            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad));
 
             return;
         }
@@ -5241,7 +5341,7 @@ final class InteractiveMode
             }
         }
 
-        $this->chat->addChild(new HookMessageComponent($message));
+        $this->chat->addChild(new HookMessageComponent($message, $this->expanded, $this->outputPad));
     }
 
     /** @param array<string, mixed> $arguments */
@@ -5272,6 +5372,7 @@ final class InteractiveMode
             cwd: $this->cwd,
             toolRenderers: $this->toolRenderers($name, $custom),
             startedAt: microtime(true),
+            outputPad: $this->outputPad,
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);
@@ -5353,7 +5454,7 @@ final class InteractiveMode
     private function sayError(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('error', "Error: {$message}"), 1, 0));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('error', "Error: {$message}"), $this->outputPad, 0));
         $this->tui->requestRender();
     }
 

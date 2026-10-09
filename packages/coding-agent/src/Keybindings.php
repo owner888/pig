@@ -49,6 +49,7 @@ final class Keybindings
         'app.tools.expand' => ['ctrl+o'],
         'app.thinking.toggle' => ['ctrl+t'],
         'app.editor.external' => ['ctrl+g'],
+        'app.message.copy' => ['ctrl+x'],
         'app.message.followUp' => ['command+enter', 'alt+enter'],
         'app.message.dequeue' => ['alt+up'],
     ];

@@ -36,8 +36,9 @@ final class CompactionComponent extends Container
     public function __construct(
         private readonly CompactionSummary $summary,
         bool $expanded = false,
+        int $outputPad = 1,
     ) {
-        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
+        $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->label = new Text('', 0, 0);
         $this->detail = new Text('', 0, 0);
         $this->body = new Markdown(
@@ -60,6 +61,12 @@ final class CompactionComponent extends Container
         parent::invalidate();
         $this->body->invalidate();
         $this->setExpanded($this->expanded);
+    }
+
+    /** Upstream's `setOutputPad()`: the box's own padding, which is where the pad lives here. */
+    public function setOutputPad(int $outputPad): void
+    {
+        $this->box->setPaddingX($outputPad);
     }
 
     public function setExpanded(bool $expanded): void

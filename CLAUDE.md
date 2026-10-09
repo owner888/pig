@@ -759,14 +759,33 @@ at one end only. `InteractiveMode` passes `$this->settings` and not its own argu
 settings given, that is the in-memory object `/settings` writes to, and the footer has to read
 what that screen changes.
 
-**Two preview sizes for command output**, both upstream's, in one component where upstream has
-two: `BASH_LINES = 5` for a command the model ran, `TYPED_BASH_LINES = 20` for one typed with
-`!`. Upstream's numbers live in `tool-execution.ts` and `bash-execution.ts` respectively, and the
-difference has a reason worth keeping — a `!` command is the thing the person just asked for and
-is looking at, where a model's is one step inside something else. pig reuses one component for
-both, so the number is a constructor argument rather than a second class — and the trap entry on
-what that sharing cost is below, because a component with two callers needs somewhere to put what
-only one of them knows.
+**A command the person typed and one the model ran are two components, as upstream has them.**
+`ToolExecutionComponent` draws the model's `bash` in a box with a background and keeps five lines
+(`tool-execution.ts`'s `BASH_PREVIEW_LINES`); `BashExecutionComponent` draws `!cmd` as
+`bash-execution.ts` does — a blank row, a rule in the bash-mode colour (`dim` for `!!`), `$ cmd`
+in bold, the last twenty lines, the loader while it runs, then the status parts (`... N more lines
+(ctrl+o to expand)`, `(cancelled)`, `(exit N)`, the spill path) and a closing rule. They were one
+component with two line counts for a long time; the developer asked for upstream's two, to the
+line, and the `Not added to the conversation` note `!!` used to print went with it — the `dim`
+rule is how upstream says that.
+
+**Padding comes from two settings, both upstream's.** `outputPad` (1, or exactly 0) is the blank
+column either side of every message, tool box, command block and error line; every component that
+draws one takes it as a constructor argument and has a `setOutputPad()`, and `/settings`' *Output
+padding* row walks the chat and the pending area calling it, as upstream's `onOutputPadChange`
+does. `editorPaddingX` (0–3) is the blank column either side of what is typed —
+`Editor::setPaddingX()`, which lays the text and the suggestion rows out at the width between the
+pads and takes the pad off a click's `x`; the rules above and below still span the whole width.
+`Text`, `Box` and `Markdown` gained a `setPaddingX()` for it, and `BashOutputComponent` a
+`paddingX`, because upstream rebuilds its components on a change where pig's keep theirs.
+
+**The spacing in the transcript is upstream's row for row**, checked against `interactive-mode.ts`
+and every component under `components/`: a `Spacer(1)` before each note (`say()`, `sayError()`,
+`sayWarning()`), one between *What's New* and the notes on top of the markdown's own top padding,
+`✓ New session started` padded a row below (`ThemedText(…, 1, 1)`), `/hotkeys` in the same
+rule–title–spacer–body–rule frame as the changelog (its rows are pig's columns rather than
+upstream's markdown tables, because `Pig\Tui\Components\Markdown` draws no tables), and a
+`Spacer(1)` after every overlay list, which is where upstream's selectors put theirs.
 
 **A truncation notice has two readers, so it is said twice.** Every tool that cuts its own output
 ends the text with a line saying so — `[Showing lines 1-2000 of 8431. Use offset=2001 to
@@ -1317,7 +1336,7 @@ Two decisions of pig's own:
   2 where the terminal gives it 4, which pushes every value column after it out of line. Same
   deviation, same reason, as `SelectList`'s description column.
 
-**The list only offers things that take effect**, which is what decided its seven rows:
+**The list only offers things that take effect**, which is what decided its rows:
 
 | Row | Reaches |
 |---|---|
@@ -1328,6 +1347,8 @@ Two decisions of pig's own:
 | Queued messages | `AgentSession::setQueueMode()`, which tells the agent and writes the setting |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
+| Editor padding | `editorPaddingX`, `useEditorPaddingX()` — the editor that is up is told |
+| Output padding | `outputPad`, `useOutputPad()` — everything drawn is told, see above |
 
 **Row by row against upstream's seven, two differ.** Upstream's list is `autocompact`,
 `queue-mode`, `hide-thinking`, `collapse-changelog`, `thinking`, `theme`, `show-images` — so pig
@@ -8520,6 +8541,19 @@ implementations of one list walk — this audit's subject exactly.
 One quirk kept on purpose: a current model that is not in the list counts as being at position 0,
 so ctrl+p from there lands on the *second* model. That is upstream's `indexOf` returning -1, and
 `--model` pinned to a provider whose key has since gone is how somebody gets there.
+
+### Ctrl+X: `app.message.copy` existed upstream and pig had neither the key nor the selection half
+
+Upstream's `app.message.copy` (ctrl+x) is `handleCopyCommand({flashConfirmation, preferSelection})`:
+in fullscreen with `fullscreenCopyOnSelect` off it copies the active mouse selection, otherwise the
+last assistant message, and in fullscreen it says `Copied!` as a flash rather than a transcript line.
+pig had `/copy` for the last-answer half, `TuiAltScreen::copyActiveSelectionToClipboard()` ported and
+called by nobody, and no binding at all. Found while answering why ⌘C beeps after a fullscreen
+selection — it does not reach pig; Terminal.app's Copy has no native selection to copy, and the
+text was already on the clipboard from the mouse release — which is exactly the case the key is
+for when copy-on-select is turned off.
+
+`copyLastAnswer(flashConfirmation, preferSelection)` now carries both options; `/copy` calls it bare.
 
 ### Switching models in a session must not clobber the user's default model in settings.json
 

@@ -31,8 +31,9 @@ final class SkillInvocationMessageComponent extends Container
         private readonly SkillBlock $skillBlock,
         private bool $expanded = false,
         private readonly string $expandKey = 'ctrl+o',
+        int $outputPad = 1,
     ) {
-        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
+        $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->addChild(new Spacer(1));
         $this->addChild($this->box);
         $this->updateDisplay();
@@ -44,6 +45,12 @@ final class SkillInvocationMessageComponent extends Container
     {
         parent::invalidate();
         $this->updateDisplay();
+    }
+
+    /** Upstream's `setOutputPad()`: the box's own padding, which is where the pad lives here. */
+    public function setOutputPad(int $outputPad): void
+    {
+        $this->box->setPaddingX($outputPad);
     }
 
     public function setExpanded(bool $expanded): void

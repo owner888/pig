@@ -262,6 +262,40 @@ final class Settings
         return array_values(array_filter($patterns, static fn (mixed $pattern): bool => is_string($pattern) && trim($pattern) !== ''));
     }
 
+    /**
+     * Upstream's `getEditorPaddingX()`: `editorPaddingX`, whole columns from 0 to 3, 0 unless set.
+     * Blank columns either side of what is typed; the rules above and below are not narrowed.
+     */
+    public function editorPaddingX(): int
+    {
+        $value = $this->get('editorPaddingX');
+
+        return is_int($value) || is_float($value) ? max(0, min(3, (int) floor($value))) : 0;
+    }
+
+    /** Upstream's `setEditorPaddingX()`: `Math.max(0, Math.min(3, Math.floor(padding)))`. */
+    public function setEditorPaddingX(int $padding): void
+    {
+        $this->set('editorPaddingX', max(0, min(3, $padding)));
+    }
+
+    /**
+     * Upstream's `getOutputPad()`: `outputPad`, the blank column either side of a message, a
+     * tool's output and a command's — 1 unless the file says exactly 0.
+     *
+     * @return 0|1
+     */
+    public function outputPad(): int
+    {
+        return $this->get('outputPad') === 0 ? 0 : 1;
+    }
+
+    /** @param 0|1 $padding */
+    public function setOutputPad(int $padding): void
+    {
+        $this->set('outputPad', $padding === 0 ? 0 : 1);
+    }
+
     public function hideThinking(): bool
     {
         return $this->get('hideThinkingBlock') === true;

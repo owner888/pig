@@ -73,6 +73,12 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
      */
     private int $lastWidth = 80;
 
+    /**
+     * Columns left blank on either side of the text — upstream's `paddingX`, the
+     * `editorPaddingX` setting. The rules above and below still span the whole width.
+     */
+    private int $paddingX = 0;
+
     /** Text rows and suggestion rows in the last frame, for mouse hit-testing — upstream's render geometry. */
     private int $renderedVisibleLineCount = 1;
     private int $renderedAutocompleteHeight = 0;
@@ -277,49 +283,74 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     #[\Override]
     public function render(int $width): array
     {
-        $this->lastWidth = $width;
+        // Upstream: the padding is capped so at least one column of text is left, and the text —
+        // and the suggestion rows under it — are laid out at the width between the pads. The
+        // rules are not: they span the whole width, as upstream's do.
+        $paddingX = $this->paddingX($width);
+        $contentWidth = max(1, $width - $paddingX * 2);
+        $pad = str_repeat(' ', $paddingX);
+
+        $this->lastWidth = $contentWidth;
         // The style goes round the whole rule, not round each dash: styled per character, a
         // 140-column rule was 3,360 bytes and 280 escape sequences — 40% of a frame, on two
         // lines, on every frame. Upstream styles `"─".repeat(width)` once.
         $rule = ($this->theme->border)(str_repeat('─', $width));
         $lines = [$this->topBorder($width, $rule)];
 
-        $layoutLines = $this->layout($width);
+        $layoutLines = $this->layout($contentWidth);
         $this->renderedVisibleLineCount = count($layoutLines);
 
         foreach ($layoutLines as $layoutLine) {
-            $lines[] = $this->draw($layoutLine, $width);
+            $lines[] = $pad . $this->draw($layoutLine, $contentWidth) . $pad;
         }
 
         $lines[] = $rule;
 
-        $suggestions = $this->suggestionList?->render($width) ?? [];
+        $suggestions = $this->suggestionList?->render($contentWidth) ?? [];
         $this->renderedAutocompleteHeight = count($suggestions);
 
         foreach ($suggestions as $suggestion) {
-            $lines[] = $suggestion;
+            $lines[] = $pad . $suggestion . str_repeat(' ', max(0, $contentWidth - Width::visible($suggestion))) . $pad;
         }
 
         return $lines;
+    }
+
+    /** Upstream's `setPaddingX()`: whole columns, never negative. */
+    public function setPaddingX(int $padding): void
+    {
+        $this->paddingX = max(0, $padding);
+    }
+
+    public function paddingX(?int $width = null): int
+    {
+        if ($width === null) {
+            return $this->paddingX;
+        }
+
+        // Upstream's `maxPadding`: at least one column stays for the text.
+        return min($this->paddingX, max(0, intdiv($width - 1, 2)));
     }
 
     /**
      * Suggestion rows go to the list; a click on a text row puts the cursor under it — upstream's
      * `handleMouse()`.
      *
-     * Upstream's padding and scroll offset are both zero here, because pig's editor has neither:
-     * it draws every row at the full width.
+     * Upstream's scroll offset is zero here, because pig's editor has none: every row is drawn.
+     * The padding is taken off `x`, as upstream takes it, so a click lands on the column it is over.
      */
     #[\Override]
     public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
     {
         $autocompleteStartRow = $this->renderedVisibleLineCount + 2;
+        $paddingX = $this->paddingX($event->width);
         if (
             $this->suggestionList !== null
             && $event->y >= $autocompleteStartRow
             && $event->y < $autocompleteStartRow + $this->renderedAutocompleteHeight
         ) {
-            $result = $this->suggestionList->handleMouse($event->at($event->x, $event->y - $autocompleteStartRow, $event->width, $this->renderedAutocompleteHeight));
+            $contentWidth = max(1, $event->width - $paddingX * 2);
+            $result = $this->suggestionList->handleMouse($event->at($event->x - $paddingX, $event->y - $autocompleteStartRow, $contentWidth, $this->renderedAutocompleteHeight));
 
             return $result?->withFocus();
         }
@@ -343,7 +374,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         }
         $logicalLine = $this->lines[$visualLine->logicalLine] ?? '';
         $chunk = substr($logicalLine, $visualLine->startCol, $visualLine->length);
-        $targetColumn = max(0, $event->x);
+        $targetColumn = max(0, $event->x - $paddingX);
         $visibleColumn = 0;
         $targetIndex = strlen($chunk);
         $lastGraphemeIndex = 0;

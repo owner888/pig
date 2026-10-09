@@ -62,14 +62,10 @@ final class ToolExecutionComponent extends Container
     /**
      * A command says what happened at the end, so only the end is kept.
      *
-     * Upstream has two numbers here, in two components this one stands in for both of:
-     * `tool-execution.ts`'s `BASH_PREVIEW_LINES = 5` for a command the *model* ran, and
-     * `bash-execution.ts`'s `PREVIEW_LINES = 20` for one typed with `!`. The difference has
-     * a reason — a `!` command is the thing the person just asked for and is looking at,
-     * where a model's is one step of something else — so both numbers are here.
+     * Upstream's `tool-execution.ts` `BASH_PREVIEW_LINES`, for a command the *model* ran. One
+     * typed with `!` is `BashExecutionComponent`, with upstream's own twenty.
      */
     private const int BASH_LINES = 5;
-    public const int TYPED_BASH_LINES = 20;
 
     /** Tabs are three spaces here: a diff or a listing is narrow enough already. */
     private const string TAB = '   ';
@@ -118,8 +114,7 @@ final class ToolExecutionComponent extends Container
      * @param CustomTool|null               $custom    the declaration, when this is a tool
      *        somebody wrote — for `renderCall` and `renderResult`
      * @param Closure(string): void|null    $onError   told once when a renderer throws
-     * @param int  $bashLines  how much command output to keep unexpanded — `TYPED_BASH_LINES`
-     *        for a `!` command, the default for one the model ran
+     * @param int  $bashLines  how much command output to keep unexpanded
      * @param bool $showImages the person's `terminal.showImages`. Off draws the same label a
      *        terminal that cannot draw pictures gets, so the two look alike
      * @param string|null $cwd where the project is, for `setArgsComplete()` to read the file
@@ -140,11 +135,13 @@ final class ToolExecutionComponent extends Container
         /** @var array{renderCall?: Closure, renderResult?: Closure}|null */
         private readonly ?array $toolRenderers = null,
         private ?float $startedAt = null,
+        /** Upstream's `options.outputPad`: the blank column either side of the box. */
+        int $outputPad = 1,
     ) {
         $this->addChild(new Spacer(1));
 
-        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
-        $this->body = new Text('', 1, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
+        $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
+        $this->body = new Text('', $outputPad, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
         $this->bash = new BashOutputComponent(
             $bashLines,
             fn (int $dropped): string => Themes::theme()->fg('toolOutput', "... ({$dropped} earlier lines)"),
@@ -241,6 +238,14 @@ final class ToolExecutionComponent extends Container
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
+        $this->draw();
+    }
+
+    /** Upstream's `setOutputPad()`: both shells, since either may be the one on screen. */
+    public function setOutputPad(int $outputPad): void
+    {
+        $this->box->setPaddingX($outputPad);
+        $this->body->setPaddingX($outputPad);
         $this->draw();
     }
 
@@ -471,21 +476,9 @@ final class ToolExecutionComponent extends Container
     }
 
     /**
-     * What happened to the command, under its output.
-     *
-     * Upstream's `bash-execution.ts` builds this as a list of status parts and pig had nowhere to
-     * put them, because pig draws a typed `!command` with the same component as the model's `bash`
-     * calls — one component where upstream has two. That sharing is worth keeping and it cost these
-     * three facts: `executeBash()` returns the exit code, whether escape stopped it and where the
-     * whole output went, and `runCommand()` had no way to hand any of them over. So an `!exit 3`
-     * block was the right colour and silent about the 3, escape-stopping a command looked like a
-     * command that failed, and a `!make` over the line limit was cut on screen with nothing saying
-     * so — while `BashExecution::toText()` told the *model* all three. The notice has two readers
-     * and only one of them was being served.
-     *
-     * Read out of `details` rather than taken as constructor arguments, because the model's `bash`
-     * already puts `fullOutputPath` there under pi's own name — so its truncated calls gain the same
-     * line, which is what upstream shows for both.
+     * What happened to the command, under its output — the status parts `bash-execution.ts`
+     * draws for a typed command, here for the model's `bash` calls, which put `fullOutputPath`
+     * in `details` under pi's own name.
      */
     private function drawBashStatus(): void
     {

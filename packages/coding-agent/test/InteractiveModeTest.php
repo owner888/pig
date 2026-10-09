@@ -1500,12 +1500,30 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
-        // Shown the same way — what differs is whether the model sees it afterwards,
-        // which is worth saying rather than leaving someone to remember.
+        // Shown the same way, in `dim` rather than the bash-mode colour — upstream's one signal
+        // that the model will not see it afterwards.
         $this->assertStringContainsString('$ echo quiet', $screen);
         $this->assertStringContainsString('quiet', $screen);
-        $this->assertStringContainsString('Not added to the conversation', $screen);
+        $this->assertStringNotContainsString('Not added', $screen);
         $this->assertSame([], $this->session->messages());
+    }
+
+    public function testATypedCommandKeepsTwentyLinesAndCountsTheRest(): void
+    {
+        $this->start();
+
+        // Upstream's `bash-execution.ts`: the last `PREVIEW_LINES` (20) are shown, and the count
+        // of what is hidden goes under them with the expand key — not above, as the model's
+        // `bash` tool draws its own cut.
+        $this->type('!seq 1 30');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('$ seq 1 30', $screen);
+        $this->assertStringContainsString('30', $screen);
+        $this->assertStringContainsString('... 10 more lines (ctrl+o to expand)', $screen);
     }
 
     public function testABareBangDoesNothing(): void
@@ -1528,8 +1546,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        // dark's toolErrorBg.
-        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), implode('', $this->mode->screen()->render(80)));
+        // The exit code is marked with the error color.
+        $this->assertStringContainsString(Themes::theme()->fg('error', '(exit 3)'), implode('', $this->mode->screen()->render(80)));
         $this->assertSame(3, $this->session->messages()[0]->exitCode);
     }
 

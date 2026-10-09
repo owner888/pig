@@ -32,26 +32,35 @@ final class UserMessageComponent extends Container
     private const string OSC133_ZONE_END = "\x1b]133;B\x07";
     private const string OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
+    private readonly Markdown $markdown;
+
     /**
      * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
      */
-    public function __construct(string $text, array $transformers = [])
+    public function __construct(string $text, array $transformers = [], int $outputPad = 1)
     {
         foreach ($transformers as $transformer) {
             $text = $transformer($text, ['role' => 'user', 'isStreaming' => false]);
         }
 
         $this->addChild(new Spacer(1));
-        $this->addChild(new Markdown(
+        $this->markdown = new Markdown(
             Shell::sanitize($text),
-            1,
+            $outputPad,
             1,
             Themes::getMarkdownTheme(),
             new DefaultTextStyle(
                 colour: static fn (string $text): string => Themes::theme()->fg('userMessageText', $text),
                 background: static fn (string $text): string => Themes::theme()->bg('userMessageBg', $text),
             ),
-        ));
+        );
+        $this->addChild($this->markdown);
+    }
+
+    /** Upstream's `setOutputPad()`. */
+    public function setOutputPad(int $outputPad): void
+    {
+        $this->markdown->setPaddingX($outputPad);
     }
 
     /**
