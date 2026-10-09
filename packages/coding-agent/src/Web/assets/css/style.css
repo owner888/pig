@@ -926,6 +926,15 @@
       font-size: 13px;
     }
 
+    /* The TUI's `say()` line: the session reporting something it did, in a quiet mono line. */
+    .msg-notice {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
     /* Images grid in message */
     .msg-images-grid {
       display: flex;
@@ -1801,6 +1810,8 @@
       color: var(--text-muted);
     }
     .hook-preview { margin-top: 8px; }
+    .skill-invocation .skill-location { margin-left: 8px; color: var(--text-muted); font-weight: 400; }
+    .skill-invocation .compaction-summary-text { white-space: normal; }
     .hook-message[open] .hook-preview { display: none; }
     .compaction-summary-text {
       margin-top: 10px;

@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.16] - 2026-10-08
+
+### New Features
+
+- **Collapsible Skill Invocation Cards in Web UI (`app.js`, `style.css`)**:
+  - Replayed `/skill:name` user messages as sleek collapsible `[skill] name` summary cards with child prompts cleanly separated, preventing raw `<skill>` XML blocks and `SKILL.md` contents from flooding the user chat bubble.
+- **Web UI Notice Blocks & Dynamic Fallback Alerts (`msg-notice`, `model_fallback`)**:
+  - Added quiet `.msg-notice` transcript line styling matching TUI `say()`.
+  - Added real-time notifications when hitting quota walls and transitioning to fallback models (`model_fallback_notice`), automatically updating the active model selector bar.
+  - Displayed virtual model routing telemetry in Web UI header (`→ routed-id • level`).
+  - Added banner indicators for summarization and branch summary retries (`summarization_retry_*`).
+
+### Added
+
+- **Home Directory Expansion in MCP Stdio Configs (`Paths::expand`, `McpConfig`)**:
+  - Automatically expanded `~` in `command`, `args`, and `cwd` fields of `mcp.json` stdio configurations, enabling clean, portable configs across different machines and user paths.
+
 ## [0.5.15] - 2026-10-08
 
 ### Added

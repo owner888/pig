@@ -3219,6 +3219,9 @@ for what the config file means. Two things are pig's own and both are consequenc
   agent's tools — in `CodingAgent::session()` and in `InteractiveMode::reload()`, the two places
   that build the set, with the built-ins and `HookedTool::wrap()` exactly as at startup. That last
   clause is what makes the permission gate reach an MCP tool, and it was watched doing so.
+- **`command`, `args`, and `cwd` expand `~` automatically** (`Paths::expand()` via `ServerConnection::transportFor()`).
+  Configurations in `mcp.json` can use `~/` instead of hardcoding absolute home directories, keeping
+  configs clean and portable across machines.
 
 **And the first real server found a provider bug of its own.** The TypeScript MCP SDK writes
 `"$schema": "http://json-schema.org/draft-07/schema#"` on every tool; Gemini's `parameters` is an

@@ -22,6 +22,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use PigMcp\McpConfig;
 use PigMcp\McpServersSection;
+use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
 use PigMcp\McpTools;
 use Pig\Codemode\ToolSearch;
@@ -97,6 +98,31 @@ final class McpExtensionTest extends TestCase
         // Untrusted: the project file is not even opened.
         $gated = McpConfig::load($this->home, $this->cwd, projectTrusted: false);
         $this->assertSame('npx', array_combine(array_map(static fn ($e) => $e->name, $gated->servers), $gated->servers)['fs']->config['command']);
+    }
+
+    public function testMcpConfigStdioPathsWithTildeAreExpandedToHome(): void
+    {
+        $home = \Pig\Tui\Env::home();
+        $this->assertNotNull($home);
+
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'demo' => [
+                'command' => '~/bin/server',
+                'args' => ['~/data/test.json'],
+                'cwd' => '~/workspace',
+            ],
+        ]]));
+
+        $config = McpConfig::load($this->home, $this->cwd, true);
+        $entry = $config->servers[0];
+        $transport = ServerConnection::defaultTransport($entry, $this->cwd);
+
+        $this->assertInstanceOf(\Pig\Mcp\Transports\StdioTransport::class, $transport);
+
+        $ref = new \ReflectionClass($transport);
+        $this->assertSame($home . '/bin/server', $ref->getProperty('command')->getValue($transport));
+        $this->assertSame([$home . '/data/test.json'], $ref->getProperty('args')->getValue($transport));
+        $this->assertSame($home . '/workspace', $ref->getProperty('cwd')->getValue($transport));
     }
 
     /** @return iterable<string, array{array<string, mixed>|mixed, string}> */

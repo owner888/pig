@@ -465,6 +465,11 @@ final class RpcModeTest extends TestCase
         $this->assertFalse($state['isBashRunning']);
         $this->assertSame(0, $state['messageCount']);
         $this->assertStringEndsWith('.jsonl', $state['sessionFile']);
+        // Under a physical model there is nothing routed; the key is there so a host can read it
+        // without checking first (the web shell's telemetry line does). The populated shape is
+        // `VirtualModelsTest`'s `routedModel()`, encoded as `{provider, id, thinkingLevel}`.
+        $this->assertArrayHasKey('routedModel', $state);
+        $this->assertNull($state['routedModel']);
     }
 
     public function testAHostCanSetTheQueueModeAndNotOnlyReadIt(): void

@@ -41,8 +41,12 @@ final class WebMessageBlocksTest extends TestCase
             new ToolCall('read1', 'read', ['path' => 'a.php']),
             new ToolCall('write1', 'write', ['path' => 'b.php', 'content' => 'written contents']),
         ], Api::AnthropicMessages, 'anthropic', 'test', new Usage(), StopReason::ToolUse);
+        // A `/skill:deploy ship it` prompt as the session records it — the TUI's
+        // `SkillInvocationMessageComponent` draws it collapsed, and so must the page.
+        $skill = new UserMessage("<skill name=\"deploy\" location=\"/skills/deploy/SKILL.md\">\n# Deploy\n\nrun the pipeline\n</skill>\n\nship it");
         $messages = [
             new UserMessage('**question**'),
+            $skill,
             $compaction, $branch, $hook, $hidden, $assistant,
             new ToolResultMessage('edit1', 'edit', [new TextContent('Edited')], details: ['diff' => "-1 actual-old\n+1 actual-new"]),
             new ToolResultMessage('read1', 'read', [new TextContent('file excerpt')], details: ['notice' => 'Use offset=6 to continue']),

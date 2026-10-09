@@ -628,6 +628,19 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       agentWorkingChanged();
     }
 
+    // `Prompt\SkillBlock::parse()`'s pattern: a `/skill:name` prompt is recorded as the skill's
+    // text in a `<skill>` block, with whatever the person typed after it below. The TUI draws
+    // that as a collapsed `[skill] name` line (`SkillInvocationMessageComponent`); before this
+    // the page poured the whole SKILL.md into the user bubble on every replay.
+    const SKILL_BLOCK = /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/;
+
+    function appendSkillInvocation(name, location, content) {
+      const block = document.createElement("details");
+      block.className = "compaction-box hook-message skill-invocation";
+      block.innerHTML = `<summary class="compaction-header"><span class="compaction-title">[skill]</span> ${escapeHtml(name)}<span class="skill-location">${escapeHtml(location)}</span></summary><div class="compaction-summary-text prose">${renderMarkdown(content)}</div>`;
+      chatScroll.appendChild(block);
+    }
+
     function appendUserMessage(text, images = []) {
       const tab = T();
       if (tab?.emptyState) {
@@ -635,6 +648,16 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         tab.emptyState = null;
       }
       chatScroll.querySelector(".empty-state-hero")?.remove();
+
+      const skill = text ? text.match(SKILL_BLOCK) : null;
+      if (skill) {
+        appendSkillInvocation(skill[1], skill[2], skill[3]);
+        text = skill[4] || "";
+        if (!text && images.length === 0) {
+          scrollToBottomIfNeeded();
+          return;
+        }
+      }
 
       const block = document.createElement("div");
       block.className = "msg-block msg-user";
@@ -684,6 +707,16 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       const block = document.createElement("div");
       block.className = "msg-block msg-error";
       block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`;
+      chatScroll.appendChild(block);
+      scrollToBottomIfNeeded();
+    }
+
+    // The TUI's `say()`: one dim line in the transcript for something the session did on its
+    // own (a model fallback, say) — not an error, not the model speaking.
+    function appendNoticeMessage(text) {
+      const block = document.createElement("div");
+      block.className = "msg-block msg-notice";
+      block.innerText = text;
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
     }
@@ -811,6 +844,24 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         if (!evt.succeeded && evt.error) {
           appendErrorMessage(evt.error);
         }
+      } else if (evt.type === "model_fallback") {
+        // pig's own event (v0.5.4): the quota wall moved the session to a `fallbackModels` entry
+        // and the turn is already running again on it. Same sentence as the TUI, and the model
+        // bar is re-read so it shows where the session went.
+        (tab ? tab.refreshState() : Promise.resolve()).then(() => {
+          const level = tab?.state?.thinkingLevel;
+          const suffix = level && level !== "off" ? ` · thinking ${level}` : "";
+          appendNoticeMessage(t("model_fallback_notice", { from: `${evt.from.provider}/${evt.from.id}`, to: `${evt.to.provider}/${evt.to.id}` }) + suffix);
+        });
+      } else if (evt.type === "summarization_retry_scheduled") {
+        // Upstream's three summarization retry events: a compaction or branch summary hit a
+        // transient error and will be tried again — the same banner the turn's own retry uses.
+        if (evt.errorMessage) appendErrorMessage(evt.errorMessage);
+        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage || "" }));
+      } else if (evt.type === "summarization_retry_attempt_start") {
+        if (tab === active) showStatusBanner(t(evt.source === "branchSummary" ? "summarising_branch_banner" : "compacting_banner"));
+      } else if (evt.type === "summarization_retry_finished") {
+        if (tab === active) hideStatusBanner();
       } else if (evt.type === "auto_compaction_start") {
         if (tab === active) showStatusBanner(t("compacting_banner"));
       } else if (evt.type === "auto_compaction_end") {
@@ -1574,8 +1625,11 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       const pct = window_ > 0 ? (tokens / window_ * 100).toFixed(1) : "0.0";
       const windowLabel = window_ >= 1000000 ? (window_ / 1000000).toFixed(1) + "M" : Math.round(window_ / 1000) + "k";
       const stats = cur.stats || {};
+      // A virtual model routes each request; say where the latest response went, as the TUI's
+      // footer does (`model → routed-id • level`).
+      const routed = s.routedModel ? ` → ${s.routedModel.id}${s.routedModel.thinkingLevel ? ` • ${s.routedModel.thinkingLevel}` : ""}` : "";
       telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "")
-        + `↑${formatK(stats.input || 0)} ↓${formatK(stats.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}`;
+        + `↑${formatK(stats.input || 0)} ↓${formatK(stats.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`;
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;

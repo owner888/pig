@@ -77,19 +77,35 @@ const scrollToBottomIfNeeded = () => { chatScroll.scrollTop = chatScroll.scrollH
 const openImageLightbox = () => {};
 function textOf(content) { if (!Array.isArray(content)) return ''; return content.filter((c) => c && c.type === 'text').map((c) => c.text || '').join(''); }
 function appendErrorMessage(errorText) { const block = new Element('div'); block.className = 'msg-block msg-error'; block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`; chatScroll.appendChild(block); }
-function appendUserMessage(text, images = []) { const block = new Element('div'); block.className = 'msg-block msg-user'; block.innerHTML = renderMarkdown(text); block.images = images; chatScroll.appendChild(block); }
 
 const app = fs.readFileSync(`${root}/app.js`, 'utf8');
+// The page's own user-message renderer, skill block included — a stub here would be a second
+// answer to what a user message looks like, which is the fork this test exists to prevent.
+const userStart = app.indexOf('    const SKILL_BLOCK');
+const userEnd = app.indexOf('    function ensureAssistantBlock', userStart);
+assert.notEqual(userStart, -1);
+assert.notEqual(userEnd, -1);
 const start = app.indexOf('function appendSummaryMessage');
 const end = app.indexOf('    // ---- boot', start);
 assert.notEqual(start, -1);
 assert.notEqual(end, -1);
-const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', 'appendUserMessage', `${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, renderMessages };`);
-const { appendSummaryMessage, appendHookMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage, appendUserMessage);
+const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', `${app.slice(userStart, userEnd)}\n${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages };`);
+const { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage);
 
 renderMessages(fixture.messages);
 const html = chatScroll.children.map((c) => c.innerHTML).join('\n');
 assert.match(html, /\[compaction\]/);
+// The skill block is a collapsed card with the skill's name, its text inside, and the person's
+// own words as the user message after it — the raw `<skill>` tag is nowhere on the page.
+const skillCard = chatScroll.children.find((c) => c.className.includes('skill-invocation'));
+assert.ok(skillCard, 'the skill invocation card was not drawn');
+assert.equal(skillCard.tagName, 'DETAILS');
+assert.match(skillCard.innerHTML, /\[skill\]<\/span> deploy/);
+assert.match(skillCard.innerHTML, /run the pipeline/);
+const userBlocks = chatScroll.children.filter((c) => c.className.includes('msg-user'));
+// The page builds the bubble from child elements, so the text is one level down.
+assert.ok(userBlocks.some((c) => c.children.some((ch) => /ship it/.test(ch.innerHTML))), 'the words typed after the skill were not shown as the user message');
+assert.doesNotMatch(html, /&lt;skill name=|<skill name=/);
 assert.match(html, /Compacted from 256,653 tokens/);
 assert.match(html, /\[branch summary\]/);
 assert.match(html, /Branch summary provided by a hook/);

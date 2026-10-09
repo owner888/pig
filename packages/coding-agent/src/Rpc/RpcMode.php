@@ -410,6 +410,13 @@ final class RpcMode
             'autoCompactionEnabled' => $this->settings?->compactionEnabled() ?? true,
             'autoRetryEnabled' => $this->settings?->retryEnabled() ?? true,
             'isRetrying' => $this->session->isRetrying(),
+            // Under a virtual model, where the latest response actually went — what the TUI's
+            // footer draws after the arrow. Null under a physical selection.
+            'routedModel' => ($routed = $this->session->routedModel()) === null ? null : [
+                'provider' => $routed->model->provider,
+                'id' => $routed->model->id,
+                'thinkingLevel' => $routed->thinkingLevel?->value,
+            ],
             // Three fields upstream's state has no need of and the web shell's tab bar does: a
             // tab is labelled by the session's name or its opening line, and grouped by
             // directory. Reading them off the file on the shell side would mean the shell
