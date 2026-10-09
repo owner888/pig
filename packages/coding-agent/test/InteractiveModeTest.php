@@ -3735,6 +3735,30 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('must be of type', $screen);
     }
 
+    /**
+     * A plain custom tool called while hooks are loaded. `toolRenderers()` `array_filter`s the
+     * tool's two null renderers down to `[]` — not null, so `drawsItself()` looks inside it — and
+     * the check used to read `a ?? null !== null || b ?? null !== null`, which with `!==` binding
+     * tighter than `??` is `a ?? ((false || b) ?? false)`: `b` is reached outside any `??` and
+     * warned `Undefined array key "renderResult"` on every such call. Red under `failOnWarning`.
+     */
+    public function testACustomToolWithNoRenderersDoesNotWarnWhenHooksAreLoaded(): void
+    {
+        $this->start(
+            customTools: $this->tools('wc'),
+            answers: [self::wants('wc', []), 'done'],
+            hooks: $this->runner(new HookApi($this->cwd, 'bystander.php'), 'bystander.php'),
+        );
+
+        $this->type('count them');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('ran', $screen);
+        $this->assertStringContainsString('done', $screen);
+    }
+
     public function testAToolIsToldTheSessionStartedAndThenSwitched(): void
     {
         $seen = [];

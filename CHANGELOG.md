@@ -43,15 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [0.5.15] - 2026-10-08
 
 ### Added
 
-- README and the package docs say how a package gets onto pigagent.dev/packages: the GitHub topic `pig-package`, with optional `extra.pig.image` / `extra.pig.video` for a preview (the site reads them; pig ignores them).
+- README and package documentation now explain how packages can be listed on pigagent.dev/packages via GitHub topic `pig-package` and preview assets (`extra.pig.image` / `extra.pig.video`).
 
 ### Changed
 
-- Changed `pig-vless` from opt-in-by-settings to `/web`'s shape: loading it writes the UUID and listen address into `settings.json` but opens no port; `/vless start | stop | restart | status` control it, and the bare `/vless` is `status` with the share link.
+- Transitioned `pig-vless` proxy control lifecycle to match `/web` conventions: loading the extension sets UUID and listen address without opening ports; `/vless start | stop | restart | status` provide runtime daemon control.
+
+### Fixed
+
+- **Operator Precedence in Tool Renderer Checks (`ToolExecutionComponent::drawsItself`)**:
+  - Parenthesized null-coalescing expressions in `ToolExecutionComponent::drawsItself()` (`($a ?? null) !== null || ($b ?? null) !== null`), eliminating `PHP Warning: Undefined array key "renderResult"` when invoking custom tools that provide no custom renderers.
 
 ## [0.5.14] - 2026-10-08
 

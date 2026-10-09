@@ -3,6 +3,16 @@
 A file-by-file port of [earendil-works/pi](https://github.com/earendil-works/pi): agent core,
 unified LLM API, terminal UI, coding agent CLI. Zero runtime dependencies beyond PHP itself.
 
+## This file is written in English
+
+Every rule, trap entry, table and heading in this file is English — not because of the reader's
+language but because the file is read by the model alongside upstream's TypeScript, both READMEs'
+English half and the source comments, and a rule that exists in two languages is a rule with two
+copies that can drift. Two things stay as they are: a person's words quoted verbatim (*"任务还没
+完成，但是总是偶发触发系统通知"*), and CJK strings that are data (`你好`, `代码审查` in the
+width tables). The developer's requests are reported in English ("the developer asked for…"),
+never pasted.
+
 ## pig is a minimal agent
 
 **The developer's standing rule, above every other decision in this file: pig stays minimal, and
@@ -449,31 +459,31 @@ the queue of messages someone typed while the agent was working, the thinking le
 session has cost, persistence, compaction, tree navigation and the hook events. Each of the
 rest can arrive on its own when something needs it.
 
-主题照 upstream 的 `theme.ts` / `theme-json.ts` / `system-theme.ts` / `theme-controller.ts` 移植（开发者要求 100% 对齐，旧的 `Theme\Palette` 已删除，不留别名）：`Theme\Themes` 是 `theme.ts` 的模块函数和全局主题（`Themes::theme()` 对应 upstream 的 `theme` 代理），`Theme\Theme` 是 upstream 的 `Theme` 类，颜色运算在 `Pig\Tui\Colors` / `Pig\Tui\Oklab`（`colors.ts` / `oklab.ts`）。内置主题 `dark.json` / `light.json` 与 upstream 逐字相同（OKHSL 写法），`labra.json` 是 pig 额外保留的内置主题。没有主题设置时用 upstream 的 `system` 主题：终端报告颜色前是灰阶，`InteractiveThemeController` 用 `TUI::queryTerminalColors()` 拿到颜色后生成，DEC 2031 深浅色切换时自动跟随（设置为 `light/dark` 一对时在两者之间切换）。
+Themes are ported from upstream's `theme.ts` / `theme-json.ts` / `system-theme.ts` / `theme-controller.ts` (the developer asked for 100% alignment; the old `Theme\Palette` is deleted, with no alias left behind): `Theme\Themes` is `theme.ts`'s module functions and the global theme (`Themes::theme()` is upstream's `theme` proxy), `Theme\Theme` is upstream's `Theme` class, and the color math lives in `Pig\Tui\Colors` / `Pig\Tui\Oklab` (`colors.ts` / `oklab.ts`). The built-in `dark.json` / `light.json` are upstream's byte for byte (OKHSL notation); `labra.json` is a built-in theme pig keeps in addition. With no theme setting, upstream's `system` theme applies: grayscale until the terminal reports its colors, then `InteractiveThemeController` generates one from `TUI::queryTerminalColors()`, following DEC 2031 light/dark switches automatically (and switching between the pair when the setting is a `light/dark` pair).
 
-**避坑规则**：组件在绘制时取 `Themes::theme()->fg(...)`，不要把 `Theme` 实例存起来，否则切主题后不变；会把颜色烘进字符串的组件要在 `invalidate()` 里重建（upstream 同样），切主题时控制器 `invalidate` 整个 UI。`Theme::fg()` 给背景色 token 会抛错，背景用 `bg()`。`InteractiveMode` 装了 `ThemeJson::validateThemeJson` 校验器：缺 token 的自定义主题会被拒绝并报原因（不再用 dark 补齐）。自定义主题目录是 pig 的四个（`~/.pig/agent/themes`、`~/.pi/agent/themes`、项目信任后的 `<cwd>/.pig/themes`、`<cwd>/.pi/themes`），先找文件名再找文件里的 `name`；读不了的主题记在 `Themes::getCustomThemeErrors()` 并在列出主题时说出来。语法高亮仍用 pig 的 `Highlight`/`Grammar`（`Themes::highlightCode()`）。`/theme` 不带参数打开选择器（移动即预览，Esc 还原），`/theme <name>` 直接切换并保存。Web UI（`pig --mode web`）自带 `Dark`/`Labra`/`Light` 切换并用 `localStorage` 记住。
+**Trap rules**: components read `Themes::theme()->fg(...)` at render time and do not keep a `Theme` instance, or a theme switch changes nothing; a component that bakes colors into strings rebuilds them in `invalidate()` (as upstream does), and the controller `invalidate`s the whole UI on a switch. `Theme::fg()` throws for a background token — use `bg()`. `InteractiveMode` installs the `ThemeJson::validateThemeJson` validator: a custom theme missing a token is refused with the reason (no longer filled in from dark). Custom theme directories are pig's four (`~/.pig/agent/themes`, `~/.pi/agent/themes`, and once the project is trusted `<cwd>/.pig/themes`, `<cwd>/.pi/themes`), matched by file name first, then by the `name` inside the file; a theme that cannot be read is recorded in `Themes::getCustomThemeErrors()` and named when themes are listed. Syntax highlighting is still pig's `Highlight`/`Grammar` (`Themes::highlightCode()`). `/theme` with no argument opens the picker (moving previews, Esc restores), `/theme <name>` switches and saves. The Web UI (`pig --mode web`) has its own `Dark`/`Labra`/`Light` switch, remembered in `localStorage`.
 
-**烘进颜色的文字用 `ThemedText`**（upstream `components/themed-text.ts`）：`new ThemedText(fn () => Themes::theme()->fg('dim', $msg), 1, 0)`，`invalidate()` 后下次绘制用当前主题重建；数据要在建组件前取好快照。`say()`/`sayError()`/`sayWarning()`、横幅（`ExpandableText`，ctrl+o 用 `setExpanded()`）、各命令输出都走它。直接 `new Text(Themes::theme()->fg(...))` 切主题后颜色不变——`system` 主题在终端回报颜色前是灰阶，这种文字会一直是灰的。
+**Text with baked-in colors uses `ThemedText`** (upstream `components/themed-text.ts`): `new ThemedText(fn () => Themes::theme()->fg('dim', $msg), 1, 0)`; after `invalidate()` the next render rebuilds it with the current theme, so the data has to be snapshotted before the component is built. `say()`/`sayError()`/`sayWarning()`, the banner (`ExpandableText`, ctrl+o via `setExpanded()`) and every command's output go through it. A plain `new Text(Themes::theme()->fg(...))` keeps its color across a theme switch — and since the `system` theme is grayscale until the terminal reports its colors, such text stays gray forever.
 
-**扩展的主题接口照 upstream `ExtensionUIContext`**：`getAllThemes()` 返回 `list<ThemeInfo>`（`->name`、`->path`），`getTheme($name): ?Theme`，`setTheme(string|Theme): array{success, error?}`；`NoUi` 回 `UI not available`，`RpcUi` 回 `Theme switching not supported in RPC mode`（不再转发给宿主）。扩展组件不要存 `custom()` 给的 `Theme`，绘制时读 `Themes::theme()`（upstream 的 `theme` 是代理）。
+**The extension theme interface follows upstream's `ExtensionUIContext`**: `getAllThemes()` returns `list<ThemeInfo>` (`->name`, `->path`), `getTheme($name): ?Theme`, `setTheme(string|Theme): array{success, error?}`; `NoUi` answers `UI not available`, `RpcUi` answers `Theme switching not supported in RPC mode` (no longer forwarded to the host). Extension components do not keep the `Theme` that `custom()` hands them; they read `Themes::theme()` at render time (upstream's `theme` is a proxy).
 
-**启动信息的布局照 upstream**：`headerContainer`（内置头部 `ExpandableText`）之后是 `loadedResourcesContainer`，由 `showLoadedResources()` 每段一个 `ExpandableText`（Context、Skills、Prompts、Extensions，pig 多一段 Tools），问题用 `[Skill conflicts]`/`[Extension issues]` 的 `ThemedText` 块；ctrl+o 展开收起全部，`/reload` 重建。
+**The startup information layout follows upstream**: after `headerContainer` (the built-in header `ExpandableText`) comes `loadedResourcesContainer`, filled by `showLoadedResources()` with one `ExpandableText` per section (Context, Skills, Prompts, Extensions, plus a Tools section in pig); problems are `ThemedText` blocks headed `[Skill conflicts]`/`[Extension issues]`; ctrl+o expands and collapses all of them, `/reload` rebuilds them.
 
-**`Markdown::invalidate()` 必须清掉缓存的默认样式转义**：行内 span（`**粗体**`、`` `代码` ``）之后恢复默认样式用的转义是算一次存起来的，只清行缓存不清它，切主题后粗体后面的文字还是旧颜色（用户消息、压缩/分支摘要正文都中招）。
+**`Markdown::invalidate()` must clear the cached default-style escape**: the escape that restores the default style after an inline span (`**bold**`, `` `code` ``) is computed once and stored; clearing only the line cache and not that leaves the text after a bold run in the old color after a theme switch (user messages and compaction/branch summary bodies were all affected).
 
-**鼠标**：`Box`、`Editor`、`SelectList`、`SettingsList` 照 upstream 有 `handleMouse()`。包装组件（如 `CustomEditor` 包着 `Editor`）必须实现 `MouseHandler` 并转发，否则点击输入框什么都不做；`Mouse::dispatchMouseEvent()` 会把焦点给到包装组件本身。
+**Mouse**: `Box`, `Editor`, `SelectList` and `SettingsList` have `handleMouse()` as upstream does. A wrapping component (such as `CustomEditor` around `Editor`) must implement `MouseHandler` and forward, or clicking the input does nothing; `Mouse::dispatchMouseEvent()` gives focus to the wrapper itself.
 
-| 旧 | 新 |
+| Old | New |
 |---|---|
-| `Theme\Palette`、`PaletteTest` | 删除；`Theme\Themes` + `Theme\Theme` |
-| `$palette->fg/bg('x', $t)`、`$palette->of('x')` | `Themes::theme()->fg/bg('x', $t)`（绘制时取）；闭包 `static fn ($t) => Themes::theme()->fg('x', $t)` |
+| `Theme\Palette`, `PaletteTest` | deleted; `Theme\Themes` + `Theme\Theme` |
+| `$palette->fg/bg('x', $t)`, `$palette->of('x')` | `Themes::theme()->fg/bg('x', $t)` (read at render time); closure `static fn ($t) => Themes::theme()->fg('x', $t)` |
 | `$palette->hex('x')` | `Themes::getResolvedThemeColors($name)['x']` |
 | `markdownTheme()/selectListTheme()/editorTheme()/settingsListTheme()` | `Themes::getMarkdownTheme()/getSelectListTheme()/getEditorTheme()/getSettingsListTheme()` |
 | `highlightTheme()` + `Highlight::lines` | `Themes::highlightCode($code, $lang)` |
-| `thinkingBorder($l)`、bash 模式边框、`isTruecolor()` | `Themes::theme()->getThinkingBorderColor($l)`、`getBashModeBorderColor()`、`getColorMode() === 'truecolor'` |
-| `Palette::named/dark/light/labra`、`names()`、`customThemes()` | `Themes::setTheme()/initTheme()/getThemeByName()`、`setCustomThemesCwd()` + `getAvailableThemes()`、`getAvailableThemesWithPaths()` |
-| `HookUi::palette()`、`FooterComponent::setPalette()` | `HookUi::theme()`；页脚直接读全局主题 |
-| `InteractiveMode::useTheme()/$palette`，构造参数 `(session, palette, cwd, version, theme, …)` | `$themeController`（`InteractiveThemeController`），`(session, cwd, version, ?themeSetting, …)` |
+| `thinkingBorder($l)`, the bash-mode border, `isTruecolor()` | `Themes::theme()->getThinkingBorderColor($l)`, `getBashModeBorderColor()`, `getColorMode() === 'truecolor'` |
+| `Palette::named/dark/light/labra`, `names()`, `customThemes()` | `Themes::setTheme()/initTheme()/getThemeByName()`, `setCustomThemesCwd()` + `getAvailableThemes()`, `getAvailableThemesWithPaths()` |
+| `HookUi::palette()`, `FooterComponent::setPalette()` | `HookUi::theme()`; the footer reads the global theme directly |
+| `InteractiveMode::useTheme()/$palette`, constructor `(session, palette, cwd, version, theme, …)` | `$themeController` (`InteractiveThemeController`), `(session, cwd, version, ?themeSetting, …)` |
 
 `!command` runs a shell command and puts the result in the conversation, as a
 `Session\BashExecution` — an app message, not an LLM one. `CodingAgent` supplies the
@@ -11362,1223 +11372,1224 @@ refuses a second copy of a class, which is the fatal error with a politer messag
 4. Added `isImageLine()` bypass in `Markdown::lines()` to skip wrapping and padding on terminal image protocol lines.
 5. Added cached layout in `Editor.php` to memoize the visual line layout within the same render frame.
 
-### `SessionManager::describe()` 必须流式读取，否则扫描多个 10MB+ 会话会触发 PHP 128MB OOM
+### `SessionManager::describe()` must stream the file, or scanning several 10MB+ sessions hits PHP's 128MB OOM
 
-**现象**：
-在 Web 模式或会话选择器加载包含超大 `.jsonl` 会话（如 16MB、14MB 包含大量长上下文、压缩摘要与工具调用的会话）时，触发 `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 144`。
+**Phenomenon**:
+Loading a huge `.jsonl` session (16MB, 14MB — long context, compaction summaries and tool calls) in Web mode or in the session picker died with `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 144`.
 
-**原因**：
-`SessionManager::lines()` 此前使用 `file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)` 将整文件一次性读入由所有行组成的巨大 PHP 数组，并在后续使用 `array_slice` 发生数组浅拷贝。PHP 数组对于长字符串的内部 zval 结构体和散列表开销达到文件体积的 5-8 倍，单个 16MB 会话文件载入数组就消耗了近百兆内存；若一个目录下连续遍历 30 个会话的 `describe()`，极易瞬间冲破 PHP 默认的 128MB `memory_limit` 限制。
+**Cause**:
+`SessionManager::lines()` used `file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)`, reading the whole file into one huge PHP array of lines, then shallow-copied it with `array_slice`. A PHP array of long strings costs 5–8× the file size in zvals and hash table; one 16MB session took close to 100MB as an array, and `describe()` over 30 sessions in one directory blew through the default 128MB `memory_limit` at once.
 
-**对策**：
-1. 重构 `SessionManager::describe()` 为流式逐行解析（`fopen` + `fgets`），读完一行立即解码并释放内存，实现 O(1) 恒定内存解析（即使单个会话文件达到 100MB，解析内存也仅几 KB）。
-2. 在 `describe()` 提取会话搜索关键词 `$said` 时，增加 `$totalSaidLength < 65536` 上限截断保护，避免累积数万条长历史消息把内存撑爆。
-3. 在 `HttpServer::listAllWorkspaces()` 读取首行 `cwd` 时，改用 `fgets($fh)` 只读取单个首行，避免调用 `file()` 吞进整个大文件。
-4. 在 CLI 入口 `bin/pig` 和 `bin/pig-ai` 中显式设置 `ini_set('memory_limit', '512M');`，提供双重运行保障。
+**Countermeasure**:
+1. `SessionManager::describe()` parses line by line (`fopen` + `fgets`), decoding and releasing each line as it goes — constant memory, a few KB even for a 100MB file.
+2. When `describe()` collects the search text `$said`, a `$totalSaidLength < 65536` cap stops tens of thousands of long messages from accumulating.
+3. `HttpServer::listAllWorkspaces()` reads the first line's `cwd` with one `fgets($fh)` instead of `file()` on the whole file.
+4. `bin/pig` and `bin/pig-ai` set `ini_set('memory_limit', '512M');` as a second line of defense.
 
-### PHP 8.5 `curl_close()` 弃用警报与 `CurlHandle` 资源生命周期
+### PHP 8.5's `curl_close()` deprecation and the `CurlHandle` lifetime
 
-**现象**：
-在 PHP 8.5 运行时下执行 cURL 网络请求（如 `pig-computer` 或其它扩展模块发起 HTTP 调用）时，终端或日志抛出：
-`PHP Deprecated: Function curl_close() is deprecated since 8.5, as it has no effect since PHP 8.0`。
+**Phenomenon**:
+Under PHP 8.5, a cURL request (`pig-computer` or another extension making an HTTP call) printed
+`PHP Deprecated: Function curl_close() is deprecated since 8.5, as it has no effect since PHP 8.0` to the terminal or the log.
 
-**原因**：
-自 PHP 8.0 起，`curl_init()` 返回值已由传统的底层 resource 升级为 `\CurlHandle` 类实例对象，对象在超出作用域或析构时会自动释放底层 cURL 连接句柄；在 PHP 8.5 中，调用 `curl_close()` 已正式标记为 Deprecated。
+**Cause**:
+Since PHP 8.0 `curl_init()` returns a `\CurlHandle` object rather than a resource; the handle is released when the object goes out of scope or is destructed, and PHP 8.5 marks `curl_close()` deprecated.
 
-**对策**：
-在整个仓库及扩展中全面弃用 `curl_close($ch)`，改用 `unset($ch)` 显式注销或令其在作用域结束自然析构。
+**Countermeasure**:
+No `curl_close($ch)` anywhere in the repository or the extensions; `unset($ch)` explicitly, or let it be destructed at the end of scope.
 
-### 命令后台化（`&`）导致子进程继承管道、`Run::wait()` 永久卡死
+### A backgrounded command (`&`) leaves its pipes with the grandchild and `Run::wait()` hangs forever
 
-**现象**：
-当模型或用户在 `bash` 工具中执行后台任务（如 `nohup ... &`、`(cmd) &`、或启动后台守护进程/服务）时，前台父进程已立即退出并输出结果，但 `Run::wait()` 陷入无限阻塞、会话彻底卡死，直到外部强行终止进程。
+**Phenomenon**:
+When the model or the user ran a background job in the `bash` tool (`nohup ... &`, `(cmd) &`, starting a daemon or a service), the foreground parent exited at once with its output, but `Run::wait()` blocked forever and the session was dead until the process was killed from outside.
 
-**原因**：
-Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程打开的所有未标记 `O_CLOEXEC` 的文件描述符（包括 stdout/stderr 管道的写端）。即使父 shell 执行完 `echo ...` 正常退出，后台孙进程仍持有管道写端。`Run.php` 此前仅依赖 `feof($pipe)` 检测完成，而操作系统只有在所有写端均关闭时才会使 `feof()` 为真；同时 `Run::wait()` 未设置默认超时，导致 Fiber 永久等待管道 EOF。
+**Cause**:
+On Unix, a process spawned by `proc_open` / `fork` inherits every open descriptor of its parent that is not `O_CLOEXEC`, including the write ends of the stdout/stderr pipes. The parent shell finishes its `echo ...` and exits, but the background grandchild still holds the write end. `Run.php` detected completion with `feof($pipe)` alone, and the OS only reports EOF once *every* write end is closed; `Run::wait()` had no default timeout either, so the Fiber waited for an EOF that never came.
 
-**对策**：
-在 `Run::wait()` 中增加基于 `Loop::delay(0.1)` 的进程状态轮询：一旦检测到主命令进程 `proc_get_status()['running'] !== true`（说明主 shell 已经退出生命周期），给予 50ms 宽限期让事件循环读取并 drain 尽缓冲区中的残留数据，随后立即结束 `$this->finished` 等待，关闭管道并安全退出，杜绝后台孙进程阻断会话。
+**Countermeasure**:
+`Run::wait()` polls the process state on `Loop::delay(0.1)`: as soon as the main command's `proc_get_status()['running'] !== true` (the shell has left its lifecycle), it gives the event loop a 50ms grace period to read and drain what is left in the buffers, then ends the `$this->finished` wait, closes the pipes and returns — a background grandchild can no longer hold the session.
 
-### Web 模式下 LLM 发送失败无任何错误提示（静默吞错）
+### A failed LLM send in Web mode showed no error at all (the error was swallowed)
 
-**现象**：
-在 Web 界面向模型提问后，偶尔没有生成任何回复，转圈停止，界面恢复为空白且没有弹出任何红色错误提示；输入框中的内容被清空，用户误以为请求丢失或卡住。
+**Phenomenon**:
+Every so often a question asked in the Web UI produced no reply: the spinner stopped, the view went back to blank with no red error, and the input had been cleared — the user assumed the request was lost or stuck.
 
-**原因**：
-1. `RpcEvents.php` 的 `agent_end` 事件此前未抽取失败消息的 `errorMessage`，输出事件为 `{"type":"agent_end","messages":[...]}`（缺少 `error` 顶层字段），而前端 `onEvent(evt)` 仅检查 `evt.error`，导致 turn 失败时错误直接穿透遗漏。
-2. 流式错误事件 `ErrorEvent` 在 `RpcEvents::delta()` 中仅序列化了 `stopReason`，遗漏了 `$event->error->errorMessage`。
-3. `retry_end` 重试全部耗尽失败后，前端仅隐藏横幅并刷新状态，未在聊天区渲染 `evt.error`。
-4. `RpcMode::prompt()` 内部异步抛出异常时发送的错误响应缺少 `$id`，前端 `onRpcEvent()` 因无对应 pending promise 直接忽略，既未通知发送操作也未渲染到界面。
-5. 前端在连接等待或发送报错时提前清空了 `promptInput.value`，导致用户输入内容在错误时被彻底销毁。
+**Cause**:
+1. `RpcEvents.php`'s `agent_end` did not extract the failed message's `errorMessage`; the event was `{"type":"agent_end","messages":[...]}` with no top-level `error`, and the front end's `onEvent(evt)` only checked `evt.error`, so a failed turn passed straight through.
+2. The streaming `ErrorEvent` in `RpcEvents::delta()` serialized only `stopReason`, not `$event->error->errorMessage`.
+3. When `retry_end` reported all retries spent, the front end only hid the banner and refreshed state; it never rendered `evt.error` in the chat.
+4. When `RpcMode::prompt()` threw asynchronously, the error response carried no `$id`; the front end's `onRpcEvent()` found no pending promise and dropped it, neither notifying the send nor rendering anything.
+5. The front end cleared `promptInput.value` before the connection was ready or when the send failed, destroying the user's text on error.
 
-**对策**：
-1. 在 `RpcEvents::encode(AgentEndEvent)` 中增加 `lastError` 提取器，将失败消息的 `errorMessage` 显式序列化至 `agent_end.error`；并在 `ErrorEvent` 的 delta 中包含 `error`。
-2. 前端 `onEvent(evt)` 增加后备错误提取 `evt.error || lastErrorMessage(evt.messages)`，双重确保 `agent_end` 出错必定在聊天区输出红色 `msg-error`。
-3. 前端 `retry_end` 失败时（`!evt.succeeded`）在界面输出具体重试失败错误。
-4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
-5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
+**Countermeasure**:
+1. `RpcEvents::encode(AgentEndEvent)` gained a `lastError` extractor that serializes the failed message's `errorMessage` into `agent_end.error`; the `ErrorEvent` delta includes `error`.
+2. The front end's `onEvent(evt)` falls back to `evt.error || lastErrorMessage(evt.messages)`, so a failed `agent_end` always prints a red `msg-error` in the chat.
+3. A failed `retry_end` (`!evt.succeeded`) prints the actual retry error.
+4. `onRpcEvent` catches failed responses with no id or no match, ends the running state and calls `appendErrorMessage`.
+5. `submitMessage` restores `text` and `pendingImages` to the input when the send or the connection fails.
 
-### quota 墙的行动提示是 provider 的措辞，session 不改写
+### The quota wall's call to action is the provider's wording; the session does not rewrite it
 
-**现象**：pi 在 quota 用尽且 reset 很久以后显示 `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`。TUI 还曾把同一个失败显示两次：assistant error component 一次，`InteractiveMode::onMessageEnd()` 的 `sayError()` 又一次。
+**Phenomenon**: long after a quota reset pi showed `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`. The TUI also showed the same failure twice: once in the assistant error component and once more via `sayError()` in `InteractiveMode::onMessageEnd()`.
 
-**原因**：这句话是 pi-antigravity 的 `friendlyAntigravityError()` 在 provider 里写的，不是 pi 的 session 写的；上游 session 不读错误里的等待时间。pig 曾在 `Session\Retry` 里解析 `reset after …`/`Resets in …` 并在 `AgentSession` 里改写消息——上游没有这一层，已删除。
+**Cause**: that sentence is written by pi-antigravity's `friendlyAntigravityError()` inside the provider, not by pi's session; upstream's session does not read the wait time out of the error. pig once parsed `reset after …`/`Resets in …` in `Session\Retry` and rewrote the message in `AgentSession` — upstream has no such layer, and it is deleted.
 
-**规则**：配额墙的措辞属于 provider（`AntigravityApi::explain()` 的 429 分支，逐字照 pi-antigravity），措辞本身保证不命中上游的可重试模式，所以 session 不重试、原样结束这一轮。同一个 assistant error 只能由一个 transcript component 负责显示；`sayError()` 只在 `$this->streaming === null` 的畸形事件流里兜底。
+**Rule**: the quota wall's wording belongs to the provider (the 429 branch of `AntigravityApi::explain()`, word for word from pi-antigravity), and the wording itself guarantees it misses upstream's retryable patterns, so the session does not retry and ends the turn as it is. One assistant error is shown by exactly one transcript component; `sayError()` is only the fallback for a malformed event stream where `$this->streaming === null`.
 
-**对策**：`AntigravityApiTest::testAQuotaWallIsNotTriedOnTheOtherHostAndIsSaidInPiAntigravitysWords`、`AgentSessionTest::testAProvidersQuotaWallIsNotRetriedAndItsSentenceIsKept`、`InteractiveModeTest::testAProvidersQuotaWallIsShownOnceAsItWasWordedAndNotRetried`。
+**Countermeasure**: `AntigravityApiTest::testAQuotaWallIsNotTriedOnTheOtherHostAndIsSaidInPiAntigravitysWords`, `AgentSessionTest::testAProvidersQuotaWallIsNotRetriedAndItsSentenceIsKept`, `InteractiveModeTest::testAProvidersQuotaWallIsShownOnceAsItWasWordedAndNotRetried`.
 
-### Web 历史回放消息块不能有第二套更窄的 wire 规则
+### Web history replay must not have a second, narrower set of wire rules
 
-**现象**：Web 重新打开会话或自动压缩后，若干 transcript block 与 TUI 不一致甚至直接丢失：压缩摘要仍显示旧文案、不按 `tokensBefore` 展示；自动压缩完成事件带了 summary 却没有追加块；hook 消息完全不显示；历史工具结果丢失 `details.diff`、截断提示和完整输出路径；`!command` 历史回放没有自己的块。
+**Phenomenon**: after the Web UI reopened a session or auto-compacted, several transcript blocks differed from the TUI or were missing outright: compaction summaries kept the old wording and ignored `tokensBefore`; the auto-compaction completion event carried a summary but appended no block; hook messages were not shown at all; historical tool results lost `details.diff`, the truncation notice and the full-output path; a replayed `!command` had no block of its own.
 
-**原因**：Web 有两条分叉：后端 `SessionCodec` 只编码 compaction / branch / bash 三种 app message，漏掉 `HookMessage`，所以 RPC/Web 事件链上 hook 消息变成 `null`；前端历史回放又有一套手写工具卡和 summary/hook HTML，读取 `result.diff` 而不是真实的 `result.details.diff`，并把工具结果的 `details` 丢掉。这是 TUI、session file、RPC wire 和 Web 四端各自回答同一个问题。
+**Cause**: Web had two forks. The back end's `SessionCodec` encoded only the three app messages compaction / branch / bash and skipped `HookMessage`, so hook messages became `null` on the RPC/Web event chain; the front end's history replay had its own hand-written tool cards and summary/hook HTML, read `result.diff` instead of the real `result.details.diff`, and dropped the tool result's `details`. That is the TUI, the session file, the RPC wire and the Web each answering the same question on their own.
 
-**规则**：Web 历史回放必须消费 `SessionCodec::encode()` 的完整形状；工具卡只允许 `ToolCard` 一处决定 result 怎么画，不能在 `app.js` 再写一套 `formatToolResultBody()`；压缩、分支摘要和 hook 消息都用同一个主题 token block，而不是硬编码紫色或旧文案。自动压缩的 `auto_compaction_end.summary` 和后续 `message_end` 可能是同一个摘要，前端必须按 `role:timestamp` 去重。
+**Rule**: Web replay consumes the full shape of `SessionCodec::encode()`; `ToolCard` is the one place that decides how a result is drawn, with no second `formatToolResultBody()` in `app.js`; compaction, branch summaries and hook messages all use the same theme-token block rather than a hard-coded purple or old wording. `auto_compaction_end.summary` and the `message_end` that follows may be the same summary, so the front end deduplicates by `role:timestamp`.
 
-**对策**：`SessionCodec` 增加 `HookMessage` 的 `role: "custom"` 编解码；Web 回放把 tool result 包成 `{content, details}` 交给 `ToolCard`，`edit` 优先显示 `details.diff`，`write` 显示写入内容，`bashExecution` 走 bash card；compaction / branch / hook 使用 `.compaction-box` + theme token，hook 消息五行预览并可点击展开；`auto_compaction_end` 追加 summary 且与 `message_end` 去重。回归测试用 PHP 实际消息生成 JSON，再由 Node 运行 Web renderer，避免测试自己发明一套 wire。
+**Countermeasure**: `SessionCodec` encodes `HookMessage` as `role: "custom"`; Web replay wraps a tool result as `{content, details}` for `ToolCard`, `edit` prefers `details.diff`, `write` shows what was written, `bashExecution` takes the bash card; compaction / branch / hook use `.compaction-box` + theme tokens, hook messages preview five lines and expand on click; `auto_compaction_end` appends the summary and deduplicates against `message_end`. The regression test generates the JSON from real PHP messages and runs the Web renderer under Node, so the test cannot invent a wire of its own.
 
-### `Auth::fresh()` 在非协程中刷新 OAuth 令牌导致 `Future::await()` 崩溃
+### `Auth::fresh()` renewing an OAuth token outside a coroutine crashed in `Future::await()`
 
-**现象**：
-当恢复历史会话（`bin/pig -c` 或 `--resume`）且上一次使用的模型是基于 OAuth 认证的提供商（如 Antigravity、Anthropic OAuth）且该 token 刚好在本地过期时，启动瞬间抛出致命崩溃：
-`Pig\Ai\Utils\Oauth\OauthError: Could not renew the antigravity token: Future::await() must be called inside a coroutine; wrap the entry point in Async::run()`。
+**Phenomenon**:
+Resuming a session (`bin/pig -c` or `--resume`) whose last model used an OAuth provider (Antigravity, Anthropic OAuth) with a token that had just expired locally crashed on startup:
+`Pig\Ai\Utils\Oauth\OauthError: Could not renew the antigravity token: Future::await() must be called inside a coroutine; wrap the entry point in Async::run()`.
 
-**原因**：
-在 `bin/pig -c` 启动的主引导流（`CodingAgent::session()`）中尚未进入 `Async::run()`，此时处于普通的同步执行流中。`AgentSession::restoreSettings()` 此前为了校验恢复的模型是否有可用 key，调用了 `$this->keyFor($model)`，而 `keyFor()` 内部触发了 `$auth->apiKey()`。`Auth::apiKey()` 发现 access token 已过期后调用了 `$this->fresh()` 试图进行异步网络刷新，内部调用的 `Socket::connect()` 执行了 `Future::await()`，因外部无 Fiber 协程直接抛错。
+**Cause**:
+The bootstrap of `bin/pig -c` (`CodingAgent::session()`) runs before `Async::run()`, in plain synchronous code. `AgentSession::restoreSettings()` checked that the restored model had a usable key by calling `$this->keyFor($model)`, which reaches `$auth->apiKey()`; `Auth::apiKey()` saw the expired access token and called `$this->fresh()` to renew it over the network, whose `Socket::connect()` runs `Future::await()` — with no Fiber around it, that throws.
 
-**对策**：
-1. 在 `Auth::fresh()` 中加入非协程保护：一旦捕获到或者检测到当前处于普通同步上下文（`Fiber::getCurrent() === null`），绝不在同步流中强行刷新网络 token，而是返回已有凭据，留待进入 `Async::run()` 真实 turn 时再安全异步换票。
-2. 在 `AgentSession::restoreSettings()` 预检模型可用性时，优先使用无网络副作用的 `$this->auth->hasKeyFor($model->provider)`，不仅杜绝崩溃，更消除了启动阶段多余的远程网络请求。
+**Countermeasure**:
+1. `Auth::fresh()` guards against the non-coroutine case: in a plain synchronous context (`Fiber::getCurrent() === null`) it never renews over the network, returning the credentials it has and leaving the renewal to the real turn inside `Async::run()`.
+2. `AgentSession::restoreSettings()` pre-checks the model with `$this->auth->hasKeyFor($model->provider)`, which has no network side effect — no crash, and no needless remote request at startup.
 
-### `SessionManager::open()` 必须流式读取超大会话避免 128MB OOM
+### `SessionManager::open()` must stream a huge session to avoid the 128MB OOM
 
-**现象**：
-在恢复包含数千轮历史对话或包含大量代码 diff、体积达到 50MB~65MB+ 的历史会话时，抛出 `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 150`。
+**Phenomenon**:
+Resuming a session with thousands of turns or a lot of code diffs — 50MB to 65MB+ — threw `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 150`.
 
-**原因**：
-`SessionManager::open()` 此前依赖 `SessionManager::lines()`，后者使用 `file($path)` 将整个 65MB、数万行的 JSONL 文件一次性读入为巨大的字符串数组，并在 `array_slice` 时触发内存倍增，瞬间吞噬超过 150MB 内存，冲破 PHP 默认的 128MB 上限。
+**Cause**:
+`SessionManager::open()` relied on `SessionManager::lines()`, which read the whole 65MB, tens-of-thousands-of-lines JSONL file into one string array with `file($path)`, then doubled it in `array_slice` — over 150MB at once, past PHP's default 128MB.
 
-**对策**：
-将 `SessionManager::open()` 重构为逐行流式读取（`fopen` + `fgets`），读一行解析一行放入会话树并立即释放行字符串，内存占用从 150MB+ 骤降至不足 10MB（在标准 128MB 限制下仅需 1.7 秒即可无压力打开 65MB 超大历史会话）。
+**Countermeasure**:
+`SessionManager::open()` reads line by line (`fopen` + `fgets`), parses each line into the session tree and frees the string at once; memory fell from 150MB+ to under 10MB, and a 65MB session opens in 1.7 seconds under the standard 128MB limit.
 
-### `Socket::write()` 与 `read()` 遇对端关闭触发 Broken pipe Warning 导致终端刷屏与重试失效
+### `Socket::write()` and `read()` on a peer-closed connection leaked Broken pipe warnings onto the terminal and broke retries
 
-**现象**：
-在长连接通信或流式请求期间，如果服务端因超时、限流、断网或重置连接而提前关闭了 TCP/SSL 连接，客户端在调用 `Socket::write()` 写数据时，终端会被 PHP 抛出的多条原生 OpenSSL Warning 严重刷屏：
-`Warning: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe in Socket.php on line 92`。
-并且，`Socket::write()` 此前仅抛出硬编码的 `SocketError('Write failed')`，丢失了底层的真实失败原因。
+**Phenomenon**:
+During a long-lived connection or a streaming request, when the server closed the TCP/SSL connection early (timeout, rate limit, network loss, reset), `Socket::write()` flooded the terminal with PHP's native OpenSSL warnings:
+`Warning: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe in Socket.php on line 92`.
+And `Socket::write()` threw a hard-coded `SocketError('Write failed')`, losing the real reason.
 
-**原因**：
-`Socket.php` 中虽然定义了用于捕获 Warning 的 `capturingWarnings()` 闭包工具，但在 `Socket::write()` 和 `Socket::read()` 调用底层 PHP 内置函数 `fwrite()` 和 `fread()` 时，未包裹在 `set_error_handler` 中。当连接对端关闭导致 EPIPE/Broken pipe 时，PHP 底层直接将 OpenSSL Warning 打印到了标准错误输出，既破坏了 TUI 和 CLI 的渲染状态，又丢弃了 warning 文本，使得上层捕获到的异常信息不包含 `broken pipe` 关键字。
+**Cause**:
+`Socket.php` had the `capturingWarnings()` helper for exactly this, but `Socket::write()` and `Socket::read()` called `fwrite()` and `fread()` outside any `set_error_handler`. On EPIPE/Broken pipe, PHP printed the OpenSSL warning to stderr — wrecking the TUI and CLI rendering — and threw the warning text away, so the exception the caller saw never contained `broken pipe`.
 
-**对策**：
-1. 在 `Socket::write()` 和 `Socket::read()` 中全面通过 `self::capturingWarnings()` 执行 `fwrite` 和 `fread`，杜绝任何 PHP Warning 泄露到终端。
-2. 当写入或读取返回 `false` 时，主动调用 `$this->close()` 释放已失效连接，并将 `$warning` 详细原因追加至异常信息中（形如 `Write failed: ... Broken pipe`）。
+**Countermeasure**:
+1. `Socket::write()` and `Socket::read()` run `fwrite` and `fread` through `self::capturingWarnings()`; no PHP warning reaches the terminal.
+2. When a write or read returns `false`, `$this->close()` releases the dead connection and the captured `$warning` is appended to the exception (`Write failed: ... Broken pipe`).
 
-### `fwrite(): SSL operation failed` 零写死循环、fclose close_notify 警告泄露与网络重试补强
+### `fwrite(): SSL operation failed` zero-write spin, `fclose` close_notify warning leak, and stronger network retries
 
-**现象**：
-长对话、网络波动、代理服务器关闭连接或发送大 payload 时，偶发抛出 `fwrite(): SSL operation failed with code 5` / `SSL operation failed with code 1` / `Broken pipe`，或者终端突然冒出原生 PHP Warning；会话直接红字中断报错，未能进入自动重试。
+**Phenomenon**:
+In long conversations, on a flaky network, when a proxy closed the connection or when a large payload was sent, `fwrite(): SSL operation failed with code 5` / `SSL operation failed with code 1` / `Broken pipe` appeared now and then, or a raw PHP Warning popped up in the terminal; the session ended in red without an automatic retry.
 
-**原因**：
-1. **零写死循环（Zero-write loop）**：在 OpenSSL 非阻塞流上，当连接被对端提早关闭时，`fwrite` 并不总是返回 `false`，而是返回 `0`。在非阻塞模式下，已关闭的 TCP socket 在 `stream_select` 中永远处于 Writable 状态，因此 `$this->awaitReady(true)` 瞬间返回，导致 `while ($offset < $length)` 在毫秒级内空转上万次并耗尽超时，甚至导致 OpenSSL 状态机崩溃报错。且 `Socket::write()` 原先缺少对 `feof($this->stream)` 的即时检测。
-2. **`fclose()` close_notify 警告泄露**：当连接已被底层异常打断时，直接执行 `fclose($stream)` 会触发 OpenSSL 尝试发送 TLS `close_notify` alert，在 Broken pipe 连接上写入直接向终端抛出裸露的 `Warning: fwrite(): SSL operation failed with code 5`。
-3. **一秒轮询片段被误当成整体写入超时**：连续零写时，代码用 `awaitReady(true, min(1.0, $stallLimit))` 等下一次可写。这样一个 30 秒或 5 秒的整体写入超时，遇到对端暂时不读、socket 一秒内没有重新可写，就会提前抛出 `Socket timed out after 1.0s`。这不是 provider 超时，而是 pig 把内部 poll slice 当成了用户可见超时；大 payload 或代理背压时尤其容易触发。
+**Cause**:
+1. **Zero-write loop**: on a non-blocking OpenSSL stream, a connection closed by the peer makes `fwrite` return `0`, not always `false`. A closed TCP socket is permanently writable in `stream_select`, so `$this->awaitReady(true)` returned at once and `while ($offset < $length)` spun tens of thousands of times within milliseconds until the timeout — sometimes crashing the OpenSSL state machine. `Socket::write()` also had no immediate `feof($this->stream)` check.
+2. **`fclose()` close_notify warning leak**: `fclose($stream)` on a connection already broken makes OpenSSL try to send a TLS `close_notify` alert, and writing that on a Broken pipe connection printed a bare `Warning: fwrite(): SSL operation failed with code 5` to the terminal.
+3. **A one-second poll slice mistaken for the whole write timeout**: after consecutive zero writes the code waited for writability with `awaitReady(true, min(1.0, $stallLimit))`. A 30-second or 5-second overall write timeout therefore failed early with `Socket timed out after 1.0s` whenever the peer stopped reading for a second — pig's internal poll slice shown as a user-visible timeout, easiest to hit with large payloads or proxy back-pressure.
 
-**对策**：
-1. 在 `Socket::write()` 中加入前置 `feof()` 检查及连续零写（`$zeroWrites > 10`）熔断保护，遇到断开立即安全抛出 `SocketError`，杜绝死循环空转与状态机损坏。
-2. 在 `Socket::close()` 中使用 `self::capturingWarnings()` 包裹 `fclose($stream)`，彻底静音已断连 SSL 的 `close_notify` 原生警告。
-3. `Socket::capturingWarnings()` 改为字符串累加（`$warning .= ' ' . $message`），确保 OpenSSL 的连续复合报警（如 Code 5 叠加具体 Broken pipe）不丢失。
-4. 这类传输失败能否被会话自动重试，取决于 provider 按 Node fetch 的措辞报告它（响应头前 `Connection error.`/`fetch failed`，body 中途 `terminated`，见 `SdkRequest::errorMessage()`），而不是 PHP 原生异常文本——上游的可重试模式只认前者。
-5. 零写后的等待使用整体写入超时剩余值（`$stallLimit - elapsed`），而不是固定的一秒片段；`SocketTest::testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout` 用一个接受但不读取的本地 peer 证明旧代码约 1 秒失败，新代码等完整 1.5 秒。
+**Countermeasure**:
+1. `Socket::write()` checks `feof()` first and trips a consecutive-zero-write breaker (`$zeroWrites > 10`), throwing `SocketError` at once on disconnect — no spin, no damaged state machine.
+2. `Socket::close()` wraps `fclose($stream)` in `self::capturingWarnings()`, silencing the `close_notify` warning of a dead SSL connection.
+3. `Socket::capturingWarnings()` accumulates (`$warning .= ' ' . $message`) so OpenSSL's compound warnings (code 5 plus the Broken pipe detail) are kept whole.
+4. Whether such a transport failure is retried by the session depends on the provider reporting it in Node fetch's words (`Connection error.`/`fetch failed` before the response headers, `terminated` mid-body — see `SdkRequest::errorMessage()`), not on PHP's native exception text; upstream's retryable patterns only recognize the former.
+5. The wait after a zero write uses what is left of the overall write timeout (`$stallLimit - elapsed`), not a fixed one-second slice; `SocketTest::testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout` uses a local peer that accepts but never reads to show the old code failing after about 1 second and the new code waiting the full 1.5 seconds.
 
-### 会话树回溯 O(N²) 数组重分配与 `latestFor` 全文件扫描导致 `pig -c` 启动严重迟钝
+### O(N²) array reallocation walking the session tree and a full-file scan in `latestFor` made `pig -c` start very slowly
 
-**现象**：
-在存在大体积历史会话（如数十兆、上万轮对话）的工作目录中执行 `pig -c`（恢复最新会话）时，启动首帧耗时高达 2.28 秒，而上游 `pi -c` 仅需 0.5 秒左右，慢了 3.6 倍以上。
+**Phenomenon**:
+In a working directory with large session history (tens of megabytes, tens of thousands of turns), `pig -c` (resume the latest session) took 2.28 seconds to its first frame where upstream `pi -c` takes about 0.5 — more than 3.6× slower.
 
-**原因**：
-剖析定位到 4 个严重的性能杀手：
-1. **`SessionManager::latestFor()` 全量扫描**：此前直接调用 `listFor($cwd)`，而 `listFor` 会对排在前 30 个的历史会话全部进行完整的逐行流式 `describe()` 解析与提取。如果目录下有几个大文件，仅这一步就耗去近 400ms，而其实只需找出最新 mtime 的单个文件。
-2. **`SessionManager::pathTo()` O(N²) 内存重排**：在从 leaf 回溯到 root 的 `while` 循环中，此前调用了 `array_unshift($path, $id)`。PHP 的 `array_unshift` 是 O(N) 的内存块整体搬移和全键重排，在包含 2.8 万个节点的树链路上循环执行 2.8 万次，耗时高达 718ms！
-3. **`SessionManager::settings()` 全树正向扫描**：原实现先构建完整的 `pathTo($this->leaf)`，再从 root 到 leaf 正向遍历两万多个节点以查找最后一次配置变更，耗时高达 725ms。而查找最新配置理应从 `leaf` 沿 `parent` 链反向向上回溯，只要匹配到最新的 model 和 thinking 即可立即 `break` 退出。
-4. **`SessionManager::resolve()` 循环解包拷贝**：此前在循环中执行 `$messages = [...$messages, ...self::edited([[$id, $item]], $edits)];`，每轮循环都对已有数组全量解包深拷贝，造成 O(N²) 的内存分配。
-5. **`SessionEntries::decode()` 冗余计算**：对文件中的每一行均在最顶层无条件执行慢速的 `self::millis()`（包含 `strtotime` 与 `preg_match`），而在占文件 99% 的 `message` 行上该结果根本未被使用。
+**Cause**:
+Profiling found four (then five) heavy hitters:
+1. **`SessionManager::latestFor()` scanned everything**: it called `listFor($cwd)`, which fully streams and `describe()`s the first 30 sessions. With a few large files in the directory that alone cost close to 400ms, when all that was needed was the one file with the newest mtime.
+2. **`SessionManager::pathTo()` O(N²) memory shuffling**: the `while` loop walking from leaf to root did `array_unshift($path, $id)`. PHP's `array_unshift` is O(N) — it moves the whole block and renumbers every key — and on a chain of 28,000 nodes it ran 28,000 times: 718ms.
+3. **`SessionManager::settings()` walked the whole tree forward**: it built the full `pathTo($this->leaf)`, then walked more than twenty thousand nodes root-to-leaf to find the last settings change: 725ms. The newest settings should be found by walking *up* the `parent` chain from `leaf` and `break`ing at the first model and thinking level seen.
+4. **`SessionManager::resolve()` spread-copied in a loop**: `$messages = [...$messages, ...self::edited([[$id, $item]], $edits)];` deep-copies the existing array on every iteration — O(N²) allocation.
+5. **`SessionEntries::decode()` did redundant work**: every line went through the slow `self::millis()` (`strtotime` plus `preg_match`) unconditionally, and on `message` lines — 99% of the file — the result was never used.
 
-**对策**：
-1. **`SessionManager::latestPathFor()` 首行轻量嗅探**：对齐上游 pi 的 `findMostRecentSession`，仅读取首行验证 header，不再全量 `describe()` 读取整个 71MB 会话，单项耗时直接从 206ms 暴跌至 1.6ms（提速 128 倍）！
-2. `SessionManager::pathTo()` 改为 `$path[] = $id`（O(1) 追加）并在退出循环后执行单次 `array_reverse($path)`（O(N)），单项耗时直接从 717ms 暴跌至 3ms，提速 230 倍。
-3. `SessionManager::settings()` 改为从 `leaf` 沿 `parent` 链反向向上查找，遇到最新设置立即终止，耗时从 725ms 暴跌至 0.6ms，提速 1200 倍。
-4. `SessionManager::resolve()` 改为直接 `$messages[] = ...` 单条追加，消除循环解包拷贝，耗时从 30ms 降至 7ms。
-5. `SessionEntries::decode()` 仅对需要时间戳的非 `message` 条目执行 `millis()`。
-6. 实测 `pig -c` 在真实 71MB、2.8 万行超大会话下的首帧启动耗时从 2275ms 缩减至 **489ms**，不仅完全追平甚至在部分轮次超越了 `pi -c`（440-540ms）！
+**Countermeasure**:
+1. **`SessionManager::latestPathFor()` sniffs the first line**: as upstream's `findMostRecentSession` does, it reads only the header line instead of `describe()`ing a whole 71MB session — 206ms down to 1.6ms (128×).
+2. `SessionManager::pathTo()` appends with `$path[] = $id` (O(1)) and does a single `array_reverse($path)` (O(N)) after the loop — 717ms down to 3ms (230×).
+3. `SessionManager::settings()` walks up the `parent` chain from `leaf` and stops at the newest settings — 725ms down to 0.6ms (1200×).
+4. `SessionManager::resolve()` appends with `$messages[] = ...`, no spread copy — 30ms down to 7ms.
+5. `SessionEntries::decode()` calls `millis()` only for the non-`message` entries that need a timestamp.
+6. Measured on the real 71MB, 28,000-line session, `pig -c` reaches its first frame in **489ms** instead of 2275ms — level with `pi -c` (440–540ms) and ahead of it in some runs.
 
-### `PtyManager::input()` / `resize()` 在已退出的终端 ID 上触发 Undefined array key Warning
+### `PtyManager::input()` / `resize()` on an exited terminal id raised an Undefined array key warning
 
-**现象**：
-当 Web 终端已退出或标签页关闭后，前端 xterm.js 窗口由于 resize 事件监听器或快速连击滞后发送的 `terminal_resize` / `terminal_input` 请求在服务端触发：
-`PHP Warning: Undefined array key "term-..." in PtyManager.php on line 106`。
+**Phenomenon**:
+After a Web terminal had exited or its tab was closed, a late `terminal_resize` / `terminal_input` from xterm.js (a resize listener, or quick repeated clicks) produced
+`PHP Warning: Undefined array key "term-..." in PtyManager.php on line 106` on the server.
 
-**原因**：
-PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧结果为 `null` 或对象时安全，如果 `$id` 在散列表数组中不存在，PHP 在计算表达式左侧 `$this->terminals[$id]` 时会首先产生未定义键警告。
+**Cause**:
+The nullsafe operator in `$this->terminals[$id]?->resize()` is only safe when the left side evaluates to `null` or an object; when `$id` is not in the array, evaluating `$this->terminals[$id]` itself raises the undefined-key warning first.
 
-**对策**：
-改用 `($this->terminals[$id] ?? null)?->input($data)` 与 `($this->terminals[$id] ?? null)?->resize($cols, $rows)`，使用 null 合并运算符（`?? null`）安全访问数组元素，对已退出或未找到的终端静默忽略，彻底杜绝 Warning 泄露。
+**Countermeasure**:
+`($this->terminals[$id] ?? null)?->input($data)` and `($this->terminals[$id] ?? null)?->resize($cols, $rows)` — the null coalescing (`?? null`) reads the element safely, and an exited or unknown terminal is ignored without a warning.
 
-### Bash 耗时计时器（Elapsed / Took）与 `test/lint.php` 批处理加速
+### The bash timer (Elapsed / Took) and batching `test/lint.php`
 
-**现象**：
-1. 在 TUI 运行长耗时命令（如用户 `!command` 或模型调用 `bash` 工具）时，bash 块内缺少执行耗时显示，无法获知具体耗时了多久（例如 `Elapsed 30.3s`、`Took 53.1s`）。
-2. 执行 `php test/lint.php` 耗时高达 53.1 秒，严重拖慢提交前检查与本地流转。
+**Phenomenon**:
+1. A long command in the TUI (a user `!command` or the model's `bash` tool) showed no elapsed time in its block — no way to see that it had taken `Elapsed 30.3s` or `Took 53.1s`.
+2. `php test/lint.php` took 53.1 seconds, slowing down every pre-commit check.
 
-**原因**：
-1. 对照上游 pi `packages/coding-agent/src/core/tools/renderers/bash.ts`，pi 官方在 bash 渲染器中记录了 `startedAt` 与 `endedAt`，运行中动态显示 `Elapsed ${formatDuration}`，完成后显示 `Took ${formatDuration}`；pig 的 `ToolExecutionComponent` 此前未对齐该耗时计时器。
-2. `test/lint.php` 此前在 `foreach ($files as $file)` 中对 637 个文件逐一调用 `exec(PHP_BINARY . ' -l ' . $file)` 串行启动了 637 个独立的 PHP 子进程，进程启动开销导致耗时达 53 秒。
+**Cause**:
+1. Upstream's `packages/coding-agent/src/core/tools/renderers/bash.ts` records `startedAt` and `endedAt`, shows `Elapsed ${formatDuration}` while running and `Took ${formatDuration}` when done; pig's `ToolExecutionComponent` had not ported that timer.
+2. `test/lint.php` ran `exec(PHP_BINARY . ' -l ' . $file)` inside `foreach ($files as $file)` — 637 files, 637 PHP processes started one after another, and the process startup cost was the 53 seconds.
 
-**对策**：
-1. 在 `ToolExecutionComponent` 与 `InteractiveMode` 中对齐 upstream pi 的耗时格式化器 `formatDuration()`（秒保留一位小数 `30.3s`、分秒 `3m 42s`、时分秒 `1h 15m 30s`），并在 bash 结果中渲染 muted 样式的 `Elapsed <duration>`（运行中）与 `Took <duration>`（完成后）。
-2. 在 `InteractiveMode::executeBash` 中加入 500ms 刷新调度，保证即使无标准输出的命令也能平滑跳动显示当前经过时间。
-3. `test/lint.php` 改用 `array_chunk($files, 100)` 批量分块执行 `php -l`，如有语法错误自动回退到逐文件定位；全量 lint 耗时由 **53.1s 暴降至 0.9s（提速 59 倍）**。
+**Countermeasure**:
+1. `ToolExecutionComponent` and `InteractiveMode` carry upstream's `formatDuration()` (one decimal in seconds `30.3s`, `3m 42s`, `1h 15m 30s`) and render a muted `Elapsed <duration>` while running and `Took <duration>` when done.
+2. `InteractiveMode::executeBash` schedules a refresh every 500ms so a command with no stdout still shows a moving timer.
+3. `test/lint.php` runs `php -l` on `array_chunk($files, 100)` batches and falls back to one file at a time only when a batch reports a syntax error; a full lint went from **53.1s to 0.9s (59×)**.
 
-### 全屏固定底部 Dock 与滚动视口（ChatViewport & ScrollView）
+### The fullscreen fixed bottom dock and the scrolling viewport (ChatViewport & ScrollView)
 
-**现象**：单屏流式渲染下，对话一长输入框和 Footer 就被推出屏幕。upstream pi 的 fullscreen 模式里输入框、工作指示器、状态栏始终贴在底部，往上滚时视口最后一行正中浮出 `↓ Jump to latest message · Ctrl+End`。
+**Phenomenon**: with single-screen streaming, a long conversation pushed the editor and the footer off the screen. In upstream pi's fullscreen mode the editor, the working indicator and the status bar stay at the bottom, and scrolling up floats `↓ Jump to latest message · Ctrl+End` centered on the viewport's last line.
 
-**结构（照 upstream 逐文件移植）**：
-1. `TuiAltScreen`（`tui-alt-screen.ts`）每帧用 `Layout::renderLayoutFrame()`（`layout.ts`）把布局根排进整窗矩形；没有布局根时把 children 放进一个隐式 follow-end 的 `ScrollView`。
-2. `ChatViewport::create()`（`chat-viewport.ts` 的 `createChatViewport()`）：`VStack[transcript ScrollView(basis 0, grow 1, min 1), dock VStack(basis auto)]`；dock 各项可收缩，编辑器最少 3 行。pig 的 overlay 跟 status 一槽、extension footer 跟 footer 一槽、编辑器上方的 Spacer 放在 widgetsAbove 槽。
-3. `ScrollView`（`components/scroll-view.ts`）只管状态：`updateLayout()` 时跟随末尾，`scrollBy()` 返回没滚完的行数（滚轮外溢、拖选自动滚动都靠它），滚动条 `hidden|auto|always`。
-4. 搜索高亮、浮条、overlay、滚动条、选择高亮都在 `TuiAltScreen::doRender()` 里按 upstream 的顺序合成；`tui.altScreen.*` 键（翻页、半页、逐行、上/下一个 prompt、搜索、顶/底）由 `TuiAltScreen::handleViewportKey()` 查 `Pig\Tui\Keybindings::getKeybindings()`，见下面的键位条目。
-5. 光标：和 upstream 一样找 `TUI::CURSOR_MARKER`；叶子盒子比分到的高度高时，`Layout` 让带标记的那一行留在盒子里。
+**Structure (ported file by file from upstream)**:
+1. `TuiAltScreen` (`tui-alt-screen.ts`) lays the layout root into the full window rectangle every frame with `Layout::renderLayoutFrame()` (`layout.ts`); without a layout root the children go into an implicit follow-end `ScrollView`.
+2. `ChatViewport::create()` (`createChatViewport()` in `chat-viewport.ts`): `VStack[transcript ScrollView(basis 0, grow 1, min 1), dock VStack(basis auto)]`; the dock's items can shrink, the editor to no less than 3 rows. pig's overlay shares the status slot, the extension footer shares the footer slot, and the Spacer above the editor sits in the widgetsAbove slot.
+3. `ScrollView` (`components/scroll-view.ts`) holds state only: it follows the end in `updateLayout()`, `scrollBy()` returns the rows it could not scroll (wheel overflow and drag-select auto-scroll both rely on it), and the scrollbar is `hidden|auto|always`.
+4. Search highlights, the floating pill, the overlay, the scrollbar and the selection highlight are composited in `TuiAltScreen::doRender()` in upstream's order; the `tui.altScreen.*` keys (page, half page, line, previous/next prompt, search, top/bottom) go through `TuiAltScreen::handleViewportKey()`, which consults `Pig\Tui\Keybindings::getKeybindings()` — see the keybinding entry below.
+5. Cursor: `TUI::CURSOR_MARKER` is searched for as upstream does; when a leaf box is taller than its allotted height, `Layout` keeps the marked row inside the box.
 
-### 全屏模式滚轮失灵、底部 Dock 被顶走：AltScreen 必须开鼠标上报 + 关 autowrap
+### Fullscreen wheel dead and the bottom dock pushed up: AltScreen must enable mouse reporting and disable autowrap
 
-**症状**：fullscreen 下滚轮翻不动历史（Terminal.app 把滚轮变成 ↑/↓，被输入框拿去翻历史）；底部输入框偶尔整体上移一行且不再归位，调窗口高度后错位；`Ctrl+Home` 直接 fatal。
+**Symptom**: in fullscreen the wheel could not scroll history (Terminal.app turns the wheel into ↑/↓, which the editor took for history); the bottom editor sometimes moved up one row and never came back, and misaligned after a window-height change; `Ctrl+Home` was a fatal error.
 
-**根因**：为保住终端原生选择复制，把 `?1000h ?1002h ?1006h` 去掉了，`InteractiveMode` 里的滚轮解析成了死代码（测试直接塞 SGR 序列所以一直绿）。绘制分支没有 `?7l`，某行在终端里比 `Width::visible()` 宽一格就自动换行，底行换行会滚屏，逐行 diff 不知道；高度变化也不整屏重画。`scrollToTop()` 在 `ScrollView` 里不存在。
+**Root cause**: `?1000h ?1002h ?1006h` had been removed to keep the terminal's native select-and-copy, which made the wheel parsing in `InteractiveMode` dead code (the tests fed SGR sequences directly, so they stayed green). The render path had no `?7l`, so a row one cell wider in the terminal than `Width::visible()` wrapped, and a wrap on the last row scrolled the screen without the line diff knowing; a height change did not repaint the whole screen either. `scrollToTop()` did not exist on `ScrollView`.
 
-**避坑规则**：AltScreen 照 upstream `TuiAltScreen`：进屏 `?1049h ?7l` + 鼠标上报（tmux/screen 用 button-motion，其余 all-motion，都带 `?1004` 焦点），选择复制由 pig 自己做（`TuiAltScreen` 里的 selection + `AltScreenFlashContainer` 的 `Copied!`）；每帧逐行绝对寻址第 0..height-1 行，宽或高变了就 `\x1b[2J` 整帧重画。不要为了原生选择再关鼠标上报。
+**Trap rule**: AltScreen follows upstream's `TuiAltScreen`: on entry `?1049h ?7l` plus mouse reporting (button-motion under tmux/screen, all-motion elsewhere, `?1004` focus in both), with select-and-copy done by pig itself (the selection in `TuiAltScreen` plus `AltScreenFlashContainer`'s `Copied!`); every frame addresses rows 0..height-1 absolutely, and a width or height change repaints the frame with `\x1b[2J`. Do not turn mouse reporting off again for native selection.
 
 ```php
 $this->terminal->write(self::ENTER_ALT_SCREEN . self::DISABLE_AUTOWRAP . $mouse . "\x1b[2J\x1b[H");
-// 鼠标/焦点报告可能和按键挤在同一次 read 里，TuiAltScreen::handleViewportInput() 先把它们抠出来。
+// Mouse/focus reports may share one read with keystrokes; TuiAltScreen::handleViewportInput() picks them out first.
 ```
 
-### 向上滚动后崩溃：`Rendered line N is 172 columns wide, terminal is 171`
+### Crash after scrolling up: `Rendered line N is 172 columns wide, terminal is 171`
 
-**症状**：fullscreen 下往上滚，`↓ Jump to latest message` 胶囊盖在含中文的那一行上时，`checkWidth()` 抛错，pig 崩溃。（现在 `TuiAltScreen` 照 upstream 把超宽行截断而不是抛错，但拼接本身仍必须对。）
+**Symptom**: scrolling up in fullscreen, when the `↓ Jump to latest message` pill landed on a row containing Chinese, `checkWidth()` threw and pig crashed. (`TuiAltScreen` now truncates an over-wide row as upstream does instead of throwing, but the compositing itself still has to be right.)
 
-**根因**：`Width::composite()` 用非 strict 的 `sliceByColumn()` 取胶囊左边的部分，一个宽字符正好跨在起始列上时被整个留下，整行多出一列。upstream 的 `compositeTuiLine()` 用 `extractSegments()` + strict slice，跨边的宽字符丢掉、用空格补齐，最后还按 `$totalWidth` 截断。
+**Root cause**: `Width::composite()` took the part left of the pill with a non-strict `sliceByColumn()`; a wide character straddling the start column was kept whole, and the row came out one column too wide. Upstream's `compositeTuiLine()` uses `extractSegments()` plus a strict slice — the straddling wide character is dropped and padded with a space — and truncates to `$totalWidth` at the end.
 
-**避坑规则**：任何"把 A 盖到 B 某一列上"的拼接都走 `Width::composite()`；自己拼 before/selected/after 时三段都传 `strict: true`。
+**Trap rule**: any "draw A over B at column X" compositing goes through `Width::composite()`; when assembling before/selected/after by hand, pass `strict: true` for all three.
 
 ```php
 $before = Width::sliceByColumn($line, 0, $start, true);
 ```
 
-### TUI 拆成 upstream 的 `TUI` / `TuiBase` / `TuiMainScreen` / `TuiAltScreen`（无别名）
+### The TUI split into upstream's `TUI` / `TuiBase` / `TuiMainScreen` / `TuiAltScreen` (no aliases)
 
-开发者要求 100% 对齐 upstream，出问题直接去 pi 找答案，所以旧类名不留别名。
+The developer asked for 100% alignment with upstream — when something breaks, the answer is found in pi — so the old class names keep no alias.
 
-| 旧 | 新 |
+| Old | New |
 |---|---|
-| `Tui`（类） | `TUI`（接口）+ `TuiBase`（公共）+ `TuiMainScreen`（regular）+ `TuiAltScreen`（fullscreen） |
-| `new Tui()` + `setAltScreen()` | `TuiRenderer::createInteractiveTui()`（`tui-renderer.ts`） |
+| `Tui` (class) | `TUI` (interface) + `TuiBase` (shared) + `TuiMainScreen` (regular) + `TuiAltScreen` (fullscreen) |
+| `new Tui()` + `setAltScreen()` | `TuiRenderer::createInteractiveTui()` (`tui-renderer.ts`) |
 | `onInput()` | `addInputListener()` / `removeInputListener()` |
 | `setDebugHandler()` | `$tui->onDebug = ...` |
 | `handleInput()` / `draw()` | `handleTerminalInput()` / `doRender()` |
-| `setViewportRenderer()` / `setPrimaryScrollView()` / `setCopySelection()` | `setLayoutRoot()` / 布局里 `primary: true` 的 `ScrollView` / `TuiAltScreenOptions` |
-| `new ChatViewport(...)`、`renderViewport()`、`indicatorRect()` | `ChatViewport::create(...)`；浮条由 `TuiAltScreen` 合成 |
-| `Caret` 接口、`caret()`、`Container::rowOf()` | `Focusable` + `public bool $focused` + `TUI::CURSOR_MARKER` |
-| `ScrollView::scrollToBottom()`、`contentLines()` | `scrollToEnd()`、`LayoutBox::$scrollContentLines` |
-| `TuiAltScreen::scrollPage()`、`InteractiveMode` 里查 `tui.altScreen.*` 的输入监听 | `TuiAltScreen::handleViewportKey()` + `Pig\Tui\Keybindings`（`keybindings.ts`） |
-| `InteractiveMode::$tui`（具体渲染器） | `$tui` 是 `TuiRenderer::createInteractiveTuiReference()` 给的转发引用（upstream 的 `ui`），具体渲染器是 `$renderer`（upstream 的 `renderer`） |
+| `setViewportRenderer()` / `setPrimaryScrollView()` / `setCopySelection()` | `setLayoutRoot()` / the `ScrollView` with `primary: true` in the layout / `TuiAltScreenOptions` |
+| `new ChatViewport(...)`, `renderViewport()`, `indicatorRect()` | `ChatViewport::create(...)`; the floating pill is composited by `TuiAltScreen` |
+| the `Caret` interface, `caret()`, `Container::rowOf()` | `Focusable` + `public bool $focused` + `TUI::CURSOR_MARKER` |
+| `ScrollView::scrollToBottom()`, `contentLines()` | `scrollToEnd()`, `LayoutBox::$scrollContentLines` |
+| `TuiAltScreen::scrollPage()`, the input listener in `InteractiveMode` that looked up `tui.altScreen.*` | `TuiAltScreen::handleViewportKey()` + `Pig\Tui\Keybindings` (`keybindings.ts`) |
+| `InteractiveMode::$tui` (the concrete renderer) | `$tui` is the forwarding reference from `TuiRenderer::createInteractiveTuiReference()` (upstream's `ui`); the concrete renderer is `$renderer` (upstream's `renderer`) |
 
-**macOS 大小写陷阱**：`Tui.php` → `TUI.php` 只差大小写。APFS 默认不区分大小写、git 默认 `core.ignorecase=true`，`git add -A` 不会记下改名，Linux 上 PSR-4 找不到 `TUI.php`。必须 `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`。
+**macOS case trap**: `Tui.php` → `TUI.php` differs only in case. APFS is case-insensitive by default and git's default is `core.ignorecase=true`, so `git add -A` does not record the rename and PSR-4 on Linux cannot find `TUI.php`. It has to be `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`.
 
-### `tui.altScreen.*` 键位走 TUI 的全局注册表，不走 coding-agent 的 `Keybindings`
+### The `tui.altScreen.*` keys go through the TUI's global registry, not coding-agent's `Keybindings`
 
-**结构**：upstream 的 `keybindings.ts` 是 `Pig\Tui\Keybindings`（`TUI_KEYBINDINGS`、`getKeybindings()`、`setKeybindings()`）+ `KeybindingsManager`。`TuiAltScreen` 只问注册表。coding-agent 的 `Keybindings::load()` 把 `keybindings.json` 里的 `tui.altScreen.*` 分出去，`InteractiveMode` 构造时 `TuiKeybindings::setKeybindings($keybindings->tuiKeybindings())`，和 upstream 构造函数里的 `setKeybindings()` 同一处。
+**Structure**: upstream's `keybindings.ts` is `Pig\Tui\Keybindings` (`TUI_KEYBINDINGS`, `getKeybindings()`, `setKeybindings()`) plus `KeybindingsManager`. `TuiAltScreen` asks only the registry. coding-agent's `Keybindings::load()` splits the `tui.altScreen.*` entries out of `keybindings.json`, and `InteractiveMode`'s constructor calls `TuiKeybindings::setKeybindings($keybindings->tuiKeybindings())` — the same place as the `setKeybindings()` in upstream's constructor.
 
-**避坑规则**：`tui.editor.*`、`tui.input.*`、`tui.select.*` 还没有组件去读注册表，所以 `keybindings.json` 写它们会报"pig has no action for"，不要放开成静默接受。注册表是进程级静态的：装了自定义键位的测试在 `setUp()`/`tearDown()` 里 `Keybindings::reset()`。`actionFor()` 只认 `app.*`，否则 `searchNext` 的 `enter` 会被编辑器当成动作吃掉。
+**Trap rule**: no component reads `tui.editor.*`, `tui.input.*` or `tui.select.*` from the registry yet, so writing them in `keybindings.json` reports "pig has no action for" — do not loosen that into silent acceptance. The registry is process-wide static: a test that installs custom keys calls `Keybindings::reset()` in `setUp()`/`tearDown()`. `actionFor()` recognizes `app.*` only, or `searchNext`'s `enter` would be eaten by the editor as an action.
 
 ```php
 TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 ```
 
-### 图片模块照 upstream 的 `terminal-image.ts` 改名（无别名）
+### The image module renamed after upstream's `terminal-image.ts` (no aliases)
 
-| 旧 | 新 |
+| Old | New |
 |---|---|
-| `Images\Capabilities`（`::detect()`、`->drawsImages()`） | `Images\TerminalCapabilities`；`TerminalImage::detectCapabilities()`；`->images !== null` |
-| `Images\CellSize` / `Images\ImageSize` | `Images\CellDimensions` / `Images\ImageDimensions`（值对象） |
-| `ImageDimensions::of/png/jpeg/gif/webp`（解析器） | `TerminalImage::getImageDimensions/getPngDimensions/getJpegDimensions/getGifDimensions/getWebpDimensions` |
+| `Images\Capabilities` (`::detect()`, `->drawsImages()`) | `Images\TerminalCapabilities`; `TerminalImage::detectCapabilities()`; `->images !== null` |
+| `Images\CellSize` / `Images\ImageSize` | `Images\CellDimensions` / `Images\ImageDimensions` (value objects) |
+| `ImageDimensions::of/png/jpeg/gif/webp` (parsers) | `TerminalImage::getImageDimensions/getPngDimensions/getJpegDimensions/getGifDimensions/getWebpDimensions` |
 | `TerminalImage::capabilities()` / `cellSize()` / `setCellSize()` / `reset()` | `getCapabilities()` / `getCellDimensions()` / `setCellDimensions()` / `setCapabilities()` + `resetCapabilitiesCache()` |
 | `TerminalImage::kitty()` / `iterm2()` / `render()` / `fallback()` / `rows()` | `encodeKitty()` / `encodeITerm2()` / `renderImage()` / `imageFallback()` / `calculateImageRows()` |
-| `TuiBase::isImageLine()`、`Markdown` 里私有的 `isImageLine()` | `TerminalImage::isImageLine()` |
-| `new Image($b64, $mime, ?theme, maxWidthCells, filename, size)`、`ImageTheme->fallback` | `new Image($b64, $mime, ImageTheme, ImageOptions, ?ImageDimensions)`、`ImageTheme->fallbackColor` |
+| `TuiBase::isImageLine()`, the private `isImageLine()` in `Markdown` | `TerminalImage::isImageLine()` |
+| `new Image($b64, $mime, ?theme, maxWidthCells, filename, size)`, `ImageTheme->fallback` | `new Image($b64, $mime, ImageTheme, ImageOptions, ?ImageDimensions)`, `ImageTheme->fallbackColor` |
 
-**避坑规则**：全屏下 Kitty 图片只上传一次，之后用 `getKittyImagePlacement()` 换成只放置的命令（`a=p`），离屏缓存按张数/传输字节/解码字节三道上限淘汰；iTerm2 在全屏期间关掉图片（`setCapabilities` 置空，停止时恢复）。能力探测的环境变量先 `PIG_*` 再 `PI_*`，用 helper 判断，不能用 `?:`——`PIG_HYPERLINKS=0` 在 PHP 里是假值会掉到 `PI_`。测试改了全局能力就在 `tearDown()` 里 `resetCapabilitiesCache()`。
+**Trap rule**: in fullscreen a Kitty image is uploaded once, after which `getKittyImagePlacement()` swaps in the placement-only command (`a=p`); the off-screen cache evicts by three caps — image count, transferred bytes, decoded bytes. iTerm2 images are switched off while fullscreen (`setCapabilities` to null, restored on stop). Capability environment variables are read `PIG_*` first, then `PI_*`, through a helper, never with `?:` — `PIG_HYPERLINKS=0` is falsy in PHP and would fall through to `PI_`. A test that changes the global capabilities calls `resetCapabilitiesCache()` in `tearDown()`.
 
-### 终端颜色查询：成批读入里挑回复
+### Terminal color queries: picking the replies out of a batched read
 
-**结构**：`TuiBase::queryTerminalColors()`（返回 `Future<TerminalColors>`）、`onTerminalColorSchemeChange()`、`setTerminalColorSchemeNotifications()`（DEC 2031）照 upstream `tui.ts`；解析在 `TerminalColors::parseOscColorResponse()` / `parseTerminalColorSchemeReport()`（`terminal-colors.ts`）。
+**Structure**: `TuiBase::queryTerminalColors()` (returns `Future<TerminalColors>`), `onTerminalColorSchemeChange()` and `setTerminalColorSchemeNotifications()` (DEC 2031) follow upstream's `tui.ts`; parsing is in `TerminalColors::parseOscColorResponse()` / `parseTerminalColorSchemeReport()` (`terminal-colors.ts`).
 
-**避坑规则**：upstream 的输入已按序列切好，pig 的一次 read 里可能夹着 18 个颜色回复 + DA1 + 按键，`consumeTerminalColorReplies()` 在监听器之前按顺序挑出来，剩下的照常分发；有查询挂着时，read 末尾半截的 `\e]…`/`\e[?…` 留到下一次拼上。没有查询挂着时 OSC 回复和 DA1 是普通输入（upstream 同样）。
+**Trap rule**: upstream's input arrives already split into sequences; one of pig's reads may hold 18 color replies plus DA1 plus keystrokes, so `consumeTerminalColorReplies()` picks them out in order before the listeners and the rest is dispatched as usual. While a query is pending, a half `\e]…`/`\e[?…` at the end of a read is kept for the next one. With no query pending, OSC replies and DA1 are ordinary input (as upstream).
 
-### 运行中切换 TUI 模式：组件拿的是转发引用，`instanceof` 只能问 `$renderer`
+### Switching TUI mode at runtime: components hold a forwarding reference, so `instanceof` can only be asked of `$renderer`
 
-**结构**：照 upstream 的 `switchTuiMode()`，`/settings` 里改 TUI mode 时同一棵组件树（document、pending、status 槽、widgetsAbove 槽、editor、widgetsBelow、footer 槽）从旧渲染器卸下、挂到新渲染器上；fullscreen 另外 `setLayoutRoot(ChatViewport)`。退出时 `fullscreenExitOutput=transcript` 也是切到 regular 再 `renderNow()` 打出对话，`resume-hint` 只离开备用屏。
+**Structure**: as upstream's `switchTuiMode()`, changing the TUI mode in `/settings` unmounts the same component tree (document, pending, status slot, widgetsAbove slot, editor, widgetsBelow, footer slot) from the old renderer and mounts it on the new one; fullscreen additionally does `setLayoutRoot(ChatViewport)`. On exit, `fullscreenExitOutput=transcript` also switches to regular and `renderNow()`s the conversation; `resume-hint` only leaves the alternate screen.
 
-**避坑规则**：`InteractiveMode::$tui` 是 `TUI` 转发引用，Loader、TerminalUi、扩展拿到的都是它，切换后仍然有效；`$this->tui instanceof TuiAltScreen` 永远是 false，判断模式、调 `setLayoutRoot()`/`setCopyOnSelect()`/`frame()` 一律用 `$this->renderer`。扩展经 `TerminalUi::onTerminalInput()` 加的监听挂在旧渲染器上，切换后由 `rebindTerminalInputListeners()` 搬过去，新加输入监听的入口也要进这个登记表。有 overlay 栈条目时拒绝切换（upstream 同样）。
+**Trap rule**: `InteractiveMode::$tui` is the `TUI` forwarding reference — the Loader, `TerminalUi` and extensions all hold it, and it stays valid across a switch; `$this->tui instanceof TuiAltScreen` is always false, so checking the mode and calling `setLayoutRoot()`/`setCopyOnSelect()`/`frame()` always go through `$this->renderer`. Listeners an extension added via `TerminalUi::onTerminalInput()` hang on the old renderer and are moved by `rebindTerminalInputListeners()` after a switch, so any new way of adding an input listener has to go through that register too. A switch is refused while the overlay stack has entries (as upstream).
 
-### 全屏鼠标：组件优先，滚轮在 overlay 聚焦时留给 overlay
+### Fullscreen mouse: components first, and the wheel stays with a focused overlay
 
-**结构**：照 upstream，`TuiAltScreen::handleMouseEvent()` 依次是捕获/按下目标 → 搜索框按钮 → overlay → 浮条/滚动条 → 布局里的组件（`dispatchMouseToLayout()`，跳过用 `Container` 默认 `handleMouse()` 的栈节点）→ 文本选择。抬起时没移动就合成 `click`。OSC 8 链接按下记下 URL，原地抬起时调 `TuiAltScreenOptions::$openUrl`。
+**Structure**: as upstream, `TuiAltScreen::handleMouseEvent()` goes capture/press target → search box buttons → overlay → floating pill/scrollbar → components in the layout (`dispatchMouseToLayout()`, skipping stack nodes that use `Container`'s default `handleMouse()`) → text selection. A release without movement synthesizes `click`. An OSC 8 link press records the URL, and a release in place calls `TuiAltScreenOptions::$openUrl`.
 
-**避坑规则**：pig 的 read 是成批的，`handleViewportReport()` 返回 false 的报告（overlay 聚焦、没有组件接的滚轮）原样留在 read 里交给聚焦组件——这就是 upstream 的 `return undefined`。upstream 对 `openUrl`/右键粘贴用 catch 吞掉失败；pig 不吞，回调自己报错（`InteractiveMode::openInBrowser()` 本来就不抛）。用户消息和非工具调用的助手消息首尾带 OSC 133 `A`/`B`/`C`，`tui.altScreen.previousPrompt/nextPrompt` 靠 `A` 定位，别在渲染里剥掉它们（`TuiAltScreen` 只在合成屏幕时去掉前缀）。
+**Trap rule**: pig's reads are batched, so a report for which `handleViewportReport()` returns false (overlay focused, a wheel no component takes) is left in the read for the focused component — that is upstream's `return undefined`. Upstream swallows `openUrl`/right-click-paste failures with a catch; pig does not, the callback reports its own errors (`InteractiveMode::openInBrowser()` never threw anyway). User messages and assistant messages without tool calls carry OSC 133 `A`/`B`/`C` at their ends, and `tui.altScreen.previousPrompt/nextPrompt` locate by `A` — do not strip them in rendering (`TuiAltScreen` removes the prefix only when compositing the screen).
 
-### `Ansi::at()` 不认 OSC/APC，`\e]8;;\a` 被当成 4 列可见字符
+### `Ansi::at()` did not know OSC/APC, so `\e]8;;\a` counted as 4 visible columns
 
-**症状**：`Width::composite()` 在一个已经拼过的行上再拼，第二段落到错误的列（`left  right` 变成 `leright`）。
+**Symptom**: `Width::composite()` compositing onto a row that had already been composited put the second segment in the wrong column (`left  right` became `leright`).
 
-**根因**：`compositeTuiLine()` 在两段之间插 `\e[0m\e]8;;\a`；`Ansi::at()` 只认 CSI，`]` `8` `;` `;` 被 `sliceByColumn()` 一类按列切的函数算成 4 列。upstream 的 `ansiCodeLength()` 认 OSC（`\e]`）和 APC（`\e_`），到 BEL 或 ST 结束。
+**Root cause**: `compositeTuiLine()` inserts `\e[0m\e]8;;\a` between segments; `Ansi::at()` recognized CSI only, so `]` `8` `;` `;` were counted as 4 columns by `sliceByColumn()` and the other column-slicing functions. Upstream's `ansiCodeLength()` recognizes OSC (`\e]`) and APC (`\e_`), terminated by BEL or ST.
 
-**避坑规则**：`Ansi::at()` 是所有按列切分的基础，它认的序列必须和 upstream `ansiCodeLength()` 一致。
+**Trap rule**: `Ansi::at()` is the base of every column slice; the sequences it recognizes must match upstream's `ansiCodeLength()`.
 
-### agent_settled 在 Working 时提前触发（「任务已完成」通知弹在还在干活的屏幕上）
+### agent_settled fired early while Working (the "task done" notification over a screen still working)
 
-**症状**：TUI 仍显示 Working…，system-notify 已弹「任务已完成 (Xs)」。典型触发：在 "Retrying…" 期间按 Enter；或 agent_end handler 里 sendMessage(triggerTurn)/sendUserMessage；或 run 收尾瞬间 steer/followUp（消息卡在队列里不被回答）。
+**Symptom**: the TUI still showed Working… while system-notify had already shown "task done (Xs)". Typical triggers: pressing Enter during "Retrying…"; `sendMessage(triggerTurn)`/`sendUserMessage` inside an agent_end handler; a steer/followUp in the instant a run was winding down (the message sat in the queue unanswered).
 
-**根因**：pig 原来在 `AgentEndEvent` 的 fan-out 里决定重试/压缩/结束，并在每个不重试的 run 结束时 settle —— settle 是「每个 run」而不是「每个 prompt」。同时 `isStreaming()` 只看 agent 当前 run（重试 sleep、溢出压缩、run 之间都是 false，且 `Agent::finish()` 在 agent_end 监听器之前就清了 isStreaming），于是这些空档里进来的输入变成新 prompt：先 settle 旧的，再立刻 Working。另外 AgentLoop 生产者 fiber 跑在监听器前面：turn_end 里排队的消息漏读，监听器抛错后还在跑工具。
+**Root cause**: pig decided retry/compaction/end inside the `AgentEndEvent` fan-out and settled at the end of every run that was not retried — settling "per run" rather than "per prompt". At the same time `isStreaming()` looked only at the agent's current run (false during a retry sleep, during overflow compaction and between runs, and `Agent::finish()` cleared isStreaming before the agent_end listeners ran), so input arriving in those gaps became a new prompt: settle the old one, then Working at once. The AgentLoop producer fiber also ran ahead of the listeners: messages queued in turn_end were missed, and tools kept running after a listener threw.
 
-**避坑规则**：
-- settle 只能出现在 `runAgentPrompt()` 的 finally（对应上游 `_runAgentPrompt` → `_emitAgentSettled`），一个 prompt 恰好一次；重试/溢出压缩/`agent.hasQueuedMessages()` 续跑都在它的 post-run 循环里，不准在 agent 事件回调里决定「之后做什么」。
-- `AgentSession::isStreaming()` = 上游 `_isAgentRunActive`（整个 prompt），不是 `agent->state->isStreaming`；新代码判断「能不能直接发」一律问 session。
-- Agent 的监听器必须在 loop 的 fiber 里同步跑完再继续（`AgentLoop::start/continue` 的 `$emit`），不要再用「另一个 fiber 迭代 EventStream」消费 agent 事件。
-- 改这块先跑 `AgentSettledTest`（记录 agent_start/agent_end/agent_settled 顺序）。
+**Trap rules**:
+- settle happens only in the `finally` of `runAgentPrompt()` (upstream's `_runAgentPrompt` → `_emitAgentSettled`), exactly once per prompt; retry, overflow compaction and the `agent.hasQueuedMessages()` continuation all live in its post-run loop, and "what happens next" is never decided inside an agent event callback.
+- `AgentSession::isStreaming()` = upstream's `_isAgentRunActive` (the whole prompt), not `agent->state->isStreaming`; new code asking "can this be sent now" asks the session.
+- The agent's listeners run synchronously to completion inside the loop's fiber (the `$emit` of `AgentLoop::start/continue`) before it continues; do not go back to "another fiber iterating the EventStream" to consume agent events.
+- Run `AgentSettledTest` (which records the agent_start/agent_end/agent_settled order) before touching this.
 
-### Web 终端里 vim 用不了（首屏不出来、输入没反应、Ctrl+C 无效）
-**症状**：`pig web` 的终端抽屉里敲 `vim file`，屏幕停在命令行不动（或只剩零星几块），之后按的键 vim 都收到了（`:wq` 能存盘）却不再刷新；Ctrl+C 停不下 `sleep`；bash 开头打印 "cannot set terminal process group … no job control"；`pig web` 停掉后端口还被残留的 shell 占着。
-**根因**（三处叠加）：
-- 当时 vendored 的 `xterm.js` 不是官方构建，而是别人把 5.5 和 FitAddon 重新打包成的一个 ES module（导出名被压成 `D` / `o`）。这次重打包把 `requestMode()`（DECRQM，`CSI ? Ps $ p` 的回答）压坏了，给枚举赋值到未声明的 `i`；模块是严格模式，第一次模式查询就在解析器里抛 ReferenceError，这次 write 后面的内容全丢。vim 启动就查模式（`?12$p` 光标闪烁），于是首屏和之后的重绘都没了。官方 5.5.0 和 6.0.0 都没有这段代码，现在换成了官方 6.0.0。
-- pty 输出按 JSON 文本帧发，`json_encode()` 遇到任何非 UTF-8 字节就整帧返回 false（`(string) false` 是空帧）。pty 是字节流，读取会把「你」切成两半；vim 启动探测也会写出不成字符的字节——整帧连同 vim 首屏一起消失。
-- `proc_open` 只把 fd 0–2 指到 pty，子进程留在 pig 的 session 里，没有控制终端：^C/^Z 只是普通字节、resize 没有 SIGWINCH、bash 没有作业控制、`/dev/tty` 要么不存在（daemon）要么是启动 `pig web` 的那个终端；master 关闭时也没有 SIGHUP，交互 bash 不理 SIGTERM。更糟的是 PHP 的 `proc_open` 把 `openpty()` 得到的 master/slave 原 fd 漏给了子进程（只关了 dup 出来的那份），连同服务器没设 CLOEXEC 的 socket：shell 自己攥着 master，关终端永远等不到 hangup，`pig web` 停了它还占着监听端口；旧 `PtyTest` 每次跑满 300s 超时也是它（残留 shell 攥着 phpunit 的输出管道）。另外 Linux 上 shell 退出后读 master 是 EIO（`fread` 返回 false），旧代码只认 EOF，watcher 空转 100% CPU、永远不报 exit。
-**避坑规则**：
-- shell 一律经 `PtyProcess::launcher()` 启动（setsid → 打开 slave 取得控制终端 → `stty` 初始尺寸 → exec），不要改回 `proc_open($shell)` 直跑；建不了 session 时它在终端第一行明说，不静默。
-- 发给浏览器的终端输出必须是完整 UTF-8：`flushOutput()` 留住未完的尾巴、`mb_scrub` 成 U+FFFD；`Websocket::encode()` 用 `JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR`，不许再出空帧。
-- 读 master 时 `false` 和 EOF 都是结束，都要 `cleanup()`。
-- 初始尺寸由 launcher 在 slave 上设，并由它在 fd 3 报告 slave 名（它是唯一确定 fd 0 已经是 slave 的进程；从父进程刚 fork 完去看 `/proc/$pid/fd/0` / `lsof` 可能看到的是服务器自己的终端，`stty` 会改掉用户自己窗口的尺寸）。报告到之前的 resize 先记下，报告到了再补一次，否则会被 launcher 的初始 `stty` 盖掉。
-- launcher exec shell 前必须关掉 fd 0–2 以外所有继承来的 fd（PHP 关不了裸 fd 号，经 `/bin/bash -c 'exec N<&- …; exec "$0" "$@"'`；POSIX sh 只认到 9）。
-- `vendor/` 下的 xterm 文件只能原样拷自 npm 官方包（`@xterm/xterm` 的 `lib/xterm.mjs`、`css/xterm.css`，`@xterm/addon-fit` 的 `lib/addon-fit.mjs`），不改、不重新打包；升级时换文件并更新 `VendoredXtermTest` 里的 sha256。
-- 改 pty 先跑 `PtyProcessTest`（^C、前台进程组、初始尺寸、半个字符、非法字节、继承 fd、EIO 退出）和 `PtyTest`。
+### vim unusable in the Web terminal (no first screen, no response to input, Ctrl+C ignored)
+**Symptom**: `vim file` in the terminal drawer of `pig web` left the screen on the command line (or a few scattered blocks); keys pressed afterwards reached vim (`:wq` saved) but nothing repainted; Ctrl+C could not stop `sleep`; bash printed "cannot set terminal process group … no job control" at startup; after `pig web` stopped, a leftover shell still held the port.
+**Root cause** (three stacked):
+- The vendored `xterm.js` was not the official build but someone's repackaging of 5.5 plus FitAddon into one ES module (exports minified to `D` / `o`). That repackaging broke `requestMode()` (DECRQM, the answer to `CSI ? Ps $ p`), assigning an enum into an undeclared `i`; the module is strict mode, so the first mode query threw a ReferenceError inside the parser and the rest of that write was lost. vim queries a mode on startup (`?12$p`, cursor blink), so the first screen and every later repaint vanished. Official 5.5.0 and 6.0.0 have no such code; it is now the official 6.0.0.
+- pty output was sent as JSON text frames, and `json_encode()` returns false for the whole frame on any non-UTF-8 byte (`(string) false` is an empty frame). A pty is a byte stream: a read can split `你` in half, and vim's startup probing writes bytes that are not characters — the whole frame, vim's first screen included, disappeared.
+- `proc_open` only pointed fds 0–2 at the pty; the child stayed in pig's session with no controlling terminal: ^C/^Z were plain bytes, resize sent no SIGWINCH, bash had no job control, `/dev/tty` either did not exist (daemon) or was the terminal that started `pig web`; closing the master sent no SIGHUP, and an interactive bash ignores SIGTERM. Worse, PHP's `proc_open` leaked the original master/slave fds from `openpty()` to the child (closing only its dup), along with the server's sockets that had no CLOEXEC: the shell held the master itself, so closing the terminal never produced a hangup and the shell kept the listening port after `pig web` stopped; the old `PtyTest` running to its full 300s timeout was the same thing (a leftover shell holding phpunit's output pipe). And on Linux, reading the master after the shell exits is EIO (`fread` returns false); the old code only recognized EOF, so the watcher spun at 100% CPU and never reported exit.
+**Trap rules**:
+- The shell is always started through `PtyProcess::launcher()` (setsid → open the slave to acquire the controlling terminal → `stty` the initial size → exec); do not go back to running `proc_open($shell)` directly. When it cannot create a session it says so on the terminal's first line, not silently.
+- Terminal output sent to the browser must be complete UTF-8: `flushOutput()` holds back an unfinished tail and `mb_scrub`s to U+FFFD; `Websocket::encode()` uses `JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR` — no more empty frames.
+- Reading the master, `false` and EOF both mean the end, and both `cleanup()`.
+- The initial size is set on the slave by the launcher, which reports the slave name on fd 3 (it is the only process that knows fd 0 is already the slave; looking at `/proc/$pid/fd/0` / `lsof` from the parent right after fork may show the server's own terminal, and `stty` would resize the user's own window). A resize arriving before the report is remembered and applied again once it arrives, or the launcher's initial `stty` overwrites it.
+- Before exec'ing the shell the launcher must close every inherited fd other than 0–2 (PHP cannot close raw fd numbers, so it goes through `/bin/bash -c 'exec N<&- …; exec "$0" "$@"'`; POSIX sh only knows up to 9).
+- The xterm files under `vendor/` are copied verbatim from the official npm packages (`@xterm/xterm`'s `lib/xterm.mjs`, `css/xterm.css`, `@xterm/addon-fit`'s `lib/addon-fit.mjs`), never edited or repackaged; an upgrade swaps the files and updates the sha256 in `VendoredXtermTest`.
+- Run `PtyProcessTest` (^C, foreground process group, initial size, half a character, invalid bytes, inherited fds, EIO exit) and `PtyTest` before touching the pty.
 
-### Anthropic 的 `redacted_thinking` 块被丢掉，下一轮重放的不是模型写的那一轮
+### Anthropic's `redacted_thinking` block was dropped, so the next turn replayed something the model did not write
 
-**症状**：Anthropic 在思考被安全策略隐去时发 `content_block_start` 的 `{type: "redacted_thinking", data: "<加密载荷>"}`；pig 的消息里没有这一块，会话文件里也没有，下一次请求把这一轮原样发回时少了它——发回去的不是模型写的那一轮，多轮推理的连续性断掉。
+**Symptom**: when Anthropic's safety policy redacts thinking it sends `content_block_start` with `{type: "redacted_thinking", data: "<encrypted payload>"}`; pig's message had no such block, nor did the session file, and the next request replayed the turn without it — not the turn the model wrote, breaking multi-turn reasoning continuity.
 
-**根因**：`Anthropic::onBlockStart()` 的 `match` 只认 `text` / `thinking` / `tool_use`，`redacted_thinking` 落到 `default => null`，块直接消失；`ThinkingContent` 也没有 `redacted` 字段可存。upstream（`anthropic-messages.ts`）把它存成 `thinking: "[Reasoning redacted]"`、`thinkingSignature: data`、`redacted: true`，回放给 Anthropic 时还原成 `{type: "redacted_thinking", data}`；`transform-messages.ts` 只在 provider、API、model 三者都相同时保留，否则整块丢弃（不转成 `<thinking>` 文本）。
+**Root cause**: the `match` in `Anthropic::onBlockStart()` knew `text` / `thinking` / `tool_use` only; `redacted_thinking` fell to `default => null` and the block vanished, and `ThinkingContent` had no `redacted` field to hold it. Upstream (`anthropic-messages.ts`) stores it as `thinking: "[Reasoning redacted]"`, `thinkingSignature: data`, `redacted: true`, and restores `{type: "redacted_thinking", data}` when replaying to Anthropic; `transform-messages.ts` keeps it only when provider, API and model all match, otherwise the block is dropped whole (not turned into `<thinking>` text).
 
-**避坑规则**：
-- provider 的块类型 `match` 里遇到不认识的类型，先查 upstream 是不是存成了别的形状，不能默认丢；能回放的东西丢了是协议错误，不是显示问题。
-- 隐去的思考：`thinking` 只放占位文字（TUI / HTML / Markdown 导出只显示这个），加密载荷只在 `thinkingSignature`；`Anthropic::assistantBlocks()` 先判断 `redacted === true` 再做空文本检查。
-- `TransformMessages` 里 redacted 块只在 provider、API、model 三者都相同时保留，其余一律丢弃。
-- 新加的可选字段（`ThinkingContent::$redacted`、`AssistantMessage` 的 `responseId` / `responseModel` / `endTurn` / `diagnostics`、`Usage` 的 `reasoning` / `cacheWrite1h`）全部照 `rawStopReason` 的做法：构造参数加在最后、JSON 里为 null 就不写键、所有逐字段复制 `new AssistantMessage(` 的地方（`TransformMessages`、`SessionManager::withContent()`、`AgentSession::normaliseFinalMessage()`）都要带上。测试在 `AnthropicTest` 和 `MessageTest`。
+**Trap rules**:
+- An unknown block type in a provider's `match`: check first whether upstream stores it in another shape; never drop by default. Losing something that can be replayed is a protocol error, not a display issue.
+- Redacted thinking: `thinking` holds only the placeholder (which is all the TUI / HTML / Markdown export show); the encrypted payload lives only in `thinkingSignature`; `Anthropic::assistantBlocks()` checks `redacted === true` before the empty-text check.
+- In `TransformMessages` a redacted block is kept only when provider, API and model all match, and dropped otherwise.
+- New optional fields (`ThinkingContent::$redacted`, `AssistantMessage`'s `responseId` / `responseModel` / `endTurn` / `diagnostics`, `Usage`'s `reasoning` / `cacheWrite1h`) all follow `rawStopReason`: constructor parameter last, key omitted from JSON when null, and every field-by-field `new AssistantMessage(` copy (`TransformMessages`, `SessionManager::withContent()`, `AgentSession::normaliseFinalMessage()`) carries them. Tests in `AnthropicTest` and `MessageTest`.
 
-### OpenAI 兼容 / Gemini 的 token 用量：思考算两遍、缓存漏读或算两遍
+### Token usage on OpenAI-compatible / Gemini: thinking counted twice, cache missed or counted twice
 
-**症状**：OpenAI 兼容 provider 上带推理的一轮，`output` 比账单多出整段 `reasoning_tokens`；DeepSeek / Kimi 的缓存命中全按新输入计价，`cacheRead` 永远是 0；Gemini 的 `input` 里还含着已缓存的部分，同一批 token 既按输入价又按缓存价各算一次。
+**Symptom**: on an OpenAI-compatible provider a turn with reasoning reported `output` above the bill by the whole `reasoning_tokens`; DeepSeek / Kimi cache hits were all billed as fresh input with `cacheRead` forever 0; Gemini's `input` still included the cached part, so the same tokens were charged once at input price and once at cache price.
 
-**根因**：`OpenAiCompletions::usage()` 把 `completion_tokens + reasoning_tokens` 当输出（当年为 Groq 加的补丁），但 `completion_tokens` 本来就含推理，upstream 的 `parseChunkUsage()` 没有任何 provider 分支；缓存只读 `prompt_tokens_details.cached_tokens`，没有 DeepSeek 的 `prompt_cache_hit_tokens`、Kimi 的顶层 `cached_tokens` 和 OpenRouter 系的 `cache_write_tokens`。`GoogleShared::usage()` 没从 `promptTokenCount` 里减 `cachedContentTokenCount`。
+**Root cause**: `OpenAiCompletions::usage()` took `completion_tokens + reasoning_tokens` as output (a patch once added for Groq), but `completion_tokens` already includes reasoning, and upstream's `parseChunkUsage()` has no per-provider branch at all; the cache read only `prompt_tokens_details.cached_tokens`, missing DeepSeek's `prompt_cache_hit_tokens`, Kimi's top-level `cached_tokens` and the OpenRouter family's `cache_write_tokens`. `GoogleShared::usage()` did not subtract `cachedContentTokenCount` from `promptTokenCount`.
 
-**避坑规则**：
-- 用量字段逐行照 upstream：completions 是 `output = completion_tokens`、`cacheRead = details.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens`（第一个存在的赢，0 也算）、`cacheWrite = details.cache_write_tokens`、`input = max(0, prompt - cacheRead - cacheWrite)`、total 由四项相加；Google 是 `input = prompt - cached`、`output = candidates + thoughts`、total 直接读 `totalTokenCount`。
-- `reasoning` 只是 `output` 的子集，不再加进任何计数；想给某个 provider 加修正，先在 upstream 找到对应分支再移植。
-- 测试固定在 `OpenAiCompletionsTest`（缓存字段的 data provider、cache write、推理不重复计）和 `GoogleTest::testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput`。
-- chunk 顶层没有 `usage` 时读 `choices[0].usage`（Moonshot 放在那里）；只读顶层的话 Moonshot 每一轮用量都是 0。测试：`OpenAiCompletionsTest::testUsageOnTheChoiceIsReadWhenTheChunkHasNoneOfItsOwn`。
+**Trap rules**:
+- Usage fields line by line as upstream: completions is `output = completion_tokens`, `cacheRead = details.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens` (the first one present wins, 0 included), `cacheWrite = details.cache_write_tokens`, `input = max(0, prompt - cacheRead - cacheWrite)`, total the sum of the four; Google is `input = prompt - cached`, `output = candidates + thoughts`, total read straight from `totalTokenCount`.
+- `reasoning` is a subset of `output` and is never added to any count; a correction for some provider is ported only after its branch is found in upstream.
+- Pinned by `OpenAiCompletionsTest` (the cache-field data provider, cache write, reasoning not double-counted) and `GoogleTest::testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput`.
+- When the chunk has no top-level `usage`, read `choices[0].usage` (where Moonshot puts it); reading the top level alone makes every Moonshot turn 0. Test: `OpenAiCompletionsTest::testUsageOnTheChoiceIsReadWhenTheChunkHasNoneOfItsOwn`.
 
-### 出错 / 被中断的 assistant 轮被原样重放
+### Failed / aborted assistant turns were replayed as they were
 
-**症状**：在 OpenAI Responses 模型（gpt-5 / codex）推理项结束、正文还没开始时按 Esc，下一次提问把只有一个签名推理项的那一轮发回去，后面紧跟用户消息——OpenAI 报 400 "reasoning was provided without its required following item"，会话卡死。其他 provider 也会收到半截正文和参数被截断的工具调用，外加一条为它编造的 `No result provided`。
+**Symptom**: on an OpenAI Responses model (gpt-5 / codex), pressing Esc after the reasoning item finished but before the body started, the next question replayed a turn holding a lone signed reasoning item followed by the user message — OpenAI answered 400 "reasoning was provided without its required following item" and the session was stuck. Other providers received half a body and a tool call with truncated arguments, plus a fabricated `No result provided` for it.
 
-**根因**：upstream `transform-messages.ts` 在补齐悬空工具调用的那一遍里，`stopReason` 是 `error` 或 `aborted` 的 assistant 轮整轮跳过（先关掉之前挂着的调用，再跳过）；pig 的 `TransformMessages::fillOrphanedCalls()` 没有这一步，`OpenAiResponses` 自己的保护只认 `Error`、不认 `Aborted`。
+**Root cause**: in the pass that closes dangling tool calls, upstream's `transform-messages.ts` skips an assistant turn whose `stopReason` is `error` or `aborted` entirely (closing the previously pending calls first, then skipping); pig's `TransformMessages::fillOrphanedCalls()` lacked that step, and `OpenAiResponses`'s own guard knew `Error` but not `Aborted`.
 
-**避坑规则**：
-- 失败轮在 `TransformMessages` 里过滤，顺序照 upstream：先 `$flush()`，再跳过；provider 拿到的历史里已经没有失败轮，新 provider 不要靠自己再判断。
-- 失败轮的工具调用不进 `$pending`，不会为它编造结果。
-- 测试：`AnthropicTest::testAFailedTurnIsNotReplayedAndNeitherAreItsCalls`、`testCallsPendingFromBeforeAFailedTurnAreStillAnswered`，`OpenAiResponsesTest::testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone`。
+**Trap rules**:
+- Failed turns are filtered in `TransformMessages`, in upstream's order: `$flush()` first, then skip; the history a provider receives has no failed turns, so a new provider does not judge them again on its own.
+- A failed turn's tool calls do not enter `$pending`, so no result is fabricated for them.
+- Tests: `AnthropicTest::testAFailedTurnIsNotReplayedAndNeitherAreItsCalls`, `testCallsPendingFromBeforeAFailedTurnAreStillAnswered`, `OpenAiResponsesTest::testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone`.
 
-### 跨模型的工具调用 id 形状不对，整个请求 400
+### Tool call ids of the wrong shape across models made the whole request a 400
 
-**症状**：会话中途 `/model` 切模型、历史里有工具调用时，下一次请求被拒：gpt-5 → Claude，`call_…|fc_…` 超过 64 字符（Anthropic 只收 `^[a-zA-Z0-9_-]+$` 且不超过 64）；gpt-5 → Groq 等 chat completions 端点，带 `|` 的长 id 原样发出；Copilot → `openai/gpt-5`，Copilot 自己铸的 item id（含 `+` `/` `=`）被当成 `id` 发回，OpenAI 要求 `fc_` 开头；同一 provider 换型号（gpt-5 → gpt-5-mini），`fc_` id 发回但配对的 `rs_` 推理项没发，OpenAI 拒绝。
+**Symptom**: switching models mid-session with `/model` while the history held tool calls got the next request refused: gpt-5 → Claude, `call_…|fc_…` over 64 characters (Anthropic accepts only `^[a-zA-Z0-9_-]+$` up to 64); gpt-5 → Groq and other chat-completions endpoints, the long id with `|` sent as is; Copilot → `openai/gpt-5`, the item id Copilot minted (with `+` `/` `=`) sent back as `id`, which OpenAI requires to start with `fc_`; a different model of the same provider (gpt-5 → gpt-5-mini), the `fc_` id sent back without its paired `rs_` reasoning item, refused by OpenAI.
 
-**根因**：upstream `transformMessages()` 收一个各 provider 自己的 `normalizeToolCallId` 回调，对非同一模型的调用改 id、结果跟着改；pig 只写死了 Copilot 两个 API 之间的一条改名规则，Anthropic 在发送时只替换字符不截断，`OpenAiResponses` 也没有 upstream 的 `isDifferentModel` / `fc_` 前缀判断。
+**Root cause**: upstream's `transformMessages()` takes each provider's own `normalizeToolCallId` callback and rewrites the id (and the matching result) for calls from a different model; pig hard-coded one rename between Copilot's two APIs, Anthropic only substituted characters without truncating when sending, and `OpenAiResponses` had none of upstream's `isDifferentModel` / `fc_` prefix checks.
 
-**避坑规则**：
-- id 规则只放在各 provider 里，以 closure 传给 `TransformMessages::apply()`；`TransformMessages` 里不写任何 provider 名字。
-- 同一模型（provider、API、model 三者相同）的 id 原样发回，不在发送时再清洗。
-- Responses 的 `id` 只在以 `fc_` 开头、且不是同 provider 同 API 的另一个型号时才发。
-- 测试：`AnthropicTest::testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows`，`OpenAiCompletionsTest::testAResponsesIdIsRemadeForChatCompletionsWhoeverMintedIt`，`OpenAiResponsesTest::testAnotherProvidersPairKeepsItsCallIdAndGetsAnItemIdOfItsOwn`、`testAnotherModelOfThisProviderSendsNoItemIdAndNeitherDoesOneNotStartingFc`，`GoogleTest::testAnotherModelsIdIsMadeSafeOnlyForAModelThatIsSentIt`。
+**Trap rules**:
+- Id rules live only in each provider, passed as a closure to `TransformMessages::apply()`; `TransformMessages` names no provider.
+- Ids from the same model (provider, API and model all equal) are sent back unchanged, with no cleaning at send time.
+- A Responses `id` is sent only when it starts with `fc_` and is not from another model of the same provider and API.
+- Tests: `AnthropicTest::testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows`, `OpenAiCompletionsTest::testAResponsesIdIsRemadeForChatCompletionsWhoeverMintedIt`, `OpenAiResponsesTest::testAnotherProvidersPairKeepsItsCallIdAndGetsAnItemIdOfItsOwn`, `testAnotherModelOfThisProviderSendsNoItemIdAndNeitherDoesOneNotStartingFc`, `GoogleTest::testAnotherModelsIdIsMadeSafeOnlyForAModelThatIsSentIt`.
 
-### Gemini 思考配置按 `str_contains($id, 'gemini-3')` 判断：不思考的请求 400，Gemma 4 / `-latest` 的级别无效
+### Gemini thinking config chosen by `str_contains($id, 'gemini-3')`: a no-thinking request was a 400, and levels did nothing on Gemma 4 / `-latest`
 
-**症状**：hook（`HookContext` 的补全）或导出摘要这类不带思考级别的请求，在 `google/gemini-3.1-pro-preview` 上直接 400 "Budget 0 is invalid. This model only works in thinking mode"，3.5 Flash Lite 同样 400；`gemma-4-*`、`gemini-flash-latest`、`gemini-flash-lite-latest` 上 `--thinking low` 不起作用，模型照样想多少是多少。
+**Symptom**: requests without a thinking level (the `HookContext` completion, an export summary) were a straight 400 on `google/gemini-3.1-pro-preview` — "Budget 0 is invalid. This model only works in thinking mode" — and likewise on 3.5 Flash Lite; on `gemma-4-*`, `gemini-flash-latest` and `gemini-flash-lite-latest`, `--thinking low` had no effect and the model thought as much as it liked.
 
-**根因**：`Stream::gemini()` 用 `str_contains($id, 'gemini-3')` 选级别还是预算，Gemma 4 和两个 `-latest` 别名落到 `thinkingBudget: -1`；`Google::thinking()` 对“不思考”一律发 `thinkingBudget: 0`，而 agent 的 `ThinkingLevel::clampedFor()` 只管 agent 自己的请求，不带级别的请求不经过它。upstream 用 `usesGoogleThinkingLevel()`（正则 + 两个别名 + `/gemma-?4/`）选格式，“不思考”走 `getDisabledGoogleThinkingConfig()`：没有 `off` 的级别模型发 `off` 夹到的最低级别。预算也按 `thinkingLevelMap` 解析后的级别查表，2.5 Flash-Lite 有自己的一行。
+**Root cause**: `Stream::gemini()` chose level versus budget with `str_contains($id, 'gemini-3')`, so Gemma 4 and the two `-latest` aliases fell to `thinkingBudget: -1`; `Google::thinking()` sent `thinkingBudget: 0` for every "no thinking", and the agent's `ThinkingLevel::clampedFor()` covers only the agent's own requests, so a request without a level never passed through it. Upstream picks the format with `usesGoogleThinkingLevel()` (a regex plus the two aliases plus `/gemma-?4/`) and routes "no thinking" through `getDisabledGoogleThinkingConfig()`: a level model without `off` is sent the lowest level `off` clamps to. Budgets are also looked up by the level `thinkingLevelMap` resolved to, and 2.5 Flash-Lite has a row of its own.
 
-**避坑规则**：
-- 判断 Google 模型的思考格式只用 `GoogleShared::usesGoogleThinkingLevel()`，不在别处按 id 片段判断。
-- “不思考”只经 `GoogleShared::disabledGoogleThinkingConfig($model)` 生成，不直接写 `thinkingBudget: 0`。
-- 测试：`GoogleTest::testThinkingOffOnALevelModelWithNoOffIsItsLowestLevelAndNotABudgetOfZero`、`testTheLatestAliasesAndGemmaFourTakeALevelToo`、`testABudgetIsReadFromTheLevelTheMapResolvedTo`。
+**Trap rules**:
+- A Google model's thinking format is decided only by `GoogleShared::usesGoogleThinkingLevel()`, never by an id fragment elsewhere.
+- "No thinking" is produced only by `GoogleShared::disabledGoogleThinkingConfig($model)`, never by writing `thinkingBudget: 0` directly.
+- Tests: `GoogleTest::testThinkingOffOnALevelModelWithNoOffIsItsLowestLevelAndNotABudgetOfZero`, `testTheLatestAliasesAndGemmaFourTakeALevelToo`, `testABudgetIsReadFromTheLevelTheMapResolvedTo`.
 
-### chat completions 的推理回放：思考重复、多段思考连在一起、`reasoning_details` 丢失
+### Reasoning replay on chat completions: thinking duplicated, blocks run together, `reasoning_details` lost
 
-**症状**：chutes.ai 这类同时发 `reasoning_content` 和 `reasoning` 的端点，每段思考在消息里出现两遍；多个思考块回放时没有分隔符（`hmmand then`），签名不同的块各写一个字段；经 OpenRouter 的推理模型，`reasoning_details` 里的 `reasoning.text` / `reasoning.summary` 被丢掉，下一轮推理从头开始。
+**Symptom**: on endpoints like chutes.ai that send both `reasoning_content` and `reasoning`, every thought appeared twice in the message; several thinking blocks replayed with no separator (`hmmand then`), and blocks with different signatures each wrote their own field; on reasoning models via OpenRouter, `reasoning.text` / `reasoning.summary` in `reasoning_details` were dropped and the next turn's reasoning started from scratch.
 
-**根因**：`OpenAiCompletions` 读三个推理字段时每个都追加，upstream 只读第一个非空的；回放时按每块自己的签名拼接，upstream 用第一块的签名选字段名、`"\n"` 连接、只在签名是三个已知字段名之一且没有 `reasoning_details` 时才写；`reasoning_details` 只认 `reasoning.encrypted` 并挂在工具调用的 `thoughtSignature` 上，upstream 把整份列表合并后存进思考块的签名，回放时发 `reasoning_details` 而不发原始字段。
+**Root cause**: `OpenAiCompletions` appended all three reasoning fields it read, where upstream reads the first non-empty one; replay joined by each block's own signature, where upstream picks the field name from the first block's signature, joins with `"\n"`, and writes only when the signature is one of the three known field names and there are no `reasoning_details`; `reasoning_details` recognized only `reasoning.encrypted`, hung on the tool call's `thoughtSignature`, where upstream merges the whole list into the thinking block's signature and replays `reasoning_details` instead of the raw fields.
 
-**避坑规则**：
-- 推理字段只读第一个非空的；回放字段名只取第一个非空思考块的签名，并且必须在 `REASONING_FIELDS` 里。
-- `reasoning_details` 存在思考块签名里（流结束时写入第一个思考块；没有就建一个不打开的思考块），旧会话挂在工具调用上的加密条目照 upstream 的 legacy 分支继续读。
-- 测试：`OpenAiCompletionsTest::testOnlyTheFirstReasoningFieldInADeltaIsRead`、`testReasoningDetailsAreKeptOnTheThinkingBlockAndMergedAsTheyStream`、`testTheFirstThinkingBlocksFieldCarriesEveryThoughtJoinedByANewline`。
+**Trap rules**:
+- Only the first non-empty reasoning field is read; the replay field name is the first non-empty thinking block's signature, and it must be in `REASONING_FIELDS`.
+- `reasoning_details` is stored in the thinking block's signature (written into the first thinking block when the stream ends; one that is never opened is created if there is none); encrypted entries hung on tool calls in old sessions keep being read through upstream's legacy branch.
+- Tests: `OpenAiCompletionsTest::testOnlyTheFirstReasoningFieldInADeltaIsRead`, `testReasoningDetailsAreKeptOnTheThinkingBlockAndMergedAsTheyStream`, `testTheFirstThinkingBlocksFieldCarriesEveryThoughtJoinedByANewline`.
 
-### Responses API 的拒答（refusal）文字丢失
+### Refusal text lost on the Responses API
 
-**症状**：gpt-5 等走 OpenAI Responses API 的模型拒答时，界面和会话里看不到拒答内容，或只看到部分文字；完成的 message item 里有、流式 delta 里不全的文字也会少一截。
+**Symptom**: when gpt-5 and other OpenAI Responses models refused, the refusal was missing or partial in the UI and the session; text that was in the finished message item but incomplete in the streamed deltas was cut short too.
 
-**根因**：upstream 在 `response.output_item.done` 用完成的 item 重建文本：`item.content.map(c => c.type === "output_text" ? c.text : c.refusal).join("")`，流式累积的文字被丢弃；pig 只保留了 delta 累积的文字，从不读完成 item 的 `content`。
+**Root cause**: upstream rebuilds the text from the finished item on `response.output_item.done` — `item.content.map(c => c.type === "output_text" ? c.text : c.refusal).join("")` — discarding what the stream accumulated; pig kept only the delta-accumulated text and never read the finished item's `content`.
 
-**避坑规则**：
-- 文本块以 `output_item.done` 的 `content` 为准（`AssistantMessageBuilder::setText()` 替换，不追加），`output_text` 和 `refusal` 两种 part 都要拼进去；item 没有 `content` 时按 upstream 置为 `""`，不回退到 delta。
-- 测试 fixture 的 `output_item.done` 要带真实形状的 `content`，否则测出来的是 pig 自己编的流。
-- 测试：`OpenAiResponsesTest::testTheFinishedMessageItemIsTheTextAndARefusalIsPartOfIt`、`testAFinishedMessageItemWithNoContentLeavesNoText`。
+**Trap rules**:
+- The text block is whatever `output_item.done`'s `content` says (`AssistantMessageBuilder::setText()` replaces, never appends), with both `output_text` and `refusal` parts joined in; an item without `content` sets `""` as upstream does, with no fallback to the deltas.
+- A test fixture's `output_item.done` carries a real-shaped `content`, or the test exercises a stream pig invented.
+- Tests: `OpenAiResponsesTest::testTheFinishedMessageItemIsTheTextAndARefusalIsPartOfIt`, `testAFinishedMessageItemWithNoContentLeavesNoText`.
 
-### 不支持图片的模型收不到任何图片提示
+### A model without image support was told nothing about the images
 
-**症状**：给纯文本模型（`input` 里没有 `image`，如 DeepSeek）发截图或 `read` 一张图片，模型回答得像根本没有附件，或者对着空的工具结果胡编。
+**Symptom**: sending a screenshot or `read`ing an image to a text-only model (`input` without `image`, such as DeepSeek), the model answered as if there were no attachment, or made things up about an empty tool result.
 
-**根因**：upstream `transformMessages()` 先跑 `downgradeUnsupportedImages()`，把用户消息和工具结果里的图片换成 `(image omitted: model does not support images)` / `(tool image omitted: model does not support images)`，连续多张合成一行；pig 只在各 provider 里按 `acceptsImages()` 把图片默默跳过。
+**Root cause**: upstream's `transformMessages()` first runs `downgradeUnsupportedImages()`, replacing images in user messages and tool results with `(image omitted: model does not support images)` / `(tool image omitted: model does not support images)`, collapsing a run of several into one line; pig only skipped images silently inside each provider by `acceptsImages()`.
 
-**避坑规则**：
-- 图片降级只在 `TransformMessages::apply()` 里做，provider 里的 `acceptsImages()` 判断保留但不能当成降级的地方。
-- 占位文字和去重规则照 upstream 字面：紧挨着占位文字的图片不再加一行。
-- 测试：`MessageTest::testAModelThatCannotSeeIsToldAnImageWasLeftOutAndARunIsOneLine`，`OpenAiCompletionsTest::testAnImageBecomesAPlaceholderForAModelThatCannotSeeOne`，`GoogleTest::testAnImageGoesInlineAndBecomesAPlaceholderForAModelThatCannotSeeOne`。
+**Trap rules**:
+- Image downgrading happens only in `TransformMessages::apply()`; the `acceptsImages()` checks in providers stay but are not where downgrading happens.
+- The placeholder text and the deduplication follow upstream literally: an image right after a placeholder adds no new line.
+- Tests: `MessageTest::testAModelThatCannotSeeIsToldAnImageWasLeftOutAndARunIsOneLine`, `OpenAiCompletionsTest::testAnImageBecomesAPlaceholderForAModelThatCannotSeeOne`, `GoogleTest::testAnImageGoesInlineAndBecomesAPlaceholderForAModelThatCannotSeeOne`.
 
-### DeepSeek 回放没有思考的助手轮：400 缺 `reasoning_content`
+### DeepSeek replaying an assistant turn without thinking: 400 for the missing `reasoning_content`
 
-**症状**：DeepSeek 思考模型（`models.json` 里 `reasoning: true`）的会话，历史里出现一条没有思考内容的助手轮（只有工具调用、或从别的模型切过来的轮次）后，下一次请求 400，提示助手消息缺 `reasoning_content`。
+**Symptom**: in a session on a DeepSeek thinking model (`reasoning: true` in `models.json`), once the history held an assistant turn without thinking (tool calls only, or a turn from another model), the next request was a 400 saying the assistant message lacks `reasoning_content`.
 
-**根因**：upstream 的 compat 有 `requiresReasoningContentOnAssistantMessages`，`detectCompat()` 对 `provider === "deepseek"` 或 URL 含 `deepseek.com`（不分大小写）打开，回放时对 `model.reasoning` 的模型在每条还没有 `reasoning_content` 的助手消息上补 `""`；pig 的 `OpenAiCompat` 没有这个开关，只有思考块签名是 `reasoning_content` 时才写这个字段。
+**Root cause**: upstream's compat has `requiresReasoningContentOnAssistantMessages`, switched on by `detectCompat()` for `provider === "deepseek"` or a URL containing `deepseek.com` (case-insensitive), and on replay it adds `""` to every assistant message without `reasoning_content` for a `model.reasoning` model; pig's `OpenAiCompat` had no such switch and wrote the field only when the thinking block's signature was `reasoning_content`.
 
-**避坑规则**：
-- 开关在 `OpenAiCompat::$reasoningContentOnAssistantMessages`，`detect($baseUrl, $provider)` 要传 provider 名；`models.json` 的 `compat` 用 upstream 拼写 `requiresReasoningContentOnAssistantMessages`，`StreamProxy` 也要带上。
-- 条件是模型能力 `model.reasoning`，不是本次请求是否思考；已有 `reasoning_content` 的轮次不覆盖。
-- 测试：`OpenAiCompletionsTest::testDeepSeekGetsAnEmptyReasoningContentOnAReplayedTurnThatHadNoThinking`、`testTheReasoningContentFillerNeedsTheFlagAndAReasoningModel`，`CustomModelsTest::testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock`。
+**Trap rules**:
+- The switch is `OpenAiCompat::$reasoningContentOnAssistantMessages`; `detect($baseUrl, $provider)` takes the provider name; the `compat` in `models.json` uses upstream's spelling `requiresReasoningContentOnAssistantMessages`, and `StreamProxy` carries it too.
+- The condition is the model capability `model.reasoning`, not whether this request thinks; a turn that already has `reasoning_content` is not overwritten.
+- Tests: `OpenAiCompletionsTest::testDeepSeekGetsAnEmptyReasoningContentOnAReplayedTurnThatHadNoThinking`, `testTheReasoningContentFillerNeedsTheFlagAndAReasoningModel`, `CustomModelsTest::testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock`.
 
-### Responses API 的思考文字只信流式 delta
+### Responses API thinking text trusted the streamed deltas alone
 
-**症状**：走 OpenAI Responses API 的思考模型，思考块末尾多出一个空段落（`reasoning_summary_part.done` 补的 `\n\n`）；只给原始推理（`reasoning_text`）不给摘要的模型，思考块整块是空的。
+**Symptom**: on a thinking model over the OpenAI Responses API, the thinking block ended with an extra empty paragraph (the `\n\n` added by `reasoning_summary_part.done`); on a model giving raw reasoning (`reasoning_text`) and no summary, the thinking block was empty.
 
-**根因**：upstream 在 `response.output_item.done` 上用完成的 reasoning item 重建思考文字：`summary` 各段 `join("\n\n")`，没有就用 `content` 各段，两者都空才保留 delta 拼出来的；还把 `response.reasoning_text.delta` 当思考 delta。pig 只把 item 存进签名，文字一直是 delta 拼的，也不认 `reasoning_text.delta`。
+**Root cause**: upstream rebuilds the thinking text from the finished reasoning item on `response.output_item.done`: the `summary` parts `join("\n\n")`, else the `content` parts, and only when both are empty does it keep what the deltas built; it also treats `response.reasoning_text.delta` as a thinking delta. pig only stored the item in the signature, kept the delta-built text, and did not recognize `reasoning_text.delta`.
 
-**避坑规则**：
-- 完成的 item 是权威文字，思考块和文字块一样用 `setText()` 覆盖；顺序 `summary || content || 已流式的`，空数组不算有内容。
-- 签名照旧存整个 item，不因重建文字而改动。
-- 测试：`OpenAiResponsesTest::testTheFinishedReasoningItemsSummaryIsTheThinkingText`、`testRawReasoningContentIsTheThinkingWhenThereIsNoSummary`、`testAReasoningItemWithNothingToReadKeepsTheStreamedThinking`。
+**Trap rules**:
+- The finished item is the authoritative text; the thinking block, like the text block, is overwritten with `setText()`, in the order `summary || content || streamed`, and an empty array does not count as content.
+- The signature still stores the whole item, unchanged by the text rebuild.
+- Tests: `OpenAiResponsesTest::testTheFinishedReasoningItemsSummaryIsTheThinkingText`, `testRawReasoningContentIsTheThinkingWhenThereIsNoSummary`, `testAReasoningItemWithNothingToReadKeepsTheStreamedThinking`.
 
-### `OpenAiCompat::detect()` 和 upstream 的 `detectCompat()` 不是一张表
+### `OpenAiCompat::detect()` and upstream's `detectCompat()` were not the same table
 
-**症状**：`models.json` 里写成 `https://API.DeepSeek.com` 的 DeepSeek 端点输出上限不生效（发的是会被忽略的 `max_completion_tokens`）；DeepSeek、z.ai、Moonshot、Together、NVIDIA 等端点被当成标准端点，收到 `store`、`developer` 角色、`reasoning_effort` 或 `max_completion_tokens`。
+**Symptom**: a DeepSeek endpoint written as `https://API.DeepSeek.com` in `models.json` ignored the output cap (it was sent `max_completion_tokens`, which it ignores); DeepSeek, z.ai, Moonshot, Together, NVIDIA and others were treated as standard endpoints and received `store`, the `developer` role, `reasoning_effort` or `max_completion_tokens`.
 
-**根因**：pig 的 `detect()` 只按 URL 认 cerebras/x.ai/mistral/chutes 四家为非标准，`deepseek.com` 只在 `maxTokensField` 一项上、且区分大小写；upstream 的 `isDeepSeek`（`baseUrl.toLowerCase()`）同时决定非标准、`max_tokens`、`reasoning_content` 补齐，另有 z.ai、Moonshot、Together、OpenRouter、Cloudflare、NVIDIA、Ant Ling、opencode 各自的 provider 名/URL 判定。
+**Root cause**: pig's `detect()` recognized only cerebras/x.ai/mistral/chutes as non-standard, by URL; `deepseek.com` affected only `maxTokensField`, case-sensitively. Upstream's `isDeepSeek` (`baseUrl.toLowerCase()`) decides non-standard, `max_tokens` and the `reasoning_content` filler together, and z.ai, Moonshot, Together, OpenRouter, Cloudflare, NVIDIA, Ant Ling and opencode each have their own provider-name/URL checks.
 
-**避坑规则**：
-- `detect($baseUrl, $provider, $modelId)` 逐项照 upstream `detectCompat()` 抄，provider 名和 URL 都要传；只有 DeepSeek 的 URL 判定不分大小写。
-- Mistral 不走这个 API：它是 `Providers\Mistral`（upstream 的 `mistral-conversations`），`detect()` 里不再有 Mistral 规则。
-- 测试：`OpenAiCompletionsTest::testEveryEndpointUpstreamNamesIsDetectedAsUpstreamDetectsIt`、`testDeepSeekIsNonStandardTheWayUpstreamDetectsIt`、`testDeepSeekGetsItUnderTheOlderNameToo`。
+**Trap rules**:
+- `detect($baseUrl, $provider, $modelId)` copies upstream's `detectCompat()` item by item, with both the provider name and the URL passed in; only the DeepSeek URL check is case-insensitive.
+- Mistral is not on this API: it is `Providers\Mistral` (upstream's `mistral-conversations`), and `detect()` has no Mistral rule any more.
+- Tests: `OpenAiCompletionsTest::testEveryEndpointUpstreamNamesIsDetectedAsUpstreamDetectsIt`, `testDeepSeekIsNonStandardTheWayUpstreamDetectsIt`, `testDeepSeekGetsItUnderTheOlderNameToo`.
 
-### `compat` 块整块替换检测结果
+### A `compat` block replaced the whole detection result
 
-**症状**：`models.json` 里给 DeepSeek 模型写了只有一个键的 `compat`（比如 `requiresThinkingAsText`），结果请求又带上了 `store`、`developer` 角色和 `max_completion_tokens`，`reasoning_content` 补齐也没了。
+**Symptom**: a `compat` with a single key (say `requiresThinkingAsText`) on a DeepSeek model in `models.json` made the request carry `store`, the `developer` role and `max_completion_tokens` again, and the `reasoning_content` filler was gone.
 
-**根因**：upstream `getCompat()` 是逐键 `model.compat.x ?? detected.x`；pig 只要有 `compat` 就整块替换检测结果，没写的键回落到普通默认值。provider 级的 `compat` 也完全不读（upstream `mergeCompat(providerConfig.compat, definition.compat)`）。
+**Root cause**: upstream's `getCompat()` is key by key, `model.compat.x ?? detected.x`; pig replaced the detection result wholesale as soon as a `compat` existed, with the unspecified keys falling to the plain defaults. The provider-level `compat` was not read at all (upstream `mergeCompat(providerConfig.compat, definition.compat)`).
 
-**避坑规则**：
-- `OpenAiCompat` 每个字段可空，null 表示"没说"；provider 里只用 `OpenAiCompat::resolve($model)`，不要再写 `$model->compat ?? detect(...)`。
-- `CustomModels::compat()` 缺的键给 null，不给默认值；provider 级 `compat` 先铺、模型自己的键覆盖。`StreamProxy` 只发非 null 的键。
-- 测试：`OpenAiCompletionsTest::testAnExplicitCompatOverridesDetectionOnlyForTheKeysItSets`，`CustomModelsTest::testACompatBlockIsLaidOverDetectionKeyByKey`、`testAProviderCompatBlockAppliesToItsModelsAndAModelsOwnKeysWin`。
+**Trap rules**:
+- Every `OpenAiCompat` field is nullable, null meaning "unspecified"; providers use only `OpenAiCompat::resolve($model)`, never `$model->compat ?? detect(...)` again.
+- `CustomModels::compat()` gives null for missing keys, not defaults; the provider-level `compat` is laid down first and the model's own keys override. `StreamProxy` sends only non-null keys.
+- Tests: `OpenAiCompletionsTest::testAnExplicitCompatOverridesDetectionOnlyForTheKeysItSets`, `CustomModelsTest::testACompatBlockIsLaidOverDetectionKeyByKey`, `testAProviderCompatBlockAppliesToItsModelsAndAModelsOwnKeysWin`.
 
-### 空工具结果被说成"见附图"
+### An empty tool result was described as "see attached image"
 
-**症状**：命令什么都没输出（或工具结果只有一个空文本块）时，OpenAI 系模型收到的工具结果是 `(see attached image)`，跟着去找一张不存在的图。
+**Symptom**: when a command printed nothing (or the tool result had one empty text block), OpenAI-family models received `(see attached image)` as the tool result and went looking for an image that did not exist.
 
-**根因**：upstream 按拼接后的文字长度判断 `hasText`，没有文字时有图才说 `(see attached image)`，没图说 `(no tool output)`（Completions、Responses）；Google 没图给 `""`。pig 用"有没有文本块"判断，而且无论有没有图都写 `(see attached image)`。
+**Root cause**: upstream decides `hasText` by the length of the joined text; with no text it says `(see attached image)` only when there is an image and `(no tool output)` otherwise (Completions, Responses); Google gets `""` without an image. pig checked "is there a text block" and wrote `(see attached image)` whether or not there was an image.
 
-**避坑规则**：
-- 先 `implode("\n", $text)` 再判断是否为空；占位文字按各 provider 照抄：Completions/Responses `(no tool output)`，Google `""`，Anthropic 没图时直接发拼接文字。
-- 测试：`OpenAiCompletionsTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`、`OpenAiResponsesTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`、`GoogleTest::testAnImageResultWithOnlyEmptyTextStillSaysThereIsAnImage`。
+**Trap rules**:
+- `implode("\n", $text)` first, then test for empty; the placeholder follows each provider literally: Completions/Responses `(no tool output)`, Google `""`, Anthropic sends the joined text as is when there is no image.
+- Tests: `OpenAiCompletionsTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`, `OpenAiResponsesTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`, `GoogleTest::testAnImageResultWithOnlyEmptyTextStillSaysThereIsAnImage`.
 
-### strict 采样下可选参数以 null 到达
+### Optional parameters arrive as null under strict sampling
 
-**症状**：内置 bash/edit/read/write 声明了 `constrainedSampling`（strict: prefer），Anthropic、OpenAI、Gemini 3 等支持 strict 的模型调用 `read` 时不想给 `limit`，发来 `"limit": null`，工具被拒：`limit: must be number`。
+**Symptom**: the built-in bash/edit/read/write declare `constrainedSampling` (strict: prefer); a strict-capable model (Anthropic, OpenAI, Gemini 3) calling `read` without wanting a `limit` sent `"limit": null`, and the tool refused: `limit: must be number`.
 
-**根因**：strict 变换把可选参数改成必填且可为 null；upstream `validateToolArguments()` 先跑 `normalizeOptionalNulls()`，按工具原始 schema 把"非必填、值为 null、本身不接受 null"的键删掉再校验。pig 的 `ToolArguments` 直接校验。
+**Root cause**: the strict transform makes optional parameters required-and-nullable; upstream's `validateToolArguments()` first runs `normalizeOptionalNulls()`, which deletes keys that are not required, are null and do not themselves accept null, by the tool's original schema, before validating. pig's `ToolArguments` validated directly.
 
-**避坑规则**：
-- 给工具加 `constrainedSampling` 前确认 `ToolArguments::validate()` 的 null 归一化还在；归一化按工具原始 schema，不按 strict schema，必填参数的 null 照样报错。
-- 哪些模型支持 strict 照 upstream 的生成元数据：`anthropic` provider 的模型（`AnthropicCompat::$strictTools`）、`openai` 的 Responses 模型、除 Cerebras 外内置的 Completions 模型（含 Copilot）；`models.json` 默认不支持，可用 `supportsStrictMode`（Anthropic 用 `supportsStrictTools`）打开。
-- 测试：`ToolArgumentsTest`，`AgentLoopTest::testANullForAnOptionalParameterIsTheParameterLeftOut`，`StrictToolSamplingTest`。
+**Trap rules**:
+- Before giving a tool `constrainedSampling`, confirm the null normalization in `ToolArguments::validate()` is still there; it goes by the tool's original schema, not the strict one, and a null for a required parameter still fails.
+- Which models support strict follows upstream's generated metadata: models of the `anthropic` provider (`AnthropicCompat::$strictTools`), `openai`'s Responses models, the built-in Completions models except Cerebras (Copilot included); `models.json` models do not by default and can switch it on with `supportsStrictMode` (`supportsStrictTools` for Anthropic).
+- Tests: `ToolArgumentsTest`, `AgentLoopTest::testANullForAnOptionalParameterIsTheParameterLeftOut`, `StrictToolSamplingTest`.
 
-### z.ai / DeepSeek 收不到"要不要思考"
+### z.ai / DeepSeek were never told whether to think
 
-**症状**：z.ai（GLM）关掉思考仍然在思考、照样计费；DeepSeek 关掉思考没有效果；OpenRouter、Qwen、Together 等走 `models.json` 的端点思考开关无效。
+**Symptom**: z.ai (GLM) kept thinking, and billing for it, with thinking switched off; switching DeepSeek's thinking off did nothing; the thinking switch had no effect on OpenRouter, Qwen, Together and other `models.json` endpoints.
 
-**根因**：upstream 的 compat 有 `thinkingFormat`（detect：deepseek → `deepseek`，z.ai → `zai`，Together → `together`，Ant Ling → `ant-ling`，OpenRouter → `openrouter`，其余 `openai`），`buildParams()` 按格式发 `thinking: {type}`、`reasoning: {effort}`、`enable_thinking`、`chat_template_kwargs` 等；pig 只会发 `reasoning_effort`，而按 upstream 检测 z.ai 又不支持 `reasoning_effort`，结果什么都不发。
+**Root cause**: upstream's compat has `thinkingFormat` (detected: deepseek → `deepseek`, z.ai → `zai`, Together → `together`, Ant Ling → `ant-ling`, OpenRouter → `openrouter`, otherwise `openai`), and `buildParams()` sends `thinking: {type}`, `reasoning: {effort}`, `enable_thinking`, `chat_template_kwargs` and so on by format; pig could only send `reasoning_effort`, and since upstream's detection says z.ai does not support `reasoning_effort`, nothing was sent at all.
 
-**避坑规则**：
-- 思考参数只在 `OpenAiCompletions::thinking()` 里按 `thinkingFormat` 分支写，顺序和运算符照 upstream：`map[e] ?? e`、`Model::thinkingEffort()` + `is_string()`、"`off` 不存在或是字符串"三种读法别混。
-- 关闭思考也要按格式明说（`{type: "disabled"}`、`effort: "none"` 等），除非 `thinkingLevelMap` 把 `off` 设成 null。
-- `models.json` 键：`thinkingFormat`、`chatTemplateKwargs`、`chatTemplateArgs`（provider 和模型的两个模板对象按键合并）。
-- 测试：`OpenAiCompletionsTest::testZaiIsToldWhetherToThinkInItsOwnField`、`testDeepSeekIsToldWhetherToThinkAndHowHard`、`testEachThinkingFormatSaysItTheWayUpstreamDoes`、`testTheThinkingFormatIsDetectedAsUpstreamDetectsIt`，`CustomModelsTest::testAThinkingFormatAndItsTemplateValuesAreReadAndMergedKeyByKey`。
+**Trap rules**:
+- Thinking parameters are written only in `OpenAiCompletions::thinking()`, branching on `thinkingFormat`, in upstream's order and with upstream's operators: `map[e] ?? e`, `Model::thinkingEffort()` + `is_string()`, and "`off` is absent or a string" are three different reads — do not mix them.
+- Switching thinking off is also said explicitly per format (`{type: "disabled"}`, `effort: "none"`, …) unless `thinkingLevelMap` sets `off` to null.
+- `models.json` keys: `thinkingFormat`, `chatTemplateKwargs`, `chatTemplateArgs` (the provider's and the model's template objects merge key by key).
+- Tests: `OpenAiCompletionsTest::testZaiIsToldWhetherToThinkInItsOwnField`, `testDeepSeekIsToldWhetherToThinkAndHowHard`, `testEachThinkingFormatSaysItTheWayUpstreamDoes`, `testTheThinkingFormatIsDetectedAsUpstreamDetectsIt`, `CustomModelsTest::testAThinkingFormatAndItsTemplateValuesAreReadAndMergedKeyByKey`.
 
-### Anthropic 自适应思考靠模型 id 猜，还读了不存在的属性
+### Anthropic adaptive thinking guessed from the model id, and read a property that did not exist
 
-**症状**：Opus 4.6、Sonnet 4.6、Opus 5 开思考时发的是 `budget_tokens`，不是 adaptive；`anthropic-messages` 模型在 `models.json` 里写了 `compat` 时，思考请求触发 PHP 警告（`Undefined property ...::$forceAdaptiveThinking`）。
+**Symptom**: Opus 4.6, Sonnet 4.6 and Opus 5 were sent `budget_tokens` rather than adaptive when thinking; an `anthropic-messages` model with a `compat` in `models.json` raised a PHP warning on a thinking request (`Undefined property ...::$forceAdaptiveThinking`).
 
-**根因**：upstream 运行时只看 `model.compat?.forceAdaptiveThinking === true`，id 判断（`isAnthropicAdaptiveThinkingModel()`）只在生成模型表时把这个标记写进 Anthropic API 的内置模型；pig 在请求时用四个 id 片段判断，还从 `OpenAiCompat` 上读这个它没有的属性。interleaved-thinking beta 也该只在推理模型的思考轮、且非 adaptive 时才发。
+**Root cause**: at runtime upstream looks only at `model.compat?.forceAdaptiveThinking === true`; the id check (`isAnthropicAdaptiveThinkingModel()`) runs only when the model table is generated, writing the flag into the Anthropic API's built-in models. pig checked four id fragments at request time and read that property off an `OpenAiCompat`, which has no such thing. The interleaved-thinking beta should also be sent only on a reasoning model's thinking turn, and not when adaptive.
 
-**避坑规则**：
-- Anthropic 的模型元数据放 `AnthropicCompat`（`forceAdaptiveThinking`、`strictTools`），`Models` 建表时按 upstream 的 id 列表写入；provider 里只读标记，不看 id。
-- `Model::$compat` 按 API 分类型，provider 读之前先 `instanceof`，别的 API 的 compat 当作没有。
-- `models.json` 里代理的新 Claude 要 adaptive 得写 `"forceAdaptiveThinking": true`，和 upstream 一样。
-- 测试：`AnthropicTest::testAModelWhoseCompatSaysAdaptiveThinksAdaptively`、`testWithoutTheFlagEvenAnAdaptiveIdGetsABudget`、`testAnAnthropicModelCarryingACompatBlockDoesNotWarn`、`testATurnThatDoesNotThinkAsksForNoInterleavedThinking`，`ModelsTest::testTheAnthropicModelsThatThinkAdaptivelySaySo`。
+**Trap rules**:
+- Anthropic's model metadata lives in `AnthropicCompat` (`forceAdaptiveThinking`, `strictTools`), written by `Models` at table-build time from upstream's id list; the provider reads the flag and never looks at the id.
+- `Model::$compat` is typed per API; a provider does `instanceof` before reading it, and another API's compat counts as absent.
+- A proxied new Claude in `models.json` that should be adaptive says `"forceAdaptiveThinking": true`, as upstream.
+- Tests: `AnthropicTest::testAModelWhoseCompatSaysAdaptiveThinksAdaptively`, `testWithoutTheFlagEvenAnAdaptiveIdGetsABudget`, `testAnAnthropicModelCarryingACompatBlockDoesNotWarn`, `testATurnThatDoesNotThinkAsksForNoInterleavedThinking`, `ModelsTest::testTheAnthropicModelsThatThinkAdaptivelySaySo`.
 
-### Anthropic 关思考时什么都不发，思考摘要被省略
+### Anthropic sent nothing when thinking was off, and omitted the thinking summary
 
-**症状**：思考级别设为 off 时，adaptive 的 Claude（Opus 4.6+、Sonnet 4.6+ 等）照样思考、照样计费；Opus 4.7 及之后开思考时思考块是空的。
+**Symptom**: with the thinking level off, adaptive Claudes (Opus 4.6+, Sonnet 4.6+, …) kept thinking and billing for it; on Opus 4.7 and later the thinking block was empty when thinking was on.
 
-**根因**：upstream `buildParams()` 在 `thinkingEnabled === false` 且 `thinkingLevelMap.off !== null` 时发 `thinking: {type: "disabled"}`，开思考时两个分支（adaptive / budget）都带 `display: options.thinkingDisplay ?? "summarized"`；pig 关思考时不发 `thinking`，开思考时不带 `display`（新模型的 API 默认是 omitted）。
+**Root cause**: upstream's `buildParams()` sends `thinking: {type: "disabled"}` when `thinkingEnabled === false` and `thinkingLevelMap.off !== null`, and both thinking branches (adaptive / budget) carry `display: options.thinkingDisplay ?? "summarized"`; pig sent no `thinking` when off and no `display` when on (and the API default on the new models is omitted).
 
-**避坑规则**：
-- `AnthropicOptions::$thinkingEnabled` 是三态：true 开、false 明说关、null 什么都不说；只有 false 才发 disabled。
-- 发 disabled 依赖 `off: null` 元数据：Fable 5、managed-effort 的 Claude、5.5 系列在 `Models::thinkingLevelMap()` 里标了，加新 Claude 时照 upstream 生成器补。
-- 测试：`AnthropicTest::testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi`、`testNothingIsSaidWhereOffIsNotALevelOrNothingWasAsked`、`testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise`，`ModelsTest::testTheClaudeModelsThatCannotStopThinkingSaySo`，`StreamTest::testReasoningBecomesAThinkingBudget`。
+**Trap rules**:
+- `AnthropicOptions::$thinkingEnabled` is three-state: true on, false explicitly off, null nothing said; only false sends disabled.
+- Sending disabled depends on `off: null` metadata: Fable 5, the managed-effort Claudes and the 5.5 series are marked in `Models::thinkingLevelMap()`; a new Claude is added the way upstream's generator does.
+- Tests: `AnthropicTest::testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi`, `testNothingIsSaidWhereOffIsNotALevelOrNothingWasAsked`, `testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise`, `ModelsTest::testTheClaudeModelsThatCannotStopThinkingSaySo`, `StreamTest::testReasoningBecomesAThinkingBudget`.
 
-### models.json 的 OpenRouter / Vercel 路由偏好被丢掉
+### OpenRouter / Vercel routing preferences in models.json were dropped
 
-**症状**：pi 的 `models.json` 里写了 `openRouterRouting`（`order`、`only`、`allow_fallbacks`…）或 `vercelGatewayRouting`，pig 读进来后请求里没有，路由由网关自己决定。
+**Symptom**: `openRouterRouting` (`order`, `only`, `allow_fallbacks`, …) or `vercelGatewayRouting` written in pi's `models.json` was read by pig but absent from the request, leaving routing to the gateway.
 
-**根因**：upstream compat 有这两个键，`buildParams()` 读模型自己的 compat 发 `provider` 和 `providerOptions.gateway`，`mergeCompat()` 把它们和模板参数一起按键合并；pig 的 `OpenAiCompat` 没有这两个字段。
+**Root cause**: upstream's compat has both keys; `buildParams()` reads the model's own compat and sends `provider` and `providerOptions.gateway`, and `mergeCompat()` merges them key by key along with the template parameters; pig's `OpenAiCompat` had neither field.
 
-**避坑规则**：
-- 读 `$model->compat`（模型自己说的），不读 `OpenAiCompat::resolve()` 的结果；`{}` 也算说了，发 `{}` 不发 `[]`。
-- 新增 compat 对象键时，`CustomModels::OBJECT_KEYS`（合并和保留对象共用）、`StreamProxy` 的编码一起改。
-- 测试：`OpenAiCompletionsTest::testOpenRouterRoutingIsSentAsTheProviderField`、`testVercelGatewayRoutingIsSentAsTheGatewayOptions`，`CustomModelsTest::testRoutingObjectsAreReadAndMergedFromProviderToModelKeyByKey`，`StreamProxyTest::testRoutingPreferencesTravelUnderUpstreamsKeyNames`。
+**Trap rules**:
+- Read `$model->compat` (what the model itself says), not the result of `OpenAiCompat::resolve()`; `{}` counts as said, and is sent as `{}`, not `[]`.
+- A new object-valued compat key changes `CustomModels::OBJECT_KEYS` (shared by merging and object preservation) and `StreamProxy`'s encoding together.
+- Tests: `OpenAiCompletionsTest::testOpenRouterRoutingIsSentAsTheProviderField`, `testVercelGatewayRoutingIsSentAsTheGatewayOptions`, `CustomModelsTest::testRoutingObjectsAreReadAndMergedFromProviderToModelKeyByKey`, `StreamProxyTest::testRoutingPreferencesTravelUnderUpstreamsKeyNames`.
 
-### Copilot 的 Claude 走了 chat completions
+### Copilot's Claude went over chat completions
 
-**症状**：`github-copilot/claude-*` 的工具带 OpenAI 的 `strict` 字段发出，思考和缓存不是 Anthropic 的方式（没有 adaptive、没有 `cache_control`）。
+**Symptom**: `github-copilot/claude-*` tools went out with OpenAI's `strict` field, and thinking and caching were not done Anthropic's way (no adaptive, no `cache_control`).
 
-**根因**：upstream 生成器用 `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/` 把 Copilot 的 Claude 路由到 `anthropic-messages`（token 作 bearer、带 Copilot 的静态头和动态头、`forceAdaptiveThinking` 按 id 列表写、不写 `supportsStrictTools`）；pig 的 `copilotApi()` 只分 Responses 和 completions。
+**Root cause**: upstream's generator routes Copilot's Claude to `anthropic-messages` by `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/` (token as bearer, Copilot's static and dynamic headers, `forceAdaptiveThinking` from the id list, no `supportsStrictTools`); pig's `copilotApi()` only distinguished Responses from completions.
 
-**避坑规则**：
-- Copilot 的 API 由 `scripts/generate-models.php` 的 `copilotApi()` 决定，改规则时生成器和 `Models.php` 的表一起改。
-- `Anthropic` 对 `github-copilot`：`authorization: Bearer <token>`，不发 `x-api-key`、不当 Claude Code 订阅；地址照 token 的 `proxy-ep`（`GithubCopilot::baseUrl()`）；`Copilot::headers()` 放在模型头之后。
-- 测试：`AnthropicTest::testACopilotClaudeAuthenticatesWithItsTokenAsABearerAndSendsCopilotsHeaders`、`testACopilotTokenDecidesWhereTheMessagesGo`，`ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`、`testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt`，`GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`。
+**Trap rules**:
+- Copilot's API is decided by `copilotApi()` in `scripts/generate-models.php`; a rule change updates the generator and the table in `Models.php` together.
+- `Anthropic` for `github-copilot`: `authorization: Bearer <token>`, no `x-api-key`, not treated as a Claude Code subscription; the address follows the token's `proxy-ep` (`GithubCopilot::baseUrl()`); `Copilot::headers()` come after the model headers.
+- Tests: `AnthropicTest::testACopilotClaudeAuthenticatesWithItsTokenAsABearerAndSendsCopilotsHeaders`, `testACopilotTokenDecidesWhereTheMessagesGo`, `ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`, `testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt`, `GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`.
 
-### Responses API 工具结果的图片变成一条用户消息
+### Responses API tool-result images became a user message
 
-**症状**：OpenAI Responses 模型（gpt-5 等）看截图类工具结果时，图片以一条单独的用户消息（"Attached image(s) from tool result:"）出现，模型把它当成用户说的话。
+**Symptom**: when an OpenAI Responses model (gpt-5, …) looked at a screenshot-type tool result, the image arrived as a separate user message ("Attached image(s) from tool result:") and the model took it for something the user said.
 
-**根因**：upstream `convertToolResultOutput()` 把图片放进 `function_call_output.output` 的内容列表（`input_text` + `input_image`，`detail: "auto"`）；pig 只在 output 里写 `(see attached image)`，图片另起一条用户消息。
+**Root cause**: upstream's `convertToolResultOutput()` puts images into the `function_call_output.output` content list (`input_text` + `input_image`, `detail: "auto"`); pig wrote `(see attached image)` into the output and started a user message for the image.
 
-**避坑规则**：
-- 只有 chat completions 才需要另起用户消息放图（它的 tool 消息装不了图）；Responses 放在 output 里。
-- 测试：`OpenAiResponsesTest::testToolResultImagesGoInsideTheFunctionCallOutput`、`testAnImageOnlyResultHasNoTextPartAndATextOnlyModelStillGetsAString`。
+**Trap rules**:
+- Only chat completions needs a separate user message for images (its tool message cannot hold one); Responses puts them in the output.
+- Tests: `OpenAiResponsesTest::testToolResultImagesGoInsideTheFunctionCallOutput`, `testAnImageOnlyResultHasNoTextPartAndATextOnlyModelStillGetsAString`.
 
-### 模型把数字写成字符串，工具调用被拒
+### The model wrote numbers as strings and the tool call was refused
 
-**症状**：模型发 `"limit": "10"`、`"recursive": "true"` 之类，工具被拒（`must be number` / `must be boolean`），多一轮往返。
+**Symptom**: the model sent `"limit": "10"`, `"recursive": "true"` and the like; the tool refused (`must be number` / `must be boolean`), costing a round trip.
 
-**根因**：upstream `validateToolArguments()` 在 `normalizeOptionalNulls()` 之后、校验之前用 schema 做转换（`Value.Convert`，普通 JSON schema 再走 `coerceWithJsonSchema()`）；pig 只做了 null 归一化。
+**Root cause**: upstream's `validateToolArguments()` converts by schema after `normalizeOptionalNulls()` and before validating (`Value.Convert`, with plain JSON schemas going through `coerceWithJsonSchema()`); pig did only the null normalization.
 
-**避坑规则**：
-- 顺序固定：先 null 归一化，再转换，再校验；报错信息里打印模型原始参数。
-- 普通 JSON schema（扩展、MCP）照 `coercePrimitiveByType()` 逐条抄：必填参数的 null 变成该类型的零值（`""`、0、false）。内置工具另见下面的 `Value.Convert` 一条。
-- 测试：`ToolArgumentsTest` 的 coercion 一节。
+**Trap rules**:
+- Fixed order: null normalization, then conversion, then validation; the error message prints the model's original arguments.
+- Plain JSON schemas (extensions, MCP) copy `coercePrimitiveByType()` line by line: a null for a required parameter becomes that type's zero value (`""`, 0, false). Built-in tools: see the `Value.Convert` entry below.
+- Tests: the coercion section of `ToolArgumentsTest`.
 
-### 扩展工具的 constrainedSampling 被丢掉
+### An extension tool's constrainedSampling was dropped
 
-**症状**：扩展或自定义工具声明了 `constrainedSampling`（strict: prefer），发给支持 strict 的模型时仍是非 strict。
+**Symptom**: an extension or custom tool declaring `constrainedSampling` (strict: prefer) was still sent non-strict to a strict-capable model.
 
-**根因**：upstream `wrapToolDefinition()` 把 `constrainedSampling` 和名字、描述、schema 一起带上；pig 的 `CustomTool` 没这个字段，`WrappedCustomTool::definition()` 只构造三个字段。MCP 工具 upstream 不设，pig 也不设。
+**Root cause**: upstream's `wrapToolDefinition()` carries `constrainedSampling` along with the name, description and schema; pig's `CustomTool` had no such field, and `WrappedCustomTool::definition()` built only the three. Upstream sets none for MCP tools, and neither does pig.
 
-**避坑规则**：
-- `Tool` 的新字段要检查所有 `new Tool(...)`，包括 `WrappedCustomTool`。
-- 测试：`CustomToolsTest::testAWrappedToolKeepsTheConstrainedSamplingItAskedFor`。
+**Trap rules**:
+- A new `Tool` field means checking every `new Tool(...)`, `WrappedCustomTool` included.
+- Test: `CustomToolsTest::testAWrappedToolKeepsTheConstrainedSamplingItAskedFor`.
 
-### Copilot 的 gpt-6 / grok / mai 模型被发到 chat completions
+### Copilot's gpt-6 / grok / mai models were sent to chat completions
 
-**症状**：`github-copilot/gpt-6-*`、`grok-*`、`mai-*` 的请求发到 `/chat/completions`，而 Copilot 只在 `/responses` 上提供这些模型。
+**Symptom**: requests for `github-copilot/gpt-6-*`, `grok-*`, `mai-*` went to `/chat/completions`, where Copilot offers these models only on `/responses`.
 
-**根因**：upstream 生成器的 `needsResponsesApi` 是前缀 `gpt-`、`grok-`、`oswe`、`mai-`（没有例外）；pig 的 `copilotApi()` 只认 `gpt-5`、`oswe`。
+**Root cause**: upstream's generator `needsResponsesApi` is the prefixes `gpt-`, `grok-`, `oswe`, `mai-` (no exceptions); pig's `copilotApi()` recognized only `gpt-5` and `oswe`.
 
-**避坑规则**：
-- 改 `scripts/generate-models.php` 的 `copilotApi()` 时同步改 `Models.php` 的 `COPILOT_MODELS` 行。
-- 测试：`ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`，`GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`。
+**Trap rules**:
+- A change to `copilotApi()` in `scripts/generate-models.php` changes the `COPILOT_MODELS` row in `Models.php` with it.
+- Tests: `ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`, `GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`.
 
-### Anthropic：Opus 4.7+ 带 temperature 被拒、思考轮也带 temperature
+### Anthropic: Opus 4.7+ refused a temperature, and thinking turns carried one too
 
-**症状**：设了 temperature 时，Opus 4.7/4.8/5、Sonnet/Haiku 5.5 的请求被 API 拒绝；开思考的轮次也带着 temperature 发出。
+**Symptom**: with a temperature set, requests to Opus 4.7/4.8/5 and Sonnet/Haiku 5.5 were refused by the API; thinking turns also went out with a temperature.
 
-**根因**：upstream 只在 `!thinkingEnabled && !supportsMidConvoEffort && compat.supportsTemperature` 时发 temperature，生成器按 `isAnthropicTemperatureUnsupportedModel()` 给这些模型写 `supportsTemperature: false`；pig 有就发。
+**Root cause**: upstream sends temperature only when `!thinkingEnabled && !supportsMidConvoEffort && compat.supportsTemperature`, and the generator writes `supportsTemperature: false` for these models by `isAnthropicTemperatureUnsupportedModel()`; pig sent it whenever it had one.
 
-**避坑规则**：
-- 新 Claude 的元数据走 `AnthropicCompat::forBuiltIn()`（id 规则从 upstream 生成器抄），provider 只读标记。
-- 测试：`AnthropicTest::testTemperatureIsLeftOutWhileThinkingAndForAModelThatRefusesIt`。
+**Trap rules**:
+- A new Claude's metadata goes through `AnthropicCompat::forBuiltIn()` (id rules copied from upstream's generator); the provider only reads the flag.
+- Test: `AnthropicTest::testTemperatureIsLeftOutWhileThinkingAndForAModelThatRefusesIt`.
 
-### Anthropic：工具流式用 eager_input_streaming，beta 头照 upstream 计算
+### Anthropic: tool streaming uses eager_input_streaming, and the beta header is computed as upstream does
 
-**症状**：每个请求都带 `fine-grained-tool-streaming` beta；模型自己的 `anthropic-beta` 头和 pig 的并排发出两份。
+**Symptom**: every request carried the `fine-grained-tool-streaming` beta; a model's own `anthropic-beta` header and pig's went out side by side.
 
-**根因**：upstream 默认给每个工具 `eager_input_streaming: true`，只在模型不支持时（`supportsEagerToolInputStreaming: false`，Copilot 的三个 Claude）才发 fine-grained beta；模型头里的 `anthropic-beta` 就是整张列表。另外三个 `createClient()` 分支都发 `anthropic-dangerous-direct-browser-access: true`。
+**Root cause**: upstream gives every tool `eager_input_streaming: true` by default and sends the fine-grained beta only when the model does not support it (`supportsEagerToolInputStreaming: false`, Copilot's three Claudes); the model header's `anthropic-beta` is the whole list. All three `createClient()` branches also send `anthropic-dangerous-direct-browser-access: true`.
 
-**避坑规则**：
-- beta 列表只在 `Anthropic::betaFeatures()` 里算，发之前删掉其它大小写的 `anthropic-beta`。
-- 测试：`AnthropicTest::testToolsAskForEagerInputStreamingInsteadOfTheFineGrainedBeta`、`testAModelWithoutEagerStreamingGetsTheFineGrainedBetaForItsTools`、`testAModelsOwnAnthropicBetaHeaderIsTheWholeList`。
+**Trap rules**:
+- The beta list is computed only in `Anthropic::betaFeatures()`, and any `anthropic-beta` in other casing is removed before sending.
+- Tests: `AnthropicTest::testToolsAskForEagerInputStreamingInsteadOfTheFineGrainedBeta`, `testAModelWithoutEagerStreamingGetsTheFineGrainedBetaForItsTools`, `testAModelsOwnAnthropicBetaHeaderIsTheWholeList`.
 
-### Claude 的 xhigh 选不到
+### Claude's xhigh could not be selected
 
-**症状**：Opus 4.7+、Sonnet 5、Fable 5 等支持 xhigh 的 Claude，思考级别里没有 xhigh。
+**Symptom**: Claudes that support xhigh (Opus 4.7+, Sonnet 5, Fable 5, …) had no xhigh among their thinking levels.
 
-**根因**：upstream 生成器给每个 Claude 写完整的 `thinkingLevelMap`（`max`、`xhigh`、5.5 的整张表、Copilot 的 `minimal: "low"`），`getSupportedThinkingLevels()` 只在表里写了 xhigh 时才提供它；pig 只抄了 `off: null`。
+**Root cause**: upstream's generator writes a full `thinkingLevelMap` for every Claude (`max`, `xhigh`, the whole 5.5 table, Copilot's `minimal: "low"`), and `getSupportedThinkingLevels()` offers xhigh only when the map has it; pig had copied only `off: null`.
 
-**避坑规则**：
-- `Models::thinkingLevelMap()` 按 upstream 的合并顺序写（5.5 覆盖 → managed-effort 的 off → `applyThinkingLevelMetadata()` → Copilot 覆盖），所有内置表都过它。pig 没有 `max` 级别，`max` 条目只是数据。
-- 测试：`ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`。
+**Trap rules**:
+- `Models::thinkingLevelMap()` is written in upstream's merge order (5.5 overrides → the managed-effort `off` → `applyThinkingLevelMetadata()` → Copilot overrides), and every built-in table goes through it. pig has no `max` level; a `max` entry is data only.
+- Test: `ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`.
 
-### Opus 5 / Fable 5.1 等 managed-effort 模型的请求形状不对
+### The request shape for managed-effort models (Opus 5 / Fable 5.1, …) was wrong
 
-**症状**：`anthropic/claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-5-5`、`claude-fable-5-1` 中途换思考强度后，旧轮次的思考块和新 effort 不匹配，请求可能一直 400。
+**Symptom**: after changing the thinking effort mid-conversation on `anthropic/claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, the old turns' thinking blocks no longer matched the new effort and the request could 400 indefinitely.
 
-**根因**：upstream 对 `supportsMidConvoEffort` 的模型总是发 adaptive + `block_binding: {prefix_mismatch_behavior: "drop_block"}`、顶层 effort `high`、两个 managed-effort beta，在每个记了 `providerThinkingLevel` 的本 provider 旧轮次前插一条只有 `output_config` 的 system 消息，末尾再插当前 effort；pig 没有这个分支，也不记 `providerThinkingLevel`。
+**Root cause**: for `supportsMidConvoEffort` models upstream always sends adaptive + `block_binding: {prefix_mismatch_behavior: "drop_block"}`, top-level effort `high` and the two managed-effort betas, inserts a system message holding only `output_config` before every old turn of this provider that recorded a `providerThinkingLevel`, and the current effort at the end; pig had no such branch and did not record `providerThinkingLevel`.
 
-**避坑规则**：
-- `AssistantMessage::$providerThinkingLevel` 要随会话保存（`MessageJson`）；所有复制 `AssistantMessage` 的地方都要带上它。
-- 测试：`AnthropicTest::testAManagedEffortModelThinksAdaptivelyAndSaysItsEffortInSystemMessages`、`testAManagedEffortTurnRecordsTheEffortItWasAskedFor`，`MessageTest::testEveryNewOptionalFieldSurvivesTheTripToJsonAndBack`。
+**Trap rules**:
+- `AssistantMessage::$providerThinkingLevel` is saved with the session (`MessageJson`); every place that copies an `AssistantMessage` carries it.
+- Tests: `AnthropicTest::testAManagedEffortModelThinksAdaptivelyAndSaysItsEffortInSystemMessages`, `testAManagedEffortTurnRecordsTheEffortItWasAskedFor`, `MessageTest::testEveryNewOptionalFieldSurvivesTheTripToJsonAndBack`.
 
-### 内置工具的参数转换和 upstream 不一样
+### Built-in tool argument conversion differed from upstream
 
-**症状**：内置工具收到 `"path": null` 时 pig 变成 `""`，upstream 是 `"null"`；`"offset": ""` pig 报错，upstream 是 0；`"TRUE"`、`"1"` 的布尔值、单个值给数组参数等同理。
+**Symptom**: a built-in tool receiving `"path": null` got `""` in pig where upstream gives `"null"`; `"offset": ""` was an error in pig and 0 upstream; likewise `"TRUE"`, `"1"` as booleans, a single value for an array parameter, and so on.
 
-**根因**：upstream 的内置工具是 TypeBox schema，`validateToolArguments()` 先跑 `Value.Convert`（只转换 TypeBox 建的节点），再跑 `coerceWithJsonSchema()`（它的 TypeBox 判断用 `Symbol.for("TypeBox.Kind")`，typebox 1.x 已不设这个 symbol，所以所有 schema 都会走）。pig 没有 `Value.Convert`。
+**Root cause**: upstream's built-in tools are TypeBox schemas; `validateToolArguments()` runs `Value.Convert` first (converting only TypeBox-built nodes), then `coerceWithJsonSchema()` (whose TypeBox check uses `Symbol.for("TypeBox.Kind")`, which typebox 1.x no longer sets, so every schema goes through it). pig had no `Value.Convert`.
 
-**避坑规则**：
-- 内置工具的 `Tool` 带 `typeBox: true`，`ToolArguments::valueConvert()` 只对它们跑；扩展、MCP 的普通 schema 不跑。
-- 期望值以 typebox 1.3.27 实测为准（upstream 锁定的版本），不要凭印象。
-- 测试：`ToolArgumentsTest::testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`，`StrictToolSamplingTest::testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre`。
+**Trap rules**:
+- Built-in tools' `Tool` carries `typeBox: true`, and `ToolArguments::valueConvert()` runs only for them; plain schemas from extensions and MCP do not go through it.
+- Expected values are what typebox 1.3.27 (the version upstream pins) actually does, not what one remembers.
+- Tests: `ToolArgumentsTest::testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`, `StrictToolSamplingTest::testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre`.
 
-### models.json 的 compat 对象值里的空对象发成了 `[]`
+### Empty objects inside models.json compat object values were sent as `[]`
 
-**症状**：`"openRouterRouting": {"max_price": {}}`、`"chatTemplateKwargs": {"options": {}}` 之类，请求里（含经 `StreamProxy` 发给网关的 model）变成 `[]`。
+**Symptom**: `"openRouterRouting": {"max_price": {}}`, `"chatTemplateKwargs": {"options": {}}` and the like became `[]` in the request (including the model `StreamProxy` sends to a gateway).
 
-**根因**：`json_decode(..., true)` 分不出 `{}` 和 `[]`；upstream 原样转发文件里的对象。
+**Root cause**: `json_decode(..., true)` cannot tell `{}` from `[]`; upstream forwards the file's objects as they are.
 
-**避坑规则**：
-- `CustomModels::load()` 对 `OBJECT_KEYS`（两个路由键和 `chatTemplateKwargs` / `chatTemplateArgs`）用保留对象的第二次解码重建（嵌套的空对象留成 `stdClass`）；顶层值仍是数组。
-- `OpenAiCompletions::chatTemplateValues()` 把 `stdClass` 值当对象（没有 `$var` → 取 effort），和 upstream 的 `typeof value === "object"` 一致，不能当普通值原样发。
-- 测试：`CustomModelsTest::testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire`、`testANestedEmptyObjectInTheTemplateValuesStaysAnObjectToo`，`OpenAiCompletionsTest` 的 `chat-template with an empty object`。
+**Trap rules**:
+- `CustomModels::load()` rebuilds the `OBJECT_KEYS` (the two routing keys and `chatTemplateKwargs` / `chatTemplateArgs`) with a second, object-preserving decode (nested empty objects stay `stdClass`); the top-level value is still an array.
+- `OpenAiCompletions::chatTemplateValues()` treats a `stdClass` value as an object (no `$var` → take the effort), matching upstream's `typeof value === "object"`; it must not be sent as a plain value.
+- Tests: `CustomModelsTest::testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire`, `testANestedEmptyObjectInTheTemplateValuesStaysAnObjectToo`, and `chat-template with an empty object` in `OpenAiCompletionsTest`.
 
-### Anthropic 的 `max_tokens` 只有模型上限的三分之一，思考预算比上限还大
+### Anthropic's `max_tokens` was a third of the model's ceiling, and the thinking budget exceeded the ceiling
 
-**症状**：没传 `maxTokens` 时 Anthropic 请求的 `max_tokens` 是 `maxTokens / 3`，`Stream::simple()` 又统一封顶 32,000；传了 `maxTokens: 700` 再开 medium 思考，发出去 `max_tokens: 700` 带 8,192 的 `budget_tokens`，Anthropic 拒绝。`minimal` 思考级别在 agent 层就被改成了 `low`，1,024 的预算永远用不到。
+**Symptom**: without `maxTokens`, an Anthropic request's `max_tokens` was `maxTokens / 3`, and `Stream::simple()` capped everything at 32,000 on top; with `maxTokens: 700` and medium thinking, the request went out as `max_tokens: 700` with a `budget_tokens` of 8,192, which Anthropic refused. The `minimal` thinking level was rewritten to `low` at the agent layer, so the 1,024 budget was never used.
 
-**根因**：upstream `buildBaseOptions()` 用 `clampMaxTokensToContext(model, context, options.maxTokens ?? model.maxTokens)`，Anthropic 的 `streamSimple()` 再用 `adjustMaxTokensForThinking()` 把预算加到上限里（最多到模型上限）、给回答留 1,024；provider 里是 `options.maxTokens ?? model.maxTokens`。upstream agent 原样传 `minimal`。
+**Root cause**: upstream's `buildBaseOptions()` uses `clampMaxTokensToContext(model, context, options.maxTokens ?? model.maxTokens)`, and Anthropic's `streamSimple()` then adds the budget to the ceiling with `adjustMaxTokensForThinking()` (up to the model's ceiling), leaving 1,024 for the answer; inside the provider it is `options.maxTokens ?? model.maxTokens`. Upstream's agent passes `minimal` through unchanged.
 
-**避坑规则**：
-- `Stream::translate()` 的上限一律 `clampMaxTokensToContext()`（`Utils\Estimate::contextTokens()`，3.5 字符一个 token，长度按 UTF-16），不要再加自己的封顶。
-- 预算表是 upstream 的 `DEFAULT_THINKING_BUDGETS`（minimal 1,024 / low 2,048 / medium 8,192 / high 16,384），`ThinkingLevel::toReasoning()` 每个级别按原名传。
-- 测试：`StreamTest::testMaxTokensDefaultsToTheModelsOwnCeiling`、`testTheCeilingIsCutToTheRoomTheConversationLeaves`、`testABudgetThinkingTurnRaisesTheCeilingByItsBudget`，`AgentTest::testTheThinkingLevelReachesTheProviderAsReasoning`，`EstimateTest`。
+**Trap rules**:
+- The ceiling in `Stream::translate()` is always `clampMaxTokensToContext()` (`Utils\Estimate::contextTokens()`, 3.5 characters per token, length in UTF-16); no cap of pig's own on top.
+- The budget table is upstream's `DEFAULT_THINKING_BUDGETS` (minimal 1,024 / low 2,048 / medium 8,192 / high 16,384), and `ThinkingLevel::toReasoning()` passes each level by its own name.
+- Tests: `StreamTest::testMaxTokensDefaultsToTheModelsOwnCeiling`, `testTheCeilingIsCutToTheRoomTheConversationLeaves`, `testABudgetThinkingTurnRaisesTheCeilingByItsBudget`, `AgentTest::testTheThinkingLevelReachesTheProviderAsReasoning`, `EstimateTest`.
 
-### Anthropic 的拒答、`sensitive` 和新 stop reason 当成正常结束
+### Anthropic's refusal, `sensitive` and new stop reasons were treated as a normal end
 
-**症状**：`stop_reason: refusal` 的回合以 `done` 结束、没有任何说明；`sensitive` 和 API 新加的 stop reason 被当成 `stop`，agent 把被拦下的回合当完成继续干活。
+**Symptom**: a turn with `stop_reason: refusal` ended as `done` with no explanation; `sensitive` and newly added API stop reasons were treated as `stop`, and the agent carried on as if the blocked turn had completed.
 
-**根因**：upstream `mapStopReason()`：`refusal` → error，消息是 `stop_details.explanation` 或 "The model refused to complete the request"；`sensitive` → "Provider stopped with: sensitive"；未知值抛 `Unhandled stop reason: <reason>`；流结束后 stopReason 是 error 就抛出，以 error 事件结束。
+**Root cause**: upstream's `mapStopReason()`: `refusal` → error, with `stop_details.explanation` or "The model refused to complete the request" as the message; `sensitive` → "Provider stopped with: sensitive"; an unknown value throws `Unhandled stop reason: <reason>`; and when the stream ends with stopReason error it throws, ending with an error event.
 
-**避坑规则**：
-- `Anthropic::stopReason()` 不要有兜底成 `stop` 的 `default`；错误消息先记到 builder（`setErrorMessage()`），流结束后再抛。
-- 测试：`AnthropicTest::testARefusalEndsAsAnErrorThatCarriesItsExplanation`、`testSensitiveIsAnErrorAndAnUnknownReasonIsNotASilentStop`。
+**Trap rules**:
+- `Anthropic::stopReason()` has no `default` falling back to `stop`; the error message is recorded on the builder first (`setErrorMessage()`) and thrown after the stream ends.
+- Tests: `AnthropicTest::testARefusalEndsAsAnErrorThatCarriesItsExplanation`, `testSensitiveIsAnErrorAndAnUnknownReasonIsNotASilentStop`.
 
-### Anthropic 的缓存断点漏了工具，`cacheRetention` 不起作用
+### Anthropic's cache breakpoints skipped the tools, and `cacheRetention` did nothing
 
-**症状**：工具定义不在缓存前缀里；`cacheRetention: long` / `PI_CACHE_RETENTION=long` 没有一小时缓存，`none` 也照样打 `cache_control`；OpenRouter 等要 session 亲和头的端点收不到。
+**Symptom**: tool definitions were outside the cached prefix; `cacheRetention: long` / `PI_CACHE_RETENTION=long` gave no one-hour cache, and `none` still marked `cache_control`; endpoints that need session affinity headers (OpenRouter, …) did not get them.
 
-**根因**：upstream `getCacheControl()` 按保留时长生成 `{type: "ephemeral", ttl?: "1h"}`，打在 system、最后一个工具、最后一个 user 块上；`createClient()` 在开缓存且 compat 要求时发 `x-session-affinity` / `x-session-id`。pig 写死了五分钟标记，工具上没有，也没有 session id。
+**Root cause**: upstream's `getCacheControl()` builds `{type: "ephemeral", ttl?: "1h"}` by retention and marks the system prompt, the last tool and the last user block; `createClient()` sends `x-session-affinity` / `x-session-id` when caching is on and the compat asks for it. pig hard-coded the five-minute marker, had none on tools, and had no session id.
 
-**避坑规则**：
-- 断点统一走 `Anthropic::cacheControl()`；`supportsCacheControlOnTools: false` 的模型工具上不打；1h 不需要 beta。
-- session id 从 `AgentSession`（会话文件的 id）→ `Agent::$sessionId` → `SimpleStreamOptions::$sessionId` 传下来，Responses 的 `prompt_cache_key` 也用它。
-- 测试：`AnthropicTest::testTheLastToolCarriesTheCacheBreakpoint`、`testLongRetentionIsAnHourOnEveryBreakpointAndNoneMarksNothing`、`testTheSessionGoesOutAsAnAffinityHeaderWhereTheCompatAsksForIt`，`AgentSessionTest::testTheAgentCarriesTheSessionFilesIdAsItsSessionId`。
+**Trap rules**:
+- Breakpoints all go through `Anthropic::cacheControl()`; models with `supportsCacheControlOnTools: false` get none on tools; 1h needs no beta.
+- The session id flows from `AgentSession` (the session file's id) → `Agent::$sessionId` → `SimpleStreamOptions::$sessionId`, and Responses' `prompt_cache_key` uses it too.
+- Tests: `AnthropicTest::testTheLastToolCarriesTheCacheBreakpoint`, `testLongRetentionIsAnHourOnEveryBreakpointAndNoneMarksNothing`, `testTheSessionGoesOutAsAnAffinityHeaderWhereTheCompatAsksForIt`, `AgentSessionTest::testTheAgentCarriesTheSessionFilesIdAsItsSessionId`.
 
-### Responses API 关思考靠 `# Juice: 0`，`incomplete` 一律当 `length`
+### Responses API switched thinking off with `# Juice: 0`, and every `incomplete` was `length`
 
-**症状**：gpt-5.x 关思考时多发一条 `# Juice: 0 !important` developer 消息，模型照样推理计费；内容过滤截断的回答显示成"写太长被截断"，agent 继续；`maxTokens` 小于 16 时 API 400；没收到 `output_item.done` 的半截工具调用被交给 agent 执行。
+**Symptom**: switching thinking off on gpt-5.x sent an extra `# Juice: 0 !important` developer message while the model kept reasoning and billing; an answer cut by content filtering was shown as "cut for being too long" and the agent carried on; `maxTokens` under 16 was an API 400; a half tool call with no `output_item.done` was handed to the agent to run.
 
-**根因**：upstream 关思考发 `reasoning: {effort: map.off ?? "none"}`（Copilot 和 `off: null` 的模型不发），effort 取 `thinkingLevelMap[level] ?? level`；`mapStopReason()` 只把 `max_output_tokens` 映射成 length，其它原因是 `Response incomplete: <reason>` 错误；`max_output_tokens` 至少 16；流结束时 toolUse 但有未完成的调用就抛错。
+**Root cause**: upstream switches thinking off with `reasoning: {effort: map.off ?? "none"}` (not sent for Copilot or `off: null` models), effort being `thinkingLevelMap[level] ?? level`; `mapStopReason()` maps only `max_output_tokens` to length, any other reason is a `Response incomplete: <reason>` error; `max_output_tokens` is at least 16; a stream ending in toolUse with an unfinished call throws.
 
-**避坑规则**：
-- OpenAI / Copilot GPT 的 `thinkingLevelMap` 由 `Models::thinkingLevelMap()` 按 upstream 生成器写，关思考和 effort 都只读这张表，不要按 id 判断。
-- 测试：`OpenAiResponsesTest::testThinkingOffIsTheMapsOffEffortAndNoLongerAJuiceMessage`、`testAnAnswerCutOffForAnyOtherReasonIsAnErrorThatSaysWhy`、`testMaxOutputTokensIsNeverBelowSixteen`、`testAToolCallWhoseItemNeverFinishedIsRefused`，`ModelsTest::testOpenAiAndCopilotGptModelsCarryUpstreamsThinkingLevelMaps`。
+**Trap rules**:
+- The `thinkingLevelMap` of OpenAI / Copilot GPT models is written by `Models::thinkingLevelMap()` as upstream's generator does; switching off and the effort both read that table only, never the id.
+- Tests: `OpenAiResponsesTest::testThinkingOffIsTheMapsOffEffortAndNoLongerAJuiceMessage`, `testAnAnswerCutOffForAnyOtherReasonIsAnErrorThatSaysWhy`, `testMaxOutputTokensIsNeverBelowSixteen`, `testAToolCallWhoseItemNeverFinishedIsRefused`, `ModelsTest::testOpenAiAndCopilotGptModelsCarryUpstreamsThinkingLevelMaps`.
 
-### Copilot 的 GPT-6 选不到 xhigh
+### Copilot's GPT-6 could not select xhigh
 
-**症状**：`github-copilot/gpt-6-sol` 等思考级别里没有 xhigh；`openai/gpt-5` 提供了它关不掉的 off。
+**Symptom**: `github-copilot/gpt-6-sol` and the like had no xhigh among their thinking levels; `openai/gpt-5` offered an off it cannot switch to.
 
-**根因**：pig 的 OpenAI / Copilot GPT 行没有 `thinkingLevelMap`，xhigh 靠一张只有三个 id 的旧列表；upstream 生成器给这些行写了完整的表（`off`、Copilot `minimal: "low"`、gpt-5.2+ 的 `xhigh`、gpt-5.6 / gpt-6 的 `max`、GPT-6 整表）。
+**Root cause**: pig's OpenAI / Copilot GPT rows had no `thinkingLevelMap`, and xhigh came from an old list of three ids; upstream's generator writes full tables for these rows (`off`, Copilot `minimal: "low"`, `xhigh` from gpt-5.2, `max` for gpt-5.6 / gpt-6, the whole GPT-6 table).
 
-**避坑规则**：
-- xhigh 只看表（`Model::supportsXhigh()`），不要再加 id 列表；`models.json` 里的模型要自己写 `"xhigh": "xhigh"`。
-- 测试：`ThinkingLevelTest::testCopilotsGptSixOffersXhighAndClampsByItsMap`，`ModelTest::testWithNoMapXhighIsNotOfferedWhateverTheId`。
+**Trap rules**:
+- xhigh is decided by the table alone (`Model::supportsXhigh()`), with no id list added back; a `models.json` model writes `"xhigh": "xhigh"` itself.
+- Tests: `ThinkingLevelTest::testCopilotsGptSixOffersXhighAndClampsByItsMap`, `ModelTest::testWithNoMapXhighIsNotOfferedWhateverTheId`.
 
-### StreamProxy 发给网关的上下文和模型缺字段
+### The context and model StreamProxy sent to a gateway were missing fields
 
-**症状**：按 upstream 写的网关收不到 system prompt 和工具（pig 发的是 `systemPrompt` / `tools` 平铺字段），工具的 `constrainedSampling`、模型的 `thinkingLevelMap`、价格分档都丢了，`cacheRetention` / `sessionId` / `metadata` 不传。
+**Symptom**: a gateway written to upstream's spec received no system prompt and no tools (pig sent flat `systemPrompt` / `tools` fields); the tools' `constrainedSampling`, the model's `thinkingLevelMap` and price tiers were lost, and `cacheRetention` / `sessionId` / `metadata` were not sent.
 
-**根因**：upstream `streamProxy()` 发的是 `TranscriptContext`（首条 `system` 消息带 prompt 和 `toolsAdded`），模型整个对象、`buildProxyRequestOptions()` 的全部字段（undefined 的省略）。
+**Root cause**: upstream's `streamProxy()` sends a `TranscriptContext` (the first `system` message carrying the prompt and `toolsAdded`), the whole model object, and every field of `buildProxyRequestOptions()` (undefined ones omitted).
 
-**避坑规则**：
-- 改 `Model` / `Tool` / `StreamOptions` 字段时同步 `StreamProxy::encodeModel()` / `encodeContext()` / `request()`。
-- 测试：`StreamProxyTest::testTheContextGoesOverTheWireAsTheSessionFileWritesIt`、`testAToolsConstrainedSamplingTravelsWithIt`、`testTheThinkingLevelMapAndPriceTiersGoWithTheModel`、`testTheCacheAndSessionOptionsTravelAndUnsetOnesAreLeftOut`。
+**Trap rules**:
+- A change to a `Model` / `Tool` / `StreamOptions` field updates `StreamProxy::encodeModel()` / `encodeContext()` / `request()` with it.
+- Tests: `StreamProxyTest::testTheContextGoesOverTheWireAsTheSessionFileWritesIt`, `testAToolsConstrainedSamplingTravelsWithIt`, `testTheThinkingLevelMapAndPriceTiersGoWithTheModel`, `testTheCacheAndSessionOptionsTravelAndUnsetOnesAreLeftOut`.
 
-### OpenAI gpt-5.4/5.5/5.6/6 的窗口是 1.05M，长上下文按原价算
+### OpenAI gpt-5.4/5.5/5.6/6 had a 1.05M window, and long context was billed at the base price
 
-**症状**：`openai/gpt-5.5` 等模型对话涨到 27 万 token 以上也不压缩，之后每轮按两倍输入价计费，而 `/session` 和页脚按基础价报，少报一半；`gpt-5-pro` 的输出上限是 272,000。
+**Symptom**: conversations on `openai/gpt-5.5` and the like grew past 270k tokens without compacting, after which every turn was billed at twice the input price while `/session` and the footer reported the base price — under by half; `gpt-5-pro`'s output ceiling was 272,000.
 
-**根因**：upstream 生成器的临时覆盖把 `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` 的窗口设成 272,000（输出 128,000），`OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` 加 `withOpenAiLongContextPricing()` 档位（272k 以上输入和缓存 2 倍、输出 1.5 倍，基价取 `OPENAI_STANDARD_COSTS`），`gpt-5-pro` 输出改 128,000；pig 的生成器没有这段。
+**Root cause**: upstream's generator has temporary overrides: the window of `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` is 272,000 (output 128,000), `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` get a `withOpenAiLongContextPricing()` tier (input and cache 2× past 272k, output 1.5×, base from `OPENAI_STANDARD_COSTS`), and `gpt-5-pro`'s output becomes 128,000; pig's generator had none of it.
 
-**避坑规则**：
-- 这些是生成器规则（`openAiTemporaryOverrides()`），每次重新生成都会套用；不要手改表里这些行的窗口和档位。
-- 只对 `openai` provider，Copilot 转售的同名模型不受影响。pig 没有 `modelOverrides`，要用完整窗口只能在 `models.json` 里自己声明。
-- 测试：`ModelsTest::testOpenAisLongContextModelsStopAt272kAndPriceWhatIsPastIt`，`GenerateModelsTest::testOpenAisLongContextModelsAreCappedAndPricedAsUpstreamsGeneratorWritesThem`，`CompactionTest::testOpenAisLongContextModelsCompactBeforeTheLongContextPrice`。
+**Trap rules**:
+- These are generator rules (`openAiTemporaryOverrides()`), applied on every regeneration; do not hand-edit the window and tiers of these rows in the table.
+- `openai` provider only; the same models resold through Copilot are unaffected. pig has no `modelOverrides`, so the full window is only available by declaring it in `models.json`.
+- Tests: `ModelsTest::testOpenAisLongContextModelsStopAt272kAndPriceWhatIsPastIt`, `GenerateModelsTest::testOpenAisLongContextModelsAreCappedAndPricedAsUpstreamsGeneratorWritesThem`, `CompactionTest::testOpenAisLongContextModelsCompactBeforeTheLongContextPrice`.
 
-### 流半路断开，半截回答当成正常结束
+### A stream that broke midway was taken for a normal end
 
-**症状**：Anthropic 或 Responses 的连接在文字流到一半时断掉，回合以 `done`/`stop` 结束，半句话被当成完整回答，没有用量，agent 继续往下做；Anthropic 流中途的 `event: error`（如 overloaded）被忽略。
+**Symptom**: when an Anthropic or Responses connection dropped mid-text, the turn ended `done`/`stop`, half a sentence passed as the whole answer with no usage, and the agent carried on; a mid-stream Anthropic `event: error` (overloaded, say) was ignored.
 
-**根因**：upstream 的输出从 `stopReason: "pending"` 开始，流结束仍是 pending 就抛 `… stream ended without a stop reason`；Anthropic 看到 `message_start` 没看到 `message_stop` 抛 `Anthropic stream ended before message_stop`，`event: error` 直接以 data 为消息抛出；Responses 没收到 `response.completed` / `.incomplete` / `.failed` 抛 `OpenAI Responses stream ended before a terminal response event`。pig 的 builder 默认是 `stop`。
+**Root cause**: upstream's output starts at `stopReason: "pending"`, and a stream still pending at the end throws `… stream ended without a stop reason`; Anthropic throws `Anthropic stream ended before message_stop` when it saw `message_start` without `message_stop`, and `event: error` throws with its data as the message; Responses throws `OpenAI Responses stream ended before a terminal response event` without `response.completed` / `.incomplete` / `.failed`. pig's builder defaulted to `stop`.
 
-**避坑规则**：
-- 新 provider 若按 upstream 以 pending 起步，就在构造 builder 后 `setStopReason(StopReason::Pending)`，结束时检查；先 `throwIfAborted()` 再查这些（upstream 的中止在循环里就抛了）。
-- 测试固件要像真实流一样以 `message_stop` / 终止事件收尾，否则现在会失败。
-- 测试：`AnthropicTest::testAStreamThatEndsWithoutAStopReasonIsAnErrorNotAFinishedAnswer`、`testAStreamThatStartedAndNeverStoppedIsAnErrorEvenWithAStopReason`、`testAnErrorEventMidStreamIsTheTurnsErrorWordForWord`，`OpenAiResponsesTest::testABodyThatEndsWithNoTerminalEventIsAnErrorNotAnAnswer`。
+**Trap rules**:
+- A new provider that starts from pending as upstream does calls `setStopReason(StopReason::Pending)` right after building the builder and checks at the end; `throwIfAborted()` comes before those checks (upstream's abort throws inside the loop).
+- Test fixtures end with `message_stop` / a terminal event like a real stream, or they now fail.
+- Tests: `AnthropicTest::testAStreamThatEndsWithoutAStopReasonIsAnErrorNotAFinishedAnswer`, `testAStreamThatStartedAndNeverStoppedIsAnErrorEvenWithAStopReason`, `testAnErrorEventMidStreamIsTheTurnsErrorWordForWord`, `OpenAiResponsesTest::testABodyThatEndsWithNoTerminalEventIsAnErrorNotAnAnswer`.
 
-### Responses 的错误文本和 upstream 不一样，ChatGPT 额度错误不给链接
+### Responses error text differed from upstream, and the ChatGPT quota error gave no link
 
-**症状**：`response.failed` 显示成 "The response failed: …"，丢了错误码；SSE `error` 事件显示成 pig 自己的 `Error <code>: …`；Sign in with ChatGPT 额度用完时没有指向用量页面的提示。
+**Symptom**: `response.failed` was shown as "The response failed: …" without the error code; an SSE `error` event as pig's own `Error <code>: …`; and a spent Sign in with ChatGPT quota came with no pointer to the usage page.
 
-**根因**：upstream 经 `openai` SDK（7.19.0）读流：`event: error` 或 data 带真值 `error` 的事件直接成 `APIError`，消息是 `error.message`（没有就是 JSON）；只有没有 `event:` 行的扁平错误才走 `Error Code ${code}: ${message}`；`response.failed` 是 `${code || "unknown"}: ${message || "no message"}` / `incomplete: <reason>` / `Unknown error (no error details in response)`；错误含 `subscription_sharing_usage_limit_exceeded` 就追加 `\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage`。
+**Root cause**: upstream reads the stream through the `openai` SDK (7.19.0): an `event: error`, or an event whose data carries a truthy `error`, becomes an `APIError` whose message is `error.message` (or the JSON when there is none); only a flat error with no `event:` line goes through `Error Code ${code}: ${message}`; `response.failed` is `${code || "unknown"}: ${message || "no message"}` / `incomplete: <reason>` / `Unknown error (no error details in response)`; an error containing `subscription_sharing_usage_limit_exceeded` gets `\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage` appended.
 
-**避坑规则**：
-- 事件先过 `OpenAiResponses::sdkEvent()`，不要在 `dispatch()` 里自己解析错误形状。
-- ChatGPT 提示也查被拒请求的原始 body：`explain()` 只保留 `error.message`，upstream 的格式化消息里带着 code。
-- 测试：`OpenAiResponsesTest::testAnErrorEventIsTheSdksMessageWithoutTheCode`、`testAFlatErrorWithNoEventNameIsErrorCodeAndMessage`、`testAFailedResponseSaysCodeAndMessageAsUpstreamWritesThem`、`testASignInWithChatGptUsageLimitPointsAtTheUsagePage`。
+**Trap rules**:
+- Events go through `OpenAiResponses::sdkEvent()` first; `dispatch()` does not parse error shapes on its own.
+- The ChatGPT hint also checks a refused request's raw body: `explain()` keeps only `error.message`, while upstream's formatted message carries the code.
+- Tests: `OpenAiResponsesTest::testAnErrorEventIsTheSdksMessageWithoutTheCode`, `testAFlatErrorWithNoEventNameIsErrorCodeAndMessage`, `testAFailedResponseSaysCodeAndMessageAsUpstreamWritesThem`, `testASignInWithChatGptUsageLimitPointsAtTheUsagePage`.
 
-### Responses 丢 Azure 只在 `response.completed` 里给的加密推理，参数以 `.done` 为准
+### Responses dropped the encrypted reasoning Azure gives only in `response.completed`, and arguments follow `.done`
 
-**症状**：Azure 等只在终止事件里给 `encrypted_content` 的端点，下一轮回放的推理项没有加密内容，模型从头推理；只发 `function_call_arguments.done` 不发 delta 的端点，工具参数靠 `output_item.done` 才补齐，监听 delta 的界面看到的参数不全；compat 说 `supportsDeveloperRole: false` 的端点仍收到 `developer` 角色。
+**Symptom**: on endpoints like Azure that give `encrypted_content` only in the terminal event, the next turn replayed reasoning items without their encrypted content and the model reasoned from scratch; on endpoints sending `function_call_arguments.done` without deltas, tool arguments were completed only by `output_item.done`, so a UI listening to deltas saw partial arguments; endpoints whose compat says `supportsDeveloperRole: false` still received the `developer` role.
 
-**根因**：upstream `backfillReasoningSignatures()` 用 `response.completed.response.output` 回填推理项；`response.function_call_arguments.done` 用整段参数替换并补发缺的尾巴 delta；`instructionRole` 看 `compat.supportsDeveloperRole !== false`。
+**Root cause**: upstream's `backfillReasoningSignatures()` fills reasoning items from `response.completed.response.output`; `response.function_call_arguments.done` replaces with the whole arguments and emits the missing tail delta; `instructionRole` checks `compat.supportsDeveloperRole !== false`.
 
-**避坑规则**：
-- 推理块按 item id 记下（`$reasoningById`），回填只补没有 `encrypted_content` 的。
-- 测试：`OpenAiResponsesTest::testEncryptedReasoningOnlyTheTerminalResponseCarriesIsBackfilled`、`testTheFinishedArgumentsReplaceTheDeltasAndSendWhatTheyMissed`、`testTheSystemPromptIsASystemTurnWhereTheCompatSaysThereIsNoDeveloperRole`。
+**Trap rules**:
+- Reasoning blocks are recorded by item id (`$reasoningById`); the backfill fills only those without `encrypted_content`.
+- Tests: `OpenAiResponsesTest::testEncryptedReasoningOnlyTheTerminalResponseCarriesIsBackfilled`, `testTheFinishedArgumentsReplaceTheDeltasAndSendWhatTheyMissed`, `testTheSystemPromptIsASystemTurnWhereTheCompatSaysThereIsNoDeveloperRole`.
 
-### chat completions 不发 prompt cache key、会话亲和头和 Anthropic 缓存标记
+### chat completions sent no prompt cache key, session affinity headers or Anthropic cache marks
 
-**症状**：经 OpenAI 自家 chat completions、OpenRouter 的 Claude 等模型，长对话每轮都按全价算输入；`cacheRetention: long` 不起作用；思考级别不按模型的表夹（如 Groq Qwen 3.6 只有 `high`，问 `low` 原样发出）。
+**Symptom**: through OpenAI's own chat completions, OpenRouter's Claude and the like, every turn of a long conversation was billed at full input price; `cacheRetention: long` did nothing; the thinking level was not clamped to the model's map (Groq Qwen 3.6 has only `high`, and asking for `low` sent `low`).
 
-**根因**：upstream `buildParams()` 对含 `api.openai.com` 的地址（非 `none`）或 `long` 且支持长保留时发 `prompt_cache_key` / `prompt_cache_retention: "24h"`；`createClient()` 在 `sendSessionAffinityHeaders`（检测：OpenRouter）时发会话头；`cacheControlFormat: "anthropic"`（检测：OpenRouter 的 `anthropic/…`）给 system、最后一个工具、最后一条会话文本打 `cache_control`；`streamSimple()` 用 `clampThinkingLevel()`。pig 都没有，`Stream` 的 completions 分支只夹 xhigh。
+**Root cause**: upstream's `buildParams()` sends `prompt_cache_key` / `prompt_cache_retention: "24h"` for addresses containing `api.openai.com` (unless `none`), or for `long` where long retention is supported; `createClient()` sends the session headers under `sendSessionAffinityHeaders` (detected: OpenRouter); `cacheControlFormat: "anthropic"` (detected: OpenRouter's `anthropic/…`) marks `cache_control` on the system prompt, the last tool and the last conversation text; `streamSimple()` uses `clampThinkingLevel()`. pig had none of it, and `Stream`'s completions branch clamped xhigh only.
 
-**避坑规则**：
-- 这四个键在 `OpenAiCompat::detect()` 里检测、`resolve()` 里按键覆盖；Responses 仍读模型自己的 compat 加运行时默认值。
-- 测试：`OpenAiCompletionsTest::testOpenAisOwnEndpointGetsThePromptCacheKeyUnlessCachingIsOff`、`testTheSessionGoesOutAsHeadersOnlyWhereTheCompatSaysSo`、`testAnAnthropicModelThroughOpenRouterGetsCacheControlMarks`、`testTheCachingAndSessionKeysAreDetectedAsUpstreamDetectsThem`，`StreamTest::testTheCompletionsApiGetsTheLevelClampedToTheModelsMapAsTheResponsesOneDoes`。
+**Trap rules**:
+- The four keys are detected in `OpenAiCompat::detect()` and overridden key by key in `resolve()`; Responses still reads the model's own compat plus runtime defaults.
+- Tests: `OpenAiCompletionsTest::testOpenAisOwnEndpointGetsThePromptCacheKeyUnlessCachingIsOff`, `testTheSessionGoesOutAsHeadersOnlyWhereTheCompatSaysSo`, `testAnAnthropicModelThroughOpenRouterGetsCacheControlMarks`, `testTheCachingAndSessionKeysAreDetectedAsUpstreamDetectsThem`, `StreamTest::testTheCompletionsApiGetsTheLevelClampedToTheModelsMapAsTheResponsesOneDoes`.
 
-### StreamProxy 丢网关的 `providerThinkingLevel` 和最终工具调用
+### StreamProxy dropped the gateway's `providerThinkingLevel` and its final tool call
 
-**症状**：经网关的 Opus 5 等回合不记 `providerThinkingLevel`，下一轮的 effort 提示不对；网关在 `toolcall_end` 里给的修正后的调用（id、参数、namespace）被忽略，执行的是 delta 拼出来的；网关断流时报 pig 自己的消息。
+**Symptom**: Opus 5 and similar turns through a gateway did not record `providerThinkingLevel`, so the next turn's effort hint was wrong; the corrected call (id, arguments, namespace) the gateway gives in `toolcall_end` was ignored in favor of the one built from deltas; a gateway stream cut short reported pig's own message.
 
-**根因**：upstream `processProxyEvent()` 在 `done` / `error` 上拷贝 `providerThinkingLevel`，`toolcall_end` 做 `Object.assign(content, proxyEvent.toolCall)`，块不是工具调用时返回 undefined（不抛）；无终止事件时报 `Connection closed by proxy server before the response completed`。
+**Root cause**: upstream's `processProxyEvent()` copies `providerThinkingLevel` on `done` / `error`, does `Object.assign(content, proxyEvent.toolCall)` on `toolcall_end`, returns undefined (does not throw) when the block is not a tool call, and reports `Connection closed by proxy server before the response completed` when there is no terminal event.
 
-**避坑规则**：
-- 测试：`StreamProxyTest::testTheProvidersThinkingLevelComesBackOnDoneAndOnError`、`testTheServersFinishedToolCallReplacesWhatTheDeltasBuilt`、`testAToolCallEndForABlockThatIsNoToolCallIsIgnoredNotFatal`、`testAStreamThatEndsWithoutDoneIsAFailureAndNotASuccess`。
+**Trap rules**:
+- Tests: `StreamProxyTest::testTheProvidersThinkingLevelComesBackOnDoneAndOnError`, `testTheServersFinishedToolCallReplacesWhatTheDeltasBuilt`, `testAToolCallEndForABlockThatIsNoToolCallIsIgnoredNotFatal`, `testAStreamThatEndsWithoutDoneIsAFailureAndNotASuccess`.
 
-### models.json 的价格档位写错时静默按 0 计费
+### A mistyped price tier in models.json was silently billed at 0
 
-**症状**：`cost.tiers` 里少写 `output` 等字段，长提示的那部分按 0 计费；`inputTokensAbove` 写成字符串的档位被悄悄丢掉；`inputLimits` / `promptCache` 写了也不读。
+**Symptom**: a `cost.tiers` entry missing `output` or another field billed that part of a long prompt at 0; a tier with `inputTokensAbove` written as a string was quietly dropped; `inputLimits` / `promptCache` were ignored even when written.
 
-**根因**：upstream 用 TypeBox 校验 `ModelCostTierSchema`（五个字段必填、都是 number），错了整个文件报 `Invalid models.json schema:` 加 `<路径>: <消息>`；`inputLimits` / `promptCache` 按各自 schema 校验后原样传下去。
+**Root cause**: upstream validates `ModelCostTierSchema` with TypeBox (five required fields, all numbers), and an error fails the whole file with `Invalid models.json schema:` plus `<path>: <message>`; `inputLimits` / `promptCache` are validated by their own schemas and passed through as they are.
 
-**避坑规则**：
-- 校验走 `CustomModels::schemaErrors()`，消息与 TypeBox 1.3.27 一致（`must be number`、`must have required properties …`、`must be >= 1`）；pig 只拒这个模型，不拒整个文件。
-- schema 校验读保留对象的那份解码（`json_decode($raw, false)`），`{}` 和 `[]` 照 upstream 区分开。
-- 测试：`CustomModelsTest::testACostTierIsValidatedWithUpstreamsSchemaMessages`、`testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem`。
+**Trap rules**:
+- Validation goes through `CustomModels::schemaErrors()`, with messages matching TypeBox 1.3.27 (`must be number`, `must have required properties …`, `must be >= 1`); pig refuses only that model, not the whole file.
+- Schema validation reads the object-preserving decode (`json_decode($raw, false)`), telling `{}` from `[]` as upstream does.
+- Tests: `CustomModelsTest::testACostTierIsValidatedWithUpstreamsSchemaMessages`, `testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem`.
 
-### Copilot 按 $0 计费、扩展窗口靠逐条修补
+### Copilot billed at $0, and extended windows patched one id at a time
 
-**症状**：经 GitHub Copilot 的会话花费恒为 $0；新上的 1M 窗口 Copilot 模型仍按 models.dev 的小窗口压缩；upstream 手加的 Copilot 模型（Claude Opus 5.5、GPT-6 Sol/Luna）在 pig 里不存在。
+**Symptom**: a session through GitHub Copilot always cost $0; newly added 1M-window Copilot models still compacted at models.dev's small window; the Copilot models upstream adds by hand (Claude Opus 5.5, GPT-6 Sol/Luna) did not exist in pig.
 
-**根因**：upstream `getModelsDevCost()` 给 Copilot 也写 models.dev 的标价；`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` 里的 id 一律 `contextWindow: 1_000_000`；`missingCopilotModels` 补 models.dev 还没有的行。pig 的生成器把 Copilot 价格写成 0，窗口靠 OVERRIDES 一条条改。
+**Root cause**: upstream's `getModelsDevCost()` writes models.dev's list prices for Copilot too; every id in `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` gets `contextWindow: 1_000_000`; `missingCopilotModels` adds rows models.dev does not have yet. pig's generator wrote Copilot prices as 0 and fixed windows one OVERRIDES row at a time.
 
-**避坑规则**：
-- 扩展窗口只改 `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`，不要再写按 id 的 fix 行；手加模型放 OVERRIDES 的 add 行，models.dev 有了就删。
-- 测试：`GenerateModelsTest::testCopilotRowsCarryModelsDevsListPricesAsUpstreamsGeneratorWritesThem`、`testCopilotsExtendedWindowIsUpstreamsRuleOverEveryListedId`、`testUpstreamsMissingCopilotModelsAreAddedByHandUntilTheCatalogueHasThem`，`ModelsTest::testACopilotConversationIsPricedAtModelsDevsListPricesAsUpstreamPricesIt`、`testCopilotsExtendedWindowsAreUpstreamsOneMillionForEveryListedId`。
+**Trap rules**:
+- Extended windows change only `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`, with no more per-id fix rows; hand-added models go in OVERRIDES' add rows and are removed once models.dev has them.
+- Tests: `GenerateModelsTest::testCopilotRowsCarryModelsDevsListPricesAsUpstreamsGeneratorWritesThem`, `testCopilotsExtendedWindowIsUpstreamsRuleOverEveryListedId`, `testUpstreamsMissingCopilotModelsAreAddedByHandUntilTheCatalogueHasThem`, `ModelsTest::testACopilotConversationIsPricedAtModelsDevsListPricesAsUpstreamPricesIt`, `testCopilotsExtendedWindowsAreUpstreamsOneMillionForEveryListedId`.
 
-### Mistral 走 chat completions，工具 id 和思考参数都是 pig 自己猜的
+### Mistral went over chat completions, with tool ids and thinking parameters pig guessed itself
 
-**症状**：Mistral 模型经 `openai-completions` 发请求，工具 id 被 pig 改写成 9 位，推理模型不收 `reasoning_effort` / `prompt_mode`；`detect()` 看到 `mistral.ai` 就开一堆特例，自定义 Mistral 兼容端点也被波及。
+**Symptom**: Mistral models sent requests through `openai-completions`, tool ids were rewritten by pig to 9 characters, reasoning models received no `reasoning_effort` / `prompt_mode`; `detect()` switched on a pile of special cases at the sight of `mistral.ai`, catching custom Mistral-compatible endpoints too.
 
-**根因**：upstream 生成器把 mistral 行写成 `api: "mistral-conversations"`、`baseUrl: "https://api.mistral.ai"`，由 `api/mistral-conversations.ts` 发 Mistral 自己的形状（9 位 id 只在这里做，effort 有表才发 `reasoning_effort`，否则 `prompt_mode: "reasoning"`）；completions 的 `detectCompat()` 没有任何 Mistral 分支。
+**Root cause**: upstream's generator writes the mistral rows as `api: "mistral-conversations"`, `baseUrl: "https://api.mistral.ai"`, and `api/mistral-conversations.ts` sends Mistral's own shape (the 9-character id only there; `reasoning_effort` when the effort has a map entry, otherwise `prompt_mode: "reasoning"`); completions' `detectCompat()` has no Mistral branch at all.
 
-**避坑规则**：
-- Mistral 的特殊处理只放 `Providers/Mistral.php`；`OpenAiCompat` 不认主机名 `mistral.ai`，`requiresMistralToolIds` 已删。
-- 测试：`MistralTest` 全部，`ModelsTest::testMistralsModelsSpeakMistralsOwnApiAsUpstreamsGeneratorRoutesThem`，`OpenAiCompletionsTest::testMistralsHostIsNotOneOfThisApisQuirksAnyMore`、`testAToolIdGoesOutAsItIsWhateverTheHost`。
+**Trap rules**:
+- Mistral's special handling lives only in `Providers/Mistral.php`; `OpenAiCompat` does not recognize the host `mistral.ai`, and `requiresMistralToolIds` is gone.
+- Tests: all of `MistralTest`, `ModelsTest::testMistralsModelsSpeakMistralsOwnApiAsUpstreamsGeneratorRoutesThem`, `OpenAiCompletionsTest::testMistralsHostIsNotOneOfThisApisQuirksAnyMore`, `testAToolIdGoesOutAsItIsWhateverTheHost`.
 
-### Google / Gemma 的思考级别表不是 upstream 的
+### The Google / Gemma thinking level maps were not upstream's
 
-**症状**：Gemma 4 等只认 `thinking_level` 两档的模型收到 pig 夹出来的 `low` / `medium`，被 400 拒；Gemini `-latest` 别名价格和表跟着错的源模型走；`off` 对不能关思考的模型也发出去。
+**Symptom**: Gemma 4 and other models with only two `thinking_level` values received the `low` / `medium` pig clamped to and were refused with 400; a Gemini `-latest` alias took its price and map from the wrong source model; `off` was sent to models that cannot stop thinking.
 
-**根因**：upstream `getGoogleThinkingLevelMap()` 从 models.dev 的 `reasoning_options` 建表写进行里，`-latest` 别名取指向的模型；运行时 `streamSimpleGoogle` 用 `clampThinkingLevel()` 按行里的表夹。pig 生成器不建表，`Stream::gemini()` 只夹到 high。
+**Root cause**: upstream's `getGoogleThinkingLevelMap()` builds the map from models.dev's `reasoning_options` and writes it into the row, with a `-latest` alias taking its target model's; at runtime `streamSimpleGoogle` clamps with `clampThinkingLevel()` by the row's map. pig's generator built no map, and `Stream::gemini()` clamped to high only.
 
-**避坑规则**：
-- 行里的 `thinkingLevelMap` 由生成器写，测出来的拒绝级别再合并进去；`Stream::gemini()` 只用 `$model->clampThinkingLevel()`。
-- 测试：`GenerateModelsTest::testGoogleRowsTakeUpstreamsGoogleThinkingLevelMap`、`testALevelTheEndpointRefusesIsMergedIntoTheRowsThinkingLevelMap`。
+**Trap rules**:
+- The row's `thinkingLevelMap` is written by the generator, with the levels the endpoint was measured to refuse merged in; `Stream::gemini()` uses only `$model->clampThinkingLevel()`.
+- Tests: `GenerateModelsTest::testGoogleRowsTakeUpstreamsGoogleThinkingLevelMap`, `testALevelTheEndpointRefusesIsMergedIntoTheRowsThinkingLevelMap`.
 
-### Z.ai 读错 models.dev 条目
+### Z.ai read the wrong models.dev entry
 
-**症状**：Z.ai 编程套餐的模型缺行、窗口和思考开关不对，工具调用不流式。
+**Symptom**: Z.ai coding-plan models had missing rows, wrong windows and thinking switches, and tool calls did not stream.
 
-**根因**：upstream `processZaiModels()` 读 `zai-coding-plan` 条目、价格取 `zai` 条目的，GLM-5.2 不能 `off`，除 `ZAI_TOOL_STREAM_UNSUPPORTED_MODELS` 外都 `zaiToolStream: true`、`thinkingFormat: "zai"`。pig 读的是 `zai`。
+**Root cause**: upstream's `processZaiModels()` reads the `zai-coding-plan` entry with prices from the `zai` entry; GLM-5.2 cannot `off`; everything outside `ZAI_TOOL_STREAM_UNSUPPORTED_MODELS` gets `zaiToolStream: true`, `thinkingFormat: "zai"`. pig read `zai`.
 
-**避坑规则**：
-- 生成器 `SOURCE['zai'] = 'zai-coding-plan'`；`Models.php` 里的 Z.ai 行要等下一次重新生成才换成新源（models.dev 当前不可达）。
-- 测试：`GenerateModelsTest::testZaiIsReadFromTheCodingPlansEntryAndPricedFromZaisOwn`，`ModelsTest::testZaisModelsSayTheirThinkingFormatAndStreamTheirToolCalls`，`OpenAiCompletionsTest::testZaiIsAskedToStreamToolCallsWhereItsCompatSaysSo`。
+**Trap rules**:
+- Generator `SOURCE['zai'] = 'zai-coding-plan'`; the Z.ai rows in `Models.php` switch to the new source on the next regeneration (models.dev is unreachable at the moment).
+- Tests: `GenerateModelsTest::testZaiIsReadFromTheCodingPlansEntryAndPricedFromZaisOwn`, `ModelsTest::testZaisModelsSayTheirThinkingFormatAndStreamTheirToolCalls`, `OpenAiCompletionsTest::testZaiIsAskedToStreamToolCallsWhereItsCompatSaysSo`.
 
-### Responses 并发 item 串流、只到 `done` 的 item 丢失、空 delta 被吞
+### Responses: concurrent items crossed streams, items arriving only at `done` were lost, empty deltas swallowed
 
-**症状**：同一响应里两个 item 交错流（如推理和消息、两个工具调用），delta 落进错的块；端点只发 `output_item.done` 不发 `added` 时那段输出整个丢掉；空字符串 delta 不发事件；被拒请求的消息不是 upstream 的 `OpenAI API error (N): {...}`。
+**Symptom**: two items streaming interleaved in one response (reasoning and a message, two tool calls) had their deltas land in the wrong block; an endpoint sending `output_item.done` without `added` lost that output entirely; an empty-string delta emitted no event; a refused request's message was not upstream's `OpenAI API error (N): {...}`.
 
-**根因**：upstream `processResponsesStream()` 按 `output_index` 建槽，`done` 时 `getOrCreateSlot()`；delta 只判 `typeof === "string"`；错误经 `formatProviderError(normalizeProviderError(err), "OpenAI API error")`。pig 只有一个“当前块”。
+**Root cause**: upstream's `processResponsesStream()` keeps slots by `output_index` and `getOrCreateSlot()`s on `done`; a delta is checked only for `typeof === "string"`; errors go through `formatProviderError(normalizeProviderError(err), "OpenAI API error")`. pig had a single "current block".
 
-**避坑规则**：
-- 事件一律按 `output_index` 找槽（缺省键 `'undefined'`），不要回到“当前块”；`done` 不重读 id / name。
-- 错误文本走 `Utils\ErrorBody`，不要手拼。
-- 测试：`OpenAiResponsesTest::testTwoItemsStreamingAtOnceEachGetTheirOwnDeltas`、`testAnItemThatOnlyArrivesFinishedStillBecomesABlock`、`testAFinishedCallKeepsTheIdItWasOpenedWith`、`testAnEmptyDeltaIsStillADelta`、`testARefusedRequestReadsAsUpstreamsSdkErrorDoes`。
+**Trap rules**:
+- Every event finds its slot by `output_index` (default key `'undefined'`), never a "current block"; `done` does not re-read id / name.
+- Error text goes through `Utils\ErrorBody`, never assembled by hand.
+- Tests: `OpenAiResponsesTest::testTwoItemsStreamingAtOnceEachGetTheirOwnDeltas`, `testAnItemThatOnlyArrivesFinishedStillBecomesABlock`, `testAFinishedCallKeepsTheIdItWasOpenedWith`, `testAnEmptyDeltaIsStillADelta`, `testARefusedRequestReadsAsUpstreamsSdkErrorDoes`.
 
-### chat completions 把没有 finish_reason 的断流当成功
+### chat completions took a stream cut off without finish_reason for success
 
-**症状**：流在中途断开（没有 `finish_reason`）时回合按 `stop` 收尾，截断的回答当完整回答；未知 finish_reason 被当 `stop`；不支持 `stream_options` 的端点被 400 拒；vLLM 优先级、思考预算字段、Z.ai 工具流无法配置。
+**Symptom**: a stream broken midway (no `finish_reason`) ended the turn as `stop`, the truncated answer passing for a whole one; an unknown finish_reason was treated as `stop`; endpoints that do not support `stream_options` refused with 400; vLLM priority, the thinking budget field and Z.ai tool streaming could not be configured.
 
-**根因**：upstream 消息从 `pending` 开始，流尽时 `supportsFinishReason !== false` 且未收到 finish_reason 就报 `Stream ended without finish_reason`；`mapStopReason()` 默认分支报 `Provider finish_reason: X`；`stream_options` 看 `supportsUsageInStreaming`；`vllmPriority` / `thinkingTokenBudgetField` / `zaiToolStream` 是 compat 键。
+**Root cause**: upstream's message starts at `pending`; when the stream ends with `supportsFinishReason !== false` and no finish_reason received it reports `Stream ended without finish_reason`; `mapStopReason()`'s default branch reports `Provider finish_reason: X`; `stream_options` depends on `supportsUsageInStreaming`; `vllmPriority` / `thinkingTokenBudgetField` / `zaiToolStream` are compat keys.
 
-**避坑规则**：
-- 不支持 finish_reason 的端点写 `compat.supportsFinishReason: false`，不要改回默认成功。
-- 测试：`OpenAiCompletionsTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`、`testAnEndpointThatSendsNoFinishReasonIsFinishedWhenItsStreamIs`、`testAFinishReasonNobodyMappedIsAnErrorThatSaysWhich`、`testUsageInTheStreamIsAskedForUnlessTheCompatSaysNot`、`testVllmsPriorityAndTheThinkingBudgetFieldGoOutAsTopLevelFields`、`testTheNewCompatKeysAreLaidOverDetectionKeyByKey`、`testARefusedRequestReadsAsUpstreamsSdkErrorDoes`。
+**Trap rules**:
+- An endpoint without finish_reason support writes `compat.supportsFinishReason: false`; the default is not changed back to success.
+- Tests: `OpenAiCompletionsTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`, `testAnEndpointThatSendsNoFinishReasonIsFinishedWhenItsStreamIs`, `testAFinishReasonNobodyMappedIsAnErrorThatSaysWhich`, `testUsageInTheStreamIsAskedForUnlessTheCompatSaysNot`, `testVllmsPriorityAndTheThinkingBudgetFieldGoOutAsTopLevelFields`, `testTheNewCompatKeysAreLaidOverDetectionKeyByKey`, `testARefusedRequestReadsAsUpstreamsSdkErrorDoes`.
 
-### Google 无 finish reason 的流当成功、错误 finish reason 立即抛
+### A Google stream without a finish reason was a success, and an error finish reason threw at once
 
-**症状**：Gemini 流中途断开时截断的回答按 `stop` 收尾；`finishReason` 是安全拦截等错误值时，后面同一流里的用量和内容丢失。
+**Symptom**: a Gemini stream broken midway ended the truncated answer as `stop`; when `finishReason` was an error value such as a safety block, the usage and content later in the same stream were lost.
 
-**根因**：upstream `google.ts` 从 `pending` 开始，流尽仍是 `pending` 报 `Google stream ended without a finish reason`，错误 finish reason 读到流尾再报 `Provider stopped with: X`。
+**Root cause**: upstream's `google.ts` starts at `pending`, reports `Google stream ended without a finish reason` if still `pending` at the end, and reads an error finish reason to the end of the stream before reporting `Provider stopped with: X`.
 
-**避坑规则**：
-- `GoogleShared::onChunk()` 只记录 finish reason，不抛；`Google::run()` 和 Antigravity 都在读完流之后才抛 `Provider stopped with: X`。
-- 测试：`GoogleTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`、`testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeItEndsTheTurn`。
+**Trap rules**:
+- `GoogleShared::onChunk()` only records the finish reason and does not throw; `Google::run()` and Antigravity throw `Provider stopped with: X` only after reading the stream to its end.
+- Tests: `GoogleTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`, `testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeItEndsTheTurn`.
 
-### Anthropic 坏 SSE 事件静默跳过
+### A malformed Anthropic SSE event was skipped silently
 
-**症状**：Anthropic 流里一条解析不了的事件被丢掉，回合照常结束但少了内容；含原始控制字符的事件也被丢。
+**Symptom**: an unparsable event in an Anthropic stream was dropped and the turn ended normally with content missing; an event containing raw control characters was dropped too.
 
-**根因**：upstream 只处理消息事件，`parseJsonWithRepair()` 先修再解析，仍失败就抛 `Could not parse Anthropic SSE event <type>: <msg>; data=<data>; raw=<raw>`。
+**Root cause**: upstream handles message events only, parses with `parseJsonWithRepair()` (repair first), and when that still fails throws `Could not parse Anthropic SSE event <type>: <msg>; data=<data>; raw=<raw>`.
 
-**避坑规则**：
-- 解析走 `Utils\JsonRepair::parse()`；`SseEvent::$raw` 保留原始行供消息使用。
-- 测试：`AnthropicTest::testAnEventThatCannotBeParsedEndsTheTurnAndSaysWhatItWas`、`testARawControlCharacterInAnEventIsRepairedRatherThanFatal`，`SseParserTest::testAnEventKeepsTheLinesItWasMadeOfCommentsIncluded`。
+**Trap rules**:
+- Parsing goes through `Utils\JsonRepair::parse()`; `SseEvent::$raw` keeps the original lines for the message.
+- Tests: `AnthropicTest::testAnEventThatCannotBeParsedEndsTheTurnAndSaysWhatItWas`, `testARawControlCharacterInAnEventIsRepairedRatherThanFatal`, `SseParserTest::testAnEventKeepsTheLinesItWasMadeOfCommentsIncluded`.
 
-### StreamProxy 的错误文本不是 upstream 的
+### StreamProxy's error text was not upstream's
 
-**症状**：网关发来非 JSON 行时 pig 跳过继续读；delta 落到别种块时报 pig 自己的话；网关 `error` 事件没有 `errorMessage` 时 pig 填默认文本。
+**Symptom**: on a non-JSON line from the gateway pig skipped it and kept reading; a delta landing on a block of another kind reported pig's own words; a gateway `error` event without `errorMessage` had pig fill in default text.
 
-**根因**：upstream `JSON.parse` 失败即抛，块类型不符抛 `Received text_delta for non-text content` 等，`error` 事件原样拷 `errorMessage`（可以没有）。
+**Root cause**: upstream throws as soon as `JSON.parse` fails, throws `Received text_delta for non-text content` and the like on a block type mismatch, and copies `errorMessage` from the `error` event as it is (possibly absent).
 
-**避坑规则**：
-- 测试：`StreamProxyTest::testALineThatIsNotJsonEndsTheTurnAsUpstreamsJsonParseDoes`、`testAnEventAgainstABlockOfAnotherKindEndsTheTurnInUpstreamsWords`、`testAnErrorEventWithNoMessageLeavesTheTurnWithoutOne`。
+**Trap rules**:
+- Tests: `StreamProxyTest::testALineThatIsNotJsonEndsTheTurnAsUpstreamsJsonParseDoes`, `testAnEventAgainstABlockOfAnotherKindEndsTheTurnInUpstreamsWords`, `testAnErrorEventWithNoMessageLeavesTheTurnWithoutOne`.
 
-### models.json 的 cost 缺基础价格、备用模型列表不校验
+### models.json cost without base prices, and the fallback model list unvalidated
 
-**症状**：`cost` 只写 `input` 时其余按 0 计费；`compat.allowedFallbackModels` 写超过 3 项、空 provider 或缺 cost 也被接受；`"cost": {}` 和 `"cost": []` 被当成一回事。
+**Symptom**: a `cost` with only `input` billed the rest at 0; `compat.allowedFallbackModels` with more than 3 entries, an empty provider or a missing cost was accepted; `"cost": {}` and `"cost": []` were treated alike.
 
-**根因**：upstream `ModelCostSchema` 四个基础价格必填（不限非负），`allowedFallbackModels` 用 `maxItems: 3`、`minLength: 1` 的 schema 校验，TypeBox 区分对象和数组。
+**Root cause**: upstream's `ModelCostSchema` requires the four base prices (not restricted to non-negative), `allowedFallbackModels` is validated by a `maxItems: 3`, `minLength: 1` schema, and TypeBox tells objects from arrays.
 
-**避坑规则**：
-- 校验读 `json_decode($raw, false)` 的对象，不要用数组解码判断类型；provider 级的 `allowedFallbackModels` 错误拒整个 provider。
-- 测试：`CustomModelsTest::testAPriceThatIsNotANumberIsRefusedRatherThanReadAsFree`、`testANegativePriceIsWhatUpstreamsSchemaAllows`、`testACostTierIsValidatedWithUpstreamsSchemaMessages`、`testTheCachingSessionAndFallbackKeysAreReadUnderUpstreamsNames`。
+**Trap rules**:
+- Validation reads the objects of `json_decode($raw, false)`, never the array decode, to tell types apart; an `allowedFallbackModels` error at provider level refuses the whole provider.
+- Tests: `CustomModelsTest::testAPriceThatIsNotANumberIsRefusedRatherThanReadAsFree`, `testANegativePriceIsWhatUpstreamsSchemaAllows`, `testACostTierIsValidatedWithUpstreamsSchemaMessages`, `testTheCachingSessionAndFallbackKeysAreReadUnderUpstreamsNames`.
 
-### `deferred` 停止原因不存在
+### The `deferred` stop reason did not exist
 
-**症状**：提供方以 `deferred` 结束的回合（后台续跑的句柄）在会话文件里读回时被当成 `stop`（`StopReason::tryFrom()` 失败后的默认值），句柄丢失；提供方也无法报告这种结束。
+**Symptom**: a turn a provider ended with `deferred` (a handle for a run continuing in the background) read back from the session file as `stop` (the default after `StopReason::tryFrom()` fails), losing the handle; a provider had no way to report that ending either.
 
-**根因**：upstream `StopReason` 含 `"deferred"`，`AssistantMessage.deferred` 携带句柄，agent loop 把它当正常结束。
+**Root cause**: upstream's `StopReason` includes `"deferred"`, `AssistantMessage.deferred` carries the handle, and the agent loop treats it as a normal end.
 
-**避坑规则**：
-- 新增停止原因时同步 `MessageJson`、`TransformMessages`、`SessionManager`、`AgentSession` 的拷贝点。
-- 测试：`MessageTest::testADeferredTurnAndItsHandleSurviveTheSessionFile`，`AgentLoopTest::testADeferredTurnEndsTheRunAsAFinishedOneDoes`。
+**Trap rules**:
+- A new stop reason updates the copy points in `MessageJson`, `TransformMessages`, `SessionManager` and `AgentSession` with it.
+- Tests: `MessageTest::testADeferredTurnAndItsHandleSurviveTheSessionFile`, `AgentLoopTest::testADeferredTurnEndsTheRunAsAFinishedOneDoes`.
 
-### JSON 解析错误的文字是 PHP 的，不是 V8 的
+### JSON parse error text was PHP's, not V8's
 
-**症状**：网关、Anthropic SSE、Mistral 流、Gemini 流里有一段不是 JSON 时，错误行写 `Syntax error`（PHP 的 `json_last_error_msg()`），pi 对同样的字节写 `Unexpected token 'x', "..." is not valid JSON` 之类。
+**Symptom**: when a gateway, an Anthropic SSE, a Mistral stream or a Gemini stream contained a piece that was not JSON, the error line said `Syntax error` (PHP's `json_last_error_msg()`), where pi says `Unexpected token 'x', "..." is not valid JSON` or similar for the same bytes.
 
-**根因**：upstream 这些地方直接 `JSON.parse`，把 V8 的 `SyntaxError` 原文交给用户；PHP 的解析器只有一句笼统的话。
+**Root cause**: upstream calls `JSON.parse` directly in these places and hands V8's `SyntaxError` text to the user; PHP's parser has one generic sentence.
 
-**避坑规则**：
-- 凡是 upstream 会把 `JSON.parse` 的错误交出去的地方，一律用 `Utils\JsJson::parse()`（抛带 V8 原文的 `JsonException`），不要用 `json_last_error_msg()`。
-- `openai` SDK 的流不透传 V8 文字（固定写 `Error reading response: malformed server-sent event JSON.`），走 `ErrorBody::openAiStreamEvent()`。
-- 改 `JsJson` 之后用 `node -e` 对照；测试：`JsJsonTest`（期望值全部是 node 的真实输出）。
+**Trap rules**:
+- Wherever upstream passes a `JSON.parse` error through, use `Utils\JsJson::parse()` (throws a `JsonException` carrying V8's text), never `json_last_error_msg()`.
+- The `openai` SDK's stream does not pass V8's text through (it always writes `Error reading response: malformed server-sent event JSON.`); that goes through `ErrorBody::openAiStreamEvent()`.
+- After changing `JsJson`, compare against `node -e`; test: `JsJsonTest` (every expected value is node's real output).
 
-### Anthropic / Gemini 的 HTTP 错误文本是 pig 自己的话
+### Anthropic / Gemini HTTP error text was pig's own
 
-**症状**：Anthropic 拒绝请求时显示 `Anthropic returned 401: invalid key`，Gemini 显示 `google returned 429: ...`；pi 显示 SDK 的原文（`401 {"type":"error",...}`、`{"error":{"code":429,...}}`）。Gemini 流里坏掉的块被静默跳过，200 流里的错误对象、截断的末尾都不报错。
+**Symptom**: a refused Anthropic request showed `Anthropic returned 401: invalid key`, Gemini `google returned 429: ...`; pi shows the SDK's text (`401 {"type":"error",...}`, `{"error":{"code":429,...}}`). Broken chunks in a Gemini stream were skipped silently, and an error object or a truncated tail in a 200 stream raised no error.
 
-**根因**：upstream 的 Anthropic 打印 `@anthropic-ai/sdk` `APIError` 的 message（整个响应体当 error），Gemini 打印 `@google/genai` `throwErrorIfNotOK()` 的 `JSON.stringify(errorBody)`；Gemini 的流由 SDK 的 `processStreamResponse()` 读，不是标准 SSE 解析。
+**Root cause**: upstream's Anthropic prints the `@anthropic-ai/sdk` `APIError` message (the whole response body as the error), Gemini prints `@google/genai`'s `throwErrorIfNotOK()` `JSON.stringify(errorBody)`; the Gemini stream is read by the SDK's `processStreamResponse()`, not a standard SSE parse.
 
-**避坑规则**：
-- 错误文本只从 `Utils\ErrorBody`（`anthropicApiError()`、`genaiApiError()`、`openAiApiError()`）来，不要手拼 `<who> returned <status>`。
-- 会话重试按上游 `utils/retry.ts` 的模式匹配这些原文（`Pig\Ai\Utils\Retry`），不读状态码；改错误措辞时先跑 `packages/ai/test/Utils/RetryTest.php`。
-- Gemini 流走 `Google::sdkChunks()`，不要换回 `SseParser`。
-- 测试：`AnthropicTest::testARefusedRequestReadsAsTheSdksApiErrorMessage`，`GoogleTest::testARefusedRequestReadsAsTheGenaiSdkWritesIt`、`testTheStreamIsReadAsTheGenaiSdkReadsIt`。
+**Trap rules**:
+- Error text comes only from `Utils\ErrorBody` (`anthropicApiError()`, `genaiApiError()`, `openAiApiError()`); never assemble `<who> returned <status>` by hand.
+- Session retries pattern-match these texts as upstream's `utils/retry.ts` does (`Pig\Ai\Utils\Retry`), never reading status codes; run `packages/ai/test/Utils/RetryTest.php` before changing an error's wording.
+- The Gemini stream goes through `Google::sdkChunks()`; do not switch back to `SseParser`.
+- Tests: `AnthropicTest::testARefusedRequestReadsAsTheSdksApiErrorMessage`, `GoogleTest::testARefusedRequestReadsAsTheGenaiSdkWritesIt`, `testTheStreamIsReadAsTheGenaiSdkReadsIt`.
 
-### chat completions 流里的错误对象被读过去、tool 结果的图片插在结果中间
+### An error object in a chat completions stream was read past, and tool-result images landed between results
 
-**症状**：OpenRouter 等在 200 流里发 `{"error":{...}}` 时 pig 忽略它继续读，最后报 `Stream ended without finish_reason`；连续几个带图的工具结果，图片的 user 消息夹在两个 `tool` 消息之间，部分端点拒绝。
+**Symptom**: when OpenRouter and others sent `{"error":{...}}` in a 200 stream, pig ignored it, kept reading, and finally reported `Stream ended without finish_reason`; with several consecutive tool results carrying images, the images' user message sat between two `tool` messages and some endpoints refused.
 
-**根因**：upstream 的块经 `openai` SDK 的 `Stream`：`[DONE]` 即停，非 JSON 抛固定文字，`data.error` 抛 `APIError`（catch 再附 `metadata.raw`）。`convertMessages()` 把一串连续的工具结果先全部发成 `tool` 消息，再把所有图片合成一条 user 消息，`lastRole` 只在真正产出消息时更新。
+**Root cause**: upstream's chunks go through the `openai` SDK's `Stream`: `[DONE]` stops, non-JSON throws fixed text, `data.error` throws an `APIError` (the catch attaches `metadata.raw`). `convertMessages()` sends a run of consecutive tool results all as `tool` messages first, then all their images as one user message, and `lastRole` is updated only when a message is actually produced.
 
-**避坑规则**：
-- 流事件走 `ErrorBody::openAiStreamEvent()`，两个 OpenAI 提供方共用。
-- 测试：`OpenAiCompletionsTest::testTheStreamFailsWhereTheSdksStreamDoes`、`testDoneEndsTheStreamWhateverFollows`、`testAToolResultRunsImagesGoOutTogetherAfterTheWholeRun`、`testASkippedEmptyMessageDoesNotResetTheLastRole`。
+**Trap rules**:
+- Stream events go through `ErrorBody::openAiStreamEvent()`, shared by the two OpenAI providers.
+- Tests: `OpenAiCompletionsTest::testTheStreamFailsWhereTheSdksStreamDoes`, `testDoneEndsTheStreamWhateverFollows`, `testAToolResultRunsImagesGoOutTogetherAfterTheWholeRun`, `testASkippedEmptyMessageDoesNotResetTheLastRole`.
 
-### 上下文溢出表落后于 upstream，Mistral 溢出被重试
+### The context-overflow table lagged upstream, and a Mistral overflow was retried
 
-**症状**：Mistral（`... too large for model with N maximum context length`）、Kimi、MiniMax、Together 等的溢出不被识别，pig 带退避重发同一个超长请求三次而不是压缩；任何提供方无响应体的 429 都被当成溢出。
+**Symptom**: overflows from Mistral (`... too large for model with N maximum context length`), Kimi, MiniMax, Together and others were not recognized, and pig resent the same oversized request three times with backoff instead of compacting; any provider's 429 with no body counted as an overflow.
 
-**根因**：`Overflow` 是旧版 upstream 表的拷贝，还带 pig 自己的 `EMPTY_BODY`。upstream 现在有 25 条模式、`NON_OVERFLOW_PATTERNS`、只对 `cerebras` 生效的无响应体 400/413，以及 Xiaomi MiMo 的 `length` 停止判定。
+**Root cause**: `Overflow` was a copy of an old upstream table, plus pig's own `EMPTY_BODY`. Upstream now has 25 patterns, `NON_OVERFLOW_PATTERNS`, a bodiless 400/413 rule for `cerebras` only, and the Xiaomi MiMo `length` stop check.
 
-**避坑规则**：
-- `Overflow` 逐条照抄 upstream `overflow.ts`，不加 pig 自己的模式。
-- 测试：`OverflowTest::testUpstreamsLaterExamplesAreRecognised`、`testTheBodilessFourHundredsOnlyCountForCerebras`、`testThrottlingThatMentionsTokensIsNotAnOverflow`、`testALengthStopThatFilledTheWindowWithNothingWrittenIsAnOverflow`。
+**Trap rules**:
+- `Overflow` copies upstream's `overflow.ts` entry by entry, with no pattern of pig's own.
+- Tests: `OverflowTest::testUpstreamsLaterExamplesAreRecognised`, `testTheBodilessFourHundredsOnlyCountForCerebras`, `testThrottlingThatMentionsTokensIsNotAnOverflow`, `testALengthStopThatFilledTheWindowWithNothingWrittenIsAnOverflow`.
 
-### Mistral 没有响应头超时，各提供方不发 User-Agent
+### Mistral had no response-header timeout, and no provider sent a User-Agent
 
-**症状**：Mistral 服务端迟迟不回响应头时，回合一直挂着；所有内置提供方的请求都没有 `User-Agent`。
+**Symptom**: when Mistral's server was slow to return the response headers, the turn hung indefinitely; no built-in provider's request carried a `User-Agent`.
 
-**根因**：upstream `requestMistralStream()` 给响应头 `timeoutMs ?? 60_000`（只管响应头，不截断长流），超时报 `Mistral response headers timed out after <ms>ms`；每个提供方都先发 `User-Agent: pi (<platform> <release>; <arch>)`（`getPiUserAgent()`），模型自己的头可以覆盖。pig 发的是 `pig (<platform> <release>; <arch>)`（`PigUserAgent::get()`，产品名按开发者要求用 `pig`，其余照搬）。
+**Root cause**: upstream's `requestMistralStream()` gives the response headers `timeoutMs ?? 60_000` (headers only, never cutting a long stream), reporting `Mistral response headers timed out after <ms>ms`; every provider sends `User-Agent: pi (<platform> <release>; <arch>)` (`getPiUserAgent()`) first, which the model's own headers may override. pig sends `pig (<platform> <release>; <arch>)` (`PigUserAgent::get()` — the product name is `pig` at the developer's request, the rest copied).
 
-**避坑规则**：
-- 头部超时只包 `HttpClient::send()`，拿到响应头就取消计时器；用户的 signal 继续作用于响应体。
-- `User-Agent` 放在头数组最前面（`PigUserAgent::get()`），Claude Code 订阅令牌和 Copilot 的 UA 在后面覆盖它。
-- 测试：`MistralTest::testTheResponseHeadersHaveTimeoutMsToArrive`、`testAStreamLongerThanTheTimeoutIsNotCutOff`、各提供方的 `testTheUserAgentIsPis*`。
+**Trap rules**:
+- The header timeout wraps only `HttpClient::send()` and cancels its timer once the headers arrive; the user's signal keeps applying to the body.
+- `User-Agent` goes first in the header array (`PigUserAgent::get()`); the Claude Code subscription token's and Copilot's UAs override it afterwards.
+- Tests: `MistralTest::testTheResponseHeadersHaveTimeoutMsToArrive`, `testAStreamLongerThanTheTimeoutIsNotCutOff`, each provider's `testTheUserAgentIsPis*`.
 
-### StreamProxy 接受没有空格的 `data:` 行，错误文本少了状态文字
+### StreamProxy accepted `data:` lines without the space, and error text lacked the status text
 
-**症状**：网关写 `data:{...}`（冒号后无空格）时 pig 照读，pi 跳过；非 2xx 时 pig 写 `Proxy error: 502`，pi 写 `Proxy error: 502 Bad Gateway`；`error` 字段不是字符串时 pig 不用它。
+**Symptom**: when a gateway wrote `data:{...}` (no space after the colon) pig read it where pi skips it; on a non-2xx pig wrote `Proxy error: 502` where pi writes `Proxy error: 502 Bad Gateway`; a non-string `error` field was not used by pig.
 
-**根因**：upstream `processLine()` 只认 `startsWith("data: ")`、`slice(6).trim()`；错误是 `Proxy error: ${status} ${statusText}`，`errorData.error` 为真值时用模板字符串打印它。
+**Root cause**: upstream's `processLine()` recognizes only `startsWith("data: ")`, `slice(6).trim()`; the error is `Proxy error: ${status} ${statusText}`, and a truthy `errorData.error` is printed through a template string.
 
-**避坑规则**：
-- 照 upstream 只认 `data: `；不要以 SSE 规范为由放宽。
-- 测试：`StreamProxyTest::testOnlyALineStartingWithDataAndASpaceIsAnEvent`、`testANon2xxWithNoErrorFieldNamesTheStatus`、`testANon2xxErrorFieldIsPrintedAsATemplateLiteralWould`。
+**Trap rules**:
+- Recognize only `data: `, as upstream; do not loosen it on the grounds of the SSE spec.
+- Tests: `StreamProxyTest::testOnlyALineStartingWithDataAndASpaceIsAnEvent`, `testANon2xxWithNoErrorFieldNamesTheStatus`, `testANon2xxErrorFieldIsPrintedAsATemplateLiteralWould`.
 
-### Antigravity 在错误 finish reason 那一块就抛，后面的用量丢失
+### Antigravity threw at the error-finish-reason chunk, losing the usage after it
 
-**症状**：Antigravity 上 Gemini 因安全拦截等结束时，同一流里之后才到的 `usageMetadata` 不计入，回合显示 0 输入。
+**Symptom**: when Gemini on Antigravity ended with a safety block or similar, the `usageMetadata` arriving later in the same stream was not counted and the turn showed 0 input.
 
-**根因**：直连 Gemini 早已照 upstream 读完流再抛，Antigravity 仍在 `onChunk` 里立即抛。
+**Root cause**: direct Gemini had long read the stream to its end before throwing, as upstream does; Antigravity still threw at once in `onChunk`.
 
-**避坑规则**：
-- 两条 Gemini 路径的流尾检查保持一致；`promptFeedback.blockReason` 只在 Antigravity 里检查（upstream 的 Gemini 路径没有这一条）。
-- 测试：`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`、`testABlockedPromptIsStillNamedHere`。
+**Trap rules**:
+- The two Gemini paths keep the same end-of-stream check; `promptFeedback.blockReason` is checked only in Antigravity (upstream's Gemini path has no such check).
+- Tests: `AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`, `testABlockedPromptIsStillNamedHere`.
 
-### 会话自动重试按上游的文字模式分类，不读状态码、不读错误里的等待时间
+### Session auto-retry classifies by upstream's text patterns, reading neither status codes nor wait times in the error
 
-**症状**：pig 用自己的 `Session\Retry`：从错误里抠 HTTP 状态码决定是否重试、照错误里写的 `retry in 39s` 等待、超过 60 秒的等待直接不重试并把消息改写成 `Quota reached…`；`retry.maxRetries: 0` 被当成未设置照样重试 3 次；还有上游没有的 `before_retry` hook。行为和 pi 不一致。
+**Symptom**: pig had its own `Session\Retry`: it dug the HTTP status out of the error to decide on a retry, waited the `retry in 39s` written in the error, refused to retry past a 60-second wait and rewrote the message to `Quota reached…`; `retry.maxRetries: 0` counted as unset and retried 3 times anyway; there was a `before_retry` hook upstream does not have. None of it matched pi.
 
-**根因**：上游 `packages/ai/src/utils/retry.ts` 的 `isRetryableAssistantError()` 只用两张文字模式表（`RETRYABLE_PROVIDER_ERROR_PATTERN` / `NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`），等待是 `retryDelayMs()`（`baseDelayMs` 翻倍、`maxAgentDelayMs` 封顶），`settings.retry?.maxRetries ?? 3` 照收 0。
+**Root cause**: upstream's `isRetryableAssistantError()` in `packages/ai/src/utils/retry.ts` uses only two text pattern tables (`RETRYABLE_PROVIDER_ERROR_PATTERN` / `NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`), the wait is `retryDelayMs()` (`baseDelayMs` doubling, capped at `maxAgentDelayMs`), and `settings.retry?.maxRetries ?? 3` accepts 0.
 
-**避坑规则**：
-- 分类只在 `Pig\Ai\Utils\Retry`，两张表逐条照抄上游；不加 pig 自己的词。
-- 传输失败要按 Node 的措辞报出来才会被重试（`Connection error.`、`Request timed out.`、`fetch failed`、`terminated`，见 `SdkRequest::errorMessage()`）；新增失败路径先想上游运行时会怎么说。
-- `prepareRetry()` 超预算时 `attempt--`，由 post-run 报失败；取消文案是 `Retry cancelled`。
-- 已装在 `~/.pig/agent/extensions/` 的旧 `pig-antigravity` 仍订阅 `before_retry`，加载会报 `No event called 'before_retry'`——更新全局副本。
-- 测试：`packages/ai/test/Utils/RetryTest.php`、`AgentSessionTest::testNoRetriesInTheSettingsMeansNone`、`testARetryBudgetThatRunsOutReportsTheAttemptsThatWereMade`、`SettingsTest::testTheRetryKeysAreUpstreamsSpellings`。
+**Trap rules**:
+- Classification lives only in `Pig\Ai\Utils\Retry`, both tables copied entry by entry from upstream, with no words of pig's own.
+- A transport failure is retried only when reported in Node's words (`Connection error.`, `Request timed out.`, `fetch failed`, `terminated` — see `SdkRequest::errorMessage()`); a new failure path first asks how upstream's runtime would word it.
+- `prepareRetry()` does `attempt--` when over budget and the post-run reports the failure; the cancellation text is `Retry cancelled`.
+- An old `pig-antigravity` installed under `~/.pig/agent/extensions/` still subscribes to `before_retry` and fails to load with `No event called 'before_retry'` — update the global copy.
+- Tests: `packages/ai/test/Utils/RetryTest.php`, `AgentSessionTest::testNoRetriesInTheSettingsMeansNone`, `testARetryBudgetThatRunsOutReportsTheAttemptsThatWereMade`, `SettingsTest::testTheRetryKeysAreUpstreamsSpellings`.
 
-### provider 层重试、请求选项与 provider 事件走请求 options，不走全局 `HttpClient` 观察者
+### Provider-level retries, request options and provider events go through the request options, not a global `HttpClient` observer
 
-**症状**：pig 的 provider 没有 `onPayload`/`onResponse`/`onProviderStreamEvent`/`headers`/`timeoutMs`/`maxRetries`/`maxRetryDelayMs`；`before_provider_request` 挂在进程级 `HttpClient::observe()` 上，拿到的是 `Request` 对象，连登录换 token 的请求也会被看到；Anthropic 无 key 时不能用 header 鉴权或 workload identity federation。
+**Symptom**: pig's providers had no `onPayload`/`onResponse`/`onProviderStreamEvent`/`headers`/`timeoutMs`/`maxRetries`/`maxRetryDelayMs`; `before_provider_request` hung on the process-wide `HttpClient::observe()`, received a `Request` object, and saw even the login token exchange; Anthropic without a key could not authenticate by header or by workload identity federation.
 
-**根因**：上游这些都是 `ProviderRequestOptions`/`StreamOptions` 字段，provider 用 `retryProviderRequest()` 包首个请求；coding-agent 的 `buildRequestOptions()` 每次请求填 `timeoutMs`（`retry.provider.timeoutMs` → `httpIdleTimeoutMs`）、`maxRetries`、`maxRetryDelayMs`，扩展事件经 `onPayload`/`transformHeaders`/`onResponse`/`onProviderStreamEvent` 接上。
+**Root cause**: upstream has all of these as `ProviderRequestOptions`/`StreamOptions` fields, providers wrap the first request in `retryProviderRequest()`, coding-agent's `buildRequestOptions()` fills `timeoutMs` (`retry.provider.timeoutMs` → `httpIdleTimeoutMs`), `maxRetries` and `maxRetryDelayMs` on every request, and the extension events attach through `onPayload`/`transformHeaders`/`onResponse`/`onProviderStreamEvent`.
 
-**避坑规则**：
-- 新字段加在 `StreamOptions` 基类，`Stream` 用 `baseArgs()` 整体传递，别逐个手抄。
-- provider 层重试只认 `ProviderHttpError`（有/无 status+headers）；Gemini 的错误没有 headers，`retry-after` 不读、上限不生效。
-- `onResponse` 只在上游调用的地方调用：Anthropic/OpenAI 成功响应后、Mistral 每个响应（含拒绝）、Gemini 不调用。
-- federation 客户端按 `[baseUrl, config]` 缓存 token；不能按 `HttpClient` 实例做 key（`Stream` 每次 new provider）。
-- 测试：`RequestOptionsTest`（五个 provider × 各选项、federation、Mistral URL/对象 toolChoice）、`ProviderRetryTest`、`ExtensionApiTest::testTheProviderHooksSeeThePayloadTheHeadersTheResponseAndEachStreamEvent`、`AgentSessionTest::testEveryRequestCarriesTheProviderRequestOptions`。
+**Trap rules**:
+- New fields go on the `StreamOptions` base class, and `Stream` passes them whole with `baseArgs()`, never copying one by one.
+- Provider-level retry recognizes only `ProviderHttpError` (with or without status+headers); Gemini's errors have no headers, so `retry-after` is not read and the cap does not apply.
+- `onResponse` is called only where upstream calls it: after a successful Anthropic/OpenAI response, on every Mistral response (refusals included), never for Gemini.
+- The federation client caches tokens by `[baseUrl, config]`; it cannot key by `HttpClient` instance (`Stream` news up a provider every time).
+- Tests: `RequestOptionsTest` (five providers × each option, federation, Mistral URL/object toolChoice), `ProviderRetryTest`, `ExtensionApiTest::testTheProviderHooksSeeThePayloadTheHeadersTheResponseAndEachStreamEvent`, `AgentSessionTest::testEveryRequestCarriesTheProviderRequestOptions`.
 
-### SDK 自带的请求头与中止文案也是移植的一部分
+### The SDKs' own request headers and abort wording are part of the port too
 
-**症状**：Anthropic 发到 `/v1/messages`（SDK 是 `?beta=true`）；Anthropic/OpenAI 缺 `X-Stainless-*`，OpenAI 发 `accept: text/event-stream`（SDK 发 `Accept: application/json`）；Gemini 缺 `x-goog-api-client` 却多发了 `accept`；中止时错误文本是 pig 的 abort reason。
+**Symptom**: Anthropic was sent to `/v1/messages` (the SDK uses `?beta=true`); Anthropic/OpenAI lacked `X-Stainless-*`, OpenAI sent `accept: text/event-stream` (the SDK sends `Accept: application/json`); Gemini lacked `x-goog-api-client` yet sent an extra `accept`; on abort the error text was pig's abort reason.
 
-**避坑规则**：
-- 头部版本号取上游 `packages/ai/package.json` 钉住的 SDK 版本（`Utils\SdkHeaders`）；描述运行时的字段（`X-Stainless-Runtime*`、`gl-*`）如实写 PHP，不冒充 Node。
-- 中止文案按 provider：请求阶段 `Request aborted`（`retryProviderRequest`），读 body 时 `This operation was aborted`（Anthropic/Gemini/Mistral）或静默结束后 `Request was aborted`（OpenAI 两条），StreamProxy 读流时 `Request aborted by user`。
-- `SseParser`、Mistral、Gemini、StreamProxy 解码都按 `TextDecoder`：流首 BOM 去掉、坏 UTF-8 变 U+FFFD；JS 的 `trim()` 用 `JsJson::trim()`。
-- 测试：`RequestOptionsTest::testTheStainlessSdksOwnHeadersAreSent`、`testGeminiGetsTheGoogleSdksHeadersAndNoAccept`、`testAnAbortBeforeTheResponseIsRequestAborted`、`SseParserTest::testALeadingByteOrderMarkIsDroppedEvenSplitAcrossFeeds`、`AnthropicTest::testAbortingLeavesAnAbortedMessage`。
+**Trap rules**:
+- Header version numbers come from the SDK versions pinned in upstream's `packages/ai/package.json` (`Utils\SdkHeaders`); fields describing the runtime (`X-Stainless-Runtime*`, `gl-*`) say PHP truthfully and do not pretend to be Node.
+- Abort wording per provider: `Request aborted` at the request stage (`retryProviderRequest`), `This operation was aborted` while reading the body (Anthropic/Gemini/Mistral) or `Request was aborted` after a silent end (both OpenAI), `Request aborted by user` while StreamProxy reads the stream.
+- `SseParser`, Mistral, Gemini and StreamProxy decode as `TextDecoder` does: a leading BOM dropped, bad UTF-8 to U+FFFD; JS's `trim()` is `JsJson::trim()`.
+- Tests: `RequestOptionsTest::testTheStainlessSdksOwnHeadersAreSent`, `testGeminiGetsTheGoogleSdksHeadersAndNoAccept`, `testAnAbortBeforeTheResponseIsRequestAborted`, `SseParserTest::testALeadingByteOrderMarkIsDroppedEvenSplitAcrossFeeds`, `AnthropicTest::testAbortingLeavesAnAbortedMessage`.
 
-### 系统提示和工具是 transcript 里的 `SystemMessage`，不是 `Context` 上的两个字段
+### The system prompt and tools are `SystemMessage`s in the transcript, not two fields on `Context`
 
-**症状**：pig 只有一份 system prompt 和一张工具表；会话中途增删工具、技能或 `AGENTS.md` 变化、`cwd` 段刷新时整份 prompt 重发（缓存全部失效）；会话文件不记 prompt；RPC `get_messages` 没有 `system` 消息。
+**Symptom**: pig had one system prompt and one tool table; adding or removing a tool mid-session, a skill or `AGENTS.md` change, or a refresh of the `cwd` section resent the whole prompt (invalidating the whole cache); the session file did not record the prompt; RPC `get_messages` had no `system` messages.
 
-**根因**：上游把 prompt 和工具放进消息流：首条 `SystemMessage`（`sections` + `toolsAdded`，timestamp 0）就是 prompt，之后的 `SystemMessage` 只带变化的段（`null` 表示删除）和 `toolsAdded`/`toolsRemoved`；provider 用 `resolveTranscript()` 决定原地发还是折叠成一条（`supportsMidConvoSystemMessages`），工具用 `resolveTranscriptTools()` 决定原地加载还是整表重发。
+**Root cause**: upstream puts the prompt and the tools in the message stream: the first `SystemMessage` (`sections` + `toolsAdded`, timestamp 0) is the prompt, later `SystemMessage`s carry only the changed sections (`null` meaning removed) and `toolsAdded`/`toolsRemoved`; a provider uses `resolveTranscript()` to decide between sending in place and collapsing into one (`supportsMidConvoSystemMessages`), and `resolveTranscriptTools()` to decide between loading in place and resending the whole table.
 
-**避坑规则**：
-- provider 只收 `TranscriptContext`；`Stream` 用 `Transcript::normalizeContext()` 把旧的 `Context` 折成首条 system 消息。新 provider 先 `resolveTranscript()`，再取 `getInitialSystemMessage()`/`getCurrentTools()`，不要再读 `systemPrompt`/`tools`。
-- 比较工具定义只用 `Transcript::declarationsEqual()`：PHP 的空对象有 `[]` 和 `stdClass` 两种写法，会话文件读回的是前者，直接比会让每次 resume 都重声明全部工具。
-- 增量由 `AgentLoop` 的 `declareToolChanges()` 和 `AgentSession` 的 `prepareNextTurnWithContext`（`SystemPrompt::diffSections()`）产生；`Agent` 没有 `setSystemPrompt()` 了，改 prompt 就是追加一条 `SystemMessage`。
-- 压缩：被摘要的部分不含 `SystemMessage`，`CompactionSummary::$systemMessage` 存回放后的那条，重建顺序 `[system, summary, …kept]`。
-- `context` hook 看不到 system 消息（`HookRunner` 先拿掉再放回原位），要看用 `context_with_system`。
-- 测试：`packages/ai/test/Utils/TranscriptTest.php`、`Providers/SystemMessagesOnTheWireTest.php`、`AgentLoopTest`/`AgentTest` 的 declare/prepareNextTurn 用例、`coding-agent/test/SystemMessageTranscriptTest.php`、`RpcModeTest::testGetMessagesRoundTripsThroughTheSessionCodec`。
+**Trap rules**:
+- Providers receive only `TranscriptContext`; `Stream` folds an old `Context` into the first system message with `Transcript::normalizeContext()`. A new provider calls `resolveTranscript()` first, then `getInitialSystemMessage()`/`getCurrentTools()`, never `systemPrompt`/`tools`.
+- Tool definitions are compared only with `Transcript::declarationsEqual()`: PHP has two spellings of an empty object, `[]` and `stdClass`, the session file reads back the former, and a direct comparison would redeclare every tool on every resume.
+- Deltas come from `AgentLoop`'s `declareToolChanges()` and `AgentSession`'s `prepareNextTurnWithContext` (`SystemPrompt::diffSections()`); `Agent` has no `setSystemPrompt()` any more — changing the prompt means appending a `SystemMessage`.
+- Compaction: the summarized part holds no `SystemMessage`; `CompactionSummary::$systemMessage` stores the one to replay, rebuilt in the order `[system, summary, …kept]`.
+- The `context` hook does not see system messages (`HookRunner` removes them first and puts them back in place); use `context_with_system` to see them.
+- Tests: `packages/ai/test/Utils/TranscriptTest.php`, `Providers/SystemMessagesOnTheWireTest.php`, the declare/prepareNextTurn cases of `AgentLoopTest`/`AgentTest`, `coding-agent/test/SystemMessageTranscriptTest.php`, `RpcModeTest::testGetMessagesRoundTripsThroughTheSessionCodec`.
 
-### HTTP 空闲超时是 300 秒，不是 60 秒
+### The HTTP idle timeout is 300 seconds, not 60
 
-**症状**：模型思考超过一分钟才吐下一个 token 时，流在 `Socket timed out after 60.0s` 处断掉；`httpIdleTimeoutMs` 设置只影响 provider 重试层的 `timeoutMs`，管不到读流。
+**Symptom**: when a model thought for over a minute before the next token, the stream broke at `Socket timed out after 60.0s`; the `httpIdleTimeoutMs` setting affected only the provider retry layer's `timeoutMs`, not the stream read.
 
-**根因**：上游 `configureHttpDispatcher(httpIdleTimeoutMs)` 把 undici 的 `headersTimeout`/`bodyTimeout` 设成 300000（`DEFAULT_HTTP_IDLE_TIMEOUT_MS`）；pig 的 `HttpClient` 每步都用构造参数 60 秒。
+**Root cause**: upstream's `configureHttpDispatcher(httpIdleTimeoutMs)` sets undici's `headersTimeout`/`bodyTimeout` to 300000 (`DEFAULT_HTTP_IDLE_TIMEOUT_MS`); pig's `HttpClient` used its constructor's 60 seconds at every step.
 
-**避坑规则**：
-- 不传超时的 `HttpClient` 等响应头和每次读 body 都用进程级 `HttpClient::useIdleTimeout()`（默认 `DEFAULT_IDLE_TIMEOUT = 300.0`，0 为不限）；连接和写仍是 60 秒。`bin/pig` 在设好代理后按设置调用它。
-- 测试：`HttpClientTest::testTheIdleTimeoutIsFiveMinutesUnlessTheSettingSaysOtherwise`、`testAClientWithoutATimeoutOfItsOwnWaitsBetweenReadsAsLongAsTheSettingSays`。
+**Trap rules**:
+- An `HttpClient` given no timeout waits for the response headers and for every body read as long as the process-wide `HttpClient::useIdleTimeout()` says (default `DEFAULT_IDLE_TIMEOUT = 300.0`, 0 for unlimited); connect and write stay at 60 seconds. `bin/pig` calls it from the setting after configuring the proxy.
+- Tests: `HttpClientTest::testTheIdleTimeoutIsFiveMinutesUnlessTheSettingSaysOtherwise`, `testAClientWithoutATimeoutOfItsOwnWaitsBetweenReadsAsLongAsTheSettingSays`.
 
-### 压缩和分支摘要也会重试，`agent_end` 说明会不会重试
+### Compaction and branch summaries retry too, and `agent_end` says whether a retry follows
 
-**症状**：压缩时遇到一次 `overloaded_error` 整个压缩就失败；摘要请求不带会话的请求选项（provider 重试、超时、扩展的 payload hook）；RPC/扩展收到 `agent_end` 时不知道会话马上要重试。
+**Symptom**: one `overloaded_error` during compaction failed the whole compaction; the summary request carried none of the session's request options (provider retry, timeout, the extensions' payload hook); RPC/extensions receiving `agent_end` could not tell the session was about to retry.
 
-**根因**：上游摘要走 `retryAssistantCall()`（同一套 `isRetryableAssistantError()` 和退避）并用会话的 `streamFn` 与请求选项；会话转发的 `agent_end` 带 `willRetry`（`_willRetryAfterAgentEnd()`）。
+**Root cause**: upstream's summaries go through `retryAssistantCall()` (the same `isRetryableAssistantError()` and backoff) with the session's `streamFn` and request options; the `agent_end` the session forwards carries `willRetry` (`_willRetryAfterAgentEnd()`).
 
-**避坑规则**：
-- 摘要只经 `Retry::retryAssistantCall()`，回调转成 `SummarizationRetryEvent`（RPC `summarization_retry_*`）；不要在调用处自己写循环。
-- `AgentEndEvent::$willRetry` 只由 `AgentSession` 填，循环本身永远发 false。
-- 测试：`RetryTest::testRetryAssistantCall…`、`SystemMessageTranscriptTest::testASummaryRetriesATransientFailureWithTheSessionsRetrySettings`、`testAgentEndSaysWhetherTheSessionWillRetry`。
+**Trap rules**:
+- Summaries go only through `Retry::retryAssistantCall()`, with the callback turned into a `SummarizationRetryEvent` (RPC `summarization_retry_*`); no loop written at the call site.
+- `AgentEndEvent::$willRetry` is set only by `AgentSession`; the loop itself always emits false.
+- Tests: `RetryTest::testRetryAssistantCall…`, `SystemMessageTranscriptTest::testASummaryRetriesATransientFailureWithTheSessionsRetrySettings`, `testAgentEndSaysWhetherTheSessionWillRetry`.
 
-### 重试提示按上游写 `(escape to cancel)` 并逐秒倒数
+### The retry notice reads `(escape to cancel)` and counts down by the second, as upstream
 
-**症状**：重试时编辑框边框上写 `Retrying (1/3) in 30s... (esc to stop)`，秒数不动。
+**Symptom**: the editor border read `Retrying (1/3) in 30s... (esc to stop)` during a retry, with the seconds frozen.
 
-**根因**：上游 `Retrying (${attempt}/${max}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`，每秒刷新；`keyText()` 输出的是按键 id 原文（`escape`），macOS 上 `alt` 写成 `option`。
+**Root cause**: upstream is `Retrying (${attempt}/${max}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`, refreshed every second; `keyText()` prints the key id as it is (`escape`), with `alt` written as `option` on macOS.
 
-**避坑规则**：
-- 键名只经 `Keybindings::keyText()`，不手写 `esc`；倒计时在重试结束或取消时停掉（`stopRetryCountdown()`）。
-- 测试：`InteractiveModeTest::testTheRetryCountdownCountsDownOnceASecond`、`testEscapeStopsTheRetryTheScreenSaysItCanStop`。
+**Trap rules**:
+- Key names come only from `Keybindings::keyText()`, never a hand-written `esc`; the countdown stops when the retry ends or is cancelled (`stopRetryCountdown()`).
+- Tests: `InteractiveModeTest::testTheRetryCountdownCountsDownOnceASecond`, `testEscapeStopsTheRetryTheScreenSaysItCanStop`.
 
-### Antigravity：空响应先重问两次，运行时模型 404 回退旧名
+### Antigravity: an empty response is asked again twice first, and a 404 runtime model falls back to the older name
 
-**症状**：Antigravity 偶尔回一个没有任何内容的流，pig 直接以空回答结束；新的运行时模型名在某些账号上 404 时整轮失败；错误文本不是 pi-antigravity 的措辞。
+**Symptom**: Antigravity occasionally returned a stream with no content at all and pig ended with an empty answer; when a new runtime model name was a 404 on some accounts the whole turn failed; the error text was not pi-antigravity's wording.
 
-**根因**：pi-antigravity 0.9.0 对空响应最多再请求两次（退避 0.5s、1s），之后报 `Antigravity API returned an empty response`；运行时模型按 `[首选, Routing::fallback()]` 依次试，404 换下一个；状态码的措辞来自 `friendlyAntigravityError()`。
+**Root cause**: pi-antigravity 0.9.0 re-requests an empty response up to twice (0.5s, 1s backoff), then reports `Antigravity API returned an empty response`; runtime models are tried in the order `[preferred, Routing::fallback()]`, moving on at a 404; the wording per status code comes from `friendlyAntigravityError()`.
 
-**避坑规则**：
-- 措辞只改 `AntigravityApi::friendlyAntigravityError()`，逐字对照上游；错误里的 token 要先脱敏。
-- 测试：`AntigravityApiTest::testAnEmptyResponseIsAskedForAgainBeforeTheTurnFails`、`testARuntimeModelThatIsNotThereFallsBackToTheOlderOne`、`testEveryStatusIsWordedAsPiAntigravityWordsIt`。
+**Trap rules**:
+- Wording changes only in `AntigravityApi::friendlyAntigravityError()`, word for word against upstream; a token in an error is redacted first.
 
-### Gemini：没提思考就不发 `thinkingConfig`；Windows 的 `os.release()` 带 build 号
+- Tests: `AntigravityApiTest::testAnEmptyResponseIsAskedForAgainBeforeTheTurnFails`, `testARuntimeModelThatIsNotThereFallsBackToTheOlderOne`, `testEveryStatusIsWordedAsPiAntigravityWordsIt`.
 
-**症状**：直接调 `Google::stream()` 而选项没提思考时，pig 发 `thinkingBudget: 0`（上游什么都不发，让 Gemini 自己决定）；Windows 上 User-Agent 里的系统版本是 `10.0` 而 Node 给的是 `10.0.22631`。
+### Gemini: no `thinkingConfig` when thinking was not mentioned; Windows `os.release()` carries the build number
 
-**避坑规则**：
-- `GoogleOptions::$thinkingEnabled` 是 `?bool`，null 表示没说；“不思考”仍只经 `GoogleShared::disabledGoogleThinkingConfig()`。
-- 系统版本走 `PigUserAgent::releaseFrom($family, $release, $version)`，Windows 从 `php_uname('v')` 取 build；测试注入值，不依赖本机系统。产品名保持 `pig`。
-- 测试：`GoogleTest::testOptionsThatSayNothingAboutThinkingSendNoThinkingConfig`、`PigUserAgentTest`。
+**Symptom**: calling `Google::stream()` directly with options that said nothing about thinking, pig sent `thinkingBudget: 0` (upstream sends nothing and lets Gemini decide); on Windows the OS version in the User-Agent was `10.0` where Node gives `10.0.22631`.
 
-### Vertex 与 Bedrock：SDK 行为按 oracle 录制逐项对齐
+**Trap rules**:
+- `GoogleOptions::$thinkingEnabled` is `?bool`, null meaning unsaid; "no thinking" still goes only through `GoogleShared::disabledGoogleThinkingConfig()`.
+- The OS version goes through `PigUserAgent::releaseFrom($family, $release, $version)`, taking the build from `php_uname('v')` on Windows; tests inject the values rather than depending on the machine. The product name stays `pig`.
+- Tests: `GoogleTest::testOptionsThatSayNothingAboutThinkingSendNoThinkingConfig`, `PigUserAgentTest`.
 
-**症状**：照着 `google-vertex.ts` / `bedrock-converse-stream.ts` 读代码写出来的请求，和上游实际发出的不一样——`[profile work]` 被当成名叫 `profile work` 的段而读不到 region；空的 `inferenceConfig` 序列化成 `[]`；STS/SSO 请求没有 SDK 的 user agent 和 `amz-sdk-request`，也不重试；assume role 之后 Bedrock 的 UA 少了 `T`；Vertex 的裸 id `gemini-2.5-flash` 被解析成 Vertex 而不是 Gemini API；凭据不是 key 时把 `<authenticated>` 当 key 发了出去。
+### Vertex and Bedrock: SDK behavior aligned item by item against oracle recordings
 
-**根因**：这两个 provider 的行为大半在 SDK 里（`@aws-sdk/*`、smithy、`@google/genai`、`google-auth-library`），源码只读 provider 文件看不出来：
-- smithy 的 ini 段名正则 `(["'])?…\2` 在 JS 里未参与的分组反向引用匹配空串，PCRE 里则失败；
-- PHP 的空数组 `json_encode` 成 `[]`，JS 的空对象是 `{}`；
-- STS/SSO/SSO-OIDC 是 `@aws-sdk/nested-clients`（3.997.45），同样有 UA、invocation id、标准重试；
-- `RESOLVED_ACCOUNT_ID`（`T`）是 user-agent 中间件对任何带 `$source` 且有 accountId 的身份加的，不只是 web identity；
-- Vertex 用 Google 自己的 id，和直连的 Gemini API 撞名。
+**Symptom**: requests written from reading `google-vertex.ts` / `bedrock-converse-stream.ts` differed from what upstream actually sends — `[profile work]` was taken for a section named `profile work` and the region went unread; an empty `inferenceConfig` serialized as `[]`; STS/SSO requests lacked the SDK's user agent and `amz-sdk-request` and were not retried; after assume-role Bedrock's UA lacked `T`; the bare Vertex id `gemini-2.5-flash` resolved to Vertex instead of the Gemini API; with non-key credentials `<authenticated>` was sent as the key.
 
-**避坑规则**：
-- 改 Bedrock/Vertex 行为前先看 `packages/ai/test/fixtures/{bedrock,vertex}/*.json` 里上游的录制；fixture 是上游的行为，对不上就是 pig 的 bug，除非测试里写了为什么（只有两处：abort 的确切截断点、undici 的 `accept: */*`）。
-- smithy 正则里的可选分组写成 `(["\']?)`，让它总是参与匹配。
-- 结构体走 `BedrockRuntimeClient::serializeRequest()` 的 `shape()`，空结构返回 `stdClass`；不要在调用处拼 JSON。
-- STS/SSO/OIDC 请求只经 `CredentialChain::call()`（SDK 头 + 标准重试）；UA 的凭据特征只经 `BedrockRuntimeClient::credentialFeatures()`。
-- `Models::RESOLD` 含 `google-vertex`：裸 id 归直连的 Gemini API，Vertex 写 `google-vertex/<id>`。
-- `Stream::AMBIENT_AUTH_MARKER` 只表示“已登录”，`Stream::start()`/`translate()` 都会去掉它，任何地方都不能把它当 key 发。
-- oracle 的冻结时钟会触发时钟偏移重试：录制错误类场景用真实时钟；Node 侧要 `AWS_BEDROCK_FORCE_HTTP1=1`。
-- 测试：`BedrockTest`（47 个录制场景）、`GoogleVertexTest`（12 个端到端 + 8 个 URL）、`Utils/Aws/SignatureV4Test`（AWS 签名套件 38 例）、`Utils/Aws/EventStreamTest`、`Utils/Aws/SharedConfigTest`、`Utils/GoogleAuthTest`、`ModelsTest::testBedrockRowsAreUpstreamsCatalogueRows`、`GenerateModelsTest::testBedrockRowsAreUpstreamsBedrockRows`。
+**Root cause**: most of these two providers' behavior lives in the SDKs (`@aws-sdk/*`, smithy, `@google/genai`, `google-auth-library`) and is invisible from the provider files alone:
+- smithy's ini section regex `(["'])?…\2` — in JS a backreference to a group that did not participate matches the empty string; in PCRE it fails;
+- PHP's empty array `json_encode`s to `[]`, JS's empty object to `{}`;
+- STS/SSO/SSO-OIDC are `@aws-sdk/nested-clients` (3.997.45), with the same UA, invocation id and standard retries;
+- `RESOLVED_ACCOUNT_ID` (`T`) is added by the user-agent middleware for any identity with `$source` and an accountId, not only web identity;
+- Vertex uses Google's own ids, colliding with the direct Gemini API's.
 
-### 压缩和分支摘要的 loader 按上游写，并写出 escape 能取消
+**Trap rules**:
+- Before changing Bedrock/Vertex behavior, read upstream's recordings in `packages/ai/test/fixtures/{bedrock,vertex}/*.json`; a fixture is upstream's behavior, and a mismatch is pig's bug unless the test says why (only two places: the exact cut point of an abort, and undici's `accept: */*`).
+- The optional group in the smithy regex is written `(["\']?)` so it always participates.
+- Structures go through `shape()` in `BedrockRuntimeClient::serializeRequest()`, which returns `stdClass` for an empty one; no JSON assembled at call sites.
+- STS/SSO/OIDC requests go only through `CredentialChain::call()` (SDK headers + standard retries); the UA's credential features only through `BedrockRuntimeClient::credentialFeatures()`.
+- `Models::RESOLD` includes `google-vertex`: a bare id belongs to the direct Gemini API, Vertex is written `google-vertex/<id>`.
+- `Stream::AMBIENT_AUTH_MARKER` means only "signed in"; `Stream::start()`/`translate()` both strip it, and nowhere is it sent as a key.
+- The oracle's frozen clock triggers clock-skew retries: record error scenarios with the real clock; the Node side needs `AWS_BEDROCK_FORCE_HTTP1=1`.
+- Tests: `BedrockTest` (47 recorded scenarios), `GoogleVertexTest` (12 end-to-end + 8 URL), `Utils/Aws/SignatureV4Test` (the AWS signature suite, 38 cases), `Utils/Aws/EventStreamTest`, `Utils/Aws/SharedConfigTest`, `Utils/GoogleAuthTest`, `ModelsTest::testBedrockRowsAreUpstreamsCatalogueRows`, `GenerateModelsTest::testBedrockRowsAreUpstreamsBedrockRows`.
 
-**症状**：`/compact`、阈值压缩、溢出压缩和 `/tree` 的分支摘要时，编辑框边框上只写 `Summarising the conversation...` / `Summarising the branch...`，没说按什么取消；重试的 loader 却写 `(escape to cancel)`。取消后分支摘要说的是 pig 自己的 `Branch summary cancelled — still where you were.`。
+### The compaction and branch-summary loaders read as upstream's, saying that escape cancels
 
-**根因**：上游 `CompactionStatusIndicator` 是 `Compacting context... (${keyText("app.interrupt")} to cancel)`（manual）、`Auto-compacting... (…)`（threshold）、`Context overflow detected, Auto-compacting... (…)`（overflow）；`BranchSummaryStatusIndicator` 是 `Summarizing branch... (…)`。中止时 manual 报错 `Compaction cancelled`，自动的只是状态行 `Auto-compaction cancelled`；分支摘要中止是状态行 `Branch summarization cancelled`，并在原来选中的条目上重新打开树（`showTreeSelector(entryId)`）。提交 bff3d61 曾把这些提示删掉；现按上游对齐。
+**Symptom**: during `/compact`, threshold compaction, overflow compaction and `/tree`'s branch summary the editor border said only `Summarising the conversation...` / `Summarising the branch...` without naming the cancel key, while the retry loader said `(escape to cancel)`. After a cancel the branch summary said pig's own `Branch summary cancelled — still where you were.`.
 
-**避坑规则**：
-- 文案只经 `InteractiveMode::compactionLabel()` / `branchSummaryLabel()`，键名只经 `Keybindings::keyText()`；`summarization_retry_attempt_start` 也走这两个。
-- pig 的 loader 计时器把 ` · 5s` 插在括号前，断言屏幕文字时要允许它。
-- 测试：`InteractiveModeTest::testCompactingSaysEscapeCancelsItAndEscapeDoes`、`testSummarisingTheBranchSaysEscapeCancelsItAndEscapeReopensTheTree`、`testEnterDuringAnAutoCompactionKeepsWhatYouTypedRatherThanLosingIt`。
+**Root cause**: upstream's `CompactionStatusIndicator` is `Compacting context... (${keyText("app.interrupt")} to cancel)` (manual), `Auto-compacting... (…)` (threshold), `Context overflow detected, Auto-compacting... (…)` (overflow); `BranchSummaryStatusIndicator` is `Summarizing branch... (…)`. On abort, manual reports the error `Compaction cancelled`, the automatic ones only the status line `Auto-compaction cancelled`; an aborted branch summary is the status line `Branch summarization cancelled` and reopens the tree on the entry that was selected (`showTreeSelector(entryId)`). Commit bff3d61 had removed these hints; they now follow upstream.
 
-### 摘要请求不写死 `ReasoningEffort::High`
+**Trap rules**:
+- Wording goes only through `InteractiveMode::compactionLabel()` / `branchSummaryLabel()`, key names only through `Keybindings::keyText()`; `summarization_retry_attempt_start` uses the same two.
+- pig's loader timer inserts ` · 5s` before the parenthesis; assertions on screen text must allow for it.
+- Tests: `InteractiveModeTest::testCompactingSaysEscapeCancelsItAndEscapeDoes`, `testSummarisingTheBranchSaysEscapeCancelsItAndEscapeReopensTheTree`, `testEnterDuringAnAutoCompactionKeepsWhatYouTypedRatherThanLosingIt`.
 
-**症状**：压缩和分支摘要都以 high reasoning 请求，不管会话的思考等级，也不管模型会不会推理；分支摘要的输出上限是 2048，且两者都不按模型自己的 `maxTokens` 截。
+### Summary requests do not hard-code `ReasoningEffort::High`
 
-**根因**：上游 `createSummarizationOptions()` 只在 `model.reasoning && thinkingLevel && thinkingLevel !== "off"` 时设 `reasoning = thinkingLevel`（会话当前等级）；`generateBranchSummary()` 的请求选项是 `{ apiKey, headers, env, signal, maxTokens }`，没有 reasoning，`maxTokens = Math.min(4096, model.maxTokens)`；压缩是 `Math.min(floor(0.8 * reserveTokens), model.maxTokens)`。
+**Symptom**: compaction and branch summaries both requested high reasoning regardless of the session's thinking level or whether the model reasons at all; the branch summary's output ceiling was 2048, and neither was cut to the model's own `maxTokens`.
 
-**避坑规则**：
-- `AgentSession::summarise()` 的 `$thinkingLevel` 为 null 就是不带 reasoning；压缩传 `thinkingLevel()`，分支摘要不传。
-- 测试：`SystemMessageTranscriptTest::testACompactionAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasons`、`testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens`。
+**Root cause**: upstream's `createSummarizationOptions()` sets `reasoning = thinkingLevel` (the session's current level) only when `model.reasoning && thinkingLevel && thinkingLevel !== "off"`; `generateBranchSummary()`'s request options are `{ apiKey, headers, env, signal, maxTokens }` with no reasoning and `maxTokens = Math.min(4096, model.maxTokens)`; compaction is `Math.min(floor(0.8 * reserveTokens), model.maxTokens)`.
 
-### `cwd` 段只有目录，不带日期时间
+**Trap rules**:
+- A null `$thinkingLevel` in `AgentSession::summarise()` means no reasoning; compaction passes `thinkingLevel()`, the branch summary passes nothing.
+- Tests: `SystemMessageTranscriptTest::testACompactionAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasons`, `testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens`.
 
-**症状**：系统提示的 `cwd` 段带 `Current date and time: …, HH:MM:SS`，每次 `ToolLoadout::apply()` 秒数一变，段就变，下一次请求就多一条只改了 `cwd` 的 system 消息（缓存前缀跟着失效）。
+### The `cwd` section is the directory alone, with no date or time
 
-**根因**：上游 `promptSections.cwd = cwd.replace(/\\/g, "/")`，没有时间。
+**Symptom**: the system prompt's `cwd` section carried `Current date and time: …, HH:MM:SS`; the seconds changed on every `ToolLoadout::apply()`, the section changed with them, and the next request carried an extra system message changing only `cwd` (invalidating the cache prefix).
 
-**避坑规则**：
-- `SystemPrompt::sections()` 的 `cwd` 只放目录（反斜杠换成 `/`）；pig 自己的 `Current working directory: ` 前缀保留。
-- 测试：`SystemPromptTest::testTheWorkingDirectoryComesLastAndNoDateOrTime`、`SystemMessageTranscriptTest::testAnUnchangedPromptAddsNothingAndAChangedToolSetSendsOnlyWhatChanged`。
+**Root cause**: upstream is `promptSections.cwd = cwd.replace(/\\/g, "/")`, with no time.
 
-### 恢复会话和树导航按 transcript 恢复工具集；强制 prompt 只投影不记录
+**Trap rules**:
+- `cwd` in `SystemPrompt::sections()` holds only the directory (backslashes to `/`); pig's own `Current working directory: ` prefix stays.
+- Tests: `SystemPromptTest::testTheWorkingDirectoryComesLastAndNoDateOrTime`, `SystemMessageTranscriptTest::testAnUnchangedPromptAddsNothingAndAChangedToolSetSendsOnlyWhatChanged`.
 
-**症状**：`--continue` 或 `/tree` 回到某处后，扩展收窄过的工具集（plan mode 一类）丢了，全部工具又都在；`tool_search` 加载过的 MCP deferred 工具 resume 后要重新搜；`before_agent_start` 不能改 prompt 段，也不能给这一轮换整份 prompt；MCP 服务器的 codemode/deferred 工具模型不知道从哪来。
+### Resuming and tree navigation restore the tool set from the transcript; a forced prompt is projected, never recorded
 
-**根因**：上游 `_restoreToolsFromTranscript()`（构造时和 `navigateTree()` 之后）把当前 system 消息 `toolsAdded` 的名字设为激活集，还没注册的进 `_pendingToolNames`，注册时激活；`setActiveToolsByName()` 停用了任何工具就清空 pending，`_runAgentPrompt()` 一开始也清空。`before_agent_start` 的 `systemPromptOptions` 可改（`sections`），结果的 `systemPrompt` 变成 `forceSystemPrompt`，由 `_installAgentForcedPromptProjection()` 在 `context` 处理之后把请求里的 system 消息折成一条 `{content: forced, toolsAdded: current}`，transcript 只记结构化段。MCP 扩展每次 prompt 写 `mcp_servers` 段（`renderServersSection()`）。
+**Symptom**: after `--continue` or going back somewhere with `/tree`, a tool set an extension had narrowed (plan mode and the like) was lost and every tool was back; MCP deferred tools loaded through `tool_search` had to be searched again after a resume; `before_agent_start` could neither change prompt sections nor swap the whole prompt for one turn; the model did not know where an MCP server's codemode/deferred tools came from.
 
-**避坑规则**：
-- 恢复只经 `AgentSession::restore()` → `restoreToolsFromTranscript()`；pending 只在 `ToolLoadout`（`restore()`/`refresh()`/`clearPending()`/`isPending()`），每次 `apply()` 把已激活的移出 pending。
-- 注册表变化只经 `ToolLoadout::refresh()`（`onChange` 接的是它，不是 `apply()`）：收窄过的集合里，新注册的工具会被激活（上游 `_isActivatedOnRegistration()`），pending 的也会。
-- pig 的 deferred MCP 工具在 `tool_search` 之前不注册，所以 pig-mcp 在 `ExtensionApi::isToolPending()` 为真时直接注册它——这是上游"注册但不激活，再由 pending 激活"在 pig 里的样子。
-- 附加段只经 `SystemPrompt::withSections()`：名字要合 `/^[a-z][a-z0-9_-]*$/` 且不是 `preamble`，内容包成 `<name>\n…\n</name>`，空内容不出现；pig 自己的段不加标签。
-- 本轮的选项在 `AgentSession::$runSystemPromptOptions`，`runAgentPrompt()` 结束时清空；投影装在 `Agent::$transformContext`（已改成 public，与上游一致）。
-- 测试：`SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`、`testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`、`testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`、`testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`、`testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`、`testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`、`SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`、`HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`、`McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`、`testEveryPromptListsTheServersWhoseToolsAreNotDeclared` 和三个 `testTheSection…`。
+**Root cause**: upstream's `_restoreToolsFromTranscript()` (in the constructor and after `navigateTree()`) sets the names in the current system message's `toolsAdded` as the active set, puts unregistered ones in `_pendingToolNames`, and activates them on registration; `setActiveToolsByName()` clears pending when it deactivates any tool, and `_runAgentPrompt()` clears it at its start. `before_agent_start`'s `systemPromptOptions` is editable (`sections`), its resulting `systemPrompt` becomes `forceSystemPrompt`, and `_installAgentForcedPromptProjection()` folds the request's system messages into one `{content: forced, toolsAdded: current}` after `context` processing, with the transcript recording only structured sections. The MCP extension writes the `mcp_servers` section on every prompt (`renderServersSection()`).
 
-### Antigravity 的模型目录是动态发现的
+**Trap rules**:
+- Restoring goes only through `AgentSession::restore()` → `restoreToolsFromTranscript()`; pending lives only in `ToolLoadout` (`restore()`/`refresh()`/`clearPending()`/`isPending()`), and every `apply()` moves the activated ones out of pending.
+- Registry changes go only through `ToolLoadout::refresh()` (`onChange` is wired to it, not `apply()`): in a narrowed set, a newly registered tool is activated (upstream's `_isActivatedOnRegistration()`), and so is a pending one.
+- pig's deferred MCP tools are not registered before `tool_search`, so pig-mcp registers one directly when `ExtensionApi::isToolPending()` is true — that is what upstream's "register but do not activate, then pending activates" looks like in pig.
+- Extra sections go only through `SystemPrompt::withSections()`: the name matches `/^[a-z][a-z0-9_-]*$/` and is not `preamble`, the content is wrapped as `<name>\n…\n</name>`, and empty content does not appear; pig's own sections are not tagged.
+- The turn's options live in `AgentSession::$runSystemPromptOptions`, cleared when `runAgentPrompt()` ends; the projection is installed on `Agent::$transformContext` (now public, as upstream).
+- Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
 
-**症状**：pig-antigravity 只有生成脚本打印的静态表，加上读 pi 写在 `models-store.json` 里的目录；pig 自己从不问 `fetchAvailableModels`，新模型要等 pi 跑过或重跑脚本；`/antigravity.refresh` 只是重读文件。读入的目录用 `replace: true` 叠在静态行上，静态行留着而它的 routing 已被替换。
+### Antigravity's model catalog is discovered dynamically
 
-**根因**：pi-antigravity 0.9.0 的 `refreshAntigravityModels()`：先 hydrate 存储里的目录，离线/没 key 直接返回；不 force 时上次检查在 `getCatalogRefreshIntervalMs()`（默认 4 小时，`ANTIGRAVITY_CATALOG_REFRESH_INTERVAL_MS`）以内就不问；问三个端点（`ANTIGRAVITY_BASE_URL` 时只问它，且必须是 https 的 `*.googleapis.com`）合并，`buildAntigravityCatalog()` 分组，非空才 apply 并发布 `{models, "pi-antigravity": {catalog, checkedAt, modelEnums}}`；失败保留上次的目录，只有 force 抛出。`applyAntigravityCatalog()` 整体替换模型列表。
+**Symptom**: pig-antigravity had only the static table the generator script prints, plus whatever catalog pi had written to `models-store.json`; pig itself never asked `fetchAvailableModels`, so a new model waited for pi to run or the script to be rerun; `/antigravity.refresh` only reread the file. The catalog read in was laid over the static rows with `replace: true`, leaving the static row in place while its routing had been replaced.
 
-**避坑规则**：
-- 分组只在 `Grouping`，网络、TTL、存储只在 `Discovery`；形状是扩展自己的（存储里的样子），转成 pig 的 `Model`/`Routing` 只经 `Catalog::fromCatalog()`/`tables()`，路由目标缺 enum 时整份拒绝（`Discovery::apply()` 抛出）。
-- pig 写自己的 `~/.pig/agent/models-store.json`（pi 的形状，保留其他 provider 的条目）；读的顺序是 pig 的、pi 的、pi 旧的 `antigravity-model-catalog.json`。
-- 何时刷新：pi 是模型注册表在打开 `/model`、登录后、`pi update --models` 时；pig 没有这层，扩展在 session_start 和 `/login antigravity` 之后后台不强制刷新，`/antigravity.refresh` 强制。离线开关是 `PIG_OFFLINE`。
-- 不强制的刷新失败写进 pig 的日志（`Logger::warning`），不抛。
-- 测试：`AntigravityDiscoveryTest`（11 个）、`AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst`、`AntigravityCatalogTest`。
+**Root cause**: pi-antigravity 0.9.0's `refreshAntigravityModels()`: hydrate the stored catalog first, return at once when offline or without a key; unless forced, do not ask if the last check is within `getCatalogRefreshIntervalMs()` (default 4 hours, `ANTIGRAVITY_CATALOG_REFRESH_INTERVAL_MS`); ask the three endpoints (only `ANTIGRAVITY_BASE_URL` when set, which must be an https `*.googleapis.com`) and merge, group with `buildAntigravityCatalog()`, apply only when non-empty and publish `{models, "pi-antigravity": {catalog, checkedAt, modelEnums}}`; on failure keep the previous catalog, throwing only when forced. `applyAntigravityCatalog()` replaces the model list as a whole.
 
-### Azure、Codex、Radius 的模型行是上游生成器的派生规则，Codex 凭据要带 `accountId`
+**Trap rules**:
+- Grouping lives only in `Grouping`; network, TTL and storage only in `Discovery`; the shape is the extension's own (as stored), converted to pig's `Model`/`Routing` only through `Catalog::fromCatalog()`/`tables()`, and a routing target missing its enum refuses the whole catalog (`Discovery::apply()` throws).
+- pig writes its own `~/.pig/agent/models-store.json` (pi's shape, keeping other providers' entries); the read order is pig's, then pi's, then pi's old `antigravity-model-catalog.json`.
+- When to refresh: pi's model registry does it on opening `/model`, after login and on `pi update --models`; pig has no such layer, so the extension refreshes unforced in the background at session_start and after `/login antigravity`, and `/antigravity.refresh` forces. The offline switch is `PIG_OFFLINE`.
+- An unforced refresh failure goes to pig's log (`Logger::warning`), not thrown.
+- Tests: `AntigravityDiscoveryTest` (11), `AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst`, `AntigravityCatalogTest`.
 
-**症状**：`azure/…`、`openai-codex/…`、`radius/…` 一个模型都没有，协议移植了也选不到；裸 id `gpt-5.4` 有可能被解析到 Azure 或 Radius；`openai/gpt-5.6` 照 models.dev 列出来，OpenAI 拒收；pig 改写 `auth.json` 时丢掉 pi 写进去的 Codex `accountId`。
+### Azure, Codex and Radius rows are derived rules of upstream's generator, and Codex credentials carry `accountId`
 
-**根因**：上游这三张表不是 models.dev 的行：Azure 是 `openai` Responses 行在应用 compat/思考元数据**之前**的克隆（只拷四个价格，无 tiers；`AZURE_CONTEXT_WINDOW_OVERRIDES` 把 5.4/5.5/5.6 改成 1,050,000），外加手写的 DeepSeek V4 Pro（Chat Completions、Azure 价、`AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP`）；Codex 是手写的 `codexModels`；Radius 是网关 `/v1/config`。之后的 `applyThinkingLevelMetadata()` 对 azure/codex API 有自己的分支（`gpt-5` 的 `off: null` 含 Azure、GPT-6 分支和 `max` 含三种 Responses API、Codex 的 xhigh 模型加 `minimal: "low"`）。`MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS` 去掉 `gpt-5.6`。`credentialsFromToken()` 把 `accountId` 存在凭据上。
+**Symptom**: `azure/…`, `openai-codex/…`, `radius/…` had no models at all, so the ported protocols could not be selected; a bare id `gpt-5.4` could resolve to Azure or Radius; `openai/gpt-5.6` was listed from models.dev and refused by OpenAI; pig rewriting `auth.json` dropped the Codex `accountId` pi had written.
 
-**避坑规则**：
-- 三张表只经生成器的 `azureRows()`（从刚写的 `openai` 行派生）、`codexRows()`（`CODEX_MODELS`）、`radiusRows()`（`RadiusConfig`，离线用 `--radius-from`）写；不要手改成别的形状。网关的 `baseUrl` 和 `Models::RADIUS_BASE_URL` 不一致时生成器拒绝写。
-- 派生行的 compat 只经 `Models::azureCompat()` / `codexCompat()`，思考表只经 `thinkingLevelMap()` 的分支；改了要对照 `@earendil-works/pi-ai` 发布包里的 `azure.json`/`openai-codex.json`/`radius.json` 逐行比（82 行全等，含 key 顺序）。
-- `RESOLD` 含 `azure`、`openai-codex`、`radius`：裸 id 归直连 provider，转售的写 `azure/<id>`。
-- `Credentials::$accountId` 读写都经 `Auth`；`CallbackServer` 的 `state` 参数开了就按上游对错 state、缺 code 回 400 并继续等。
-- Codex 只走 SSE（无 WebSocket、无 zstd），Radius 只有 `RADIUS_API_KEY` 加公共目录（无登录、无运行时刷新），TypeSafe 没有聊天模型——这些是已知差异，见 “Azure OpenAI, ChatGPT's Codex backend and `pi-messages`”。
-- 测试：`ModelsTest::testAzureRowsAreUpstreamsCatalogueRows`、`testCodexRowsAreUpstreamsCatalogueRows`、`testRadiusRowsAreUpstreamsCatalogueRows`、`GenerateModelsTest::testAzureRowsAreUpstreamsCloneOfTheOpenAiRows`、`testCodexRowsAreUpstreamsExplicitList`、`testRadiusRowsAreTheGatewaysCatalogueAsItSentThem`、`testOpenAisUnsupportedAliasIsNotOffered`、`AzureOpenAiCompletionsTest`、`OpenAiCodexOauthTest`（14 个录制场景）、`RadiusConfigTest`、`AuthTest::testACodexCredentialKeepsItsAccountIdAsPiWritesIt`。
+**Root cause**: upstream's three tables are not models.dev rows: Azure is a clone of the `openai` Responses rows taken **before** compat/thinking metadata is applied (the four prices only, no tiers; `AZURE_CONTEXT_WINDOW_OVERRIDES` sets 5.4/5.5/5.6 to 1,050,000), plus a hand-written DeepSeek V4 Pro (Chat Completions, Azure price, `AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP`); Codex is the hand-written `codexModels`; Radius is the gateway's `/v1/config`. The `applyThinkingLevelMetadata()` that follows has its own branches for the azure/codex APIs (`gpt-5`'s `off: null` includes Azure, the GPT-6 branch and `max` cover all three Responses APIs, Codex's xhigh models get `minimal: "low"`). `MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS` removes `gpt-5.6`. `credentialsFromToken()` stores `accountId` on the credentials.
 
-### 其余走已移植 API 的 25 个 provider：行是上游生成器的产出，compat 按生成器自己的检测写
+**Trap rules**:
+- The three tables are written only by the generator's `azureRows()` (derived from the `openai` rows just written), `codexRows()` (`CODEX_MODELS`) and `radiusRows()` (`RadiusConfig`, `--radius-from` offline); never hand-edited into another shape. The generator refuses to write when the gateway's `baseUrl` disagrees with `Models::RADIUS_BASE_URL`.
+- The derived rows' compat comes only from `Models::azureCompat()` / `codexCompat()`, the thinking maps only from the branches of `thinkingLevelMap()`; a change is compared row by row against `azure.json`/`openai-codex.json`/`radius.json` in the `@earendil-works/pi-ai` release package (82 rows identical, key order included).
+- `RESOLD` includes `azure`, `openai-codex`, `radius`: a bare id belongs to the direct provider, resold ones are written `azure/<id>`.
+- `Credentials::$accountId` is read and written only through `Auth`; `CallbackServer`'s `state` parameter, when on, checks a wrong state and a missing code as upstream does — 400 and keep waiting.
+- Codex is SSE only (no WebSocket, no zstd), Radius is `RADIUS_API_KEY` plus the public catalog only (no login, no runtime refresh), TypeSafe has no chat models — known differences, see "Azure OpenAI, ChatGPT's Codex backend and `pi-messages`".
+- Tests: `ModelsTest::testAzureRowsAreUpstreamsCatalogueRows`, `testCodexRowsAreUpstreamsCatalogueRows`, `testRadiusRowsAreUpstreamsCatalogueRows`, `GenerateModelsTest::testAzureRowsAreUpstreamsCloneOfTheOpenAiRows`, `testCodexRowsAreUpstreamsExplicitList`, `testRadiusRowsAreTheGatewaysCatalogueAsItSentThem`, `testOpenAisUnsupportedAliasIsNotOffered`, `AzureOpenAiCompletionsTest`, `OpenAiCodexOauthTest` (14 recorded scenarios), `RadiusConfigTest`, `AuthTest::testACodexCredentialKeepsItsAccountIdAsPiWritesIt`.
 
-**症状**：DeepSeek、OpenRouter、Vercel AI Gateway、Together、Fireworks、Baseten、Hugging Face、NVIDIA、MiniMax(-cn)、Moonshot(-cn)、Kimi For Coding、Meta、OpenCode Zen/Go、小米及其三个 Token Plan、通义三个 Token Plan、智谱国内编程套餐、Ant Ling 一个模型都没有，协议明明都已移植；`cerebras`、`zai` 行的 compat 只有两三项，和上游目录不是一回事（运行时 `resolve()` 补齐后行为相同，但元数据不是上游的）；OpenCode 的请求不带 `x-opencode-session`。
+### The other 25 providers on ported APIs: rows are the generator's output, compat written by the generator's own detection
 
-**根因**：upstream `providers/all.ts` 的这些 provider 都走 `openai-completions` / `anthropic-messages` / `openai-responses` / `google-generative-ai`；生成器对每个 provider 有自己的处理（`processBasetenModels()`、`processFireworksModels()`、`loadModelsDevData()` 的各分支、`fetchOpenRouterModels()`/`fetchAiGatewayModels()`、手写的 DeepSeek/Ant Ling 行、临时覆盖），再对所有模型跑同一串 `apply*Metadata()`。其中 `applyOpenAICompletionsCompatMetadata()` 用的是**生成器自己的** `detectOpenAICompletionsCompat()`，和运行时 `detectCompat()` 有三处不同：`supportsStrictMode` 按 provider 写成显式元数据、`TOGETHER_REASONING_ONLY_MODELS` 不给 together 格式、OpenRouter 的 `~anthropic/` 也给 Anthropic 缓存控制；`applyModelsDevReasoningOptionMetadata()` 在 `applyThinkingLevelMetadata()` 按 id 写 `forceAdaptiveThinking` **之前**判断，所以只按 id 自适应的代理 Claude 不吃 models.dev 的 effort（发布目录里 OpenCode 的 `claude-opus-4-6` 就是 `{max: "max"}`）；`opencode-headers.ts` 给两个 OpenCode provider 的每个请求加会话头。
+**Symptom**: DeepSeek, OpenRouter, Vercel AI Gateway, Together, Fireworks, Baseten, Hugging Face, NVIDIA, MiniMax(-cn), Moonshot(-cn), Kimi For Coding, Meta, OpenCode Zen/Go, Xiaomi and its three Token Plans, the three Qwen Token Plans, Zhipu's domestic coding plan and Ant Ling had no models at all although the protocols were ported; the `cerebras` and `zai` rows had two or three compat items, not upstream's catalog (runtime `resolve()` filled them in to the same behavior, but the metadata was not upstream's); OpenCode requests carried no `x-opencode-session`.
 
-**避坑规则**：
-- 表只在 `Models::CATALOGUE_PROVIDERS`（provider => 表、各 API 的 base URL）；一行只写目录说的事（九列，多 API 的四家多一列 api；`thinkingLevelMap`、`effortLevelMap`、`tiers`、`supportsToggle`/`supportsEffort`、`cacheControlFormat`）。compat 和 id 规则只在 `catalogueCompat()`、`completionsCompat()`、`responsesCompat()`、`AnthropicCompat::forBuiltIn($provider, $id, $own)`、`thinkingLevelMap()`；单行经 `catalogueModel()` 建。
-- 内置 Chat Completions 模型的 compat（`cerebras`/`groq`/`xai`/`zai` 也是）只经 `completionsCompat()` = `detectedCompletionsCompat()`（生成器的检测，只留和 `OPENAI_COMPLETIONS_DEFAULT_COMPAT` 不同的键）+ 自己的 + transcript 规则；`STRICT_MODE` 那种第二张表已删，不要再加。运行时检测仍是 `OpenAiCompat::detect()` + `resolve()`，两者不要合并。
-- Anthropic API 行的 effort 门一律用处理阶段的 compat（`$own`）判断，`anthropic`、`github-copilot` 表也是——见 “Claude 吃了 models.dev 的 effort map”。
-- 行是从 `@earendil-works/pi-ai` 1.1.0 发布目录写的（models.dev、OpenRouter、Vercel、NVIDIA 列表都不可达）：目录是生成器跑完元数据之后的结果，所以只有 id 规则还原不出来的行才带最终 map（作 `thinkingLevelMap`），都没有 `effortLevelMap`，Baseten/Fireworks 的 toggle/effort 由 compat 反推。下次重生成按来源写。写完逐行和 25 个 `<provider>.json` 比过：1023 行全等（map 含顺序、compat、inputLimits、headers、tiers）。
-- 生成器：`rowsFor()` 的新分支、`openRouterRows()`/`aiGatewayRows()`/`nvidiaIds()`（离线用 `--openrouter-from`/`--vercel-from`/`--nvidia-from`，失败打印并保留原表，同 Radius）、`catalogueTemporaryOverrides()`、`DEEPSEEK_ROWS`/`ANT_LING_ROWS`；Azure 的 DeepSeek 行改为从 `DEEPSEEK_ROWS` 派生。
-- `RESOLD` 加网关、托管、Token Plan、国内端点；裸 id 归厂商自己的 provider（pig 的规则——上游对多个 provider 都有的裸 id 直接不认）。
-- OpenCode 会话头只在 `Stream::base()` 经 `Providers\OpenCodeHeaders::withSessionHeader()`：有 sessionId（空串不算）、调用方没写同名头（不分大小写，null 也算写了）才加。
-- OpenRouter 路由器（`openrouter/auto` 等）的价格是 -1/token，照上游透传成 -1,000,000；`ModelsTest` 只许这一种负价。
-- 没移植：OpenRouter、Kimi、Meta 的 OAuth 登录（只读 Key）。Cloudflare、分类器、图片、faux 见 “Cloudflare、分类器与图片模型”。OpenCode 的 Kimi K2.6 / Grok Build 规则若落在 Messages/Gemini API 的行上，上游会把 OpenAI 的键写进那行的 compat，pig 的 `AnthropicCompat` 装不下——目录里目前没有这种行。
-- 测试：`ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`、`testFireworksCombinesModelsDevsEffortAndToggleWithNarrowCorrections`（上游 `fireworks-model-generation.test.ts`）、`testAProxiedClaudeThatThinksAdaptivelyOnlyByItsIdTakesNoModelsDevEfforts`、`testAResoldIdOfTheCatalogueProvidersIsItsMakersOnlyBare`，`CatalogueProvidersTest`（上游 baseten/together/fireworks/qwen-token-plan/xiaomi/zai-coding-plan/openrouter-cache-control/opencode-provider-headers 各测试），`GenerateModelsTest` 的 Baseten、Fireworks、Together、OpenCode、Kimi/Moonshot、Token Plan、NVIDIA、MiniMax、OpenRouter、Vercel、DeepSeek/Ant Ling 与列表取不到时的场景。
+**Root cause**: these providers in upstream's `providers/all.ts` all go over `openai-completions` / `anthropic-messages` / `openai-responses` / `google-generative-ai`; the generator handles each on its own (`processBasetenModels()`, `processFireworksModels()`, the branches of `loadModelsDevData()`, `fetchOpenRouterModels()`/`fetchAiGatewayModels()`, hand-written DeepSeek/Ant Ling rows, temporary overrides) and then runs the same `apply*Metadata()` chain over every model. `applyOpenAICompletionsCompatMetadata()` uses the **generator's own** `detectOpenAICompletionsCompat()`, which differs from the runtime `detectCompat()` in three places: `supportsStrictMode` written as explicit metadata per provider, `TOGETHER_REASONING_ONLY_MODELS` not given the together format, and OpenRouter's `~anthropic/` also given Anthropic cache control; `applyModelsDevReasoningOptionMetadata()` decides **before** `applyThinkingLevelMetadata()` writes `forceAdaptiveThinking` by id, so a proxied Claude that is adaptive by id alone does not take models.dev's efforts (OpenCode's `claude-opus-4-6` in the release catalog is `{max: "max"}`); `opencode-headers.ts` adds a session header to every request of the two OpenCode providers.
 
-### Claude 吃了 models.dev 的 effort map
+**Trap rules**:
+- Tables live only in `Models::CATALOGUE_PROVIDERS` (provider => table, base URL per API); a row says only what the catalog says (nine columns, plus an api column for the four multi-API providers; `thinkingLevelMap`, `effortLevelMap`, `tiers`, `supportsToggle`/`supportsEffort`, `cacheControlFormat`). Compat and id rules live only in `catalogueCompat()`, `completionsCompat()`, `responsesCompat()`, `AnthropicCompat::forBuiltIn($provider, $id, $own)`, `thinkingLevelMap()`; a single row is built by `catalogueModel()`.
+- The compat of built-in Chat Completions models (`cerebras`/`groq`/`xai`/`zai` included) comes only from `completionsCompat()` = `detectedCompletionsCompat()` (the generator's detection, keeping only keys that differ from `OPENAI_COMPLETIONS_DEFAULT_COMPAT`) + its own + the transcript rules; the second table that `STRICT_MODE` was is deleted — do not add one back. Runtime detection is still `OpenAiCompat::detect()` + `resolve()`; the two are not merged.
+- The effort gate of Anthropic API rows always uses the processing-stage compat (`$own`), the `anthropic` and `github-copilot` tables too — see "Claude took models.dev's effort map".
+- Rows were written from the `@earendil-works/pi-ai` 1.1.0 release catalog (models.dev, OpenRouter, Vercel and the NVIDIA list are all unreachable): the catalog is the result after the generator's metadata, so only rows the id rules cannot reproduce carry the final map (as `thinkingLevelMap`), none has `effortLevelMap`, and Baseten/Fireworks toggle/effort are inferred from compat. The next regeneration writes from the sources. Compared row by row against the 25 `<provider>.json`: 1023 rows identical (maps in order, compat, inputLimits, headers, tiers).
+- Generator: new branches in `rowsFor()`, `openRouterRows()`/`aiGatewayRows()`/`nvidiaIds()` (`--openrouter-from`/`--vercel-from`/`--nvidia-from` offline; on failure print and keep the existing table, as Radius does), `catalogueTemporaryOverrides()`, `DEEPSEEK_ROWS`/`ANT_LING_ROWS`; Azure's DeepSeek row is now derived from `DEEPSEEK_ROWS`.
+- `RESOLD` gains the gateways, hosted providers, Token Plans and domestic endpoints; a bare id belongs to the maker's own provider (pig's rule — upstream simply does not recognize a bare id several providers have).
+- The OpenCode session header is added only in `Stream::base()` through `Providers\OpenCodeHeaders::withSessionHeader()`: when there is a sessionId (an empty string is none) and the caller wrote no header of that name (case-insensitive; null counts as written).
+- OpenRouter routers (`openrouter/auto`, …) are priced -1/token, passed through as -1,000,000 as upstream does; `ModelsTest` allows only that one negative price.
+- Not ported: OpenRouter, Kimi and Meta OAuth login (key only). Cloudflare, classifiers, images and faux: see "Cloudflare, classifiers and image models". If OpenCode's Kimi K2.6 / Grok Build rules land on a Messages/Gemini API row, upstream writes OpenAI keys into that row's compat, which pig's `AnthropicCompat` cannot hold — no such row in the catalog today.
+- Tests: `ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`, `testFireworksCombinesModelsDevsEffortAndToggleWithNarrowCorrections` (upstream `fireworks-model-generation.test.ts`), `testAProxiedClaudeThatThinksAdaptivelyOnlyByItsIdTakesNoModelsDevEfforts`, `testAResoldIdOfTheCatalogueProvidersIsItsMakersOnlyBare`, `CatalogueProvidersTest` (upstream's baseten/together/fireworks/qwen-token-plan/xiaomi/zai-coding-plan/openrouter-cache-control/opencode-provider-headers tests), and in `GenerateModelsTest` the Baseten, Fireworks, Together, OpenCode, Kimi/Moonshot, Token Plan, NVIDIA, MiniMax, OpenRouter, Vercel, DeepSeek/Ant Ling and unreachable-list scenarios.
 
-**症状**：`anthropic` 的 Opus 4.6/4.7/4.8/5、Sonnet 4.6/5、Fable 5/5.1 和 Copilot 的同类 Claude，`thinkingLevelMap` 是 models.dev 的整张 effort 表（`off: null, minimal: null, low, …`）；1.1.0 发布目录里只有 id 规则给的几项（Opus 4.6 只有 `{max: "max"}`）。所以 Sonnet 4.6/5、Opus 4.6–4.8，Copilot 的 Opus 4.7/5、Sonnet 4.6/5/5.5 被说成不能关思考。另有三处行数据和目录不同：`claude-sonnet-4-5`（两个 id）窗口 200k（目录 1M），`claude-sonnet-5-5` 的 cacheRead 0.1（目录 0.2），Copilot 多一个目录没有的 `claude-haiku-5.5`。
+### Claude took models.dev's effort map
 
-**根因**：上游 `generateModels()` 的元数据循环先跑 `applyModelsDevReasoningOptionMetadata()`，再跑 `applyThinkingLevelMetadata()`。前者的门 `supportsDirectReasoningEffort()` 对 `anthropic-messages` 只看 `compat.forceAdaptiveThinking`，而 `loadModelsDevData()` 的 `anthropic` 分支不写 compat、Copilot 分支只写 `getAnthropicMessagesCompat()`——`forceAdaptiveThinking` 是后者按 id 写的。pig 拿 `AnthropicCompat::forBuiltIn()` 的最终 compat 判断，门就开了。行数据是从比 1.1.0 新的 models.dev 生成的；上游的 Opus/Sonnet 5.5 手写行 pig 生成器里也没有。
+**Symptom**: `anthropic`'s Opus 4.6/4.7/4.8/5, Sonnet 4.6/5, Fable 5/5.1 and Copilot's Claudes of the same kind had models.dev's whole effort table as `thinkingLevelMap` (`off: null, minimal: null, low, …`); the 1.1.0 release catalog has only the few entries the id rules give (Opus 4.6 is just `{max: "max"}`). So Sonnet 4.6/5, Opus 4.6–4.8 and Copilot's Opus 4.7/5, Sonnet 4.6/5/5.5 were said unable to stop thinking. Three more row values differed from the catalog: `claude-sonnet-4-5` (both ids) window 200k (catalog 1M), `claude-sonnet-5-5` cacheRead 0.1 (catalog 0.2), and Copilot had a `claude-haiku-5.5` the catalog does not.
 
-**避坑规则**：
-- `Models::table()` 里 effort 门一律传处理阶段的 compat：`anthropic` 行传 null，Copilot 的 Anthropic 行传 null，其余 API 的行传它的 compat（就是 `loadModelsDevData()` 写的那份）。不要把 `forBuiltIn()` 的结果传给 `supportsDirectReasoningEffort()`。
-- 行照旧带 `effortLevelMap`（生成器照 models.dev 写），用不用由门决定。
-- 生成器 `OVERRIDES` 有上游的 `anthropic/claude-opus-5-5`、`claude-sonnet-5-5` 手写行（"Add Claude Opus 5.5 until models.dev includes it"），整张 map 由 `thinkingLevelMap()` 第 1 步按 id 合并。
-- 改了要和 1.1.0 发布目录的 `anthropic.json`、`github-copilot.json` 逐行比：51 行全等，map 含顺序。
-- 测试：`ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`、`testTheClaudeModelsThatCannotStopThinkingSaySo`，`GenerateModelsTest::testClaudeOpusAndSonnetFiveFiveAreAddedByHandUntilTheCatalogueHasThem`。
+**Root cause**: upstream's metadata loop in `generateModels()` runs `applyModelsDevReasoningOptionMetadata()` before `applyThinkingLevelMetadata()`. The former's gate `supportsDirectReasoningEffort()` looks only at `compat.forceAdaptiveThinking` for `anthropic-messages`, while the `anthropic` branch of `loadModelsDevData()` writes no compat and the Copilot branch writes only `getAnthropicMessagesCompat()` — `forceAdaptiveThinking` is written by id by the latter. pig judged with the final compat from `AnthropicCompat::forBuiltIn()`, so the gate opened. The row values were generated from a models.dev newer than 1.1.0; upstream's hand-written Opus/Sonnet 5.5 rows were missing from pig's generator too.
 
-### xAI 走了 Chat Completions
+**Trap rules**:
+- The effort gate in `Models::table()` always gets the processing-stage compat: null for `anthropic` rows, null for Copilot's Anthropic rows, and for other APIs' rows their compat (the one `loadModelsDevData()` writes). Never pass `forBuiltIn()`'s result to `supportsDirectReasoningEffort()`.
+- Rows still carry `effortLevelMap` (the generator writes it from models.dev); the gate decides whether it is used.
+- The generator's `OVERRIDES` has upstream's hand-written `anthropic/claude-opus-5-5` and `claude-sonnet-5-5` rows ("Add Claude Opus 5.5 until models.dev includes it"); the whole map is merged by id in step 1 of `thinkingLevelMap()`.
+- A change is compared row by row against the 1.1.0 release catalog's `anthropic.json` and `github-copilot.json`: 51 rows identical, maps in order.
+- Tests: `ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`, `testTheClaudeModelsThatCannotStopThinkingSaySo`, `GenerateModelsTest::testClaudeOpusAndSonnetFiveFiveAreAddedByHandUntilTheCatalogueHasThem`.
 
-**症状**：`xai/grok-4.x` 发到 `https://api.x.ai/v1/chat/completions`，没有 `include: ["reasoning.encrypted_content"]`，`cacheRetention: long` 时发 `prompt_cache_retention`；models.dev 的 effort 没有生效，四个模型都没有 level map。
+### xAI went over Chat Completions
 
-**根因**：上游 `xaiProvider()` 是 `openAIResponsesApi()`，生成器给每个 xAI 行写 `api: "openai-responses"` 和 `XAI_RESPONSES_COMPAT`（`{supportsLongCacheRetention: false}`）；Responses 模型的 `supportsDirectReasoningEffort()` 恒真，没有 effort 的行由 `applyThinkingLevelMetadata()` 给 `{off: null, minimal: null}`。
+**Symptom**: `xai/grok-4.x` was sent to `https://api.x.ai/v1/chat/completions` without `include: ["reasoning.encrypted_content"]`, and sent `prompt_cache_retention` for `cacheRetention: long`; models.dev's efforts did not apply and none of the four models had a level map.
 
-**避坑规则**：
-- xAI 行只经 `Models::addXaiModels()` 建（`XAI_BASE_URL`、`XAI_RESPONSES_COMPAT` 经 `responsesCompat()`）；`OPENAI_COMPATIBLE` 里已没有 xai，不要加回去。生成器 `DIRECT` 的 xai 是 `Api::OpenAiResponses`。
-- `OpenAiResponses` 对 `provider === 'xai'` 的 `include` 规则早已在；运行时的 `OpenAiCompat::detect()` 里 xAI 的 completions 判定留给 `models.json` 写成 completions 的自定义模型。
-- 没移植：xAI 的 SuperGrok/X Premium 登录（只读 `XAI_API_KEY`）。
-- 测试：`XaiResponsesTest`（上游 `xai-responses.test.ts`，UA 两例与 OAuth 除外）。
+**Root cause**: upstream's `xaiProvider()` is `openAIResponsesApi()`, and the generator writes `api: "openai-responses"` and `XAI_RESPONSES_COMPAT` (`{supportsLongCacheRetention: false}`) on every xAI row; `supportsDirectReasoningEffort()` is always true for Responses models, and rows without efforts get `{off: null, minimal: null}` from `applyThinkingLevelMetadata()`.
 
-### Cloudflare、分类器与图片模型
+**Trap rules**:
+- xAI rows are built only by `Models::addXaiModels()` (`XAI_BASE_URL`, `XAI_RESPONSES_COMPAT` through `responsesCompat()`); `OPENAI_COMPATIBLE` no longer has xai — do not add it back. The generator's `DIRECT` has xai as `Api::OpenAiResponses`.
+- `OpenAiResponses`'s `include` rule for `provider === 'xai'` was already there; the xAI completions detection in the runtime `OpenAiCompat::detect()` is left for custom models written as completions in `models.json`.
+- Not ported: xAI's SuperGrok/X Premium login (`XAI_API_KEY` only).
+- Tests: `XaiResponsesTest` (upstream `xai-responses.test.ts`, minus the two UA cases and OAuth).
 
-**症状**：`cloudflare-workers-ai`、`cloudflare-ai-gateway` 一个模型都没有；没有 `classify()`/`generateImages()`，TypeSafe、OpenRouter、Vercel、OpenCode Zen、Workers AI 的 decision 模型和 OpenRouter 的图片模型无处可放；faux provider 没有。
+### Cloudflare, classifiers and image models
 
-**根因**：上游 1.x 把一个 provider 的模型分成 chat、image、classifier 三类（`ModelType`、`KnownImageApi`、`KnownClassifierApi`），`Models.classify()`/`generateImages()` "never rejects"；Cloudflare 的 `auth.resolve()` 把账号（和网关）id 放进 env，`cloudflareStreams()`/`cloudflareClassifier()` 在分派前替换 base URL 里的占位符，网关的 key 走 `cf-aig-authorization`，`Authorization`/`x-api-key` 压成 null。
+**Symptom**: `cloudflare-workers-ai`, `cloudflare-ai-gateway` had no models at all; there was no `classify()`/`generateImages()`, so the decision models of TypeSafe, OpenRouter, Vercel, OpenCode Zen and Workers AI and OpenRouter's image models had nowhere to go; there was no faux provider.
 
-**避坑规则**：
-- 三类分表：chat 仍是 `Model`、`all()`、`find()`；`ClassifierModel`、`ImageModel` 在 `CLASSIFIER_MODELS`、`IMAGE_MODELS`（键 `provider/id`），只经 `Models::findOfType()`/`allOfType()` 取。`classify()`/`generateImages()` 按 API 分派（不是按 provider 的 `classifiers` 表——内置的每个 provider 都把同名 API 注册给同一个实现），任何失败都是结果（`stopReason` error/aborted），不抛；没 key 是 `Provider is not configured: <provider>`（`llama-cpp-classify` 不要 key）。
-- Cloudflare 的 auth 只在 `Stream::start()` 的 `$requestAuth` 和 `Models::applyClassifierAuth()`：`Providers\Cloudflare::resolveCloudflareEnv()` 缺 key、账号或网关 id 就是 `Provider is not configured`；占位符只经 `resolveCloudflareModel()` 换（env 里没有的保留）；网关头经 `gatewayAuthHeaders()` + `mergeHeaders()`，调用方同名的头（不分大小写）赢。
-- pig 的 `Auth` 不存凭据的 `env`：pi 登录 Cloudflare 时写进 `auth.json` 的 `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_GATEWAY_ID` pig 不读，要放环境变量或 `StreamOptions::$env`。
-- System One 和 llama.cpp 的请求只经 `SystemOneShared::postJson()`：超时是 `ProviderHttpError`（"Request timed out after <ms>ms"，会被重试，和上游 `isProviderError()` 一样），没拿到响应是 `fetch failed`（不重试），拒绝是 `<label> returned <status>` 带 body，展示为 `ErrorBody::format(ErrorBody::normalizeProviderError(), "<label> error")`；默认重试 2 次。
-- 公开的 `bool` 问题上线是 `noul`；`state` 为空数组发 `{}`；响应一律按对象（`stdClass`）解析，`{}` 和 `[]` 才分得开。
-- llama.cpp 的 label token 缓存是进程级静态表，键 `root\0model\0label`；测试每个用例用不同的路径前缀（`/sN/v1`）。
-- `openrouter-images` 走 `SdkRequest`（`openai` SDK 的头、超时、`APIError`），usage 按四个单价算、不看 tiers——上游自己的 `parseUsage()` 就这样。
-- 行是从 `@earendil-works/pi-ai` 1.1.0 发布目录写的（models.dev、OpenRouter、Vercel 不可达）：Cloudflare 74 行、分类器 25 行、图片 61 行逐行比过（map 含顺序）；Cloudflare 行里带最终 `thinkingLevelMap` 的只有 id 规则还原不出的 25 行，下次重生成按来源写 `effortLevelMap`。`openai/gpt-6-luna` 的 `openai-decisions` 分类器不在参考提交（98d2e1947）里，没写。生成器：`DIRECT` 的 `cloudflare-workers-ai`、`cloudflareAiGatewayRows()`、`classifierRows()`/`imageRows()`（离线用 `--decisions-from`、`--openrouter-decisions-from`、`--openrouter-images-from`）、`HAND_KEPT_CLASSIFIERS`。
-- faux：`Providers\Faux`（`fauxText()` 等与 `fauxProvider()`）+ `FauxProvider`（`StreamApi`，`provider()` 交给 `ProviderRegistry`）。经 `Stream` 仍要给 key（pig 的扩展协议都要），直接调 `->stream()` 不要。
-- 没移植：`cloudflare-ai-binding.ts` 只有 sentinel 和 `createAiBindingFetch()` 的检查（`StreamOptions` 没有 `fetch`，Worker 外没有 binding）；faux 的 deferred；`pig-codemode` 的 `models` 命名空间；coding-agent 的 llama 扩展；`api/lazy.ts` 与 `*.lazy.ts`（PHP 自动加载，没有可观察的差别：没有异步装载，就没有装载失败的错误流）；1.1.0 才有的 `classifier-shared`、`openai-decisions`、`context.images`。
-- 测试：`SystemOneTest`（上游 `typesafe-system-one.test.ts`、`cloudflare-workers-ai-system-one.test.ts`、`classifier-models.test.ts`）、`LlamaCppClassifyTest`、`OpenRouterImagesTest`、`CloudflareTest`、`FauxProviderTest`，`ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`，`GenerateModelsTest` 的 Workers AI、网关、分类器、图片与读不到时的场景。
+**Root cause**: upstream 1.x splits a provider's models into chat, image and classifier (`ModelType`, `KnownImageApi`, `KnownClassifierApi`), and `Models.classify()`/`generateImages()` "never rejects"; Cloudflare's `auth.resolve()` puts the account (and gateway) id into env, `cloudflareStreams()`/`cloudflareClassifier()` replace the placeholders in the base URL before dispatch, the gateway's key goes in `cf-aig-authorization`, and `Authorization`/`x-api-key` are forced to null.
 
-### 跑着跑着停了：监听器里的 TypeError 走进 `Agent` 的 catch，整轮消失得无声无息
+**Trap rules**:
+- Three tables for three kinds: chat is still `Model`, `all()`, `find()`; `ClassifierModel` and `ImageModel` live in `CLASSIFIER_MODELS` and `IMAGE_MODELS` (keyed `provider/id`), read only through `Models::findOfType()`/`allOfType()`. `classify()`/`generateImages()` dispatch by API (not by the provider's `classifiers` table — every built-in provider registers the same API to the same implementation), every failure is a result (`stopReason` error/aborted), never a throw; no key is `Provider is not configured: <provider>` (`llama-cpp-classify` needs none).
+- Cloudflare auth lives only in `Stream::start()`'s `$requestAuth` and `Models::applyClassifierAuth()`: `Providers\Cloudflare::resolveCloudflareEnv()` missing the key, account or gateway id is `Provider is not configured`; placeholders are replaced only by `resolveCloudflareModel()` (ones missing from env are kept); gateway headers go through `gatewayAuthHeaders()` + `mergeHeaders()`, and the caller's header of the same name (case-insensitive) wins.
+- pig's `Auth` does not store a credential's `env`: the `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_GATEWAY_ID` pi writes into `auth.json` on Cloudflare login are not read by pig; put them in environment variables or `StreamOptions::$env`.
+- System One and llama.cpp requests go only through `SystemOneShared::postJson()`: a timeout is a `ProviderHttpError` ("Request timed out after <ms>ms", retried, like upstream's `isProviderError()`), no response is `fetch failed` (not retried), a refusal is `<label> returned <status>` with the body, shown as `ErrorBody::format(ErrorBody::normalizeProviderError(), "<label> error")`; 2 retries by default.
+- The public `bool` question goes on the wire as `noul`; an empty `state` array is sent as `{}`; responses are always parsed as objects (`stdClass`), the only way to tell `{}` from `[]`.
+- llama.cpp's label token cache is a process-wide static table keyed `root\0model\0label`; each test case uses a different path prefix (`/sN/v1`).
+- `openrouter-images` goes through `SdkRequest` (the `openai` SDK's headers, timeout, `APIError`); usage is computed from the four unit prices, ignoring tiers — upstream's own `parseUsage()` does the same.
+- Rows were written from the `@earendil-works/pi-ai` 1.1.0 release catalog (models.dev, OpenRouter, Vercel unreachable): Cloudflare 74 rows, classifiers 25, images 61, compared row by row (maps in order); of the Cloudflare rows only the 25 the id rules cannot reproduce carry a final `thinkingLevelMap`, and the next regeneration writes `effortLevelMap` from the sources. `openai/gpt-6-luna`'s `openai-decisions` classifier is not in the reference commit (98d2e1947) and was not written. Generator: `DIRECT`'s `cloudflare-workers-ai`, `cloudflareAiGatewayRows()`, `classifierRows()`/`imageRows()` (`--decisions-from`, `--openrouter-decisions-from`, `--openrouter-images-from` offline), `HAND_KEPT_CLASSIFIERS`.
+- faux: `Providers\Faux` (`fauxText()` and the rest, with `fauxProvider()`) + `FauxProvider` (`StreamApi`, `provider()` handed to `ProviderRegistry`). Through `Stream` a key is still required (every pig extension protocol needs one); calling `->stream()` directly does not.
+- Not ported: `cloudflare-ai-binding.ts` beyond the sentinel and `createAiBindingFetch()`'s check (`StreamOptions` has no `fetch`, and there is no binding outside a Worker); faux's deferred; `pig-codemode`'s `models` namespace; coding-agent's llama extension; `api/lazy.ts` and `*.lazy.ts` (PHP autoloads, with no observable difference: no asynchronous loading, so no load-failure error stream); `classifier-shared`, `openai-decisions` and `context.images`, which arrived in 1.1.0.
+- Tests: `SystemOneTest` (upstream `typesafe-system-one.test.ts`, `cloudflare-workers-ai-system-one.test.ts`, `classifier-models.test.ts`), `LlamaCppClassifyTest`, `OpenRouterImagesTest`, `CloudflareTest`, `FauxProviderTest`, `ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`, and in `GenerateModelsTest` the Workers AI, gateway, classifier, image and unreachable scenarios.
 
-**现象**：模型调了一个扩展注册的工具后，TUI 上只剩一段 thinking，然后什么都没有——没有红字、会话文件里没有这一轮、没有重试，但 `agent_settled` 照发（自动命名跑了、"任务完成"通知弹了）。`/debug` 是唯一能看到原因的地方：
-`InteractiveMode::toolRenderers(): Argument #2 ($custom) must be of type ?Pig\CodingAgent\Interactive\CustomTool, Pig\CodingAgent\CustomTools\CustomTool given`。
+### It just stopped: a TypeError in a listener walked into `Agent`'s catch and the whole turn vanished silently
 
-**根因**：两层叠加。
-1. `toolRenderers(string $name, ?CustomTool $custom)` 的签名写了裸的 `CustomTool`，文件 import 了 `CustomTools\` 下的四个类偏偏没有这一个，于是类型解析成当前命名空间下不存在的类——missing-`use` trap 的第五个变种。`$custom` 只有模型调自定义工具时才非 null，所以内置工具一直好好的。同一批扫出来的还有 `PrintMode.php` / `RpcMode.php` 的 `getApiKey: fn (Model $m)`（没 `use Pig\Ai\Model`，`-p`/rpc 下扩展一调 `$ctx->apiKey()` 就炸）、`TcpConnection.php:104` 的 `catch (Throwable $e)`（没 `use Throwable`，web 守护进程那道"故障隔离"从来没接住过任何东西）、`HttpServer.php:231` 的 `Http::class`（没 import，`===` 永远 false）。
-2. 监听器里的 throw 一路抛回 `Agent::run()` 的 catch，旧的 `recordFailure()` 只发 `agent_end`——而写会话文件、画错误组件、`sayError()` 兜底、RPC 的事件都挂在 `message_end` 上，所以这条错误消息谁都看不见。上游 HEAD 的 `handleRunFailure()` 是 message_start → message_end → turn_end → agent_end 四连发（锚点 `d0a4c37` 只有 agent_end，这是从 HEAD 拿的）。
+**Phenomenon**: after the model called a tool an extension had registered, the TUI showed one thinking block and then nothing — no red text, no turn in the session file, no retry, yet `agent_settled` fired (auto-naming ran, the "task done" notification popped). `/debug` was the only place the reason existed:
+`InteractiveMode::toolRenderers(): Argument #2 ($custom) must be of type ?Pig\CodingAgent\Interactive\CustomTool, Pig\CodingAgent\CustomTools\CustomTool given`.
 
-**避坑规则**：
-- `Agent::handleRunFailure()` 照上游四连发，走和 loop 同一个 `$emit`，`apply()` 在 message_end 把消息进 state、turn_end 记 error。不要再回到"只发 agent_end"。
-- `test/lint.php` 的 `unresolvedClassNames()` 现在逐 token 扫类名（`new`、`instanceof`、`extends`/`implements`、`catch (`、参数/属性/返回类型含 `?T`、`A|B`、`...$x`，`::` 前、`#[Attr]`、类体里的 `use Trait;`），按 PHP 的规则解析（import 的目标、否则本文件命名空间；无命名空间的文件才查全局），解析不到就红。函数名、常量、docblock 不算；名字后面跟 `(` 的是调用不是类型（三元 `? f() : g()` 的 `):` 差点全报）。一次扫出 5 处，全部是真的。
-- 新加 `catch`/`instanceof`/类型标注时跑 `php test/lint.php`，别等到跑到那行。
+**Root cause**: two layers.
+1. The signature `toolRenderers(string $name, ?CustomTool $custom)` named a bare `CustomTool`, and of the four `CustomTools\` classes the file imports, that one was missing, so the type resolved to a nonexistent class in the current namespace — the fifth variant of the missing-`use` trap. `$custom` is non-null only when the model calls a custom tool, which is why the built-in tools were fine all along. The same sweep found `getApiKey: fn (Model $m)` in `PrintMode.php` / `RpcMode.php` (no `use Pig\Ai\Model`; an extension calling `$ctx->apiKey()` under `-p`/rpc blew up), `catch (Throwable $e)` at `TcpConnection.php:104` (no `use Throwable`; the web daemon's "fault isolation" never caught anything), and `Http::class` at `HttpServer.php:231` (not imported; the `===` was always false).
+2. A throw in a listener went all the way back to the catch in `Agent::run()`, whose old `recordFailure()` emitted only `agent_end` — while writing the session file, drawing the error component, the `sayError()` fallback and the RPC events all hang on `message_end`, so nobody saw the error message. Upstream HEAD's `handleRunFailure()` is the four-shot message_start → message_end → turn_end → agent_end (the anchor `d0a4c37` has only agent_end; this is taken from HEAD).
 
-**测试**：`AgentTest::testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees`（改回只发 agent_end 就红）、`InteractiveModeTest::testTheModelCallingACustomToolIsDrawnRatherThanEndingTheTurnInSilence`（去掉 import 就红）、`PrintModeTest::testAHookGetsTheSessionsKeyHereToo`、`RpcModeTest::testAHookGetsTheSessionsKeyHereToo`；lint 的五处 import 各去掉一次都报，合成探针文件 11 种写法全中。
+**Trap rules**:
+- `Agent::handleRunFailure()` fires the four events as upstream does, through the same `$emit` as the loop; `apply()` puts the message into state at message_end and records the error at turn_end. Never back to "agent_end only".
+- `test/lint.php`'s `unresolvedClassNames()` now scans class names token by token (`new`, `instanceof`, `extends`/`implements`, `catch (`, parameter/property/return types including `?T`, `A|B`, `...$x`, before `::`, `#[Attr]`, `use Trait;` in a class body), resolving by PHP's rules (the import's target, else the file's namespace; only a file without a namespace checks the global one), and is red when nothing resolves. Function names, constants and docblocks do not count; a name followed by `(` is a call, not a type (the `):` of a ternary `? f() : g()` nearly reported everything). One sweep found 5, all real.
+- Run `php test/lint.php` when adding a `catch`/`instanceof`/type declaration; do not wait until that line runs.
+
+**Tests**: `AgentTest::testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees` (red if changed back to agent_end only), `InteractiveModeTest::testTheModelCallingACustomToolIsDrawnRatherThanEndingTheTurnInSilence` (red without the import), `PrintModeTest::testAHookGetsTheSessionsKeyHereToo`, `RpcModeTest::testAHookGetsTheSessionsKeyHereToo`; each of the five lint imports removed in turn is reported, and a synthetic probe file hits all 11 spellings.
 
 ## Version floor: PHP >= 8.3
 
@@ -12634,5 +12645,6 @@ and only the thinking test found it.
   leniency stays local instead of becoming a global rule.
 - **`CHANGELOG.md` matches upstream pi's format exactly.** Every release uses the `## [x.y.z] - YYYY-MM-DD` header (e.g. `## [0.87.1] - 2026-09-22`) and groups items into four standard sections: `### New Features` (major highlights, new model workflows), `### Added` (new capabilities, options, APIs, tools), `### Changed` (behavioral updates, defaults, refactoring), and `### Fixed` (bug fixes, crash preventions, protocol corrections). Only sections with items are included, and entries clearly state what changed and why.
 - **Extensions are 100% pure PHP; never bridge or depend on npm packages.** Pig stays zero-runtime-dependency beyond PHP itself. Any extension from the upstream/pi ecosystem (such as `pi-antigravity`) must be ported directly to native PHP (e.g. `pig-antigravity`) using `ExtensionApi` and scoped closures. Do not query npm registries, parse `package.json`, or shell out to `npm`.
-- **UI 文案与占位符（Placeholder）极简克制原则：严禁把功能说明、快捷键提示直接堆砌塞进核心 UI 控件中（又臭又长、喧宾夺主）。** 主输入框 placeholder 保持极致简练（`Ask pig a question` / `向 pig 提问...`），绝不堆砌 `(Enter to send, Shift+Enter for new line)` 等长篇操作说明。快捷键与用法说明属于 HUD 速查窗（`⌘ Shortcuts`）、Help 文档或悬停 Tooltip，保证核心交互界面清爽纯净的高级感。
-- **每次发新版必须递增小版本号，严禁覆盖已有 tag（禁止 force push tag）。** 遵循 SemVer 标准，每次发布必须增加版本号（例如 `v0.2.3` ➔ `v0.2.4`），打出全新的独立 tag 并推送到远程，绝对不使用 `git tag -f` 或 `git push -f` 强推已有 tag。
+- **UI copy and placeholders stay minimal.** Feature descriptions and shortcut hints are never piled into core controls: the main input's placeholder stays as short as `Ask pig a question` / `向 pig 提问...`, never `(Enter to send, Shift+Enter for new line)` and the like. Shortcuts and usage belong in the shortcuts HUD (`⌘ Shortcuts`), the help text or a hover tooltip, so the core interaction surface stays clean.
+- **Every release bumps the patch version; an existing tag is never overwritten (no force-pushed tags).** SemVer: every release raises the version (`v0.2.3` → `v0.2.4`), gets a new tag of its own pushed to the remote, and never uses `git tag -f` or `git push -f` on an existing tag.
+- **Documentation is updated before the tag, without being reminded.** Before `git tag`, go over everything user-visible in the release (commands, options, settings, slash commands, file formats, defaults) and update, in order: (1) `README.md` + `README.zh-CN.md`; (2) the site docs, `../smart-book/app/Views/pig/docs/{en,zh-cn}/*.md` (a new page also goes into `nav.json`) — pigagent.dev/docs serves them; (3) `CHANGELOG.md`'s `## Unreleased` becomes `## [x.y.z] - date`, and the file is copied to `../smart-book/app/Views/pig/CHANGELOG.md`, which the site's banner version and /changelog page read. A purely internal refactor does (3) only. The release notes say what each of the three changed, or why one was not.

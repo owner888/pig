@@ -341,7 +341,9 @@ final class ToolExecutionComponent extends Container
     /** Whether this tool brought at least one renderer of its own. */
     private function drawsItself(): bool
     {
-        if ($this->toolRenderers !== null && ($this->toolRenderers['renderCall'] ?? null !== null || $this->toolRenderers['renderResult'] ?? null !== null)) {
+        // `!==` binds tighter than `??`: without the parentheses this read `a ?? ((false || b) ?? false)`,
+        // reaching `b` outside any `??` and warning on the `[]` a tool with no renderers resolves to.
+        if ($this->toolRenderers !== null && (($this->toolRenderers['renderCall'] ?? null) !== null || ($this->toolRenderers['renderResult'] ?? null) !== null)) {
             return true;
         }
 
