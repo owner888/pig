@@ -96,6 +96,17 @@ pig -e git:github.com/user/pig-tools             # 只在这一次运行里试�
 }
 ```
 
+#### 上架一个包
+
+[pigagent.dev/packages](https://pigagent.dev/packages) 对应 pi 的 npm 关键字 `pi-package`，只是换成 git：
+所有打了 GitHub topic `pig-package` 的仓库都会被收录，不用登记，没有审核。
+
+1. 把包放进一个独立的 GitHub 仓库——上面的约定目录，或带 `extra.pig` 的 `composer.json`。需要第三方库的包自己把 `vendor/` 提交进去。
+2. 确认能装：`pig install git:github.com/user/repo`，再 `pig list` 看资源有没有被识别。
+3. 在仓库页面（About → Topics）加上 topic `pig-package`。列表每小时刷新；卡片上的描述、star、最后推送时间都来自 GitHub，所以仓库 description 就是卡片文案。
+
+`composer.json` 里可选的 `extra.pig.image` / `extra.pig.video`（仓库内路径或 `https://` 地址）给卡片加预览，pig 本体忽略它们。去掉 topic 就下架。只收录 GitHub——别的 git 托管上的包能装，但市场里搜不到。
+
 settings 里的条目可以收窄要加载的内容，语法与 pi 相同——省略某类=全部加载，`[]`=一个不要，`!glob` 排除，`+path` / `-path` 精确增减一个文件：
 
 ```json

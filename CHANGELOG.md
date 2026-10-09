@@ -45,6 +45,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Added
+
+- README and the package docs say how a package gets onto pigagent.dev/packages: the GitHub topic `pig-package`, with optional `extra.pig.image` / `extra.pig.video` for a preview (the site reads them; pig ignores them).
+
 ### Changed
 
 - Changed `pig-vless` from opt-in-by-settings to `/web`'s shape: loading it writes the UUID and listen address into `settings.json` but opens no port; `/vless start | stop | restart | status` control it, and the bare `/vless` is `status` with the share link.

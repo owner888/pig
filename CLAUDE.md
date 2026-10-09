@@ -364,6 +364,10 @@ packages, manifest, filters, both scopes, and git against a bare repository reac
 `GIT_CONFIG_*` `url.<dir>.insteadOf`, so no network), `PackageCommandsTest` (the parser),
 `ConfigSelectorTest` (what a toggle writes, in each scope).
 
+- The gallery at pigagent.dev/packages is GitHub topic `pig-package` (the smart-book site's
+  `PigPackageGalleryService`), not anything pig reads; `extra.pig.image` / `extra.pig.video` exist
+  only for it, so `PackageManifest` does not parse them — do not add write-only fields for the site.
+
 ## Layout
 
 ```

@@ -98,6 +98,21 @@ A package is a directory with any of `extensions/` (`.php` files, or folders wit
 }
 ```
 
+#### Publishing a package
+
+The gallery at [pigagent.dev/packages](https://pigagent.dev/packages) is pi's `pi-package` npm keyword, for git:
+every GitHub repository with the topic `pig-package` is listed, with no registration and no review.
+
+1. Put the package in its own GitHub repository — the conventional directories above, or a `composer.json`
+   with `extra.pig`. A package that needs libraries commits its own `vendor/`.
+2. Check it installs: `pig install git:github.com/user/repo`, then `pig list` shows its resources.
+3. Add the topic `pig-package` on the repository page (About → Topics). The list refreshes hourly; the card
+   shows the repository description, stars and last push, so the description is the card's text.
+
+Optional `extra.pig.image` / `extra.pig.video` in `composer.json` (a path in the repository or an `https://`
+URL) give the card a preview; pig itself ignores them. Removing the topic removes the package. Only GitHub is
+indexed — packages on other hosts install fine but are not listed.
+
 The settings entry can narrow what loads, with pi's syntax — omit a type to load all of it, `[]`
 for none, `!glob` to exclude, `+path` / `-path` for one exact file:
 
