@@ -26,6 +26,7 @@ use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
+use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Settings;
 use Pig\Agent\Agent;
@@ -51,6 +52,7 @@ final class ExtensionApiTest extends TestCase
         ProviderRegistry::forget();
         ExtensionApi::forgetFlags();
         ExtensionApi::forgetHttpRoutes();
+        McpServerRegistry::reset();
         $this->server = new CannedServer();
     }
 
@@ -65,6 +67,84 @@ final class ExtensionApiTest extends TestCase
     }
 
     // ---- providers ----------------------------------------------------------------------
+
+    // ---- registerMcpServer / unregisterMcpServer / getMcpServers (upstream's loader.ts) ------
+
+    public function testARegisteredMcpServerIsListedAndTakenBackByItsOwnerOnly(): void
+    {
+        $jira = new ExtensionApi('/work', 'jira.php', 'jira');
+        $other = new ExtensionApi('/work', 'other.php', 'other');
+
+        $jira->registerMcpServer('jira', ['url' => 'https://mcp.example.com/jira', 'exposure' => 'codemode']);
+        $listed = $other->getMcpServers();
+        $this->assertCount(1, $listed);
+        $this->assertSame(['jira', 'jira.php', 'https://mcp.example.com/jira'], [$listed[0]->name, $listed[0]->extensionPath, $listed[0]->config['url']]);
+
+        // Another extension's server is left alone; the owner's goes.
+        $other->unregisterMcpServer('jira');
+        $this->assertCount(1, $jira->getMcpServers());
+        $jira->unregisterMcpServer('jira');
+        $this->assertSame([], $jira->getMcpServers());
+
+        // Registering the same name again replaces the earlier registration.
+        $jira->registerMcpServer('jira', ['command' => 'x']);
+        $jira->registerMcpServer('jira', ['command' => 'y']);
+        $this->assertSame('y', $jira->getMcpServers()[0]->config['command']);
+    }
+
+    public function testAnInvalidAnotherExtensionsOrAClashingNameIsRefusedByName(): void
+    {
+        $jira = new ExtensionApi('/work', 'jira.php', 'jira');
+        $other = new ExtensionApi('/work', 'other.php', 'other');
+
+        $error = $this->assertThrows(\InvalidArgumentException::class, static fn () => $jira->registerMcpServer('my server', ['command' => 'x']));
+        $this->assertStringContainsString('Invalid MCP server registered by extension "jira.php": invalid server name', $error->getMessage());
+
+        $jira->registerMcpServer('jira', ['command' => 'x']);
+        $error = $this->assertThrows(\InvalidArgumentException::class, static fn () => $other->registerMcpServer('jira', ['command' => 'x']));
+        $this->assertSame('MCP server "jira" is already registered by extension "jira.php"', $error->getMessage());
+
+        // `-` and `_` share a tool namespace (`mcp__my_jira`), so the two cannot both be registered.
+        $jira->registerMcpServer('my-jira', ['command' => 'x']);
+        $error = $this->assertThrows(\InvalidArgumentException::class, static fn () => $jira->registerMcpServer('my_jira', ['command' => 'x']));
+        $this->assertSame('MCP server "my_jira" conflicts with registered server "my-jira"', $error->getMessage());
+    }
+
+    public function testAChangeAfterTheHooksAreUpReachesMcpServersChangeAndNobodyConnectingIsReported(): void
+    {
+        $jira = new ExtensionApi('/work', 'jira.php', 'jira');
+        $heard = [];
+        $jira->on('mcp_servers_change', static function (mixed $event) use (&$heard): null {
+            $heard[] = array_map(static fn ($s) => $s->name, $event->servers);
+
+            return null;
+        });
+        $runner = new HookRunner([new LoadedHook('jira.php', 'jira.php', $jira)], '/work');
+        $runner->initialize(static fn () => null);
+
+        $jira->registerMcpServer('jira', ['command' => 'x']);
+        $jira->unregisterMcpServer('jira');
+        // Said on the loop, as upstream says it on a microtask: each change with the list as it was then.
+        $this->assertSame([], $heard);
+        Loop::get()->delay(0.0, static fn () => null);
+        Loop::get()->tick();
+        $this->assertSame([['jira'], []], $heard);
+
+        // Without a handler the registration is reported once, as a loading complaint.
+        $alone = new ExtensionApi('/work', 'alone.php', 'alone');
+        $runner = new HookRunner([new LoadedHook('alone.php', 'alone.php', $alone)], '/work');
+        $errors = [];
+        $runner->onError(static function ($e) use (&$errors): void {
+            $errors[] = $e->toText();
+        });
+        $runner->initialize(static fn () => null);
+        $alone->registerMcpServer('alone', ['command' => 'x']);
+        $alone->registerMcpServer('alone', ['command' => 'y']);
+        Loop::get()->delay(0.0, static fn () => null);
+        Loop::get()->tick();
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('MCP server "alone" is registered, but no loaded extension connects MCP servers', $errors[0]);
+    }
 
     public function testRegisterProviderReachesTheRegistryAndUnregisterTakesItBack(): void
     {

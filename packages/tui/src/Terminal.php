@@ -49,4 +49,10 @@ interface Terminal
     public function clearScreen(): void;
 
     public function setTitle(string $title): void;
+
+    /**
+     * Report what the program is doing (OSC 7501). Sent only to terminals that support it; the latest
+     * status is re-sent when support is confirmed or the terminal restarts.
+     */
+    public function setProgramStatus(ProgramStatus $status): void;
 }

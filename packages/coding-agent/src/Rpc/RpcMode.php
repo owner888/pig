@@ -138,7 +138,7 @@ final class RpcMode
             abort: function (): void {
                 $this->session->abort();
             },
-            hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
+            hasPendingMessages: fn (): bool => $this->session->queued() !== [],
             signal: fn () => $this->session->signal(),
             ui: $this->ui,
             send: function (HookMessage $message, bool $triggerTurn): void {
@@ -169,6 +169,7 @@ final class RpcMode
         $this->watcher = Loop::get()->onReadable($this->in, $this->onReadable(...));
 
         $this->hooks?->emit(new SessionStartEvent());
+        $this->session->discoverResources('startup');
         $this->report($this->customTools?->notify('start') ?? []);
     }
 

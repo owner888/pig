@@ -7,6 +7,7 @@ namespace Pig\Tui\Test;
 use Closure;
 use Pig\Async\Loop;
 use Pig\Tui\Graphemes;
+use Pig\Tui\ProgramStatus;
 use Pig\Tui\Terminal;
 use Pig\Tui\Width;
 
@@ -442,5 +443,11 @@ final class VirtualTerminal implements Terminal
     public function setTitle(string $title): void
     {
         $this->write("\x1b]0;{$title}\x07");
+    }
+
+    #[\Override]
+    public function setProgramStatus(ProgramStatus $status): void
+    {
+        $this->write($status->format());
     }
 }

@@ -37,11 +37,9 @@ use Pig\Tui\Process;
  * ```
  *
  * Ported from the `HookAPI` interface in upstream's `core/hooks/types.ts`, whose
- * eighteen `on()` overloads exist to give each event its own handler type. PHP has no
- * overloads, so the names live in `EVENTS` and an unknown one is a loading error rather
- * than a subscription that silently never fires — which is what a typo costs upstream.
- *
- * Nothing of upstream's `HookAPI` is left out.
+ * `on()` overloads exist to give each event its own handler type. PHP has no overloads,
+ * so the names live in `EVENTS` and an unknown one is a loading error rather than a
+ * subscription that silently never fires — which is what a typo costs upstream.
  */
 class HookApi
 {
@@ -49,7 +47,6 @@ class HookApi
     public const array EVENTS = [
         'session_start',
         'session_before_switch',
-        'session_switch',
         'session_before_compact',
         'session_compact',
         'session_before_tree',
@@ -81,18 +78,22 @@ class HookApi
         'session_compact_failed',
         'user_bash',
         'input',
+        'ui_prompt_start',
+        'ui_prompt_end',
+        'mcp_servers_change',
+        'project_trust',
+        'resources_discover',
+        'agent_before_settle',
     ];
 
     /**
      * Upstream events pig does not fire, and why, so subscribing to one says so.
      *
-     * `session_before_branch` and `session_branch` are about forking a conversation into
-     * a second session file. pig branches inside one file instead — `/tree` — which is
-     * `session_before_tree` and `session_tree`.
+     * `session_before_fork` is about forking a conversation into a second session file.
+     * pig branches inside one file instead — `/tree` — which is `session_before_tree`.
      */
     private const array UNPORTED = [
-        'session_before_branch' => 'pig branches inside one session file; use session_before_tree',
-        'session_branch' => 'pig branches inside one session file; use session_tree',
+        'session_before_fork' => 'pig branches inside one session file; use session_before_tree',
     ];
 
     /** How long a command a hook runs may take before it is killed. */
@@ -271,6 +272,12 @@ class HookApi
     public function cwd(): string
     {
         return $this->cwd;
+    }
+
+    /** The file this hook or extension was loaded from, which is what a registration is owned by. */
+    public function path(): string
+    {
+        return $this->path;
     }
 
     public function withContext(Closure $context): void

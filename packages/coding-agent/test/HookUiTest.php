@@ -82,7 +82,7 @@ final class HookUiTest extends TestCase
             $this->tui,
             $this->chat,
             $this->overlay,
-            $this->editor,
+            fn () => $this->editor,
             // A footer needs a session, and nothing here draws one: the keyed status is
             // what the UI writes into it, and `FooterTest` covers how that renders.
             new FooterComponent(
@@ -187,7 +187,7 @@ final class HookUiTest extends TestCase
             $this->tui,
             $this->chat,
             $this->overlay,
-            $this->editor,
+            fn () => $this->editor,
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
                 sys_get_temp_dir(),
@@ -917,7 +917,7 @@ final class HookUiTest extends TestCase
             $this->tui,
             $this->chat,
             $this->overlay,
-            $this->editor,
+            fn () => $this->editor,
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
                 sys_get_temp_dir(),
@@ -940,6 +940,71 @@ final class HookUiTest extends TestCase
         $runner->initialize(getModel: static fn () => null, ui: $this->ui);
 
         return new HookedTool($tool, $runner);
+    }
+
+    // ---- ui_prompt_start / ui_prompt_end (upstream's wrapUIPromptContext) -----------------
+
+    public function testAQuestionIsAnnouncedToTheHooksAndSoIsItsAnswer(): void
+    {
+        $heard = [];
+        $api = new HookApi('.', 'ask.php');
+        $api->on('tool_call', static function (ToolCallEvent $event, HookContext $ctx) {
+            return $ctx->ui->confirm("Let {$event->toolName} run?", 'x') ? null : new ToolCallEventResult(block: true, reason: 'no');
+        });
+        $api->on('ui_prompt_start', static function (mixed $event) use (&$heard): null {
+            $heard[] = ['start', $event->kind, $event->title, $event->reason];
+
+            return null;
+        });
+        $api->on('ui_prompt_end', static function (mixed $event) use (&$heard): null {
+            $heard[] = ['end', $event->kind, $event->title, $event->reason];
+
+            return null;
+        });
+
+        $runner = new HookRunner([new LoadedHook('ask.php', 'ask.php', $api)], '.');
+        $runner->initialize(getModel: static fn () => null, ui: $this->ui);
+        $tool = new HookedTool(new RecordingTool(), $runner);
+
+        $result = null;
+        Async::spawn(static function () use ($tool, &$result): void {
+            $result = $tool->execute('1', ['path' => 'a'], null, null);
+        });
+        $this->settle();
+
+        // Said while the dialog is up, so a terminal can show the wait before the answer.
+        $this->assertSame([['start', 'confirm', 'Let read run?', 'ui_prompt']], $heard);
+
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame(['end', 'confirm', 'Let read run?', 'ui_prompt'], $heard[1] ?? null);
+        $this->assertNotNull($result);
+    }
+
+    public function testNoUiAnnouncesNoPromptBecauseItAsksNobody(): void
+    {
+        $heard = 0;
+        $api = new HookApi('.', 'ask.php');
+        $api->on('tool_call', static fn (ToolCallEvent $event, HookContext $ctx) => $ctx->ui->confirm('?', '') ? null : new ToolCallEventResult(block: true, reason: 'no'));
+        $api->on('ui_prompt_start', static function () use (&$heard): null {
+            $heard++;
+
+            return null;
+        });
+
+        $runner = new HookRunner([new LoadedHook('ask.php', 'ask.php', $api)], '.');
+        $runner->initialize(getModel: static fn () => null, ui: new NoUi());
+
+        // Nobody to ask, so the guard's safe answer blocks the call — and no prompt was ever up.
+        $this->expectException(AgentError::class);
+
+        try {
+            (new HookedTool(new RecordingTool(), $runner))->execute('1', ['path' => 'a'], null, null);
+        } finally {
+            $this->settle();
+            $this->assertSame(0, $heard);
+        }
     }
 
     // ---- a loader a hook can put up ------------------------------------------------------

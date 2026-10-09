@@ -4,7 +4,14 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Closure;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookError;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Hooks\Results\ProjectTrustEventResult;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
 
@@ -118,6 +125,81 @@ final class ProjectTrustTest extends TestCase
         $this->assertNull(ProjectTrust::decision($this->project, $this->home));
         $this->assertFalse(ProjectTrust::resolve($this->project, static fn (): ?TrustChoice => null, $this->home));
         $this->assertNull(ProjectTrust::decision($this->project, $this->home));
+    }
+
+    /** @param list<Closure> $handlers */
+    private function extensions(array $handlers, ?array &$errors = null): HookRunner
+    {
+        $hooks = [];
+
+        foreach ($handlers as $i => $handler) {
+            $api = new HookApi($this->project, "/ext/{$i}.php");
+            $api->on('project_trust', $handler);
+            $hooks[] = new LoadedHook("/ext/{$i}.php", "/ext/{$i}.php", $api);
+        }
+
+        $runner = new HookRunner($hooks, $this->project);
+        $runner->initialize(static fn () => null);
+        $errors = [];
+        $runner->onError(static function (HookError $error) use (&$errors): void {
+            $errors[] = $error;
+        });
+
+        return $runner;
+    }
+
+    public function testAnExtensionThatAnswersWinsOverTheSavedDecisionAndThePrompt(): void
+    {
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        ProjectTrust::remember([$this->project => false], $this->home);
+        $asked = false;
+        $ask = static function () use (&$asked): ?TrustChoice {
+            $asked = true;
+
+            return null;
+        };
+
+        $extensions = $this->extensions([
+            static fn (ProjectTrustEvent $event): ProjectTrustEventResult => new ProjectTrustEventResult('undecided'),
+            static fn (ProjectTrustEvent $event): ProjectTrustEventResult => new ProjectTrustEventResult('yes'),
+            static fn (): ProjectTrustEventResult => new ProjectTrustEventResult('no'),
+        ]);
+
+        $this->assertTrue(ProjectTrust::resolve($this->project, $ask, $this->home, $extensions), 'the first yes or no wins; undecided falls through');
+        $this->assertFalse($asked);
+        $this->assertFalse(ProjectTrust::decision($this->project, $this->home), 'nothing was saved: the answer did not say remember');
+    }
+
+    public function testAnExtensionsRememberIsSavedLikeAnAnswerAtThePrompt(): void
+    {
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        $extensions = $this->extensions([
+            static fn (): ProjectTrustEventResult => new ProjectTrustEventResult('no', remember: true),
+        ]);
+
+        $this->assertFalse(ProjectTrust::resolve($this->project, null, $this->home, $extensions));
+        $this->assertFalse(ProjectTrust::decision($this->project, $this->home));
+    }
+
+    public function testAnExtensionWithNoOpinionLeavesItToTheSavedAnswerAndAThrowIsReported(): void
+    {
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        ProjectTrust::remember([$this->project => true], $this->home);
+        $extensions = $this->extensions([
+            static fn (): ProjectTrustEventResult => throw new \RuntimeException('boom'),
+            static fn (): ProjectTrustEventResult => new ProjectTrustEventResult('undecided'),
+        ], $errors);
+
+        $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home, $extensions));
+        $this->assertCount(1, $errors);
+        $this->assertSame('project_trust', $errors[0]->event);
+        $this->assertStringContainsString('boom', $errors[0]->error);
+    }
+
+    public function testAnAnswerThatIsNotOneOfTheThreeIsRefused(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new ProjectTrustEventResult('maybe');
     }
 
     public function testTrustingTheParentClearsANarrowerAnswerUnderneath(): void

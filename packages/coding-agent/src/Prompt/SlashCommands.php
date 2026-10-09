@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Prompt;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Tools\Paths;
 
 /**
  * Prompts kept as files, reachable as `/name`.
@@ -37,6 +38,24 @@ final class SlashCommands
             ...self::scan($home . '/commands', 'user'),
             ...($projectTrusted ? self::scan(rtrim($cwd, '/') . '/.pig/commands', 'project') : []),
         ];
+    }
+
+    /**
+     * Prompt templates from the directories an extension adds (`resources_discover`), under the
+     * source `extension`, each scanned as a commands folder is.
+     *
+     * @param list<string> $directories
+     * @return list<FileCommand>
+     */
+    public static function fromDirectories(array $directories): array
+    {
+        $commands = [];
+
+        foreach ($directories as $directory) {
+            $commands = [...$commands, ...self::scan(Paths::expand($directory), 'extension')];
+        }
+
+        return $commands;
     }
 
     /**

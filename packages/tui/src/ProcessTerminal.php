@@ -24,6 +24,16 @@ final class ProcessTerminal implements Terminal
     /** How much is handed to one `fwrite()`; see the loop in `write()`. */
     private const int WRITE_SLICE = 65536;
 
+    /** DA1, the sentinel behind the program status query: every terminal answers it. */
+    private const string DEVICE_ATTRIBUTES_QUERY = "\x1b[c";
+
+    private const string DEVICE_ATTRIBUTES_REPLY = '/\x1b\[\?[\d;]*c/';
+
+    private const string PROGRAM_STATUS_REPLY = '/\x1b\]7501;\?[^\x07\x1b]*(?:\x07|\x1b\\\\)/';
+
+    /** A tail that could be the start of either reply, cut by the read. */
+    private const string PARTIAL_PROGRAM_STATUS_REPLY = '/\x1b(?:\](?:7(?:5(?:0(?:1(?:;(?:\?[^\x07\x1b]*\x1b?)?)?)?)?)?)?|\[(?:\?[\d;]*)?)?$/';
+
     /** Terminal settings as they were before we touched them, for `stty` to restore. */
     private ?string $savedState = null;
 
@@ -40,6 +50,18 @@ final class ProcessTerminal implements Terminal
     private int $columns = 80;
 
     private int $rows = 24;
+
+    /** Latest program status, kept across stop() so start() can report it again. */
+    private ?ProgramStatus $programStatus = null;
+
+    /** Whether the terminal confirmed OSC 7501 support since the last start(), or `PIG_PROGRAM_STATUS=1`. */
+    private bool $programStatusSupported = false;
+
+    /** The support query was sent and its DA1 sentinel has not arrived yet. */
+    private bool $programStatusQueryPending = false;
+
+    /** The end of a read that may be a reply still arriving, held for the next read. */
+    private string $programStatusReplyBuffer = '';
 
     /**
      * @param resource|null $input
@@ -69,6 +91,20 @@ final class ProcessTerminal implements Terminal
         // that plain ANSI cannot distinguish — Shift+Enter as \e[13;2u rather than \r.
         $this->write("\x1b[>1u");
 
+        // The OSC 7501 program status query, with DA1 as its sentinel: a terminal that supports
+        // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` or
+        // `0` skips the query. Upstream sends it inside its kitty keyboard query, which pig does
+        // not make; the sentinel is the part that matters.
+        $override = getenv('PIG_PROGRAM_STATUS');
+        $this->programStatusSupported = $override === '1';
+        $this->programStatusQueryPending = $override !== '1' && $override !== '0';
+
+        if ($this->programStatusQueryPending) {
+            $this->write(ProgramStatus::QUERY . self::DEVICE_ATTRIBUTES_QUERY);
+        }
+
+        $this->writeProgramStatus();
+
         $this->measure();
         $this->watchResize();
 
@@ -81,8 +117,57 @@ final class ProcessTerminal implements Terminal
                 return;
             }
 
+            $data = $this->takeProgramStatusReplies($data);
+
+            if ($data === '') {
+                return;
+            }
+
             $onInput(self::normalizeNativeInput($data));
         });
+    }
+
+    /**
+     * Pull the support query's answers out of a read: the OSC 7501 echo, if the terminal sent
+     * one, and the DA1 sentinel behind it. What is left goes to the components.
+     *
+     * Upstream splits stdin into sequences first (`StdinBuffer`) and looks at them one at a
+     * time; here a reply may arrive cut across two reads, so a tail that could be the start
+     * of one is held until the next read — only while the sentinel is owed, and never a lone
+     * escape, which is more often a key than the first byte of a reply.
+     */
+    private function takeProgramStatusReplies(string $data): string
+    {
+        if (!$this->programStatusQueryPending) {
+            return $data;
+        }
+
+        $data = $this->programStatusReplyBuffer . $data;
+        $this->programStatusReplyBuffer = '';
+
+        $data = (string) preg_replace(self::PROGRAM_STATUS_REPLY, '', $data, 1, $replied);
+
+        if ($replied === 1) {
+            $this->programStatusSupported = true;
+            $this->writeProgramStatus();
+        }
+
+        // The DA answers the query whether or not the terminal spoke first. Later ones are
+        // somebody else's sentinel — the colour query's — and pass through.
+        $data = (string) preg_replace(self::DEVICE_ATTRIBUTES_REPLY, '', $data, 1, $answered);
+
+        if ($answered === 1) {
+            $this->programStatusQueryPending = false;
+
+            return $data;
+        }
+
+        if (preg_match(self::PARTIAL_PROGRAM_STATUS_REPLY, $data, $partial) === 1 && strlen($partial[0]) >= 2) {
+            $this->programStatusReplyBuffer = $partial[0];
+            $data = substr($data, 0, -strlen($partial[0]));
+        }
+
+        return $data;
     }
 
     /**
@@ -143,6 +228,15 @@ final class ProcessTerminal implements Terminal
     #[\Override]
     public function stop(): void
     {
+        // Remove the status while stopped, after exit or while suspended. start() reports it again.
+        if ($this->programStatusSupported && $this->programStatus !== null) {
+            $this->write((new ProgramStatus('clear'))->format());
+        }
+
+        $this->programStatusSupported = false;
+        $this->programStatusQueryPending = false;
+        $this->programStatusReplyBuffer = '';
+
         $this->write("\x1b[?2004l");
         $this->write("\x1b[<u");
 
@@ -301,6 +395,23 @@ final class ProcessTerminal implements Terminal
     public function clearScreen(): void
     {
         $this->write("\x1b[2J\x1b[H");
+    }
+
+    #[\Override]
+    public function setProgramStatus(ProgramStatus $status): void
+    {
+        $this->programStatus = $status->state === 'clear' ? null : $status;
+
+        if ($this->programStatusSupported) {
+            $this->write($status->format());
+        }
+    }
+
+    private function writeProgramStatus(): void
+    {
+        if ($this->programStatusSupported && $this->programStatus !== null) {
+            $this->write($this->programStatus->format());
+        }
     }
 
     #[\Override]

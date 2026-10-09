@@ -182,6 +182,9 @@ final class Themes
     /** Project directory whose `.pig/themes` and `.pi/themes` hold custom themes (pig addition). */
     private static ?string $customThemesCwd = null;
 
+    /** @var list<string> */
+    private static array $extensionThemeDirs = [];
+
     /** @var list<string> what the last custom theme listing skipped, and why (pig addition) */
     private static array $customThemeErrors = [];
 
@@ -327,7 +330,18 @@ final class Themes
             $dirs[] = rtrim($cwd, '/') . '/.pi/themes';
         }
 
-        return $dirs;
+        return [...$dirs, ...self::$extensionThemeDirs];
+    }
+
+    /**
+     * The directories extensions added through `resources_discover`, searched after the four
+     * above. Replaced whole on each discovery, so a `/reload` that drops one drops its themes.
+     *
+     * @param list<string> $dirs
+     */
+    public static function setExtensionThemeDirs(array $dirs): void
+    {
+        self::$extensionThemeDirs = $dirs;
     }
 
     /** The project whose `.pig/themes` and `.pi/themes` are searched; null searches only the two homes. */

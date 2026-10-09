@@ -9,7 +9,7 @@ final class ServerEntry
 {
     /**
      * @param array<string, mixed> $config
-     * @param 'global'|'project'   $scope
+     * @param 'global'|'project'|'extension' $scope where it came from: a file, or an extension that registered it
      */
     public function __construct(
         public readonly string $name,

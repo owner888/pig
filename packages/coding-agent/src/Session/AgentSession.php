@@ -59,6 +59,8 @@ use Pig\CodingAgent\Hooks\Events\MessageStartEvent as HookMessageStart;
 use Pig\CodingAgent\Hooks\Events\MessageUpdateEvent as HookMessageUpdate;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
+use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
@@ -68,7 +70,6 @@ use Pig\CodingAgent\Hooks\Events\ToolExecutionStartEvent as HookToolExecutionSta
 use Pig\CodingAgent\Hooks\Events\ToolExecutionUpdateEvent as HookToolExecutionUpdate;
 use Pig\CodingAgent\Hooks\Events\ToolExecutionEndEvent as HookToolExecutionEnd;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
-use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
 use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
@@ -76,14 +77,24 @@ use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
 use Pig\CodingAgent\Hooks\Events\ModelSelectEvent;
 use Pig\CodingAgent\Hooks\Events\ThinkingLevelSelectEvent;
 use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
+use Pig\CodingAgent\Hooks\Boundary\BoundaryContextPreview;
+use Pig\CodingAgent\Hooks\Boundary\CompactionDraft;
+use Pig\CodingAgent\Hooks\Boundary\ContextEditDraft;
+use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
+use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
+use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
+use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
+use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\Agent\AgentTool;
@@ -150,6 +161,9 @@ final class AgentSession
 
     /** Escape reached the prompt in progress, so its post-run loop stops. Upstream's `_agentRunAbortRequested`. */
     private bool $runAbortRequested = false;
+
+    /** @var 'completed'|'aborted'|'error' how the last turn ended, for `agent_before_settle` */
+    private string $lastOutcome = 'completed';
 
     /** Set while the hooks hear `agent_settled`. Upstream's `_isEmittingAgentSettled`. */
     private bool $emittingSettled = false;
@@ -332,6 +346,56 @@ final class AgentSession
     public function setFileCommands(array $fileCommands): void
     {
         $this->fileCommands = $fileCommands;
+    }
+
+    /**
+     * Upstream's `extendResourcesFromExtensions()`: after `session_start`, the directories the
+     * extensions add through `resources_discover` are loaded — skills onto the loadout, and so
+     * into the system prompt; prompt templates beside the file commands; theme directories into
+     * `Themes`. Null when nobody listened or nobody added anything, so a caller can leave its
+     * own lists alone. A skill that could not be read is reported against the extension that
+     * named its directory.
+     *
+     * @param 'startup'|'reload' $reason
+     */
+    public function discoverResources(string $reason): ?ExtensionResources
+    {
+        if ($this->hooks === null || !$this->hooks->listensTo('resources_discover')) {
+            return null;
+        }
+
+        $found = $this->hooks->emitResourcesDiscover($this->cwd, $reason);
+
+        if ($found->isEmpty()) {
+            return null;
+        }
+
+        $paths = static fn (array $entries): array => array_values(array_unique(array_column($entries, 'path')));
+
+        [$skills, $warnings] = Skills::fromDirectories($paths($found->skillPaths));
+
+        foreach ($warnings as $warning) {
+            $extensionPath = '';
+
+            foreach ($found->skillPaths as $entry) {
+                if (str_starts_with($warning->path, rtrim($entry['path'], '/') . '/')) {
+                    $extensionPath = $entry['extensionPath'];
+                }
+            }
+
+            $this->hooks->emitError(new HookError($extensionPath, 'resources_discover', "skill {$warning->path}: {$warning->message}"));
+        }
+
+        $commands = SlashCommands::fromDirectories($paths($found->promptPaths));
+        Themes::setExtensionThemeDirs($paths($found->themePaths));
+
+        $this->fileCommands = [
+            ...array_values(array_filter($this->fileCommands, static fn (FileCommand $c): bool => !str_starts_with($c->source, '(extension'))),
+            ...$commands,
+        ];
+        $this->loadout?->addSkills($skills);
+
+        return new ExtensionResources($skills, $commands);
     }
 
     /** Where this session is being written, if it is. */
@@ -603,6 +667,12 @@ final class AgentSession
         }
 
         if ($event instanceof TurnEndEvent) {
+            // Upstream's `_lastActivityOutcome`, for `agent_before_settle`'s `outcome`.
+            $this->lastOutcome = match ($event->message->stopReason ?? null) {
+                StopReason::Aborted => 'aborted',
+                StopReason::Error => 'error',
+                default => 'completed',
+            };
             $this->hooks->emit(new HookTurnEnd($event->message, $event->toolResults, $this->turnIndex));
             $this->turnIndex++;
 
@@ -954,7 +1024,7 @@ final class AgentSession
     /**
      * Told after `startNew()` or `switchTo()` has finished, with the reason and the file left.
      *
-     * The hook event (`session_switch`) is for hooks; this is for a front end that has to redraw
+     * The hook events (`session_shutdown` then `session_start`, with the reason) are for hooks; this is for a front end that has to redraw
      * — the Web UI's tab bar, which otherwise cannot know the terminal just moved to another
      * conversation underneath it.
      *
@@ -1704,6 +1774,11 @@ final class AgentSession
         $this->abort()->await();
         $this->clearQueue();
 
+        // Upstream tears the whole runtime down and builds a new one, so its hooks hear
+        // `session_shutdown` with the target and then `session_start` with the previous file.
+        // pig keeps the same hooks across the switch and tells them the same two things.
+        $this->hooks?->emit(new SessionShutdownEvent('new', $fresh?->path));
+
         if ($fresh !== null) {
             $this->writeTo($fresh);
         }
@@ -1713,7 +1788,7 @@ final class AgentSession
         // declares both again, so the new file starts with them as the old one did.
         $this->agent->reset();
         $this->agent->clearMessages();
-        $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+        $this->hooks?->emit(new SessionStartEvent('new', $previous));
         $this->tellSwitched('new', $previous);
 
         return new SessionSwitch(switched: true, previous: $previous);
@@ -1749,6 +1824,7 @@ final class AgentSession
         // Unconditional, for `startNew()`'s reason: a sleeping retry is not streaming either.
         $this->abort()->await();
         $this->clearQueue();
+        $this->hooks?->emit(new SessionShutdownEvent('resume', $opened->path));
 
         // The file that was opened is the one written to from here on. Without this the
         // conversation on screen is the resumed one while everything said next is appended
@@ -1762,7 +1838,7 @@ final class AgentSession
         // And what it was being had with. Nothing was typed here — resuming takes no model —
         // so the file wins outright, which is what "resume" means.
         $this->restoreSettings();
-        $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
+        $this->hooks?->emit(new SessionStartEvent('resume', $previous));
         $this->tellSwitched('resume', $previous);
 
         // The messages somebody would count: a system message is prompt state, not something said.
@@ -2023,7 +2099,11 @@ final class AgentSession
                     continue;
                 }
 
-                if ($this->runAbortRequested || !$this->agent->hasQueuedMessages()) {
+                if ($this->runAbortRequested || !$this->runBeforeSettleBoundary()) {
+                    break;
+                }
+
+                if ($this->runAbortRequested) {
                     break;
                 }
 
@@ -2398,6 +2478,157 @@ final class AgentSession
     }
 
     /**
+     * Upstream's `_runBeforeSettleBoundary()`: with nobody listening, the prompt carries on only
+     * for what is queued; with handlers, they are asked (`HookRunner::emitBoundary()`), what they
+     * drafted is appended, and the prompt carries on if they said so or something is queued —
+     * unless the context as it then stands could not be sent, which is reported and refused.
+     *
+     * @return bool true to `continue()` the agent
+     */
+    private function runBeforeSettleBoundary(): bool
+    {
+        if ($this->hooks === null || !$this->hooks->listensTo('agent_before_settle')) {
+            return $this->agent->hasQueuedMessages();
+        }
+
+        $result = $this->hooks->emitBoundary(
+            fn (array $entries, bool $continue, BoundaryContextPreview $context): AgentBeforeSettleEvent => new AgentBeforeSettleEvent($entries, $continue, $context, $this->lastOutcome),
+            fn (array $entries): BoundaryContextPreview => $this->buildBoundaryContext($entries),
+        );
+
+        $this->commitBoundaryDrafts($result->entries);
+
+        if ($this->runAbortRequested) {
+            return false;
+        }
+
+        $final = $this->buildBoundaryContext([]);
+        $shouldContinue = $result->continue || $this->agent->hasQueuedMessages();
+
+        if ($shouldContinue && !$final->canContinue) {
+            if ($result->continue) {
+                $this->hooks->emitError(new HookError('<boundary>', 'agent_before_settle', 'agent_before_settle requested continuation without runnable model context'));
+            }
+
+            return false;
+        }
+
+        return $shouldContinue;
+    }
+
+    /**
+     * Upstream's `_buildBoundaryContext()`: the session with the drafts applied, as the model
+     * would be sent it. Against a copy of the store (`SessionManager::preview()`), so a draft that
+     * cannot be applied — an edit of an entry that is not there — throws here, into
+     * `emitBoundary()`'s report, and changes nothing.
+     *
+     * @param list<SessionBoundaryDraft> $drafts
+     */
+    private function buildBoundaryContext(array $drafts): BoundaryContextPreview
+    {
+        $preview = $this->store?->preview() ?? SessionManager::previewOf($this->cwd, $this->messages());
+        $this->applyBoundaryDrafts($preview, $drafts);
+        $messages = $preview->messages();
+        $llm = CodingAgent::toLlm($messages);
+        $endsOnAssistant = $llm !== [] && $llm[count($llm) - 1] instanceof AssistantMessage;
+        $hasConversation = false;
+
+        foreach ($llm as $message) {
+            if (!$message instanceof SystemMessage) {
+                $hasConversation = true;
+
+                break;
+            }
+        }
+
+        return new BoundaryContextPreview(
+            $preview->branch(),
+            $messages,
+            $llm,
+            $this->agent->peekQueuedMessages(),
+            ($hasConversation && !$endsOnAssistant) || ($endsOnAssistant && $this->agent->hasQueuedMessages()),
+        );
+    }
+
+    /**
+     * Upstream's `_applyBoundaryDrafts()`, against the store or a preview of it.
+     *
+     * @param list<SessionBoundaryDraft> $drafts
+     * @return list<HookMessage> the messages among them, for the agent's own state
+     */
+    private function applyBoundaryDrafts(SessionManager $manager, array $drafts): array
+    {
+        $messages = [];
+
+        foreach ($drafts as $draft) {
+            if ($draft instanceof CustomEntryDraft) {
+                $manager->appendCustomEntry($draft->customType, $draft->data);
+            } elseif ($draft instanceof CustomMessageDraft) {
+                $message = new HookMessage(
+                    $draft->customType,
+                    is_string($draft->content) ? [new TextContent($draft->content)] : $draft->content,
+                    $draft->display,
+                    $draft->details,
+                );
+                $manager->append($message);
+                $messages[] = $message;
+            } elseif ($draft instanceof ContextEditDraft) {
+                $manager->appendContextEdit($draft->targetId, $draft->replacement);
+            } elseif ($draft instanceof CompactionDraft) {
+                $current = $manager->messages();
+                $tokensBefore = 0;
+
+                foreach ($current as $message) {
+                    $tokensBefore += Compaction::estimateTokens($message);
+                }
+
+                $manager->append(new CompactionSummary(
+                    $draft->summary,
+                    tokensBefore: $tokensBefore,
+                    firstKeptEntryId: $draft->firstKeptEntryId,
+                    fromHook: true,
+                    systemMessage: Transcript::getCurrentSystemMessage($current),
+                ));
+            } else {
+                throw new AgentError('Not a boundary draft: ' . get_debug_type($draft));
+            }
+        }
+
+        return $messages;
+    }
+
+    /**
+     * Upstream's `_commitBoundaryDrafts()`: appended to the store for good, and the agent's state
+     * brought up to what the store now projects — a context edit or a compaction changes what the
+     * model is shown, which `restore()` is also what does on a resume.
+     *
+     * @param list<SessionBoundaryDraft> $drafts
+     */
+    private function commitBoundaryDrafts(array $drafts): void
+    {
+        if ($drafts === []) {
+            return;
+        }
+
+        if ($this->store === null) {
+            // Nothing is written down, so only what reaches the agent's state exists: its messages.
+            foreach ($this->applyBoundaryDrafts(SessionManager::previewOf($this->cwd, []), $drafts) as $message) {
+                $this->agent->appendMessage($message);
+                $this->announce(new MessageEndEvent($message));
+            }
+
+            return;
+        }
+
+        $messages = $this->applyBoundaryDrafts($this->store, $drafts);
+        $this->agent->replaceMessages($this->store->messages());
+
+        foreach ($messages as $message) {
+            $this->announce(new MessageEndEvent($message));
+        }
+    }
+
+    /**
      * The prompt is over: tell the hooks, run what they asked for, release whoever is waiting.
      * Upstream's `_emitAgentSettled()`.
      *
@@ -2410,9 +2641,11 @@ final class AgentSession
     {
         $this->runActive = false;
         $this->emittingSettled = true;
+        $aborted = $this->runAbortRequested;
 
         try {
-            $this->hooks?->emit(new HookAgentSettled($this->messages()));
+            $this->hooks?->emit(new HookAgentSettled($this->messages(), $aborted));
+            $this->announce(new AgentSettledEvent($aborted));
         } finally {
             $this->emittingSettled = false;
         }

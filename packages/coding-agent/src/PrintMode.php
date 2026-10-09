@@ -111,7 +111,7 @@ final class PrintMode
             abort: function (): void {
                 $this->session->abort();
             },
-            hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
+            hasPendingMessages: fn (): bool => $this->session->queued() !== [],
             signal: fn () => $this->session->signal(),
             ui: new NoUi(),
             send: function (HookMessage $message, bool $triggerTurn): void {
@@ -149,6 +149,7 @@ final class PrintMode
         }
 
         $this->hooks?->emit(new SessionStartEvent());
+        $this->session->discoverResources('startup');
 
         foreach ($this->customTools?->notify('start') ?? [] as $problem) {
             $this->complain("tool {$problem->path}: {$problem->error}");

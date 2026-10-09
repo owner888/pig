@@ -17,6 +17,7 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
+use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
@@ -29,6 +30,7 @@ use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
+use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
@@ -78,6 +80,46 @@ final class HookRunnerTest extends TestCase
         });
 
         return $runner;
+    }
+
+    // ---- resources_discover ------------------------------------------------------------
+
+    public function testEveryExtensionsDirectoriesAreCollectedAndARelativeOneIsItsOwn(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['resources_discover' => static fn (ResourcesDiscoverEvent $e): ResourcesDiscoverResult => new ResourcesDiscoverResult(
+                skillPaths: ['skills', '/opt/shared/skills'],
+                promptPaths: ['prompts'],
+            )], '/exts/one/index.php'),
+            $this->hook(['resources_discover' => static fn (): ResourcesDiscoverResult => new ResourcesDiscoverResult(themePaths: ['themes'])], '/exts/two.php'),
+            $this->hook(['resources_discover' => static fn (): null => null], '/exts/quiet.php'),
+        ]);
+
+        $found = $runner->emitResourcesDiscover('/work', 'startup');
+
+        $this->assertSame([
+            ['path' => '/exts/one/skills', 'extensionPath' => '/exts/one/index.php'],
+            ['path' => '/opt/shared/skills', 'extensionPath' => '/exts/one/index.php'],
+        ], $found->skillPaths);
+        $this->assertSame([['path' => '/exts/one/prompts', 'extensionPath' => '/exts/one/index.php']], $found->promptPaths);
+        $this->assertSame([['path' => '/exts/themes', 'extensionPath' => '/exts/two.php']], $found->themePaths);
+        $this->assertSame([], $this->errors);
+    }
+
+    public function testAHandlerThatThrowsOrAnswersWronglyIsReportedAndTheRestStillAnswer(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['resources_discover' => static fn (): never => throw new \RuntimeException('no disk')], '/exts/broken.php'),
+            $this->hook(['resources_discover' => static fn (): array => ['skillPaths' => ['x']]], '/exts/wrong.php'),
+            $this->hook(['resources_discover' => static fn (): ResourcesDiscoverResult => new ResourcesDiscoverResult(skillPaths: ['/s'])], '/exts/fine.php'),
+        ]);
+
+        $found = $runner->emitResourcesDiscover('/work', 'reload');
+
+        $this->assertSame([['path' => '/s', 'extensionPath' => '/exts/fine.php']], $found->skillPaths);
+        $this->assertCount(2, $this->errors);
+        $this->assertStringContainsString('no disk', $this->errors[0]->error);
+        $this->assertStringContainsString('expected ' . ResourcesDiscoverResult::class, $this->errors[1]->error);
     }
 
     // ---- what is listening -------------------------------------------------------------
@@ -155,7 +197,7 @@ final class HookRunnerTest extends TestCase
         $this->assertSame('/work', $context->cwd);
         $this->assertNull($context->model);
         $this->assertFalse($context->isIdle());
-        $this->assertFalse($context->hasQueuedMessages());
+        $this->assertFalse($context->hasPendingMessages());
     }
 
     public function testAContextWithNothingWiredUpIsIdle(): void

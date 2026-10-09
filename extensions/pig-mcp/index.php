@@ -7,10 +7,12 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
+use Pig\CodingAgent\Hooks\Events\McpServersChangeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Version;
 use PigMcp\McpConfig;
@@ -79,6 +81,12 @@ return static function (ExtensionApi $pi): void {
     $connections = [];
     /** @var list<string> */
     $configErrors = [];
+    /** @var list<ServerEntry> the `mcp.json` servers, which take precedence over registered ones of the same name */
+    $configuredEntries = [];
+    /** @var list<string> registered servers `mcp.json` overrides, shown in `/mcp` */
+    $overridden = [];
+    /** @var array<string, string> registered server => its config as registered (JSON), to detect re-registrations */
+    $registeredConfigs = [];
     /** @var \Pig\Async\Future|null the startup connections, for the first prompt to wait on */
     $pending = null;
     $waitedForStartup = false;
@@ -374,6 +382,39 @@ return static function (ExtensionApi $pi): void {
     };
 
     /** One message for everything that needs the user after startup. */
+    /**
+     * Servers extensions registered with `$pi->registerMcpServer()`, except names `mcp.json`
+     * defines (by tool namespace, where `-` and `_` read alike), which take precedence.
+     *
+     * @return array{servers: list<ServerEntry>, overridden: list<string>, configs: array<string, string>}
+     */
+    $registeredServers = static function () use ($pi, &$configuredEntries): array {
+        $registered = [];
+        $overriddenNames = [];
+        $configs = [];
+
+        foreach ($pi->getMcpServers() as $server) {
+            $configured = null;
+
+            foreach ($configuredEntries as $entry) {
+                if (McpServers::namespace($entry->name) === McpServers::namespace($server->name)) {
+                    $configured = $entry;
+                    break;
+                }
+            }
+
+            if ($configured !== null) {
+                $overriddenNames[] = "\"{$server->name}\" registered by {$server->extensionPath} is overridden by \"{$configured->name}\" in {$configured->source}";
+                continue;
+            }
+
+            $registered[] = new ServerEntry($server->name, $server->config, $server->extensionPath, 'extension');
+            $configs[$server->name] = json_encode($server->config, JSON_THROW_ON_ERROR);
+        }
+
+        return ['servers' => $registered, 'overridden' => $overriddenNames, 'configs' => $configs];
+    };
+
     $reportProblems = static function (HookContext $ctx, array $only = []) use (&$entries, &$connections, &$configErrors, $describeState): void {
         $lines = $only === [] ? array_map(static fn (string $e): string => "config: {$e}", $configErrors) : [];
 
@@ -427,10 +468,15 @@ return static function (ExtensionApi $pi): void {
         return $connection;
     };
 
-    /** Write a change to the file the server came from, and to the entry in hand. */
+    /**
+     * Write a change to the file the server came from, and to the entry in hand. A server an
+     * extension registered has no file: the change applies to this session, as upstream has it.
+     */
     $saveConfig = static function (ServerEntry $entry, array $patch): ?string {
         try {
-            McpConfig::update($entry->source, $entry->name, $patch);
+            if ($entry->scope !== 'extension') {
+                McpConfig::update($entry->source, $entry->name, $patch);
+            }
         } catch (\Throwable $error) {
             return "Could not update {$entry->source}: {$error->getMessage()}";
         }
@@ -493,8 +539,8 @@ return static function (ExtensionApi $pi): void {
         return null;
     };
 
-    $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$deferred, $describeState): string {
-        if ($entries === [] && $configErrors === []) {
+    $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$overridden, &$deferred, $describeState): string {
+        if ($entries === [] && $configErrors === [] && $overridden === []) {
             return 'No MCP servers configured. Add them to ' . Config::home() . '/mcp.json or .pig/mcp.json.';
         }
 
@@ -528,6 +574,10 @@ return static function (ExtensionApi $pi): void {
             $lines[] = "config error: {$error}";
         }
 
+        foreach ($overridden as $note) {
+            $lines[] = $note;
+        }
+
         return implode("\n", $lines);
     };
 
@@ -536,16 +586,24 @@ return static function (ExtensionApi $pi): void {
         &$entries,
         &$connections,
         &$configErrors,
+        &$configuredEntries,
+        &$overridden,
+        &$registeredConfigs,
         &$pending,
         &$waitedForStartup,
         &$generation,
         $cwd,
         $createConnection,
+        $registeredServers,
         $reportProblems,
     ): void {
         $trusted = ProjectTrust::hasResources($cwd) ? (ProjectTrust::decision($cwd) ?? false) : true;
         $loaded = McpConfig::load(Config::home(), $cwd, $trusted);
-        $entries = $loaded->servers;
+        $configuredEntries = $loaded->servers;
+        $registered = $registeredServers();
+        $overridden = $registered['overridden'];
+        $registeredConfigs = $registered['configs'];
+        $entries = [...$loaded->servers, ...$registered['servers']];
         $configErrors = $loaded->errors;
         $waitedForStartup = false;
         $current = ++$generation;
@@ -622,8 +680,86 @@ return static function (ExtensionApi $pi): void {
         return null;
     });
 
-    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$generation, &$serverTools, $hideTools): void {
+    // Servers registered or unregistered during the session connect or disconnect right away.
+    $pi->on('mcp_servers_change', static function (McpServersChangeEvent $event, HookContext $ctx) use (
+        &$entries,
+        &$connections,
+        &$overridden,
+        &$registeredConfigs,
+        &$generation,
+        $registeredServers,
+        $createConnection,
+        $hideTools,
+        $emitChange,
+        $reportProblems,
+    ): void {
+        $registered = $registeredServers();
+        $overridden = $registered['overridden'];
+        $next = $registered['configs'];
+
+        // Unregistered servers and re-registered ones with a new config are dropped; the latter
+        // come back below.
+        $removed = array_values(array_filter(
+            $entries,
+            static fn (ServerEntry $e): bool => $e->scope === 'extension' && ($next[$e->name] ?? null) !== ($registeredConfigs[$e->name] ?? null),
+        ));
+        $removedNames = array_map(static fn (ServerEntry $e): string => $e->name, $removed);
+        $entries = array_values(array_filter($entries, static fn (ServerEntry $e): bool => !in_array($e->name, $removedNames, true)));
+        $registeredConfigs = $next;
+
+        foreach ($removed as $entry) {
+            $hideTools($entry->name);
+            $connection = $connections[$entry->name] ?? null;
+            unset($connections[$entry->name]);
+
+            try {
+                $connection?->close();
+            } catch (\Throwable) {
+                // Gone is gone, however the connection went.
+            }
+        }
+
+        $have = array_map(static fn (ServerEntry $e): string => $e->name, $entries);
+        $added = array_values(array_filter($registered['servers'], static fn (ServerEntry $e): bool => !in_array($e->name, $have, true)));
+        $entries = [...$entries, ...$added];
+        $emitChange();
+
+        $connecting = array_values(array_filter($added, static fn (ServerEntry $e): bool => $e->isEnabled()));
+
+        if ($connecting === []) {
+            return;
+        }
+
+        $current = $generation;
+        $started = array_map($createConnection, $connecting);
+        $waits = [];
+
+        foreach ($started as $connection) {
+            $waits[] = Async::spawn(static function () use ($connection): void {
+                try {
+                    $connection->client();
+                } catch (\Throwable) {
+                    // The failure is the connection's state, reported below.
+                }
+            });
+        }
+
+        foreach ($waits as $wait) {
+            $wait->await();
+        }
+
+        if ($current !== $generation) {
+            return;
+        }
+
+        $reportProblems($ctx, $connecting);
+    });
+
+    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools): void {
         $generation++;
+        $configuredEntries = [];
+        $overridden = [];
+        $registeredConfigs = [];
 
         // Every server's tools come off the model and out of the codemode registry first.
         foreach (array_keys($serverTools) as $server) {
@@ -816,7 +952,9 @@ return static function (ExtensionApi $pi): void {
         }
 
         $connection = $connections[$name] ?? null;
-        $saved = "saved to the {$entry->scope} mcp.json";
+        $saved = $entry->scope === 'extension'
+            ? "applies to this session; the server is registered by {$entry->source}"
+            : "saved to the {$entry->scope} mcp.json";
         $items = [];
         $item = static fn (string $value, string $label, ?string $description = null) => new \Pig\Tui\Components\SelectItem($value, $label, $description);
 

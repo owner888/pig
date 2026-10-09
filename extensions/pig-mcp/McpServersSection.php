@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PigMcp;
 
+use Pig\CodingAgent\McpServers;
+
 /**
  * The `mcp_servers` system prompt section — upstream's `renderServersSection()` in
  * `extensions/mcp/index.ts`: every enabled server with codemode or deferred tools, with how its
@@ -51,7 +53,7 @@ final class McpServersSection
         );
         $intro = self::intro(array_fill_keys($reaches, true));
         $heads = array_map(
-            static fn (array $server, string $reach): string => '- ' . self::mcpNamespace($server['entry']->name) . " ({$reach})",
+            static fn (array $server, string $reach): string => '- ' . McpServers::namespace($server['entry']->name) . " ({$reach})",
             $listed,
             $reaches,
         );
@@ -141,12 +143,6 @@ final class McpServersSection
         $text = $description !== '' ? $description : (string) ($server['instructions'] ?? '');
 
         return self::jsTrim(explode("\n", $text, 2)[0]);
-    }
-
-    /** Upstream's `mcpNamespace()`: `mcp__<server>` with `-` as `_`. */
-    private static function mcpNamespace(string $server): string
-    {
-        return 'mcp__' . str_replace('-', '_', $server);
     }
 
     /** Upstream's `truncate()`: `text.slice(0, max - 1).trimEnd()` and an ellipsis, in UTF-16 units. */

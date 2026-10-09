@@ -2136,9 +2136,15 @@ final class AgentSessionTest extends TestCase
     public function testTheHooksHearAboutASwitchOnceItHasHappened(): void
     {
         $seen = [];
+        $shutdowns = [];
         $hooks = $this->hooks([
-            'session_switch' => function (mixed $event) use (&$seen): null {
+            'session_start' => function (mixed $event) use (&$seen): null {
                 $seen[] = [$event->reason, $event->previousSessionFile];
+
+                return null;
+            },
+            'session_shutdown' => function (mixed $event) use (&$shutdowns): null {
+                $shutdowns[] = [$event->reason, $event->targetSessionFile];
 
                 return null;
             },
@@ -2156,12 +2162,15 @@ final class AgentSessionTest extends TestCase
         $this->assertSame([['new', $store->path]], $seen);
 
         $fresh = (string) $session->store()?->path;
+        // Upstream's shutdown names the file being switched *to*, before the start names the one left.
+        $this->assertSame([['new', $fresh]], $shutdowns);
         $other = $this->session(['hi'], store: SessionManager::create(sys_get_temp_dir()));
         Async::run(static fn () => $other->prompt('somewhere else'));
 
         $session->switchTo((string) $other->store()?->path);
 
         $this->assertSame(['resume', $fresh], $seen[1] ?? null, 'and the other door says which it was');
+        $this->assertSame(['resume', (string) $other->store()?->path], $shutdowns[1] ?? null);
     }
 
     public function testResumingComesBackOnWhatThatConversationWasHadWith(): void

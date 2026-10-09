@@ -6,6 +6,7 @@ namespace Pig\Tui\Test;
 
 use Closure;
 use Pig\Async\Loop;
+use Pig\Tui\ProgramStatus;
 use Pig\Tui\Terminal;
 
 /**
@@ -22,6 +23,9 @@ final class FakeTerminal implements Terminal
     public bool $cursorVisible = true;
 
     public bool $started = false;
+
+    /** @var list<ProgramStatus> every status reported, in order */
+    public array $programStatuses = [];
 
     /** @var list<array{0: 'start'|'stop'|'write', 1?: string}> starts, stops and writes in the order they happened */
     public array $events = [];
@@ -167,5 +171,12 @@ final class FakeTerminal implements Terminal
     public function setTitle(string $title): void
     {
         $this->write("\x1b]0;{$title}\x07");
+    }
+
+    #[\Override]
+    public function setProgramStatus(ProgramStatus $status): void
+    {
+        $this->programStatuses[] = $status;
+        $this->write($status->format());
     }
 }

@@ -79,6 +79,42 @@ final class SessionManager
     ) {
     }
 
+    /** True on a copy made by `preview()`: appended to like any session, written nowhere. */
+    private bool $preview = false;
+
+    /**
+     * A copy of this session to try entries against without writing any of them — upstream's
+     * `SessionManager.inMemory(cwd, undefined, [header, ...branch])` as a boundary preview. The
+     * entries are copied with it, so what the copy projects is what this session would project
+     * with the same things appended.
+     */
+    public function preview(): self
+    {
+        $copy = clone $this;
+        $copy->preview = true;
+
+        return $copy;
+    }
+
+    /**
+     * The same for a session that is not being written down (`--no-save`): the messages the
+     * agent holds, appended to a session nothing writes. An id-addressed draft — a context edit,
+     * a compaction's `firstKeptEntryId` — has nothing to name here, as nothing there has an id.
+     *
+     * @param list<mixed> $messages
+     */
+    public static function previewOf(string $cwd, array $messages): self
+    {
+        $copy = self::create($cwd);
+        $copy->preview = true;
+
+        foreach ($messages as $message) {
+            $copy->append($message);
+        }
+
+        return $copy;
+    }
+
     /** A session that will be written to $cwd's directory once it has something to say. */
     public static function create(string $cwd, ?string $path = null): self
     {
@@ -1178,6 +1214,10 @@ final class SessionManager
     /** @param array<string, mixed> $entry */
     private function write(array $entry): void
     {
+        if ($this->preview) {
+            return;
+        }
+
         $directory = dirname($this->path);
 
         if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {

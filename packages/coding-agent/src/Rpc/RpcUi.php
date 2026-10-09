@@ -189,6 +189,12 @@ final class RpcUi implements HookUi
         $this->tell(['method' => 'set_working_visible', 'visible' => $visible]);
     }
 
+    /** Not supported over RPC, as upstream's is not: the indicator is the TUI loader's. */
+    #[\Override]
+    public function setWorkingIndicator(?array $options = null): void
+    {
+    }
+
     #[\Override]
     public function setHiddenThinkingLabel(?string $label = null): void
     {
@@ -315,5 +321,21 @@ final class RpcUi implements HookUi
         $value = $reply['value'] ?? null;
 
         return is_string($value) ? $value : null;
+    }
+
+    #[\Override]
+    public function addAutocompleteProvider(Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function setEditorComponent(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function getEditorComponent(): ?Closure
+    {
+        return null;
     }
 }

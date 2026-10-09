@@ -258,6 +258,17 @@ final class Agent
         return $this->steeringQueue !== [] || $this->followUpQueue !== [];
     }
 
+    /**
+     * What is queued, without taking it — upstream's `peekQueuedMessages()`, for a boundary
+     * preview of what the next run would start with.
+     *
+     * @return list<mixed>
+     */
+    public function peekQueuedMessages(): array
+    {
+        return [...$this->steeringQueue, ...$this->followUpQueue];
+    }
+
     /** Stop the current run. Does nothing when idle. */
     public function abort(): void
     {

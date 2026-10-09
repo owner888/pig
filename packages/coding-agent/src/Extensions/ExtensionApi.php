@@ -12,6 +12,9 @@ use Pig\Ai\Model;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\McpServerRegistry;
+use Pig\CodingAgent\McpServers;
+use Pig\CodingAgent\RegisteredMcpServer;
 use Pig\CodingAgent\Settings;
 
 /**
@@ -209,6 +212,56 @@ final class ExtensionApi extends HookApi
     public function providers(): array
     {
         return $this->providers;
+    }
+
+    // ---- MCP servers -------------------------------------------------------------------
+
+    /**
+     * Add an MCP server for the current session, as an `mcpServers` entry of `mcp.json` is: stdio
+     * with `command`, `args`, `env`, `cwd`; streamable HTTP with `url`, `headers`, `oauth`; plus
+     * `exposure`, `toolExposure`, `description`, `enabled`, `timeout`. Registered while loading, it
+     * connects when the session starts beside the `mcp.json` servers; registered later, it
+     * connects right away (`mcp_servers_change`). Not saved: register again on every load. A server
+     * in `mcp.json` with the same name takes precedence, and `/mcp` shows the override.
+     *
+     * @param array<string, mixed> $config
+     * @throws \InvalidArgumentException for an invalid name or config, a name another extension
+     *         registered, or one whose tool namespace (`-` and `_` read alike) another server has
+     */
+    public function registerMcpServer(string $name, array $config): void
+    {
+        $validated = McpServers::validate($name, $config);
+
+        if (is_string($validated)) {
+            throw new \InvalidArgumentException("Invalid MCP server registered by extension \"{$this->path()}\": {$validated}");
+        }
+
+        $registry = McpServerRegistry::current();
+        $owner = $registry->get($name)?->extensionPath;
+
+        if ($owner !== null && $owner !== $this->path()) {
+            throw new \InvalidArgumentException("MCP server \"{$name}\" is already registered by extension \"{$owner}\"");
+        }
+
+        foreach ($registry->list() as $server) {
+            if ($server->name !== $name && McpServers::namespace($server->name) === McpServers::namespace($name)) {
+                throw new \InvalidArgumentException("MCP server \"{$name}\" conflicts with registered server \"{$server->name}\"");
+            }
+        }
+
+        $registry->register(new RegisteredMcpServer($name, $validated, $this->path()));
+    }
+
+    /** Closes the connection and makes the server's tools unreachable. Another extension's server is left alone. */
+    public function unregisterMcpServer(string $name): void
+    {
+        McpServerRegistry::current()->unregister($name, $this->path());
+    }
+
+    /** @return list<RegisteredMcpServer> every server any extension registered, in registration order */
+    public function getMcpServers(): array
+    {
+        return McpServerRegistry::current()->list();
     }
 
     // ---- flags -------------------------------------------------------------------------

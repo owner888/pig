@@ -43,6 +43,35 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.1] - 2026-10-08
+
+### New Features
+
+- **Program Status Reporting via OSC 7501 (`ProgramStatus`, `ProgramStatusReporter`)**:
+  - Implemented OSC 7501 protocol reporting (`working`, `blocked`, `done`, `error`, `idle`) for compatible terminals and agent dashboards, with `PIG_PROGRAM_STATUS=1|0` overrides and clean capability detection.
+- **Dynamic Extension Resource Discovery (`resources_discover`, `Skills`, `SlashCommands`, `Themes`)**:
+  - Added `resources_discover` hook event: extensions dynamically contribute skills, prompt templates, and custom theme directories relative to the extension entry file.
+- **Upstream Extension Lifecycle & Boundary Interception (`HookApi::EVENTS`, `agent_before_settle`)**:
+  - Aligned `session_start` (with `reason` and `previousSessionFile`) and `session_shutdown` (with `reason` and `targetSessionFile`), firing properly across startup, reload, new, and resume lifecycles.
+  - Implemented `agent_before_settle` with `BoundaryContextPreview` and `BoundaryResult(continue: true)` draft appending before turn settling.
+  - Added `ui_prompt_start` / `ui_prompt_end` wrapping blocking dialogs (`PromptingUi`).
+- **Dynamic Extension MCP Server Registration (`ExtensionApi::registerMcpServer`, `McpServerRegistry`)**:
+  - Added `$pi->registerMcpServer()`, `unregisterMcpServer()`, and `getMcpServers()`, firing `mcp_servers_change` and allowing extensions to declare and manage MCP servers dynamically.
+
+### Added
+
+- Added `aborted` flag to `agent_settled` hook event and `AgentSettledEvent`.
+- Added `ui.setWorkingIndicator()` supporting custom spinner animation frames or static marks.
+- Added `$ctx->scopedModels()` providing models scoped by `--models`.
+- Added `ui.addAutocompleteProvider()` and `ui.setEditorComponent()` for custom editor and completion hot-swapping.
+- Added `project_trust` event allowing extensions to intervene in project trust decisions prior to loading project resources.
+
+### Changed
+
+- Transitioned `session_switch` to standard `session_start` / `session_shutdown` pairs.
+- Aligned `ExtensionLoader::load()` ordering to load user and configuration extensions before project-level extensions.
+- Renamed `$ctx->hasQueuedMessages()` to `$ctx->hasPendingMessages()` matching upstream.
+
 ## [0.5.0] - 2026-10-08
 
 ### New Features
@@ -924,7 +953,7 @@ Every release entry strictly follows upstream pi's format with version date and 
   - Implemented an industrial-standard 60ms cooldown window on `compositionend` alongside `isComposing` and `keyCode === 229` guards across the main chat prompt input, the Web Terminal interactive input, and the Slash Autocomplete popup.
 - **Mobile Web Terminal Prompt Auto-Compactness & Pixel-Perfect Cursor Alignment**:
   - Fixed an issue where long hostnames and deep directory paths caused the terminal prompt prefix to break across multiple lines on mobile screens, resulting in detached, vertically misaligned floating cursors.
-  - **Responsive Prompt Compactness**: On narrow mobile screens (<= 640px), the lengthy hostname (e.g. `@kakadeMacBook-Air.local`) is automatically hidden and long paths are abbreviated to `~/.../folder` without breaking.
+  - **Responsive Prompt Compactness**: On narrow mobile screens (<= 640px), the lengthy hostname is automatically hidden and long paths are abbreviated to `~/.../folder` without breaking.
   - **Baseline Lock & Wrap Prevention**: Enforced `white-space: nowrap; flex-shrink: 0;` and locked `align-items: baseline` with matched 20px line heights, ensuring the input caret is permanently glued directly after the `$` prompt symbol across all mobile screen sizes.
 
 ## [0.3.47] - 2026-10-05

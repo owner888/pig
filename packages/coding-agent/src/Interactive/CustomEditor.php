@@ -32,9 +32,13 @@ use Pig\Tui\TuiMouseEventResult;
  * rather than opening it up keeps the list of keys an application may steal explicit —
  * anything not named below reaches the editor unchanged.
  *
+ * Not final itself, for the one reason upstream names: an extension's own prompt
+ * (`$ctx->ui->setEditorComponent()`) extends this and overrides `handleInput()`, calling
+ * `parent::handleInput()` for the keys it does not take, so every app binding still works there.
+ *
  * Ported from upstream's `components/custom-editor.ts`.
  */
-final class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
+class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
 {
     /** Set by the renderer and handed to the wrapped editor, which is what draws the cursor. */
     public bool $focused = false;

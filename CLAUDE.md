@@ -73,6 +73,17 @@ the developer asked for it, it is ported and listed here:
 | Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
 | Fullscreen ChatViewport with fixed bottom dock & scroll-to-end indicator | `Pig\CodingAgent\Interactive\ChatViewport`, `Pig\Tui\Components\ScrollView` | `chat-viewport.ts` + `tui-alt-screen.ts` at 0.85+ |
 | Skill invocation collapsible message component | `Pig\CodingAgent\Interactive\SkillInvocationMessageComponent`, `Pig\CodingAgent\Prompt\SkillBlock` | `skill-invocation-message.ts` |
+| Program status over OSC 7501 — `working` / `blocked` / `done` / `error` / `idle` for terminals and agent dashboards, `PIG_PROGRAM_STATUS=1\|0` to force or silence it | `Pig\Tui\ProgramStatus`, `ProcessTerminal::setProgramStatus()`, `Pig\CodingAgent\Interactive\ProgramStatusReporter` | `tui/src/program-status.ts` + `program-status-reporter.ts` at 503c605 (2026-10-07) |
+
+The program status port differs from upstream in two places, both platform. Upstream sends the
+support query inside its kitty keyboard query and reads the answers out of `StdinBuffer`'s split
+sequences; pig makes no keyboard query, so `ProcessTerminal::start()` sends the OSC 7501 query with
+its own DA1 sentinel and sifts the two answers out of the raw read, holding back a tail that could be
+a reply cut by the read — never a lone escape, which is a key. And upstream hears every compaction as
+a `compaction_start`/`compaction_end` session event, while here only the overflow one is an event:
+`/compact` and the threshold check run in the mode, which tells `ProgramStatusReporter` itself
+through `compactionStart()`/`compactionEnd()`. A cancelled overflow compaction reads as `error` for a
+moment and becomes `idle` at the `agent_settled` that follows it, since `abort()` set the flag.
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
@@ -2652,10 +2663,69 @@ everything PHP raises as a `Throwable` — including a syntax error, which an in
 raises as a catchable `ParseError` — so a broken hook is a complaint on the shell at startup
 rather than a crash. `--no-hooks` starts without loading any.
 
-Sixteen of upstream's eighteen events are fired. `session_before_branch` and `session_branch`
-are not: they are about forking a conversation into a second session file, and pig branches
-inside one file instead. Subscribing to either says so rather than silently never firing —
-as does a typo, since the names are a list here rather than eighteen TypeScript overloads.
+The event names are upstream HEAD's (`HookApi::EVENTS`), with the shapes they have there:
+`session_start` carries `reason` (`startup`/`reload`/`new`/`resume`) and `previousSessionFile`,
+`session_shutdown` carries `reason` (`quit`/`reload`/`new`/`resume`) and `targetSessionFile`, and
+`/new`, `/resume` and `/reload` fire the pair in that order — upstream tears its runtime down and
+builds a new one, pig keeps the same hooks and tells them the same two things. `session_switch`,
+which upstream no longer has, went with no alias. `ui_prompt_start`/`ui_prompt_end` are said
+around every blocking dialog by `Hooks\PromptingUi`, upstream's `wrapUIPromptContext()`.
+`session_before_fork` is refused by name: it is about forking a conversation into a second
+session file, and pig branches inside one file instead (`session_before_tree`). A typo is refused
+the same way, since the names are a list here rather than TypeScript overloads.
+
+**Four of upstream's events arrive in pig's own arrangement, and the arrangement is the thing to
+know before reading any of them:**
+
+- **`project_trust` is asked of a runner that exists only for the question.** `bin/pig` loads the
+  person's extensions first (`ExtensionLoader::load()` in upstream's order: home, the settings',
+  the command line's — then, after trust, the project's two roots and the project settings'
+  `extensions`), and `projectTrusted:` may be a closure that is asked with what loaded so far. The
+  closure builds a `HookRunner` over them and hands it to `ProjectTrust::resolve()`, which asks
+  `emitProjectTrust()` before the saved answer and the prompt — the first `yes`/`no` wins,
+  `undecided` falls through, `remember` writes `trust.json`. Two phases of one load rather than
+  upstream's two loads, because a factory run twice is an MCP server connected twice. The settings
+  are the person's alone until trust is decided (`$settleTrust` reads them again with the project's,
+  re-applies the proxy and the idle timeout, and sets the theme directory); `--list-models` is
+  asked too, as upstream's `print` mode is, with nobody to prompt. **The handler's `ctx->ui` is
+  `NoUi` and `hasUi` is false** even at a terminal: pig has no screen before the session, and the
+  trust prompt is a one-shot `TrustPrompt`. `defaultProjectTrust` (upstream's `always`/`never`
+  setting) is not ported.
+- **`resources_discover` is `AgentSession::discoverResources($reason)`**, called by each mode
+  straight after it emits `session_start`, and by `/reload` after its `session_start('reload')`.
+  Skills from the answered directories go through `Skills::fromDirectories()` (source
+  `extension`, no `ignoredSkills`/`includeSkills` filter) onto `ToolLoadout::addSkills()`, so the
+  prompt names them; prompt templates through `SlashCommands::fromDirectories()` (source
+  `(extension)`) into the session's file commands; theme directories into
+  `Themes::setExtensionThemeDirs()`. A relative path is resolved against the extension's file. The
+  mode gets an `ExtensionResources` back for its own `/skills` list and the autocomplete; a skill
+  that could not be read is reported against the extension that named its directory.
+- **`ui.setEditorComponent()` swaps the dock slot, and rebinds from scratch.** The prompt sits in
+  `InteractiveMode::$editorSlot` (upstream's `editorContainer`); `setCustomEditorComponent()` puts
+  the factory's `CustomEditor` there, carries the text over, and runs `bindEditor()` + `bindKeys()`
+  again — the same two methods startup runs, which is the one way the new prompt cannot be
+  missing a key the old one had. `TerminalUi` reads the prompt through a closure for the same
+  reason. `CustomEditor` is **not final any more**, which upstream names as the point: an
+  extension's editor extends it and calls `parent::handleInput()` for what it does not take.
+  `ui.addAutocompleteProvider()` stacks wrappers over `baseAutocompleteProvider()`
+  (`setupAutocompleteProvider()`); `/reload` clears both the wrappers and the editor, as upstream's
+  does, and the extensions put them back on `session_start`. pig's editor has no
+  `triggerCharacters`: `/` and `@` open a list and Tab opens the wrapper's, nothing else does.
+- **`agent_before_settle` is the last step of `runAgentPrompt()`'s loop**, where upstream has it:
+  after `handlePostAgentRun()` found no retry, no overflow and nothing queued, `runBeforeSettleBoundary()`
+  runs `HookRunner::emitBoundary()` — each handler handed the drafts and `continue` the ones before
+  it settled on, and a `BoundaryContextPreview` built from `SessionManager::preview()` (a clone that
+  appends and writes nowhere; `previewOf()` for `--no-save`) with those drafts applied. An entry
+  that cannot be applied throws there, is reported as `Invalid boundary entries`, and the whole list
+  appends nothing. Committed drafts go to the store and the agent's state is replaced with what the
+  store projects; a `continue` the context cannot carry (ends on the assistant's turn, nothing
+  queued) is refused with upstream's sentence. `outcome` is set from each `turn_end`'s stop reason.
+  pig has no `_pendingCustomMessages`: a hook's message during a run is already a follow-up on the
+  agent's queue, which is what `pendingMessages` shows. `turn_end` is **not** a boundary here.
+
+**Not yet ported from upstream's `ExtensionAPI`:** `cache_warming_decision` (the cache warmer),
+`registerVirtualModel()`/`unregisterVirtualModel()`, the context's `modelRegistry` (pig has
+`Auth` + the static `Models`), and `ExtensionCommandContext` (see below).
 
 **What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
 Upstream gives a slash command's handler four methods an event handler does not get —
@@ -2825,8 +2895,6 @@ conversation that did not happen.
 `BeforeAgentStartEventResult` still carries text rather than a `HookMessage`: upstream's is one,
 and the part that survives into the conversation is the part that reaches the model.
 
-**Nothing of upstream's hook API is left out now.**
-
 **Each mode wires its own UI**, which is upstream's rule too. `InteractiveMode` builds the
 `TerminalUi` and calls `HookRunner::initialize()` and `CustomToolSet::withUi()` itself;
 `bin/pig` loads and constructs but wires none of it, because it has no screen to draw a
@@ -2992,6 +3060,18 @@ in pig's tests was written by pig. The direct Gemini API has since moved to upst
 stripped `parameters` is what the Code Assist path (`GoogleShared::tools()`, `pig-antigravity`)
 still sends. Regression tests: `GoogleTest::testTheCodeAssistToolsStillStripJsonSchemaMetaDeclarations`,
 `testTheDirectApiSendsTheSchemaAsWrittenInParametersJsonSchema`.
+
+**An extension registers a server with `$pi->registerMcpServer($name, $config)`**, upstream's
+API with upstream's validation (`McpServers::validate()`, which `McpConfig` and `pig mcp` use
+too — one answer to what a config is). The static `McpServerRegistry` holds them for
+`Models::register()`'s reason; `unregisterMcpServer()` takes one away only from the extension that
+registered it. Servers registered while the extensions load are read by `pig-mcp` on
+`session_start` through `$pi->getMcpServers()`; one registered later reaches it as
+`mcp_servers_change`, emitted in an `Async::spawn` because handlers await and a factory registers
+at load, outside any fiber. A registered server **overrides a configured one of the same name for
+the session** (`ServerEntry` scope `extension`; the manager says so and writes nothing to the
+file for it), and a server no extension connects is reported once, as upstream reports it.
+`/reload` resets the registry so the reloaded extensions register afresh.
 
 **The manager is one component whose contents are swapped**, and its `menu()` parks the caller on
 a `Deferred` the way every hook dialog does — which is what lets `$manage` read as upstream's loop
@@ -8552,7 +8632,7 @@ lines to `RpcMode` made the two modes agree today; it left the next mode — the
 to disagree, because nothing about `writeTo()` and `agent->reset()` says that a hook has to be asked
 first. `AgentSession::startNew()` and `AgentSession::switchTo()` now hold the whole recipe (the
 cancellable hook, the abort, the emptied queue, the new or opened file, `restore()` +
-`restoreSettings()`, the `session_switch` emit), the way `goTo()` already held its own guards inside.
+`restoreSettings()`, the `session_shutdown` and `session_start` emits), the way `goTo()` already held its own guards inside.
 Both modes call them and keep only what is theirs: the screen, and `customTools->notify('switch', …)`
 — `AgentSession` has no custom tools, and upstream's equivalent call from inside is the one piece not
 followed. `InteractiveMode::mayLeave()` is gone with them; a hook refusal comes back as
@@ -10329,7 +10409,7 @@ The entry is "RPC's session switch and new-session skipped the three checks the 
 and its fix moved the whole recipe into `startNew()` and `switchTo()`. What the sweep says is that
 the recipe arrived without tests of its own: the cancellable `session_before_switch` hook could be
 deleted from either method, the queue could stop being cleared, `restoreSettings()` could stop being
-called on a resume, and the `session_switch` event could stop being emitted — nine mutations across
+called on a resume, and the `session_start` event could stop being emitted — nine mutations across
 the two methods, none of which any test could see. **A fix that moves a rule into one place still
 needs the rule tested in that place**, which is the same lesson as "after wiring anything through,
 mutate each end", one level up.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Extensions;
 
+use Closure;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Hooks\HookApi;
@@ -18,19 +19,29 @@ use Throwable;
  * and can register slash commands, agent tools, lifecycle event handlers, message renderers,
  * and interact with the UI.
  *
- * Locations searched in order:
+ * Locations searched in order — the person's first, so they are loaded before the project is
+ * trusted and can be asked `project_trust` about it:
  * 1. Global extensions: ~/.pig/agent/extensions/*.php and subdirectories with index.php
- * 2. Project extensions: <cwd>/.pig/extensions/*.php and subdirectories with index.php
- * 3. Project root extensions: <cwd>/extensions/*.php and subdirectories with index.php
- * 4. Configured extra paths from settings
- * 5. Explicit CLI paths passed via --extension
+ * 2. Configured extra paths from the person's settings
+ * 3. Explicit CLI paths passed via --extension
+ * 4. Project extensions: <cwd>/.pig/extensions/*.php and subdirectories with index.php
+ * 5. Project root extensions: <cwd>/extensions/*.php and subdirectories with index.php
+ * 6. Configured extra paths from the project's settings
  */
 final class ExtensionLoader
 {
     /**
-     * @param list<string> $configured extra paths from settings
+     * @param list<string> $configured extra paths from settings — the person's, since a project's
+     *                                 settings wait for trust like its extensions do
      * @param list<string> $cliPaths    explicit paths passed on the command line
+     * @param bool|Closure(list<LoadedExtension>): bool $projectTrusted whether the project roots
+     *        may be loaded; a closure is asked once everything else has loaded and is handed it —
+     *        upstream's `resolveProjectTrust({extensionsResult})`, which is how `project_trust`
+     *        reaches the extensions that can answer it. Two phases of one load rather than
+     *        upstream's two loads, because a factory run twice is an MCP server connected twice.
      * @param list<string> $disabled    extension names (their directory or file name) not to load
+     * @param (Closure(): list<string>)|null $projectConfigured the project's own `extensions`
+     *        setting, asked only once it is trusted
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -39,25 +50,16 @@ final class ExtensionLoader
         array $cliPaths = [],
         ?string $home = null,
         ?Auth $auth = null,
-        bool $projectTrusted = true,
+        bool|Closure $projectTrusted = true,
         array $disabled = [],
+        ?Closure $projectConfigured = null,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
-        // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An
-        // extension is `require`d into this process, which is the whole reason the question exists.
-        $paths = [
-            ...self::discover($home . '/extensions'),
-            ...($projectTrusted ? self::discover($cwd . '/.pig/extensions') : []),
-            ...($projectTrusted ? self::discover($cwd . '/extensions') : []),
-        ];
+        $paths = self::discover($home . '/extensions');
 
-        foreach ($configured as $path) {
-            $paths[] = Paths::resolve($path, $cwd);
-        }
-
-        foreach ($cliPaths as $path) {
+        foreach ([...$configured, ...$cliPaths] as $path) {
             $paths[] = Paths::resolve($path, $cwd);
         }
 
@@ -66,32 +68,56 @@ final class ExtensionLoader
         $seen = [];
         $events = new EventBus();
 
-        foreach ($paths as $path) {
-            $real = realpath($path) ?: $path;
+        $loadAll = static function (array $paths) use (&$extensions, &$errors, &$seen, $events, $cwd, $auth, $disabled): void {
+            foreach ($paths as $path) {
+                $real = realpath($path) ?: $path;
 
-            if (isset($seen[$real])) {
-                continue;
+                if (isset($seen[$real])) {
+                    continue;
+                }
+
+                // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`. By name, which is
+                // the directory's, so the same switch reaches the copy under
+                // `~/.pig/agent/extensions` and one in the project. Not loaded at all, rather than
+                // loaded and told to do nothing — an extension that connects servers in a fiber
+                // has no "do nothing" to be told.
+                if (in_array(self::nameOf($path), $disabled, true)) {
+                    continue;
+                }
+
+                $seen[$real] = true;
+
+                [$loaded, $error] = self::one($path, $real, $cwd, $auth, $events);
+
+                if ($error !== null) {
+                    $errors[] = $error;
+                }
+
+                if ($loaded !== null) {
+                    $extensions[$loaded->name] = $loaded;
+                }
+            }
+        };
+
+        $loadAll($paths);
+
+        if ($projectTrusted instanceof Closure) {
+            $projectTrusted = $projectTrusted(array_values($extensions));
+        }
+
+        // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An
+        // extension is `require`d into this process, which is the whole reason the question exists.
+        if ($projectTrusted) {
+            $project = [
+                ...self::discover($cwd . '/.pig/extensions'),
+                ...self::discover($cwd . '/extensions'),
+            ];
+
+            foreach ($projectConfigured === null ? [] : $projectConfigured() as $path) {
+                $project[] = Paths::resolve($path, $cwd);
             }
 
-            // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`. By name, which is the
-            // directory's, so the same switch reaches the copy under `~/.pig/agent/extensions` and
-            // one in the project. Not loaded at all, rather than loaded and told to do nothing —
-            // an extension that connects servers in a fiber has no "do nothing" to be told.
-            if (in_array(self::nameOf($path), $disabled, true)) {
-                continue;
-            }
-
-            $seen[$real] = true;
-
-            [$loaded, $error] = self::one($path, $real, $cwd, $auth, $events);
-
-            if ($error !== null) {
-                $errors[] = $error;
-            }
-
-            if ($loaded !== null) {
-                $extensions[$loaded->name] = $loaded;
-            }
+            $loadAll($project);
         }
 
         return [array_values($extensions), $errors];

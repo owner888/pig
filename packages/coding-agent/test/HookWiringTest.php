@@ -110,6 +110,7 @@ final class HookWiringTest extends TestCase
                 'message_end',
                 'turn_end',
                 'agent_end',
+                'agent_before_settle',
                 'agent_settled',
             ],
             array_column($this->seen, 0),

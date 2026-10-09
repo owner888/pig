@@ -57,6 +57,7 @@ use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\Ai\Extension\ProviderRegistry;
+use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
@@ -82,6 +83,7 @@ use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\ExtensionResources;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
@@ -101,6 +103,7 @@ use Pig\CodingAgent\Theme\ThemeJson;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
+use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\SlashCommand;
 use Pig\Tui\Clipboard\Clipboard;
@@ -200,9 +203,24 @@ final class InteractiveMode
     private readonly Container $customHeader;
     private readonly Container $customFooter;
     private ?string $customWorkingMessage = null;
+
+    /** @var array{frames?: list<string>, intervalMs?: int}|null upstream's `workingIndicatorOptions` */
+    private ?array $workingIndicatorOptions = null;
     private ?string $hiddenThinkingLabel = null;
 
-    private readonly CustomEditor $editor;
+    /** The prompt as it stands: the default, or what an extension put in its place. */
+    private CustomEditor $editor;
+
+    private readonly CustomEditor $defaultEditor;
+
+    /** Upstream's `editorContainer`: the dock slot the prompt sits in, so it can be swapped. */
+    private readonly Container $editorSlot;
+
+    /** @var (Closure(TUI, EditorTheme, Keybindings): CustomEditor)|null upstream's `editorComponentFactory` */
+    private ?Closure $editorFactory = null;
+
+    /** @var list<Closure(AutocompleteProvider): AutocompleteProvider> upstream's `autocompleteProviderWrappers` */
+    private array $autocompleteWrappers = [];
 
     private readonly FooterComponent $footer;
 
@@ -249,6 +267,9 @@ final class InteractiveMode
 
     /** How a hook or a custom tool asks the person something. */
     private readonly TerminalUi $ui;
+
+    /** Reports working, blocked, done, and error states to terminals that support OSC 7501. */
+    private readonly ProgramStatusReporter $programStatus;
 
     /** @var array<string, RegisteredCommand> what the hooks added, by name */
     private array $hookCommands = [];
@@ -386,10 +407,18 @@ final class InteractiveMode
         $this->customHeader = new Container();
         $this->loadedResourcesContainer = new Container();
         $this->customFooter = new Container();
-        $this->editor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
+        $this->defaultEditor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
+        $this->editor = $this->defaultEditor;
+        $this->editorSlot = new Container();
+        $this->editorSlot->addChild($this->editor);
         // `$this->settings` rather than the argument: with none given it is the in-memory one
         // that `/settings` writes to, and the footer has to read what that screen changes.
         $this->footer = new FooterComponent($session, $cwd, $this->settings, $auth);
+
+        $this->programStatus = new ProgramStatusReporter(
+            fn (): Terminal => $this->renderer->terminal,
+            fn (): ?string => $this->session->sessionName(),
+        );
 
         $this->ui = new TerminalUi(
             $this->tui,
@@ -397,7 +426,7 @@ final class InteractiveMode
             // The overlay, not the status area: a dialog holds the focus, so it belongs
             // where only the thing that opened it clears.
             $this->overlay,
-            $this->editor,
+            fn (): CustomEditor => $this->editor,
             $this->footer,
             // The same `$VISUAL` hand-off Ctrl+G at the prompt uses, so the key means one
             // thing in both places and there is one piece of code to get right.
@@ -407,12 +436,22 @@ final class InteractiveMode
             $this->widgetsBelow,
             $this->customHeader,
             $this->customFooter,
+            // Extension dialogs share one slot: opening one replaces the status of a displaced one.
+            onBlocked: fn (?BlockedStatus $blocked) => $this->programStatus->setBlocked('extension-dialog', $blocked),
+            addAutocompleteProvider: fn (Closure $factory) => $this->addAutocompleteProvider($factory),
+            setEditorComponent: fn (?Closure $factory) => $this->setCustomEditorComponent($factory),
+            getEditorComponent: fn (): ?Closure => $this->editorFactory,
             onWorkingMessage: function (?string $message): void {
                 $this->customWorkingMessage = $message;
                 if ($this->working !== null) {
                     $this->working->setText($message ?? 'Working...');
                     $this->tui->requestRender();
                 }
+            },
+            onWorkingIndicator: function (?array $options): void {
+                $this->workingIndicatorOptions = $options;
+                $this->working?->setIndicator($options);
+                $this->tui->requestRender();
             },
             onWorkingVisible: function (bool $visible): void {
                 if ($visible) {
@@ -461,7 +500,7 @@ final class InteractiveMode
             abort: static function () use ($session): void {
                 $session->abort();
             },
-            hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+            hasPendingMessages: static fn (): bool => $session->queued() !== [],
             signal: static fn () => $session->signal(),
             ui: $this->ui,
             send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
@@ -504,8 +543,11 @@ final class InteractiveMode
         $this->reportLoopFailures();
         $this->watchCommandKey();
         $this->session->onSessionNameChanged(function (): void {
+            // The session name is part of working and done reports.
+            $this->programStatus->report();
             $this->tui->requestRender();
         });
+        $this->session->onSessionSwitched(fn () => $this->programStatus->reset());
         $this->session->subscribe($this->onEvent(...));
 
         $this->replay();
@@ -534,8 +576,10 @@ final class InteractiveMode
 
         $this->running = true;
         $this->hooks?->emit(new SessionStartEvent());
+        $this->takeExtensionResources($this->session->discoverResources('startup'));
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
+        $this->programStatus->report();
 
         // Upstream's `applyFromSettings()` once the terminal is up, since the colour query's replies
         // arrive as input. Everything above was drawn in the theme the controller started with (the
@@ -749,7 +793,7 @@ final class InteractiveMode
         // still has a session to read. Nothing after this point is drawn — the terminal
         // is about to be handed back — so a hook that complains here complains to stderr
         // through whatever it uses itself.
-        $this->hooks?->emit(new SessionShutdownEvent());
+        $this->hooks?->emit(new SessionShutdownEvent('quit'));
 
         // Nothing is drawn after this, so a tool that fails while letting go is reported
         // to stderr — the transcript is a moment away from being scrolled off.
@@ -885,7 +929,7 @@ final class InteractiveMode
             document: $document,
             pendingMessages: $this->pending,
             status: $statusSlot,
-            editor: $this->editor,
+            editor: $this->editorSlot,
             footer: $footerSlot,
             widgetsAbove: $widgetsAboveSlot,
             widgetsBelow: $this->widgetsBelow,
@@ -894,7 +938,7 @@ final class InteractiveMode
             scrollbarThumbStyle: fn (string $text): string => Themes::theme()->fg('scrollbarThumb', $text),
         );
 
-        $this->mountedComponents = [$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editor, $this->widgetsBelow, $footerSlot];
+        $this->mountedComponents = [$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editorSlot, $this->widgetsBelow, $footerSlot];
         $this->mountInteractiveTui($this->renderer, $this->mountedComponents);
         $this->tui->setFocus($this->editor);
     }
@@ -1657,15 +1701,10 @@ final class InteractiveMode
         $this->say('Thinking: ' . $level->value);
     }
 
-    // ---- what the person typed -------------------------------------------------------------
-
-    private function bindEditor(): void
+    /** Upstream's `createBaseAutocompleteProvider()`: the commands, the files, the git changes. */
+    private function baseAutocompleteProvider(): AutocompleteProvider
     {
-        // Ctrl+V: an image on the clipboard is written to a temp file and its path
-        // pasted, which is how a screenshot gets to the model.
-        $this->editor->setClipboard($this->clipboard);
-
-        $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider(
+        return new CombinedAutocompleteProvider(
             [
                 ...array_map(
                     fn (array $command): SlashCommand => new SlashCommand(
@@ -1701,7 +1740,75 @@ final class InteractiveMode
             // list is not something a keystroke should do.
             ExternalTool::has('fd') ? ExternalTool::fd() : null,
             $this->modifiedGitFiles(...),
-        ));
+        );
+    }
+
+    /**
+     * Upstream's `setupAutocompleteProvider()`: the built-in provider, wrapped by every factory an
+     * extension added, in the order they were added, and put on the prompt — whichever prompt.
+     */
+    private function setupAutocompleteProvider(): void
+    {
+        $provider = $this->baseAutocompleteProvider();
+
+        foreach ($this->autocompleteWrappers as $wrap) {
+            $provider = $wrap($provider);
+        }
+
+        $this->editor->setAutocompleteProvider($provider);
+    }
+
+    /** Upstream's `addAutocompleteProvider()` on the UI context. */
+    private function addAutocompleteProvider(Closure $factory): void
+    {
+        $this->autocompleteWrappers[] = $factory;
+        $this->setupAutocompleteProvider();
+    }
+
+    /**
+     * Upstream's `setCustomEditorComponent()`: swap the prompt for one of the extension's own, or
+     * back to the default with null. The text carries over; everything else bound to the prompt —
+     * the keys, the handlers, the clipboard, the completions, the loader in its border — is bound
+     * again, which is the same two methods startup runs and the one way the new prompt cannot be
+     * missing a key the old one had.
+     *
+     * @param (Closure(TUI, EditorTheme, Keybindings): CustomEditor)|null $factory
+     */
+    private function setCustomEditorComponent(?Closure $factory): void
+    {
+        $this->editorFactory = $factory;
+        $text = $this->editor->text();
+        $editor = $factory === null ? $this->defaultEditor : $factory($this->tui, Themes::getEditorTheme(), $this->keybindings);
+
+        if (!$editor instanceof CustomEditor) {
+            throw new \InvalidArgumentException('An editor factory must return a CustomEditor, got ' . get_debug_type($editor));
+        }
+
+        $this->editor = $editor;
+        $this->editor->setText($text);
+        $this->editorSlot->clear();
+        $this->editorSlot->addChild($this->editor);
+        $this->bindEditor();
+        $this->bindKeys();
+        $this->paintBorder();
+
+        if ($this->working !== null) {
+            $this->editor->setWorkingStatus($this->working, fn (string $t): string => $this->borderColour()($t));
+        }
+
+        $this->tui->setFocus($this->editor);
+        $this->tui->requestRender();
+    }
+
+    // ---- what the person typed -------------------------------------------------------------
+
+    private function bindEditor(): void
+    {
+        // Ctrl+V: an image on the clipboard is written to a temp file and its path
+        // pasted, which is how a screenshot gets to the model.
+        $this->editor->setClipboard($this->clipboard);
+
+        $this->setupAutocompleteProvider();
 
         // The border turns green the moment the line becomes a command, so there is no
         // way to press Enter thinking it was a prompt.
@@ -1985,6 +2092,7 @@ final class InteractiveMode
         }
 
         $this->showLoader($this->compactionLabel($reason), timer: true);
+        $this->programStatus->compactionStart();
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -1999,6 +2107,7 @@ final class InteractiveMode
         } finally {
             $this->compaction = null;
             $this->hideLoader();
+            $this->programStatus->compactionEnd($reason, aborted: $summary === null && $failure === null, errorMessage: $failure);
         }
 
         if ($failure !== null) {
@@ -2688,7 +2797,7 @@ final class InteractiveMode
         $this->footer->invalidate();
         $this->say('New session');
 
-        // The `session_switch` hook fired inside `startNew()`, where every mode gets it. What
+        // The `session_start` hook (reason `new`) fired inside `startNew()`, where every mode gets it. What
         // is left here is the custom tools, which this mode holds and the session does not.
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
@@ -2957,6 +3066,29 @@ final class InteractiveMode
     }
 
     /**
+     * What `resources_discover` added, merged into the lists this screen keeps of its own: the
+     * `/skills` listing and the names the autocomplete offers. The session already holds them.
+     */
+    private function takeExtensionResources(?ExtensionResources $resources): void
+    {
+        if ($resources === null) {
+            return;
+        }
+
+        $byName = [];
+
+        foreach ([...$this->skills, ...$resources->skills] as $skill) {
+            $byName[$skill->name] = $skill;
+        }
+
+        $this->skills = array_values($byName);
+        $this->fileCommands = [
+            ...array_values(array_filter($this->fileCommands, static fn (FileCommand $c): bool => !str_starts_with($c->source, '(extension'))),
+            ...$resources->commands,
+        ];
+    }
+
+    /**
      * Hot-reload keybindings, extensions, skills, commands, tools, and context files.
      *
      * Ported from upstream's `/reload` command in `interactive-mode.ts`.
@@ -3002,7 +3134,17 @@ final class InteractiveMode
         $this->fileCommands = SlashCommands::load($this->cwd, projectTrusted: $this->projectTrusted);
         $this->session->setFileCommands($this->fileCommands);
 
-        // 4. Reload hooks, and extensions with theirs
+        // Upstream's `reload()`: what the extensions being replaced put on the prompt goes with them —
+        // the wrappers around the completions and the editor itself — and they add it again on
+        // `session_start` if they still want it.
+        $this->autocompleteWrappers = [];
+        $this->setCustomEditorComponent(null);
+
+        // 4. Reload hooks, and extensions with theirs. The runner being replaced hears
+        // `session_shutdown` first and the new one `session_start`, as upstream's do across a
+        // reload — an MCP server connected by the old one is otherwise never closed, and never
+        // connected by the new one.
+        $this->hooks?->emit(new SessionShutdownEvent('reload'));
         [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks(), projectTrusted: $this->projectTrusted);
         $loadedTools = [];
 
@@ -3017,6 +3159,7 @@ final class InteractiveMode
         ProviderRegistry::forget();
         ExtensionApi::forgetHttpRoutes();
         ExtensionApi::forgetFlags();
+        McpServerRegistry::reset();
 
         [$loadedExtensions, $extensionProblems] = ExtensionLoader::load(
             $this->cwd,
@@ -3044,7 +3187,7 @@ final class InteractiveMode
             abort: static function () use ($session): void {
                 $session->abort();
             },
-            hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+            hasPendingMessages: static fn (): bool => $session->queued() !== [],
             signal: static fn () => $session->signal(),
             ui: $this->ui,
             send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
@@ -3108,6 +3251,8 @@ final class InteractiveMode
         }
 
         $customTools->onChange(static fn () => $loadout->refresh());
+        $hooks->emit(new SessionStartEvent('reload'));
+        $this->takeExtensionResources($this->session->discoverResources('reload'));
 
         // 8. Rebind autocomplete on editor, and redraw the header and what was loaded — upstream's
         // `showLoadedResources()` after a reload, which draws the problems as its warning blocks.
@@ -3884,6 +4029,7 @@ final class InteractiveMode
             // that has to be killed. `interrupt()` reaches this controller.
             $controller = new AbortController();
             $this->signingIn = $controller;
+            $this->programStatus->setBlocked('login', new BlockedStatus('auth', "Log in to {$provider->label()}"));
 
             try {
                 $credentials = $this->auth?->login(
@@ -3932,6 +4078,7 @@ final class InteractiveMode
                 $this->sayError($problem->getMessage());
             } finally {
                 $this->signingIn = null;
+                $this->programStatus->setBlocked('login', null);
             }
 
             $this->tui->requestRender();
@@ -4651,6 +4798,7 @@ final class InteractiveMode
     private function onEvent(AgentEvent $event): void
     {
         $this->footer->invalidate();
+        $this->programStatus->handleEvent($event);
 
         match (true) {
             $event instanceof AgentStartEvent => $this->onStart(),
@@ -4708,6 +4856,10 @@ final class InteractiveMode
 
         if ($timer) {
             $this->working->withTimer();
+        }
+
+        if ($this->workingIndicatorOptions !== null) {
+            $this->working->setIndicator($this->workingIndicatorOptions);
         }
 
         $this->editor->setWorkingStatus($this->working, fn (string $text): string => $this->borderColour()($text));

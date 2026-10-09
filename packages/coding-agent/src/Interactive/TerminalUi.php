@@ -112,7 +112,8 @@ final class TerminalUi implements HookUi
         private readonly TUI $tui,
         private readonly Container $chat,
         private readonly Container $overlay,
-        private readonly CustomEditor $editor,
+        /** @var Closure(): CustomEditor the prompt as it stands — an extension may replace it */
+        private readonly Closure $editor,
         private readonly FooterComponent $footer,
         private readonly ?Closure $externalEditor = null,
         private readonly Keybindings $keybindings = new Keybindings(),
@@ -122,11 +123,26 @@ final class TerminalUi implements HookUi
         private readonly ?Container $customFooter = null,
         private readonly ?Closure $onWorkingMessage = null,
         private readonly ?Closure $onWorkingVisible = null,
+        /** @var (Closure(?array): void)|null upstream's `setWorkingIndicator()` on the mode */
+        private readonly ?Closure $onWorkingIndicator = null,
         private readonly ?Closure $onHiddenThinkingLabel = null,
         private readonly ?Closure $getToolsExpanded = null,
         private readonly ?Closure $setToolsExpanded = null,
         private readonly ?Closure $setTheme = null,
+        /** @var (Closure(?BlockedStatus): void)|null told what a dialog waits for, and `null` when it closes */
+        private readonly ?Closure $onBlocked = null,
+        /** @var (Closure(Closure): void)|null upstream's `addAutocompleteProvider()` on the mode */
+        private readonly ?Closure $addAutocompleteProvider = null,
+        /** @var (Closure(?Closure): void)|null upstream's `setCustomEditorComponent()` on the mode */
+        private readonly ?Closure $setEditorComponent = null,
+        /** @var (Closure(): ?Closure)|null the factory the mode has in use */
+        private readonly ?Closure $getEditorComponent = null,
     ) {
+    }
+
+    private function prompt(): CustomEditor
+    {
+        return ($this->editor)();
     }
 
     #[\Override]
@@ -165,6 +181,7 @@ final class TerminalUi implements HookUi
         return $this->ask(
             trim($message) === '' ? $title : $title . ' — ' . $message,
             $list,
+            new BlockedStatus('permission', $title),
         ) === 'yes';
     }
 
@@ -201,6 +218,7 @@ final class TerminalUi implements HookUi
             $title . ($placeholder === '' ? '' : " ({$placeholder})"),
             $field,
             'enter to submit, esc to cancel',
+            new BlockedStatus('question', $title),
         );
 
         try {
@@ -270,8 +288,13 @@ final class TerminalUi implements HookUi
         // Ctrl+G is named only when there is somewhere to hand the text to, which is upstream's
         // rule for the same hint: a key in the list that does nothing is worse than a key missing
         // from it.
-        $this->open($title, $field, 'enter to finish, shift+enter for a line, esc to cancel'
-            . ($this->externalEditor === null ? '' : ', ' . $this->keybindings->label('app.editor.external') . ' for $VISUAL'));
+        $this->open(
+            $title,
+            $field,
+            'enter to finish, shift+enter for a line, esc to cancel'
+            . ($this->externalEditor === null ? '' : ', ' . $this->keybindings->label('app.editor.external') . ' for $VISUAL'),
+            new BlockedStatus('question', $title),
+        );
 
         $value = $answer->future->await();
 
@@ -354,14 +377,14 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function setEditorText(string $text): void
     {
-        $this->editor->setText($text);
+        $this->prompt()->setText($text);
         $this->tui->requestRender();
     }
 
     #[\Override]
     public function getEditorText(): string
     {
-        return $this->editor->text();
+        return $this->prompt()->text();
     }
 
     #[\Override]
@@ -373,7 +396,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function pasteToEditor(string $text): void
     {
-        $this->editor->insertAtCursor($text);
+        $this->prompt()->insertAtCursor($text);
         $this->tui->requestRender();
     }
 
@@ -396,6 +419,14 @@ final class TerminalUi implements HookUi
     {
         if ($this->onWorkingVisible !== null) {
             ($this->onWorkingVisible)($visible);
+        }
+    }
+
+    #[\Override]
+    public function setWorkingIndicator(?array $options = null): void
+    {
+        if ($this->onWorkingIndicator !== null) {
+            ($this->onWorkingIndicator)($options);
         }
     }
 
@@ -545,7 +576,7 @@ final class TerminalUi implements HookUi
      *
      * @return string|null the chosen value, or null on escape
      */
-    private function ask(string $title, SelectList $list): ?string
+    private function ask(string $title, SelectList $list, ?BlockedStatus $blocked = null): ?string
     {
         $this->busy = true;
         $answer = new Deferred();
@@ -560,7 +591,7 @@ final class TerminalUi implements HookUi
             $answer->complete(null);
         });
 
-        $this->open($title, $list, 'enter to choose, esc to cancel');
+        $this->open($title, $list, 'enter to choose, esc to cancel', $blocked ?? new BlockedStatus('question', $title));
 
         $value = $answer->future->await();
 
@@ -577,8 +608,11 @@ final class TerminalUi implements HookUi
      * Upstream's three components each carry their own; here they are one line in one place,
      * because there is one place that opens all four. `custom()` passes none: a hook that drew its
      * own component knows its own keys, and pig does not.
+     *
+     * `$blocked` is what the terminal is told the dialog waits for (OSC 7501). `custom()` passes
+     * none, as upstream reports none for it.
      */
-    private function open(string $title, object $component, string $hint = ''): void
+    private function open(string $title, object $component, string $hint = '', ?BlockedStatus $blocked = null): void
     {
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
@@ -596,6 +630,11 @@ final class TerminalUi implements HookUi
         }
 
         $this->tui->setFocus($component);
+
+        if ($blocked !== null && $this->onBlocked !== null) {
+            ($this->onBlocked)($blocked);
+        }
+
         $this->tui->requestRender();
     }
 
@@ -603,8 +642,35 @@ final class TerminalUi implements HookUi
     private function close(): void
     {
         $this->busy = false;
+
+        if ($this->onBlocked !== null) {
+            ($this->onBlocked)(null);
+        }
+
         $this->overlay->clear();
-        $this->tui->setFocus($this->editor);
+        $this->tui->setFocus($this->prompt());
         $this->tui->requestRender();
+    }
+
+    #[\Override]
+    public function addAutocompleteProvider(Closure $factory): void
+    {
+        if ($this->addAutocompleteProvider !== null) {
+            ($this->addAutocompleteProvider)($factory);
+        }
+    }
+
+    #[\Override]
+    public function setEditorComponent(?Closure $factory): void
+    {
+        if ($this->setEditorComponent !== null) {
+            ($this->setEditorComponent)($factory);
+        }
+    }
+
+    #[\Override]
+    public function getEditorComponent(): ?Closure
+    {
+        return $this->getEditorComponent === null ? null : ($this->getEditorComponent)();
     }
 }

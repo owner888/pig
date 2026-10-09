@@ -135,6 +135,39 @@ final class Skills
             $table[] = [Paths::expand($directory), 'custom', self::RECURSIVE];
         }
 
+        return self::collect($table, $ignored, $only, $roots);
+    }
+
+    /**
+     * Skills from the directories an extension adds (`resources_discover`), under the source
+     * `extension`, after every other root — so an extension's skill overrides a same-named one of
+     * the person's, which is the precedence `load()` gives to whatever came last. The settings'
+     * `ignoredSkills` and `includeSkills` are not applied: an extension's skills are its own, as
+     * upstream loads them from their paths alone.
+     *
+     * @param list<string> $directories
+     * @return array{0: list<Skill>, 1: list<SkillWarning>}
+     */
+    public static function fromDirectories(array $directories): array
+    {
+        $table = [];
+
+        foreach ($directories as $directory) {
+            $table[] = [Paths::expand($directory), 'extension', self::RECURSIVE];
+        }
+
+        return self::collect($table, [], [], []);
+    }
+
+    /**
+     * @param list<array{0: string, 1: string, 2: self::RECURSIVE|self::ONE_LEVEL}> $table
+     * @param list<string>        $ignored
+     * @param list<string>        $only
+     * @param array<string, bool> $roots
+     * @return array{0: list<Skill>, 1: list<SkillWarning>}
+     */
+    private static function collect(array $table, array $ignored, array $only, array $roots): array
+    {
         $skills = [];
         $warnings = [];
         $seenFiles = [];

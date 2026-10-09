@@ -7,20 +7,29 @@ namespace Pig\CodingAgent\Hooks;
 use Closure;
 use Pig\Ai\ImageContent;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\Ai\Model;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\Utils\Transcript;
 use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\ContextEvent;
+use Pig\CodingAgent\Hooks\Events\McpServersChangeEvent;
 use Pig\CodingAgent\Hooks\Events\ContextWithSystemEvent;
 use Pig\CodingAgent\Hooks\Events\BeforeProviderRequestEvent;
 use Pig\CodingAgent\Hooks\Events\BeforeProviderHeadersEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Boundary\BoundaryContextPreview;
+use Pig\CodingAgent\Hooks\Boundary\BoundaryDispatch;
+use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
+use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
+use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
+use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
 use Pig\CodingAgent\Hooks\Events\InputEvent;
+use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\Hooks\Events\UserBashEvent;
 use Pig\CodingAgent\Hooks\Results\InputEventResult;
 use Pig\CodingAgent\Hooks\Results\UserBashEventResult;
@@ -28,6 +37,9 @@ use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
+use Pig\CodingAgent\Hooks\Results\BoundaryResult;
+use Pig\CodingAgent\Hooks\Results\ProjectTrustEventResult;
+use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
@@ -35,6 +47,7 @@ use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
 /**
@@ -73,7 +86,7 @@ final class HookRunner
 
     private ?Closure $abort = null;
 
-    private ?Closure $hasQueuedMessages = null;
+    private ?Closure $hasPendingMessages = null;
 
     private ?Closure $getSignal = null;
 
@@ -82,6 +95,9 @@ final class HookRunner
     private ?\Pig\CodingAgent\Session\AgentSession $session = null;
 
     private ?HookUi $ui = null;
+
+    /** @var array<string, true> servers already reported as connected by nobody */
+    private array $reportedMcpServers = [];
 
     private readonly HookState $state;
 
@@ -116,7 +132,7 @@ final class HookRunner
      * @param Closure(): (Model|null) $getModel
      * @param Closure(): bool|null    $isIdle
      * @param Closure(): void|null    $abort
-     * @param Closure(): bool|null    $hasQueuedMessages
+     * @param Closure(): bool|null    $hasPendingMessages
      * @param Closure(): (AbortSignal|null)|null $signal the turn in progress's
      * @param HookUi|null                     $ui   the terminal's, when there is one
      * @param Closure(HookMessage, bool): void|null $send `$pi->sendMessage()`
@@ -126,7 +142,7 @@ final class HookRunner
         Closure $getModel,
         ?Closure $isIdle = null,
         ?Closure $abort = null,
-        ?Closure $hasQueuedMessages = null,
+        ?Closure $hasPendingMessages = null,
         ?Closure $signal = null,
         ?HookUi $ui = null,
         ?Closure $send = null,
@@ -138,10 +154,26 @@ final class HookRunner
         $this->getModel = $getModel;
         $this->isIdle = $isIdle;
         $this->abort = $abort;
-        $this->hasQueuedMessages = $hasQueuedMessages;
+        $this->hasPendingMessages = $hasPendingMessages;
         $this->getSignal = $signal;
         $this->getApiKey = $getApiKey;
-        $this->ui = $ui;
+
+        // Servers registered from now on reach the extension that connects them right away; the
+        // ones registered during loading are read with `getMcpServers()` on `session_start`.
+        // On the loop rather than inside the registering call, as upstream's `void this.emit()`
+        // is: a handler that connects a server awaits, and a factory registering one at load time
+        // is not in a fiber.
+        $registry = McpServerRegistry::current();
+        $registry->setChangeListener(function () use ($registry): void {
+            $servers = $registry->list();
+            Async::spawn(function () use ($servers): void {
+                $this->emit(new McpServersChangeEvent($servers));
+                $this->reportUnhandledMcpServers();
+            });
+        });
+
+        // `NoUi` answers without asking anybody, so there is no prompt to report around it.
+        $this->ui = $ui === null || $ui instanceof NoUi ? $ui : new PromptingUi($ui, $this->emit(...));
 
         // Handed to each hook's own API object rather than kept here, because that is the
         // object the hook closed over — `$pi->sendMessage()` inside a handler is a call on
@@ -277,6 +309,30 @@ final class HookRunner
     }
 
     /** Whether firing this event would reach anyone. */
+    /**
+     * Report registered MCP servers when no hook handles `mcp_servers_change`, which means nothing
+     * connects them (for example when another MCP extension replaced the built-in one).
+     */
+    public function reportUnhandledMcpServers(): void
+    {
+        if ($this->hasHandlers('mcp_servers_change')) {
+            return;
+        }
+
+        foreach (McpServerRegistry::current()->list() as $server) {
+            if (isset($this->reportedMcpServers[$server->name])) {
+                continue;
+            }
+
+            $this->reportedMcpServers[$server->name] = true;
+            $this->emitError(new HookError(
+                $server->extensionPath,
+                'register_mcp_server',
+                "MCP server \"{$server->name}\" is registered, but no loaded extension connects MCP servers; another extension may have replaced the built-in MCP support",
+            ));
+        }
+    }
+
     public function hasHandlers(string $event): bool
     {
         foreach ($this->hooks as $hook) {
@@ -364,7 +420,7 @@ final class HookRunner
             $this->getModel === null ? null : ($this->getModel)(),
             $this->isIdle,
             $this->abort,
-            $this->hasQueuedMessages,
+            $this->hasPendingMessages,
             $this->ui,
             // `NoUi` is not a UI. It answers every question without asking anybody, which is
             // exactly what a hook checking `hasUi` is trying to find out before it asks —
@@ -801,6 +857,110 @@ final class HookRunner
         }
 
         return false;
+    }
+
+    /**
+     * Ask the loaded extensions whether this project may be trusted, before its own `.pig/` is
+     * loaded. The first yes or no wins; `undecided` falls through. Upstream's
+     * `emitProjectTrustEvent()`, over the extensions loaded before trust — so the runner this is
+     * called on is a pre-trust one, built for the question.
+     */
+    public function emitProjectTrust(ProjectTrustEvent $event): ?ProjectTrustEventResult
+    {
+        return $this->ask($event, ProjectTrustEventResult::class, static fn (object $r): bool => $r->decided());
+    }
+
+    /**
+     * Collect the resource directories every `resources_discover` handler adds. Nothing stops
+     * the rest: each extension's directories are its own, and a handler that threw is reported
+     * and the others still answer. A relative path is resolved against the extension's directory.
+     */
+    public function emitResourcesDiscover(string $cwd, string $reason): DiscoveredResources
+    {
+        $event = new ResourcesDiscoverEvent($cwd, $reason);
+        $context = $this->context();
+        $skills = [];
+        $prompts = [];
+        $themes = [];
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers($event->type()) as $handler) {
+                try {
+                    $result = $handler($event, $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, $event->type(), $error);
+
+                    continue;
+                }
+
+                if ($result === null) {
+                    continue;
+                }
+
+                if (!$result instanceof ResourcesDiscoverResult) {
+                    $this->wrongType($hook, $event->type(), ResourcesDiscoverResult::class, $result);
+
+                    continue;
+                }
+
+                $base = dirname($hook->path);
+                $found = static fn (string $path): array => ['path' => Paths::resolve($path, $base), 'extensionPath' => $hook->path];
+                $skills = [...$skills, ...array_map($found, $result->skillPaths)];
+                $prompts = [...$prompts, ...array_map($found, $result->promptPaths)];
+                $themes = [...$themes, ...array_map($found, $result->themePaths)];
+            }
+        }
+
+        return new DiscoveredResources($skills, $prompts, $themes);
+    }
+
+    /**
+     * Upstream's `emitBoundary()`: every `agent_before_settle` handler in turn, each handed the
+     * entries and the `continue` the ones before it settled on and a fresh preview of the context
+     * with those entries applied. A handler's answer replaces either field it sets; a throw is
+     * reported and leaves them as they were. A preview that cannot be built from the entries is
+     * reported too, and the dispatch comes back `valid: false` — nothing of it is then appended.
+     *
+     * @param Closure(list<SessionBoundaryDraft>, bool, BoundaryContextPreview): AgentBeforeSettleEvent $event
+     * @param Closure(list<SessionBoundaryDraft>): BoundaryContextPreview $buildContext
+     */
+    public function emitBoundary(Closure $event, Closure $buildContext): BoundaryDispatch
+    {
+        $context = $this->context();
+        $entries = [];
+        $continue = false;
+        $preview = $buildContext($entries);
+        $valid = true;
+        $type = $event($entries, $continue, $preview)->type();
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers($type) as $handler) {
+                try {
+                    $result = $handler($event($entries, $continue, $preview), $context);
+
+                    if ($result instanceof BoundaryResult) {
+                        $entries = $result->entries ?? $entries;
+                        $continue = $result->continue ?? $continue;
+                    } elseif ($result !== null) {
+                        $this->wrongType($hook, $type, BoundaryResult::class, $result);
+                    }
+                } catch (Throwable $error) {
+                    $this->fail($hook, $type, $error);
+                }
+
+                try {
+                    $preview = $buildContext($entries);
+                    $valid = true;
+                } catch (Throwable $error) {
+                    $valid = false;
+                    $this->emitError(new HookError($hook->path, $type, 'Invalid boundary entries: ' . $error->getMessage()));
+                }
+            }
+        }
+
+        return $valid
+            ? new BoundaryDispatch($entries, $continue, $preview, true)
+            : new BoundaryDispatch([], false, $preview, false);
     }
 
     /** Ask whether to leave this conversation. The first refusal stops the rest. */

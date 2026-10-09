@@ -109,6 +109,37 @@ final class ProjectTrustGatesTest extends TestCase
         $this->assertStringEndsWith('/home/extensions/mine.php', $untrusted[0]->path);
     }
 
+    public function testTheTrustQuestionIsAskedOfThePersonsExtensionsBeforeTheProjectsLoad(): void
+    {
+        $extension = <<<'PHP'
+            <?php
+            return function ($pi): void { $pi->registerCommand('NAME', fn () => null, 'x'); };
+            PHP;
+        $this->put('home/extensions/mine.php', str_replace('NAME', 'mine', $extension));
+        $this->put('project/.pig/extensions/dot.php', str_replace('NAME', 'dot', $extension));
+        $this->put('elsewhere/listed.php', str_replace('NAME', 'listed', $extension));
+
+        $askedWith = null;
+        $decide = static function (array $loaded) use (&$askedWith): bool {
+            $askedWith = array_map(static fn ($ext) => $ext->name, $loaded);
+
+            return true;
+        };
+
+        [$trusted] = ExtensionLoader::load(
+            $this->cwd,
+            home: $this->home,
+            projectTrusted: $decide,
+            projectConfigured: fn (): array => [$this->root . '/elsewhere/listed.php'],
+        );
+
+        $this->assertSame(['mine'], $askedWith, 'the question is put to what loaded before the project');
+        $this->assertSame(['mine', 'dot', 'listed'], array_map(static fn ($ext) => $ext->name, $trusted));
+
+        [$untrusted] = ExtensionLoader::load($this->cwd, home: $this->home, projectTrusted: static fn (): bool => false);
+        $this->assertSame(['mine'], array_map(static fn ($ext) => $ext->name, $untrusted));
+    }
+
     public function testProjectCommandsAreLeftOut(): void
     {
         $this->put('home/commands/mine.md', "mine\n");

@@ -25,6 +25,14 @@ class Loader extends Text
     /** @var list<string> */
     private const array FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+    /** @var list<string> the frames in use; upstream's `setIndicator()` replaces them */
+    private array $frames = self::FRAMES;
+
+    private float $frameSeconds = self::FRAME_SECONDS;
+
+    /** Custom frames are drawn as given, without the spinner colour, as upstream draws them. */
+    private bool $verbatim = false;
+
     private int $frame = 0;
 
     private ?string $timer = null;
@@ -82,11 +90,32 @@ class Loader extends Text
         return $this->running;
     }
 
+    /**
+     * Upstream's `setIndicator()`: no argument restores the default spinner, `frames: ['●']`
+     * is a still mark, `frames: []` hides the indicator, and custom frames are drawn verbatim.
+     *
+     * @param array{frames?: list<string>, intervalMs?: int}|null $indicator
+     */
+    public function setIndicator(?array $indicator = null): void
+    {
+        $this->verbatim = $indicator !== null;
+        $this->frames = $indicator['frames'] ?? self::FRAMES;
+        $interval = $indicator['intervalMs'] ?? 0;
+        $this->frameSeconds = $interval > 0 ? $interval / 1000 : self::FRAME_SECONDS;
+        $this->frame = 0;
+        $this->stop();
+        $this->start();
+    }
+
     public function withTimer(bool $withTimer = true, ?float $startedAt = null): self
     {
         $this->withTimer = $withTimer;
         $this->startedAt = $withTimer ? ($startedAt ?? microtime(true)) : null;
         $this->update();
+
+        if ($this->running && $this->timer === null) {
+            $this->schedule();
+        }
 
         return $this;
     }
@@ -117,7 +146,10 @@ class Loader extends Text
             }
         }
 
-        return ($this->spinnerStyle)(self::FRAMES[$this->frame]) . ' ' . ($this->messageStyle)($msg);
+        $frame = $this->frames[$this->frame] ?? '';
+        $indicator = $frame === '' ? '' : ($this->verbatim ? $frame : ($this->spinnerStyle)($frame)) . ' ';
+
+        return $indicator . ($this->messageStyle)($msg);
     }
 
     public function setMessage(string $message): void
@@ -128,7 +160,13 @@ class Loader extends Text
 
     private function schedule(): void
     {
-        $this->timer = Loop::get()->delay(self::FRAME_SECONDS, function (): void {
+        // A single frame or none is a still indicator: nothing to animate, so no timer to
+        // keep the loop awake — unless the elapsed time is on the line, which ticks anyway.
+        if (count($this->frames) <= 1 && !$this->withTimer) {
+            return;
+        }
+
+        $this->timer = Loop::get()->delay($this->frameSeconds, function (): void {
             // The id that just fired is spent, so it is dropped before anything else can
             // ask to cancel it — and `running` is what decides whether to go round again,
             // so a stop() from inside the redraw below is not undone by the reschedule.
@@ -138,7 +176,7 @@ class Loader extends Text
                 return;
             }
 
-            $this->frame = ($this->frame + 1) % count(self::FRAMES);
+            $this->frame = ($this->frame + 1) % count($this->frames);
             $this->update();
             $this->schedule();
         });

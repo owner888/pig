@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
+use Pig\CodingAgent\Interactive\CustomEditor;
+use Pig\CodingAgent\Keybindings;
+use Pig\Tui\Autocomplete\AutocompleteProvider;
+use Pig\Tui\Components\EditorTheme;
+use Pig\Tui\TUI;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\ThemeInfo;
 
@@ -121,6 +126,15 @@ interface HookUi
     /** Show or hide the working loader explicitly. Upstream's `setWorkingVisible()`. */
     public function setWorkingVisible(bool $visible): void;
 
+    /**
+     * Configure the working indicator shown during streaming: no argument restores the default
+     * spinner, `['frames' => ['●']]` is a still mark, `['frames' => []]` hides it. Custom frames
+     * are drawn as given, so an extension adds its own colours.
+     *
+     * @param array{frames?: list<string>, intervalMs?: int}|null $options
+     */
+    public function setWorkingIndicator(?array $options = null): void;
+
     /** Set label for hidden thinking blocks. Upstream's `setHiddenThinkingLabel()`. */
     public function setHiddenThinkingLabel(?string $label = null): void;
 
@@ -169,4 +183,26 @@ interface HookUi
      * @return Closure(): void unregister callback
      */
     public function onTerminalInput(callable $handler): Closure;
+
+    /**
+     * Stack autocomplete behaviour on top of the built-in provider. Upstream's
+     * `addAutocompleteProvider()`: the factory is handed the provider as it stands and answers
+     * the one to use — wrapping it, usually. Applied again on `/reload`, in the order added.
+     *
+     * @param Closure(AutocompleteProvider): AutocompleteProvider $factory
+     */
+    public function addAutocompleteProvider(Closure $factory): void;
+
+    /**
+     * Replace the prompt with an editor of the extension's own, or restore the default with null.
+     * Upstream's `setEditorComponent()`: the factory is handed the TUI, the editor theme and the
+     * keybindings and answers a `CustomEditor` — a subclass whose `handleInput()` calls
+     * `parent::handleInput()` for the keys it does not take keeps every app binding.
+     *
+     * @param (Closure(TUI, EditorTheme, Keybindings): CustomEditor)|null $factory
+     */
+    public function setEditorComponent(?Closure $factory): void;
+
+    /** The factory in use, or null for the default editor. */
+    public function getEditorComponent(): ?Closure;
 }

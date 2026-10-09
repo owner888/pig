@@ -10,8 +10,11 @@ use Pig\CodingAgent\Hooks\HookEvent;
 final readonly class AgentSettledEvent implements HookEvent
 {
     /** @param list<mixed> $messages */
-    public function __construct(public array $messages = [])
-    {
+    public function __construct(
+        public array $messages = [],
+        /** Whether the run ended because it was aborted, for example with Escape. */
+        public bool $aborted = false,
+    ) {
     }
 
     public function type(): string

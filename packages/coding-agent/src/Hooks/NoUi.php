@@ -103,6 +103,11 @@ final readonly class NoUi implements HookUi
     }
 
     #[\Override]
+    public function setWorkingIndicator(?array $options = null): void
+    {
+    }
+
+    #[\Override]
     public function setHiddenThinkingLabel(?string $label = null): void
     {
     }
@@ -155,5 +160,21 @@ final readonly class NoUi implements HookUi
     public function onTerminalInput(callable $handler): Closure
     {
         return static fn () => null;
+    }
+
+    #[\Override]
+    public function addAutocompleteProvider(Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function setEditorComponent(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function getEditorComponent(): ?Closure
+    {
+        return null;
     }
 }

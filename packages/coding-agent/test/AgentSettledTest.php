@@ -33,11 +33,20 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Hooks\Boundary\CompactionDraft;
+use Pig\CodingAgent\Hooks\Boundary\ContextEditDraft;
+use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
+use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
+use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
 use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookError;
+use Pig\CodingAgent\Hooks\Results\BoundaryResult;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Settings;
 use RuntimeException;
@@ -359,6 +368,115 @@ final class AgentSettledTest extends TestCase
         $this->assertSettledOnceAtTheEnd();
     }
 
+    // ---- agent_before_settle -------------------------------------------------------------
+
+    public function testABeforeSettleHandlerCanAppendAMessageAndAskForOneMoreRequest(): void
+    {
+        $seen = [];
+        $session = $this->start(['first', 'second'], static function (HookApi $pi) use (&$seen): void {
+            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$seen): ?BoundaryResult {
+                $seen[] = [$event->outcome, $event->continue, $event->context->canContinue, count($event->context->pendingMessages)];
+
+                if (count($seen) > 1) {
+                    return null;
+                }
+
+                return new BoundaryResult(
+                    entries: [new CustomMessageDraft('nudge', 'one more thing'), new CustomEntryDraft('note', ['n' => 1])],
+                    continue: true,
+                );
+            });
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+
+        $messages = $session->messages();
+        $this->assertSame('second', self::textOf($messages[count($messages) - 1]), 'the request the handler asked for was made');
+        $this->assertInstanceOf(HookMessage::class, $messages[count($messages) - 2], 'the drafted message is in the conversation, in front of it');
+        $this->assertSame([['completed', false, false, 0], ['completed', false, false, 0]], $seen, 'asked once per boundary: before the first answer settled, and again after the second');
+        $this->assertSettledOnceAtTheEnd();
+    }
+
+    public function testAContinueTheContextCannotCarryIsRefusedAndReported(): void
+    {
+        $errors = [];
+        $session = $this->start(['first', 'second'], static function (HookApi $pi): void {
+            $pi->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(continue: true));
+        });
+        $session->hooks()?->onError(static function (HookError $error) use (&$errors): void {
+            $errors[] = $error->error;
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+
+        $messages = $session->messages();
+        $this->assertSame('first', self::textOf($messages[count($messages) - 1]), 'nothing was appended, so a second request would end on the assistant\'s turn');
+        $this->assertSame(['agent_before_settle requested continuation without runnable model context'], $errors);
+        $this->assertSettledOnceAtTheEnd();
+    }
+
+    public function testAHandlerSeesWhatTheOneBeforeItDraftedAndAnEditOfNothingIsRefused(): void
+    {
+        $second = null;
+        $session = $this->start(['first'], static function (HookApi $pi) use (&$second): void {
+            $pi->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(entries: [new CustomMessageDraft('a', 'from a')]));
+            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$second): BoundaryResult {
+                $second = $event;
+
+                return new BoundaryResult(entries: [...$event->entries, new ContextEditDraft('no-such-entry')]);
+            });
+        });
+        $errors = [];
+        $session->hooks()?->onError(static function (HookError $error) use (&$errors): void {
+            $errors[] = $error->error;
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+
+        $this->assertCount(1, $second->entries);
+        $this->assertTrue($second->context->canContinue, 'the first handler\'s message would let a request go');
+        $this->assertStringStartsWith('Invalid boundary entries:', $errors[0] ?? '');
+        $this->assertNotInstanceOf(HookMessage::class, $session->messages()[count($session->messages()) - 1], 'an invalid list appends nothing, not even its good half');
+        $this->assertSettledOnceAtTheEnd();
+    }
+
+    public function testADraftedCompactionReachesTheFileAndTheAgentsOwnState(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-settle-' . bin2hex(random_bytes(4));
+        $store = SessionManager::create($dir);
+        $session = $this->start(['first', 'second'], static function (HookApi $pi): void {
+            $once = false;
+            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$once): ?BoundaryResult {
+                if ($once) {
+                    return null;
+                }
+
+                $once = true;
+                // Keep nothing but the summary, then ask the model what it was about.
+                return new BoundaryResult(
+                    entries: [new CompactionDraft('we said hi'), new CustomMessageDraft('ask', 'what did we say?')],
+                    continue: true,
+                );
+            });
+        }, store: $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+
+        $messages = $session->messages();
+        $this->assertInstanceOf(CompactionSummary::class, $messages[1] ?? null, 'the agent now holds the compacted conversation');
+        $this->assertTrue($messages[1]->fromHook);
+        $this->assertSame('second', self::textOf($messages[count($messages) - 1]));
+
+        $reopened = SessionManager::open($store->path)->messages();
+        $this->assertSame(array_map(get_class(...), $messages), array_map(get_class(...), $reopened), 'and the file projects the same');
+        $this->assertSettledOnceAtTheEnd();
+        exec('rm -rf ' . escapeshellarg($dir));
+    }
+
     // ---- helpers ------------------------------------------------------------------------
 
     private function assertSettledOnceAtTheEnd(): void
@@ -389,7 +507,7 @@ final class AgentSettledTest extends TestCase
      * @param list<string|array{error: string}|array{tool: string}> $script
      * @param (Closure(HookApi): void)|null $register
      */
-    private function start(array $script, ?Closure $register = null, ?Settings $settings = null, bool $extension = false): AgentSession
+    private function start(array $script, ?Closure $register = null, ?Settings $settings = null, bool $extension = false, ?SessionManager $store = null): AgentSession
     {
         $this->script = $script;
         $api = $extension ? new ExtensionApi('.', 'test.php', 'test') : new HookApi('.', 'test.php');
@@ -418,7 +536,7 @@ final class AgentSettledTest extends TestCase
         $agent->setModel(new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
         $agent->setTools([$this->tool()]);
 
-        $session = new AgentSession($agent, sys_get_temp_dir(), null, $settings ?? Settings::inMemory(['retry' => ['baseDelayMs' => 1]]), $hooks);
+        $session = new AgentSession($agent, sys_get_temp_dir(), $store, $settings ?? Settings::inMemory(['retry' => ['baseDelayMs' => 1]]), $hooks);
         $this->session = $session;
 
         $hooks->initialize(

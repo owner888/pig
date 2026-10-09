@@ -7,6 +7,7 @@ namespace PigMcp;
 use Closure;
 use Pig\Async\Async;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Version;
 use Pig\Tui\Style;
@@ -388,7 +389,7 @@ final class McpCli
             $config['exposure'] = $values['exposure'];
         }
 
-        $validated = McpConfig::validate($name, $config);
+        $validated = McpServers::validate($name, $config);
 
         if (is_string($validated)) {
             ($this->err)($validated);

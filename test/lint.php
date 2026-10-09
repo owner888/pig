@@ -278,6 +278,32 @@ function uncapturedClosureReads(string $source): array
                 }
             }
 
+            if ($tok->is(T_NEW) && next_token($tokens, $j)?->is(T_CLASS)) {
+                // An anonymous class: its methods are scopes of their own, not this closure's
+                // (`new class($base) { … }` — the constructor arguments before the body are ours).
+                $bo = $j;
+                $pd = 0;
+                while ($bo < $close && !($tokens[$bo]->text === '{' && $pd === 0)) {
+                    if ($tokens[$bo]->text === '(') {
+                        $pd++;
+                    } elseif ($tokens[$bo]->text === ')') {
+                        $pd--;
+                    }
+                    $bo++;
+                }
+                $d = 0;
+                for ($bc = $bo; $bc < $close; $bc++) {
+                    if ($tokens[$bc]->text === '{' || $tokens[$bc]->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
+                        $d++;
+                    } elseif ($tokens[$bc]->text === '}' && --$d === 0) {
+                        break;
+                    }
+                }
+                $nested[] = [$bo, $bc, $bo, $bo];
+                $j = $bc;
+                continue;
+            }
+
             if ($tok->is(T_FN)) {
                 // Arrow fn: its params are its own; its body reads the enclosing scope, which is us.
                 $po = $j;

@@ -97,6 +97,24 @@ final class ToolLoadout
     }
 
     /**
+     * The skills extensions added through `resources_discover`, on top of what was loaded off
+     * disk; a same-named one replaces it, as a later root replaces an earlier one in `Skills`.
+     *
+     * @param list<Skill> $skills
+     */
+    public function addSkills(array $skills): void
+    {
+        $byName = [];
+
+        foreach ([...$this->skills, ...$skills] as $skill) {
+            $byName[$skill->name] = $skill;
+        }
+
+        $this->skills = array_values($byName);
+        $this->apply();
+    }
+
+    /**
      * Hand the agent the tools that are active now, and work out the system prompt that names them.
      *
      * Upstream's `_applyToolLoadout()` and `_rebuildSystemPrompt()`: the tools go on the agent,

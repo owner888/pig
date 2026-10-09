@@ -43,7 +43,7 @@ final readonly class HookContext
     /**
      * @param Closure(): bool|null $isIdle            whether the agent is between runs
      * @param Closure(): void|null $abort             stop whatever is running
-     * @param Closure(): bool|null $hasQueuedMessages whether someone typed while it worked
+     * @param Closure(): bool|null $hasPendingMessages whether someone typed while it worked
      * @param HookUi|null          $ui                `NoUi` when there is no terminal
      * @param AbortSignal|null     $signal            the turn in progress's, null between
      *        turns — what a handler's own waiting should park on, so escape cuts it short
@@ -56,7 +56,7 @@ final readonly class HookContext
         public ?Model $model = null,
         private ?Closure $isIdle = null,
         private ?Closure $abort = null,
-        private ?Closure $hasQueuedMessages = null,
+        private ?Closure $hasPendingMessages = null,
         ?HookUi $ui = null,
         public bool $hasUi = false,
         public ?AbortSignal $signal = null,
@@ -150,9 +150,9 @@ final readonly class HookContext
         }
     }
 
-    public function hasQueuedMessages(): bool
+    public function hasPendingMessages(): bool
     {
-        return $this->hasQueuedMessages !== null && ($this->hasQueuedMessages)();
+        return $this->hasPendingMessages !== null && ($this->hasPendingMessages)();
     }
 
     // ---- upstream's ExtensionContext, the parts that need the session -------------------
@@ -170,6 +170,17 @@ final readonly class HookContext
     public function thinkingLevel(): ?ThinkingLevel
     {
         return $this->session?->thinkingLevel();
+    }
+
+    /**
+     * Upstream's `scopedModels`: what `--models` narrowed this session to, each with the thinking
+     * level its pattern named, or empty when nothing is scoped and every available model is usable.
+     *
+     * @return list<\Pig\CodingAgent\ModelChoice>
+     */
+    public function scopedModels(): array
+    {
+        return $this->session?->modelScope() ?? [];
     }
 
     /** Whether `<cwd>/.pig/` was allowed to load. */

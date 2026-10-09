@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent;
 
 use Closure;
+use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
+use Pig\CodingAgent\Hooks\HookRunner;
 use RuntimeException;
 
 /**
@@ -184,17 +186,33 @@ final class ProjectTrust
     }
 
     /**
-     * Decide: nothing to gate means yes, a saved answer wins, otherwise ask — and with nobody
-     * to ask, **no**. That last one is upstream's and the only safe direction: `-p` on a
-     * stranger's repository must not run its hooks because there was no terminal to refuse on.
+     * Decide: nothing to gate means yes, an extension that answers wins, then a saved answer,
+     * otherwise ask — and with nobody to ask, **no**. That last one is upstream's and the only
+     * safe direction: `-p` on a stranger's repository must not run its hooks because there was
+     * no terminal to refuse on.
      *
      * @param (Closure(list<TrustChoice>): ?TrustChoice)|null $ask draws the question; null
      *        (escape) is "do not trust, this session only"
+     * @param HookRunner|null $extensions the extensions loaded before trust — the person's and
+     *        the command line's — asked `project_trust` first, as upstream asks them. One that
+     *        says `remember` is saved like an answer at the prompt.
      */
-    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null): bool
+    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?HookRunner $extensions = null): bool
     {
         if (!self::hasResources($cwd)) {
             return true;
+        }
+
+        $answer = $extensions?->emitProjectTrust(new ProjectTrustEvent($cwd));
+
+        if ($answer !== null) {
+            $trusted = $answer->trusted === 'yes';
+
+            if ($answer->remember) {
+                self::remember([$cwd => $trusted], $home);
+            }
+
+            return $trusted;
         }
 
         $saved = self::decision($cwd, $home);

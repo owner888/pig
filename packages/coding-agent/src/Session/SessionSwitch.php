@@ -12,7 +12,7 @@ namespace Pig\CodingAgent\Session;
  * hook stopped that" and stays put, and RPC answers `{"cancelled": true}`. Everything that
  * can genuinely go wrong (no such file, a new one that cannot be created) still throws.
  *
- * `previous` is the file being left, which is what both the `session_switch` hook and the
+ * `previous` is the file being left, which is what both the `session_start` hook and the
  * custom tools are told, and it is null for a session that was never being written down.
  * `messages` is how many came back, for a caller that says so on screen.
  */

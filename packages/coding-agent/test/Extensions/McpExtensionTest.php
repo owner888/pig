@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test\Extensions;
 
+use Pig\CodingAgent\McpServerRegistry;
+use Pig\CodingAgent\McpServers;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Test\GlobalThemeFixture;
 use Pig\Agent\AgentError;
@@ -40,6 +42,7 @@ final class McpExtensionTest extends TestCase
         $this->setUpGlobalTheme();
         Loop::reset();
         \Pig\Codemode\Registry::reset();
+        McpServerRegistry::reset();
         $this->root = sys_get_temp_dir() . '/pig-mcp-ext-' . bin2hex(random_bytes(4));
         $this->home = $this->root . '/home';
         $this->cwd = $this->root . '/project';
@@ -137,8 +140,8 @@ final class McpExtensionTest extends TestCase
 
     public function testABadServerNameIsRefused(): void
     {
-        $this->assertStringContainsString('invalid server name', McpConfig::validate('my server', ['command' => 'x']));
-        $this->assertIsArray(McpConfig::validate('my-server_2', ['command' => 'x']));
+        $this->assertStringContainsString('invalid server name', McpServers::validate('my server', ['command' => 'x']));
+        $this->assertIsArray(McpServers::validate('my-server_2', ['command' => 'x']));
     }
 
     public function testToolExposureExactWinsThenFirstPatternThenTheServers(): void
@@ -153,7 +156,7 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('codemode', McpConfig::toolExposure([], 'x'), "upstream's default, before pig's mapping");
 
         // All five of upstream's are pig's own now that codemode is ported; a sixth lands on the default.
-        foreach (McpConfig::EXPOSURES as $exposure) {
+        foreach (McpServers::EXPOSURES as $exposure) {
             $this->assertSame($exposure, McpConfig::here($exposure));
         }
 
@@ -347,6 +350,78 @@ final class McpExtensionTest extends TestCase
         // `broken` names no exposure, so it has upstream's default, which is codemode.
         $this->assertStringContainsString('broken: failed (codemode)', $status);
         $this->assertStringContainsString('MCP connection closed', $status);
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Loop::get()->tick();
+        $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
+    }
+
+    public function testAServerAnExtensionRegistersIsConnectedAndTakenAwayWhenItUnregisters(): void
+    {
+        // `mcp.json` names `fixture`, so the registered `fixture` is overridden and only `reg` connects.
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
+        ]]));
+        $fixture = var_export(self::fixtureServer(), true);
+        $registrar = $this->root . '/registrar.php';
+        file_put_contents($registrar, <<<PHP
+        <?php
+        use Pig\\CodingAgent\\Extensions\\ExtensionApi;
+        return static function (ExtensionApi \$pi): void {
+            \$pi->registerMcpServer('reg', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
+            \$pi->registerMcpServer('fixture', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
+            \$pi->registerCommand('unreg', static fn () => \$pi->unregisterMcpServer('reg'));
+            \$pi->registerCommand('rereg', static fn () => \$pi->registerMcpServer('late', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']));
+        };
+        PHP);
+
+        $repo = dirname(__DIR__, 4);
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php', $registrar], home: $this->home);
+        $this->assertSame([], $errors);
+        $this->assertCount(2, $loaded);
+        [$mcp, $reg] = $loaded;
+
+        $set = new CustomToolSet([]);
+        $set->adopt($mcp);
+        $hooks = new HookRunner([new LoadedHook($mcp->path, $mcp->resolved, $mcp->api), new LoadedHook($reg->path, $reg->resolved, $reg->api)], $this->cwd);
+        $ui = new NoticingUi();
+        $hooks->initialize(static fn () => null, ui: $ui);
+
+        Async::run(function () use ($hooks): void {
+            $hooks->emit(new SessionStartEvent());
+            $hooks->emitBeforeAgentStart('hi');
+        });
+
+        $names = $set->names();
+        sort($names);
+        $this->assertSame(['mcp__fixture__echo', 'mcp__reg__echo'], $names, 'the file\'s server and the registered one, once each');
+
+        // `/mcp` says whose the registered one is, and that the file won the other name.
+        $command = $mcp->api->commands()['mcp'] ?? null;
+        Async::run(function () use ($command, $ui): void {
+            ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
+        });
+        $status = end($ui->notices);
+        $this->assertStringContainsString('reg: connected, 1 tools (direct)', $status);
+        $this->assertStringContainsString('"fixture" registered by ' . $registrar . ' is overridden by "fixture" in', $status);
+
+        // Unregistered mid-session: `mcp_servers_change` closes it and its tool goes.
+        $unreg = $reg->api->commands()['unreg'];
+        Async::run(function () use ($unreg): void {
+            ($unreg->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.'));
+        });
+        $this->turn();
+        $this->assertSame(['mcp__fixture__echo'], $set->names());
+
+        // Registered mid-session: connected right away.
+        $rereg = $reg->api->commands()['rereg'];
+        Async::run(function () use ($rereg): void {
+            ($rereg->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.'));
+        });
+        $this->until(static fn (): bool => in_array('mcp__late__echo', $set->names(), true));
+        $names = $set->names();
+        sort($names);
+        $this->assertSame(['mcp__fixture__echo', 'mcp__late__echo'], $names);
 
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
         Loop::get()->tick();
@@ -1132,7 +1207,7 @@ final class McpExtensionTest extends TestCase
             $tui,
             $chat,
             $overlay,
-            $editor,
+            static fn () => $editor,
             new \Pig\CodingAgent\Interactive\FooterComponent(
                 new \Pig\CodingAgent\Session\AgentSession(new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions()), sys_get_temp_dir()),
                 sys_get_temp_dir(),

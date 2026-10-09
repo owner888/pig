@@ -62,6 +62,12 @@ use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\ProbeModels;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
+use Pig\Tui\Autocomplete\AutocompleteItem;
+use Pig\Tui\Autocomplete\AutocompleteProvider;
+use Pig\Tui\Autocomplete\Completion;
+use Pig\Tui\Autocomplete\Suggestions;
+use Pig\Tui\Components\Editor;
+use Pig\CodingAgent\Interactive\CustomEditor;
 use Pig\Tui\TuiAltScreen;
 use Pig\Tui\Width;
 use Pig\Tui\Components\Text;
@@ -2260,7 +2266,7 @@ final class InteractiveModeTest extends TestCase
         // Upstream's model selector lists `getAvailable()`. A picker that offers a model whose
         // every turn will fail is a picker that teaches people not to read it.
         $this->assertStringContainsString('openai', $screen);
-        $this->assertStringNotContainsString('anthropic', $screen);
+        $this->assertStringNotContainsString('anthropic ·', $screen);
     }
 
     public function testAPatternForAProviderWithNoKeyMatchesNothing(): void
@@ -3021,6 +3027,96 @@ final class InteractiveModeTest extends TestCase
 
         $release();
         $this->settle();
+    }
+
+    public function testAnExtensionCanStackItsOwnCompletionsOnTheBuiltInOnes(): void
+    {
+        $api = new HookApi($this->cwd, 'completer.php');
+        $api->on('session_start', static function ($event, $ctx): void {
+            $ctx->ui->addAutocompleteProvider(static fn (AutocompleteProvider $base): AutocompleteProvider => new class($base) implements AutocompleteProvider {
+                public function __construct(private readonly AutocompleteProvider $base)
+                {
+                }
+
+                #[\Override]
+                public function suggestions(array $lines, int $cursorLine, int $cursorCol): ?Suggestions
+                {
+                    $before = substr($lines[$cursorLine] ?? '', 0, $cursorCol);
+
+                    return str_starts_with($before, '/zz')
+                        ? new Suggestions([new AutocompleteItem('zz-from-extension')], $before)
+                        : $this->base->suggestions($lines, $cursorLine, $cursorCol);
+                }
+
+                #[\Override]
+                public function apply(array $lines, int $cursorLine, int $cursorCol, AutocompleteItem $item, string $prefix): Completion
+                {
+                    return $this->base->apply($lines, $cursorLine, $cursorCol, $item, $prefix);
+                }
+            });
+        });
+
+        $this->start(hooks: $this->runner($api, 'completer.php'));
+        $this->type('/');
+        $this->type('zz');
+
+        $this->assertStringContainsString('zz-from-extension', $this->screen());
+
+        // The built-ins are still underneath: the wrapper hands anything else on.
+        $this->type(self::ESC);
+        $this->type("\x03");
+        $this->type('/');
+        $this->type('hel');
+        $this->assertStringContainsString('Show the keys and commands', $this->screen());
+    }
+
+    public function testAnExtensionCanPutItsOwnPromptInPlaceAndTakeItBack(): void
+    {
+        $api = new HookApi($this->cwd, 'vim.php');
+        $api->registerCommand('vim', static function (string $arguments, $ctx): void {
+            if ($ctx->ui->getEditorComponent() !== null) {
+                $ctx->ui->setEditorText('kept');
+                $ctx->ui->setEditorComponent(null);
+
+                return;
+            }
+
+            $ctx->ui->setEditorComponent(static fn ($tui, $theme, $keybindings): CustomEditor => new class(new Editor($theme), $keybindings) extends CustomEditor {
+                #[\Override]
+                public function handleInput(string $data): void
+                {
+                    // A prompt of its own: `Z` means something to it and never reaches the text.
+                    if ($data !== 'Z') {
+                        parent::handleInput($data);
+                    }
+                }
+            });
+        });
+
+        $this->start(hooks: $this->runner($api, 'vim.php'));
+        $this->type('/vim');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('x');
+        $this->type('Z');
+        $this->type('y');
+        $this->assertStringContainsString('xy', $this->screen());
+        $this->assertStringNotContainsString('xZy', $this->screen());
+
+        // The app's own keys still work from inside it: ctrl+c clears, and Enter submits.
+        $this->type("\x03");
+        $this->type('/help');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('/compact', $this->screen());
+
+        // Back to the default, with the text the extension left in it.
+        $this->type('/vim');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type('Z');
+        $this->assertStringContainsString('keptZ', $this->screen());
     }
 
     private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner

@@ -239,18 +239,31 @@ if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
     exit(1);
 }
 
-// Whether this project's own `.pig/` may be loaded at all — asked **before** the settings, because
-// `.pig/settings.json` is one of the things being asked about. A project with nothing to gate is
-// trusted without a question; a saved answer wins; otherwise the terminal asks, and a mode with
-// no terminal answers no. The prompt's theme comes from the person's own settings alone, since
-// the project's are exactly what is not yet allowed in.
+// Whether this project's own `.pig/` may be loaded at all is decided **after** the person's own
+// extensions have loaded, because they are asked first (`project_trust`), and before anything of
+// the project's is read — its `.pig/settings.json` is one of the things being asked about. So the
+// settings start as the person's alone, and are read again with the project's once it is trusted.
+// A project with nothing to gate is trusted without a question; an extension that answers wins;
+// a saved answer next; otherwise the terminal asks, and a mode with no terminal answers no.
 // `--list-models` and `--export` print and exit without loading anything of the project's, so
 // they are not asked either.
 $startsASession = !isset($options['list-models']) && !isset($options['export']);
-$projectTrusted = ProjectTrust::resolve($cwd, $interactive && $startsASession
-    ? static function (array $choices) use ($cwd, $options): ?Pig\CodingAgent\TrustChoice {
-        $own = Settings::load($cwd, projectTrusted: false);
-        $themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $own->theme());
+$trustUndecided = ProjectTrust::hasResources($cwd);
+$projectTrusted = !$trustUndecided;
+
+// The order everywhere below: what was typed, then the environment, then what was chosen
+// last time, then the built-in default.
+$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd, projectTrusted: $projectTrusted);
+
+foreach ($settings->problems() as $problem) {
+    fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
+}
+
+// The prompt's theme comes from the person's own settings, since the project's are exactly what
+// is not yet allowed in.
+$askTrust = $interactive && $startsASession
+    ? static function (array $choices) use ($cwd, $options, &$settings): ?Pig\CodingAgent\TrustChoice {
+        $themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
         $themeError = Themes::initTheme(Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()));
         if ($themeError !== null) {
             fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
@@ -258,61 +271,51 @@ $projectTrusted = ProjectTrust::resolve($cwd, $interactive && $startsASession
 
         return TrustPrompt::ask($cwd, $choices);
     }
-    : null);
-Timings::mark('trust');
-
-// The order everywhere below: what was typed, then the environment, then what was chosen
-// last time, then the built-in default.
-$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd, projectTrusted: $projectTrusted);
-// The project's `.pig/themes` and `.pi/themes` are the project's resources, so they wait for trust
-// like its settings do.
-Themes::setCustomThemesCwd($projectTrusted ? $cwd : null);
-// What `--theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
-// Null is upstream's default, the system theme.
-$themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
-
-foreach ($settings->problems() as $problem) {
-    fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
-}
+    : null;
 
 Timings::mark('settings');
 
 // Before anything opens a socket, which the first token refresh in `Auth::discover()` already
-// does. `--proxy`, then the environment, then the settings file — the order stated above.
-if (isset($options['no-proxy'])) {
-    HttpClient::useProxy(null);
-} else {
-    try {
-        $proxy = isset($options['proxy']) && $options['proxy'] !== ''
-            ? Proxy::parse($options['proxy'], $settings->proxyBypass())
-            : Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
+// does. `--proxy`, then the environment, then the settings file — the order stated above. A
+// closure because it runs again should a trusted project's settings arrive with a proxy or a
+// timeout of their own.
+$configureHttp = static function (Settings $settings) use ($options): void {
+    if (isset($options['no-proxy'])) {
+        HttpClient::useProxy(null);
+    } else {
+        try {
+            $proxy = isset($options['proxy']) && $options['proxy'] !== ''
+                ? Proxy::parse($options['proxy'], $settings->proxyBypass())
+                : Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
 
-        if ($proxy === null && $settings->proxyUrl() !== null) {
-            $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+            if ($proxy === null && $settings->proxyUrl() !== null) {
+                $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+            }
+
+            HttpClient::useProxy($proxy);
+        } catch (HttpError $error) {
+            // Named and fatal rather than falling back to a direct connection: in the network a
+            // proxy is for, "direct" is not a worse route, it is no route, and a run that quietly
+            // tried it would report the provider as unreachable and send somebody looking at the
+            // wrong thing.
+            fwrite(STDERR, Style::red('proxy: ' . $error->getMessage() . "\n"));
+
+            exit(1);
         }
-
-        HttpClient::useProxy($proxy);
-    } catch (HttpError $error) {
-        // Named and fatal rather than falling back to a direct connection: in the network a proxy
-        // is for, "direct" is not a worse route, it is no route, and a run that quietly tried it
-        // would report the provider as unreachable and send somebody looking at the wrong thing.
-        fwrite(STDERR, Style::red('proxy: ' . $error->getMessage() . "\n"));
-
-        exit(1);
     }
-}
 
+    // Upstream's `configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs())`: how long a
+    // request may sit with nothing arriving — its response head, or the next piece of its body —
+    // before it fails. 300 seconds unless `httpIdleTimeoutMs` says otherwise; `disabled` (0) waits
+    // forever. A setting that is not a duration says so and keeps the default.
+    try {
+        HttpClient::useIdleTimeout($settings->httpIdleTimeoutMs() / 1000);
+    } catch (\RuntimeException $error) {
+        fwrite(STDERR, Style::yellow('settings: ' . $error->getMessage() . "\n"));
+    }
+};
+$configureHttp($settings);
 Timings::mark('proxy');
-
-// Upstream's `configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs())`: how long a request
-// may sit with nothing arriving — its response head, or the next piece of its body — before it
-// fails. 300 seconds unless `httpIdleTimeoutMs` says otherwise; `disabled` (0) waits forever. A
-// setting that is not a duration says so and keeps the default.
-try {
-    HttpClient::useIdleTimeout($settings->httpIdleTimeoutMs() / 1000);
-} catch (\RuntimeException $error) {
-    fwrite(STDERR, Style::yellow('settings: ' . $error->getMessage() . "\n"));
-}
 
 // Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
@@ -355,12 +358,54 @@ foreach ($custom->problems as $problem) {
     fwrite(STDERR, Style::yellow("models.json: {$problem}\n"));
 }
 
+Timings::mark('customModels');
+
 // And the providers the extensions bring, for the same reason `models.json` is read before
 // `--list-models`: a listing that cannot show a model an installed extension sells is a listing
 // nobody will trust about the rest. `--no-extensions` skips them. Loaded once: the result is
 // handed to `CodingAgent::session()` below, because a factory run twice is an MCP server
 // connected twice.
 $preloadedExtensions = null;
+
+// Once trust is decided, whichever way: the project's settings join the person's, and what was
+// read off the person's alone is read again with them.
+$settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings, $cwd, $options, $configureHttp): void {
+    $projectTrusted = $trusted;
+
+    if ($trusted && !isset($options['no-save'])) {
+        $own = $settings->problems();
+        $settings = Settings::load($cwd, projectTrusted: true);
+
+        foreach (array_diff($settings->problems(), $own) as $problem) {
+            fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
+        }
+
+        \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($settings);
+        $configureHttp($settings);
+    }
+
+    // The project's `.pig/themes` and `.pi/themes` are the project's resources, so they wait for
+    // trust like its settings do.
+    Themes::setCustomThemesCwd($trusted ? $cwd : null);
+};
+
+// `project_trust`, over the extensions loaded before the project's: the first yes or no wins over
+// a saved answer and the prompt. A handler that threw is one line on the shell, as upstream prints it.
+$decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrust): bool {
+    $runner = new \Pig\CodingAgent\Hooks\HookRunner(
+        array_map(static fn ($ext) => new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api), $loaded),
+        $cwd,
+    );
+    $runner->initialize(static fn () => null);
+    $runner->onError(static function (\Pig\CodingAgent\Hooks\HookError $error): void {
+        fwrite(STDERR, Style::yellow("Extension \"{$error->hookPath}\" {$error->event} error: {$error->error}\n"));
+    });
+
+    $trusted = ProjectTrust::resolve($cwd, $askTrust, extensions: $runner);
+    $settleTrust($trusted);
+
+    return $trusted;
+};
 
 if (!isset($options['no-extensions']) && $mode !== 'web') {
     \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($settings);
@@ -369,12 +414,27 @@ if (!isset($options['no-extensions']) && $mode !== 'web') {
         $settings->extensions(),
         isset($options['extension']) ? [$options['extension']] : [],
         auth: $auth,
-        projectTrusted: $projectTrusted,
+        projectTrusted: $trustUndecided ? $decideTrust : true,
         disabled: isset($options['no-mcp']) ? ['pig-mcp'] : [],
+        projectConfigured: static fn (): array => $settings->extensions(),
     );
 }
 
-Timings::mark('customModels');
+// With no extensions to ask, the question goes straight to the saved answer and the prompt.
+if ($trustUndecided && $preloadedExtensions === null) {
+    $settleTrust(ProjectTrust::resolve($cwd, $askTrust));
+}
+
+if (!$trustUndecided) {
+    $settleTrust(true);
+}
+
+Timings::mark('extensions');
+
+// What `--theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
+// Null is upstream's default, the system theme.
+$themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
+
 
 // The web shell starts no session of its own: each tab in the page is a `pig --mode rpc` child,
 // and the child does everything from here down — model, hooks, extensions, the lot — in its own

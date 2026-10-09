@@ -134,6 +134,53 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertContains(\Pig\CodingAgent\ProjectTrust::warning(), $untrusted->warnings);
     }
 
+    public function testAnExtensionsOwnDirectoriesJoinTheSessionAfterSessionStart(): void
+    {
+        mkdir($this->home . '/extensions/mine/skills/tidy', 0o755, true);
+        mkdir($this->home . '/extensions/mine/prompts', 0o755, true);
+        mkdir($this->home . '/extensions/mine/themes', 0o755, true);
+        file_put_contents($this->home . '/extensions/mine/skills/tidy/SKILL.md', "---\nname: tidy\ndescription: Tidies things up\n---\nDo it.\n");
+        file_put_contents($this->home . '/extensions/mine/prompts/greet.md', "say hello to \$1\n");
+        file_put_contents($this->home . '/extensions/mine/index.php', <<<'PHP'
+            <?php
+            use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
+            return function ($pi): void {
+                $pi->on('resources_discover', fn ($event) => new ResourcesDiscoverResult(
+                    skillPaths: ['skills'],
+                    promptPaths: ['prompts'],
+                    themePaths: ['themes'],
+                ));
+            };
+            PHP);
+
+        $started = $this->start();
+
+        // Nothing of it before the event: upstream fires it after `session_start`.
+        $this->assertSame([], $started->fileCommands);
+        $this->assertSame([], $started->skills);
+
+        $added = $started->session->discoverResources('startup');
+
+        $this->assertNotNull($added);
+        $this->assertSame(['tidy'], array_map(static fn ($s) => $s->name, $added->skills));
+        $this->assertSame('extension', $added->skills[0]->source);
+        $this->assertSame(['greet'], array_map(static fn ($c) => $c->name, $added->commands));
+        $this->assertStringContainsString('tidy', $started->session->loadout()?->systemPrompt() ?? '', 'the skill reaches the prompt');
+        $this->assertContains($this->home . '/extensions/mine/themes', \Pig\CodingAgent\Theme\Themes::getCustomThemesDirs());
+
+        // Asked again on a reload, the lists are replaced rather than doubled.
+        $again = $started->session->discoverResources('reload');
+        $this->assertCount(1, $again?->commands ?? []);
+        \Pig\CodingAgent\Theme\Themes::setExtensionThemeDirs([]);
+    }
+
+    public function testWithNobodyListeningForResourcesThereIsNothingToTake(): void
+    {
+        $started = $this->start();
+
+        $this->assertNull($started->session->discoverResources('startup'));
+    }
+
     public function testAnUntrustedProjectWithNothingToTrustIsNotWarnedAbout(): void
     {
         $started = $this->start([], ['projectTrusted' => false]);

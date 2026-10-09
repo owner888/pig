@@ -587,7 +587,7 @@ PHP);
         $expanded = false;
 
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
-            $tui, $chat, $overlay, $editor, $footer,
+            $tui, $chat, $overlay, static fn () => $editor, $footer,
             onWorkingMessage: function (?string $m) use (&$workingMsg): void { $workingMsg = $m; },
             onWorkingVisible: function (bool $v) use (&$workingVis): void { $workingVis = $v; },
             getToolsExpanded: function () use (&$expanded): bool { return $expanded; },
@@ -641,7 +641,7 @@ PHP);
         $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), '/work');
 
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
-            $tui, $chat, $overlay, $editor, $footer,
+            $tui, $chat, $overlay, static fn () => $editor, $footer,
             widgetsAbove: $widgetsAbove,
             widgetsBelow: $widgetsBelow,
             customHeader: $customHeader,
@@ -688,7 +688,7 @@ PHP);
 
         $intercepted = [];
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
-            $tui, $chat, $overlay, $editor, $footer,
+            $tui, $chat, $overlay, static fn () => $editor, $footer,
         );
 
         $off = $ui->onTerminalInput(static function (string $data) use (&$intercepted) {
