@@ -29,14 +29,34 @@ final class WebSearchExtensionTest extends TestCase
     private static function cleanStaleChromeDirs(): void
     {
         foreach (glob(sys_get_temp_dir() . '/pig-chrome-*') ?: [] as $dir) {
-            if (is_dir($dir)) {
-                foreach (scandir($dir) ?: [] as $file) {
-                    if ($file !== '.' && $file !== '..') {
-                        $p = $dir . '/' . $file;
-                        is_dir($p) ? rmdir($p) : unlink($p);
-                    }
-                }
-                rmdir($dir);
+            self::removeTree($dir);
+        }
+    }
+
+    private static function removeTree(string $path): void
+    {
+        if (is_link($path) || is_file($path)) {
+            unlink($path);
+
+            return;
+        }
+
+        if (!is_dir($path)) {
+            return;
+        }
+
+        foreach (scandir($path) ?: [] as $file) {
+            if ($file !== '.' && $file !== '..') {
+                self::removeTree("{$path}/{$file}");
+            }
+        }
+
+        if (is_dir($path)) {
+            set_error_handler(static fn (): bool => true);
+            try {
+                rmdir($path);
+            } finally {
+                restore_error_handler();
             }
         }
     }

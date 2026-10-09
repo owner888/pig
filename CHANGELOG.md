@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.13] - 2026-10-08
+
+### Fixed
+
+- **Recursive Directory Deletion in WebSearch Test (`WebSearchExtensionTest`)**:
+  - Replaced shallow directory cleanup in `WebSearchExtensionTest::cleanStaleChromeDirs` with recursive tree deletion (`removeTree`), preventing `rmdir(): Directory not empty` PHP warnings during Chrome temporary profile teardown on CI test runners.
+
 ## [0.5.12] - 2026-10-08
 
 ### New Features
