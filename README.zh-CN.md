@@ -199,7 +199,20 @@ pig --mode mcp --session <id>             # 在已有对话上继续（`-c` 取�
 在对方 agent 的 MCP 配置里注册即可——Claude Code 是
 `claude mcp add --transport http pig http://127.0.0.1:8089/mcp`，或
 `claude mcp add pig -- pig --mode mcp --mcp-stdio`——它会得到一个 `ask` 工具，每次调用都是同一个
-pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展；一轮进行中再来的 `ask` 排队等，不会失败。
+pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展；一轮进行中再来的 `ask` 排队等，不会失败。详见[作为 MCP Server 提供服务](https://pigagent.dev/docs/latest/mcp-server)。
+
+### 4. 给手机用的 VLESS 入站（`pig-vless`）
+
+内置扩展 `pig-vless` 在 agent 旁边开一个 [VLESS](https://xtls.github.io/development/protocols/vless.html) 入站，让跑 Shadowrocket 或 v2rayNG 的手机通过 pig 所在的这台机器上网。只做 TCP、单 UUID、给了证书才走 TLS——手机能用的最小版本，不是 Xray。
+
+```text
+/vless start      # 开端口（不开口不监听）
+/vless status     # 配置、状态，以及给手机的 vless:// 链接
+/vless stop       # 关掉；会话结束也会关
+/vless restart
+```
+
+第一个会话会把 `vless.listen`（`0.0.0.0:10086`）和自动生成的 `vless.uuid` 写进 `settings.json`；要 TLS 加 `vless.cert` / `vless.key`（PEM）。详见[让手机通过 pig 上网](https://pigagent.dev/docs/latest/vless)。
 
 ---
 

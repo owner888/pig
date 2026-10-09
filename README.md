@@ -206,7 +206,20 @@ Register it where the other agent reads its MCP servers — for Claude Code,
 `claude mcp add --transport http pig http://127.0.0.1:8089/mcp`, or
 `claude mcp add pig -- pig --mode mcp --mcp-stdio` — and it gets an `ask` tool whose calls are turns
 in one pig conversation, with pig's own tools, hooks and extensions behind it. Asks made while one
-is running wait their turn rather than failing.
+is running wait their turn rather than failing. Details: [Serve pig as an MCP Server](https://pigagent.dev/docs/latest/mcp-server).
+
+### 4. A VLESS Inbound for Your Phone (`pig-vless`)
+
+The built-in `pig-vless` extension opens a [VLESS](https://xtls.github.io/en/development/protocols/vless.html) inbound beside the agent, so a phone running Shadowrocket or v2rayNG can route through the machine pig is on. TCP only, one UUID, TLS when you give it a certificate — the smallest version a phone can use, not an Xray.
+
+```text
+/vless start      # open the port (nothing listens until you ask)
+/vless status     # configuration, state, and the vless:// link for the phone
+/vless stop       # close it; the session ending does this too
+/vless restart
+```
+
+The first session writes `vless.listen` (`0.0.0.0:10086`) and a generated `vless.uuid` into `settings.json`; add `vless.cert` / `vless.key` (PEM) for TLS. Details: [Proxy a Phone Through pig](https://pigagent.dev/docs/latest/vless).
 
 ---
 
