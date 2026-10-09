@@ -198,6 +198,22 @@ final class McpServerTest extends TestCase
         $this->assertSame('quota exhausted', $events[0]['result']['content'][0]['text']);
     }
 
+    public function testAnAskDuringAnAskWaitsItsTurnRatherThanFailing(): void
+    {
+        $this->answers = ['first', 'second'];
+
+        [$a, $b] = Async::run(function (): array {
+            $a = Async::spawn(fn () => $this->request('POST', self::rpc(1, 'tools/call', ['name' => 'ask', 'arguments' => ['prompt' => 'one']])));
+            $b = Async::spawn(fn () => $this->request('POST', self::rpc(2, 'tools/call', ['name' => 'ask', 'arguments' => ['prompt' => 'two']])));
+
+            return [$a->await(), $b->await()];
+        });
+
+        $this->assertSame('first', self::events($a['body'])[0]['result']['content'][0]['text']);
+        $this->assertSame('second', self::events($b['body'])[0]['result']['content'][0]['text']);
+        $this->assertArrayNotHasKey('isError', self::events($b['body'])[0]['result'], 'queued, not refused');
+    }
+
     public function testTwoAsksAreOneConversation(): void
     {
         $this->answers = ['first', 'second'];
@@ -227,7 +243,7 @@ final class McpServerTest extends TestCase
     /** @return array{status: int, headers: array<string, string>, body: string} */
     private function request(string $method, string $body, ?string $sessionId = null, string $path = McpServer::PATH): array
     {
-        return Async::run(function () use ($method, $body, $sessionId, $path): array {
+        $exchange = function () use ($method, $body, $sessionId, $path): array {
             $socket = Socket::connect('127.0.0.1', $this->server->port, timeout: 2.0);
             $head = "{$method} {$path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: application/json, text/event-stream\r\n"
                 . "Content-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n"
@@ -256,7 +272,10 @@ final class McpServerTest extends TestCase
             $socket->close();
 
             return self::parse($raw);
-        });
+        };
+
+        // From a test body there is no fiber yet, so one is made; from inside one, it is the one.
+        return \Fiber::getCurrent() === null ? Async::run($exchange) : $exchange();
     }
 
     /** @return array{status: int, headers: array<string, string>, body: string} */

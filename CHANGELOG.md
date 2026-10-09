@@ -43,6 +43,24 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.12] - 2026-10-08
+
+### New Features
+
+- **MCP Stdio Transport Support (`--mcp-stdio`, `McpStdio`)**:
+  - Implemented JSON-RPC 2.0 line-delimited communication over standard input/output for host environments that spawn MCP servers as subprocesses (e.g. `claude mcp add pig -- pig --mode mcp --mcp-stdio`).
+  - Extracted shared dispatcher logic into `McpDispatcher` serving both Streamable HTTP and Stdio transports.
+- **Concurrent `ask` Tool Call Serial Queue (`McpDispatcher`)**:
+  - Automatically queued concurrent incoming `ask` tool calls in order of arrival instead of rejecting them with busy errors, executing turns sequentially while continuously sending HTTP `: keep-alive` frames during wait states.
+
+### Added
+
+- Added `--session <id>` / `-c` support documentation and test verification for `--mode mcp`, allowing external clients to attach to existing session histories.
+
+### Changed
+
+- Changed HTTP transport response protocol negotiation to dynamically select JSON or SSE streaming based on resolution timing (synchronous dispatch returns JSON, asynchronous turns open SSE streams).
+
 ## [0.5.11] - 2026-10-08
 
 ### Added

@@ -188,14 +188,17 @@ pig --mode json -p "解析 index.php"
 # 长生命周期标准双向 RPC 管道模式（适合外部编辑器或宿主调用）
 pig --mode rpc
 
-# MCP server 模式：把当前对话作为 MCP server 提供给别的 agent（Streamable HTTP，唯一工具 `ask`）
-pig --mode mcp                            # http://127.0.0.1:8089/mcp
+# MCP server 模式：把当前对话作为 MCP server 提供给别的 agent（唯一工具 `ask`）
+pig --mode mcp                            # Streamable HTTP，http://127.0.0.1:8089/mcp
 pig --mode mcp --mcp-host 0.0.0.0 --mcp-port 9000
+pig --mode mcp --mcp-stdio                # stdin/stdout 上的 JSON-RPC 行，给会自己拉起子进程的宿主
+pig --mode mcp --session <id>             # 在已有对话上继续（`-c` 取最近一个）
 ```
 
 在对方 agent 的 MCP 配置里注册即可——Claude Code 是
-`claude mcp add --transport http pig http://127.0.0.1:8089/mcp`——它会得到一个 `ask` 工具，每次调用都是同一个
-pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展。
+`claude mcp add --transport http pig http://127.0.0.1:8089/mcp`，或
+`claude mcp add pig -- pig --mode mcp --mcp-stdio`——它会得到一个 `ask` 工具，每次调用都是同一个
+pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展；一轮进行中再来的 `ask` 排队等，不会失败。
 
 ---
 

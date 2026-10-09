@@ -194,14 +194,18 @@ pig --mode json -p "explain index.php"
 # Long-lived JSON-RPC server over stdio
 pig --mode rpc
 
-# Serve this conversation to another agent as an MCP server (Streamable HTTP, one tool: `ask`)
-pig --mode mcp                            # http://127.0.0.1:8089/mcp
+# Serve this conversation to another agent as an MCP server (one tool: `ask`)
+pig --mode mcp                            # Streamable HTTP at http://127.0.0.1:8089/mcp
 pig --mode mcp --mcp-host 0.0.0.0 --mcp-port 9000
+pig --mode mcp --mcp-stdio                # JSON-RPC lines on stdin/stdout, for a host that spawns it
+pig --mode mcp --session <id>             # over an existing conversation (`-c` for the latest)
 ```
 
 Register it where the other agent reads its MCP servers — for Claude Code,
-`claude mcp add --transport http pig http://127.0.0.1:8089/mcp` — and it gets an `ask` tool whose
-calls are turns in one pig conversation, with pig's own tools, hooks and extensions behind it.
+`claude mcp add --transport http pig http://127.0.0.1:8089/mcp`, or
+`claude mcp add pig -- pig --mode mcp --mcp-stdio` — and it gets an `ask` tool whose calls are turns
+in one pig conversation, with pig's own tools, hooks and extensions behind it. Asks made while one
+is running wait their turn rather than failing.
 
 ---
 

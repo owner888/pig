@@ -3685,13 +3685,25 @@ Three choices, each asked rather than assumed:
 
 - **One tool, `ask`**, not the 24 RPC commands as tools and not the built-in tools re-exported.
   `ask(prompt)` is a turn in this process's one `AgentSession`, answered with the last assistant
-  message's text blocks — `PrintMode::say()`'s reading, as a tool result. Calls are serial; a
-  second `ask` while one runs gets an `isError` result saying so, not a queue.
-- **Streamable HTTP, not stdio.** `POST /mcp`: `initialize` / `ping` / `tools/list` as one JSON
-  document, `tools/call` as an SSE stream — `notifications/progress` per text delta when the caller
-  sent a `progressToken`, a `: keep-alive` comment every 15 s otherwise, the result last. `GET` is
-  405 (nothing server-initiated to stream), `DELETE` forgets the `Mcp-Session-Id`; a stale id is 404,
-  which the spec defines as "re-initialize", so a client outliving a restart recovers on its own.
+  message's text blocks — `PrintMode::say()`'s reading, as a tool result. Calls are serial **and
+  queued**: the first draft answered a second `ask` during a turn with an `isError` "busy", and the
+  developer asked for a queue instead — a caller with two questions means both, and "try later" is
+  a retry loop every caller would have had to write. `McpDispatcher::enqueue()`/`drain()`, one
+  fiber at a time, arrival order; the HTTP stream's keep-alive runs while the call waits.
+- **Streamable HTTP first, stdio second.** `POST /mcp`: `initialize` / `ping` / `tools/list` as
+  one JSON document, `tools/call` as an SSE stream — `notifications/progress` per text delta when
+  the caller sent a `progressToken`, a `: keep-alive` comment every 15 s otherwise, the result last.
+  `GET` is 405 (nothing server-initiated to stream), `DELETE` forgets the `Mcp-Session-Id`; a stale
+  id is 404, which the spec defines as "re-initialize", so a client outliving a restart recovers on
+  its own. **JSON or stream is decided by *when* the answer comes**, not by the method: a `$send`
+  called while `dispatch()` is still on the stack (including a `tools/call` with no `prompt`) is a
+  JSON document, and a `dispatch()` that returns without answering opens the stream. `--mcp-stdio`
+  is the same `McpDispatcher` over lines on stdin/stdout (`McpStdio`), with no session id and no
+  keep-alive because a pipe needs neither; stdin closing stops the loop, as in `RpcMode`.
+- **`--session` / `-c` needed nothing**: `bin/pig` resolves them before the mode is picked and
+  hands every mode a session over that store, so `pig --mode mcp --session <id>` was already a
+  server over that conversation. Pinned by `McpStdioTest::testAnAskIsATurnInTheSessionFileItWasStartedWith`
+  rather than built twice.
 - **`--mode mcp`**, not `pig mcp serve`: `pig mcp` is the MCP *client* extension's CLI (`login`,
   `status`), and a server command under it would be the one word meaning both sides.
 
@@ -3716,7 +3728,10 @@ Agreed: an extension or a separate repository if he wants one in PHP, not `packa
 Regression tests: `Mcp\McpServerTest` — a real loopback listener and a real `Async\Socket` into it,
 asserting the bytes an MCP client reads: the session id header, version negotiation, 202 for a
 notification, 404 for a stale id, 405 for GET, the SSE frames of an `ask` with and without a
-progress token, a failed turn as an `isError` result, and two asks landing in one transcript.
+progress token, a failed turn as an `isError` result, two asks landing in one transcript, and two
+asks *at once* both answered in order (`testAnAskDuringAnAskWaitsItsTurnRatherThanFailing`).
+`Mcp\McpStdioTest` — the lines both ways, a non-JSON line as a parse error that ends nothing,
+progress then result as two lines, the session file holding the turn, and EOF stopping the loop.
 `ArgumentsTest::testMcpModeNeedsNoMessageBecauseItsMessagesArriveAsToolCalls`.
 
 ### The web mode's process model: pi-web's shell over `pig --mode rpc`, not a mirror of the TUI

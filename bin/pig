@@ -195,6 +195,7 @@ if (isset($options['help'])) {
                         as an MCP server (one tool, `ask`) over Streamable HTTP.
       --mcp-host <h>, --mcp-port <n>
                         where --mode mcp listens (default: 127.0.0.1:8089).
+      --mcp-stdio       --mode mcp on stdin/stdout instead, for a host that spawns its servers.
 
     Anything that is not an option is a message, and `@some/file` is read in front of
     the first one — an image goes in as an image. `--` ends the options, for a message
@@ -787,7 +788,7 @@ if ($mode === 'rpc') {
 } elseif ($mode === 'mcp') {
     $mcpPort = isset($options['mcp-port']) && ctype_digit((string) $options['mcp-port']) ? (int) $options['mcp-port'] : 8089;
     $mcpHost = isset($options['mcp-host']) && $options['mcp-host'] !== '' ? (string) $options['mcp-host'] : '127.0.0.1';
-    $serving = new McpMode($session, $mcpPort, $mcpHost, $hooks, $customTools);
+    $serving = new McpMode($session, $mcpPort, $mcpHost, $hooks, $customTools, stdio: isset($options['mcp-stdio']));
     $exit = (int) Async::run(static fn (): int => $serving->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
