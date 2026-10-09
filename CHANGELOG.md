@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.4] - 2026-10-08
+
+### New Features
+
+- **Automatic model fallback at a quota wall (`fallbackModels`)**:
+  - A turn that ends on a quota / billing limit error now moves on to the next entry of `fallbackModels` and is sent again there, instead of ending the run. The switch is kept for the session like a `/model` typed by hand, not written to `defaultModel`; `:level` on an entry sets the thinking level, otherwise the current one carries over.
+  - Added `ModelFallbackEvent` (RPC `model_fallback` with `from`, `to`, `error`) and a transcript line in the terminal.
+  - Added `Retry::isProviderLimitError()`, the quota / billing half of the retry classifier, with pi-antigravity's `Quota reached.` wording recognised as a limit.
+
 ## [0.5.3] - 2026-10-08
 
 ### New Features

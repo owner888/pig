@@ -46,6 +46,18 @@ final class Retry
         'subscription_sharing_usage_limit_exceeded',
     ];
 
+    /**
+     * pig's own additions to the list above, kept apart so the upstream list stays a copy.
+     *
+     * `Quota reached.` is pi-antigravity's own sentence for an account that has used its share
+     * (`AntigravityApi::friendlyAntigravityError()`, word for word from there), and it matches none
+     * of upstream's entries — upstream never classifies it, because its session simply stops.
+     * pig's does not: it is the one error a fallback model exists for.
+     */
+    private const array PIG_PROVIDER_LIMIT_ERROR_PATTERNS = [
+        'quota reached',
+    ];
+
     /** Upstream's `RETRYABLE_PROVIDER_ERROR_PATTERN` entries. */
     private const array RETRYABLE_PROVIDER_ERROR_PATTERNS = [
         // Generic provider load, HTTP status, and server-side transient failures.
@@ -286,14 +298,30 @@ final class Retry
             return false;
         }
 
-        // A JavaScript string is always text; malformed bytes are read as U+FFFD, as it would hold them.
-        $errorMessage = JsJson::decodeUtf8($message->errorMessage);
-
-        if (preg_match(self::pattern(self::NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERNS), $errorMessage) === 1) {
+        if (self::isProviderLimitError($message)) {
             return false;
         }
 
-        return preg_match(self::pattern(self::RETRYABLE_PROVIDER_ERROR_PATTERNS), $errorMessage) === 1;
+        // A JavaScript string is always text; malformed bytes are read as U+FFFD, as it would hold them.
+        return preg_match(self::pattern(self::RETRYABLE_PROVIDER_ERROR_PATTERNS), JsJson::decodeUtf8($message->errorMessage)) === 1;
+    }
+
+    /**
+     * Whether a failed turn hit a quota, budget or billing wall — the first half of
+     * `isRetryableAssistantError()`, on its own because `AgentSession` has a second use for it:
+     * a limit is what a fallback model is for, where a transient error is what a retry is for.
+     * One list for both, so the two cannot drift apart.
+     */
+    public static function isProviderLimitError(AssistantMessage $message): bool
+    {
+        if ($message->stopReason !== StopReason::Error || $message->errorMessage === null || $message->errorMessage === '') {
+            return false;
+        }
+
+        $errorMessage = JsJson::decodeUtf8($message->errorMessage);
+
+        return preg_match(self::pattern(self::NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERNS), $errorMessage) === 1
+            || preg_match(self::pattern(self::PIG_PROVIDER_LIMIT_ERROR_PATTERNS), $errorMessage) === 1;
     }
 
     /**

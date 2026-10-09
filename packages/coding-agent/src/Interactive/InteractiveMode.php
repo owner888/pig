@@ -88,6 +88,7 @@ use Pig\CodingAgent\Session\ExtensionResources;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SummarizationRetryEvent;
@@ -4813,6 +4814,7 @@ final class InteractiveMode
             $event instanceof AgentEndEvent => $this->onEnd(),
 
             // The session's own, from between one run and the next. See `AgentEvent`.
+            $event instanceof ModelFallbackEvent => $this->onModelFallback($event),
             $event instanceof RetryStartEvent => $this->onRetryStart($event),
             $event instanceof RetryEndEvent => $this->onRetryEnd($event),
             $event instanceof AutoCompactionStartEvent => $this->onOverflow(),
@@ -5115,6 +5117,24 @@ final class InteractiveMode
                 timer: true,
             );
         }
+    }
+
+    /**
+     * The model hit its quota and the session moved on to a `fallbackModels` entry.
+     *
+     * A line in the transcript rather than a loader: by the time this arrives the switch has
+     * happened and the turn is already going again. The provider's reason is a red line above
+     * already, so this says only where the conversation went — in `cycleModel()`'s words, with the
+     * provider in front because the whole point is usually the same id on a different key.
+     */
+    private function onModelFallback(ModelFallbackEvent $event): void
+    {
+        $this->footer->invalidate();
+        $this->paintBorder();
+
+        $level = $this->session->thinkingLevel();
+        $this->say("Quota reached on {$event->from->provider}/{$event->from->id} — model: {$event->to->provider}/{$event->to->id}"
+            . ($level === ThinkingLevel::Off ? '' : " · thinking {$level->value}"));
     }
 
     private function onRetryEnd(RetryEndEvent $event): void

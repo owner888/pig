@@ -49,6 +49,7 @@ use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
+use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
@@ -991,6 +992,74 @@ final class AgentSessionTest extends TestCase
 
         $this->assertInstanceOf(AssistantMessage::class, $last);
         $this->assertSame($wall, $last->errorMessage);
+    }
+
+    public function testAQuotaWallMovesTheTurnOnToTheNextFallbackModel(): void
+    {
+        // pig's own: with `fallbackModels` set, the wall is not the end of the turn — the same
+        // turn goes again on the next entry, and the switch is kept for the session.
+        $wall = 'Quota reached. Please wait 10m15s. Next: switch models or retry later.';
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => $wall], 'carried on']),
+            settings: Settings::inMemory(['fallbackModels' => ['anthropic/claude-haiku-4-5:low']]),
+        );
+
+        $switches = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$switches): void {
+            if ($event instanceof ModelFallbackEvent) {
+                $switches[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertCount(1, $switches);
+        $this->assertSame('test-model', $switches[0]->from->id);
+        $this->assertSame('claude-haiku-4-5', $switches[0]->to->id);
+        $this->assertSame($wall, $switches[0]->error);
+
+        // The answer that came back is the fallback's, the failed turn is off the agent's state,
+        // and the session is now on the fallback with the level the entry named.
+        $this->assertSame('carried on', self::textOf($session->messages()[count($session->messages()) - 1]));
+        $this->assertSame('claude-haiku-4-5', $session->model()?->id);
+        $this->assertSame(ThinkingLevel::Low, $session->thinkingLevel());
+    }
+
+    public function testAQuotaWallWithEveryFallbackTriedEndsTheTurnAsBefore(): void
+    {
+        // Two walls, one fallback: the second wall has nowhere to go, so the turn ends on the
+        // fallback's sentence — not on a loop back to the primary, which is the one model known
+        // to be out of quota.
+        $wall = 'Quota reached. Please wait 10m15s. Next: switch models or retry later.';
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => $wall], ['error' => $wall]]),
+            settings: Settings::inMemory(['fallbackModels' => ['anthropic/claude-haiku-4-5']]),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event::class;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertSame(1, count(array_keys($seen, ModelFallbackEvent::class, true)));
+        $this->assertNotContains(RetryStartEvent::class, $seen);
+
+        $messages = $session->messages();
+        $last = $messages[count($messages) - 1];
+
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertSame($wall, $last->errorMessage);
+        $this->assertSame('claude-haiku-4-5', $session->model()?->id);
     }
 
     public function testRetryingCanBeTurnedOff(): void

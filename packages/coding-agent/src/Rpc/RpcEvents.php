@@ -33,6 +33,7 @@ use Pig\Ai\ToolCallStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -136,6 +137,14 @@ final class RpcEvents
                 'type' => 'retry_end',
                 'succeeded' => $event->succeeded,
                 'attempts' => $event->attempts,
+                'error' => $event->error,
+            ],
+
+            // pig's own, no upstream counterpart: the session moved to a `fallbackModels` entry.
+            $event instanceof ModelFallbackEvent => [
+                'type' => 'model_fallback',
+                'from' => ['provider' => $event->from->provider, 'id' => $event->from->id],
+                'to' => ['provider' => $event->to->provider, 'id' => $event->to->id],
                 'error' => $event->error,
             ],
 

@@ -1258,6 +1258,40 @@ Order for anything with more than one source: what was typed, then the environme
 was chosen last time, then the built-in default. `--no-save` gets `Settings::inMemory()`, so a
 session that is not written down does not write anything else down either.
 
+### A quota wall moves the turn to a `fallbackModels` entry
+
+pig's own, with no upstream counterpart: upstream's session stops at a limit error, pig's goes on.
+The developer asked for a run that keeps going when the primary key's share is used up and a second
+key for the same work is at hand — typically the same id on a different provider.
+
+```json
+"defaultModel": "gemini-3.8-flash",
+"defaultProvider": "antigravity",
+"fallbackModels": ["google/gemini-3.8-flash:medium"]
+```
+
+- **`defaultModel` / `defaultProvider` are untouched**; `fallbackModels` is what comes after them,
+  in order, in `--models`' spelling (`ModelResolver::parse()`), one list that cannot drift from it.
+- **Only a limit error switches** — `Retry::isProviderLimitError()`, the quota / billing half of
+  `isRetryableAssistantError()`'s lists, plus pig's own `quota reached` for pi-antigravity's wall
+  sentence, which upstream never classified because its session merely stops. A 503 is still a
+  retry, and a retry that used its budget is still a failure: the two paths do not feed each other.
+- **The switch is a `/model` typed by hand**: `setModel(…, persistAsDefault: false)`, so it is in the
+  session file and the footer and *not* in `settings.json`; the next session opens on the primary.
+  Nothing moves back inside the session — the primary is the one model known to be out.
+- **Once per model per prompt** (`$fallbacksTried`), past entries with no key or that resolve to
+  nothing; with none left the turn ends on the wall's sentence as it always did.
+- **`:level` sets the thinking level; no suffix carries the current one over** — the one place this
+  differs from `--models`, where no suffix is `off`. A fallback is the same work on another key.
+- `ModelFallbackEvent` is announced between the switch and the resend; the terminal says
+  `Quota reached on antigravity/gemini-3.8-flash — model: google/gemini-3.8-flash · thinking medium`,
+  RPC gets `model_fallback` with `from`, `to` and `error`.
+
+Lives in `AgentSession::switchToFallbackModel()`, called from `handlePostAgentRun()` after the retry
+step and before the overflow check. Regression tests:
+`AgentSessionTest::testAQuotaWallMovesTheTurnOnToTheNextFallbackModel` and
+`…WithEveryFallbackTriedEndsTheTurnAsBefore`.
+
 ### `/settings`, and why its list is shorter than upstream's
 
 `Components\SettingsList` is upstream's `tui/components/settings-list.ts` and `/settings` —

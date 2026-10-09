@@ -158,6 +158,15 @@ final class AgentSession
     private ?AbortController $retrying = null;
 
     /**
+     * The `fallbackModels` already moved on to during this prompt, as `provider/id`, so a list
+     * that loops — or two entries that resolve to one model — cannot send the same turn to the
+     * same wall twice. Cleared with the prompt.
+     *
+     * @var array<string, true>
+     */
+    private array $fallbacksTried = [];
+
+    /**
      * A prompt is in progress, from the top of `runAgentPrompt()` to its `agent_settled`: the runs,
      * and the retry sleeps, summaries and queued messages between them. Upstream's
      * `_isAgentRunActive`, and what `isStreaming()` answers.
@@ -2248,6 +2257,7 @@ final class AgentSession
         $this->runAbortRequested = false;
         // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
         $this->failedResponse = null;
+        $this->fallbacksTried = [];
         $this->recordSelection();
         // "The run records the loadout in the transcript; restored tools that did not register by
         // now are dropped, so a tool that never registers does not stay pending."
@@ -2342,6 +2352,13 @@ final class AgentSession
             $this->announce(new RetryEndEvent(false, $attempts, $last->errorMessage));
         }
 
+        // pig's own step, after the retry and before the overflow check: a quota wall is not
+        // transient and not too long, it is this model being done for now. With a fallback model
+        // to move on to, the turn goes again there.
+        if (Retry::isProviderLimitError($last) && $this->switchToFallbackModel($last)) {
+            return !$this->runAbortRequested;
+        }
+
         // Upstream's `_checkCompaction()` for the overflow case.
         if (Overflow::happened($last, $this->modelForMessage($last)?->contextWindow)) {
             return $this->compactForOverflow($last) && !$this->runAbortRequested;
@@ -2350,6 +2367,69 @@ final class AgentSession
         // The loop drains both queues before `agent_end`; anything queued after that needs a
         // fresh run, and it is still this prompt's.
         return !$this->runAbortRequested && $this->agent->hasQueuedMessages();
+    }
+
+    /**
+     * Move the conversation on to the next model in `fallbackModels` that has not been tried this
+     * prompt, and take the failed turn off the agent so `continue()` sends it again.
+     *
+     * The developer's feature, with no upstream counterpart: a run that should go on through the
+     * night cannot stop at the first quota wall when a second key for the same work is at hand. The
+     * list is walked in order, past the model that just failed and past anything already tried this
+     * prompt or without a key; a pattern that resolves to nothing is skipped, because a stale entry
+     * in a settings file is not a reason to stop the turn. Nothing moves *back*: the switch is the
+     * same as a `/model` typed by hand, kept for the session and not written to `defaultModel`, so
+     * the next session starts on the primary again.
+     *
+     * `:level` on an entry sets the thinking level, as `--models` does; without one the current
+     * level carries over, clamped to what the new model can do — which differs from `--models`'
+     * "no suffix is off", on purpose: a fallback is the same work on another key, not a new choice.
+     *
+     * @return bool true when a switch happened and the turn should go again
+     */
+    private function switchToFallbackModel(AssistantMessage $failed): bool
+    {
+        $patterns = $this->settings?->fallbackModels() ?? [];
+        $current = $this->model();
+
+        if ($patterns === [] || $current === null) {
+            return false;
+        }
+
+        $this->fallbacksTried["{$current->provider}/{$current->id}"] = true;
+
+        foreach ($patterns as $pattern) {
+            $choice = ModelResolver::parse($pattern);
+
+            if ($choice === null) {
+                continue;
+            }
+
+            $key = "{$choice->model->provider}/{$choice->model->id}";
+
+            if (isset($this->fallbacksTried[$key]) || $this->keyFor($choice->model) === null) {
+                continue;
+            }
+
+            $this->fallbacksTried[$key] = true;
+
+            // The suffix is explicit when `parse()` would have read one; `ModelChoice` cannot say
+            // whether its `Off` was typed or defaulted, so the pattern is asked.
+            $colon = strrpos($pattern, ':');
+            $explicit = $colon !== false && ThinkingLevel::tryFrom(substr($pattern, $colon + 1)) !== null;
+
+            $this->setModel($choice->model, $explicit ? $choice->thinking : null, persistAsDefault: false);
+            $this->announce(new ModelFallbackEvent(
+                $current,
+                $choice->model,
+                $failed->errorMessage !== null && $failed->errorMessage !== '' ? $failed->errorMessage : 'Unknown error',
+            ));
+            $this->dropLastAssistantMessage();
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
