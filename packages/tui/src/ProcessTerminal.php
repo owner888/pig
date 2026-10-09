@@ -92,10 +92,12 @@ final class ProcessTerminal implements Terminal
         $this->write("\x1b[>1u");
 
         // The OSC 7501 program status query, with DA1 as its sentinel: a terminal that supports
-        // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` or
-        // `0` skips the query. Upstream sends it inside its kitty keyboard query, which pig does
-        // not make; the sentinel is the part that matters.
-        $override = getenv('PIG_PROGRAM_STATUS');
+        // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` (or
+        // `PI_PROGRAM_STATUS=1`) or `0` skips the query. Upstream sends it inside its kitty
+        // keyboard query, which pig does not make; the sentinel is the part that matters.
+        $override = Env::isSet('PIG_PROGRAM_STATUS')
+            ? getenv('PIG_PROGRAM_STATUS')
+            : (Env::isSet('PI_PROGRAM_STATUS') ? getenv('PI_PROGRAM_STATUS') : false);
         $this->programStatusSupported = $override === '1';
         $this->programStatusQueryPending = $override !== '1' && $override !== '0';
 

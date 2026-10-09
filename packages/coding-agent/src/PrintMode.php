@@ -7,7 +7,6 @@ namespace Pig\CodingAgent;
 use Pig\Agent\AgentEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
-use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -18,7 +17,6 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\NoUi;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
 use Throwable;
 
 /**
@@ -106,25 +104,7 @@ final class PrintMode
         $this->session->setMode($this->mode === 'json' ? 'json' : 'print');
 
         // The same wiring as the other two modes, with the one difference that matters: no UI.
-        $this->hooks?->initialize(
-            getModel: fn () => $this->session->model(),
-            isIdle: fn (): bool => !$this->session->isStreaming(),
-            abort: function (): void {
-                $this->session->abort();
-            },
-            hasPendingMessages: fn (): bool => $this->session->queued() !== [],
-            signal: fn () => $this->session->signal(),
-            ui: new NoUi(),
-            send: function (HookMessage $message, bool $triggerTurn): void {
-                $this->session->sendHookMessage($message, $triggerTurn);
-            },
-            note: function (string $customType, mixed $data): void {
-                $this->session->appendHookEntry($customType, $data);
-            },
-            getApiKey: fn (Model $m) => $this->session->keyFor($m),
-            setSessionName: fn (string $name) => $this->session->setSessionName($name),
-            getSessionName: fn () => $this->session->getSessionName(),
-        );
+        $this->hooks?->wire($this->session, new NoUi());
 
         // Standard output is the answer, so a broken hook goes to standard error. In `json`
         // it would otherwise arrive as a line that is not JSON, in the middle of lines that

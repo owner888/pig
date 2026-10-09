@@ -505,25 +505,7 @@ final class InteractiveMode
             Loop::get()->defer(fn () => $this->stop());
         });
 
-        $hooks?->initialize(
-            getModel: static fn () => $session->model(),
-            isIdle: static fn (): bool => !$session->isStreaming(),
-            abort: static function () use ($session): void {
-                $session->abort();
-            },
-            hasPendingMessages: static fn (): bool => $session->queued() !== [],
-            signal: static fn () => $session->signal(),
-            ui: $this->ui,
-            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
-                $session->sendHookMessage($message, $triggerTurn);
-            },
-            note: static function (string $customType, mixed $data) use ($session): void {
-                $session->appendHookEntry($customType, $data);
-            },
-            getApiKey: static fn (Model $m) => $session->keyFor($m),
-            setSessionName: static fn (string $name) => $session->setSessionName($name),
-            getSessionName: static fn () => $session->getSessionName(),
-        );
+        $hooks?->wire($session, $this->ui);
 
         $customTools?->withUi($this->ui);
         $customTools?->withContext(fn () => $hooks?->context() ?? new HookContext($cwd, ui: $this->ui, hasUi: true));
@@ -3222,25 +3204,7 @@ final class InteractiveMode
         $this->session->setHooks($hooks);
 
         $session = $this->session;
-        $hooks->initialize(
-            getModel: static fn () => $session->model(),
-            isIdle: static fn (): bool => !$session->isStreaming(),
-            abort: static function () use ($session): void {
-                $session->abort();
-            },
-            hasPendingMessages: static fn (): bool => $session->queued() !== [],
-            signal: static fn () => $session->signal(),
-            ui: $this->ui,
-            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
-                $session->sendHookMessage($message, $triggerTurn);
-            },
-            note: static function (string $customType, mixed $data) use ($session): void {
-                $session->appendHookEntry($customType, $data);
-            },
-            getApiKey: static fn (Model $m) => $session->keyFor($m),
-            setSessionName: static fn (string $name) => $session->setSessionName($name),
-            getSessionName: static fn () => $session->getSessionName(),
-        );
+        $hooks->wire($session, $this->ui);
 
         $hooks->onError($this->sayHookError(...));
         $this->messageRenderers = $hooks->renderers();

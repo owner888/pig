@@ -161,7 +161,7 @@ final readonly class HookContext
     // hook file being read at startup or a test that built a context by hand. Not a fallback over
     // a failure: there is genuinely nothing to report yet.
 
-    /** `tui`, `print`, `json` or `rpc`. Upstream's `ctx.mode`. */
+    /** `tui`, `print`, `json`, `rpc` or `mcp`. Upstream's `ctx.mode`; `mcp` is pig's, for `--mode mcp`. */
     public function mode(): string
     {
         return $this->session?->mode() ?? 'print';

@@ -8,7 +8,6 @@ use Pig\Agent\QueueMode;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
-use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -21,7 +20,6 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Settings;
 use Throwable;
@@ -133,25 +131,7 @@ final class RpcMode
         });
 
         // Each mode wires its own UI; this one's is the protocol.
-        $this->hooks?->initialize(
-            getModel: fn () => $this->session->model(),
-            isIdle: fn (): bool => !$this->session->isStreaming(),
-            abort: function (): void {
-                $this->session->abort();
-            },
-            hasPendingMessages: fn (): bool => $this->session->queued() !== [],
-            signal: fn () => $this->session->signal(),
-            ui: $this->ui,
-            send: function (HookMessage $message, bool $triggerTurn): void {
-                $this->session->sendHookMessage($message, $triggerTurn);
-            },
-            note: function (string $customType, mixed $data): void {
-                $this->session->appendHookEntry($customType, $data);
-            },
-            getApiKey: fn (Model $m) => $this->session->keyFor($m),
-            setSessionName: fn (string $name) => $this->session->setSessionName($name),
-            getSessionName: fn () => $this->session->getSessionName(),
-        );
+        $this->hooks?->wire($this->session, $this->ui);
 
         $this->hooks?->onError(function (HookError $error): void {
             $this->send([

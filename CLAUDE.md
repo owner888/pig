@@ -3697,10 +3697,15 @@ Three choices, each asked rather than assumed:
 
 What the mode does not do, on purpose: no in-process reuse of `HttpServer` (it carries the page, the
 pool and the WebSocket; `McpServer` is the same `Connection` + `Http` framing with those taken out),
-no batch requests (removed from the spec in 2025-06-18), no `mode` value of its own for hooks —
-`$ctx->mode()` answers `rpc`, since a program drives it, and adding a fifth value to that union is a
-hook-API change nobody asked for. The NoUi hook wiring in `McpMode::start()` is the third copy of
-`PrintMode::start()`'s; extracting it is a refactor to ask about, not do in passing.
+no batch requests (removed from the spec in 2025-06-18).
+
+Two things the first draft left for asking, both answered the same day: `$ctx->mode()` answers
+**`mcp`** — a fifth value beside upstream's four, so a hook can tell an MCP caller from an RPC host
+(the developer asked for it rather than the draft's `rpc`). And the twelve-closure
+`$hooks->initialize(...)` block was the same in `PrintMode`, `RpcMode`, `InteractiveMode` (twice)
+and would have been the fifth copy in `McpMode`; it is **`HookRunner::wire($session, $ui)`** now,
+and what each mode keeps for itself is `onError()`, since where a broken hook is reported is the
+one thing that differed.
 
 **VLESS was declined for core.** The developer's real goal was an Xray-like inbound so a phone could
 proxy through the Mac. Server-side it is feasible in PHP (terminate TLS, read the 16-byte UUID and

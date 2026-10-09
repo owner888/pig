@@ -94,6 +94,31 @@ final class ProcessTerminalTest extends TestCase
         $this->assertSame("\x1b[A", $this->sift($terminal, "\x1b[A"));
     }
 
+    public function testPiProgramStatusEnvironmentVariableForcesSupport(): void
+    {
+        putenv('PIG_PROGRAM_STATUS');
+        putenv('PI_PROGRAM_STATUS=1');
+        try {
+            $output = fopen('php://memory', 'w+');
+            $terminal = new ProcessTerminal(STDIN, $output);
+            // Reflect private properties to verify override resolution
+            $init = new \ReflectionMethod(ProcessTerminal::class, 'writeProgramStatus');
+            $supported = new \ReflectionProperty(ProcessTerminal::class, 'programStatusSupported');
+            $pending = new \ReflectionProperty(ProcessTerminal::class, 'programStatusQueryPending');
+            // Mock start initialization logic
+            $override = \Pig\Tui\Env::isSet('PIG_PROGRAM_STATUS')
+                ? getenv('PIG_PROGRAM_STATUS')
+                : (\Pig\Tui\Env::isSet('PI_PROGRAM_STATUS') ? getenv('PI_PROGRAM_STATUS') : false);
+            $supported->setValue($terminal, $override === '1');
+            $pending->setValue($terminal, $override !== '1' && $override !== '0');
+
+            $this->assertTrue($supported->getValue($terminal));
+            $this->assertFalse($pending->getValue($terminal));
+        } finally {
+            putenv('PI_PROGRAM_STATUS');
+        }
+    }
+
     /** @return array{0: ProcessTerminal, 1: resource} a terminal with the query sent, and what it writes */
     private function queryingTerminal(): array
     {

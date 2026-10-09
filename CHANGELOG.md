@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.11] - 2026-10-08
+
+### Added
+
+- Added `mcp` as a value of a hook's `$ctx->mode()`, allowing extensions and hooks to identify MCP callers; `--mode mcp` sets this mode.
+- Recognized `PI_PROGRAM_STATUS=1|0` as well as `PIG_PROGRAM_STATUS` to force or silence OSC 7501 program status reporting.
+
+### Changed
+
+- Extracted the repetitive twelve-closure hook initialization across `PrintMode`, `RpcMode`, `InteractiveMode` and `McpMode` into `HookRunner::wire($session, $ui)`.
+
 ## [0.5.10] - 2026-10-08
 
 ### New Features

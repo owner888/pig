@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Mcp;
 
-use Pig\Ai\Model;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -15,7 +14,6 @@ use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\NoUi;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
 use Pig\Tui\Style;
 use Throwable;
 
@@ -79,27 +77,9 @@ final class McpMode
 
     private function start(): void
     {
-        $this->session->setMode('rpc');
+        $this->session->setMode('mcp');
 
-        $this->hooks?->initialize(
-            getModel: fn () => $this->session->model(),
-            isIdle: fn (): bool => !$this->session->isStreaming(),
-            abort: function (): void {
-                $this->session->abort();
-            },
-            hasPendingMessages: fn (): bool => $this->session->queued() !== [],
-            signal: fn () => $this->session->signal(),
-            ui: new NoUi(),
-            send: function (HookMessage $message, bool $triggerTurn): void {
-                $this->session->sendHookMessage($message, $triggerTurn);
-            },
-            note: function (string $customType, mixed $data): void {
-                $this->session->appendHookEntry($customType, $data);
-            },
-            getApiKey: fn (Model $m) => $this->session->keyFor($m),
-            setSessionName: fn (string $name) => $this->session->setSessionName($name),
-            getSessionName: fn () => $this->session->getSessionName(),
-        );
+        $this->hooks?->wire($this->session, new NoUi());
 
         $this->hooks?->onError(static function (HookError $error): void {
             fwrite(STDERR, "hook {$error->hookPath} ({$error->event}): {$error->error}\n");

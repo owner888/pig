@@ -45,6 +45,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
+use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Tools\Paths;
@@ -138,6 +139,35 @@ final class HookRunner
      * @param Closure(HookMessage, bool): void|null $send `$pi->sendMessage()`
      * @param Closure(string, mixed): void|null     $note `$pi->appendEntry()`
      */
+    /**
+     * `initialize()` over a session: the closures every mode hands over are the same twelve,
+     * and only the UI differs — a terminal's, the RPC host's, or `NoUi` when nobody is there.
+     * Written once here after the fifth copy; what each mode still does for itself is
+     * `onError()`, since where a broken hook is reported is the thing that differs.
+     */
+    public function wire(AgentSession $session, ?HookUi $ui): void
+    {
+        $this->initialize(
+            getModel: static fn () => $session->model(),
+            isIdle: static fn (): bool => !$session->isStreaming(),
+            abort: static function () use ($session): void {
+                $session->abort();
+            },
+            hasPendingMessages: static fn (): bool => $session->queued() !== [],
+            signal: static fn () => $session->signal(),
+            ui: $ui,
+            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
+                $session->sendHookMessage($message, $triggerTurn);
+            },
+            note: static function (string $customType, mixed $data) use ($session): void {
+                $session->appendHookEntry($customType, $data);
+            },
+            getApiKey: static fn (Model $m) => $session->keyFor($m),
+            setSessionName: static fn (string $name) => $session->setSessionName($name),
+            getSessionName: static fn () => $session->getSessionName(),
+        );
+    }
+
     public function initialize(
         Closure $getModel,
         ?Closure $isIdle = null,

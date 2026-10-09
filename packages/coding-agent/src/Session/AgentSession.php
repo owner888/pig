@@ -773,7 +773,7 @@ final class AgentSession
 
     // ---- what an extension can ask of the session ------------------------------------
 
-    /** `tui`, `print`, `json` or `rpc` — set by whichever mode is driving. Upstream's `ctx.mode`. */
+    /** `tui`, `print`, `json`, `rpc` or `mcp` — set by whichever mode is driving. Upstream's `ctx.mode`, plus pig's `mcp`. */
     private string $mode = 'print';
 
     /** @var (Closure(): void)|null what the mode does when an extension asks pig to quit */
@@ -781,7 +781,7 @@ final class AgentSession
 
     private bool $shutdownRequested = false;
 
-    /** @param 'tui'|'print'|'json'|'rpc' $mode */
+    /** @param 'tui'|'print'|'json'|'rpc'|'mcp' $mode */
     public function setMode(string $mode): void
     {
         $this->mode = $mode;
