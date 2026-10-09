@@ -347,7 +347,8 @@ final class FooterComponent implements Component
 
     private function context(): string
     {
-        $model = $this->session->model();
+        // Under a virtual model, the window is the physical model's that answered last.
+        $model = $this->session->routedModel()?->model ?? $this->session->model();
         $window = $model?->contextWindow ?? 0;
         $used = $this->session->contextTokens();
         $percent = $window > 0 ? $used / $window * 100 : 0.0;
@@ -386,8 +387,12 @@ final class FooterComponent implements Component
             return 'no-model';
         }
 
+        // A virtual model routes each request; show where the latest response went.
+        $routed = $this->session->routedModel();
+        $arrow = $routed === null ? '' : ' → ' . $routed->model->id . ($routed->thinkingLevel === null ? '' : ' • ' . $routed->thinkingLevel->value);
+
         if (!$model->reasoning) {
-            return $model->id;
+            return $model->id . $arrow;
         }
 
         // `• thinking off` and not nothing, which is upstream's wording and the more useful of
@@ -395,7 +400,7 @@ final class FooterComponent implements Component
         // and an empty corner cannot tell you which of the two reasons it is empty for.
         $level = $this->session->thinkingLevel();
 
-        return $model->id . ' • ' . ($level === ThinkingLevel::Off ? 'thinking off' : $level->value);
+        return $model->id . ' • ' . ($level === ThinkingLevel::Off ? 'thinking off' : $level->value) . $arrow;
     }
 
     /**

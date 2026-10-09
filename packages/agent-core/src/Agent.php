@@ -85,6 +85,16 @@ final class Agent
      */
     public ?Closure $prepareNextTurnWithContext;
 
+    /**
+     * Upstream's `Agent.prepareRequest`: asked, with the run's signal, immediately before every
+     * provider request, the first included; what it answers replaces the context, model or
+     * thinking level for that request and the rest of the run. How a session routes a virtual
+     * model to a physical one.
+     *
+     * @var (Closure(PrepareRequestContext, ?AbortSignal): ?AgentLoopTurnUpdate)|null
+     */
+    public ?Closure $prepareRequest;
+
     /** @var array<int, Closure(AgentEvent): void> */
     private array $listeners = [];
 
@@ -135,6 +145,7 @@ final class Agent
         $this->maxRetryDelayMs = $options->maxRetryDelayMs;
         $this->prepareNextTurn = $options->prepareNextTurn;
         $this->prepareNextTurnWithContext = $options->prepareNextTurnWithContext;
+        $this->prepareRequest = $options->prepareRequest;
     }
 
     /**
@@ -509,6 +520,7 @@ final class Agent
                     return $this->prepareNextTurn !== null ? ($this->prepareNextTurn)($this->signal()) : null;
                 }
                 : null,
+            prepareRequest: $this->prepareRequest,
             sessionId: $this->sessionId,
             onPayload: $this->onPayload,
             onResponse: $this->onResponse,

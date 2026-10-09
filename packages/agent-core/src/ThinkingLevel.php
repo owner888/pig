@@ -37,6 +37,12 @@ enum ThinkingLevel: string
         };
     }
 
+    /** The level a request's reasoning effort stands for; none is `off`. */
+    public static function fromReasoning(?ReasoningEffort $reasoning): self
+    {
+        return $reasoning === null ? self::Off : self::from($reasoning->value);
+    }
+
     /**
      * The levels $model actually has, in order.
      *

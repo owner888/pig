@@ -17,6 +17,7 @@ use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
 use Pig\Agent\PrepareNextTurnContext;
+use Pig\Agent\PrepareRequestContext;
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\TurnEndEvent;
@@ -84,6 +85,10 @@ use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
 use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
 use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
 use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
+use Pig\CodingAgent\VirtualModels\ModelRoute;
+use Pig\CodingAgent\VirtualModels\ModelRouteRequest;
+use Pig\CodingAgent\VirtualModels\RoutedModel;
+use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -191,6 +196,13 @@ final class AgentSession
      * a forced prompt is projected onto the request and never recorded. Null between runs.
      */
     private ?SystemPromptOptions $runSystemPromptOptions = null;
+
+    /**
+     * Upstream's `_failedResponse`: the response a retry is sending again, for the virtual
+     * model's router (`reason: retry`, with the failed request). Set when the retry is decided,
+     * taken by the next request's routing, and cleared with the prompt.
+     */
+    private ?AssistantMessage $failedResponse = null;
 
     /**
      * Prompts kept as files, so `/review foo.php` is the prompt in `review.md` with `$1` filled in.
@@ -312,6 +324,30 @@ final class AgentSession
             $head = new SystemMessage($forced, null, $current?->toolsAdded, null, $current?->timestamp ?? Timestamp::nowMs());
 
             return [$head, ...array_values(array_filter($transformed, static fn (mixed $message): bool => !$message instanceof SystemMessage))];
+        };
+
+        // Upstream's `_installAgentRequestProjection()`, the routing half: before every request,
+        // a virtual selection is routed to the physical model and thinking level the request goes
+        // out with. The selection stays in the agent's state; only the request uses the routed
+        // model, so each request routes again. A previous hook on the agent is asked first.
+        $previousPrepareRequest = $this->agent->prepareRequest;
+        $this->agent->prepareRequest = function (PrepareRequestContext $request, ?AbortSignal $signal) use ($previousPrepareRequest): ?AgentLoopTurnUpdate {
+            $failed = $this->failedResponse;
+            $this->failedResponse = null;
+            $previous = $previousPrepareRequest !== null
+                ? $previousPrepareRequest(new PrepareRequestContext($request->context, $this->agent->state->model ?? $request->model, $this->agent->state->thinkingLevel), $signal)
+                : null;
+            $context = $previous?->context ?? $request->context;
+            $model = $previous?->model ?? $this->agent->state->model ?? $request->model;
+            $thinkingLevel = $previous?->thinkingLevel ?? $this->agent->state->thinkingLevel;
+
+            if (!Models::isVirtual($model)) {
+                return $previous;
+            }
+
+            $route = $this->route($model, $thinkingLevel, $context->messages, $failed, $signal);
+
+            return new AgentLoopTurnUpdate($previous?->context, null, $route->model, $route->thinkingLevel);
         };
 
         // What was chosen last time, applied here rather than by whoever built the agent: this
@@ -872,7 +908,7 @@ final class AgentSession
      */
     public function contextUsage(): ?ContextUsage
     {
-        $model = $this->model();
+        $model = $this->limitsModel();
 
         if ($model === null || $model->contextWindow <= 0) {
             return null;
@@ -1001,6 +1037,137 @@ final class AgentSession
     public function model(): ?Model
     {
         return $this->agent->state->model;
+    }
+
+    /**
+     * Under a virtual selection, the physical model of the latest successful response — upstream's
+     * `routedModel`. Null under a physical selection, and before the first response.
+     */
+    public function routedModel(): ?RoutedModel
+    {
+        $model = $this->model();
+
+        if ($model === null || !Models::isVirtual($model)) {
+            return null;
+        }
+
+        $latest = VirtualModelRegistry::latestResponse($this->messages());
+        $physical = $latest === null ? null : VirtualModelRegistry::physical($latest->provider, $latest->model);
+
+        return $physical === null ? null : new RoutedModel($physical);
+    }
+
+    /** The model whose limits apply to the conversation — upstream's `_limitsModel()`. */
+    private function limitsModel(): ?Model
+    {
+        return $this->routedModel()?->model ?? $this->model();
+    }
+
+    /**
+     * The model whose limits apply to $message, or null when it came from another model —
+     * upstream's `_modelForMessage()`. Under a virtual selection, the physical model that produced it.
+     */
+    private function modelForMessage(AssistantMessage $message): ?Model
+    {
+        $model = $this->model();
+
+        if ($model !== null && Models::isVirtual($model)) {
+            return VirtualModelRegistry::physical($message->provider, $message->model);
+        }
+
+        return $model?->provider === $message->provider && $model->id === $message->model ? $model : null;
+    }
+
+    /**
+     * Route a virtual selection for one request of the agent loop. Upstream's reasons: `retry`
+     * when a failed response is being sent again, `user` when a message the person wrote follows
+     * the last response (extension messages can follow it too), `continuation` otherwise. The
+     * router's state comes off the branch and a new one goes back on it as a `STATE_ENTRY` note.
+     *
+     * @param list<mixed> $messages
+     */
+    private function route(Model $model, ThinkingLevel $thinkingLevel, array $messages, ?AssistantMessage $failed, ?AbortSignal $signal): ModelRoute
+    {
+        $lastResponse = -1;
+
+        for ($i = count($messages) - 1; $i >= 0; $i--) {
+            if ($messages[$i] instanceof AssistantMessage) {
+                $lastResponse = $i;
+                break;
+            }
+        }
+
+        $userTurn = array_filter(array_slice($messages, $lastResponse + 1), static fn (mixed $message): bool => $message instanceof UserMessage) !== [];
+        $state = $this->store === null
+            ? null
+            : VirtualModelRegistry::stateIn($this->store->customEntries(VirtualModelRegistry::STATE_ENTRY), $model->provider, $model->id);
+
+        $route = VirtualModelRegistry::current()->resolve(
+            $model,
+            $messages,
+            $failed !== null ? ModelRouteRequest::RETRY : ($userTurn ? ModelRouteRequest::USER : ModelRouteRequest::CONTINUATION),
+            $thinkingLevel,
+            fn (Model $physical): bool => $this->keyFor($physical) !== null,
+            $signal,
+            $failed,
+            $state,
+        );
+
+        if ($route->state !== null && $route->state !== $state) {
+            $this->store?->appendCustomEntry(VirtualModelRegistry::STATE_ENTRY, [
+                'provider' => $model->provider,
+                'modelId' => $model->id,
+                'state' => $route->state,
+            ]);
+        }
+
+        return $route;
+    }
+
+    /**
+     * The model and level a request outside the agent loop goes to — a summary. A virtual
+     * selection is routed with reason `direct`, which carries no state; a physical one is itself.
+     */
+    private function directModel(Model $model, ?AbortSignal $signal): ModelRoute
+    {
+        if (!Models::isVirtual($model)) {
+            return new ModelRoute($model, $this->thinkingLevel());
+        }
+
+        return VirtualModelRegistry::current()->resolve(
+            $model,
+            $this->messages(),
+            ModelRouteRequest::DIRECT,
+            $this->thinkingLevel(),
+            fn (Model $physical): bool => $this->keyFor($physical) !== null,
+            $signal,
+        );
+    }
+
+    /**
+     * Record the selection on the branch when the branch implies another one, so a resume
+     * restores it — upstream's `_recordSelection()`. Tree navigation can leave the latest
+     * `model_change` on another branch, and responses cannot record a virtual selection because
+     * they name physical models. Responses do record a physical selection unless the branch holds
+     * a virtual one; checking a physical selection against responses would record it on every
+     * prompt while the routing redirects to another model.
+     */
+    private function recordSelection(): void
+    {
+        $model = $this->model();
+        $recorded = $this->store?->settings()['model'];
+
+        if ($model === null || $recorded === null || ($recorded->provider === $model->provider && $recorded->modelId === $model->id)) {
+            return;
+        }
+
+        $recordedModel = Models::find($recorded->provider, $recorded->modelId);
+
+        if (!Models::isVirtual($model) && !($recordedModel !== null && Models::isVirtual($recordedModel))) {
+            return;
+        }
+
+        $this->store?->appendModelChange($model->provider, $model->id);
     }
 
     public function sessionName(): ?string
@@ -2002,6 +2169,9 @@ final class AgentSession
             return null;
         }
 
+        // Routed first: a summary sizes its input and output from the model it gets.
+        $model = $this->directModel($model, $signal)->model;
+
         [$messages, $read, $modified] = BranchSummarization::prepare(
             $leaving,
             BranchSummarization::budget($model->contextWindow, $this->reserveTokens()),
@@ -2035,7 +2205,7 @@ final class AgentSession
     /** Whether the next turn would be pushing against the model's window. */
     public function shouldCompact(): bool
     {
-        $model = $this->model();
+        $model = $this->limitsModel();
 
         if ($model === null || !($this->settings?->compactionEnabled() ?? true)) {
             return false;
@@ -2064,9 +2234,6 @@ final class AgentSession
      *         agent.continue()
      *     finally: flush held-back commands; _emitAgentSettled()
      *
-     * pig has no `agent_before_settle` event, and upstream's boundary without a handler is
-     * `agent.hasQueuedMessages()`, which is what stands in its place below.
-     *
      * Everything happens in the caller's fiber, after `$firstRun` has returned — not in the run's
      * own event fan-out, which is where pig used to decide it, spawning the retry and settling on
      * every `AgentEndEvent` that did not start one. That made `agent_settled` a per-*run* event:
@@ -2079,6 +2246,9 @@ final class AgentSession
     private function runAgentPrompt(Closure $firstRun): void
     {
         $this->runAbortRequested = false;
+        // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+        $this->failedResponse = null;
+        $this->recordSelection();
         // "The run records the loadout in the transcript; restored tools that did not register by
         // now are dropped, so a tool that never registers does not stay pending."
         $this->loadout?->clearPending();
@@ -2114,6 +2284,7 @@ final class AgentSession
                 $this->finishCancelledRetry();
             }
 
+            $this->failedResponse = null;
             $this->runSystemPromptOptions = null;
             $this->flushBash();
             $this->emitAgentSettled();
@@ -2152,6 +2323,8 @@ final class AgentSession
                 $this->finishCancelledRetry();
             }
 
+            $this->failedResponse = $last;
+
             return !$this->runAbortRequested;
         }
 
@@ -2170,7 +2343,7 @@ final class AgentSession
         }
 
         // Upstream's `_checkCompaction()` for the overflow case.
-        if (Overflow::happened($last, $this->model()?->contextWindow)) {
+        if (Overflow::happened($last, $this->modelForMessage($last)?->contextWindow)) {
             return $this->compactForOverflow($last) && !$this->runAbortRequested;
         }
 
@@ -2211,7 +2384,7 @@ final class AgentSession
 
     private function isRetryableError(AssistantMessage $message): bool
     {
-        if (Overflow::happened($message, $this->model()?->contextWindow)) {
+        if (Overflow::happened($message, $this->modelForMessage($message)?->contextWindow)) {
             return false;
         }
 
@@ -2789,6 +2962,10 @@ final class AgentSession
             throw new AgentError('No model selected.');
         }
 
+        // Routed first: a summary sizes its input and output from the model it gets.
+        $direct = $this->directModel($model, $signal);
+        $model = $direct->model;
+
         $messages = $this->messages();
 
         if (($messages[count($messages) - 1] ?? null) instanceof CompactionSummary) {
@@ -2886,7 +3063,7 @@ final class AgentSession
             (int) floor(0.8 * $this->reserveTokens()),
             source: 'compaction',
             reason: $reason,
-            thinkingLevel: $this->thinkingLevel(),
+            thinkingLevel: $direct->thinkingLevel,
         );
 
         if ($text === null) {

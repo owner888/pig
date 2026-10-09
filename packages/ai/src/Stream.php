@@ -143,6 +143,8 @@ final class Stream
             // Default Credentials and Bedrock on the AWS credential chain, and each says so itself
             // when there is nothing there either.
             Api::GoogleVertex, Api::BedrockConverseStream => true,
+            // Refused below by name rather than as a missing key.
+            Api::Virtual => true,
             default => false,
         };
 
@@ -171,6 +173,7 @@ final class Stream
             // dialect by the time they reach here — `translate()` asked it — or are what the
             // caller built; either way they carry the key.
             Api::Extension => self::extensionApi($model)->stream($model, $context, self::withKey($options, (string) $apiKey)),
+            Api::Virtual => throw self::unrouted($model),
         };
     }
 
@@ -224,6 +227,14 @@ final class Stream
      */
     public static function envApiKey(string $provider, ?array $env = null): ?string
     {
+        // Upstream's `withVirtualModels()` gives a provider of nothing but virtual models an
+        // `apiKey` auth whose `resolve()` answers `{auth: {}, source: "virtual"}`: it needs no
+        // credentials, because nothing of it is ever streamed — the request goes to the physical
+        // model it routes to, with that one's key. The marker is how pig says "signed in, no key".
+        if (Models::isVirtualOnlyProvider($provider)) {
+            return self::AMBIENT_AUTH_MARKER;
+        }
+
         $names = match ($provider) {
             'anthropic' => ['ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
             'github-copilot' => ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
@@ -401,7 +412,17 @@ final class Stream
             Api::MistralConversations => self::mistralSimple($model, $options, $base),
             Api::Extension => self::extensionApi($model)->translate($model, $options, $apiKey
                 ?? throw new ProviderError("No API key for provider: {$model->provider}")),
+            Api::Virtual => throw self::unrouted($model),
         };
+    }
+
+    /**
+     * Upstream's `unroutedStream()`: a virtual model reaching a provider is a request nobody
+     * routed — the session routes it before streaming (`Pig\CodingAgent\VirtualModels`).
+     */
+    private static function unrouted(Model $model): ProviderError
+    {
+        return new ProviderError("Virtual model {$model->provider}/{$model->id} must be routed before streaming");
     }
 
     /**

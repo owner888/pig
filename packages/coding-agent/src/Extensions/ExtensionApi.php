@@ -16,6 +16,8 @@ use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\RegisteredMcpServer;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\VirtualModels\VirtualModelDefinition;
+use Pig\CodingAgent\VirtualModels\VirtualModelRegistry;
 
 /**
  * What an extension factory is handed to register capabilities.
@@ -212,6 +214,31 @@ final class ExtensionApi extends HookApi
     public function providers(): array
     {
         return $this->providers;
+    }
+
+    // ---- virtual models ----------------------------------------------------------------
+
+    /**
+     * Bring a virtual model: a catalogue entry that routes each request to a physical model.
+     * Upstream's `registerVirtualModel()`.
+     *
+     * Listed under `$definition->provider`, which may also list physical models or several virtual
+     * ones; a provider of nothing but virtual models needs no key. The same provider and id again
+     * replaces it. Selecting it records the virtual model (`model_change`); the responses record
+     * the physical models the router sent each request to. The router's state is kept on the
+     * session branch as a `pi.virtual-model-state` entry. Not saved: register again on every load.
+     *
+     * @throws \InvalidArgumentException for an empty provider or id, or an id that is a physical
+     *         model's of that provider
+     */
+    public function registerVirtualModel(VirtualModelDefinition $definition): void
+    {
+        VirtualModelRegistry::current()->register($definition);
+    }
+
+    public function unregisterVirtualModel(string $provider, string $id): void
+    {
+        VirtualModelRegistry::current()->unregister($provider, $id);
     }
 
     // ---- MCP servers -------------------------------------------------------------------

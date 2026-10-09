@@ -43,34 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## [0.5.1] - 2026-10-08
+## [0.5.2] - 2026-10-08
 
 ### New Features
 
-- **Program Status Reporting via OSC 7501 (`ProgramStatus`, `ProgramStatusReporter`)**:
-  - Implemented OSC 7501 protocol reporting (`working`, `blocked`, `done`, `error`, `idle`) for compatible terminals and agent dashboards, with `PIG_PROGRAM_STATUS=1|0` overrides and clean capability detection.
-- **Dynamic Extension Resource Discovery (`resources_discover`, `Skills`, `SlashCommands`, `Themes`)**:
-  - Added `resources_discover` hook event: extensions dynamically contribute skills, prompt templates, and custom theme directories relative to the extension entry file.
-- **Upstream Extension Lifecycle & Boundary Interception (`HookApi::EVENTS`, `agent_before_settle`)**:
-  - Aligned `session_start` (with `reason` and `previousSessionFile`) and `session_shutdown` (with `reason` and `targetSessionFile`), firing properly across startup, reload, new, and resume lifecycles.
-  - Implemented `agent_before_settle` with `BoundaryContextPreview` and `BoundaryResult(continue: true)` draft appending before turn settling.
-  - Added `ui_prompt_start` / `ui_prompt_end` wrapping blocking dialogs (`PromptingUi`).
-- **Dynamic Extension MCP Server Registration (`ExtensionApi::registerMcpServer`, `McpServerRegistry`)**:
-  - Added `$pi->registerMcpServer()`, `unregisterMcpServer()`, and `getMcpServers()`, firing `mcp_servers_change` and allowing extensions to declare and manage MCP servers dynamically.
+- **Virtual Models & Dynamic Request Routing (`VirtualModels`, `AgentLoopConfig::$prepareRequest`)**:
+  - Added `$pi->registerVirtualModel()` and `unregisterVirtualModel()` to `ExtensionApi`: virtual models appear in the model selector (`api: pi-virtual`) and resolve dynamically on every request right before dispatch via `AgentLoopConfig::$prepareRequest`.
+  - The virtual model router inspects the request reason (`user`, `continuation`, `retry`, `direct`), previous responses, and failed responses, clamping thinking levels with `ThinkingLevel::clampedFor()`.
+  - Persisted router state on session branches as `pi.virtual-model-state` custom entries; the footer and UI display routed physical models (e.g. `auto • high → gpt-5.6-luna`), and providers composed solely of virtual models require no API key.
 
-### Added
-
-- Added `aborted` flag to `agent_settled` hook event and `AgentSettledEvent`.
-- Added `ui.setWorkingIndicator()` supporting custom spinner animation frames or static marks.
-- Added `$ctx->scopedModels()` providing models scoped by `--models`.
-- Added `ui.addAutocompleteProvider()` and `ui.setEditorComponent()` for custom editor and completion hot-swapping.
-- Added `project_trust` event allowing extensions to intervene in project trust decisions prior to loading project resources.
-
-### Changed
-
-- Transitioned `session_switch` to standard `session_start` / `session_shutdown` pairs.
-- Aligned `ExtensionLoader::load()` ordering to load user and configuration extensions before project-level extensions.
-- Renamed `$ctx->hasQueuedMessages()` to `$ctx->hasPendingMessages()` matching upstream.
+## [0.5.1] - 2026-10-08
 
 ## [0.5.0] - 2026-10-08
 

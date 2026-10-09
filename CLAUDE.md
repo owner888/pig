@@ -2674,8 +2674,8 @@ around every blocking dialog by `Hooks\PromptingUi`, upstream's `wrapUIPromptCon
 session file, and pig branches inside one file instead (`session_before_tree`). A typo is refused
 the same way, since the names are a list here rather than TypeScript overloads.
 
-**Four of upstream's events arrive in pig's own arrangement, and the arrangement is the thing to
-know before reading any of them:**
+**Four of upstream's events and its virtual models arrive in pig's own arrangement, and the
+arrangement is the thing to know before reading any of them:**
 
 - **`project_trust` is asked of a runner that exists only for the question.** `bin/pig` loads the
   person's extensions first (`ExtensionLoader::load()` in upstream's order: home, the settings',
@@ -2722,10 +2722,35 @@ know before reading any of them:**
   queued) is refused with upstream's sentence. `outcome` is set from each `turn_end`'s stop reason.
   pig has no `_pendingCustomMessages`: a hook's message during a run is already a follow-up on the
   agent's queue, which is what `pendingMessages` shows. `turn_end` is **not** a boundary here.
+- **Virtual models are `Pig\CodingAgent\VirtualModels`**, the virtual-model half of upstream's
+  `ModelRuntime` on a static `VirtualModelRegistry` (reached through `current()`, `reset()` on
+  `/reload`, like `McpServerRegistry`). `register()` puts an `Api::Virtual` row into `Models`
+  (`registerVirtual()`, laid over the table last so it hides a physical model of the same id) and
+  keeps the router; `Stream` refuses to stream such a row, and `Stream::envApiKey()` answers the
+  ambient marker for a provider of nothing but virtual models, which is how `Auth::hasKeyFor()`,
+  `apiKey()` and `AgentSession::keyFor()` all say "signed in". The routing is
+  `Agent::$prepareRequest` (upstream's `AgentLoopConfig.prepareRequest`, new in agent-core: asked
+  right before every request, the first included, after the pending messages are in; its answer
+  replaces context, model and reasoning for the rest of the run) — `AgentSession` installs one that
+  routes `agent->state->model` when it is virtual, so each request routes again and the selection
+  never leaves the state. `VirtualModelRegistry::resolve()` is upstream's `resolveModel()`: physical
+  target with credentials, level clamped with `ThinkingLevel::clampedFor()`. Reasons: `retry` when
+  `$failedResponse` was set by a successful `prepareRetry()`, `user` when a `UserMessage` follows the
+  last assistant message, else `continuation`; summaries (`summariseAndSwapIn()`, `branchSummary()`)
+  route with `direct` through `directModel()`. Router state is the last `pi.virtual-model-state`
+  custom entry on the branch for that provider/id. `SessionManager::settings()` carries upstream's
+  `getBranchSelection()` rule: a virtual `ModelChange` holds over the physical responses after it,
+  one no longer registered does not, and a response naming a virtual model (a failed routing) is
+  never a selection; `recordSelection()` at the start of each prompt writes the selection down when
+  the branch implies another. `routedModel()`, `limitsModel()` and `modelForMessage()` are
+  upstream's: the footer, `contextUsage()`, `shouldCompact()` and the overflow checks use the physical
+  model that answered last. **`RoutedModel::$thinkingLevel` is always null**: upstream stamps
+  `thinkingLevel` on every assistant message in the loop and pig's `AssistantMessage` has no such
+  field, so a router is not told the level of the previous response.
 
 **Not yet ported from upstream's `ExtensionAPI`:** `cache_warming_decision` (the cache warmer),
-`registerVirtualModel()`/`unregisterVirtualModel()`, the context's `modelRegistry` (pig has
-`Auth` + the static `Models`), and `ExtensionCommandContext` (see below).
+the context's `modelRegistry` (pig has `Auth` + the static `Models`), and `ExtensionCommandContext`
+(see below).
 
 **What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
 Upstream gives a slash command's handler four methods an event handler does not get —

@@ -25,6 +25,7 @@ final readonly class AgentOptions
      * @param int|null $maxRetryDelayMs upstream's `AgentOptions.maxRetryDelayMs`
      * @param Closure|null $prepareNextTurn upstream's `AgentOptions.prepareNextTurn` — see `Agent::$prepareNextTurn`
      * @param Closure|null $prepareNextTurnWithContext upstream's `AgentOptions.prepareNextTurnWithContext`
+     * @param Closure|null $prepareRequest upstream's `AgentOptions.prepareRequest` — see `Agent::$prepareRequest`
      */
     public function __construct(
         public ?AgentState $initialState = null,
@@ -41,6 +42,7 @@ final readonly class AgentOptions
         public ?int $maxRetryDelayMs = null,
         public ?Closure $prepareNextTurn = null,
         public ?Closure $prepareNextTurnWithContext = null,
+        public ?Closure $prepareRequest = null,
     ) {
     }
 }

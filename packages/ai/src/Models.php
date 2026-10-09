@@ -2687,12 +2687,67 @@ final class Models
         self::$models = null;
     }
 
+    /**
+     * @var array<string, Model> virtual models, keyed `provider/id` — upstream's `withVirtualModels()`:
+     *      laid over the table last, and **hiding** a physical chat model of the same id, which a
+     *      catalogue refresh can add after the registration
+     */
+    private static array $virtual = [];
+
     /** Forget what `register()` added. For tests, which must not leak models into each other. */
     public static function forgetRegistered(): void
     {
         self::$registered = [];
         self::$replacing = [];
+        self::$virtual = [];
         self::$models = null;
+    }
+
+    /**
+     * A virtual model (`Api::Virtual`) under any provider, with or without physical models of its
+     * own; the same provider and id again replaces it. `Pig\CodingAgent\VirtualModels` builds the
+     * row and keeps the router; this end only lists it.
+     */
+    public static function registerVirtual(Model $model): void
+    {
+        if ($model->api !== Api::Virtual) {
+            throw new \InvalidArgumentException("Not a virtual model: {$model->provider}/{$model->id}");
+        }
+
+        self::$virtual[$model->provider . '/' . $model->id] = $model;
+        self::$models = null;
+    }
+
+    public static function forgetVirtual(string $provider, string $id): void
+    {
+        unset(self::$virtual[$provider . '/' . $id]);
+        self::$models = null;
+    }
+
+    /** Whether a model is a virtual one — upstream's `isVirtualModel()`. */
+    public static function isVirtual(Model $model): bool
+    {
+        return $model->api === Api::Virtual;
+    }
+
+    /** Whether nothing but virtual models defines this provider, which then needs no credentials. */
+    public static function isVirtualOnlyProvider(string $provider): bool
+    {
+        $hasVirtual = false;
+
+        foreach (self::table() as $model) {
+            if ($model->provider !== $provider) {
+                continue;
+            }
+
+            if ($model->api !== Api::Virtual) {
+                return false;
+            }
+
+            $hasVirtual = true;
+        }
+
+        return $hasVirtual;
     }
 
     /** Forget one provider's registered models — `ProviderRegistry::unregister()`'s half. */
@@ -3251,6 +3306,12 @@ final class Models
         // the `$replace` argument on `register()` for why Antigravity's catalogue is it.
         foreach (self::$replacing as $model) {
             $models[$model->provider . '/' . $model->id] = $model;
+        }
+
+        // And the virtual ones over everything, hiding a physical model of the same id — see
+        // `registerVirtual()`.
+        foreach (self::$virtual as $key => $model) {
+            $models[$key] = $model;
         }
 
         return self::$models = $models;

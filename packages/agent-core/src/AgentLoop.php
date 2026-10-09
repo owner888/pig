@@ -252,6 +252,27 @@ final class AgentLoop
 
                 $pending = [];
 
+                // Upstream's `prepareRequest`: asked immediately before every request, the first
+                // included, once the pending messages are in. What it answers replaces the context,
+                // model and thinking level for this request and the rest of the run.
+                $update = $config->prepareRequest !== null
+                    ? ($config->prepareRequest)(
+                        new PrepareRequestContext($context, $config->model, ThinkingLevel::fromReasoning($config->reasoning)),
+                        $signal,
+                    )
+                    : null;
+
+                if ($update !== null) {
+                    $context = $update->context ?? $context;
+
+                    if ($update->model !== null || $update->thinkingLevel !== null) {
+                        $config = $config->withModel(
+                            $update->model ?? $config->model,
+                            $update->thinkingLevel !== null ? $update->thinkingLevel->toReasoning() : $config->reasoning,
+                        );
+                    }
+                }
+
                 $message = self::streamAssistantResponse($context, $config, $signal, $emit, $streamFn);
                 $newMessages[] = $message;
 

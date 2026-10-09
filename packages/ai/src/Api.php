@@ -36,4 +36,11 @@ enum Api: string
      * the provider name is the discriminator the registry needs, and it is on the model already.
      */
     case Extension = 'extension';
+
+    /**
+     * A virtual model — upstream's `VIRTUAL_MODEL_API`: a catalogue entry that routes each request
+     * to a physical model and never reaches a provider itself. `Stream` refuses one by name; the
+     * session routes it first (`Pig\CodingAgent\VirtualModels`).
+     */
+    case Virtual = 'pi-virtual';
 }

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Session;
 
 use Pig\Agent\AgentError;
+use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\Models;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
@@ -708,6 +710,12 @@ final class SessionManager
      * model that produced it, so a conversation records what it was had with even if nobody
      * ever changed it on purpose.
      *
+     * Except under a virtual model (upstream's `getBranchSelection()`): its responses name the
+     * physical models it routed to, so a virtual `ModelChange` holds over the responses after it
+     * until the next `ModelChange`. One that is no longer registered does not hold, and the
+     * selection falls back to the physical model that answered last. A response naming a virtual
+     * model is a failed routing and never a selection.
+     *
      * @return array{model: ?ModelChange, thinking: ?ThinkingLevelChange}
      */
     public function settings(): array
@@ -724,8 +732,12 @@ final class SessionManager
             if ($model === null) {
                 if ($item instanceof ModelChange) {
                     $model = $item;
-                } elseif ($item instanceof AssistantMessage && $item->model !== '') {
-                    $model = new ModelChange($item->provider, $item->model, $item->timestamp);
+                } elseif ($item instanceof AssistantMessage && $item->model !== '' && $item->api !== Api::Virtual) {
+                    $change = $this->lastModelChangeBefore($cur);
+                    $selected = $change === null ? null : Models::find($change->provider, $change->modelId);
+                    $model = $change !== null && $selected !== null && Models::isVirtual($selected)
+                        ? $change
+                        : new ModelChange($item->provider, $item->model, $item->timestamp);
                 }
             }
 
@@ -741,6 +753,24 @@ final class SessionManager
         }
 
         return ['model' => $model, 'thinking' => $thinking];
+    }
+
+    /** The nearest `ModelChange` above entry $id, or null when nothing above it changed the model. */
+    private function lastModelChangeBefore(string $id): ?ModelChange
+    {
+        $cur = $this->entries[$id]['parent'];
+
+        while ($cur !== null && isset($this->entries[$cur])) {
+            $item = $this->entries[$cur]['message'];
+
+            if ($item instanceof ModelChange) {
+                return $item;
+            }
+
+            $cur = $this->entries[$cur]['parent'];
+        }
+
+        return null;
     }
 
     /**
