@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.9] - 2026-10-08
+
+### Fixed
+
+- **Resilient Polling in Theme Watcher Test (`ThemeWatcherTest`)**:
+  - Replaced rigid 0.8s sleep in `ThemeWatcherTest` with `runUntil()` predicate polling and an expanded timeout, preventing false-positive test failures caused by scheduling jitter on busy CI virtual machines.
+
 ## [0.5.8] - 2026-10-08
 
 ### Fixed

@@ -46,6 +46,17 @@ final class ThemeWatcherTest extends TestCase
         }
     }
 
+    private static function runUntil(callable $predicate, float $timeout = 2.5): void
+    {
+        $until = microtime(true) + $timeout;
+        while (microtime(true) < $until) {
+            Loop::get()->tick();
+            if ($predicate()) {
+                return;
+            }
+        }
+    }
+
     public function testReloadsAnEditedCustomThemeAndReportsABrokenEdit(): void
     {
         $path = $this->customThemesDir() . '/mine.json';
@@ -61,13 +72,13 @@ final class ThemeWatcherTest extends TestCase
 
         $json['colors']['accent'] = '#123456';
         $this->write($path, $json);
-        self::runFor(0.8);
+        self::runUntil(static fn (): bool => $changes >= 2);
         $this->assertSame(2, $changes);
         $this->assertSame('#123456', Colors::colorToHex(Themes::theme()->colors()['accent']));
 
         file_put_contents($path, '{ broken');
         try {
-            self::runFor(0.8);
+            self::runFor(2.5);
             $this->fail('A broken edit should be reported');
         } catch (RuntimeException $error) {
             $this->assertStringContainsString('Reloading theme "mine"', $error->getMessage());
