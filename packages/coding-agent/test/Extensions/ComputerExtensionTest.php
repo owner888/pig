@@ -6,8 +6,9 @@ namespace Pig\Tests\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\NoUi;
+use Pig\Extensions\Computer\DesktopClient;
+use Pig\Extensions\Computer\InputManager;
+use Pig\Extensions\Computer\ScreenScaler;
 
 final class ComputerExtensionTest extends TestCase
 {
@@ -17,7 +18,7 @@ final class ComputerExtensionTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->tempHome = sys_get_temp_dir() . '/pig-test-home-' . uniqid();
+        $this->tempHome = sys_get_temp_dir() . '/pig-test-computer-' . uniqid();
         mkdir($this->tempHome, 0755, true);
         putenv("PIG_HOME={$this->tempHome}");
     }
@@ -26,16 +27,19 @@ final class ComputerExtensionTest extends TestCase
     protected function tearDown(): void
     {
         putenv('PIG_HOME');
-        foreach (glob("{$this->tempHome}/*.json") ?: [] as $f) {
-            unlink($f);
-        }
         if (is_dir($this->tempHome)) {
+            $files = glob("{$this->tempHome}/*") ?: [];
+            foreach ($files as $f) {
+                if (is_file($f)) {
+                    unlink($f);
+                }
+            }
             rmdir($this->tempHome);
         }
         parent::tearDown();
     }
 
-    public function testComputerExtensionRegistersToolAndSlashCommand(): void
+    public function testComputerExtensionLoadsAndRegistersToolsAndSlashCommand(): void
     {
         $root = dirname(__DIR__, 4);
         $extPath = $root . '/extensions/pig-computer/index.php';
@@ -55,121 +59,102 @@ final class ComputerExtensionTest extends TestCase
         $this->assertNotNull($computerExt);
         $this->assertSame('pig-computer', $computerExt->name);
 
-        // Tool registered
-        $toolNames = array_map(static fn ($t) => $t->name, $computerExt->api->tools());
-        $this->assertContains('computer', $toolNames);
-
         // Command registered
         $commands = $computerExt->api->commands();
         $this->assertArrayHasKey('computer', $commands);
-    }
 
-    public function testNavigateStopsWhenCookiesJsonIsMissingForJd(): void
-    {
-        $root = dirname(__DIR__, 4);
-        $extPath = $root . '/extensions/pig-computer/index.php';
+        // 10 Native Tools registered
+        $toolNames = array_map(static fn ($t) => $t->name, $computerExt->api->tools());
+        $expectedTools = [
+            'computer_doctor',
+            'computer_ready',
+            'computer_observe',
+            'computer_click',
+            'computer_drag',
+            'computer_scroll',
+            'computer_type_text',
+            'computer_press_key',
+            'computer_launch_app',
+            'computer_batch',
+        ];
 
-        [$loaded] = ExtensionLoader::load($root, cliPaths: [$extPath], home: $this->tempHome);
-        $computerTool = null;
-        foreach ($loaded as $ext) {
-            foreach ($ext->api->tools() as $t) {
-                if ($t->name === 'computer') {
-                    $computerTool = $t;
-                    break 2;
-                }
-            }
-        }
-
-        $this->assertNotNull($computerTool);
-
-        $ctx = new HookContext(cwd: '.', ui: new NoUi());
-        $res = ($computerTool->execute)('call_1', ['action' => 'navigate', 'url' => 'https://www.jd.com'], null, $ctx);
-        $text = $res->content[0]->text ?? '';
-
-        $this->assertStringContainsString('登录凭据缺失 - 操作已终止', $text);
-        $this->assertStringContainsString('jd.com.cookies.json', $text);
-    }
-
-    public function testNavigateRecognizesDomainSpecificCookieFile(): void
-    {
-        $root = dirname(__DIR__, 4);
-        $extPath = $root . '/extensions/pig-computer/index.php';
-
-        // Write domain specific cookie file: jd.com.cookies.json
-        $cookieFile = $this->tempHome . '/jd.com.cookies.json';
-        file_put_contents($cookieFile, json_encode([
-            [
-                'name' => 'pt_key',
-                'value' => 'active_key_123',
-                'expirationDate' => time() + 86400 * 30, // valid for 30d
-            ],
-            [
-                'name' => 'pt_pin',
-                'value' => 'jd_user_test',
-                'expirationDate' => time() + 86400 * 30,
-            ]
-        ]));
-
-        [$loaded] = ExtensionLoader::load($root, cliPaths: [$extPath], home: $this->tempHome);
-        $computerTool = null;
-        foreach ($loaded as $ext) {
-            foreach ($ext->api->tools() as $t) {
-                if ($t->name === 'computer') {
-                    $computerTool = $t;
-                    break 2;
-                }
-            }
-        }
-
-        $this->assertNotNull($computerTool);
-
-        $ctx = new HookContext(cwd: '.', ui: new NoUi());
-        // Since browser service is not running on 9523 during test, it should pass cookie check and fail at connect
-        try {
-            $res = ($computerTool->execute)('call_2', ['action' => 'navigate', 'url' => 'https://item.jd.com/123.html'], null, $ctx);
-            $text = $res->content[0]->text ?? '';
-            // If service was up it would succeed; if down it throws RuntimeException about connection, but NOT cookie error
-            $this->assertStringNotContainsString('登录凭据缺失', $text);
-        } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('Browser service', $e->getMessage());
-            $this->assertStringNotContainsString('登录凭据缺失', $e->getMessage());
+        foreach ($expectedTools as $expected) {
+            $this->assertContains($expected, $toolNames, "Tool {$expected} should be registered");
         }
     }
 
-    public function testNavigateStopsWhenCookiesAreExpired(): void
+    public function testScreenScalerPngDimensions(): void
     {
-        $root = dirname(__DIR__, 4);
-        $extPath = $root . '/extensions/pig-computer/index.php';
+        $validPng = "\x89PNG\r\n\x1a\n"
+                  . "\x00\x00\x00\x0d"
+                  . "IHDR"
+                  . "\x00\x00\x05\xbe" // 1470
+                  . "\x00\x00\x03\xbc" // 956
+                  . "\x08\x06\x00\x00\x00";
 
-        // Write expired cookie file
-        $cookieFile = $this->tempHome . '/jd.com.cookies.json';
-        file_put_contents($cookieFile, json_encode([
-            [
-                'name' => 'pt_key',
-                'value' => 'fake_val',
-                'domain' => '.jd.com',
-                'expirationDate' => time() - 3600, // expired 1h ago
-            ]
-        ]));
+        $tmpFile = $this->tempHome . '/test.png';
+        file_put_contents($tmpFile, $validPng);
 
-        [$loaded] = ExtensionLoader::load($root, cliPaths: [$extPath], home: $this->tempHome);
-        $computerTool = null;
-        foreach ($loaded as $ext) {
-            foreach ($ext->api->tools() as $t) {
-                if ($t->name === 'computer') {
-                    $computerTool = $t;
-                    break 2;
-                }
-            }
+        $dims = ScreenScaler::pngDimensions($tmpFile);
+        $this->assertNotNull($dims);
+        $this->assertSame(1470, $dims['width']);
+        $this->assertSame(956, $dims['height']);
+
+        // Invalid file
+        $invalidFile = $this->tempHome . '/invalid.png';
+        file_put_contents($invalidFile, 'not a png file');
+        $this->assertNull(ScreenScaler::pngDimensions($invalidFile));
+    }
+
+    public function testScreenScalerFitDimensions(): void
+    {
+        // Retina 2x: 2940 x 1912
+        // maxLong: 1568, maxShort: 980
+        // 1568 / 2940 = 0.5333
+        // 980 / 1912 = 0.5125 -> scale is 0.5125
+        $fitted = ScreenScaler::fitDimensions(2940, 1912);
+        $this->assertLessThanOrEqual(1568, $fitted['width']);
+        $this->assertLessThanOrEqual(980, $fitted['height']);
+        $this->assertGreaterThan(0, $fitted['width']);
+        $this->assertGreaterThan(0, $fitted['height']);
+
+        // Small screen stays 1.0 scale
+        $small = ScreenScaler::fitDimensions(1280, 800);
+        $this->assertSame(1280, $small['width']);
+        $this->assertSame(800, $small['height']);
+        $this->assertSame(1.0, $small['scale']);
+    }
+
+    public function testInputManagerKeycodes(): void
+    {
+        $this->assertSame(36, InputManager::KEY_CODES['enter']);
+        $this->assertSame(48, InputManager::KEY_CODES['tab']);
+        $this->assertSame(53, InputManager::KEY_CODES['escape']);
+        $this->assertSame(49, InputManager::KEY_CODES['space']);
+    }
+
+    public function testInputManagerCoordinateScaling(): void
+    {
+        // Logical Point (200, 300) with ratio [1.5, 1.5] without jitter
+        $res = InputManager::scaleCoordinates(200.0, 300.0, [1.5, 1.5], jitter: false);
+        $this->assertSame(300, $res['real_x']);
+        $this->assertSame(450, $res['real_y']);
+
+        // With anti-ban jitter
+        $jittered = InputManager::scaleCoordinates(200.0, 300.0, [1.5, 1.5], jitter: true);
+        $this->assertGreaterThanOrEqual(298, $jittered['real_x']);
+        $this->assertLessThanOrEqual(302, $jittered['real_x']);
+    }
+
+    public function testDesktopClientDetectsScreenSize(): void
+    {
+        $client = new DesktopClient();
+        if (!$client->isAvailable()) {
+            $this->markTestSkipped('Native desktop automation only available on macOS.');
         }
 
-        $this->assertNotNull($computerTool);
-
-        $ctx = new HookContext(cwd: '.', ui: new NoUi());
-        $res = ($computerTool->execute)('call_3', ['action' => 'navigate', 'url' => 'https://item.jd.com/123.html'], null, $ctx);
-        $text = $res->content[0]->text ?? '';
-
-        $this->assertStringContainsString('已过期', $text);
-        $this->assertStringContainsString('jd.com.cookies.json', $text);
+        $size = $client->screenSize();
+        $this->assertGreaterThan(0, $size['width']);
+        $this->assertGreaterThan(0, $size['height']);
     }
 }

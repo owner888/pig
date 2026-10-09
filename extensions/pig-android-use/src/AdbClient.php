@@ -214,7 +214,8 @@ final class AdbClient
             $cmd[] = $a;
         }
 
-        return Process::run($cmd, timeout: (float) $timeoutSeconds);
+        [$exit, $stdout, $stderr] = Process::run($cmd, timeout: (float) $timeoutSeconds);
+        return ['exit' => $exit, 'stdout' => $stdout, 'stderr' => $stderr];
     }
 
     /**

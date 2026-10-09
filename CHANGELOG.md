@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.19] - 2026-10-08
+
+### New Features
+
+- **Pure-PHP Native macOS Desktop Controller (`extensions/pig-computer`)**:
+  - Replaced legacy containerized browser dependency with pure-PHP native macOS automation via `screencapture`, AppleScript, and JXA CoreGraphics event injection.
+  - Provided 10 granular desktop manipulation tools: `computer_doctor`, `computer_ready`, `computer_observe`, `computer_click`, `computer_drag`, `computer_scroll`, `computer_type_text`, `computer_press_key`, `computer_launch_app`, and `computer_batch` (up to 15 operations with anti-ban jitter).
+  - Added built-in Web live stream monitor `/api/computer/stream` and image capture endpoints `/api/computer/screen.jpg`.
+  - Added `/computer status | screenshot | app <name>` slash command for interactive desktop diagnostics.
+
 ## [0.5.18] - 2026-10-08
 
 ### New Features

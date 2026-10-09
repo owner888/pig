@@ -129,8 +129,8 @@ final class ScreenCapture
                 $pngPath,
                 '--out', $jpgPath,
             ];
-            $res = Process::run($cmd, timeout: 8.0);
-            if ($res['exit'] === 0 && file_exists($jpgPath) && filesize($jpgPath) > 32) {
+            [$exit] = Process::run($cmd, timeout: 8.0);
+            if ($exit === 0 && file_exists($jpgPath) && filesize($jpgPath) > 32) {
                 // Remove temporary original PNG to save disk
                 unlink($pngPath);
                 $jpgData = (string) file_get_contents($jpgPath);
