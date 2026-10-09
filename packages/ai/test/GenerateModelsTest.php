@@ -504,7 +504,9 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.24, 0.0, 0.0, 0.0],", $output);
         // A listed model whose output is not decisions is not a classifier.
         self::assertStringNotContainsString("'openrouter/vendor/chatty'", $output);
-        self::assertStringContainsString('classifiers      8 models', $output);
+        // The hand-kept Decisions row, with the first classifier price tier.
+        self::assertStringContainsString("        'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],", $output);
+        self::assertStringContainsString('classifiers      9 models', $output);
     }
 
     public function testImageRowsAreOpenRoutersImageListing(): void

@@ -484,6 +484,12 @@ const HAND_KEPT_CLASSIFIERS = [
     'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.09, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     // https://developers.cloudflare.com/ai/models/typesafe/jev/
     'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    // Upstream's `OPENAI_CLASSIFIER_MODELS` (ce8972a0e): "OpenAI Decisions API (public beta):
+    // gpt-6-luna is its only model. It bills input tokens only, with the same long-context
+    // multiplier as chat requests. Only API keys work: Sign in with ChatGPT tokens are rejected on
+    // /v1/decisions." The input ceiling is 922K tokens; requests past roughly 600K time out at the
+    // gateway. https://developers.openai.com/api/docs/guides/decisions
+    'openai/gpt-6-luna' => ['name' => 'GPT-6 Luna', 'api' => ClassifierApi::OpenAiDecisions, 'baseUrl' => 'https://api.openai.com/v1', 'context' => 922_000, 'input' => ['text', 'image'], 'in' => 0.1, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'tiers' => [[OPENAI_LONG_CONTEXT_INPUT_THRESHOLD, 0.2, 0.0, 0.0, 0.0]]],
 ];
 
 /**
@@ -1987,7 +1993,7 @@ function openRouterModalities(mixed $values): array
 function renderClassifiers(array $rows): string
 {
     return implode("\n", array_map(static fn (string $key, array $row): string => sprintf(
-        '        %s => [%s, ClassifierApi::%s, %s, %s, %s, %s, %s, %s, %s],',
+        '        %s => [%s, ClassifierApi::%s, %s, %s, %s, %s, %s, %s, %s%s],',
         var_export($key, true),
         var_export($row['name'], true),
         $row['api']->name,
@@ -1998,6 +2004,11 @@ function renderClassifiers(array $rows): string
         money((float) $row['out']),
         money((float) $row['cacheRead']),
         money((float) $row['cacheWrite']),
+        // Tiers under their own key, as a chat row carries them.
+        ($row['tiers'] ?? []) === [] ? '' : ", 'tiers' => [" . implode(', ', array_map(
+            static fn (array $tier): string => sprintf('[%s, %s, %s, %s, %s]', grouped((int) $tier[0]), money((float) $tier[1]), money((float) $tier[2]), money((float) $tier[3]), money((float) $tier[4])),
+            $row['tiers'],
+        )) . ']',
     ), array_keys($rows), $rows));
 }
 

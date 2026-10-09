@@ -38,6 +38,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
@@ -336,6 +337,25 @@ final class RpcModeTest extends TestCase
         $this->assertIsArray($response['data'] ?? null, 'expected data on the response');
 
         return $response['data'];
+    }
+
+    // ---- the events ----------------------------------------------------------------------
+
+    public function testANestedCallsEventsNameTheirParentAndAResultCarriesWhatTheToolSpent(): void
+    {
+        // Pure encoding; the mode is started only so tearDown() has one to stop.
+        $this->start();
+        $start = RpcEvents::encode(new \Pig\Agent\ToolExecutionStartEvent('call-1/1', 'read', ['path' => 'a.txt'], 'call-1'));
+        $this->assertSame('call-1', $start['parentToolCallId'] ?? null);
+
+        $spent = new \Pig\Agent\AgentToolResult([new TextContent('ok')], null, new Usage(10, 2, 0, 0, 12, new \Pig\Ai\Cost(total: 0.003)));
+        $end = RpcEvents::encode(new \Pig\Agent\ToolExecutionEndEvent('call-1/1', 'read', $spent, false, 'call-1'));
+        $this->assertSame('call-1', $end['parentToolCallId'] ?? null);
+        $this->assertSame(0.003, $end['result']['usage']['cost']['total'] ?? null);
+
+        // Upstream spreads `parentToolCallId` in only when set, so a model-issued call has no key.
+        $plain = RpcEvents::encode(new \Pig\Agent\ToolExecutionStartEvent('call-2', 'read', []));
+        $this->assertArrayNotHasKey('parentToolCallId', $plain);
     }
 
     // ---- the envelope ------------------------------------------------------------------

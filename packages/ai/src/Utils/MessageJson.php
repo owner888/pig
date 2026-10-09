@@ -88,6 +88,7 @@ final class MessageJson
                 'content' => self::encodeContent($message->content),
                 'isError' => $message->isError,
                 'details' => self::plain($message->details),
+                ...($message->usage === null ? [] : ['usage' => self::encodeUsage($message->usage)]),
                 'timestamp' => $message->timestamp,
             ],
             default => null,
@@ -144,6 +145,7 @@ final class MessageJson
                 (bool) ($entry['isError'] ?? false),
                 $entry['details'] ?? null,
                 $timestamp,
+                is_array($entry['usage'] ?? null) ? self::decodeUsage($entry['usage']) : null,
             ),
             default => null,
         };

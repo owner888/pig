@@ -30,6 +30,7 @@ use Pig\Ai\ThinkingStartEvent;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
+use Pig\Ai\Utils\MessageJson;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
@@ -105,6 +106,7 @@ final class RpcEvents
                 'toolCallId' => $event->toolCallId,
                 'toolName' => $event->toolName,
                 'arguments' => $event->arguments,
+                ...self::parent($event->parentToolCallId),
             ],
 
             $event instanceof ToolExecutionUpdateEvent => [
@@ -113,6 +115,7 @@ final class RpcEvents
                 'toolName' => $event->toolName,
                 'arguments' => $event->arguments,
                 'partial' => self::result($event->partialResult),
+                ...self::parent($event->parentToolCallId),
             ],
 
             $event instanceof ToolExecutionEndEvent => [
@@ -121,6 +124,7 @@ final class RpcEvents
                 'toolName' => $event->toolName,
                 'result' => self::result($event->result),
                 'isError' => $event->isError,
+                ...self::parent($event->parentToolCallId),
             ],
 
             // Not the agent loop's — the session's, from between one run and the next. See
@@ -251,7 +255,19 @@ final class RpcEvents
         return [
             'content' => SessionCodec::encodeContent($result->content),
             'details' => SessionCodec::plain($result->details),
+            ...($result->usage === null ? [] : ['usage' => MessageJson::encodeUsage($result->usage)]),
         ];
+    }
+
+    /**
+     * `parentToolCallId` on a nested call's events, left out otherwise — upstream spreads it in
+     * the same way.
+     *
+     * @return array<string, string>
+     */
+    private static function parent(?string $parentToolCallId): array
+    {
+        return $parentToolCallId === null ? [] : ['parentToolCallId' => $parentToolCallId];
     }
 
     /**

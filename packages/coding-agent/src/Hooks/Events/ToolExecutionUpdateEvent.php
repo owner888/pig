@@ -16,6 +16,7 @@ final readonly class ToolExecutionUpdateEvent implements HookEvent
         public string $toolName,
         public array $args,
         public AgentToolResult $partialResult,
+        public ?string $parentToolCallId = null,
     ) {
     }
 

@@ -28,6 +28,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolResultMessage;
 use Pig\CodingAgent\Auth;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
@@ -718,6 +719,16 @@ final class AgentSessionTest extends TestCase
         $this->assertSame(10, $stats->input);
         $this->assertSame(100, $stats->totalTokens());
         $this->assertSame(0.5, $stats->cost);
+
+        // What a tool itself spent on models (a codemode script's classifier calls) is on its
+        // result message, and was paid for the same way — upstream books it under "Tools/summaries".
+        $session->agent->appendMessage(new ToolResultMessage('call-1', 'read', [new TextContent('ok')], usage: new Usage(5, 0, 0, 0, 5, new Cost(total: 0.25))));
+
+        $billed = $session->stats();
+
+        $this->assertSame(15, $billed->input);
+        $this->assertSame(0.75, $billed->cost);
+        $this->assertSame(1, $billed->toolResults);
     }
 
     public function testACompactionDoesNotRefundWhatTheSessionSpent(): void

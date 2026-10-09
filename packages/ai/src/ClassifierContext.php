@@ -23,10 +23,14 @@ final readonly class ClassifierContext
     /**
      * @param array<string, mixed>|stdClass $state
      * @param array<string, ClassifierChoiceQuestion|ClassifierScoreQuestion|ClassifierBoolQuestion> $questions
+     * @param list<ImageContent> $images "Images judged together with `state`. Only models whose
+     *        `input` includes `image` accept them; other models return an error result." Last, so the
+     *        positional calls that predate it keep working.
      */
     public function __construct(
         public array|stdClass $state,
         public array $questions,
+        public array $images = [],
     ) {
     }
 

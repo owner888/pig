@@ -641,6 +641,11 @@ final class AgentSession
             $this->store?->append($event->message);
         }
 
+        // The nested-call counters are the run's — upstream's `_nestedToolCalls.clear()`.
+        if ($event instanceof AgentEndEvent) {
+            $this->nestedCalls = [];
+        }
+
         // Upstream emits to extensions first and then, to its own listeners, `agent_end` with
         // `willRetry` filled in (`_willRetryAfterAgentEnd()`).
         $forListeners = $event instanceof AgentEndEvent
@@ -743,19 +748,19 @@ final class AgentSession
         }
 
         if ($event instanceof ToolExecutionStartEvent) {
-            $this->hooks->emit(new HookToolExecutionStart($event->toolCallId, $event->toolName, $event->arguments));
+            $this->hooks->emit(new HookToolExecutionStart($event->toolCallId, $event->toolName, $event->arguments, $event->parentToolCallId));
 
             return;
         }
 
         if ($event instanceof ToolExecutionUpdateEvent) {
-            $this->hooks->emit(new HookToolExecutionUpdate($event->toolCallId, $event->toolName, $event->arguments, $event->partialResult));
+            $this->hooks->emit(new HookToolExecutionUpdate($event->toolCallId, $event->toolName, $event->arguments, $event->partialResult, $event->parentToolCallId));
 
             return;
         }
 
         if ($event instanceof ToolExecutionEndEvent) {
-            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError));
+            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError, $event->parentToolCallId));
 
             return;
         }
@@ -1029,6 +1034,80 @@ final class AgentSession
         }
 
         throw new AgentError("No active tool called '{$name}'.");
+    }
+
+    /** @var array<string, int> how many nested calls each tool call has made, by its id */
+    private array $nestedCalls = [];
+
+    /**
+     * The id of the next call the tool call `$parentToolCallId` makes: `<parent>/<n>`, counted
+     * from 1 — upstream's `NestedToolCallRunner` shape. A call below a nested call counts from
+     * 1 again under its own id.
+     */
+    public function nestedToolCallId(string $parentToolCallId): string
+    {
+        $this->nestedCalls[$parentToolCallId] = ($this->nestedCalls[$parentToolCallId] ?? 0) + 1;
+
+        return "{$parentToolCallId}/{$this->nestedCalls[$parentToolCallId]}";
+    }
+
+    /**
+     * Run a call that the tool call `$parentToolCallId` made while it ran — a codemode script's
+     * `$tools->read()`. Upstream's `_executeNestedToolCall()`, through `NestedToolCallRunner`.
+     *
+     * The call goes through the loop's own pipeline as far as the loop has one: the arguments
+     * are checked against the schema with the message the model would read, `$tool` is the
+     * hooked tool so a `tool_call` guard sees the call, and `tool_execution_start`, `_update`
+     * and `_end` go to the hooks and the session's listeners with `parentToolCallId` set, so
+     * the RPC port and a watching hook see the sub-call where the TUI, which draws one row per
+     * model-issued call, leaves it out. The id is `nestedToolCallId()`'s, handed in so the
+     * caller can show the call as running before this returns.
+     *
+     * Never throws for a failing tool: the failure comes back as an error result, the way the
+     * loop hands one to the model. What upstream also keeps — a bounded `nestedCalls` record
+     * on the tool result message — pig does not; the codemode tool's `details` lists the calls.
+     *
+     * @param array<string, mixed>                $arguments
+     * @param ?Closure(AgentToolResult): void     $onUpdate
+     * @return array{0: AgentToolResult, 1: bool} the result and whether it is an error
+     */
+    public function executeNestedTool(
+        \Pig\Agent\AgentTool $tool,
+        string $toolCallId,
+        string $parentToolCallId,
+        array $arguments,
+        ?AbortSignal $signal = null,
+        ?Closure $onUpdate = null,
+    ): array {
+        $name = $tool->definition()->name;
+        $this->onAgentEvent(new ToolExecutionStartEvent($toolCallId, $name, $arguments, $parentToolCallId));
+        $isError = false;
+
+        try {
+            $arguments = ToolArguments::validate($tool->definition(), new ToolCall($toolCallId, $name, $arguments));
+            $result = $tool->execute(
+                $toolCallId,
+                $arguments,
+                $signal ?? $this->signal(),
+                function (AgentToolResult $partial) use ($toolCallId, $name, $arguments, $parentToolCallId, $onUpdate): void {
+                    if ($onUpdate !== null) {
+                        $onUpdate($partial);
+                    }
+
+                    $this->onAgentEvent(new ToolExecutionUpdateEvent($toolCallId, $name, $arguments, $partial, $parentToolCallId));
+                },
+            );
+        } catch (Throwable $error) {
+            $result = $error instanceof AgentError
+                ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage)
+                : new AgentToolResult([new TextContent($error->getMessage())]);
+            $isError = true;
+        }
+
+        unset($this->nestedCalls[$toolCallId]);
+        $this->onAgentEvent(new ToolExecutionEndEvent($toolCallId, $name, $result, $isError, $parentToolCallId));
+
+        return [$result, $isError];
     }
 
     // ---- state -------------------------------------------------------------------
@@ -3389,16 +3468,26 @@ final class AgentSession
         // its own `/session` sums the messages, which is two answers to one question in one tool.
         //
         // With no file there is nothing else to count, and then the two questions share an answer.
+        //
+        // A tool result's `usage` is what the tool itself spent on models (a codemode script's
+        // classifier calls) and was paid for the same way; upstream's cost breakdown books it
+        // under "Tools/summaries".
         foreach ($this->store?->everyMessage() ?? $this->messages() as $message) {
-            if (!$message instanceof AssistantMessage) {
+            $usage = match (true) {
+                $message instanceof AssistantMessage => $message->usage,
+                $message instanceof ToolResultMessage => $message->usage,
+                default => null,
+            };
+
+            if ($usage === null) {
                 continue;
             }
 
-            $input += $message->usage->input;
-            $output += $message->usage->output;
-            $cacheRead += $message->usage->cacheRead;
-            $cacheWrite += $message->usage->cacheWrite;
-            $cost += $message->usage->cost->total;
+            $input += $usage->input;
+            $output += $usage->output;
+            $cacheRead += $usage->cacheRead;
+            $cacheWrite += $usage->cacheWrite;
+            $cost += $usage->cost->total;
         }
 
         return new SessionStats(

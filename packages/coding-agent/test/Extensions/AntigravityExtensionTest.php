@@ -221,8 +221,10 @@ final class AntigravityExtensionTest extends TestCase
 
     public function testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst(): void
     {
-        // pi-antigravity's `/antigravity.refresh`: no key, no request, and its words.
+        // pi-antigravity's `/antigravity.refresh`: no key, no request, and its words. Both homes,
+        // or `Auth` reads the real `~/.pi/agent/auth.json` and the refresh goes out for real.
         putenv("PIG_HOME={$this->home}");
+        putenv("PI_HOME={$this->home}");
 
         try {
             [$loaded] = $this->loadTheExtension();
@@ -235,6 +237,7 @@ final class AntigravityExtensionTest extends TestCase
             $this->assertSame(['[warning] No Antigravity credentials. Run /login antigravity first.'], $ui->notices);
         } finally {
             putenv('PIG_HOME');
+            putenv('PI_HOME');
         }
     }
 

@@ -5072,6 +5072,11 @@ final class InteractiveMode
 
     private function onToolStart(ToolExecutionStartEvent $event): void
     {
+        // Nested calls (from codemode scripts) are shown inside their parent's row.
+        if ($event->parentToolCallId !== null) {
+            return;
+        }
+
         if (!isset($this->tools[$event->toolCallId])) {
             $this->addTool($event->toolCallId, $event->toolName, $event->arguments);
         }

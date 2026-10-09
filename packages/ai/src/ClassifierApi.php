@@ -16,4 +16,6 @@ enum ClassifierApi: string
     case CloudflareWorkersAiSystemOne = 'cloudflare-workers-ai-system-one';
     /** A chat model on llama.cpp's `llama-server`, read by its next-token probabilities (`Providers\LlamaCppClassify`). */
     case LlamaCppClassify = 'llama-cpp-classify';
+    /** OpenAI's Decisions API, `POST /v1/decisions` (`Providers\OpenAiDecisions`) — the one classifier that takes images. */
+    case OpenAiDecisions = 'openai-decisions';
 }

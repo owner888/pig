@@ -43,6 +43,30 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.18] - 2026-10-08
+
+### New Features
+
+- **Pure-PHP Android Device Automation Extension (`extensions/pig-android-use`)**:
+  - Implemented standalone, zero-dependency Android UI automation using native platform `adb` CLI (`adb exec-out screencap -p`, input tap, swipe, text, keyevents), adhering strictly to the pure-PHP architecture rule without Python or auxiliary interpreter wrappers.
+- **OpenAI Decisions Classifier Protocol & Image Support (`Providers\OpenAiDecisions`, `openai/gpt-6-luna`)**:
+  - Added `Providers\OpenAiDecisions` (`api: openai-decisions`, POST `/decisions`) supporting up to 128 images in `ClassifierContext::$images`.
+  - Added `openai/gpt-6-luna` decision model with 272k long-context pricing tiers.
+  - Enabled image passing in codemode `$models->classify()`.
+
+### Added
+
+- **Tool Call Token Accounting & Billing (`AgentToolResult::$usage`, `ToolResultMessage::$usage`)**:
+  - Added token and cost accounting to tool results: codemode `$models->*` calls and nested tools record their usage, and `AgentSession::stats()` aggregates tool costs alongside assistant turns in session totals.
+- **Nested Tool Call Session Lifecycle & Parent Tracking (`AgentSession::executeNestedTool`, `parentToolCallId`)**:
+  - Routed nested script tool calls through `AgentSession::executeNestedTool()` with `<parent>/<n>` call IDs and `ToolArguments::validate()` schema enforcement.
+  - Dispatched `parentToolCallId` across agent events, hook notifications, and RPC streaming, cleanly grouping child executions under parent cards in TUI.
+
+### Fixed
+
+- **Home Directory Test Isolation in Antigravity Catalog Tests (`AntigravityCatalogTest`, `AntigravityExtensionTest`)**:
+  - Corrected test isolation to isolate both `PI_HOME` and `PIG_HOME` across catalog and extension tests, eliminating test leaks from local developer configuration files.
+
 ## [0.5.17] - 2026-10-08
 
 ### New Features

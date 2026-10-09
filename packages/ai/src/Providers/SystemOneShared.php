@@ -39,6 +39,10 @@ use Throwable;
  * request (`wireRequest()`: a public `bool` question goes out as TypeSafe's wire-level `noul`), the
  * POST with retries, and the answers read back and checked against the questions asked.
  *
+ * The HTTP half (`postJson()`, `requestHeaders()`, `parseUsage()`, `requiredNumber()`) is what
+ * upstream moved into `classifier-shared.ts` for the Decisions API; it stays here under the name
+ * the first caller gave it, and `OpenAiDecisions` is its second.
+ *
  * Failures are the result, never thrown: `stopReason` error (or aborted, when the caller's signal
  * was) and `formatProviderError(normalizeProviderError(error), "<label> error")` as the message — so
  * a refusal reads `System One API error (401): <body>`. A usage the service reported is kept even
@@ -60,6 +64,10 @@ final class SystemOneShared
         try {
             if ($model->api !== $transport->api()) {
                 throw new ProviderError("Unsupported classifier API: {$model->api->value}");
+            }
+
+            if ($context->images !== []) {
+                throw new ProviderError("{$transport->label()} does not support image input");
             }
 
             $apiKey = $options?->apiKey;
@@ -197,7 +205,7 @@ final class SystemOneShared
     /**
      * Upstream's `requiredNumber()`: a finite number, else `<label> returned an invalid <field>`.
      */
-    private static function requiredNumber(string $label, mixed $value, string $field): float
+    public static function requiredNumber(string $label, mixed $value, string $field): float
     {
         if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value)) {
             throw new ProviderError("{$label} returned an invalid {$field}");
@@ -288,7 +296,7 @@ final class SystemOneShared
      * from the model catalog like chat usage. A missing or malformed usage object leaves the result
      * without usage instead of failing it."
      */
-    private static function parseUsage(mixed $value, ClassifierModel $model): ?Usage
+    public static function parseUsage(mixed $value, ClassifierModel $model): ?Usage
     {
         if (!self::isRecord($value) || (!property_exists($value, 'input_tokens') && !property_exists($value, 'output_tokens'))) {
             return null;
@@ -327,7 +335,7 @@ final class SystemOneShared
      * @param array<string, string|null>|null $optionsHeaders
      * @return array<string, string>
      */
-    private static function requestHeaders(ClassifierModel $model, string $apiKey, ?array $optionsHeaders): array
+    public static function requestHeaders(ClassifierModel $model, string $apiKey, ?array $optionsHeaders): array
     {
         return Headers::providerHeadersToRecord(
             ['authorization' => "Bearer {$apiKey}", 'content-type' => 'application/json'],

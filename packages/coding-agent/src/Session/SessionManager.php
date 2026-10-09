@@ -952,6 +952,7 @@ final class SessionManager
                 $message->isError,
                 $message->details,
                 $message->timestamp,
+                $message->usage,
             ),
             $message instanceof HookMessage => new HookMessage(
                 $message->customType,

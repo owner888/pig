@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Cost;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
+use Pig\Ai\ToolResultMessage;
+use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
@@ -58,6 +61,26 @@ final class SessionCodecTest extends TestCase
         $back = SessionCodec::decode($encoded);
 
         $this->assertInstanceOf(UserMessage::class, $back);
+    }
+
+    public function testAToolResultKeepsWhatTheToolSpentOnModels(): void
+    {
+        $encoded = SessionCodec::encode(new ToolResultMessage('call-1', 'codemode', [new TextContent('done')], usage: new Usage(10, 2, 0, 0, 12, new Cost(0.001, 0.002, 0.0, 0.0, 0.003))));
+
+        $this->assertIsArray($encoded);
+        $this->assertSame(12, $encoded['usage']['totalTokens'] ?? null);
+        $this->assertSame(0.003, $encoded['usage']['cost']['total'] ?? null);
+
+        $back = SessionCodec::decode($encoded);
+
+        $this->assertInstanceOf(ToolResultMessage::class, $back);
+        $this->assertSame(0.003, $back->usage?->cost->total);
+
+        // Upstream writes no `usage` key for a result with none, so neither does pig.
+        $plain = SessionCodec::encode(new ToolResultMessage('call-2', 'read', [new TextContent('ok')]));
+        $this->assertIsArray($plain);
+        $this->assertArrayNotHasKey('usage', $plain);
+        $this->assertNull(SessionCodec::decode($plain)?->usage);
     }
 
     public function testAHooksMessageGoesOverTheWireWholeRatherThanBeingDropped(): void

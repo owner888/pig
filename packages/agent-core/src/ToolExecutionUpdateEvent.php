@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\Agent;
 
-/** A long-running tool reported progress. Only tools that call `$onUpdate` emit this. */
+/**
+ * A long-running tool reported progress. Only tools that call `$onUpdate` emit this.
+ * `parentToolCallId` as on `ToolExecutionStartEvent`.
+ */
 final readonly class ToolExecutionUpdateEvent implements AgentEvent
 {
     /**
@@ -15,6 +18,7 @@ final readonly class ToolExecutionUpdateEvent implements AgentEvent
         public string $toolName,
         public array $arguments,
         public AgentToolResult $partialResult,
+        public ?string $parentToolCallId = null,
     ) {
     }
 }

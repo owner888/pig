@@ -30,7 +30,12 @@ final class AntigravityCatalogTest extends TestCase
         self::registerAntigravity();
         $this->home = sys_get_temp_dir() . '/pig-antigravity-' . bin2hex(random_bytes(6));
         mkdir($this->home, 0o700, true);
+        // Both homes, and not the same directory: `Catalog::read()` looks at pig's own store
+        // before pi's, so on a machine that has run the extension the real catalog answered and
+        // sixteen models came back — and one directory for both reads the fixture twice.
         putenv('PI_HOME=' . $this->home);
+        mkdir($this->home . '/pig', 0o700);
+        putenv('PIG_HOME=' . $this->home . '/pig');
     }
 
     #[\Override]
@@ -38,8 +43,11 @@ final class AntigravityCatalogTest extends TestCase
     {
         \Pig\Ai\Extension\ProviderRegistry::forget();
         putenv('PI_HOME');
+        putenv('PIG_HOME');
         Models::forgetRegistered();
         Routing::forgetTables();
+
+        rmdir($this->home . '/pig');
 
         foreach (glob($this->home . '/*') ?: [] as $file) {
             unlink($file);

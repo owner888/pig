@@ -3435,6 +3435,62 @@ cases (`…OnModeTellsEachTool…`, `…TextItemsAreNumbered…`, `…DescribeNa
 and `CodemodeTest::testWhatEchoWroteIsMarkedAsConsoleOutputAndTextIsNot`,
 `testTheModelsNamespaceAndDescribeNamespaceReachTheHost`.
 
+**Three of the four differences that read left went next**, the developer's call ("4 不管, 1 2 3
+做一下"; the fourth, upstream's blacklist sandbox, stays out — pig's child process is the
+sandbox). (1) **A tool's usage is billed.** `AgentToolResult` and `AgentError` carry `?Usage
+$usage` (upstream's `AgentToolResult.usage`), `AgentLoop::toolResult()` puts it on the
+`ToolResultMessage` (a new last constructor parameter, written and read by `MessageJson` as
+`usage`, kept by `SessionManager`'s content rewrite), and `AgentSession::stats()` sums tool
+results beside assistant messages — upstream books it under "Tools/summaries". Codemode returns
+its `$models->*` usage, and what a nested tool reported, as that; `details.usage` stays for the
+RPC port. The `AgentError` field is why a *failed* script still bills what it spent before
+failing. (2) **Classifiers take images.** `ClassifierContext::$images` (a list of `ImageContent`)
+is consumed by one API, upstream's `openai-decisions`, so that provider came with it:
+`Providers\OpenAiDecisions` (POST `/decisions`, questions mapped to choices/levels/predicate,
+the state as a JSON string or one user message with the images, 128 images at most, 504 not
+retried and explained, a refusal failing the result but keeping the usage) with the hand-kept
+`openai/gpt-6-luna` row — the first classifier row with a long-context **tier**, so
+`classifierTable()` rows learned an optional `'tiers'` key and `scripts/generate-models.php`
+writes it. `Models::classify()` refuses images for a model whose `input` lacks `image` before any
+provider is reached (upstream's `assertClassifierInputSupported()`); System One and llama.cpp
+refuse them by name. The codemode context check builds the blocks from `read`'s image shape, so a
+read result passes straight through. Not ported: upstream hides `gpt-6-luna` when openai is
+signed in through ChatGPT OAuth; pig lets the API's own 401 say so. (3) **Nested calls go through
+the session.** `AgentSession::executeNestedTool()` (upstream's `_executeNestedToolCall()` +
+`NestedToolCallRunner`) is handed the hooked tool and the id from `nestedToolCallId()` —
+`<parent>/<n>`, counted per parent and cleared at `agent_end` — checks the arguments with
+`ToolArguments::validate()` so a script that sends `amount: "lots"` reads the message the model
+would, turns a throw into an error result, and sends `tool_execution_start/update/end` through
+`onAgentEvent()` with the new `?string $parentToolCallId` on the agent-core events, the hook
+events and the RPC encoding (spread in only when set, as upstream does). The TUI's `onToolStart()`
+returns on a parent id, upstream's "shown inside their parent's row"; update and end already
+found no row. `codemode`'s `$modelUsage`/`$combineUsage` moved above the sandbox-tool closures
+that now capture them. Not ported: upstream's bounded `nestedCalls` record on the tool result
+message (codemode's `details.calls` lists them) and `parentToolCallId` on the `tool_call` and
+`tool_result` hook events (the id's `/` says as much). Regression tests:
+`OpenAiDecisionsTest` (twelve cases, upstream's `openai-decisions.test.ts`),
+`CodemodeExtensionTest::testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript`,
+the image rows in `…ModelsNamespaceAnswers…`, `SessionCodecTest::testAToolResultKeepsWhatTheToolSpentOnModels`,
+the tool-result half of `AgentSessionTest::testStatsCountMessagesToolCallsAndTokens`, and
+`RpcModeTest::testANestedCallsEventsNameTheirParentAndAResultCarriesWhatTheToolSpent`.
+
+**The first full run on the Mac then failed eleven tests this batch had not touched, and one it
+had.** The one was `GenerateModelsTest`'s `classifiers 8 models`, now 9 with the Decisions row.
+The eleven were ten `AntigravityCatalogTest` cases and
+`AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst` — all of
+them green in the container and red on the one machine that has run the extension for real.
+`AntigravityCatalogTest` set `PI_HOME` alone, and `Catalog::read()` looks at **pig's own**
+`~/.pig/agent/models-store.json` first, so the Mac's real sixteen-model catalog answered where the
+fixture's one model was expected; the refresh case set `PIG_HOME` alone, so `Auth` read the real
+`~/.pi/agent/auth.json`, found a key, and the "no credentials" command refreshed for real — the
+`WARNING … no endpoint available` line in the run's output is that request. *The same shape as
+the `fd` tests that passed only where pig had never fetched one*: a test that isolates one of two
+homes is isolated on the machines that have nothing in the other. Both set both now, and **not to
+one directory** — `read()` iterates pig's store and then pi's, so a shared home reads the fixture
+twice and every "named once" assertion counts two. The twelfth, `ThemeWatcherTest`, passed alone
+and passed in the same filter once those ten were green; a loop left mid-poll by ten failures
+before it is the likely cause, and it is noted rather than chased.
+
 **Two things the first live runs taught.** The model reads `$res['content'][0]['text']` *and*
 `$res['structuredContent']['content']` and does not know which the server fills, so a script
 receives the whole `CallToolResult` (upstream's rule for a tool with an output schema) and the
@@ -12696,7 +12752,7 @@ and only the thinking test found it.
   second resolve, the call site guards with `isComplete()` and says so in a comment — so the
   leniency stays local instead of becoming a global rule.
 - **`CHANGELOG.md` matches upstream pi's format exactly.** Every release uses the `## [x.y.z] - YYYY-MM-DD` header (e.g. `## [0.87.1] - 2026-09-22`) and groups items into four standard sections: `### New Features` (major highlights, new model workflows), `### Added` (new capabilities, options, APIs, tools), `### Changed` (behavioral updates, defaults, refactoring), and `### Fixed` (bug fixes, crash preventions, protocol corrections). Only sections with items are included, and entries clearly state what changed and why.
-- **Extensions are 100% pure PHP; never bridge or depend on npm packages.** Pig stays zero-runtime-dependency beyond PHP itself. Any extension from the upstream/pi ecosystem (such as `pi-antigravity`) must be ported directly to native PHP (e.g. `pig-antigravity`) using `ExtensionApi` and scoped closures. Do not query npm registries, parse `package.json`, or shell out to `npm`.
+- **Iron rule: If PHP can solve it, use pure PHP — never bridge to other languages (Python, Node.js, etc.).** Pig's core tenet is zero runtime dependencies beyond PHP itself. If a task, tool, automation, protocol, or extension can be accomplished in PHP (via built-in streams, fibers, processes, sockets, or native platform CLI tools like `adb`, `stty`, `sips`), it must be written in pure PHP. Never introduce Python, Node.js, npm, pip, or auxiliary interpreter wrappers as middleman glue layers. Extensions are 100% pure PHP using `ExtensionApi` and scoped closures. Do not query npm/pip registries, parse foreign package formats, or shell out to auxiliary interpreters when native PHP handles the job directly.
 - **UI copy and placeholders stay minimal.** Feature descriptions and shortcut hints are never piled into core controls: the main input's placeholder stays as short as `Ask pig a question` / `向 pig 提问...`, never `(Enter to send, Shift+Enter for new line)` and the like. Shortcuts and usage belong in the shortcuts HUD (`⌘ Shortcuts`), the help text or a hover tooltip, so the core interaction surface stays clean.
 - **Every release bumps the patch version; an existing tag is never overwritten (no force-pushed tags).** SemVer: every release raises the version (`v0.2.3` → `v0.2.4`), gets a new tag of its own pushed to the remote, and never uses `git tag -f` or `git push -f` on an existing tag.
 - **Documentation is updated before the tag, without being reminded.** Before `git tag`, go over everything user-visible in the release (commands, options, settings, slash commands, file formats, defaults) and update, in order: (1) `README.md` + `README.zh-CN.md`; (2) the site docs, `../smart-book/app/Views/pig/docs/{en,zh-cn}/*.md` (a new page also goes into `nav.json`) — pigagent.dev/docs serves them; (3) `CHANGELOG.md`'s `## Unreleased` becomes `## [x.y.z] - date`, and the file is copied to `../smart-book/app/Views/pig/CHANGELOG.md`, which the site's banner version and /changelog page read. A purely internal refactor does (3) only. The release notes say what each of the three changed, or why one was not.

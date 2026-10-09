@@ -6,6 +6,8 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ToolExecutionEndEvent;
+use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Ai\TextContent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -209,6 +211,61 @@ PHP);
         $this->stop($started);
     }
 
+    public function testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/spend.php', <<<'PHP'
+<?php
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\Cost;
+use Pig\Ai\TextContent;
+use Pig\Ai\Usage;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+return function (ExtensionApi $pi): void {
+    $pi->registerTool(new CustomTool(
+        name: 'spend',
+        label: 'Spend',
+        description: 'Spends a little on a model.',
+        parameters: ['type' => 'object', 'properties' => ['amount' => ['type' => 'integer']], 'required' => ['amount']],
+        execute: fn () => new AgentToolResult([new TextContent('spent')], null, new Usage(10, 2, 0, 0, 12, new Cost(0.001, 0.002, 0.0, 0.0, 0.003))),
+    ));
+};
+PHP);
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+        $events = [];
+        $started->session->subscribe(static function ($event) use (&$events): void {
+            if ($event instanceof ToolExecutionStartEvent || $event instanceof ToolExecutionEndEvent) {
+                $events[] = $event;
+            }
+        });
+
+        $result = Async::run(static fn () => ($codemode->execute)('call-9', ['code' => 'return parallel_settled([fn () => $tools->spend(["amount" => "lots"]), fn () => $tools->spend(["amount" => 3])]);'], null, $started->hooks->context(), null));
+
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertFalse($value[0]['ok']);
+        $this->assertStringContainsString('Validation failed for tool "spend"', $value[0]['error'], 'the arguments are checked against the schema, with the message the model would read');
+        $this->assertStringContainsString('amount', $value[0]['error']);
+        $this->assertSame('spent', $value[1]['value']);
+        $this->assertSame(['error', 'ok'], array_column($result->details['calls'], 'status'));
+
+        // Upstream's `usage` on the result: what the script's calls spent is the script's to bill.
+        $this->assertNotNull($result->usage);
+        $this->assertSame(12, $result->usage->totalTokens, 'only the call that ran reported usage');
+        $this->assertEqualsWithDelta(0.003, $result->usage->cost->total, 1e-9);
+
+        // `tool_execution_*` events with `parentToolCallId`, so a listener sees the sub-calls.
+        $this->assertSame(
+            [['tool_execution_start', 'call-9/1', 'call-9'], ['tool_execution_end', 'call-9/1', 'call-9'], ['tool_execution_start', 'call-9/2', 'call-9'], ['tool_execution_end', 'call-9/2', 'call-9']],
+            array_map(static fn ($e): array => [$e instanceof ToolExecutionStartEvent ? 'tool_execution_start' : 'tool_execution_end', $e->toolCallId, $e->parentToolCallId], $events),
+        );
+        $this->assertTrue($events[1]->isError);
+        $this->assertFalse($events[3]->isError);
+        $this->stop($started);
+    }
+
     public function testTextItemsAreNumberedAndWhatEchoWroteFollowsInAConsoleBlock(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
@@ -329,10 +386,16 @@ PHP);
                 fn () => $models->classify($classifiers[0], ['state' => ['a' => 1], 'questions' => ['q' => ['type' => 'score', 'instructions' => 'rate', 'criteria' => 'bad']]]),
                 fn () => $models->generateImages($models->getModelsOfType('image')[0], ['prompt' => 'a cat']),
                 fn () => $models->Classify(),
+                fn () => $models->classify($classifiers[0], ['state' => ['a' => 1], 'questions' => ['q' => ['type' => 'bool', 'instructions' => 'ok?', 'criteria' => ['true' => 'yes', 'false' => 'no']]], 'images' => ['not a block']]),
             ] as $try) {
                 try { $try(); $tries[] = 'no error'; } catch (Throwable $e) { $tries[] = $e->getMessage(); }
             }
-            return ['id' => $chat['id'], 'keys' => array_key_exists('headers', $chat), 'cost' => isset($chat['cost']['input']), 'classifiers' => count($classifiers) > 0, 'available' => $models->getAvailableOfType('chat', 'anthropic') !== [], 'tries' => $tries];
+            $blind = $models->classify($models->getModelOfType('classifier', 'typesafe', 'jev-latest'), [
+                'state' => ['a' => 1],
+                'questions' => ['q' => ['type' => 'bool', 'instructions' => 'ok?', 'criteria' => ['true' => 'yes', 'false' => 'no']]],
+                'images' => [['type' => 'image', 'data' => base64_encode('png'), 'mimeType' => 'image/png']],
+            ]);
+            return ['id' => $chat['id'], 'keys' => array_key_exists('headers', $chat), 'cost' => isset($chat['cost']['input']), 'classifiers' => count($classifiers) > 0, 'available' => $models->getAvailableOfType('chat', 'anthropic') !== [], 'tries' => $tries, 'blind' => [$blind['stopReason'], $blind['errorMessage']]];
             PHP], null, $started->hooks->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
@@ -348,7 +411,11 @@ PHP);
         $this->assertStringContainsString('context.questions.q is a "score" question, so criteria must list the levels', $value['tries'][4]);
         $this->assertStringContainsString('context.input must be a non-empty list of blocks, got null', $value['tries'][5]);
         $this->assertStringContainsString('$models->Classify() does not exist. Did you mean $models->classify()?', $value['tries'][6]);
-        $this->assertSame([], $result->details['calls'], 'nothing reached a provider, so no call row');
+        $this->assertStringContainsString('context.images[0] must be an image block with base64 data and a mimeType, got a string', $value['tries'][7]);
+        $this->assertSame('error', $value['blind'][0], 'a picture for a text-only classifier is an error result, not an exception');
+        $this->assertStringContainsString('Model typesafe/jev-latest does not accept image input', $value['blind'][1]);
+        $this->assertCount(1, $result->details['calls'], 'only the image call for the text-only model reached Models::classify()');
+        $this->assertSame('error', $result->details['calls'][0]['status']);
         $this->stop($started);
     }
 

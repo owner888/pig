@@ -963,13 +963,15 @@ final class Models
      * Workers AI's ("Workers AI has no unauthenticated catalog and models.dev does not list its
      * System One models yet").
      *
-     * Each row is `[name, api, baseUrl, contextWindow, input, $in, $out, $cacheRead, $cacheWrite]`. No
-     * `inputLimits`: the generator's `applyImageInputMetadata()` never sees a classifier.
+     * Each row is `[name, api, baseUrl, contextWindow, input, $in, $out, $cacheRead, $cacheWrite]`, plus
+     * `tiers` under its own key where the price has one. No `inputLimits`: the generator's
+     * `applyImageInputMetadata()` never sees a classifier.
      *
-     * Not here: `openai/gpt-6-luna` on the `openai-decisions` API, which the published 1.1.0 catalogue
-     * carries and the reference commit (98d2e1947) does not have.
+     * `openai/gpt-6-luna` is upstream's hand-kept `OPENAI_CLASSIFIER_MODELS` row (ce8972a0e): the
+     * Decisions API's only model, billing input tokens only with the chat requests' long-context
+     * multiplier, and the one classifier that takes images.
      *
-     * @var array<string, array{0: string, 1: ClassifierApi, 2: string, 3: int, 4: list<string>, 5: float, 6: float, 7: float, 8: float}>
+     * @var array<string, array{0: string, 1: ClassifierApi, 2: string, 3: int, 4: list<string>, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
      */
     private const array CLASSIFIER_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -978,6 +980,7 @@ final class Models
         'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
         'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/zen/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/zen/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
         'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0],
         'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text', 'image'], 0.021, 0.0, 0.0, 0.0],
         'openrouter/inception/mercury-decide:free' => ['Inception: Mercury Decide (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.0, 0.0, 0.0, 0.0],
@@ -2868,12 +2871,19 @@ final class Models
     public static function classify(ClassifierModel $model, ClassifierContext $context, ?ClassifierOptions $options = null): ClassifierResult
     {
         try {
+            // Upstream's `assertClassifierInputSupported()`: "Rejects classifier images for models
+            // whose catalog entry does not accept image input."
+            if ($context->images !== [] && !in_array('image', $model->input, true)) {
+                throw new ProviderError("Model {$model->provider}/{$model->id} does not accept image input");
+            }
+
             [$requestModel, $requestOptions] = self::applyClassifierAuth($model, $options);
 
             return match ($model->api) {
                 ClassifierApi::TypesafeSystemOne => (new Providers\TypesafeSystemOne())->classify($requestModel, $context, $requestOptions),
                 ClassifierApi::CloudflareWorkersAiSystemOne => (new Providers\CloudflareWorkersAiSystemOne())->classify($requestModel, $context, $requestOptions),
                 ClassifierApi::LlamaCppClassify => (new Providers\LlamaCppClassify())->classify($requestModel, $context, $requestOptions),
+                ClassifierApi::OpenAiDecisions => (new Providers\OpenAiDecisions())->classify($requestModel, $context, $requestOptions),
             };
         } catch (\Throwable $error) {
             return ClassifierResult::error($model, $error, $options?->signal?->aborted() ?? false);
@@ -2946,9 +2956,10 @@ final class Models
 
         $models = [];
 
-        foreach (self::CLASSIFIER_MODELS as $key => [$name, $api, $baseUrl, $window, $input, $in, $out, $read, $write]) {
+        foreach (self::CLASSIFIER_MODELS as $key => $row) {
+            [$name, $api, $baseUrl, $window, $input, $in, $out, $read, $write] = $row;
             [$provider, $id] = explode('/', $key, 2);
-            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write));
+            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []));
         }
 
         return self::$classifiers = $models;

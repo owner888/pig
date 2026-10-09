@@ -96,6 +96,10 @@ final class LlamaCppClassify
                 throw new ProviderError("Unsupported classifier API: {$model->api->value}");
             }
 
+            if ($context->images !== []) {
+                throw new ProviderError('llama.cpp classification does not support image input');
+            }
+
             $temperature = $options?->temperature ?? 1.0;
 
             if (!($temperature > 0) || !is_finite($temperature)) {

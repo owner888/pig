@@ -22,6 +22,8 @@ final readonly class ToolResultMessage
      * @param list<UserContent> $content what the model is shown
      * @param mixed             $details what the UI is shown — a diff, a file listing,
      *        command output; never sent to the model
+     * @param ?Usage            $usage what the tool itself spent on models while it ran;
+     *        "not part of main LLM context accounting", but part of the session's bill
      */
     public function __construct(
         public string $toolCallId,
@@ -30,6 +32,7 @@ final readonly class ToolResultMessage
         public bool $isError = false,
         public mixed $details = null,
         ?int $timestamp = null,
+        public ?Usage $usage = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

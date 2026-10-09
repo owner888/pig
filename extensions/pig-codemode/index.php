@@ -281,13 +281,41 @@ return static function (ExtensionApi $pi): void {
             return is_array($decoded) && (str_starts_with(ltrim($text), '{') || str_starts_with(ltrim($text), '[')) ? $decoded : $text;
         };
 
-        $record = static function (string $name, array $args) use (&$calls, $publish, $truncate, $argsPreviewChars, $toolCallId): int {
-            $calls[] = ['id' => "{$toolCallId}/" . (count($calls) + 1), 'name' => $name, 'args' => $truncate((string) json_encode($args, JSON_UNESCAPED_SLASHES), $argsPreviewChars), 'status' => 'running'];
+        // A nested call's own id is `<codemode call id>/<n>`, upstream's `NestedToolCallRunner`
+        // shape; the session counts them when there is one, so the id the hooks and the events
+        // see is the session's.
+        $nestedCount = 0;
+        $nestedId = static function () use ($ctx, $toolCallId, &$nestedCount): string {
+            $session = $ctx->session;
+
+            return $session === null ? "{$toolCallId}/" . (++$nestedCount) : $session->nestedToolCallId($toolCallId);
+        };
+        $record = static function (string $name, array $args) use (&$calls, $publish, $truncate, $argsPreviewChars, $nestedId): int {
+            $calls[] = ['id' => $nestedId(), 'name' => $name, 'args' => $truncate((string) json_encode($args, JSON_UNESCAPED_SLASHES), $argsPreviewChars), 'status' => 'running'];
             $publish();
 
             return count($calls) - 1;
         };
 
+        /** The usage of this script's `$models->*` calls and of the tools it called, for the result. */
+        $modelUsage = null;
+        // Upstream's `combineUsage()`: the counts and the money added up.
+        $combineUsage = static fn (Usage $a, Usage $b): Usage => new Usage(
+            $a->input + $b->input,
+            $a->output + $b->output,
+            $a->cacheRead + $b->cacheRead,
+            $a->cacheWrite + $b->cacheWrite,
+            $a->totalTokens + $b->totalTokens,
+            new \Pig\Ai\Cost(
+                $a->cost->input + $b->cost->input,
+                $a->cost->output + $b->cost->output,
+                $a->cost->cacheRead + $b->cost->cacheRead,
+                $a->cost->cacheWrite + $b->cost->cacheWrite,
+                $a->cost->total + $b->cost->total,
+            ),
+            $a->reasoning === null && $b->reasoning === null ? null : ($a->reasoning ?? 0) + ($b->reasoning ?? 0),
+            $a->cacheWrite1h === null && $b->cacheWrite1h === null ? null : ($a->cacheWrite1h ?? 0) + ($b->cacheWrite1h ?? 0),
+        );
         $sandboxTools = [];
         $samples = [];
 
@@ -295,19 +323,32 @@ return static function (ExtensionApi $pi): void {
             $samples[$declaration['name']] = Declarations::sample($declaration);
         }
 
-        // The agent's tools: executed through the hooked tool, so a `tool_call` guard sees the call.
+        // The agent's tools: through the session's nested-call pipeline — the arguments checked
+        // against the schema, the hooked tool so a `tool_call` guard sees the call, and
+        // `tool_execution_*` events with `parentToolCallId` for the hooks, the RPC port and the
+        // TUI. Without a session (a bare `execute` in a test) the hooked tool is called as it is.
         foreach ($agentTools($ctx) as $name => $one) {
-            $sandboxTools[] = ['name' => $name, 'description' => $samples[$name], 'execute' => static function (array $args, AbortSignal $callSignal) use ($name, $one, &$calls, $record, $publish, $scriptValue, $truncate, $errorPreviewChars, $textOf): mixed {
+            $sandboxTools[] = ['name' => $name, 'description' => $samples[$name], 'execute' => static function (array $args, AbortSignal $callSignal) use ($name, $one, $ctx, $toolCallId, &$calls, $record, $publish, $scriptValue, $truncate, $errorPreviewChars, $textOf, &$modelUsage, $combineUsage): mixed {
                 $index = $record($name, $args);
                 $at = microtime(true);
                 $isError = false;
+                $session = $ctx->session;
 
-                try {
-                    // The nested call's own id is `<codemode call id>/<n>`, upstream's `NestedToolCallRunner` shape.
-                    $result = $one['tool']->execute($calls[$index]['id'], $args, $callSignal, null);
-                } catch (\Throwable $error) {
-                    $isError = true;
-                    $result = new AgentToolResult([new TextContent($error->getMessage())]);
+                if ($session !== null) {
+                    [$result, $isError] = $session->executeNestedTool($one['tool'], $calls[$index]['id'], $toolCallId, $args, $callSignal);
+                } else {
+                    try {
+                        $result = $one['tool']->execute($calls[$index]['id'], $args, $callSignal, null);
+                    } catch (\Throwable $error) {
+                        $isError = true;
+                        $result = new AgentToolResult([new TextContent($error->getMessage())]);
+                    }
+                }
+
+                // What the nested tool spent on models is this call's to bill, as upstream's
+                // recorder sums it onto the parent's result.
+                if ($result->usage !== null) {
+                    $modelUsage = $modelUsage === null ? $result->usage : $combineUsage($modelUsage, $result->usage);
                 }
 
                 $calls[$index]['durationMs'] = (microtime(true) - $at) * 1000;
@@ -419,10 +460,12 @@ return static function (ExtensionApi $pi): void {
             static fn (Model|ImageModel|ClassifierModel $m): bool => $provider === null || $m->provider === $provider,
         ));
 
-        $classifierShape = '{ state: { ... }, questions: { <id>: { type: "choice", instructions, criteria: { <label>: <meaning> } } | { type: "score", instructions, criteria: [<lowest level>, ..., <highest level>] } | { type: "bool", instructions, criteria: { true: <meaning>, false: <meaning> } } } }';
+        $classifierShape = '{ state: { ... }, questions: { <id>: { type: "choice", instructions, criteria: { <label>: <meaning> } } | { type: "score", instructions, criteria: [<lowest level>, ..., <highest level>] } | { type: "bool", instructions, criteria: { true: <meaning>, false: <meaning> } } }, images?: [{ type: "image", data: <base64>, mimeType }] }';
         // A script's classifier context, checked so a mistake fails with the expected shape
-        // rather than a provider error — upstream's `checkClassifierContext()`. pig's
-        // `ClassifierContext` carries no images, so `images` is refused by name.
+        // rather than a provider error — upstream's `checkClassifierContext()`. `images` is
+        // the optional list of image blocks (`read` on a PNG answers them in that shape) a
+        // model with image input looks at alongside the state; `Models::classify()` refuses
+        // them for a model that cannot see.
         $checkClassifierContext = static function (mixed $context) use ($isRecord, $describeValue, $classifierShape): ClassifierContext {
             $fail = static fn (string $problem): RuntimeException => new RuntimeException("\$models->classify() {$problem}. Expected context: {$classifierShape}. See \"Classify\" in " . CodemodeDescription::DOCS_PATH . '.');
 
@@ -434,8 +477,20 @@ return static function (ExtensionApi $pi): void {
                 throw $fail('context.state must be an array with keys, got ' . $describeValue($context['state'] ?? null));
             }
 
+            $images = [];
+
             if (array_key_exists('images', $context)) {
-                throw $fail('context.images is not supported here: pig\'s classifiers take text only');
+                if (!is_array($context['images']) || !array_is_list($context['images'])) {
+                    throw $fail('context.images must be a list of image blocks, got ' . $describeValue($context['images']));
+                }
+
+                foreach ($context['images'] as $index => $block) {
+                    if (!$isRecord($block) || ($block['type'] ?? null) !== 'image' || !is_string($block['data'] ?? null) || !is_string($block['mimeType'] ?? null)) {
+                        throw $fail("context.images[{$index}] must be an image block with base64 data and a mimeType, got " . $describeValue($block));
+                    }
+
+                    $images[] = new ImageContent($block['data'], $block['mimeType']);
+                }
             }
 
             $questions = $context['questions'] ?? null;
@@ -484,7 +539,7 @@ return static function (ExtensionApi $pi): void {
                 }
             }
 
-            return new ClassifierContext($context['state'], $built);
+            return new ClassifierContext($context['state'], $built, $images);
         };
         // Upstream's `checkImagesContext()`.
         $checkImagesContext = static function (mixed $context) use ($isRecord, $describeValue): ImagesContext {
@@ -539,25 +594,6 @@ return static function (ExtensionApi $pi): void {
             }
         };
 
-        /** The usage of this script's `$models->*` calls, for the result. */
-        $modelUsage = null;
-        // Upstream's `combineUsage()`: the counts and the money added up.
-        $combineUsage = static fn (Usage $a, Usage $b): Usage => new Usage(
-            $a->input + $b->input,
-            $a->output + $b->output,
-            $a->cacheRead + $b->cacheRead,
-            $a->cacheWrite + $b->cacheWrite,
-            $a->totalTokens + $b->totalTokens,
-            new \Pig\Ai\Cost(
-                $a->cost->input + $b->cost->input,
-                $a->cost->output + $b->cost->output,
-                $a->cost->cacheRead + $b->cost->cacheRead,
-                $a->cost->cacheWrite + $b->cost->cacheWrite,
-                $a->cost->total + $b->cost->total,
-            ),
-            $a->reasoning === null && $b->reasoning === null ? null : ($a->reasoning ?? 0) + ($b->reasoning ?? 0),
-            $a->cacheWrite1h === null && $b->cacheWrite1h === null ? null : ($a->cacheWrite1h ?? 0) + ($b->cacheWrite1h ?? 0),
-        );
         /** Images `$models->generateImages()` returned, to notice a script that never shows them. */
         $generatedImages = 0;
         $modelCallCount = 0;
@@ -962,18 +998,18 @@ return static function (ExtensionApi $pi): void {
             $details['fullOutputPath'] = $fullOutputPath;
         }
 
-        // Upstream puts the `models.*` usage on the result itself, where the session adds it to the
-        // turn's bill; `AgentToolResult` has no such field here, so it rides in `details` and the
-        // call rows carry each call's cost.
+        // The `models.*` usage, and what nested tools spent, goes on the result itself, where the
+        // session bills it — upstream's `usage` on the result; the call rows carry each call's
+        // cost for the renderer, and `details.usage` is the same sum for the RPC port.
         if ($modelUsage !== null) {
             $details['usage'] = MessageJson::encodeUsage($modelUsage);
         }
 
         if (!$result['ok']) {
-            throw new AgentError(implode("\n", array_map(static fn ($b) => $b instanceof TextContent ? $b->text : '[image]', $content)), $details);
+            throw new AgentError(implode("\n", array_map(static fn ($b) => $b instanceof TextContent ? $b->text : '[image]', $content)), $details, usage: $modelUsage);
         }
 
-        return new AgentToolResult($content, $details);
+        return new AgentToolResult($content, $details, $modelUsage);
     };
 
     // ---- drawing --------------------------------------------------------------------------------

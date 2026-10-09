@@ -69,7 +69,10 @@ What a call answers depends on the tool:
   the model cannot read it as text.
 
 A call that fails, is blocked, or gets invalid arguments throws an exception carrying the
-tool's error text. Use `parallel_settled()` to keep the results of the calls that succeed.
+tool's error text; the arguments are checked against the tool's schema the way the model's own
+calls are, so the message names the parameter. Use `parallel_settled()` to keep the results of
+the calls that succeed. Each call is a `tool_execution_*` event of its own with
+`parentToolCallId` set to the script's call, and its id is `<script call id>/<n>`.
 Calling a tool that does not exist throws an error naming the close matches.
 
 ```php
@@ -114,7 +117,7 @@ images. Chat models are listed but cannot be run from scripts.
 `$result['stopReason']` (`stop`, `error` or `aborted`) and `$result['errorMessage']`. At most
 four such calls run at once per script; more wait for a free slot, so `parallel()` over many
 items is fine. Each call is a row in the result's call list with its cost, and their usage is
-on the result's `details`.
+billed to the script's result like any model call.
 
 Model ids differ between providers, for example `typesafe/jev-latest` and
 `openrouter/typesafe/jev-1.13`. Use `$models->getAvailableOfType($type)` to find the ids that
@@ -132,7 +135,10 @@ The context is `['state' => [...], 'questions' => [id => question, ...]]`. A que
 - `['type' => 'bool', 'instructions' => ..., 'criteria' => ['true' => ..., 'false' => ...]]` —
   yes or no; answered as `['probability']`, the probability of `true`.
 
-pig's classifiers take text only; a context with `images` is refused.
+An optional `'images' => [block, ...]` adds pictures for a model whose `input` includes
+`image` (`openai/gpt-6-luna`): each block is `['type' => 'image', 'data' => <base64>,
+'mimeType' => ...]`, the shape `$tools->read()` answers under `images` for a picture, so a
+read result can be passed straight through. A text-only model refuses a context with images.
 
 ```php
 $jev = $models->getModelOfType('classifier', 'typesafe', 'jev-latest');
