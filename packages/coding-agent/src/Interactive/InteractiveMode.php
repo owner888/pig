@@ -255,6 +255,9 @@ final class InteractiveMode
      */
     private int $outputPad = 1;
 
+    /** @var (Closure(string, array<string, mixed>): string)|null */
+    private ?Closure $mermaidTransformer = null;
+
     /** The easter egg, while it is animating, so its frame timer can be stopped. */
     private ?ArminComponent $armin = null;
 
@@ -638,7 +641,7 @@ final class InteractiveMode
                     if ($skillBlock->userMessage !== null) {
                         $this->chat->addChild(new UserMessageComponent(
                             $skillBlock->userMessage,
-                            $this->hooks?->markdownTransformers() ?? [],
+                            $this->markdownTransformers(),
                             $this->outputPad,
                         ));
                     }
@@ -648,7 +651,7 @@ final class InteractiveMode
 
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
-                    $this->hooks?->markdownTransformers() ?? [],
+                    $this->markdownTransformers(),
                     $this->outputPad,
                 ));
 
@@ -685,7 +688,7 @@ final class InteractiveMode
                 $this->chat->addChild(new AssistantMessageComponent(
                     $message,
                     $this->hideThinking,
-                    $this->hooks?->markdownTransformers() ?? [],
+                    $this->markdownTransformers(),
                     $this->hiddenThinkingLabel,
                     $this->outputPad,
                 ));
@@ -1414,6 +1417,31 @@ final class InteractiveMode
      * two places writing the setting and only one of them telling the components on
      * screen is how a toggle comes to half work.
      */
+    /**
+     * Upstream's `getMarkdownTransformers()`: the Mermaid diagrams first, then whatever the
+     * extensions registered.
+     *
+     * @return list<Closure(string, array<string, mixed>): string>
+     */
+    private function markdownTransformers(): array
+    {
+        $this->mermaidTransformer ??= MermaidTransformer::create(
+            fn (): string => $this->settings->mermaidRenderingMode(),
+            // The text's room: the terminal less the padding either side of a message.
+            fn (): int => max(1, $this->tui->terminal->columns() - 2 * $this->outputPad),
+        );
+
+        return [$this->mermaidTransformer, ...($this->hooks?->markdownTransformers() ?? [])];
+    }
+
+    /** Upstream's `onMermaidRenderingModeChange`: saved, and every message drawn again with it. */
+    private function useMermaidRenderingMode(string $mode): void
+    {
+        $this->settings->setMermaidRenderingMode(in_array($mode, Settings::MERMAID_MODES, true) ? $mode : 'streaming');
+        $this->chat->invalidate();
+        $this->tui->requestRender();
+    }
+
     private function useHideThinking(bool $hide): void
     {
         $this->hideThinking = $hide;
@@ -4928,6 +4956,14 @@ final class InteractiveMode
             values: Settings::CACHE_WARMING_MODES,
         );
         // Upstream's rows, with its labels and descriptions.
+        // Upstream's row, label and description.
+        $rows[] = new SettingItem(
+            'mermaid',
+            'Mermaid diagrams',
+            $this->settings->mermaidRenderingMode(),
+            'Render Mermaid code blocks as Unicode diagrams',
+            values: Settings::MERMAID_MODES,
+        );
         $rows[] = new SettingItem(
             'showCacheMissNotices',
             'Cache miss notices',
@@ -5020,6 +5056,15 @@ final class InteractiveMode
             'Collapse changelog',
             $this->settings->collapseChangelog() ? 'true' : 'false',
             'Show condensed changelog after updates',
+            values: ['true', 'false'],
+        );
+        // Upstream's row and key; pig sends no install ping, so the description says what the
+        // setting still does (`ProviderAttribution`).
+        $rows[] = new SettingItem(
+            'installTelemetry',
+            'Install telemetry',
+            $this->settings->installTelemetry() ? 'true' : 'false',
+            'Tell OpenRouter, NVIDIA and Cloudflare that pig is the client calling them',
             values: ['true', 'false'],
         );
         $rows[] = new SettingItem(
@@ -5229,6 +5274,8 @@ final class InteractiveMode
             // nothing about the ones already waiting changes, and nothing should.
             'steeringMode' => $this->session->setSteeringMode(QueueMode::tryFrom($value) ?? QueueMode::OneAtATime),
             'followUpMode' => $this->session->setFollowUpMode(QueueMode::tryFrom($value) ?? QueueMode::OneAtATime),
+            'installTelemetry' => $this->settings->setInstallTelemetry($value === 'true'),
+            'mermaid' => $this->useMermaidRenderingMode($value),
             'transport' => $this->settings->setTransport(in_array($value, Settings::TRANSPORTS, true) ? $value : 'auto'),
             'editorPaddingX' => $this->useEditorPaddingX((int) $value),
             'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
@@ -5472,14 +5519,14 @@ final class InteractiveMode
                 if ($skillBlock->userMessage !== null) {
                     $this->chat->addChild(new UserMessageComponent(
                         $skillBlock->userMessage,
-                        $this->hooks?->markdownTransformers() ?? [],
+                        $this->markdownTransformers(),
                         $this->outputPad,
                     ));
                 }
             } else {
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
-                    $this->hooks?->markdownTransformers() ?? [],
+                    $this->markdownTransformers(),
                     $this->outputPad,
                 ));
             }
@@ -5493,7 +5540,7 @@ final class InteractiveMode
             $this->streaming = new AssistantMessageComponent(
                 $event->message,
                 $this->hideThinking,
-                $this->hooks?->markdownTransformers() ?? [],
+                $this->markdownTransformers(),
                 $this->hiddenThinkingLabel,
                 $this->outputPad,
             );

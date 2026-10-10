@@ -530,6 +530,19 @@ final class SettingsTest extends TestCase
         $this->load()->websocketConnectTimeoutMs();
     }
 
+    public function testMermaidAndInstallTelemetryHaveUpstreamsDefaults(): void
+    {
+        $this->assertSame('streaming', $this->load()->mermaidRenderingMode());
+        $this->assertTrue($this->load()->installTelemetry());
+
+        $this->writeGlobal(['markdown' => ['mermaid' => 'final'], 'enableInstallTelemetry' => false]);
+        $this->assertSame('final', $this->load()->mermaidRenderingMode());
+        $this->assertFalse($this->load()->installTelemetry());
+
+        $this->writeGlobal(['markdown' => ['mermaid' => 'sometimes']]);
+        $this->assertSame('streaming', $this->load()->mermaidRenderingMode());
+    }
+
     public function testAProjectCannotVouchForItself(): void
     {
         // Upstream's schema: "Global setting only."

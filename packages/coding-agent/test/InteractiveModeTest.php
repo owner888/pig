@@ -4455,6 +4455,41 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame('sse', $this->settings->transport(), 'from auto, the last of the four, round to the first');
     }
 
+    public function testAMermaidBlockInAnAnswerIsDrawnAsItsDiagram(): void
+    {
+        $this->start(["Like this:\n\n```mermaid\ngraph LR\n  A[Ask] --> B[Answer]\n```"]);
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('│ Ask ├───▶│ Answer │', $this->screen());
+        $this->assertStringNotContainsString('graph LR', $this->screen());
+    }
+
+    public function testTheMermaidRowTurnsTheDiagramsOff(): void
+    {
+        $this->start(["```mermaid\ngraph LR\n  A[Ask] --> B[Answer]\n```"]);
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->openSettings();
+        $this->typeUntilRow('Mermaid diagrams');
+        $this->type(self::ENTER);
+        $this->assertSame('off', $this->settings->mermaidRenderingMode(), 'from streaming, the last of the three, round to the first');
+        $this->type(self::ESC);
+
+        $this->assertStringContainsString('graph LR', $this->screen(), 'the answer already drawn is drawn again');
+    }
+
+    public function testTheInstallTelemetryRowIsInSlashSettings(): void
+    {
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Install telemetry');
+        $this->type(self::ENTER);
+        $this->assertFalse($this->settings->installTelemetry());
+    }
+
     public function testNothingIsDrawnWhenThereIsNoUpgradeNote(): void
     {
         $this->start();

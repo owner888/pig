@@ -57,7 +57,8 @@ final readonly class ToolSelection
      */
     public function allows(string $name): bool
     {
-        if (self::isMcp($name) && !$this->namesMcp) {
+        // Upstream: "An empty list, like `noTools: \"all\"`, disables MCP tools too."
+        if (self::isMcp($name) && !$this->namesMcp && $this->entries !== []) {
             return true;
         }
 

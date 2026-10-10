@@ -156,7 +156,7 @@ if (isset($options['help'])) {
                         Not saved; beats the environment and any stored sign-in.
       --proxy <url>     reach providers through this proxy, this run only:
                         `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
-                        Otherwise `https_proxy`/`all_proxy`, then `proxy.url` in
+                        Otherwise `https_proxy`/`all_proxy`, then `httpProxy` in
                         the settings. `no_proxy` and `proxy.bypass` list the hosts
                         to reach directly; loopback always is.
       --no-proxy        ignore all of that and connect directly
@@ -165,11 +165,15 @@ if (isset($options['help'])) {
       --theme <name>    a theme name, or a light/dark pair like `light/dark`
                         (default: the `theme` setting, else `system`)
       --thinking <l>    off, minimal, low, medium, high, xhigh
-      --tools <list>    which tools the model gets, comma-separated; names or patterns
+      -t, --tools <list>
+                        which tools the model gets, comma-separated; names or patterns
                         with `*`: `--tools read,codemode,'mcp__gh__*'`
                         (default: read,bash,edit,write; also grep, find, ls)
-      --exclude-tools <list>
+      -xt, --exclude-tools <list>
                         take these away, after --tools; names or `*` patterns
+      -nt, --no-tools   start with no tools at all, built-in, custom, extension or MCP
+      -nbt, --no-builtin-tools
+                        start without the built-in tools, keeping custom and extension ones
       --no-mcp          do not load the MCP extension: no servers connect, no MCP tools
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
@@ -177,18 +181,24 @@ if (isset($options['help'])) {
       -r, --resume      choose from a list; `--resume <file>` opens one by path
       --session <id>    resume a session by its ID or path
       --session-dir <d> keep every session in this one directory
+      -n, --name <name> name this session, as /name does
       --no-save         do not write this session to disk
       -a, --approve     trust project-local files for this run
       -na, --no-approve ignore project-local files for this run
       --export <file>   write a session file out as HTML and stop. A second word is
                         where it goes: `--export a.jsonl out.html`
       --skills-dir <d>  one more folder of skills, on top of the standard ones
-      --no-skills       start without loading any skills, wherever they live
+      -ns, --no-skills  start without loading any skills, wherever they live
+      -np, --no-prompt-templates
+                        start without loading any prompt templates
+      -nc, --no-context-files
+                        start without reading AGENTS.md or CLAUDE.md
       --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
-      --no-tools        start without loading ~/.pig/agent/tools or .pig/tools
+      --no-tool-files   start without loading ~/.pig/agent/tools or .pig/tools
       -e, --extension <s>   load an extension for this run: a file, a directory, or a package
                         source (git:github.com/user/repo) cloned under tmp/ and not written to settings
-      --no-extensions   start without loading extensions
+      -ne, --no-extensions
+                        start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
       --mode <m>        text, json, rpc, web or mcp. Any of them leaves the terminal behind:
@@ -638,6 +648,19 @@ if (isset($options['exclude-tools'])) {
     }
 }
 
+// Upstream's `--name`: trimmed, and refused when nothing is left, before anything has loaded.
+$sessionName = null;
+
+if (isset($options['name'])) {
+    $sessionName = trim($options['name']);
+
+    if ($sessionName === '') {
+        fwrite(STDERR, Style::red("Error: --name requires a non-empty value\n"));
+
+        exit(1);
+    }
+}
+
 // Upstream's `sessionDir`: `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the
 // setting — the project's read before trust, as upstream reads it — and with none each project
 // has its own directory as before. A relative path is the working directory's. Set before
@@ -725,7 +748,7 @@ try {
         readOnly: isset($options['read-only']),
         withHooks: !isset($options['no-hooks']),
         withSkills: !isset($options['no-skills']),
-        withTools: !isset($options['no-tools']),
+        withTools: !isset($options['no-tool-files']),
         withExtensions: !isset($options['no-extensions']),
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,
@@ -743,6 +766,10 @@ try {
         preloadedExtensions: $preloadedExtensions,
         // Resolved above with the extensions, or now — `--no-extensions` skips that loader.
         packageResources: $resolvePackages($projectTrusted),
+        // Upstream's `noTools`: `--no-tools` wins over `--no-builtin-tools`.
+        noTools: isset($options['no-tools']) ? 'all' : (isset($options['no-builtin-tools']) ? 'builtin' : null),
+        withPromptTemplates: !isset($options['no-prompt-templates']),
+        withContextFiles: !isset($options['no-context-files']),
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying
@@ -760,6 +787,13 @@ foreach ($started->warnings as $warning) {
 }
 
 $session = $started->session;
+
+// Upstream's `sessionManager.appendSessionInfo(name)`, onto the file before the first turn. With
+// `--no-save` there is no file for the name to be in.
+if ($sessionName !== null) {
+    $started->store?->setSessionName($sessionName);
+}
+
 $contextFiles = $started->contextFiles;
 $skills = $started->skills;
 $fileCommands = $started->fileCommands;

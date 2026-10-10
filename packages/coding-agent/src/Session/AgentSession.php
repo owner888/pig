@@ -47,6 +47,7 @@ use Pig\Ai\Utils\Overflow;
 use Pig\Ai\Utils\Retry;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Transcript;
+use Pig\Ai\Utils\Uuid;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -105,6 +106,7 @@ use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\CodingAgent\ProviderAttribution;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Utils\ImageProcess;
@@ -319,7 +321,7 @@ final class AgentSession
         $inner = $this->agent->streamFunction;
         $this->innerStream = $inner;
         $this->agent->streamFunction = function (Model $model, TranscriptContext $context, ?SimpleStreamOptions $options) use ($inner): mixed {
-            $requestOptions = $this->buildRequestOptions($options ?? new SimpleStreamOptions());
+            $requestOptions = $this->buildRequestOptions($model, $options ?? new SimpleStreamOptions());
 
             // Compaction and summaries use their own routing ids; only session requests replace
             // the cache entry, so warming restarts from them — upstream's rule, on the options as
@@ -3108,16 +3110,18 @@ final class AgentSession
      * `websocketConnectTimeoutMs` (the request's, else the setting) goes the same way, and so does
      * `transport`, which upstream's agent carries from the setting into every request.
      *
-     * Not ported: upstream's provider attribution headers (`mergeProviderAttributionHeaders()`,
-     * OpenRouter/NVIDIA/Cloudflare/OpenCode identification sent behind its install-telemetry
-     * setting).
+     * The headers start from upstream's `mergeProviderAttributionHeaders()`
+     * (`ProviderAttribution`): what OpenRouter, NVIDIA, Cloudflare and OpenCode are told about the
+     * client, under the request's own headers and before the hooks see them.
      */
-    private function buildRequestOptions(SimpleStreamOptions $options): SimpleStreamOptions
+    private function buildRequestOptions(Model $model, SimpleStreamOptions $options): SimpleStreamOptions
     {
         $provider = $this->settings?->providerRetrySettings() ?? ['timeoutMs' => null, 'maxRetries' => null, 'maxRetryDelayMs' => 60_000];
         $httpIdleTimeoutMs = $this->settings?->httpIdleTimeoutMs() ?? 300_000;
         $effectiveTimeoutMs = $httpIdleTimeoutMs === 0 ? 2_147_483_647 : $httpIdleTimeoutMs;
-        $headers = $options->headers;
+        $headers = $this->settings !== null
+            ? ProviderAttribution::merge($model, $this->settings, $options->sessionId, $options->headers)
+            : $options->headers;
 
         if ($this->hooks?->hasHandlers('before_provider_headers') === true) {
             $headers = $this->hooks->emitBeforeProviderHeaders($headers ?? []);
@@ -3750,7 +3754,8 @@ final class AgentSession
             apiKey: $this->keyFor($model),
             reasoning: $model->reasoning && $thinkingLevel !== null ? $thinkingLevel->toReasoning() : null,
             cacheRetention: 'none',
-            sessionId: self::routingId(),
+            // Upstream's `uuidv7()` in `completeSummarization()`: a fresh routing id for a one-off request.
+            sessionId: Uuid::v7(),
         );
 
         // Normalized here, as upstream's `completeSimple()` does on its way in: the stream function
@@ -3815,24 +3820,6 @@ final class AgentSession
         }
 
         return [trim($text), $message->usage];
-    }
-
-    /** A fresh routing id for a one-off request — upstream's `uuidv7()` in `completeSummarization()`. */
-    private static function routingId(): string
-    {
-        // 48 bits of Unix milliseconds, then randomness, with the version (7) and variant bits set.
-        $millis = (int) (microtime(true) * 1000);
-        $bytes = substr(pack('J', $millis), 2, 6) . random_bytes(10);
-        $bytes[6] = chr(ord($bytes[6]) & 0x0F | 0x70);
-        $bytes[8] = chr(ord($bytes[8]) & 0x3F | 0x80);
-
-        return implode('-', [
-            bin2hex(substr($bytes, 0, 4)),
-            bin2hex(substr($bytes, 4, 2)),
-            bin2hex(substr($bytes, 6, 2)),
-            bin2hex(substr($bytes, 8, 2)),
-            bin2hex(substr($bytes, 10, 6)),
-        ]);
     }
 
     // ---- thinking ----------------------------------------------------------------

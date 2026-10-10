@@ -301,7 +301,7 @@ final class RpcClientTest extends TestCase
             cwd: $this->cwd,
             // Hooks off by default: every case but one is about the protocol, and a hook folder on
             // the machine running the tests is not this file's business.
-            arguments: [...($withHooks ? [] : ['--no-hooks']), '--no-tools', ...$arguments],
+            arguments: [...($withHooks ? [] : ['--no-hooks']), '--no-tool-files', ...$arguments],
             environment: [
                 'PIG_HOME' => $this->home . '/.pig',
                 'PI_HOME' => $this->root . '/pi',

@@ -31,6 +31,7 @@ use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\TextDecoder;
 use Pig\Ai\Utils\Transcript;
+use Pig\Ai\Utils\Uuid;
 use Pig\Async\AbortController;
 use Pig\Async\AbortError;
 use Pig\Async\AbortSignal;
@@ -184,7 +185,7 @@ final class OpenAiCodexResponses
             }
 
             if ($transport !== 'sse' && !$websocketDisabledForSession) {
-                $websocketRequestId = $codexSessionId !== null && $codexSessionId !== '' ? $codexSessionId : self::uuidv7();
+                $websocketRequestId = $codexSessionId !== null && $codexSessionId !== '' ? $codexSessionId : Uuid::v7();
                 $websocketHeaders = self::buildWebSocketHeaders($model->headers, $options?->headers, $accountId, $apiKey, $websocketRequestId);
                 $retriedWebSocketConnectionLimit = false;
                 $retriedMissingWebSocketContinuation = false;
@@ -959,23 +960,6 @@ final class OpenAiCodexResponses
         );
 
         return $built['values'];
-    }
-
-    /** A UUIDv7 — upstream's `uuidv7()`, for a request with no session to name it. */
-    private static function uuidv7(): string
-    {
-        // 48 bits of Unix milliseconds, then randomness, with the version (7) and variant bits set.
-        $bytes = substr(pack('J', Timestamp::nowMs()), 2, 6) . random_bytes(10);
-        $bytes[6] = chr(ord($bytes[6]) & 0x0F | 0x70);
-        $bytes[8] = chr(ord($bytes[8]) & 0x3F | 0x80);
-
-        return implode('-', [
-            bin2hex(substr($bytes, 0, 4)),
-            bin2hex(substr($bytes, 4, 2)),
-            bin2hex(substr($bytes, 6, 2)),
-            bin2hex(substr($bytes, 8, 2)),
-            bin2hex(substr($bytes, 10, 6)),
-        ]);
     }
 
     // ---- request building ------------------------------------------------------------------

@@ -731,6 +731,20 @@ final class Settings
         $this->set('followUpMode', $mode->value);
     }
 
+    /**
+     * Upstream's `getEnableInstallTelemetry()`: whether pig names itself to the providers that ask
+     * (`ProviderAttribution`). On unless set false; `PIG_TELEMETRY` overrides it.
+     */
+    public function installTelemetry(): bool
+    {
+        return $this->get('enableInstallTelemetry') !== false;
+    }
+
+    public function setInstallTelemetry(bool $enabled): void
+    {
+        $this->set('enableInstallTelemetry', $enabled);
+    }
+
     /** Upstream's `Transport` values, in the order `/settings` offers them. */
     public const array TRANSPORTS = ['sse', 'websocket', 'websocket-cached', 'auto'];
 
@@ -1007,6 +1021,26 @@ final class Settings
         $this->set('terminal.showTerminalProgress', $enabled);
     }
 
+    /** Upstream's `MermaidRenderingMode` values, in the order `/settings` offers them. */
+    public const array MERMAID_MODES = ['off', 'final', 'streaming'];
+
+    /**
+     * Upstream's `getMermaidRenderingMode()`: `markdown.mermaid` — whether a ```mermaid block is
+     * drawn as a diagram, only once the message is finished (`final`), or as it streams too
+     * (`streaming`, the default).
+     */
+    public function mermaidRenderingMode(): string
+    {
+        $mode = $this->get('markdown.mermaid');
+
+        return $mode === 'off' || $mode === 'final' ? $mode : 'streaming';
+    }
+
+    public function setMermaidRenderingMode(string $mode): void
+    {
+        $this->set('markdown.mermaid', $mode);
+    }
+
     /** Upstream's `getCodeBlockIndent()`: what a rendered code block is indented with. */
     public function codeBlockIndent(): string
     {
@@ -1198,7 +1232,7 @@ final class Settings
      * Custom tool files named in the settings, on top of the two standard folders.
      *
      * Upstream's key exactly: a top-level `customTools` array of paths, each one a tool's
-     * entry file. `--no-tools` is how none of them are loaded, for the same reason
+     * entry file. `--no-tool-files` is how none of them are loaded, for the same reason
      * `--no-hooks` is a flag rather than a setting — the name here is already this list.
      *
      * @return list<string>

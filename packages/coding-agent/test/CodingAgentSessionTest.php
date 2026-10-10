@@ -820,7 +820,47 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertStringStartsWith('tool ', $started->warnings[0]);
     }
 
-    public function testNoToolsSkipsThatFolderEntirely(): void
+    public function testNoToolsIsNoToolAtAllAndNoBuiltinToolsKeepsTheCustomOnes(): void
+    {
+        mkdir($this->home . '/tools/mine', 0o755, true);
+        file_put_contents($this->home . '/tools/mine/index.php', <<<'PHP'
+            <?php
+            use Pig\CodingAgent\CustomTools\CustomTool;
+            use Pig\Agent\AgentToolResult;
+            use Pig\Ai\TextContent;
+            return fn ($pi) => new CustomTool(
+                name: 'mine', label: 'x', description: 'x',
+                parameters: ['type' => 'object', 'properties' => []],
+                execute: fn () => new AgentToolResult([new TextContent('ok')]),
+            );
+            PHP);
+
+        $this->assertSame([...ToolSet::CODING, 'mine'], $this->toolNames($this->start()));
+        // Upstream's `noTools: "all"` and `"builtin"`.
+        $this->assertSame([], $this->toolNames($this->start([], ['noTools' => 'all'])));
+        $this->assertSame(['mine'], $this->toolNames($this->start([], ['noTools' => 'builtin'])));
+        $this->assertSame([], $this->toolNames($this->start([], ['noTools' => 'builtin', 'readOnly' => true, 'withTools' => false])));
+        // Modifiers change the empty default: under `all` they are the whole set.
+        $this->assertSame(['read'], $this->toolNames($this->start([], ['noTools' => 'all', 'tools' => ['+read']])));
+        $this->assertSame(['read', 'mine'], $this->toolNames($this->start([], ['noTools' => 'builtin', 'tools' => ['+read']])));
+        // A named set wins over both.
+        $this->assertSame(['bash'], $this->toolNames($this->start([], ['noTools' => 'all', 'tools' => ['bash']])));
+    }
+
+    public function testNoPromptTemplatesAndNoContextFilesLeaveThemOut(): void
+    {
+        file_put_contents($this->cwd . '/AGENTS.md', 'Use tabs, obviously.');
+        mkdir($this->cwd . '/.pig/commands', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/commands/ship.md', "Ship it.\n");
+
+        $started = $this->start([], ['withPromptTemplates' => false, 'withContextFiles' => false]);
+
+        $this->assertSame([], $started->fileCommands);
+        $this->assertSame([], $started->contextFiles);
+        $this->assertNotSame([], $this->start()->fileCommands, 'both are there without the switches');
+    }
+
+    public function testNoToolFilesSkipsThatFolderEntirely(): void
     {
         // `~/.pig/agent/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
         mkdir($this->home . '/tools/broken', 0o755, true);
@@ -839,7 +879,7 @@ final class CodingAgentSessionTest extends TestCase
 
         $this->assertNotSame([], $this->start()->skills, 'the skill is there to begin with');
 
-        // Its two siblings have had `--no-hooks` and `--no-tools` from the start, and skills had a
+        // Its two siblings have had `--no-hooks` and `--no-tool-files` from the start, and skills had a
         // settings switch and no flag — which reads as "this one cannot be turned off for one run".
         $this->assertSame([], $this->start([], ['withSkills' => false])->skills);
     }

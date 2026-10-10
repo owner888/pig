@@ -28,13 +28,13 @@ final readonly class Arguments
     public const array TAKES_A_VALUE = [
         'model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models', 'proxy',
         'tools', 'exclude-tools', 'export', 'list-models', 'extension', 'session', 'web-host', 'web-port',
-        'mcp-host', 'mcp-port', 'session-dir',
+        'mcp-host', 'mcp-port', 'session-dir', 'name',
     ];
 
     /**
      * The short ones, and the long option each stands for.
      *
-     * Upstream's, `-na` included. A short option is only ever an abbreviation: it resolves to its long
+     * Upstream's, every one — the two-letter ones included. A short option is only ever an abbreviation: it resolves to its long
      * name and then goes through exactly the same handling, so `-r path` and `--resume path`
      * cannot come to mean different things.
      */
@@ -44,9 +44,18 @@ final readonly class Arguments
         'c' => 'continue',
         'e' => 'extension',
         'h' => 'help',
+        'n' => 'name',
+        'nbt' => 'no-builtin-tools',
+        'nc' => 'no-context-files',
+        'ne' => 'no-extensions',
+        'np' => 'no-prompt-templates',
+        'ns' => 'no-skills',
+        'nt' => 'no-tools',
         'p' => 'print',
         'r' => 'resume',
+        't' => 'tools',
         'v' => 'version',
+        'xt' => 'exclude-tools',
     ];
 
     /** The five modes `--mode` accepts. */

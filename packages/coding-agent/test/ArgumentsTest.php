@@ -117,7 +117,7 @@ final class ArgumentsTest extends TestCase
             $this->assertTrue($this->parse('-' . $short)->has($long), "-{$short} should mean --{$long}");
         }
 
-        $this->assertSame(['a', 'na', 'c', 'e', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
+        $this->assertSame(['a', 'na', 'c', 'e', 'h', 'n', 'nbt', 'nc', 'ne', 'np', 'ns', 'nt', 'p', 'r', 't', 'v', 'xt'], array_keys(Arguments::SHORT));
     }
 
     public function testAShortOptionTakesAValueWhenItsLongFormDoes(): void
@@ -341,15 +341,26 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
-    public function testNoToolsIsStillAFlagAboutSomethingElse(): void
+    public function testNoToolFilesIsAFlagAndNoToolsIsUpstreams(): void
     {
-        $parsed = $this->parse('--no-tools', 'fix the bug');
+        // `--no-tool-files` skips the tools somebody wrote in `~/.pig/agent/tools`; `--no-tools`
+        // is upstream's, every tool off. Both flags, and neither eats the prompt.
+        $parsed = $this->parse('--no-tool-files', '-nt', 'fix the bug');
 
-        // `--tools` chooses the built-in set; `--no-tools` skips the ones somebody wrote in
-        // `~/.pig/agent/bin`. Two different questions with names one letter apart.
+        $this->assertTrue($parsed->has('no-tool-files'));
         $this->assertTrue($parsed->has('no-tools'));
         $this->assertFalse(isset($parsed->options['tools']));
         $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
+    public function testShortToolsAndNameTakeTheirValues(): void
+    {
+        $parsed = $this->parse('-t', 'read,bash', '-xt', 'bash', '-n', 'Refactor auth', 'go');
+
+        $this->assertSame('read,bash', $parsed->value('tools'));
+        $this->assertSame('bash', $parsed->value('exclude-tools'));
+        $this->assertSame('Refactor auth', $parsed->value('name'));
+        $this->assertSame(['go'], $parsed->messages);
     }
 
     public function testNoUpdateCheckIsAFlagAndLeavesThePromptAlone(): void

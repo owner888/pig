@@ -187,6 +187,14 @@ final class CodingAgent
      *        unless an entry starts with `mcp__`, as upstream keeps it.
      * @param list<string>|null $excludeTools names or patterns to take away, after `$tools`, MCP
      *        tools included — upstream's `--exclude-tools`
+     * @param 'all'|'builtin'|null $noTools upstream's `noTools`, for when `$tools` names no set:
+     *        `all` starts with no tool at all (`--no-tools`), MCP's included; `builtin` without the
+     *        built-ins but with every custom and extension tool (`--no-builtin-tools`). A `$tools`
+     *        of only `+name`/`-name` entries then changes an empty default rather than the four
+     * @param bool $withPromptTemplates false is upstream's `--no-prompt-templates`: no prompt
+     *        template is looked for, the packages' included; an extension's still arrive
+     * @param bool $withContextFiles false is upstream's `--no-context-files`: no `AGENTS.md` or
+     *        `CLAUDE.md` is read into the prompt
      * @param list<string> $disabledExtensions bundled extensions not to load this run, by their
      *        directory name — `pig-mcp` for `--no-mcp`
      * @param array<string, string> $flags every option the command line carried, for the ones an
@@ -231,6 +239,9 @@ final class CodingAgent
         array $flags = [],
         ?array $preloadedExtensions = null,
         ?ResolvedPaths $packageResources = null,
+        ?string $noTools = null,
+        bool $withPromptTemplates = true,
+        bool $withContextFiles = true,
     ): StartedSession {
         $warnings = [];
 
@@ -363,7 +374,7 @@ final class CodingAgent
         // `Shell::useShellPath()` states: `bash`, `!command` and a hook all reach one shell.
         Shell::useShellPath($settings->shellPath());
 
-        [$contextFiles, $contextWarnings] = ContextFiles::loadWithWarnings($cwd);
+        [$contextFiles, $contextWarnings] = $withContextFiles ? ContextFiles::loadWithWarnings($cwd) : [[], []];
 
         foreach ($contextWarnings as $problem) {
             $warnings[] = $problem;
@@ -373,7 +384,7 @@ final class CodingAgent
         Timings::mark('contextFiles');
 
         // Upstream's `--no-skills`, and the reason it is here rather than only in the settings is
-        // its two siblings: `--no-hooks` and `--no-tools` are flags, and a third loader with a
+        // its two siblings: `--no-hooks` and `--no-tool-files` are flags, and a third loader with a
         // settings switch and no flag is the asymmetry that makes somebody think skills cannot be
         // turned off for one run. The settings still decide when nothing was typed.
         [$skills, $skillWarnings] = $withSkills && $settings->skillsEnabled()
@@ -404,7 +415,7 @@ final class CodingAgent
             $warnings[] = "skill {$warning->path}: {$warning->message}";
         }
 
-        $fileCommands = SlashCommands::load($cwd, projectTrusted: $projectTrusted);
+        $fileCommands = $withPromptTemplates ? SlashCommands::load($cwd, projectTrusted: $projectTrusted) : [];
         Timings::mark('slashCommands');
 
         // The packages' skills, prompts and themes — after the local ones, which is the rank
@@ -426,7 +437,10 @@ final class CodingAgent
                 }
             }
 
-            $fileCommands = [...$fileCommands, ...SlashCommands::fromFiles($packageResources->enabled('prompts'))];
+            if ($withPromptTemplates) {
+                $fileCommands = [...$fileCommands, ...SlashCommands::fromFiles($packageResources->enabled('prompts'))];
+            }
+
             Themes::setPackageThemeFiles($packageResources->enabled('themes'));
         }
         Timings::mark('packages');
@@ -470,12 +484,20 @@ final class CodingAgent
             throw new CodingAgentError("Invalid tools option: {$toolListError}");
         }
 
-        $defaultTools = $settings->defaultTools();
+        // Upstream's `noTools ? [] : (getDefaultTools() ?? DEFAULT_TOOL_NAMES)`.
+        $defaultTools = $noTools !== null ? [] : $settings->defaultTools();
         $modifiers = $tools !== null && array_filter($tools, Settings::isToolModifier(...)) !== [] ? $tools : null;
 
         if ($modifiers !== null) {
             $defaultTools = Settings::applyToolModifiers($defaultTools ?? ToolSet::CODING, $modifiers);
             $tools = null;
+
+            // Upstream's `allowedToolNames`: under `all`, what the modifiers selected is the whole set.
+            if ($noTools === 'all') {
+                $tools = $defaultTools;
+            }
+        } elseif ($tools === null && $noTools === 'all') {
+            $tools = [];
         }
 
         $selection = $tools === null ? null : new ToolSelection($tools);
@@ -485,7 +507,7 @@ final class CodingAgent
         if ($selection !== null) {
             // `--tools` names the whole set: the built-ins it matches, in `ToolSet::ALL`'s order.
             $builtIn = array_values(array_filter(ToolSet::ALL, $selection->allows(...)));
-        } elseif ($defaultTools !== null && !$readOnly) {
+        } elseif ($defaultTools !== null && (!$readOnly || $noTools !== null)) {
             $builtIn = array_values(array_filter(ToolSet::ALL, static fn (string $name): bool => in_array($name, $defaultTools, true)));
         }
 

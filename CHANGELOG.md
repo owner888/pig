@@ -43,6 +43,31 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.28] - 2026-10-08
+
+### New Features
+
+- **Pure-PHP Unicode Mermaid Diagram Renderer (`Mermaid\*`, `Interactive\MermaidTransformer`)**:
+  - Implemented a pure-PHP zero-dependency port of `grok-mermaid` 0.2.3, rendering ````mermaid` blocks natively in terminal as Unicode box-drawing diagrams (flowcharts with subgraphs, state, class, ER, and sequence diagrams).
+  - Integrated `MermaidTransformer` into markdown rendering pipeline with `markdown.mermaid` setting (`streaming` [default], `final`, `off`) and `/settings` row.
+- **Provider Attribution & Telemetry Headers (`ProviderAttribution`)**:
+  - Automatically dispatched attribution headers matching upstream pi: `X-OpenRouter-Title: pig` and site URL for OpenRouter, `X-BILLING-INVOKE-ORIGIN: Pig` and custom User-Agent for Cloudflare, and `x-opencode-client: pig` for OpenCode, controlled via `enableInstallTelemetry` and `PIG_TELEMETRY`.
+- **UUID v7 Implementation (`Pig\Ai\Utils\Uuid::v7`)**:
+  - Implemented standard timestamp-ordered UUID v7 generation for session request tracing and summaries.
+
+### Added
+
+- Added upstream CLI tool and loader flags: `--no-tools` (`-nt`), `--no-builtin-tools` (`-nbt`), `--name <name>` (`-n`), `--no-prompt-templates` (`-np`), and `--no-context-files` (`-nc`).
+
+### Changed
+
+- Renamed legacy `--no-tools` (which skipped `tools/` directories) to `--no-tool-files`, adhering to upstream semantics where `--no-tools` disables all tools entirely.
+
+### Fixed
+
+- **Help Text Proxy Key Alignment**:
+  - Updated `pig --help` proxy setting reference from deprecated `proxy.url` to standard `httpProxy`.
+
 ## [0.5.27] - 2026-10-08
 
 ### New Features

@@ -1455,7 +1455,7 @@ Six things decided where pig differs:
   was before `AgentSession` wrapped it), not the wrapper — that would start a run for its own
   refresh. Upstream calls `modelRuntime.streamSimple` directly for the same reason.
 - **Only session requests start it**: the raw options' `sessionId` equal to the store's id, as
-  upstream checks `sessionManager.getSessionId()`. Summaries use `routingId()` and never match.
+  upstream checks `sessionManager.getSessionId()`. Summaries use a fresh `Uuid::v7()` each and never match.
 - **`isCurrent` is identity, not equality** — upstream's `cacheContextIsCurrent()`: same provider and
   id, and the message list captured at the request is a prefix of the agent's list, object by object.
 - **`writeTo()` cancels**, because pig switches files inside one `AgentSession` where upstream
@@ -3315,7 +3315,8 @@ Five things worth keeping straight:
   would then list tool files as hooks. Upstream's `branch` reason is `fork` here, the word its
   session events use for the same thing now.
 
-`--no-tools` loads none of them. Settings name extra entry files under upstream's key,
+`--no-tool-files` loads none of them (it was `--no-tools` until that became upstream's "no tools at
+all"). Settings name extra entry files under upstream's key,
 `customTools`. The system prompt's "Available tools" list stays the built-ins, as upstream's
 does: a custom tool reaches the model as a tool definition, which is the part that matters.
 
@@ -4776,6 +4777,47 @@ Deliberate deviations from upstream, both to spare every consumer an unpacking s
 `UserMessage` wraps a bare string into a `TextContent` at construction instead of keeping
 `string | Content[]`, and `Context` takes `messages` first because PHP wants required parameters
 before optional ones.
+
+### Mermaid diagrams (`Mermaid\*`, `Interactive\MermaidTransformer`)
+
+Upstream draws a ```mermaid block as Unicode box-drawing art with the npm package `grok-mermaid`;
+`packages/coding-agent/src/Mermaid/` is that package (0.2.3, Apache-2.0 — its `LICENSE` sits beside
+the code) ported file for file: `Parse` is `parse.ts`, `Layout` `layout.ts`, `SequenceLayout`
+`layout-seq.ts`, `Canvas`, `Labels`, `SourceBox`, and `Mermaid::render()` is `render()`. **One
+deliberate difference: widths are pig's** (`Measure` is `Graphemes::split()` + `Width::visible()`),
+not the package's `unicode-width` table, because the rows go through pig's Markdown and onto pig's
+screen, which measure that way. It shows only on tabs, soft hyphens, keycaps and emoji runs.
+
+`MermaidTest` replays every block of upstream's hand-written cases as grok-mermaid drew them under
+Node (`test/fixtures/mermaid/cases.json`). The fuzz corpus (4,486 sources) was checked the same
+way while porting: all of it matches with upstream's width table swapped in.
+
+`MermaidTransformer` is upstream's `components/mermaid.ts`: first among the Markdown transformers
+(`InteractiveMode::markdownTransformers()`), each row a code span joined by hard breaks, the block
+left as written when `markdown.mermaid` is `off`, while streaming under `final`, when it cannot be
+drawn, or when it is wider than the terminal less the padding. **Top level is a fence at column 0**:
+pig's Markdown lexer keeps no raw text, which upstream's `marked` tokens are re-joined from, and a
+column-0 fence is never inside a list, a quote or indented code.
+
+### Provider attribution (`ProviderAttribution`)
+
+Upstream's `provider-attribution.ts`, under pig's name: `X-OpenRouter-Title: pig` with
+`https://pigagent.dev`, `X-BILLING-INVOKE-ORIGIN: Pig`, `User-Agent: pig-coding-agent` for
+Cloudflare, and `x-opencode-client: pig` beside OpenCode's session header. The first three ride on
+`enableInstallTelemetry` (on by default; `PIG_TELEMETRY` overrides it either way); the request's own
+headers win over all of them, and the `before_provider_headers` hooks see the result
+(`AgentSession::buildRequestOptions()`). **There is no install ping**: upstream's reports to pi.dev,
+which counts pi's installs. `enableAnalytics` is not ported — upstream reads it nowhere.
+
+### Upstream's tool and loader flags
+
+`--no-tools` (`-nt`) is upstream's: no tool at all, MCP's included (`CodingAgent::session(noTools:
+'all')`), and `--no-builtin-tools` (`-nbt`) keeps the custom and extension tools; a `--tools` of
+`+name`/`-name` entries then changes the empty default, and a named set wins over both. **pig's
+old `--no-tools` is `--no-tool-files`** — it skips `~/.pig/agent/tools` and `.pig/tools` — with no
+reader for the old spelling. `--name` (`-n`) names the session before the first turn (upstream's
+`appendSessionInfo()`), `--no-prompt-templates` (`-np`) and `--no-context-files` (`-nc`) switch off
+those loaders; every one of upstream's short forms is in `Arguments::SHORT`.
 
 ## Commands
 
@@ -7294,9 +7336,7 @@ ported, tested and one flag away. The test that asserted the old behaviour was c
 `testTheDefaultIsUpstreamsFourAndNotEveryToolPigHas`, with a sibling for each of `--tools` and
 `--read-only` so the three answers cannot drift apart.
 
-`--tools` had to join `Arguments::TAKES_A_VALUE`, which is the trap that list exists for — and it is
-one letter from `--no-tools`, which is about the tools **somebody wrote** in `~/.pig/agent/tools` and not
-about this. `ArgumentsTest` states both, next to each other.
+`--tools` had to join `Arguments::TAKES_A_VALUE`, which is the trap that list exists for.
 
 ### DeepSeek accepted the field and ignored it, so every request to it was unbounded
 
@@ -9781,7 +9821,7 @@ taken no value and the path would have been sent to the model as a message.
 `echo 'Exported to: ', HtmlExport::fromFile(…)` writes left to right, so a missing file printed
 `Exported to: ` and then the error underneath it. The write happens first and the sentence after.
 
-**`--no-skills`.** `--no-hooks` and `--no-tools` have been there from the start; skills had
+**`--no-skills`.** `--no-hooks` and `--no-tool-files` (then called `--no-tools`) have been there from the start; skills had
 `skillsEnabled()` in the settings and no flag — three loaders, two with a switch on the command
 line and one without, which reads as "this one cannot be turned off for one run". `withSkills` on
 `session()`, and the settings still decide when nothing was typed.
@@ -9837,8 +9877,7 @@ Left out of `main.ts` with reasons, so the flag list is not compared twice:
 |---|---|
 | `checkForNewVersion()` | fetches `registry.npmjs.org` at every start to see whether a newer release exists. pig is not published, and the habit is one pig refuses elsewhere in as many words — *"reaching for the network to draw a completion list is not something a keystroke should do"* |
 | `--system-prompt`, `--append-system-prompt`, and `.pi/SYSTEM.md` discovery | the system prompt is the developer's own file here, so this is theirs to decide rather than the audit's |
-| `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tools`, which upstream lacks and pig has |
-| `--session-dir <dir>` | `PIG_HOME` moves the whole directory, which is the only use anybody has had for it |
+| `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tool-files`, which upstream lacks and pig has |
 | `--provider` | pig resolves a provider and an id together (`ModelResolver`), so there is nothing for a second flag to disambiguate |
 
 ### A message typed while the conversation was being summarised was lost with a red line

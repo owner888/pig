@@ -305,6 +305,8 @@ Logger::timeEnd('benchmark');
 
 **图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。`defaultProjectTrust`（`ask`、`always`、`never`）决定还没被决定过的项目（`-a`/`--approve` 或 `-na`/`--no-approve` 只替这一次运行决定，什么都不保存），`collapseChangelog: true` 在升级后只显示一行而不是完整更新说明，`steeringMode` / `followUpMode`（`one-at-a-time` 或 `all`）决定排队消息怎么交出去，`httpProxy` 是 `--proxy` 和环境变量都没给时用的代理，`transport`（`auto`、`websocket`、`websocket-cached`、`sse`）决定怎么连 ChatGPT 的 Codex 后端——默认走为会话保留的 WebSocket，失败时退回 SSE——`websocketConnectTimeoutMs` 是它握手的时限。
 
+**图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。不加载 `~/.pig/agent/tools` 和 `.pig/tools` 里的工具文件现在是 `--no-tool-files`。pig 会告诉 OpenRouter、NVIDIA 和 Cloudflare 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
+
 ### 订阅账号登录
 
 在 pig 里输入 `/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`。四个提供商，流程均与 pi 一致：
