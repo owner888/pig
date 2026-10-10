@@ -17,6 +17,7 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
+use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
@@ -28,6 +29,7 @@ use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Hooks\Results\CacheWarmingDecisionEventResult;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
@@ -185,6 +187,25 @@ final class HookRunnerTest extends TestCase
         $this->assertSame('bad.php', $this->errors[0]->hookPath);
         $this->assertSame('agent_start', $this->errors[0]->event);
         $this->assertStringContainsString('boom', $this->errors[0]->error);
+    }
+
+    public function testACacheWarmingDecisionIsTheLastAnswerAndAThrowLeavesPigsStanding(): void
+    {
+        $event = new CacheWarmingDecisionEvent(0.03, 0.345, 1.0, 'warm');
+        $runner = $this->runner([
+            $this->hook(['cache_warming_decision' => static fn (): CacheWarmingDecisionEventResult => new CacheWarmingDecisionEventResult('stop')], 'first.php'),
+            $this->hook(['cache_warming_decision' => static fn (): CacheWarmingDecisionEventResult => new CacheWarmingDecisionEventResult()], 'silent.php'),
+            $this->hook(['cache_warming_decision' => static function (): never {
+                throw new RuntimeException('boom');
+            }], 'bad.php'),
+        ]);
+
+        // Upstream's rule: every handler is asked, the last one with an action wins, and one with
+        // nothing to say leaves the answer where it was.
+        $this->assertSame('stop', $runner->emitCacheWarmingDecision($event));
+        $this->assertCount(1, $this->errors);
+        $this->assertSame('bad.php', $this->errors[0]->hookPath);
+        $this->assertSame('warm', $this->runner([])->emitCacheWarmingDecision($event));
     }
 
     public function testTheContextCarriesTheWorkingDirectoryAndTheCurrentModel(): void

@@ -308,6 +308,8 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/themes/` | Custom JSON themes directory (built-in `dark`, `light`, `labra`, plus any user-defined theme). |
 | `~/.pig/agent/sessions/` | Saved session logs in standard `.jsonl` format. |
 
+**Prompt cache warming.** While a long tool runs past the provider's cache lifetime (five minutes on Anthropic), pig re-sends the last request with a one-token cap just before the cache entry expires — only when the expected saving is at least $0.05 — so the next request reads the prompt from the cache instead of paying to write it again. Each refresh is in the session file and in `/session`'s cost. `cacheWarming` in the global `settings.json` (or the *Cache warming* row in `/settings`) is `streaming` by default (while the agent runs), `idle` (between runs too, for up to 30 minutes) or `off`. An extension can overrule each refresh with the `cache_warming_decision` event. `-p` never warms.
+
 ### Signing in with a subscription
 
 `/login` inside pig, or `pig-ai login <provider>` from a shell with no terminal UI. Four providers, each the way pi does it:

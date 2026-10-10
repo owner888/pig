@@ -297,6 +297,8 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/themes/` | 自定义主题 JSON 目录（内置 `dark`、`light`、`labra`，支持任意第三方主题）。 |
 | `~/.pig/agent/sessions/` | 遵循标准 `.jsonl` 格式的持久化会话树日志。 |
 
+**提示缓存预热。** 工具运行时间超过提供商的缓存寿命（Anthropic 为五分钟）时，pig 会在缓存条目过期前，以 1 个 token 的上限重发上一次请求——只在预计能省下至少 $0.05 时才发——让下一次请求从缓存读取提示，而不是再付一次写入的全价。每次预热都记在会话文件里，计入 `/session` 的花费。全局 `settings.json` 的 `cacheWarming`（或 `/settings` 里的 *Cache warming* 一行）默认 `streaming`（agent 运行期间），可设为 `idle`（两次运行之间也预热，最多 30 分钟）或 `off`。扩展可以通过 `cache_warming_decision` 事件否决或强制每一次预热。`-p` 从不预热。
+
 ### 订阅账号登录
 
 在 pig 里输入 `/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`。四个提供商，流程均与 pi 一致：

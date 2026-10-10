@@ -1125,6 +1125,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
 
         $this->assertStringContainsString('0 messages', $this->screen());
+        // The terminal turns the warmer on, so `/session` has something to say about it.
+        $this->assertStringContainsString('Cache warming: streaming · Inactive (waiting for first request)', $this->screenText());
     }
 
     public function testExitStopsTheWholeThing(): void

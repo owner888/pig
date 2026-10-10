@@ -40,6 +40,7 @@ use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\TranscriptContext;
+use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Overflow;
 use Pig\Ai\Utils\Retry;
@@ -55,6 +56,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
 use Pig\CodingAgent\Hooks\Events\AgentSettledEvent as HookAgentSettled;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
+use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Hooks\Events\MessageEndEvent as HookMessageEnd;
 use Pig\CodingAgent\Hooks\Events\MessageStartEvent as HookMessageStart;
 use Pig\CodingAgent\Hooks\Events\MessageUpdateEvent as HookMessageUpdate;
@@ -143,6 +145,12 @@ final class AgentSession
     private array $followUps = [];
 
     private ?Closure $unsubscribeAgent = null;
+
+    /** Upstream's `_cacheWarmer`; null until a mode with a next request turns it on. */
+    private ?CacheWarmer $cacheWarmer = null;
+
+    /** The provider call under the agent's stream function, which a cache refresh replays. */
+    private ?Closure $innerStream = null;
 
     private ?AbortController $bash = null;
 
@@ -281,8 +289,16 @@ final class AgentSession
         };
         $this->agent->maxRetryDelayMs = $this->settings?->providerRetrySettings()['maxRetryDelayMs'] ?? 60_000;
         $inner = $this->agent->streamFunction;
+        $this->innerStream = $inner;
         $this->agent->streamFunction = function (Model $model, TranscriptContext $context, ?SimpleStreamOptions $options) use ($inner): mixed {
             $requestOptions = $this->buildRequestOptions($options ?? new SimpleStreamOptions());
+
+            // Compaction and summaries use their own routing ids; only session requests replace
+            // the cache entry, so warming restarts from them — upstream's rule, on the options as
+            // the agent sent them.
+            if ($this->cacheWarmer !== null && $this->store !== null && $options?->sessionId === $this->store->id) {
+                $this->cacheWarmer->start($model, $context, $requestOptions, $this->cacheContextIsCurrent($model));
+            }
 
             return $inner !== null ? $inner($model, $context, $requestOptions) : Stream::simple($model, $context, $requestOptions);
         };
@@ -489,6 +505,8 @@ final class AgentSession
      */
     public function writeTo(?SessionManager $store): void
     {
+        // The entry being warmed belongs to the conversation being left.
+        $this->cacheWarmer?->cancel();
         $this->store = $store;
         $this->agent->sessionId = $store?->id;
         $this->hooks?->setStore($store);
@@ -624,6 +642,93 @@ final class AgentSession
         }
 
         $this->listeners = [];
+        $this->cacheWarmer?->cancel();
+    }
+
+    /**
+     * Keep the prompt cache warm between requests — upstream's `CacheWarmer`, which its SDK always
+     * builds. Here a mode turns it on: upstream `unref()`s the refresh timer so Node can exit with
+     * one pending, pig's loop has no unref and would wait it out, and a `-p` run has no next
+     * request to save anyway. The terminal and RPC modes call this.
+     */
+    public function enableCacheWarming(): void
+    {
+        if ($this->cacheWarmer !== null) {
+            return;
+        }
+
+        $inner = $this->innerStream;
+        $this->cacheWarmer = new CacheWarmer(
+            static fn (Model $model, TranscriptContext $context, SimpleStreamOptions $options): mixed => $inner !== null
+                ? $inner($model, $context, $options)
+                : Stream::simple($model, $context, $options),
+            fn (): string => $this->settings?->cacheWarmingMode() ?? 'streaming',
+            fn (CacheWarmingDecisionEvent $event): string => $this->hooks?->emitCacheWarmingDecision($event) ?? $event->action,
+            fn (): int => $this->lastPromptTokens(),
+            fn (string $kind, string $provider, string $model, Usage $usage, ?string $note): ?UsageEntry => $this->store?->appendUsage($kind, $provider, $model, $usage, $note),
+        );
+    }
+
+    /** Current cache-warming state and the policy inputs that produced it; null when it is off. */
+    public function cacheWarmingStatus(): ?CacheWarmingStatus
+    {
+        return $this->cacheWarmer?->status();
+    }
+
+    /** Persist the cache-warming mode and reconcile active warming at once. */
+    public function setCacheWarmingMode(string $mode): void
+    {
+        $this->settings?->setCacheWarmingMode($mode);
+        $this->cacheWarmer?->onModeChanged();
+    }
+
+    /**
+     * Warm only requests for the selected model, while the conversation still extends the request's
+     * prefix — upstream's `cacheContextIsCurrent()`. Identity, not equality: the agent's list is the
+     * same objects until something replaces them.
+     *
+     * @return Closure(): bool
+     */
+    private function cacheContextIsCurrent(Model $requestModel): Closure
+    {
+        $messages = $this->agent->state->messages;
+
+        return function () use ($messages, $requestModel): bool {
+            $current = $this->agent->state->model;
+            $currentMessages = $this->agent->state->messages;
+
+            if ($current === null || $current->provider !== $requestModel->provider || $current->id !== $requestModel->id) {
+                return false;
+            }
+
+            if (count($messages) > count($currentMessages)) {
+                return false;
+            }
+
+            foreach ($messages as $index => $message) {
+                if (($currentMessages[$index] ?? null) !== $message) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+    }
+
+    /** The prompt the latest answer was asked with, as its provider counted it — what a refresh would re-read. */
+    private function lastPromptTokens(): int
+    {
+        $messages = $this->agent->state->messages;
+
+        for ($i = count($messages) - 1; $i >= 0; $i--) {
+            $message = $messages[$i];
+
+            if ($message instanceof AssistantMessage) {
+                return $message->usage->input + $message->usage->cacheRead + $message->usage->cacheWrite;
+            }
+        }
+
+        return 0;
     }
 
     private function onAgentEvent(AgentEvent $event): void
@@ -3080,6 +3185,7 @@ final class AgentSession
     private function emitAgentSettled(): void
     {
         $this->runActive = false;
+        $this->cacheWarmer?->onAgentSettled();
         $this->emittingSettled = true;
         $aborted = $this->runAbortRequested;
 
@@ -3579,11 +3685,13 @@ final class AgentSession
         //
         // A tool result's `usage` is what the tool itself spent on models (a codemode script's
         // classifier calls) and was paid for the same way; upstream's cost breakdown books it
-        // under "Tools/summaries".
+        // under "Tools/summaries". A `usage` entry — a cache-warming refresh, pig's or pi's — is
+        // money that bought no message, and upstream's `getSessionStats()` adds it the same way.
         foreach ($this->store?->everyMessage() ?? $this->messages() as $message) {
             $usage = match (true) {
                 $message instanceof AssistantMessage => $message->usage,
                 $message instanceof ToolResultMessage => $message->usage,
+                $message instanceof UsageEntry => $message->usage,
                 default => null,
             };
 

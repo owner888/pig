@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Cost;
 use Pig\Ai\Timestamp;
+use Pig\Ai\Usage;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Session\SessionInfoEntry;
+use Pig\CodingAgent\Session\UsageEntry;
 
 /**
  * A line of the session file, which is pi's file.
@@ -130,5 +133,25 @@ final class SessionEntriesTest extends TestCase
             $this->assertGreaterThanOrEqual($now, $millis, var_export($unreadable, true));
             $this->assertLessThan($now + 60_000, $millis, var_export($unreadable, true));
         }
+    }
+
+    public function testAUsageEntryIsPisLineAndComesBackTheSame(): void
+    {
+        $usage = new Usage(output: 1, cacheRead: 50_000, totalTokens: 50_001, cost: new Cost(0.0, 0.000015, 0.015, 0.0, 0.015015));
+        $line = SessionEntries::encode(new UsageEntry('cache_warm', 'anthropic', 'claude-sonnet-4-5', $usage, 'extension override', 1_000), 'abcd1234', 'parent01');
+
+        $this->assertSame('usage', $line['type']);
+        $this->assertSame('cache_warm', $line['kind']);
+        $this->assertSame('anthropic', $line['provider']);
+        $this->assertSame('claude-sonnet-4-5', $line['model']);
+        $this->assertSame('extension override', $line['note']);
+        $this->assertSame(50_000, $line['usage']['cacheRead']);
+
+        $back = SessionEntries::decode($line);
+        $this->assertInstanceOf(UsageEntry::class, $back);
+        $this->assertSame('cache_warm', $back->kind);
+        $this->assertSame('extension override', $back->note);
+        $this->assertSame(0.015015, $back->usage->cost->total);
+        $this->assertArrayNotHasKey('note', SessionEntries::encode(new UsageEntry('cache_warm', 'anthropic', 'm', $usage), 'abcd1234', null));
     }
 }

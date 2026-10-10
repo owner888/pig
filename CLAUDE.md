@@ -334,8 +334,13 @@ the `@{upstream}` / `origin/HEAD` fallback, the CLI's parser and every refusal, 
 and the startup `ls-remote` check (`PackageUpdateCheck`).
 
 What is not: **`.gitignore` is not read while discovering a package's files** — upstream uses
-the `ignore` package; pig skips dot entries, `vendor` and `node_modules` and stops there (the
-`--ignore-file` trap is why there is no matcher to reuse). **`resolve()` covers the packages
+the `ignore` package; pig skips dot entries, `vendor` and `node_modules` and stops there, the
+developer's call after weighing a port. A git-installed package is a clone, and a clone holds no
+gitignored file to hide, so there the rule does nothing; a local-path package with its author's
+drafts in it says what to leave out with the manifest's `!` patterns, which upstream has too. And
+upstream's own matcher is not git's semantics either (`prefixIgnorePattern()` re-roots each nested
+file's patterns), so porting it would be a third notion of "ignored" beside git's and `fd`'s.
+**`resolve()` covers the packages
 only**: the top-level `extensions` / `skills` settings and the auto-discovered directories stay
 with the four loaders, which already had them, and a package's resources are appended after
 theirs — `ResolvedPaths::rank()` is upstream's order, and "first wins" in each loader does the
@@ -1424,6 +1429,52 @@ step and before the overflow check. Regression tests:
 `AgentSessionTest::testAQuotaWallMovesTheTurnOnToTheNextFallbackModel` and
 `…WithEveryFallbackTriedEndsTheTurnAsBefore`.
 
+### Keeping the prompt cache warm
+
+`Session\CacheWarmer` is upstream's `core/cache-warmer.ts`. A provider's prompt cache lives for the
+model's `promptCache` TTL (Anthropic: 300 s short, 3600 s long); a tool that runs past it means the
+next request writes the whole prompt to the cache again at full price, where a read costs a tenth.
+So each session request starts a run: at `max(1, floor(min(ttl × 0.9, ttl − 10 s)))` the same
+request goes out again with `maxTokens: 1` and `maxRetries: 0`, when
+`continuation × missCost − warmCost ≥ $0.05` (`missCost` = cache write or input minus cache read,
+`warmCost` = the cache read plus one output token, continuation 1.0 while the run streams and 0.15
+idle), and the refresh is written down with `SessionManager::appendUsage()` as pi's `usage` entry
+(`kind: cache_warm`). `stats()` counts it in the cost. Upstream's formulas, safety limits (60 min
+streaming, 30 min idle, a refresh deadline half the remaining margin after the planned time) and
+`/session` wording are copied as they are.
+
+Six things decided where pig differs:
+
+- **Opt-in by mode.** Upstream's SDK always builds the warmer and `unref()`s its timer, so Node can
+  exit with one pending. pig's loop has no unref — a pending timer keeps `Loop::isIdle()` false — and
+  a `-p` run has no next request to save, so `AgentSession::enableCacheWarming()` is called by
+  `InteractiveMode::start()` and `RpcMode::start()` and nothing else. `cacheWarmingStatus()` is null
+  without it, which is how `/session` can tell.
+- **The refresh replays the inner provider call** (`$innerStream`, the agent's stream function as it
+  was before `AgentSession` wrapped it), not the wrapper — that would start a run for its own
+  refresh. Upstream calls `modelRuntime.streamSimple` directly for the same reason.
+- **Only session requests start it**: the raw options' `sessionId` equal to the store's id, as
+  upstream checks `sessionManager.getSessionId()`. Summaries use `routingId()` and never match.
+- **`isCurrent` is identity, not equality** — upstream's `cacheContextIsCurrent()`: same provider and
+  id, and the message list captured at the request is a prefix of the agent's list, object by object.
+- **`writeTo()` cancels**, because pig switches files inside one `AgentSession` where upstream
+  replaces the session and disposes the old one. `dispose()` cancels too.
+- **No transcript line.** Upstream also announces each refresh as "Cache warmed: $x", behind its
+  `showCacheMissNotices` setting (default off); pig has neither, so the cost is on `/session` only.
+  The prompt size is read off the agent's last assistant message where upstream reads the branch's;
+  the two differ only when the last turn failed and was taken off the state.
+
+The `cache_warming_decision` hook (`HookRunner::emitCacheWarmingDecision()`) is upstream's: every
+handler is asked, the last one returning an action wins, a throw is reported and leaves pig's answer
+standing. A refresh that ran against pig's answer is noted `extension override` on its entry. The one
+swallowed throw is the refresh itself — best effort, as upstream's comment says: a failed refresh must
+not touch the run it serves.
+
+Regression tests: `CacheWarmerTest` (16 — the delay table, TTL by retention, replayability, refresh
+options and record, each mode, both hook directions, context changes, the status line) and
+`CacheWarmingSessionTest` (6 — through `AgentSession`: an idle refresh on the bill and in the file,
+streaming stopping at settle, not enabled meaning nothing, the hook, the mode setter, `writeTo()`).
+
 ### `/settings`, and why its list is shorter than upstream's
 
 `Components\SettingsList` is upstream's `tui/components/settings-list.ts` and `/settings` —
@@ -1460,6 +1511,7 @@ Two decisions of pig's own:
 | Queued messages | `AgentSession::setQueueMode()`, which tells the agent and writes the setting |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
+| Cache warming | `cacheWarming`, `AgentSession::setCacheWarmingMode()` — saved, and a running warm reconciled at once |
 | Editor padding | `editorPaddingX`, `useEditorPaddingX()` — the editor that is up is told |
 | Output padding | `outputPad`, `useOutputPad()` — everything drawn is told, see above |
 
@@ -2939,8 +2991,7 @@ arrangement is the thing to know before reading any of them:**
   `thinkingLevel`; the copies in `Retry`, `TransformMessages`, `FauxProvider` and
   `SessionManager` carry it, and `withThinkingLevel()` is the one way to set it on a readonly message.
 
-**Not yet ported from upstream's `ExtensionAPI`:** `cache_warming_decision` (the cache warmer),
-the context's `modelRegistry` (pig has `Auth` + the static `Models`), and `ExtensionCommandContext`
+**Not yet ported from upstream's `ExtensionAPI`:** the context's `modelRegistry` (pig has `Auth` + the static `Models`), and `ExtensionCommandContext`
 (see below).
 
 **What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
@@ -8195,9 +8246,10 @@ base URL, and rewrite the rows. Five things about it are the decisions rather th
   the providers pig generates.
 - **`inputLimits` and `promptCache` are upstream's generator metadata**, written in `Models::table()`
   (`inputLimits()`, `promptCache()`) like the maps: per-provider image limits plus the 2000px / 4.5 MiB
-  resize profile on every image model, and `{short: 300, long: 3600}` on direct Anthropic. Upstream's
-  readers are its image preprocessing (agent session and `read`) and its cache warmer, none of which
-  pig has; `StreamProxy` sends both and `models.json` may set both.
+  resize profile on every image model, and `{short: 300, long: 3600}` on direct Anthropic.
+  `promptCache` is read by `Session\CacheWarmer` for the cache lifetime; `inputLimits`' readers
+  upstream are its image preprocessing (agent session and `read`), which pig has not; `StreamProxy`
+  sends both and `models.json` may set both.
 
 `--from <file>` reads a saved `api.json` and `--dry-run` prints the rows instead of writing them.
 Neither is a seam for a test: models.dev is unreachable from the dev container (`CONNECT tunnel
@@ -11263,8 +11315,9 @@ one rename (`hookMessage` → `custom` on a message's role, which pig never wrot
 touched. Two tests pinned `version === 2` and both were pinning the number rather than the rule —
 "pi's current version" — and say 3 now.
 
-What this does **not** port: `usage` entries (pi's cache-warm accounting lines, read as nothing here
-and summed nowhere), which are read-and-walk-past. `systemMessage` on a compaction is read and
+`usage` entries — pi's cache-warm accounting lines — are `Session\UsageEntry`: outside the
+conversation, counted in `stats()`' cost, and written by pig's own cache warmer (see "Keeping the
+prompt cache warm"). `systemMessage` on a compaction is read and
 written now (`CompactionSummary::$systemMessage`), and a `system` message entry is an ordinary
 message entry, as upstream's are.
 

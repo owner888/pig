@@ -122,6 +122,7 @@ final class RpcMode
         stream_set_blocking($this->in, false);
 
         $this->session->subscribe($this->onAgentEvent(...));
+        $this->session->enableCacheWarming();
 
         $this->session->setMode('rpc');
         $this->session->onShutdownRequest(function (): void {

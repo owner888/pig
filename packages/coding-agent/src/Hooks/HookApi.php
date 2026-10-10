@@ -73,6 +73,7 @@ class HookApi
         'provider_stream_event',
         'model_select',
         'thinking_level_select',
+        'cache_warming_decision',
         'tool_execution_start',
         'tool_execution_update',
         'tool_execution_end',

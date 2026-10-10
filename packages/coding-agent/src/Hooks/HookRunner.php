@@ -24,6 +24,7 @@ use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
 use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
 use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
 use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
+use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeForkEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
@@ -41,6 +42,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\BoundaryResult;
 use Pig\CodingAgent\Hooks\Results\ProjectTrustEventResult;
 use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
+use Pig\CodingAgent\Hooks\Results\CacheWarmingDecisionEventResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
@@ -779,6 +781,47 @@ final class HookRunner
         }
 
         return $event->headers;
+    }
+
+    /**
+     * Whether to send this cache refresh — upstream's `emitCacheWarmingDecision()`. Every handler
+     * is asked and the last one with an answer wins; one that throws is reported and pig's own
+     * decision stands, because a broken hook must not decide what the person pays for.
+     *
+     * @return 'warm'|'stop'
+     */
+    public function emitCacheWarmingDecision(CacheWarmingDecisionEvent $event): string
+    {
+        $context = $this->context();
+        $action = $event->action;
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('cache_warming_decision') as $handler) {
+                try {
+                    $result = $handler($event, $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'cache_warming_decision', $error);
+
+                    continue;
+                }
+
+                if ($result === null) {
+                    continue;
+                }
+
+                if (!$result instanceof CacheWarmingDecisionEventResult) {
+                    $this->wrongType($hook, 'cache_warming_decision', CacheWarmingDecisionEventResult::class, $result);
+
+                    continue;
+                }
+
+                if ($result->action === 'warm' || $result->action === 'stop') {
+                    $action = $result->action;
+                }
+            }
+        }
+
+        return $action;
     }
 
     /**

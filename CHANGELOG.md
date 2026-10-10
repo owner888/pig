@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.25] - 2026-10-08
+
+### New Features
+
+- **Prompt Cache Warming Engine (`Session\CacheWarmer`, `cache_warming_decision`, `usage` entries)**:
+  - Ported upstream pi's cache warmer: automatically re-sends the latest request with a 1-token budget just prior to cache TTL expiration (e.g. Anthropic 300s/3600s) when projected cache miss savings exceed $0.05.
+  - Persisted warm events into `.jsonl` session files as pi-compatible `usage` entries (`UsageEntry`) and aggregated them in `/session` cost totals.
+  - Added `cacheWarming` mode to `Settings` (`off` / `streaming` / `idle`, default `streaming`) and interactive `/settings` row.
+  - Added `cache_warming_decision` hook event (`CacheWarmingDecisionEvent`, `CacheWarmingDecisionEventResult`), allowing extensions to inspect or override warming decisions.
+
 ## [0.5.24] - 2026-10-08
 
 ### Fixed

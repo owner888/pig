@@ -532,6 +532,27 @@ final class Settings
         $this->set('retry.enabled', $enabled);
     }
 
+    /** Upstream's `CACHE_WARMING_MODES`. */
+    public const array CACHE_WARMING_MODES = ['off', 'streaming', 'idle'];
+
+    /**
+     * Upstream's `getCacheWarmingMode()`: `off`, `streaming` (the default — keep the provider's
+     * prompt cache warm while a run is still going) or `idle` (between runs too, while it pays).
+     * **Global only**, as upstream's is: read from the person's file and never the project's,
+     * because it spends the person's money on a timer.
+     */
+    public function cacheWarmingMode(): string
+    {
+        $mode = $this->global['cacheWarming'] ?? null;
+
+        return is_string($mode) && in_array($mode, self::CACHE_WARMING_MODES, true) ? $mode : 'streaming';
+    }
+
+    public function setCacheWarmingMode(string $mode): void
+    {
+        $this->set('cacheWarming', $mode);
+    }
+
     /**
      * Upstream's `getRetrySettings()`: `retry.enabled` (true), `retry.maxRetries` (3),
      * `retry.baseDelayMs` (2,000) and `retry.maxAgentDelayMs` (60,000), each the setting when it is a

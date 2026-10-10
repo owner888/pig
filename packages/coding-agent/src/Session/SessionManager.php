@@ -12,6 +12,7 @@ use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Config;
 
@@ -841,6 +842,7 @@ final class SessionManager
             && !$item instanceof CustomEntry
             && !$item instanceof ModelChange
             && !$item instanceof ThinkingLevelChange
+            && !$item instanceof UsageEntry
             && !$item instanceof Label
             && !$item instanceof SessionInfoEntry
             && !$item instanceof ContextEdit;
@@ -1327,6 +1329,18 @@ final class SessionManager
     public function appendThinkingLevelChange(string $level): void
     {
         $this->append(new ThinkingLevelChange($level));
+    }
+
+    /**
+     * Something a model was paid for that is not part of the conversation — upstream's
+     * `appendUsage()`, which the cache warmer writes after each refresh.
+     */
+    public function appendUsage(string $kind, string $provider, string $model, Usage $usage, ?string $note = null): UsageEntry
+    {
+        $entry = new UsageEntry($kind, $provider, $model, $usage, $note);
+        $this->append($entry);
+
+        return $entry;
     }
 
     public function appendCustomEntry(string $customType, mixed $data = null): void

@@ -52,6 +52,17 @@ final class SessionEntries
             ];
         }
 
+        if ($item instanceof UsageEntry) {
+            return [
+                'type' => 'usage',
+                ...$base,
+                'kind' => $item->kind,
+                'provider' => $item->provider,
+                'model' => $item->model,
+                'usage' => MessageJson::encodeUsage($item->usage),
+            ] + ($item->note !== null && $item->note !== '' ? ['note' => $item->note] : []);
+        }
+
         if ($item instanceof ThinkingLevelChange) {
             return [
                 'type' => 'thinking_level_change',
@@ -175,6 +186,15 @@ final class SessionEntries
         $details = is_array($line['details'] ?? null) ? $line['details'] : [];
 
         return match ($type) {
+            'usage' => new UsageEntry(
+                (string) ($line['kind'] ?? ''),
+                (string) ($line['provider'] ?? ''),
+                (string) ($line['model'] ?? ''),
+                MessageJson::decodeUsage(is_array($line['usage'] ?? null) ? $line['usage'] : []),
+                is_string($line['note'] ?? null) && $line['note'] !== '' ? $line['note'] : null,
+                $at,
+            ),
+
             'model_change' => new ModelChange(
                 (string) ($line['provider'] ?? ''),
                 (string) ($line['modelId'] ?? ''),

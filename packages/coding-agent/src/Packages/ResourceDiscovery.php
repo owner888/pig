@@ -16,8 +16,10 @@ namespace Pig\CodingAgent\Packages;
  * - prompts: every `.md` under the root; themes: every `.json`.
  *
  * Dot entries, `vendor` and `node_modules` are skipped. Upstream also honours `.gitignore`,
- * `.ignore` and `.fdignore` on the way down, with the `ignore` package; pig has no gitignore
- * matcher (see the `--ignore-file` trap) and does not read them.
+ * `.ignore` and `.fdignore` on the way down, with the `ignore` package; pig does not, on purpose:
+ * a git-installed package is a clone and holds no gitignored file to hide, and a local-path
+ * package with its author's drafts in it names what to leave out with the manifest's `!`
+ * patterns. See CLAUDE.md.
  */
 final class ResourceDiscovery
 {

@@ -83,6 +83,7 @@ use Pig\CodingAgent\Tools\ToolInstaller;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
+use Pig\CodingAgent\Session\CacheWarmer;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\ExtensionResources;
@@ -542,6 +543,7 @@ final class InteractiveMode
         });
         $this->session->onSessionSwitched(fn () => $this->programStatus->reset());
         $this->session->subscribe($this->onEvent(...));
+        $this->session->enableCacheWarming();
 
         $this->replay();
 
@@ -2839,7 +2841,17 @@ final class InteractiveMode
             number_format($stats->cost, 4),
         );
 
-        return static fn (): string => Themes::theme()->fg('muted', $summary);
+        // Upstream's "Cache Warming" block, as one more line: the mode, then what the warmer is
+        // doing and why, then what a miss and a refresh cost when it has the numbers.
+        $status = $this->session->cacheWarmingStatus();
+        $warming = 'Cache warming: ' . $this->settings->cacheWarmingMode() . ' · '
+            . ($status !== null ? CacheWarmer::formatStatus($status) : 'Inactive (cache warming unavailable)');
+
+        if ($status?->decision?->economicsAvailable === true) {
+            $warming .= sprintf(' · miss penalty $%.3f · refresh $%.3f', $status->decision->missCost, $status->decision->warmCost);
+        }
+
+        return static fn (): string => Themes::theme()->fg('muted', $summary) . "\n" . Themes::theme()->fg('muted', $warming);
     }
 
     /**
@@ -4710,6 +4722,14 @@ final class InteractiveMode
             'Wait out a provider that is briefly busy instead of losing the turn.',
             values: ['on', 'off'],
         );
+        // Upstream's row, label and description. Global only, as upstream's setting is.
+        $rows[] = new SettingItem(
+            'cacheWarming',
+            'Cache warming',
+            $this->settings->cacheWarmingMode(),
+            'off; streaming while the agent runs; idle also between runs while continuation stays profitable',
+            values: Settings::CACHE_WARMING_MODES,
+        );
 
         // Upstream's two padding rows, with its labels and values.
         $rows[] = new SettingItem(
@@ -4853,6 +4873,7 @@ final class InteractiveMode
             'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
+            'cacheWarming' => $this->session->setCacheWarmingMode($value),
             'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
             'fullscreenScrollbar' => $this->useFullscreenScrollbar($value),
             'fullscreenCopyOnSelect' => $this->useFullscreenCopyOnSelect($value === 'true'),
