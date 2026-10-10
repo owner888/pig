@@ -4163,6 +4163,136 @@ final class InteractiveModeTest extends TestCase
         }
     }
 
+    /**
+     * An extension provider with an api-key sign-in — what pig-llama registers — and a catalog it
+     * fetches. `$refreshes` records each `refreshModels` phase: network or not, and the key.
+     *
+     * @param list<array{bool, ?string}> $refreshes
+     */
+    private static function apiKeyProvider(array &$refreshes, bool $failRefresh = false): \Pig\Ai\Extension\Provider
+    {
+        $auth = new class implements \Pig\Ai\Extension\ApiKeyAuth {
+            public function name(): string
+            {
+                return 'Probe key';
+            }
+
+            public function login(\Closure $onPrompt, ?\Pig\Async\AbortSignal $signal = null): ?\Pig\Ai\Extension\ApiKeyCredential
+            {
+                $key = $onPrompt('Probe API key', '', false, $signal);
+
+                return $key === null ? null : new \Pig\Ai\Extension\ApiKeyCredential($key);
+            }
+
+            public function check(?\Pig\Ai\Extension\ApiKeyCredential $credential): ?string
+            {
+                return $credential === null ? null : 'stored credential';
+            }
+
+            public function resolve(?\Pig\Ai\Extension\ApiKeyCredential $credential): ?\Pig\Ai\Extension\AuthResult
+            {
+                return $credential === null ? null : new \Pig\Ai\Extension\AuthResult(new \Pig\Ai\Extension\ModelAuth($credential->key));
+            }
+        };
+
+        return new \Pig\Ai\Extension\Provider(
+            'zzk-probe',
+            'Probe Keyed',
+            [],
+            apiKeyAuth: $auth,
+            refreshModels: static function (\Pig\Ai\Extension\RefreshModelsContext $context) use (&$refreshes, $failRefresh): void {
+                $refreshes[] = [$context->allowNetwork, $context->credential?->key];
+
+                if ($context->allowNetwork && $failRefresh) {
+                    throw new RuntimeException('router down');
+                }
+            },
+        );
+    }
+
+    public function testSlashLoginWithAProviderNameStartsItsApiKeySignInAndRefreshesItsCatalog(): void
+    {
+        $refreshes = [];
+        ProviderRegistry::register(self::apiKeyProvider($refreshes));
+        putenv('PIG_OFFLINE=1');
+
+        try {
+            $auth = Auth::inMemory();
+            $this->start(auth: $auth);
+
+            // By id or by name, ignoring case: upstream's `findLoginProviderOptions()`.
+            $this->type('/login probe keyed');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->assertStringContainsString('Probe API key', $this->screen());
+
+            $this->type('sk-probe');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertSame('sk-probe', $auth->apiKeyCredential('zzk-probe')?->key);
+            $this->assertStringContainsString('Saved API key for Probe Keyed', $this->screen());
+            // The stored catalog, then the network with the key just kept — after a sign-in even
+            // under PIG_OFFLINE, as upstream refreshes after one whatever the startup did.
+            $this->assertSame([[false, 'sk-probe'], [true, 'sk-probe']], $refreshes);
+        } finally {
+            putenv('PIG_OFFLINE');
+            ProviderRegistry::forget();
+        }
+    }
+
+    public function testAFailedCatalogRefreshAfterSignInIsAWarningAndTheCachedModelsStay(): void
+    {
+        $refreshes = [];
+        ProviderRegistry::register(self::apiKeyProvider($refreshes, failRefresh: true));
+        putenv('PIG_OFFLINE=1');
+
+        try {
+            $this->start(auth: Auth::inMemory());
+            $this->type('/login zzk-probe');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->type('k');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertStringContainsString('Saved API key for Probe Keyed, but its model catalog could not be refreshed; using cached models.', $this->screenText());
+        } finally {
+            putenv('PIG_OFFLINE');
+            ProviderRegistry::forget();
+        }
+    }
+
+    public function testAnApiKeyProviderIsARowInSlashLoginAndSlashLogoutRemovesItsKey(): void
+    {
+        $refreshes = [];
+        ProviderRegistry::register(self::apiKeyProvider($refreshes));
+        putenv('PIG_OFFLINE=1');
+
+        try {
+            $auth = Auth::inMemory();
+            $this->start(auth: $auth);
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->assertMatchesRegularExpression('/Probe Keyed\s+not configured/', $this->screen());
+            $this->type(self::ESCAPE);
+
+            $auth->setApiKeyCredential('zzk-probe', new \Pig\Ai\Extension\ApiKeyCredential('sk-x'));
+            $this->type('/logout');
+            $this->type(self::ENTER);
+            $this->assertMatchesRegularExpression('/Probe Keyed\s+API key configured/', $this->screen());
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertNull($auth->apiKeyCredential('zzk-probe'));
+            $this->assertStringContainsString('Removed stored API key for Probe Keyed. Environment variables and models.json config are unchanged.', $this->screenText());
+        } finally {
+            putenv('PIG_OFFLINE');
+            ProviderRegistry::forget();
+        }
+    }
+
     public function testChoosingAnthropicAsksWhichWayInAndCopyCodeShowsAUrlThenAPasteBox(): void
     {
         $this->start(auth: Auth::inMemory());

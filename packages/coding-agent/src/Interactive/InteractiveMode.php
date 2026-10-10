@@ -31,6 +31,8 @@ use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\Provider as ExtensionProvider;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Logger;
+use Pig\CodingAgent\ModelRefresh;
+use Pig\CodingAgent\ModelRefreshResult;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -127,6 +129,7 @@ use Pig\Tui\Components\Markdown;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\SelectListLayout;
 use Pig\Tui\Components\SettingItem;
 use Pig\Tui\Components\SettingsList;
 use Pig\Tui\Components\Spacer;
@@ -597,6 +600,12 @@ final class InteractiveMode
         // `ThemedText`, rebuild in the new colours. `onChanged` repaints the editor's border, as
         // upstream's `updateEditorBorderColor()`.
         $this->themeController->applyFromSettings();
+
+        // Upstream's `run()`: every provider with a fetched catalog asked for it in the background,
+        // once the UI is up, unless `PIG_OFFLINE` says no network.
+        if ($this->auth !== null && ModelRefresh::networkEnabled()) {
+            ModelRefresh::inBackground($this->auth, done: fn () => $this->tui->requestRender());
+        }
 
         // After the screen is up, so the first answer streams into a transcript that is
         // already being drawn rather than appearing all at once when it finishes. In a fiber
@@ -4445,6 +4454,7 @@ final class InteractiveMode
 
                 if ($credentials !== null) {
                     $this->maybeWarnAboutAnthropicSubscriptionAuth();
+                    $this->refreshAfterSignIn($provider instanceof Provider ? $provider->value : $provider->id(), "Logged in to {$provider->label()}");
                 }
             } catch (Throwable $problem) {
                 $this->sayError($problem->getMessage());
@@ -4486,15 +4496,7 @@ final class InteractiveMode
                 if ($credential === null) {
                     $this->say('Signing in was cancelled.');
                 } else {
-                    $actionLabel = "Saved API key for {$provider->name}";
-                    $this->say("{$actionLabel}. Credentials saved to {$this->auth?->path()}");
-
-                    if ($provider->id === 'llama.cpp' && $this->session->model() === null) {
-                        $loaded = count(array_filter(Models::all(), static fn (Model $model): bool => $model->provider === 'llama.cpp'));
-                        $this->sayError($loaded === 0
-                            ? "{$actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
-                            : "{$actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.");
-                    }
+                    $this->completeProviderAuthentication($provider->id, "Saved API key for {$provider->name}");
                 }
             } catch (Throwable $problem) {
                 $this->sayError("Failed to save API key for {$provider->name}: {$problem->getMessage()}");
@@ -4507,11 +4509,56 @@ final class InteractiveMode
         });
     }
 
+    /**
+     * Upstream's `completeProviderAuthentication()` for an api-key sign-in, less the default-model
+     * choice pig has no table for: where the credential went, llama.cpp's guidance when no model is
+     * selected yet (upstream's `llamaCppPostLoginGuidance()`), and the provider's catalog refreshed.
+     */
+    private function completeProviderAuthentication(string $providerId, string $actionLabel): void
+    {
+        $this->say("{$actionLabel}. Credentials saved to {$this->auth?->path()}");
+
+        // Matches LLAMA_PROVIDER_ID in extensions/pig-llama; kept inline, as upstream keeps it, to
+        // avoid coupling interactive mode to the built-in extension.
+        if ($providerId === 'llama.cpp' && $this->session->model() === null) {
+            $loaded = count(array_filter(Models::all(), static fn (Model $model): bool => $model->provider === 'llama.cpp'));
+            $this->sayError($loaded === 0
+                ? "{$actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
+                : "{$actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.");
+        }
+
+        $this->refreshAfterSignIn($providerId, $actionLabel);
+    }
+
+    /**
+     * Upstream's catalog refresh after a sign-in: this provider's alone, in the background, with
+     * the 15-second budget, and a warning when it timed out or failed — the cached models stay.
+     * Nothing for a provider whose catalog is not fetched.
+     */
+    private function refreshAfterSignIn(string $providerId, string $actionLabel): void
+    {
+        $provider = ProviderRegistry::get($providerId);
+
+        if ($this->auth === null || $provider?->refreshModels === null) {
+            return;
+        }
+
+        ModelRefresh::inBackground($this->auth, [$providerId], done: function (ModelRefreshResult $result) use ($actionLabel, $providerId): void {
+            if ($result->aborted) {
+                $this->sayWarning("{$actionLabel}, but its model catalog refresh timed out; using cached models.");
+            } elseif (isset($result->errors[$providerId])) {
+                $this->sayWarning("{$actionLabel}, but its model catalog could not be refreshed; using cached models.");
+            }
+
+            $this->tui->requestRender();
+        });
+    }
+
     private function signOutApiKey(ExtensionProvider $provider): void
     {
         try {
             $this->auth?->remove($provider->id);
-            $this->say("Forgot the {$provider->name} sign-in.");
+            $this->say("Removed stored API key for {$provider->name}. Environment variables and models.json config are unchanged.");
         } catch (Throwable $problem) {
             $this->sayError($problem->getMessage());
         }
@@ -4913,7 +4960,7 @@ final class InteractiveMode
             $items[] = new SelectItem($name, $name . ($isCurrent ? ' ·' : ''), self::themeDescription($name));
         }
 
-        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
+        $picker = new SelectList($items, 8, Themes::getSelectListTheme(), SelectListLayout::compact());
         $picker->setSelectedIndex($selectedIndex);
         $picker->setSelectionChangeHandler(function (SelectItem $item): void {
             $this->themeController->preview($item->value);
@@ -5305,7 +5352,7 @@ final class InteractiveMode
             }
         }
 
-        $list = new SelectList($items, count($items), Themes::getSelectListTheme());
+        $list = new SelectList($items, count($items), Themes::getSelectListTheme(), SelectListLayout::compact());
         $list->setSelectedIndex($at);
         $list->setSelectHandler(static function (SelectItem $item) use ($done): void {
             $done($item->value);

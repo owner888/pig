@@ -513,6 +513,39 @@ final class HttpServer
             return;
         }
 
+        // 9a. Every conversation across every project, newest first, for the sidebar (?q= searches)
+        if ($path === '/api/sessions/all') {
+            $limit = max(1, (int) ($req['query']['limit'] ?? 30));
+            $offset = max(0, (int) ($req['query']['offset'] ?? 0));
+            $query = trim((string) ($req['query']['q'] ?? ''));
+
+            if ($query === '') {
+                [$sessions, $total] = SessionManager::listAll($limit, $offset);
+            } else {
+                $sessions = SessionManager::searchAll($query, $limit);
+                $total = count($sessions);
+            }
+
+            $items = array_map(static fn ($s) => [
+                'id' => $s->id,
+                'path' => $s->path,
+                'filename' => basename($s->path),
+                'cwd' => $s->cwd,
+                'opening' => $s->opening,
+                'timestamp' => $s->timestamp,
+                // Grouped by the last write, which is the order the list is in; the header's
+                // timestamp is when the conversation started.
+                'modified' => filemtime($s->path) * 1000,
+            ], $sessions);
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode(['sessions' => $items, 'total' => $total]));
+
+            return;
+        }
+
         // 9b. Delete a session file
         if ($path === '/api/sessions/delete') {
             $headers = [

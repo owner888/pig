@@ -16,6 +16,7 @@ use Pig\Tui\Component;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\SelectListLayout;
 use Pig\Tui\Components\SelectListTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Container;
@@ -192,7 +193,7 @@ final class LlamaView implements LlamaUi, Component, InputHandler, Focusable
             new SelectItem(self::DOWNLOAD_VALUE, 'Download model…', 'Hugging Face owner/repository[:quant]'),
         ];
         $answer = new Deferred();
-        $list = new SelectList($items, min(count($items), 12), self::selectTheme());
+        $list = new SelectList($items, min(count($items), 12), self::selectTheme(), new SelectListLayout(36, 56));
         $list->setSelectHandler(static function (SelectItem $item) use ($answer, $byId): void {
             if ($answer->isComplete()) {
                 return;

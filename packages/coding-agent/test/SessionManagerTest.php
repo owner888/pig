@@ -659,6 +659,55 @@ final class SessionManagerTest extends TestCase
         );
     }
 
+    public function testListAllSpansEveryProjectAndBothHomesNewestFirst(): void
+    {
+        $files = [
+            'A' => [SessionManager::directory('/project/a'), '/project/a', 1_700_000_100],
+            'B' => [SessionManager::directory('/project/b'), '/project/b', 1_700_000_300],
+            // pi's directory is read as well, as `listFor()` reads it.
+            'C' => [SessionManager::directory('/project/c', $this->home . '-pi'), '/project/c', 1_700_000_200],
+        ];
+
+        foreach ($files as $which => [$directory, $cwd, $mtime]) {
+            $path = "{$directory}/2026-01-01T00-00-00-000Z_{$which}.jsonl";
+            $session = SessionManager::create($cwd, $path);
+            $session->append(new UserMessage("conversation {$which}"));
+            $session->append($this->answer());
+            touch($path, $mtime);
+        }
+
+        [$all, $total] = SessionManager::listAll(10);
+        $this->assertSame(3, $total);
+        $this->assertSame(
+            ['conversation B', 'conversation C', 'conversation A'],
+            array_map(static fn (SessionInfo $info): string => $info->opening, $all),
+        );
+        $this->assertSame(['/project/b', '/project/c', '/project/a'], array_map(static fn (SessionInfo $info): string => $info->cwd, $all));
+
+        // The window is a window: the total still counts every file.
+        [$page, $total] = SessionManager::listAll(1, 1);
+        $this->assertSame(3, $total);
+        $this->assertSame(['conversation C'], array_map(static fn (SessionInfo $info): string => $info->opening, $page));
+    }
+
+    public function testSearchAllFindsAPhraseFromTheMiddleAndAGivenName(): void
+    {
+        $first = SessionManager::create('/project/a', SessionManager::directory('/project/a') . '/2026-01-01T00-00-00-000Z_a.jsonl');
+        $first->append(new UserMessage('fix the build'));
+        $first->append($this->answer('the linker wants libsodium'));
+
+        $second = SessionManager::create('/project/b', SessionManager::directory('/project/b') . '/2026-01-01T00-00-00-000Z_b.jsonl');
+        $second->append(new UserMessage('something else entirely'));
+        $second->append($this->answer());
+        $second->setSessionName('release notes');
+
+        $opened = static fn (array $found): array => array_map(static fn (SessionInfo $info): string => $info->cwd, $found);
+
+        $this->assertSame(['/project/a'], $opened(SessionManager::searchAll('libsodium', 10)));
+        $this->assertSame(['/project/b'], $opened(SessionManager::searchAll('release notes', 10)));
+        $this->assertSame([], SessionManager::searchAll('nowhere-at-all', 10));
+    }
+
     /** Two files written in the same second still come back in a fixed order. */
     public function testSessionsWrittenInTheSameSecondDoNotShuffle(): void
     {

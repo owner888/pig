@@ -31,7 +31,7 @@ use Pig\Extensions\Llama\LlamaUi;
 use Pig\Test\ScriptedServer;
 
 // The extension's classes, as its `index.php` requires them — the class below implements one.
-foreach (['LlamaClient', 'HuggingFaceClient', 'RefreshModelsContext', 'LlamaApiKeyAuth', 'LlamaProvider', 'LlamaUi', 'HuggingFaceSearch', 'LlamaView', 'LlamaExtension'] as $class) {
+foreach (['LlamaClient', 'HuggingFaceClient', 'LlamaApiKeyAuth', 'LlamaProvider', 'LlamaUi', 'HuggingFaceSearch', 'LlamaView', 'LlamaExtension'] as $class) {
     require_once dirname(__DIR__, 4) . "/extensions/pig-llama/{$class}.php";
 }
 

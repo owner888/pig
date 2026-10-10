@@ -10,15 +10,20 @@
 </head>
 <body>
 
-  <!-- Left Drawer: Folders & Sessions -->
+  <!-- Left Drawer: New, Search, Scheduled, Sessions -->
   <aside id="sidebar" class="collapsed">
-    <div id="sidebar-header" class="sidebar-header">
-      <span id="sidebar-title" data-i18n="workspaces">Workspaces</span>
-      <span id="sidebar-subtitle" style="font-size:11px; color:var(--text-dim);" data-i18n="directories">Directories</span>
-    </div>
-    <div style="padding: 8px 12px; border-bottom: 1px solid var(--border);">
-      <button id="new-session-btn" class="new-session-btn" data-i18n="new_session" data-i18n-attr="title:new_session_title">+ New Session</button>
-    </div>
+    <nav class="sidebar-nav">
+      <button id="new-session-btn" class="sidebar-nav-item" data-i18n-attr="title:new_session_title">
+        <span class="sidebar-nav-icon">＋</span><span data-i18n="new_session">New session</span>
+      </button>
+      <button id="search-sessions-btn" class="sidebar-nav-item" data-i18n-attr="title:search_sessions_title">
+        <span class="sidebar-nav-icon">⌕</span><span data-i18n="search_sessions">Search</span>
+      </button>
+      <button id="scheduled-tasks-btn" class="sidebar-nav-item" disabled data-i18n-attr="title:coming_soon">
+        <span class="sidebar-nav-icon">⏱</span><span data-i18n="scheduled_tasks">Scheduled</span>
+        <span class="sidebar-nav-soon" data-i18n="coming_soon">Soon</span>
+      </button>
+    </nav>
     <div id="sidebar-list" class="sidebar-scroll"></div>
   </aside>
   <div id="sidebar-backdrop" class="sidebar-backdrop"></div>

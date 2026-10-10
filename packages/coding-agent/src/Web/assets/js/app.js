@@ -25,7 +25,6 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     const pendingImagesBar = document.getElementById("pending-images");
     const toggleSidebar = document.getElementById("toggle-sidebar");
     const sidebar = document.getElementById("sidebar");
-    const sidebarHeader = document.getElementById("sidebar-header");
     const sidebarList = document.getElementById("sidebar-list");
     const cwdDisplay = document.getElementById("cwd-display");
     const sessionTitleDisplay = document.getElementById("session-title-display");
@@ -38,6 +37,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     const thinkingSelect = document.getElementById("thinking-select");
     const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
     const newSessionBtn = document.getElementById("new-session-btn");
+    const searchSessionsBtn = document.getElementById("search-sessions-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
     const langBtn = document.getElementById("lang-btn");
     const themeBtn = document.getElementById("theme-btn");
@@ -278,9 +278,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     toggleSidebar.addEventListener("click", () => {
       sidebar.classList.toggle("collapsed");
       toggleSidebar.innerText = sidebar.classList.contains("collapsed") ? "›" : "‹";
-      if (!sidebar.classList.contains("collapsed") && currentView === "workspaces") {
-        loadWorkspaces();
-      }
+      refreshSidebar();
     });
 
     if (sidebarBackdrop) {
@@ -544,6 +542,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
     newSessionBtn.addEventListener("click", () => startNewSession());
+    searchSessionsBtn.addEventListener("click", () => openSessionSearch());
 
     // File input attachment
     fileInput.addEventListener("change", (e) => {
@@ -769,11 +768,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         currentThinkingBox = null;
         if (evt.type === "agent_end") {
           tab?.refreshState();
-          if (currentView === "sessions" && selectedWorkspace) {
-            enterWorkspace(selectedWorkspace);
-          } else {
-            loadWorkspaces();
-          }
+          refreshSidebar();
         }
         const err = evt.error || lastErrorMessage(evt.messages);
         if (err) {
@@ -877,11 +872,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
           if (tab === active) applyActiveTabToChrome();
         }
         tab?.refreshState();
-        if (currentView === "sessions" && selectedWorkspace) {
-          enterWorkspace(selectedWorkspace);
-        } else {
-          loadWorkspaces();
-        }
+        refreshSidebar();
       }
     }
 
@@ -986,12 +977,10 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       pendingImages = [];
       renderPendingImages();
 
-      // If a valid cwd string is passed (e.g. from tab bar '+' button), use it.
-      // If user is currently browsing a specific workspace in the sidebar, use that workspace's directory!
-      // Otherwise fallback to the active tab's cwd or the server default cwd.
+      // A cwd passed in (the tab bar's '+') wins; otherwise the active tab's, then the server's.
       const targetCwd = (typeof cwd === "string" && cwd.trim() !== "")
         ? cwd.trim()
-        : ((currentView === "sessions" && selectedWorkspace?.path) || active?.cwd || serverCwd);
+        : (active?.cwd || serverCwd);
 
       openTab(new Tab(targetCwd, null));
 
@@ -1000,11 +989,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         toggleSidebar.innerText = "›";
       }
 
-      if (currentView === "sessions" && selectedWorkspace) {
-        enterWorkspace(selectedWorkspace);
-      } else {
-        loadWorkspaces();
-      }
+      refreshSidebar();
     }
 
     async function submitMessage() {
@@ -1608,6 +1593,10 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         sessionTitleDisplay.innerText = cleanName ? ` • ${cleanName}` : "";
       }
       updateSessionFileBadge(cur);
+      // The sidebar row of the conversation on screen follows the tab, without a refetch.
+      sidebarList.querySelectorAll(".session-item").forEach((el) => {
+        el.classList.toggle("active", !!cur.sessionPath && el.dataset.sessionPath === cur.sessionPath);
+      });
       sendBtn.style.display = cur.isRunning ? "none" : "flex";
       stopBtn.style.display = cur.isRunning ? "flex" : "none";
       const s = cur.state;
@@ -1785,99 +1774,205 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       }
     }
 
-    // 1. Level 1: Workspaces/Directories
-    async function loadWorkspaces() {
-      currentView = "workspaces";
-      sidebarHeader.innerHTML = `
-        <span style="font-weight:600;">${escapeHtml(t("workspaces"))}</span>
-        <span style="font-size:11px; color:var(--text-dim);">${escapeHtml(t("directories"))}</span>
-      `;
-      sidebarList.innerHTML = `<div style="padding:12px; color:var(--text-dim); font-size:12px;">${escapeHtml(t("loading_folders"))}</div>`;
+    // ---- Sidebar: conversations across every project, grouped by the day they were last written to ----
 
+    const SIDEBAR_RECENTS = 30;
+    const SEARCH_PAGE = 50;
+    let sidebarSeq = 0;
+
+    /** Today, Yesterday, or the date — of the day a conversation was last written to. */
+    function dayLabel(ms) {
+      const day = new Date(ms);
+      day.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const days = Math.round((today - day) / 86400000);
+      if (days <= 0) return t("today");
+      if (days === 1) return t("yesterday");
+      const options = { month: "long", day: "numeric" };
+      if (day.getFullYear() !== today.getFullYear()) options.year = "numeric";
+      return new Intl.DateTimeFormat(currentLocale, options).format(day);
+    }
+
+    function groupTitle(text) {
+      const el = document.createElement("div");
+      el.className = "sidebar-group-title";
+      el.textContent = text;
+      return el;
+    }
+
+    function emptyNote(text, isError = false) {
+      const el = document.createElement("div");
+      el.className = "sidebar-empty" + (isError ? " error" : "");
+      el.textContent = text;
+      return el;
+    }
+
+    /** One conversation: its name, the folder it belongs to, rename and delete on hover. */
+    function sessionRow(s, onOpen = null) {
+      const item = document.createElement("div");
+      item.className = "drawer-item session-item" + (active?.sessionPath === s.path ? " active" : "");
+      item.dataset.sessionPath = s.path;
+
+      const label = document.createElement("span");
+      label.className = "drawer-label";
+      label.title = s.filename;
+      label.textContent = cleanSessionTitle(s.opening) || s.filename;
+
+      const folder = document.createElement("span");
+      folder.className = "drawer-badge";
+      folder.title = s.cwd;
+      folder.textContent = s.cwd.split("/").filter(Boolean).pop() || s.cwd;
+
+      const actions = document.createElement("div");
+      actions.className = "drawer-item-actions";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "drawer-action-btn edit-btn";
+      editBtn.title = t("rename_session");
+      editBtn.textContent = "✏️";
+      editBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        startRenameSession(item, label, s, s.cwd);
+      });
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "drawer-action-btn delete-btn";
+      delBtn.title = t("delete_session");
+      delBtn.textContent = "🗑️";
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        confirmDeleteSession(item, s, s.cwd);
+      });
+
+      actions.append(editBtn, delBtn);
+      item.append(label, folder, actions);
+      item.addEventListener("click", () => {
+        onOpen?.();
+        switchSession(s.path, s.filename, s.cwd);
+      });
+      return item;
+    }
+
+    /** The recent conversations under the New / Search / Scheduled entries. Nothing is fetched while closed. */
+    async function refreshSidebar() {
+      if (sidebar.classList.contains("collapsed")) return;
+      const mine = ++sidebarSeq;
+
+      let data;
       try {
-        const res = await fetch("/api/folders");
-        const data = await res.json();
-        sidebarList.innerHTML = "";
-
-        for (const ws of data.workspaces || []) {
-          const item = document.createElement("div");
-          item.className = "drawer-item" + (ws.isCurrent ? " active" : "");
-          item.innerHTML = `
-            <span class="drawer-label" title="${ws.path}">${ws.name}</span>
-            <span class="drawer-badge">${escapeHtml(t("sessions_count", { count: ws.sessionCount }))}</span>
-          `;
-          item.addEventListener("click", () => enterWorkspace(ws));
-          sidebarList.appendChild(item);
-        }
+        const res = await fetch(`/api/sessions/all?limit=${SIDEBAR_RECENTS}`);
+        data = await res.json();
       } catch (err) {
-        sidebarList.innerHTML = `<div style="padding:12px; color:var(--error); font-size:12px;">${escapeHtml(t("failed_folders"))}</div>`;
+        if (mine === sidebarSeq) sidebarList.replaceChildren(emptyNote(t("failed_sessions"), true));
+        return;
+      }
+      // Two refreshes in flight (agent_end and session_info_changed arrive together): the later one draws.
+      if (mine !== sidebarSeq) return;
+
+      sidebarList.replaceChildren();
+      if (data.sessions.length === 0) {
+        sidebarList.appendChild(emptyNote(t("no_sessions")));
+        return;
+      }
+
+      let group = null;
+      for (const s of data.sessions) {
+        const label = dayLabel(s.modified);
+        if (label !== group) {
+          group = label;
+          sidebarList.appendChild(groupTitle(label));
+        }
+        sidebarList.appendChild(sessionRow(s));
+      }
+
+      if (data.total > data.sessions.length) {
+        const all = document.createElement("button");
+        all.className = "sidebar-view-all";
+        all.textContent = t("view_all", { count: data.total });
+        all.addEventListener("click", () => openSessionSearch());
+        sidebarList.appendChild(all);
       }
     }
 
-    // 2. Level 2: Sessions under chosen workspace
-    async function enterWorkspace(ws) {
-      currentView = "sessions";
-      selectedWorkspace = ws;
-      sidebarHeader.innerHTML = `
-        <button id="back-folders" class="back-btn">${escapeHtml(t("back_workspaces"))}</button>
-        <span style="font-size:12px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${ws.name}</span>
-      `;
-      document.getElementById("back-folders").addEventListener("click", loadWorkspaces);
+    /**
+     * Search and "View all" are one panel: an empty query lists every conversation newest first,
+     * a query lists the best matches — over the name and everything said, as `--resume` searches.
+     */
+    function openSessionSearch() {
+      openModal({
+        title: t("all_sessions"),
+        hideFooter: true,
+        width: "640px",
+        bodyHtml: `
+          <input class="modal-input" id="session-search-input" type="text" placeholder="${escapeHtml(t("search_sessions_placeholder"))}" autocomplete="off">
+          <div id="session-search-results" class="session-search-results"></div>
+        `,
+        onOpen: (modalEl, close) => {
+          const input = modalEl.querySelector("#session-search-input");
+          const results = modalEl.querySelector("#session-search-results");
+          let seq = 0;
+          let timer = null;
+          let offset = 0;
+          let group = null;
 
-      sidebarList.innerHTML = `<div style="padding:12px; color:var(--text-dim); font-size:12px;">${escapeHtml(t("loading_sessions"))}</div>`;
+          const load = async (append) => {
+            const q = input.value.trim();
+            const mine = ++seq;
+            if (!append) {
+              offset = 0;
+              group = null;
+            }
+            const url = q === ""
+              ? `/api/sessions/all?limit=${SEARCH_PAGE}&offset=${offset}`
+              : `/api/sessions/all?limit=${SEARCH_PAGE}&q=${encodeURIComponent(q)}`;
 
-      try {
-        const res = await fetch(`/api/sessions?cwd=${encodeURIComponent(ws.path)}`);
-        const sessions = await res.json();
-        sidebarList.innerHTML = "";
+            let data;
+            try {
+              data = await (await fetch(url)).json();
+            } catch (err) {
+              if (mine === seq) results.replaceChildren(emptyNote(t("failed_sessions"), true));
+              return;
+            }
+            if (mine !== seq) return;
 
-        if (sessions.length === 0) {
-          sidebarList.innerHTML = `<div style="padding:12px; color:var(--text-dim); font-size:12px;">${escapeHtml(t("no_sessions"))}</div>`;
-          return;
-        }
+            if (!append) results.replaceChildren();
+            results.querySelector(".sidebar-view-all")?.remove();
+            if (!append && data.sessions.length === 0) {
+              results.appendChild(emptyNote(q === "" ? t("no_sessions") : t("no_results")));
+              return;
+            }
 
-        for (const s of sessions) {
-          const item = document.createElement("div");
-          item.className = "drawer-item session-item";
-          item.dataset.sessionPath = s.path;
+            for (const s of data.sessions) {
+              // Matches come best first, so only the full list is grouped by day.
+              if (q === "") {
+                const label = dayLabel(s.modified);
+                if (label !== group) {
+                  group = label;
+                  results.appendChild(groupTitle(label));
+                }
+              }
+              results.appendChild(sessionRow(s, close));
+            }
 
-          const label = document.createElement("span");
-          label.className = "drawer-label";
-          label.title = s.filename;
-          label.textContent = cleanSessionTitle(s.opening) || s.filename;
+            offset += data.sessions.length;
+            if (q === "" && offset < data.total) {
+              const more = document.createElement("button");
+              more.className = "sidebar-view-all";
+              more.textContent = t("load_more");
+              more.addEventListener("click", () => load(true));
+              results.appendChild(more);
+            }
+          };
 
-          const actions = document.createElement("div");
-          actions.className = "drawer-item-actions";
-
-          const editBtn = document.createElement("button");
-          editBtn.className = "drawer-action-btn edit-btn";
-          editBtn.title = t("rename_session");
-          editBtn.textContent = "✏️";
-          editBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            startRenameSession(item, label, s, ws.path);
+          input.addEventListener("input", () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => load(false), 250);
           });
-
-          const delBtn = document.createElement("button");
-          delBtn.className = "drawer-action-btn delete-btn";
-          delBtn.title = t("delete_session");
-          delBtn.textContent = "🗑️";
-          delBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            confirmDeleteSession(item, s, ws.path);
-          });
-
-          actions.appendChild(editBtn);
-          actions.appendChild(delBtn);
-
-          item.appendChild(label);
-          item.appendChild(actions);
-          item.addEventListener("click", () => switchSession(s.path, s.filename, ws.path));
-          sidebarList.appendChild(item);
-        }
-      } catch (err) {
-        sidebarList.innerHTML = `<div style="padding:12px; color:var(--error); font-size:12px;">${escapeHtml(t("failed_sessions"))}</div>`;
-      }
+          input.focus();
+          load(false);
+        },
+      });
     }
 
     /** Rename session via a clean, mobile-friendly centered Modal (matching Account popup) */
@@ -1923,6 +2018,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
               return false;
             }
             labelEl.textContent = newName;
+            refreshSidebar();
             const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
             if (matchedTab) {
               matchedTab.name = newName;
@@ -1974,7 +2070,10 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
             item.style.height = "0px";
             item.style.paddingTop = "0px";
             item.style.paddingBottom = "0px";
-            setTimeout(() => item.remove(), 200);
+            setTimeout(() => {
+              item.remove();
+              refreshSidebar();
+            }, 200);
 
             const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
             if (matchedTab) {
@@ -2225,7 +2324,12 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         e.preventDefault();
         webTerminal.toggle();
       }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        openSessionSearch();
+      }
     });
 
+    onLocaleChanged(() => refreshSidebar());
     boot();
 

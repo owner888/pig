@@ -13,6 +13,7 @@ use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\ModelRefresh;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -132,6 +133,12 @@ final class RpcMode
 
         // Each mode wires its own UI; this one's is the protocol.
         $this->hooks?->wire($this->session, $this->ui);
+
+        // Upstream's `main()`: RPC refreshes every fetched catalog in the background, unless
+        // `PIG_OFFLINE` says no network.
+        if ($this->auth !== null && ModelRefresh::networkEnabled()) {
+            ModelRefresh::inBackground($this->auth);
+        }
 
         $this->hooks?->onError(function (HookError $error): void {
             $this->send([

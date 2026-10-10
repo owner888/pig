@@ -15,6 +15,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Config;
+use Pig\Tui\Fuzzy;
 
 /**
  * The conversation on disk, one JSON object per line.
@@ -1623,6 +1624,91 @@ final class SessionManager
         }
 
         return $sessions;
+    }
+
+    /**
+     * Every conversation pig can see, newest first by when it was last written to, across every project.
+     *
+     * `listFor()` answers for one directory; the web sidebar lists conversations the way a chat app
+     * does, with no directory to choose first. Only the rows in the window are described, so a long
+     * history costs a stat per file and one read per row shown.
+     *
+     * @return array{0: list<SessionInfo>, 1: int} the rows, and how many files there are altogether
+     */
+    public static function listAll(int $limit, int $offset = 0): array
+    {
+        $paths = self::everyFile();
+        $sessions = [];
+
+        foreach (array_slice($paths, $offset, $limit) as $path) {
+            $info = self::describe($path);
+
+            if ($info !== null) {
+                $sessions[] = $info;
+            }
+        }
+
+        return [$sessions, count($paths)];
+    }
+
+    /**
+     * The conversations across every project that match $query, best match first.
+     *
+     * `SessionList`'s search over `SessionInfo::$text`, with the label in front of it so a name
+     * given with `/name` is found too. Every file is described, which is the cost of searching a
+     * phrase from the middle of a conversation.
+     *
+     * @return list<SessionInfo>
+     */
+    public static function searchAll(string $query, int $limit): array
+    {
+        $sessions = [];
+
+        foreach (self::everyFile() as $path) {
+            $info = self::describe($path);
+
+            if ($info !== null) {
+                $sessions[] = $info;
+            }
+        }
+
+        $matched = Fuzzy::filter($sessions, $query, static fn (SessionInfo $s): string => $s->opening . ' ' . $s->text);
+
+        return array_slice($matched, 0, $limit);
+    }
+
+    /**
+     * Every session file under pig's and pi's `sessions/` (or the one `--session-dir` names), newest
+     * first by mtime, the name breaking a tie — `listFor()`'s order.
+     *
+     * @return list<string>
+     */
+    private static function everyFile(): array
+    {
+        $paths = self::$sessionDir !== null
+            ? (glob(self::$sessionDir . '/*.jsonl') ?: [])
+            : [
+                ...(glob(Config::home() . '/sessions/*/*.jsonl') ?: []),
+                ...(glob(Config::piHome() . '/sessions/*/*.jsonl') ?: []),
+            ];
+
+        $times = [];
+
+        foreach ($paths as $path) {
+            if (is_file($path)) {
+                $times[$path] = filemtime($path);
+            }
+        }
+
+        $paths = array_keys($times);
+
+        usort(
+            $paths,
+            static fn (string $a, string $b): int
+                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
+        );
+
+        return $paths;
     }
 
     /**

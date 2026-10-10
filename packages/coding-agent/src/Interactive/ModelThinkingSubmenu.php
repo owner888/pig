@@ -11,6 +11,7 @@ use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Container;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\SelectListLayout;
 use Pig\Tui\InputHandler;
 
 /**
@@ -114,6 +115,8 @@ final class ModelThinkingSubmenu extends Container implements InputHandler
                 }
             },
             fn () => ($this->done)(self::summary($this->overrides)),
+            // Upstream's `MODEL_PICKER_LAYOUT`.
+            new SelectListLayout(12, 46),
         );
     }
 
@@ -162,9 +165,9 @@ final class ModelThinkingSubmenu extends Container implements InputHandler
      * @param Closure(SelectItem): void $onSelect
      * @param Closure(): void $onCancel
      */
-    private function show(string $title, string $description, array $items, int $at, Closure $onSelect, Closure $onCancel): void
+    private function show(string $title, string $description, array $items, int $at, Closure $onSelect, Closure $onCancel, ?SelectListLayout $layout = null): void
     {
-        $this->list = new SelectList($items, min(10, max(1, count($items))), Themes::getSelectListTheme());
+        $this->list = new SelectList($items, min(10, max(1, count($items))), Themes::getSelectListTheme(), $layout ?? SelectListLayout::compact());
         $this->list->setSelectedIndex($at);
         $this->list->setSelectHandler($onSelect);
         $this->list->setCancelHandler($onCancel);

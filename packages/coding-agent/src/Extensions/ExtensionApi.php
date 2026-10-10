@@ -202,6 +202,14 @@ final class ExtensionApi extends HookApi
     {
         ProviderRegistry::register($provider);
         $this->providers[] = $provider->id;
+
+        // A provider whose catalog is fetched starts from the one it stored, without the network —
+        // upstream's `refresh({allowNetwork: false})` when a provider is registered.
+        $auth = $this->auth();
+
+        if ($provider->refreshModels !== null && $auth !== null) {
+            \Pig\CodingAgent\ModelRefresh::refresh($auth, [$provider->id], allowNetwork: false);
+        }
     }
 
     public function unregisterProvider(string $id): void

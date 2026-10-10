@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.31] - 2026-10-10
+
+### New Features
+
+- The web UI's sidebar is laid out like Claude's: New session, Search and Scheduled (a placeholder for now) at the top, then the conversations of every project in one list, grouped by the day they were last written to (Today, Yesterday, a date), each with its folder beside it. "View all" and Search (also ⌘K) open one panel that lists every conversation or searches their names and contents, as `--resume` does.
+
+### Added
+
+- `SessionManager::listAll()` and `searchAll()`, and the `/api/sessions/all` endpoint they answer, across pig's and pi's `sessions/`.
+- Providers with a fetched catalog (`Provider(refreshModels:)`, upstream's `refreshModels()`): `ModelRefresh` restores the stored catalog when the provider registers, refreshes every one in the background when the TUI or RPC mode starts (not under `PIG_OFFLINE`), and refreshes the one you signed into after `/login`, warning when that times out or fails.
+- `SelectList` layouts (`SelectListLayout`): the label column fits the widest label between upstream's bounds in the theme, thinking, settings, slash-command, per-model and `/llama` pickers.
+
+### Changed
+
+- The web sidebar no longer asks for a folder before showing its conversations, and a new session opens in the active tab's directory.
+- Removing an api-key sign-in with `/logout` says upstream's `Removed stored API key for <provider>. Environment variables and models.json config are unchanged.`
+
+### Fixed
+
+- The web sidebar showed nothing and "+ New Session" did nothing: `app.js` read two variables it never declared, which an ES module throws on.
+
 ## [0.5.30] - 2026-10-08
 
 ### New Features

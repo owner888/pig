@@ -4,17 +4,12 @@ declare(strict_types=1);
 
 namespace Pig\Extensions\Llama;
 
-use Pig\Ai\ClassifierModel;
-use Pig\Ai\Extension\ApiKeyCredential;
-use Pig\Ai\Model;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
-use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Logger;
+use Pig\CodingAgent\ModelRefresh;
 use RuntimeException;
 use Throwable;
 
@@ -25,13 +20,9 @@ use Throwable;
  * `downloadModel` and the command's handler — are this class's methods, so a test can drive them
  * with a `LlamaUi` of its own.
  *
- * Two things upstream gets from its model registry are here, because pig's core has neither:
- * `ctx.modelRegistry.refresh({providers: ["llama.cpp"]})` is `refresh()`, which does what upstream's
- * `Models.refresh()` does for one provider — the stored catalog without network, then the resolved
- * credential with it — and the models store it reads and writes is pig's own `models-store.json`,
- * in pi's shape (`{"llama.cpp": {"models": [...], "checkedAt": …}}`), as the Antigravity extension
- * keeps its catalog there. With `--no-save` (`Auth::path()` null) nothing is read or written.
- * `ctx.modelRegistry.getProviderAuth()` is `Auth::providerAuth()`.
+ * The catalog is the provider's (`LlamaProvider::refreshModels()`), refreshed by pig's
+ * `ModelRefresh` as upstream's registry refreshes it; `ctx.modelRegistry.getProviderAuth()` is
+ * `Auth::providerAuth()`.
  *
  * @phpstan-import-type LlamaModelInfo from LlamaClient
  */
@@ -376,162 +367,16 @@ final class LlamaExtension
     }
 
     /**
-     * Upstream's `Models.refresh({providers: ["llama.cpp"], allowNetwork, signal})`: the stored catalog
-     * restored first, then — with network — the credential `resolve()` gives (or $credential, the one
-     * `/login` is about to keep) handed to `refreshModels()`. A failure is the answer's `error`, not a
-     * throw, as upstream's `errors` map is.
+     * Upstream's `ctx.modelRegistry.refresh({providers: ["llama.cpp"], allowNetwork, signal})`:
+     * `ModelRefresh` for this provider alone. A failure is the answer's `error`, not a throw, as
+     * upstream's `errors` map is.
      *
      * @return array{aborted: bool, error: ?Throwable}
      */
-    public function refresh(bool $allowNetwork, AbortSignal $signal, ?ApiKeyCredential $credential = null): array
+    public function refresh(bool $allowNetwork, AbortSignal $signal): array
     {
-        if ($signal->aborted()) {
-            return ['aborted' => true, 'error' => null];
-        }
+        $result = ModelRefresh::refresh($this->auth, [LlamaProvider::LLAMA_PROVIDER_ID], $signal, $allowNetwork);
 
-        $error = null;
-
-        try {
-            $storedCredential = $credential ?? $this->auth->apiKeyCredential(LlamaProvider::LLAMA_PROVIDER_ID);
-            // Restore cached provider state before auth resolution or network access.
-            $this->provider->refreshModels($this->context($storedCredential, false, $signal));
-
-            if ($allowNetwork && !$signal->aborted()) {
-                $result = $this->provider->provider->apiKeyAuth?->resolve($storedCredential);
-
-                if ($result !== null) {
-                    $this->provider->refreshModels($this->context(new ApiKeyCredential($result->auth->apiKey, $result->env), true, $signal));
-                }
-            }
-        } catch (Throwable $caught) {
-            if (!$signal->aborted()) {
-                $error = $caught;
-            }
-        }
-
-        return ['aborted' => $signal->aborted(), 'error' => $error];
-    }
-
-    /** `refresh()` in its own fiber, with network unless `PIG_OFFLINE` is set — upstream's `void modelRuntime.refresh()`. */
-    public function refreshInBackground(?ApiKeyCredential $credential = null): void
-    {
-        Async::spawn(function () use ($credential): void {
-            $controller = new AbortController();
-            $timer = Loop::get()->delay(self::CATALOG_TIMEOUT_MS / 1000, static fn () => $controller->abort('The operation was aborted due to timeout'));
-
-            try {
-                $result = $this->refresh(getenv('PIG_OFFLINE') === false, $controller->signal, $credential);
-            } finally {
-                Loop::get()->cancel($timer);
-            }
-
-            if ($result['error'] !== null) {
-                Logger::warning('llama.cpp model catalog refresh failed: ' . $result['error']->getMessage());
-            }
-        });
-    }
-
-    private function context(?ApiKeyCredential $credential, bool $allowNetwork, AbortSignal $signal): RefreshModelsContext
-    {
-        return new RefreshModelsContext(
-            $credential,
-            $this->readStored(),
-            function (?array $persist, ?\Closure $update) use ($signal): bool {
-                if ($signal->aborted()) {
-                    return false;
-                }
-
-                if ($persist !== null) {
-                    $this->writeStored($persist);
-                }
-
-                if ($update !== null) {
-                    $update();
-                    $this->provider->install();
-                }
-
-                return true;
-            },
-            $allowNetwork,
-            $signal,
-        );
-    }
-
-    private function storePath(): ?string
-    {
-        return $this->auth->path() === null ? null : Config::home() . '/models-store.json';
-    }
-
-    /** @return array{models: list<Model|ClassifierModel>, checkedAt?: int}|null upstream's `modelsStore.read(providerId)` */
-    private function readStored(): ?array
-    {
-        $path = $this->storePath();
-
-        if ($path === null || !is_file($path) || !is_readable($path)) {
-            return null;
-        }
-
-        $decoded = json_decode((string) file_get_contents($path), true);
-        $entry = is_array($decoded) ? ($decoded[LlamaProvider::LLAMA_PROVIDER_ID] ?? null) : null;
-
-        if (!is_array($entry) || !is_array($entry['models'] ?? null)) {
-            return null;
-        }
-
-        $models = [];
-
-        foreach ($entry['models'] as $stored) {
-            $model = is_array($stored) ? LlamaProvider::fromStoredModel($stored) : null;
-
-            if ($model !== null) {
-                $models[] = $model;
-            }
-        }
-
-        return ['models' => $models, ...(is_int($entry['checkedAt'] ?? null) ? ['checkedAt' => $entry['checkedAt']] : [])];
-    }
-
-    /**
-     * Upstream's `modelsStore.write(providerId, entry)`: this provider's entry replaced, every other
-     * provider's kept, written beside and renamed over.
-     *
-     * @param array{models: list<Model|ClassifierModel>, checkedAt: int} $entry
-     */
-    private function writeStored(array $entry): void
-    {
-        $path = $this->storePath();
-
-        if ($path === null) {
-            return;
-        }
-
-        $store = [];
-
-        if (is_file($path)) {
-            $decoded = json_decode((string) file_get_contents($path), true);
-
-            if (!is_array($decoded)) {
-                throw new RuntimeException("{$path} is not valid JSON, so the llama.cpp catalog was not saved");
-            }
-
-            $store = $decoded;
-        }
-
-        $store[LlamaProvider::LLAMA_PROVIDER_ID] = [
-            'models' => array_map(LlamaProvider::toStoredModel(...), $entry['models']),
-            'checkedAt' => $entry['checkedAt'],
-        ];
-        $directory = dirname($path);
-
-        if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
-            throw new RuntimeException("Cannot create {$directory} for the llama.cpp catalog");
-        }
-
-        $temporary = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
-        $json = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
-
-        if (file_put_contents($temporary, $json . "\n") === false || !rename($temporary, $path)) {
-            throw new RuntimeException("Cannot write {$path}");
-        }
+        return ['aborted' => $result->aborted, 'error' => $result->errors[LlamaProvider::LLAMA_PROVIDER_ID] ?? null];
     }
 }

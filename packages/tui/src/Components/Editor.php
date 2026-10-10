@@ -1300,6 +1300,8 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             ),
             $this->autocompleteMaxVisible,
             $this->theme->selectList,
+            // Upstream's `SLASH_COMMAND_SELECT_LIST_LAYOUT`, for a command list only.
+            str_starts_with($suggestions->prefix, '/') ? SelectListLayout::compact() : null,
         );
     }
 

@@ -19,15 +19,6 @@ use Pig\Async\AbortSignal;
  */
 final readonly class LlamaApiKeyAuth implements ApiKeyAuth
 {
-    /**
-     * @param Closure(ApiKeyCredential): void|null $onLogin told about the credential `login()`
-     *        answers — upstream's interactive mode refreshes the provider's models after a login,
-     *        and pig's has no registry refresh to do it with
-     */
-    public function __construct(private ?Closure $onLogin = null)
-    {
-    }
-
     #[\Override]
     public function name(): string
     {
@@ -55,13 +46,7 @@ final readonly class LlamaApiKeyAuth implements ApiKeyAuth
 
         $apiKey = trim($entered);
         (new LlamaClient($serverUrl, $apiKey !== '' ? $apiKey : null))->list(signal: $signal);
-        $credential = new ApiKeyCredential($apiKey !== '' ? $apiKey : null, ['LLAMA_BASE_URL' => $serverUrl]);
-
-        if ($this->onLogin !== null) {
-            ($this->onLogin)($credential);
-        }
-
-        return $credential;
+        return new ApiKeyCredential($apiKey !== '' ? $apiKey : null, ['LLAMA_BASE_URL' => $serverUrl]);
     }
 
     #[\Override]

@@ -4863,9 +4863,19 @@ chose ignoring over loading it; `pig update` copies the other bundled extensions
 (`Pig\Ai\Extension\ApiKeyAuth`, `Provider::$apiKeyAuth` and `$classifiers`), which
 `CodingAgent\Auth` asks before its own table (`hasKeyFor()`, `apiKey()`, `providerAuth()`) and
 `/login` lists beside OAuth — `/login <provider>` starts one directly, as upstream's
-`findLoginProviderOptions()`. Not ported: the model registry's post-login refresh (the extension
-refreshes its own models), the refresh warnings after a sign-in, `SelectList`'s column widths,
-and an api-key login in `pig-ai`.
+`findLoginProviderOptions()`. Its catalog is fetched (`Provider::$refreshModels`, upstream's
+`refreshModels()`), which `CodingAgent\ModelRefresh` runs as upstream's `Models.refresh()` does:
+the stored catalog without network when the provider is registered, every provider in the
+background once the TUI or RPC mode is up (not under `PIG_OFFLINE`), and the one signed into after
+`/login`, with upstream's warning when that times out or fails. The store is
+`~/.pig/agent/models-store.json` and its rows are the provider's own — pig has no codec for every
+model a provider could file. `pig-ai` stays OAuth-only, as upstream's `ai/cli.ts` is.
+
+**`SelectList` takes upstream's layout** (`SelectListLayout`): the label column is the widest
+label plus two, between a minimum and a maximum (32 and 32 when none is given, the old fixed
+column), with an optional `truncatePrimary` hook. The pickers use upstream's bounds: 12–32 for the
+theme, thinking, settings submenus and slash commands, 12–46 for the per-model thinking picker's
+models, 36–56 for `/llama`.
 
 ## Commands
 
@@ -13021,6 +13031,18 @@ API's `parametersJsonSchema` is full JSON Schema.
 declaration carries no non-string `enum` (say it in the description instead).
 
 **Test**: `GoogleTest::testAToolWithNoParametersDeclaresAnEmptyMapAndNotAList`.
+
+### The web sidebar read two variables nothing declared, and an ES module throws on that
+
+**Symptom**: in `pig --mode web`, opening the sidebar showed nothing, "+ New Session" did nothing,
+and every `agent_end` stopped half way through its handler — no error anywhere but the browser console.
+
+**Cause**: `app.js` is `<script type="module">`, which is strict mode, and `currentView` /
+`selectedWorkspace` were assigned and read but never declared: every read was a `ReferenceError`.
+`node --check` passes it — an undeclared name is a runtime error, not a syntax one.
+
+**Rule**: after touching `assets/js`, grep each new bare name for its `let`/`const`/`function`; the
+sidebar is now `refreshSidebar()` with no view state at all.
 
 ## Version floor: PHP >= 8.3
 

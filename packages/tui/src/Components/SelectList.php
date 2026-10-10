@@ -52,18 +52,23 @@ final class SelectList implements Component, InputHandler, MouseHandler
     /** Width below which descriptions are dropped: two columns need room to be two columns. */
     private const int DESCRIPTION_MIN_WIDTH = 40;
 
-    /** Where the description column starts, and the widest a label may be before it. */
-    private const int DESCRIPTION_COLUMN = 32;
-    private const int LABEL_MAX_WIDTH = 30;
+    /** Upstream's `DEFAULT_PRIMARY_COLUMN_WIDTH`, `PRIMARY_COLUMN_GAP` and `MIN_DESCRIPTION_WIDTH`. */
+    private const int DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
+    private const int PRIMARY_COLUMN_GAP = 2;
+    private const int MIN_DESCRIPTION_WIDTH = 10;
 
     private readonly SelectListTheme $theme;
+
+    private readonly SelectListLayout $layout;
 
     /** @param list<SelectItem> $items */
     public function __construct(
         array $items,
         private readonly int $maxVisible = 5,
         ?SelectListTheme $theme = null,
+        ?SelectListLayout $layout = null,
     ) {
+        $this->layout = $layout ?? new SelectListLayout();
         $this->items = array_values($items);
         $this->filtered = $this->items;
         // Not a default parameter: a theme is made of closures, and a default value has
@@ -178,9 +183,10 @@ final class SelectList implements Component, InputHandler, MouseHandler
         [$start, $end] = $this->visibleRange();
 
         $lines = [];
+        $primaryColumnWidth = $this->primaryColumnWidth();
 
         for ($index = $start; $index < $end; $index++) {
-            $lines[] = $this->row($this->filtered[$index], $index === $this->selected, $width);
+            $lines[] = $this->row($this->filtered[$index], $index === $this->selected, $width, $primaryColumnWidth);
         }
 
         if ($start > 0 || $end < $total) {
@@ -258,34 +264,65 @@ final class SelectList implements Component, InputHandler, MouseHandler
         return [$start, min($start + $this->maxVisible, $total)];
     }
 
-    private function row(SelectItem $item, bool $isSelected, int $width): string
+    /**
+     * Upstream's `renderItem()`: the label in a column as wide as `primaryColumnWidth()`, the
+     * description after it on one line — or the label alone when there is no room for both.
+     */
+    private function row(SelectItem $item, bool $isSelected, int $width, int $primaryColumnWidth): string
     {
         $prefix = $isSelected ? '→ ' : '  ';
-        $label = $item->display();
+        $prefixWidth = Width::visible($prefix);
+        $description = $item->description === null ? null : trim((string) preg_replace('/[\r\n]+/', ' ', $item->description));
 
-        if ($item->description === null || $width <= self::DESCRIPTION_MIN_WIDTH) {
-            return $this->style($prefix . Width::truncate($label, $width - 4, ''), $isSelected);
+        if ($description !== null && $description !== '' && $width > self::DESCRIPTION_MIN_WIDTH) {
+            $columnWidth = max(1, min($primaryColumnWidth, $width - $prefixWidth - 4));
+            $label = $this->truncatePrimary($item, $isSelected, max(1, $columnWidth - self::PRIMARY_COLUMN_GAP), $columnWidth);
+            // Deviation from upstream, which measures the label with JavaScript's `.length`.
+            // Here it is measured in columns, so a CJK label does not push the description
+            // column half off the screen.
+            $labelWidth = Width::visible($label);
+            $gap = str_repeat(' ', max(1, $columnWidth - $labelWidth));
+            $remaining = $width - ($prefixWidth + $labelWidth + strlen($gap)) - 2;
+
+            if ($remaining > self::MIN_DESCRIPTION_WIDTH) {
+                $description = Width::truncate($description, $remaining, '');
+
+                // The highlight covers the whole row, description included, so the selected row
+                // reads as one thing rather than as a label with someone else's grey text after it.
+                return $isSelected
+                    ? ($this->theme->selectedText)($prefix . $label . $gap . $description)
+                    : $prefix . $label . ($this->theme->description)($gap . $description);
+            }
         }
 
-        $shortLabel = Width::truncate($label, min(self::LABEL_MAX_WIDTH, $width - 6), '');
+        $maxWidth = $width - $prefixWidth - 2;
 
-        // Deviation from upstream, which measures the label with JavaScript's `.length`.
-        // Here it is measured in columns, so a CJK label does not push the description
-        // column half off the screen.
-        $gap = str_repeat(' ', max(1, self::DESCRIPTION_COLUMN - Width::visible($shortLabel)));
-        $remaining = $width - (Width::visible($prefix . $shortLabel . $gap)) - 2;
+        return $this->style($prefix . $this->truncatePrimary($item, $isSelected, $maxWidth, $maxWidth), $isSelected);
+    }
 
-        if ($remaining <= 10) {
-            return $this->style($prefix . Width::truncate($label, $width - 4, ''), $isSelected);
+    /** Upstream's `getPrimaryColumnWidth()`: the widest label shown plus the gap, between the layout's bounds. */
+    private function primaryColumnWidth(): int
+    {
+        $min = $this->layout->minPrimaryColumnWidth ?? $this->layout->maxPrimaryColumnWidth ?? self::DEFAULT_PRIMARY_COLUMN_WIDTH;
+        $max = $this->layout->maxPrimaryColumnWidth ?? $this->layout->minPrimaryColumnWidth ?? self::DEFAULT_PRIMARY_COLUMN_WIDTH;
+        [$min, $max] = [max(1, min($min, $max)), max(1, max($min, $max))];
+        $widest = 0;
+
+        foreach ($this->filtered as $item) {
+            $widest = max($widest, Width::visible($item->display()) + self::PRIMARY_COLUMN_GAP);
         }
 
-        $description = Width::truncate($item->description, $remaining, '');
+        return max($min, min($widest, $max));
+    }
 
-        // The highlight covers the whole row, description included, so the selected row
-        // reads as one thing rather than as a label with someone else's grey text after it.
-        return $isSelected
-            ? ($this->theme->selectedText)($prefix . $shortLabel . $gap . $description)
-            : $prefix . $shortLabel . ($this->theme->description)($gap . $description);
+    private function truncatePrimary(SelectItem $item, bool $isSelected, int $maxWidth, int $columnWidth): string
+    {
+        $text = $item->display();
+        $truncated = $this->layout->truncatePrimary !== null
+            ? ($this->layout->truncatePrimary)($text, $maxWidth, $columnWidth, $item, $isSelected)
+            : Width::truncate($text, $maxWidth, '');
+
+        return Width::truncate($truncated, $maxWidth, '');
     }
 
     private function style(string $line, bool $isSelected): string

@@ -13,6 +13,7 @@ use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Rule;
+use Pig\Tui\Components\SelectListLayout;
 use Pig\Tui\Components\SelectListTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
@@ -178,6 +179,28 @@ final class ComponentsTest extends TestCase
 
         $this->assertStringContainsString('→ one', $lines[0]);
         $this->assertStringContainsString('  two', $lines[1]);
+    }
+
+    public function testTheLabelColumnFollowsTheLayout(): void
+    {
+        $items = [new SelectItem('a', 'ab', 'first'), new SelectItem('b', 'abcd', 'second')];
+        $plain = static fn (array $lines): array => array_map(\Pig\Tui\Ansi::strip(...), $lines);
+
+        // No layout: the fixed 32-column label, as before upstream had layouts.
+        $lines = $plain((new SelectList($items, theme: SelectListTheme::default()))->render(80));
+        $this->assertSame('→ ab' . str_repeat(' ', 30) . 'first', $lines[0]);
+
+        // 12..32: the widest label plus two, but at least 12.
+        $lines = $plain((new SelectList($items, theme: SelectListTheme::default(), layout: SelectListLayout::compact()))->render(80));
+        $this->assertSame('→ ab' . str_repeat(' ', 10) . 'first', $lines[0]);
+
+        // A wide label is cut to the column, less the gap; the hook decides how.
+        $long = [new SelectItem('a', str_repeat('x', 40), 'd')];
+        $lines = $plain((new SelectList($long, theme: SelectListTheme::default(), layout: new SelectListLayout(4, 10)))->render(80));
+        $this->assertSame('→ ' . str_repeat('x', 8) . '  d', $lines[0]);
+        $middle = new SelectListLayout(4, 10, static fn (string $text, int $max): string => substr($text, 0, 2) . '…' . substr($text, -2));
+        $lines = $plain((new SelectList($long, theme: SelectListTheme::default(), layout: $middle))->render(80));
+        $this->assertSame('→ xx…xx     d', $lines[0]);
     }
 
     public function testArrowKeysMoveTheSelectionAndWrapAround(): void

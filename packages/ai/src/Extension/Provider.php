@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Extension;
 
+use Closure;
 use Pig\Ai\ClassifierModel;
 use Pig\Ai\Model;
 
@@ -39,6 +40,10 @@ final readonly class Provider
      *        what key — asked by `CodingAgent\Auth` before `$envKeys`
      * @param list<ClassifierModel> $classifiers the classifier half of upstream's `getAllModels()`,
      *        each with `provider` set to `$id`
+     * @param (Closure(RefreshModelsContext): void)|null $refreshModels upstream's `refreshModels()`,
+     *        for a provider whose catalog is fetched: restore `$context->stored`, fetch a newer one
+     *        with the credential, and publish both through `$context->publish` — run by
+     *        `CodingAgent\ModelRefresh` at registration, at startup and after a sign-in
      */
     public function __construct(
         public string $id,
@@ -50,6 +55,7 @@ final readonly class Provider
         public bool $resold = false,
         public ?ApiKeyAuth $apiKeyAuth = null,
         public array $classifiers = [],
+        public ?Closure $refreshModels = null,
     ) {
         if ($id === '' || $name === '') {
             throw new \InvalidArgumentException('A provider needs an id and a name.');

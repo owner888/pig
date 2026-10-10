@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Pig\Extensions\Llama;
 
-use Closure;
 use Pig\Ai\Api;
 use Pig\Ai\ClassifierApi;
 use Pig\Ai\ClassifierModel;
 use Pig\Ai\Extension\ApiKeyCredential;
 use Pig\Ai\Extension\Provider;
+use Pig\Ai\Extension\RefreshModelsContext;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
@@ -47,14 +47,14 @@ final class LlamaProvider
 
     public readonly Provider $provider;
 
-    /** @param Closure(ApiKeyCredential): void|null $onLogin told about a credential `/login` is about to keep */
-    public function __construct(?Closure $onLogin = null)
+    public function __construct()
     {
         $this->provider = new Provider(
             id: self::LLAMA_PROVIDER_ID,
             name: 'llama.cpp',
             models: [],
-            apiKeyAuth: new LlamaApiKeyAuth($onLogin),
+            apiKeyAuth: new LlamaApiKeyAuth(),
+            refreshModels: $this->refreshModels(...),
         );
     }
 
@@ -277,14 +277,15 @@ final class LlamaProvider
         Models::registerClassifiers($this->classifiers);
     }
 
-    /** Upstream's `refreshModels(context)`. */
-    public function refreshModels(RefreshModelsContext $context): void
+    /** Upstream's `refreshModels(context)`: the `Provider`'s, run by `CodingAgent\ModelRefresh`. */
+    private function refreshModels(RefreshModelsContext $context): void
     {
         /** @var array<string, int> $cachedContextWindows */
         $cachedContextWindows = [];
 
         if ($context->stored !== null) {
-            $stored = array_values(array_filter($context->stored['models'], static fn (Model|ClassifierModel $model): bool => $model->provider === self::LLAMA_PROVIDER_ID));
+            $decoded = array_values(array_filter(array_map(self::fromStoredModel(...), $context->stored['models'])));
+            $stored = array_values(array_filter($decoded, static fn (Model|ClassifierModel $model): bool => $model->provider === self::LLAMA_PROVIDER_ID));
             $restored = array_values(array_filter($stored, static fn (Model|ClassifierModel $model): bool => $model instanceof Model && $model->api === Api::OpenAiCompletions));
             $restoredClassifiers = array_values(array_filter($stored, self::isLlamaClassifierModel(...)));
 
@@ -297,6 +298,7 @@ final class LlamaProvider
             if (!($context->publish)(null, function () use ($restored, $restoredClassifiers): void {
                 $this->models = $restored;
                 $this->classifiers = $restoredClassifiers;
+                $this->install();
             })) {
                 return;
             }
@@ -351,10 +353,11 @@ final class LlamaProvider
         }
 
         ($context->publish)(
-            ['models' => [...$refreshed, ...$refreshedClassifiers], 'checkedAt' => (int) floor(microtime(true) * 1000)],
+            ['models' => array_map(self::toStoredModel(...), [...$refreshed, ...$refreshedClassifiers]), 'checkedAt' => (int) floor(microtime(true) * 1000)],
             function () use ($refreshed, $refreshedClassifiers): void {
                 $this->models = $refreshed;
                 $this->classifiers = $refreshedClassifiers;
+                $this->install();
             },
         );
     }
