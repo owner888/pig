@@ -34,11 +34,13 @@ final readonly class Arguments
     /**
      * The short ones, and the long option each stands for.
      *
-     * Upstream's five. A short option is only ever an abbreviation: it resolves to its long
+     * Upstream's, `-na` included. A short option is only ever an abbreviation: it resolves to its long
      * name and then goes through exactly the same handling, so `-r path` and `--resume path`
      * cannot come to mean different things.
      */
     public const array SHORT = [
+        'a' => 'approve',
+        'na' => 'no-approve',
         'c' => 'continue',
         'e' => 'extension',
         'h' => 'help',

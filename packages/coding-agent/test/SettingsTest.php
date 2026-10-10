@@ -111,28 +111,28 @@ final class SettingsTest extends TestCase
 
     public function testTheProxyIsReadAndWritten(): void
     {
-        $this->writeGlobal(['proxy' => ['url' => '  socks5://127.0.0.1:7891  ']]);
+        $this->writeGlobal(['httpProxy' => '  socks5://127.0.0.1:7891  ']);
 
         // Trimmed, because this one gets pasted out of a Clash or v2ray window.
-        $this->assertSame('socks5://127.0.0.1:7891', $this->load()->proxyUrl());
+        $this->assertSame('socks5://127.0.0.1:7891', $this->load()->httpProxy());
 
         $settings = $this->load();
-        $settings->setProxyUrl('http://127.0.0.1:7890');
+        $settings->setHttpProxy('http://127.0.0.1:7890');
 
-        $this->assertSame('http://127.0.0.1:7890', $this->load()->proxyUrl());
+        $this->assertSame('http://127.0.0.1:7890', $this->load()->httpProxy());
 
-        $settings->setProxyUrl(null);
+        $settings->setHttpProxy(null);
 
-        $this->assertNull($this->load()->proxyUrl(), 'and turning it off is not an empty string');
+        $this->assertNull($this->load()->httpProxy(), 'and turning it off is not an empty string');
     }
 
     public function testAnEmptyProxyUrlIsNoProxyRatherThanAnErrorLater(): void
     {
-        $this->writeGlobal(['proxy' => ['url' => '   ']]);
+        $this->writeGlobal(['httpProxy' => '   ']);
 
         // `Proxy::parse('')` throws, and it should; a half-deleted line in a settings file is not
         // a reason to refuse to start.
-        $this->assertNull($this->load()->proxyUrl());
+        $this->assertNull($this->load()->httpProxy());
     }
 
     public function testTheBypassListKeepsOnlyStrings(): void
@@ -453,7 +453,8 @@ final class SettingsTest extends TestCase
         $settings->setShowImages(false);
         $settings->setRetryEnabled(false);
         $settings->setCompactionEnabled(false);
-        $settings->setQueueMode(QueueMode::All);
+        $settings->setSteeringMode(QueueMode::All);
+        $settings->setFollowUpMode(QueueMode::All);
         $settings->setLastChangelogVersion('0.2.0');
         $settings->setExternalEditor('vim');
 
@@ -462,7 +463,8 @@ final class SettingsTest extends TestCase
             $this->assertFalse($where->showImages());
             $this->assertFalse($where->retryEnabled());
             $this->assertFalse($where->compactionEnabled());
-            $this->assertSame(QueueMode::All, $where->queueMode());
+            $this->assertSame(QueueMode::All, $where->steeringMode());
+            $this->assertSame(QueueMode::All, $where->followUpMode());
             $this->assertSame('0.2.0', $where->lastChangelogVersion());
             $this->assertSame('vim', $where->externalEditor());
         }
@@ -479,7 +481,8 @@ final class SettingsTest extends TestCase
         $this->assertTrue($settings->showImages(), 'pictures are drawn where they can be');
         $this->assertTrue($settings->retryEnabled());
         $this->assertTrue($settings->compactionEnabled());
-        $this->assertSame(QueueMode::OneAtATime, $settings->queueMode(), 'three thoughts, one at a time');
+        $this->assertSame(QueueMode::OneAtATime, $settings->steeringMode(), 'three thoughts, one at a time');
+        $this->assertSame(QueueMode::OneAtATime, $settings->followUpMode());
         $this->assertNull($settings->lastChangelogVersion(), 'never means a first run');
         $this->assertSame([], $settings->hooks());
         $this->assertSame([], $settings->customTools());
@@ -488,11 +491,67 @@ final class SettingsTest extends TestCase
 
     public function testAQueueModeTheFileInventedIsTheOrdinaryOne(): void
     {
-        $this->writeGlobal(['queueMode' => 'whenever']);
+        $this->writeGlobal(['steeringMode' => 'whenever', 'followUpMode' => 'whenever']);
 
         // Not `all`: getting three separate thoughts at once is the surprising half of the choice,
         // so an unreadable value falls back to the unsurprising one.
-        $this->assertSame(QueueMode::OneAtATime, $this->load()->queueMode());
+        $this->assertSame(QueueMode::OneAtATime, $this->load()->steeringMode());
+        $this->assertSame(QueueMode::OneAtATime, $this->load()->followUpMode());
+    }
+
+    public function testCollapseChangelogAndDefaultProjectTrustHaveUpstreamsDefaults(): void
+    {
+        $this->assertFalse($this->load()->collapseChangelog());
+        $this->assertSame('ask', $this->load()->defaultProjectTrust());
+
+        $this->writeGlobal(['collapseChangelog' => true, 'defaultProjectTrust' => 'never']);
+        $this->assertTrue($this->load()->collapseChangelog());
+        $this->assertSame('never', $this->load()->defaultProjectTrust());
+
+        $this->writeGlobal(['defaultProjectTrust' => 'sometimes']);
+        $this->assertSame('ask', $this->load()->defaultProjectTrust(), 'a value that is none of the three asks');
+    }
+
+    public function testTransportAndTheWebSocketConnectTimeoutHaveUpstreamsDefaults(): void
+    {
+        $this->assertSame('auto', $this->load()->transport());
+        $this->assertNull($this->load()->websocketConnectTimeoutMs());
+
+        $this->writeGlobal(['transport' => 'websocket-cached', 'websocketConnectTimeoutMs' => 'disabled']);
+        $this->assertSame('websocket-cached', $this->load()->transport());
+        $this->assertSame(0, $this->load()->websocketConnectTimeoutMs());
+
+        $this->writeGlobal(['transport' => 'pigeon', 'websocketConnectTimeoutMs' => 5000]);
+        $this->assertSame('auto', $this->load()->transport(), 'a value that is none of the four is the default');
+        $this->assertSame(5000, $this->load()->websocketConnectTimeoutMs());
+
+        $this->writeGlobal(['websocketConnectTimeoutMs' => 'soon']);
+        $this->expectExceptionMessage('Invalid websocketConnectTimeoutMs setting: soon');
+        $this->load()->websocketConnectTimeoutMs();
+    }
+
+    public function testAProjectCannotVouchForItself(): void
+    {
+        // Upstream's schema: "Global setting only."
+        $this->writeProject(['defaultProjectTrust' => 'always']);
+
+        $this->assertSame('ask', $this->load()->defaultProjectTrust());
+    }
+
+    public function testTheOldQueueModeKeyIsNotRead(): void
+    {
+        // Renamed to upstream's two keys before a release, with no reader for the old one.
+        $this->writeGlobal(['queueMode' => 'all']);
+
+        $this->assertSame(QueueMode::OneAtATime, $this->load()->followUpMode());
+    }
+
+    public function testTheProxyIsThePersonsAndNotTheProjects(): void
+    {
+        // Upstream's `getGlobalSettings().httpProxy`.
+        $this->writeProject(['httpProxy' => 'http://127.0.0.1:9999']);
+
+        $this->assertNull($this->load()->httpProxy());
     }
 
     public function testFilesNamedInTheSettingsComeBackAsPathsAndNothingElseComesBackAtAll(): void

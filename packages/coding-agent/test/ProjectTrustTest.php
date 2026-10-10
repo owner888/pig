@@ -83,6 +83,39 @@ final class ProjectTrustTest extends TestCase
         $this->assertFileDoesNotExist(ProjectTrust::path($this->home), 'a refusal by default is not written down');
     }
 
+    public function testApproveOrNoApproveIsThisRunsAnswerAheadOfEverything(): void
+    {
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        ProjectTrust::remember([$this->project => false], $this->home);
+
+        $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home, default: 'never', override: true));
+        $this->assertFalse(ProjectTrust::resolve($this->project, null, $this->home, default: 'always', override: false));
+        $this->assertFalse(ProjectTrust::entry($this->project, $this->home)['decision'], 'and nothing about it is written down');
+    }
+
+    public function testTheDefaultAnswersWhenNothingSavedDoesAndOnlyThen(): void
+    {
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        $asked = false;
+        $ask = static function () use (&$asked): ?TrustChoice {
+            $asked = true;
+
+            return null;
+        };
+
+        $this->assertTrue(ProjectTrust::resolve($this->project, $ask, $this->home, default: 'always'));
+        $this->assertFalse(ProjectTrust::resolve($this->project, $ask, $this->home, default: 'never'));
+        $this->assertFalse($asked, 'always and never do not ask');
+        $this->assertFileDoesNotExist(ProjectTrust::path($this->home), 'and write nothing down');
+
+        ProjectTrust::remember([$this->project => false], $this->home);
+        $this->assertFalse(ProjectTrust::resolve($this->project, $ask, $this->home, default: 'always'), 'a saved decision wins');
+
+        ProjectTrust::remember([$this->project => null], $this->home);
+        ProjectTrust::resolve($this->project, $ask, $this->home, default: 'ask');
+        $this->assertTrue($asked, 'ask asks');
+    }
+
     public function testASavedDecisionIsNotAskedAgainAndTheNearestAncestorWins(): void
     {
         mkdir($this->project . '/.pig/hooks', 0o755, true);

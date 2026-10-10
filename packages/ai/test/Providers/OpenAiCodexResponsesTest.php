@@ -20,8 +20,8 @@ use Pig\Async\Loop;
  * `UpstreamRecord`).
  *
  * `fixtures/codex/c*.json`, every one with `transport: "sse"` and `node:zlib`'s `zstdCompressSync`
- * taken away — the branch pig is, since it has no WebSocket client and no zstd (see
- * `OpenAiCodexResponses`): a replayed conversation, `instructions`, the account header, the session
+ * taken away — pig has no zstd (see `OpenAiCodexResponses`); the WebSocket transport is
+ * `OpenAiCodexWebSocketTest`'s: a replayed conversation, `instructions`, the account header, the session
  * headers and `prompt_cache_key`; the options' service tier priced by Codex's rule, verbosity, tool
  * choice and summary; `response.done` with `end_turn`; an `error` event, `response.failed`, a frame
  * that is not JSON, a token with no account; a 429 usage limit worded as one; a 503 retried after
@@ -88,6 +88,7 @@ final class OpenAiCodexResponsesTest extends TestCase
                         sessionId: $o['sessionId'] ?? null,
                         maxRetries: $o['maxRetries'] ?? null,
                         maxRetryDelayMs: $o['maxRetryDelayMs'] ?? null,
+                        transport: $o['transport'] ?? null,
                     ));
                 }
 
@@ -101,6 +102,7 @@ final class OpenAiCodexResponsesTest extends TestCase
                     serviceTier: $o['serviceTier'] ?? null,
                     textVerbosity: $o['textVerbosity'] ?? null,
                     toolChoice: $o['toolChoice'] ?? null,
+                    transport: $o['transport'] ?? null,
                 ));
             },
             static function (array $response) use ($shift): array {

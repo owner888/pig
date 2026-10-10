@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.27] - 2026-10-08
+
+### New Features
+
+- **Pure-PHP WebSocket Client & OpenAI Codex WebSocket Transport (`Http\WebSocket`, `CachedWebSocketConnection`, `OpenAiCodexResponses`)**:
+  - Implemented pure-PHP zero-dependency RFC 6455 WebSocket client (`Pig\Ai\Http\WebSocket`) over native non-blocking sockets with proxy tunneling support.
+  - Added native `transport: "auto"` support for ChatGPT Codex backend (`OpenAiCodexResponses`): pooling and caching WebSocket connections per session and account (5-minute idle TTL), streaming input deltas via `previous_response_id`, and gracefully falling back to SSE on socket interruptions.
+- **Independent Steering and Follow-Up Queue Modes (`steeringMode`, `followUpMode`)**:
+  - Split queue modes into dedicated `steeringMode` and `followUpMode` settings (`one-at-a-time`, `all`, `cancel`), matching upstream pi.
+  - Added dedicated `/settings` rows and RPC commands `set_steering_mode` and `set_follow_up_mode`.
+
+### Added
+
+- **Project Trust Override CLI Flags & Default Setting (`ProjectTrust`, `defaultProjectTrust`)**:
+  - Added `-a` / `--approve` and `-na` / `--no-approve` CLI flags to force project trust or denial for single runs without mutating `trust.json`.
+  - Added `defaultProjectTrust` setting (`always`, `never`, `ask`) and `/settings` row.
+- **Changelog Display Collapse Setting (`collapseChangelog`)**:
+  - Added `collapseChangelog` setting and `/settings` row to display concise update notices rather than full changelog bodies on startup.
+- **HTTP Proxy Setting Parity (`httpProxy`)**:
+  - Added `httpProxy` support in user settings matching upstream pi's configuration key.
+
 ## [0.5.26] - 2026-10-08
 
 ### New Features

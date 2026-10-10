@@ -34,10 +34,12 @@ final readonly class PiMessagesOptions extends StreamOptions
         ?\Closure $onResponse = null,
         ?\Closure $onProviderStreamEvent = null,
         ?array $env = null,
+        ?string $transport = null,
+        ?int $websocketConnectTimeoutMs = null,
         public ?string $reasoning = null,
         public string|array|null $toolChoice = null,
         public bool $debug = false,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
     }
 }

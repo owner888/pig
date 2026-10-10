@@ -200,10 +200,20 @@ final class ProjectTrust
      *        the command line's — asked `project_trust` first, as upstream asks them. One that
      *        says `remember` is saved like an answer at the prompt.
      */
-    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?HookRunner $extensions = null): bool
+    /**
+     * @param 'ask'|'always'|'never' $default upstream's `defaultProjectTrust`, after the saved
+     *        decision and before the question: `always` and `never` answer without asking.
+     * @param ?bool $override upstream's `--approve` / `--no-approve`: this run's answer, ahead of
+     *        everything, and written nowhere.
+     */
+    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?HookRunner $extensions = null, string $default = 'ask', ?bool $override = null): bool
     {
         if (!self::hasResources($cwd)) {
             return true;
+        }
+
+        if ($override !== null) {
+            return $override;
         }
 
         $answer = $extensions?->emitProjectTrust(new ProjectTrustEvent($cwd));
@@ -222,6 +232,10 @@ final class ProjectTrust
 
         if ($saved !== null) {
             return $saved;
+        }
+
+        if ($default === 'always' || $default === 'never') {
+            return $default === 'always';
         }
 
         if ($ask === null) {

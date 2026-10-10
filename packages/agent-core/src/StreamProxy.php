@@ -174,12 +174,10 @@ final class StreamProxy
      * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have, in
      * its order — `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for
      * the same level), `cacheRetention`, `sessionId`, `headers` (nulls and all: a null deletes a
-     * header on the server's side), `metadata` and `maxRetryDelayMs` — each left out when unset, as
-     * `JSON.stringify` leaves out an `undefined`.
+     * header on the server's side), `metadata`, `transport`, `thinkingBudgets` and
+     * `maxRetryDelayMs` — each left out when unset, as `JSON.stringify` leaves out an `undefined`.
      *
-     * The other three are not sent because nothing in pig has a value for them: `transport` (no
-     * WebSocket), `thinkingBudgets` (no thinking-budget setting) and `samplingParams` (no sampling
-     * parameters on a model).
+     * `samplingParams` is not sent: no model in pig carries any.
      *
      * The request's own headers are upstream's two, `Authorization` and `Content-Type`; it sends no
      * `Accept`.
@@ -210,6 +208,8 @@ final class StreamProxy
                 'sessionId' => $options?->sessionId,
                 'headers' => $options?->headers,
                 'metadata' => $options?->metadata,
+                'transport' => $options?->transport,
+                'thinkingBudgets' => $options?->thinkingBudgets,
                 'maxRetryDelayMs' => $options?->maxRetryDelayMs,
             ], static fn (mixed $value): bool => $value !== null),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);

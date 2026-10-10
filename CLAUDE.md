@@ -257,7 +257,7 @@ not talk to a provider at all, so "direct" is not a worse route, it is no route.
 
 Two protocols, because a local Clash or v2ray offers both and people use whichever port they
 remember: **HTTP CONNECT** (RFC 9110 §9.3.6) and **SOCKS5** (RFC 1928, with RFC 1929 for a
-password). `--proxy <url>`, then `https_proxy`/`all_proxy`, then `proxy.url` in the settings — the
+password). `--proxy <url>`, then `https_proxy`/`all_proxy`, then `httpProxy` in the person's settings (upstream's key, never the project's) — the
 order stated at the top of `bin/pig`, and `--no-proxy` ignores all three.
 
 **The order inside `Proxy::open()` is the security property, not an implementation detail.** The
@@ -1598,42 +1598,32 @@ Two decisions of pig's own:
 | Thinking | a submenu of the levels *this model* offers, so a model that cannot reason gets no row at all rather than six ways to change nothing |
 | Thinking blocks | `useHideThinking()`, split out of the ctrl+t handler |
 | Pictures | `useShowImages()`, and its reader — see below |
-| Queued messages | `AgentSession::setQueueMode()`, which tells the agent and writes the setting |
+| Steering mode, Follow-up mode | `AgentSession::setSteeringMode()` / `setFollowUpMode()`, which tell the agent and write the setting |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
 | Cache warming | `cacheWarming`, `AgentSession::setCacheWarmingMode()` — saved, and a running warm reconciled at once |
 | Editor padding | `editorPaddingX`, `useEditorPaddingX()` — the editor that is up is told |
 | Output padding | `outputPad`, `useOutputPad()` — everything drawn is told, see above |
 
-**Row by row against upstream's seven, two differ.** Upstream's list is `autocompact`,
-`queue-mode`, `hide-thinking`, `collapse-changelog`, `thinking`, `theme`, `show-images` — so pig
-has `autoRetry`, which upstream has no setting for at all, and lacks `collapse-changelog`.
-`collapse-changelog` governs one thing: whether the note shown once after an upgrade is the
-release notes or the line "Updated to vX. Use /changelog to view full changelog.". It stays out,
-and the reason is the rule at the top of this file rather than an oversight — a row whose whole
-job is to make one banner shorter is a second way to render a thing pig renders one way, and
-`sayChangelog()` exists precisely because `/changelog` and the upgrade note are "the same thing
-arriving for two reasons". Somebody who does not want to read release notes has the shorter answer
-already: they are shown once, under the conversation, and never again. If pig ever ships a
-`CHANGELOG.md` long enough that the note is genuinely in the way, the row is three lines and this
-paragraph is where to start.
+**`collapseChangelog` is a row now**, ported with the rest of upstream's settings: on, the note
+after an upgrade is the line "Updated to vX. Use /changelog to view full changelog." in place of
+the release notes (`sayChangelogCollapsed()`). An earlier reading kept it out as a second way to
+draw one thing; the developer's call was to port every setting the docs list.
 
-**Queue mode is a row now, and getting there meant the anchor commit's own break.** Upstream has
-one `setQueueMode()`; pig has two queues, because `d0a4c37` is the commit that split the single
-queue into `steer()` and `followUp()` and it changed `packages/agent` only — `agent-session.ts` at
-that same commit still calls a method that no longer exists there. So there is no working original
-to copy, and `Agent::setQueueMode()` picks the queue the *setting* is about: a message typed while
-the agent is working is a **follow-up**, which is where the submit handler puts it, and steering is
-a different act with a different key. `setSteeringMode()` arrives if something ever wants it apart.
+**The two queue modes are two rows, under upstream's names.** `d0a4c37` split the single queue
+into `steer()` and `followUp()`, and upstream's HEAD has a mode per queue — `steeringMode` and
+`followUpMode`, each a setting, a `/settings` row and an RPC command (`set_steering_mode`,
+`set_follow_up_mode`). pig had one `queueMode` that set the follow-up queue alone; it was renamed to
+upstream's pair before a release, with no reader for the old key.
 
 Three smaller decisions fell out of it:
 
 - **The modes are copied out of `AgentOptions` into fields on `Agent`.** `AgentOptions` is readonly
   and stays that way: it records what an agent was *set up* with, and a settings screen writing a
   field on it would turn that record into a record of the present.
-- **`AgentSession`'s constructor applies the stored mode**, not whoever built the agent. It is the
-  class holding both the agent and the settings, and `setQueueMode()` writes through the same
-  pair — a caller passing it into `AgentOptions` instead would be a second route for one fact.
+- **`AgentSession`'s constructor applies the stored modes**, not whoever built the agent. It is the
+  class holding both the agent and the settings, and `setSteeringMode()` / `setFollowUpMode()`
+  write through the same pair — a caller passing it into `AgentOptions` instead would be a second route for one fact.
 - **Upstream's `queue-mode-selector.ts` has no consumer.** Checked before deciding not to port the
   component: the only `QueueModeSelectorComponent` in upstream's tree is its own definition, and
   the live path is a row in its settings screen. So the row is the port and the standalone
@@ -2876,9 +2866,9 @@ Six things that took a decision:
   proxy server before the response completed`. The partial starts at `StopReason::Pending`, as
   upstream's does. `done` and `error` carry `providerThinkingLevel` onto the message, and
   `toolcall_end` lays the server's finished `toolCall` over what the deltas built — and is ignored,
-  not fatal, for a block that is not a tool call. Of upstream's request options, `headers` and
-  `maxRetryDelayMs` are sent as upstream sends them; `samplingParams`, `transport` and
-  `thinkingBudgets` are not, because pig has none of those settings or fields. The request carries
+  not fatal, for a block that is not a tool call. Of upstream's request options, `headers`,
+  `transport`, `thinkingBudgets` and `maxRetryDelayMs` are sent as upstream sends them;
+  `samplingParams` is not, because no model in pig has any. The request carries
   upstream's two headers only — no `Accept`. An abort while the body is read is `Request aborted by
   user`, as upstream's reader says.
 - **An unknown `done` reason is a plain stop, and an unknown event type is ignored.** The turn did
@@ -3019,8 +3009,10 @@ arrangement is the thing to know before reading any of them:**
   re-applies the proxy and the idle timeout, and sets the theme directory); `--list-models` is
   asked too, as upstream's `print` mode is, with nobody to prompt. **The handler's `ctx->ui` is
   `NoUi` and `hasUi` is false** even at a terminal: pig has no screen before the session, and the
-  trust prompt is a one-shot `TrustPrompt`. `defaultProjectTrust` (upstream's `always`/`never`
-  setting) is not ported.
+  trust prompt is a one-shot `TrustPrompt`. `defaultProjectTrust` (`ask`/`always`/`never`, the
+  person's settings only) answers after the saved decision and before the prompt, as upstream's;
+  `-a`/`--approve` and `-na`/`--no-approve` answer for this run ahead of everything, the saved
+  decision included, and save nothing (`ProjectTrust::resolve(override:)`).
 - **`resources_discover` is `AgentSession::discoverResources($reason)`**, called by each mode
   straight after it emits `session_start`, and by `/reload` after its `session_start('reload')`.
   Skills from the answered directories go through `Skills::fromDirectories()` (source
@@ -4391,10 +4383,10 @@ needs decide the shapes.
 | `cycle_model` | `get_available_models` and `set_model` are what it is made of |
 | `export_html` | it is `export` here, and it honours `outputPath` |
 
-Twenty-seven commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
+Twenty-eight commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
 `get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
 `set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
-`set_auto_retry`, `abort_retry`, `set_queue_mode`, `bash`, `abort_bash`, `get_branch`, `go_to`,
+`set_auto_retry`, `abort_retry`, `set_steering_mode`, `set_follow_up_mode`, `bash`, `abort_bash`, `get_branch`, `go_to`,
 `new_session`, `switch_session`, `fork`, `clone`, `get_fork_messages` and `export`.
 
 Every failure is a `success: false` response rather than a disconnection: a host asking for
@@ -4557,7 +4549,7 @@ at both ends of `prompt()`, the `isStreaming()` guards in front of `abort()`, an
 `_tryExecuteHookCommand`, which is the entry on a slash command that only worked in front of a
 screen.
 
-`get_state` gained `isCompacting` and `queueMode`; `sessionId` stays out, since pig has no session
+`get_state` gained `isCompacting`, `steeringMode` and `followUpMode`; `sessionId` stays out, since pig has no session
 identity apart from the file and `sessionFile` already is that.
 
 **Two things this scoreboard is not.** It is not a measure of quality — `theme.ts` was read this way
@@ -4719,6 +4711,16 @@ than by reading:
   through `Utils\Oauth\OpenAiCodex` (`auth/oauth/openai-codex.ts`: browser PKCE on port 1455 with the
   paste box beside it, or the device code; `accountId` stored on the credential, as pi stores it).
   `Utils\Oauth\DeviceCodeFlow` is `device-code.ts`' shared poller, which only this flow uses so far.
+  **Its transport is upstream's `auto` by default**: a `wss://…/codex/responses` connection
+  (`Http\WebSocket`, RFC 6455 over `Socket`, through `HttpClient`'s proxy) cached per session and
+  account (5-minute idle TTL, 55-minute age limit), `previous_response_id` continuation sending only
+  the input delta (`auto` / `websocket-cached`), one retry each for `previous_response_not_found` and
+  `websocket_connection_limit_reached`, and SSE when the socket fails before the answer starts — a
+  `provider_transport_failure` diagnostic, and that session stays on SSE. **The idle TTL is checked
+  when the connection is next asked for, not by a timer**: pig's loop has no `unref()`, and a pending
+  timer would hold a `-p` run open for five minutes. `AgentSession` closes the session's connection
+  on `dispose()` and on `writeTo()` (upstream's `cleanupSessionResources()`).
+  `OpenAiCodexWebSocketTest` runs it against `test/WebSocketServer.php`, which speaks both.
 - **`pi-messages`** — `Providers\PiMessages` and `PiMessagesEventConverter`, pi's own wire protocol,
   which the Radius gateway speaks; `Providers\RadiusConfig` is `radius-config.ts`' catalogue half.
 
@@ -4738,12 +4740,6 @@ The records: `packages/ai/test/fixtures/{azure,codex,pi-messages}/`, `codex-oaut
 
 What is knowingly not there:
 
-- **Codex's WebSocket transport.** Upstream's default `transport` is `auto`: a cached
-  `wss://…/codex/responses` connection per session and account (5-minute idle TTL, 55-minute age
-  limit), `previous_response_id` continuation sending only the input delta, a connection-limit retry,
-  and SSE only as the fallback. pig has no WebSocket client in `pig/ai` and speaks SSE always — what
-  upstream does with `transport: "sse"`, or after a WebSocket failure. `transport` and
-  `websocketConnectTimeoutMs` are not options here.
 - **zstd** on the Codex SSE body: PHP has no zstd without an extension; upstream sends it plain where
   `node:zlib` has none, and so does pig.
 - **Radius's sign-in and dynamic catalogue**: `auth/oauth/radius.ts`, a `models.json` provider with
@@ -12820,7 +12816,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - The derived rows' compat comes only from `Models::azureCompat()` / `codexCompat()`, the thinking maps only from the branches of `thinkingLevelMap()`; a change is compared row by row against `azure.json`/`openai-codex.json`/`radius.json` in the `@earendil-works/pi-ai` release package (82 rows identical, key order included).
 - `RESOLD` includes `azure`, `openai-codex`, `radius`: a bare id belongs to the direct provider, resold ones are written `azure/<id>`.
 - `Credentials::$accountId` is read and written only through `Auth`; `CallbackServer`'s `state` parameter, when on, checks a wrong state and a missing code as upstream does — 400 and keep waiting.
-- Codex is SSE only (no WebSocket, no zstd), Radius is `RADIUS_API_KEY` plus the public catalog only (no login, no runtime refresh), TypeSafe has no chat models — known differences, see "Azure OpenAI, ChatGPT's Codex backend and `pi-messages`".
+- Codex sends no zstd, Radius is `RADIUS_API_KEY` plus the public catalog only (no login, no runtime refresh), TypeSafe has no chat models — known differences, see "Azure OpenAI, ChatGPT's Codex backend and `pi-messages`".
 - Tests: `ModelsTest::testAzureRowsAreUpstreamsCatalogueRows`, `testCodexRowsAreUpstreamsCatalogueRows`, `testRadiusRowsAreUpstreamsCatalogueRows`, `GenerateModelsTest::testAzureRowsAreUpstreamsCloneOfTheOpenAiRows`, `testCodexRowsAreUpstreamsExplicitList`, `testRadiusRowsAreTheGatewaysCatalogueAsItSentThem`, `testOpenAisUnsupportedAliasIsNotOffered`, `AzureOpenAiCompletionsTest`, `OpenAiCodexOauthTest` (14 recorded scenarios), `RadiusConfigTest`, `AuthTest::testACodexCredentialKeepsItsAccountIdAsPiWritesIt`.
 
 ### The other 25 providers on ported APIs: rows are the generator's output, compat written by the generator's own detection

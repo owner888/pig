@@ -473,23 +473,24 @@ final class Agent
         }
     }
 
-    /**
-     * How the follow-up queue is handed over, which is what "queue mode" means to a person.
-     *
-     * **Upstream has one `setQueueMode()` and pig has two queues**, which is the anchor commit's
-     * own break: `d0a4c37` split the single queue into `steer()` and `followUp()` and changed
-     * `packages/agent` only, so `agent-session.ts` at that same commit still calls a method that
-     * no longer exists. There is no working original to copy, so this picks the queue the setting
-     * is about: a message typed while the agent is working is a **follow-up** — that is where
-     * `InteractiveMode`'s submit handler puts it — and steering is a different act with a
-     * different key. `setSteeringMode()` arrives if something ever wants it separately.
-     */
-    public function setQueueMode(QueueMode $mode): void
+    /** Upstream's `steeringMode`: how the steering queue is handed to the loop. */
+    public function setSteeringMode(QueueMode $mode): void
+    {
+        $this->steeringMode = $mode;
+    }
+
+    public function steeringMode(): QueueMode
+    {
+        return $this->steeringMode;
+    }
+
+    /** Upstream's `followUpMode`: how the follow-up queue is handed to the loop. */
+    public function setFollowUpMode(QueueMode $mode): void
     {
         $this->followUpMode = $mode;
     }
 
-    public function queueMode(): QueueMode
+    public function followUpMode(): QueueMode
     {
         return $this->followUpMode;
     }

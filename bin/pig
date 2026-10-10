@@ -178,6 +178,8 @@ if (isset($options['help'])) {
       --session <id>    resume a session by its ID or path
       --session-dir <d> keep every session in this one directory
       --no-save         do not write this session to disk
+      -a, --approve     trust project-local files for this run
+      -na, --no-approve ignore project-local files for this run
       --export <file>   write a session file out as HTML and stop. A second word is
                         where it goes: `--export a.jsonl out.html`
       --skills-dir <d>  one more folder of skills, on top of the standard ones
@@ -300,8 +302,8 @@ $configureHttp = static function (Settings $settings) use ($options): void {
                 ? Proxy::parse($options['proxy'], $settings->proxyBypass())
                 : Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
 
-            if ($proxy === null && $settings->proxyUrl() !== null) {
-                $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+            if ($proxy === null && $settings->httpProxy() !== null) {
+                $proxy = Proxy::parse($settings->httpProxy(), $settings->proxyBypass());
             }
 
             HttpClient::useProxy($proxy);
@@ -462,7 +464,10 @@ $settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings
 
 // `project_trust`, over the extensions loaded before the project's: the first yes or no wins over
 // a saved answer and the prompt. A handler that threw is one line on the shell, as upstream prints it.
-$decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrust): bool {
+// Upstream's `--approve` / `--no-approve`: this run's answer, ahead of every other.
+$trustOverride = isset($options['approve']) ? true : (isset($options['no-approve']) ? false : null);
+
+$decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrust, &$settings, $trustOverride): bool {
     $runner = new \Pig\CodingAgent\Hooks\HookRunner(
         array_map(static fn ($ext) => new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api), $loaded),
         $cwd,
@@ -472,7 +477,7 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
         fwrite(STDERR, Style::yellow("Extension \"{$error->hookPath}\" {$error->event} error: {$error->error}\n"));
     });
 
-    $trusted = ProjectTrust::resolve($cwd, $askTrust, extensions: $runner);
+    $trusted = ProjectTrust::resolve($cwd, $askTrust, extensions: $runner, default: $settings->defaultProjectTrust(), override: $trustOverride);
     $settleTrust($trusted);
 
     return $trusted;
@@ -494,7 +499,7 @@ if (!isset($options['no-extensions']) && $mode !== 'web') {
 
 // With no extensions to ask, the question goes straight to the saved answer and the prompt.
 if ($trustUndecided && $preloadedExtensions === null) {
-    $settleTrust(ProjectTrust::resolve($cwd, $askTrust));
+    $settleTrust(ProjectTrust::resolve($cwd, $askTrust, default: $settings->defaultProjectTrust(), override: $trustOverride));
 }
 
 if (!$trustUndecided) {

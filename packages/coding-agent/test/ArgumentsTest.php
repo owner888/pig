@@ -22,6 +22,13 @@ final class ArgumentsTest extends TestCase
 
     // ---- options ------------------------------------------------------------------------
 
+    public function testApproveAndNoApproveHaveUpstreamsShortForms(): void
+    {
+        $this->assertArrayHasKey('approve', Arguments::parse(['-a'])->options);
+        $this->assertArrayHasKey('no-approve', Arguments::parse(['-na'])->options);
+        $this->assertArrayHasKey('no-approve', Arguments::parse(['--no-approve', 'hi'])->options);
+    }
+
     public function testSessionDirTakesTheNextWordAsItsValue(): void
     {
         $arguments = Arguments::parse(['--session-dir', '/tmp/s', 'hello']);
@@ -104,13 +111,13 @@ final class ArgumentsTest extends TestCase
         $this->assertTrue($this->parse('-p')->has('print'));
     }
 
-    public function testAllSixOfUpstreamsShortOptionsAreThere(): void
+    public function testAllOfUpstreamsShortOptionsAreThere(): void
     {
         foreach (Arguments::SHORT as $short => $long) {
             $this->assertTrue($this->parse('-' . $short)->has($long), "-{$short} should mean --{$long}");
         }
 
-        $this->assertSame(['c', 'e', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
+        $this->assertSame(['a', 'na', 'c', 'e', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
     }
 
     public function testAShortOptionTakesAValueWhenItsLongFormDoes(): void

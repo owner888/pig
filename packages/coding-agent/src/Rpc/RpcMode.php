@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Rpc;
 
+use Closure;
 use Pig\Agent\QueueMode;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
@@ -290,7 +291,8 @@ final class RpcMode
             'set_model' => $this->setModel($command),
             'cycle_model' => $this->cycleModel($command),
 
-            'set_queue_mode' => $this->setQueueMode($command),
+            'set_steering_mode' => $this->setQueueMode($command, $this->session->setSteeringMode(...)),
+            'set_follow_up_mode' => $this->setQueueMode($command, $this->session->setFollowUpMode(...)),
 
             'set_thinking_level' => $this->setThinking($command),
             'cycle_thinking_level' => ['level' => $this->session->cycleThinkingLevel()?->value],
@@ -398,11 +400,12 @@ final class RpcMode
             'isStreaming' => $this->session->isStreaming(),
             // Upstream's `RpcSessionState` declares both of these and pig's answer carried
             // neither: a host had no way to know a summarisation was running, and could set the
-            // queue mode without ever being able to read it back. `sessionId` is the third field
+            // queue modes without ever being able to read them back. `sessionId` is the third field
             // on that interface and stays out — pig has no session identity apart from the file,
             // which `sessionFile` already is.
             'isCompacting' => $this->session->isCompacting(),
-            'queueMode' => $this->session->queueMode()->value,
+            'steeringMode' => $this->session->steeringMode()->value,
+            'followUpMode' => $this->session->followUpMode()->value,
             'isBashRunning' => $this->session->isBashRunning(),
             'sessionFile' => $this->session->store()?->path,
             'isPersisted' => $this->session->store()?->isPersisted() ?? false,
@@ -527,20 +530,17 @@ final class RpcMode
 
     /** @param array<string, mixed> $command */
     /**
-     * Whether messages typed mid-run are handed over together or one at a time.
-     *
-     * Upstream's command, and the one the left-out table used to explain away: the anchor commit's
-     * queue split accounts for `queue_message` — `steer` and `follow_up` replace it — and accounts
-     * for nothing about the *mode*. `get_state` reports it and `/settings` has a row for it, so
-     * without this a host could read the fact and never change it.
+     * Upstream's `set_steering_mode` and `set_follow_up_mode`: whether messages typed mid-run are
+     * handed over together or one at a time, one command per queue.
      *
      * @param array<string, mixed> $command
+     * @param Closure(QueueMode): void $set
      */
-    private function setQueueMode(array $command): ?array
+    private function setQueueMode(array $command, Closure $set): ?array
     {
         $wanted = self::text($command, 'mode');
 
-        $this->session->setQueueMode(
+        $set(
             QueueMode::tryFrom($wanted)
                 ?? throw new \RuntimeException("No such queue mode: '{$wanted}'. There is "
                     . implode(' and ', array_map(static fn (QueueMode $m): string => $m->value, QueueMode::cases())) . '.'),

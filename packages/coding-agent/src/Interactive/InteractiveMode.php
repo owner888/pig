@@ -560,7 +560,7 @@ final class InteractiveMode
         // settings the last-seen number is written to, and knows whether this is a resumed
         // session — where a release note nobody asked for is an interruption.
         if ($this->changelog !== null && $this->changelog !== '') {
-            $this->sayChangelog($this->changelog);
+            $this->settings->collapseChangelog() ? $this->sayChangelogCollapsed($this->changelog) : $this->sayChangelog($this->changelog);
         }
 
         // Upstream's `renderProjectTrustWarningIfNeeded()`: hooks that are not running have to
@@ -4639,6 +4639,21 @@ final class InteractiveMode
      * callers — `/changelog` and the line `bin/pig` shows once after an upgrade — draw it the
      * same way, because they are the same thing arriving for two reasons.
      */
+    /**
+     * Upstream's `collapseChangelog` arm: one line in the same rules — the newest version the notes
+     * name, and where the rest is.
+     */
+    private function sayChangelogCollapsed(string $markdown): void
+    {
+        $latest = preg_match('/##\s+\[?(\d+\.\d+\.\d+)\]?/', $markdown, $match) === 1 ? $match[1] : $this->version;
+
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
+        $this->chat->addChild(new ThemedText(static fn (): string => "Updated to v{$latest}. Use " . Style::bold('/changelog') . ' to view full changelog.', 1, 0));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
+        $this->tui->requestRender();
+    }
+
     private function sayChangelog(string $markdown): void
     {
         $this->chat->addChild(new Spacer(1));
@@ -4810,10 +4825,9 @@ final class InteractiveMode
      * **Only things that take effect.** Every row here is read again after it is changed, so
      * pressing Enter on it does something. `terminal.showImages` was nearly left off for
      * failing that — pig stored it and nothing read it — and the answer was to give it its
-     * reader rather than a row that saves a value nobody looks at. Queue mode needed the same
-     * kind of work and got it: `Agent` had no setter, because the anchor commit's queue split
-     * removed upstream's — `Agent::setQueueMode()` says which of the two queues it picks and
-     * why.
+     * reader rather than a row that saves a value nobody looks at. The two queue modes needed
+     * the same kind of work and got it: `Agent` had no setters, because the anchor commit's queue
+     * split removed upstream's.
      *
      * Escape closes it. There is no cancel, because each change has already happened by
      * then — the same as upstream, and the same as every other toggle here.
@@ -4870,11 +4884,26 @@ final class InteractiveMode
             );
         }
         $rows[] = new SettingItem(
-            'queueMode',
-            'Queued messages',
-            $this->session->queueMode()->value,
-            'Whether what you type while it works goes over one at a time or together.',
+            'steeringMode',
+            'Steering mode',
+            $this->session->steeringMode()->value,
+            "Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
             values: ['one-at-a-time', 'all'],
+        );
+        $rows[] = new SettingItem(
+            'followUpMode',
+            'Follow-up mode',
+            $this->session->followUpMode()->value,
+            $this->keybindings->display('app.message.followUp') . " queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+            values: ['one-at-a-time', 'all'],
+        );
+        // Upstream's row. Read by the session on every request, so the next one goes this way.
+        $rows[] = new SettingItem(
+            'transport',
+            'Transport',
+            $this->settings->transport(),
+            'Preferred transport for providers that support multiple transports',
+            values: Settings::TRANSPORTS,
         );
         $rows[] = new SettingItem(
             'autoCompact',
@@ -4985,6 +5014,20 @@ final class InteractiveMode
             $this->settings->showTerminalProgress() ? 'true' : 'false',
             'Show OSC 9;4 progress indicators in the terminal tab bar',
             values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'collapseChangelog',
+            'Collapse changelog',
+            $this->settings->collapseChangelog() ? 'true' : 'false',
+            'Show condensed changelog after updates',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'defaultProjectTrust',
+            'Default project trust',
+            self::PROJECT_TRUST_LABELS[$this->settings->defaultProjectTrust()],
+            'Fallback behavior when no extension or saved trust decision decides project trust',
+            values: array_values(self::PROJECT_TRUST_LABELS),
         );
         $rows[] = new SettingItem(
             'autoResizeImages',
@@ -5171,6 +5214,9 @@ final class InteractiveMode
         return $list;
     }
 
+    /** Upstream's `DEFAULT_PROJECT_TRUST_LABELS`: the words `/settings` shows for each `defaultProjectTrust`. */
+    private const array PROJECT_TRUST_LABELS = ['ask' => 'Ask', 'always' => 'Always trust', 'never' => 'Never trust'];
+
     /** One row of `/settings`, applied. Unknown ids are impossible: this list built them. */
     private function applySetting(string $id, string $value): void
     {
@@ -5181,9 +5227,9 @@ final class InteractiveMode
             'showImages' => $this->useShowImages($value === 'drawn'),
             // Takes effect on the next queued message, which is the only time it is read —
             // nothing about the ones already waiting changes, and nothing should.
-            'queueMode' => $this->session->setQueueMode(
-                QueueMode::tryFrom($value) ?? QueueMode::OneAtATime,
-            ),
+            'steeringMode' => $this->session->setSteeringMode(QueueMode::tryFrom($value) ?? QueueMode::OneAtATime),
+            'followUpMode' => $this->session->setFollowUpMode(QueueMode::tryFrom($value) ?? QueueMode::OneAtATime),
+            'transport' => $this->settings->setTransport(in_array($value, Settings::TRANSPORTS, true) ? $value : 'auto'),
             'editorPaddingX' => $this->useEditorPaddingX((int) $value),
             'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
@@ -5193,6 +5239,8 @@ final class InteractiveMode
             'quietStartup' => $this->settings->setQuietStartup($value === 'header' ? 'header' : $value === 'true'),
             'doubleEscapeAction' => $this->settings->setDoubleEscapeAction($value),
             'treeFilterMode' => $this->settings->setTreeFilterMode($value),
+            'collapseChangelog' => $this->settings->setCollapseChangelog($value === 'true'),
+            'defaultProjectTrust' => $this->settings->setDefaultProjectTrust(array_search($value, self::PROJECT_TRUST_LABELS, true) ?: 'ask'),
             'autoResizeImages' => $this->settings->setImageAutoResize($value === 'true'),
             'blockImages' => $this->settings->setBlockImages($value === 'true'),
             'enableSkillCommands' => $this->useSkillCommands($value === 'true'),

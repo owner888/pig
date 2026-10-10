@@ -189,6 +189,31 @@ final class Socket
         }
     }
 
+    /**
+     * Read whatever is available without waiting: '' when nothing is, null at end of stream.
+     *
+     * For a connection kept open between uses, whose peer may have closed it — or said something —
+     * while nothing was reading; `read()` would wait for the next byte.
+     */
+    public function readAvailable(int $length = 8192): ?string
+    {
+        $this->assertOpen();
+        [$data, $warning] = self::capturingWarnings(fn () => fread($this->stream, $length));
+
+        if ($data === false) {
+            $this->close();
+            $reason = $warning !== '' ? ": {$warning}" : '';
+
+            throw new SocketError("Read failed{$reason}");
+        }
+
+        if ($data !== '') {
+            return $data;
+        }
+
+        return feof($this->stream) ? null : '';
+    }
+
     public function isClosed(): bool
     {
         return $this->stream === null;

@@ -481,7 +481,8 @@ final class RpcModeTest extends TestCase
         $this->assertSame('anthropic', $state['model']['provider']);
         $this->assertFalse($state['isStreaming']);
         $this->assertFalse($state['isCompacting']);
-        $this->assertSame('one-at-a-time', $state['queueMode'], 'the default a host can now read back');
+        $this->assertSame('one-at-a-time', $state['steeringMode'], 'the defaults a host can read back');
+        $this->assertSame('one-at-a-time', $state['followUpMode']);
         $this->assertFalse($state['isBashRunning']);
         $this->assertSame(0, $state['messageCount']);
         $this->assertStringEndsWith('.jsonl', $state['sessionFile']);
@@ -492,27 +493,24 @@ final class RpcModeTest extends TestCase
         $this->assertNull($state['routedModel']);
     }
 
-    public function testAHostCanSetTheQueueModeAndNotOnlyReadIt(): void
+    public function testAHostCanSetEachQueuesModeAndNotOnlyReadIt(): void
     {
-        // `get_state` reports it, `/settings` has a row for it, `AgentSession::setQueueMode()`
-        // writes it through to the settings — and there was no command, so a host could see the
-        // mode and never change it. Upstream has one; the table that explained its absence lumped
-        // it in with `queue_message`, which the anchor commit's queue split really does account
-        // for, and this is about the *mode* rather than about queuing anything.
+        // Upstream's `set_steering_mode` and `set_follow_up_mode`, one command per queue.
         $this->start(store: true);
 
-        $this->assertSame('one-at-a-time', $this->data(['type' => 'get_state'])['queueMode']);
+        $this->assertTrue($this->response(['type' => 'set_steering_mode', 'mode' => 'all'])['success']);
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertSame('all', $state['steeringMode']);
+        $this->assertSame('one-at-a-time', $state['followUpMode']);
 
-        $response = $this->response(['type' => 'set_queue_mode', 'mode' => 'all']);
-
-        $this->assertTrue($response['success']);
-        $this->assertSame('all', $this->data(['type' => 'get_state'])['queueMode']);
+        $this->assertTrue($this->response(['type' => 'set_follow_up_mode', 'mode' => 'all'])['success']);
+        $this->assertSame('all', $this->data(['type' => 'get_state'])['followUpMode']);
     }
 
     public function testAQueueModeThatIsNotOneOfTheTwoIsNamedRatherThanIgnored(): void
     {
         $this->start();
-        $response = $this->response(['type' => 'set_queue_mode', 'mode' => 'whenever']);
+        $response = $this->response(['type' => 'set_follow_up_mode', 'mode' => 'whenever']);
 
         $this->assertFalse($response['success']);
         $this->assertStringContainsString('whenever', $response['error']);

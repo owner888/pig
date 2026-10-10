@@ -8,11 +8,8 @@ use Pig\Ai\StreamOptions;
 use Pig\Async\AbortSignal;
 
 /**
- * Upstream's `OpenAICodexResponsesOptions`.
- *
- * Upstream's `transport` (`sse`, `websocket`, `websocket-cached`, `auto`) and
- * `websocketConnectTimeoutMs` are not here: pig speaks only the SSE transport — see
- * `OpenAiCodexResponses`.
+ * Upstream's `OpenAICodexResponsesOptions`. `transport` and `websocketConnectTimeoutMs` are the
+ * base options'; this is the one provider that reads them.
  */
 final readonly class OpenAiCodexResponsesOptions extends StreamOptions
 {
@@ -45,12 +42,14 @@ final readonly class OpenAiCodexResponsesOptions extends StreamOptions
         ?\Closure $onResponse = null,
         ?\Closure $onProviderStreamEvent = null,
         ?array $env = null,
+        ?string $transport = null,
+        ?int $websocketConnectTimeoutMs = null,
         public ?string $reasoningEffort = null,
         public ?string $reasoningSummary = null,
         public ?string $serviceTier = null,
         public ?string $textVerbosity = null,
         public ?string $toolChoice = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
     }
 }

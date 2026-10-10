@@ -4424,6 +4424,37 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Something changed.', $screen);
     }
 
+    public function testACollapsedUpgradeNoteIsOneLineNamingTheVersion(): void
+    {
+        $this->start(changelog: "## [0.2.0] - 2026-10-01\n\n- Something changed.", settings: Settings::inMemory(['collapseChangelog' => true]));
+
+        $screen = $this->screenText();
+
+        $this->assertStringContainsString('Updated to v0.2.0. Use /changelog to view full changelog.', $screen);
+        $this->assertStringNotContainsString('Something changed.', $screen);
+    }
+
+    public function testTheChangelogAndTrustRowsAreInSlashSettings(): void
+    {
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Collapse changelog');
+        $this->type(self::ENTER);
+        $this->assertTrue($this->settings->collapseChangelog());
+        $this->typeUntilRow('Default project trust');
+        $this->type(self::ENTER);
+        $this->assertSame('always', $this->settings->defaultProjectTrust());
+    }
+
+    public function testTheTransportRowIsInSlashSettings(): void
+    {
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Transport');
+        $this->type(self::ENTER);
+        $this->assertSame('sse', $this->settings->transport(), 'from auto, the last of the four, round to the first');
+    }
+
     public function testNothingIsDrawnWhenThereIsNoUpgradeNote(): void
     {
         $this->start();
@@ -4613,12 +4644,9 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->openSettings();
 
-        // Down past Thinking blocks, Pictures and Queued messages to Auto-compact. No thinking
-        // row: the test model does not reason, which is the case the row is left out for.
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
+        // Down to Auto-compact. No thinking row: the test model does not reason, which is the
+        // case the row is left out for.
+        $this->typeUntilRow('Auto-compact');
         $this->type(self::ENTER);
 
         $this->assertFalse($this->settings->compactionEnabled());
@@ -4650,30 +4678,40 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->settings->showImages());
     }
 
-    public function testChangingHowQueuedMessagesAreHandedOverIsRemembered(): void
+    public function testChangingHowSteeringMessagesAreHandedOverIsRemembered(): void
     {
         $this->start();
         $this->openSettings();
-
-        // Theme, Thinking blocks, Pictures, then this one.
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
+        $this->typeUntilRow('Steering mode');
         $this->type(self::ENTER);
 
         // Both halves, which is the whole point of the pair: the agent is told so this run
-        // behaves, and the file is written so the next one does.
-        $this->assertSame(QueueMode::All, $this->session->queueMode());
-        $this->assertSame(QueueMode::All, $this->settings->queueMode());
+        // behaves, and the file is written so the next one does — and only this queue's.
+        $this->assertSame(QueueMode::All, $this->session->steeringMode());
+        $this->assertSame(QueueMode::All, $this->settings->steeringMode());
+        $this->assertSame(QueueMode::OneAtATime, $this->session->followUpMode());
     }
 
-    public function testQueueModeChosenLastTimeIsWhatTheAgentStartsOn(): void
+    public function testChangingHowFollowUpsAreHandedOverIsRemembered(): void
     {
-        $this->start(settings: Settings::inMemory(['queueMode' => 'all']));
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Follow-up mode');
+        $this->type(self::ENTER);
 
-        // Read out of the settings and into `AgentOptions` at construction — a row that only
-        // took effect for the session it was changed in would be a setting in name only.
-        $this->assertSame(QueueMode::All, $this->session->queueMode());
+        $this->assertSame(QueueMode::All, $this->session->followUpMode());
+        $this->assertSame(QueueMode::All, $this->settings->followUpMode());
+        $this->assertSame(QueueMode::OneAtATime, $this->session->steeringMode());
+    }
+
+    public function testTheQueueModesChosenLastTimeAreWhatTheAgentStartsOn(): void
+    {
+        $this->start(settings: Settings::inMemory(['steeringMode' => 'all', 'followUpMode' => 'all']));
+
+        // Read out of the settings and into the agent at construction — a row that only took
+        // effect for the session it was changed in would be a setting in name only.
+        $this->assertSame(QueueMode::All, $this->session->steeringMode());
+        $this->assertSame(QueueMode::All, $this->session->followUpMode());
     }
 
     public function testAModelThatCannotThinkIsNotOfferedAThinkingRow(): void

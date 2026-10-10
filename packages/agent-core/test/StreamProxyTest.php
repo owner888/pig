@@ -577,6 +577,20 @@ final class StreamProxyTest extends TestCase
         $this->assertStringNotContainsStringIgnoringCase("\r\naccept:", $this->server->receivedHead());
     }
 
+    public function testTheTransportAndTheThinkingBudgetsTravelInUpstreamsOrder(): void
+    {
+        $this->turn(
+            [['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]],
+            null,
+            new SimpleStreamOptions(sessionId: 's', maxRetryDelayMs: 5000, thinkingBudgets: ['low' => 2048], transport: 'websocket'),
+        );
+
+        $this->assertSame(
+            ['sessionId' => 's', 'transport' => 'websocket', 'thinkingBudgets' => ['low' => 2048], 'maxRetryDelayMs' => 5000],
+            $this->server->receivedJson()['options'],
+        );
+    }
+
     public function testTheOptionsGoOverAsThreeFields(): void
     {
         $this->turn(

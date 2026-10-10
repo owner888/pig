@@ -1651,6 +1651,17 @@ final class AgentSessionTest extends TestCase
         Async::run(static fn () => $session->prompt('hi'));
 
         $this->assertSame(1234, $captured[2]->timeoutMs);
+        $this->assertSame('auto', $captured[2]->transport);
+        $this->assertNull($captured[2]->websocketConnectTimeoutMs);
+
+        $session = $this->session([], streamFn: $capture, settings: Settings::inMemory([
+            'transport' => 'sse',
+            'websocketConnectTimeoutMs' => 2500,
+        ]));
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame('sse', $captured[3]->transport);
+        $this->assertSame(2500, $captured[3]->websocketConnectTimeoutMs);
     }
 
     // ---- the overflow half --------------------------------------------------------------

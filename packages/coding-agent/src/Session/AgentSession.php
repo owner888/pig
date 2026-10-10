@@ -30,6 +30,7 @@ use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\Providers\OpenAiCodexResponses;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
 use Pig\Ai\Stream;
@@ -404,12 +405,14 @@ final class AgentSession
         };
 
         // What was chosen last time, applied here rather than by whoever built the agent: this
-        // is the class that holds both the agent and the settings, and `setQueueMode()` right
-        // below writes the setting through the same pair. A caller passing it into
-        // `AgentOptions` instead would mean two routes for one fact, and the one route that
-        // every mode and every test already goes through is this constructor.
+        // is the class that holds both the agent and the settings, and `setSteeringMode()` /
+        // `setFollowUpMode()` write the setting through the same pair — upstream's
+        // `syncQueueModesFromSettings()`. A caller passing them into `AgentOptions` instead would
+        // mean two routes for one fact, and the one route every mode and every test already goes
+        // through is this constructor.
         if ($settings !== null) {
-            $this->agent->setQueueMode($settings->queueMode());
+            $this->agent->setSteeringMode($settings->steeringMode());
+            $this->agent->setFollowUpMode($settings->followUpMode());
         }
 
         // `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
@@ -532,8 +535,10 @@ final class AgentSession
      */
     public function writeTo(?SessionManager $store): void
     {
-        // The entry being warmed belongs to the conversation being left.
+        // The entry being warmed belongs to the conversation being left, and so does its Codex
+        // connection — upstream disposes the session it replaces.
         $this->cacheWarmer?->cancel();
+        $this->closeSessionResources();
         $this->store = $store;
         $this->agent->sessionId = $store?->id;
         $this->hooks?->setStore($store);
@@ -670,6 +675,15 @@ final class AgentSession
 
         $this->listeners = [];
         $this->cacheWarmer?->cancel();
+        $this->closeSessionResources();
+    }
+
+    /** Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket is the one there is. */
+    private function closeSessionResources(): void
+    {
+        if ($this->agent->sessionId !== null) {
+            OpenAiCodexResponses::closeWebSocketSessions($this->agent->sessionId);
+        }
     }
 
     /**
@@ -2091,21 +2105,33 @@ final class AgentSession
     }
 
     /**
-     * Whether queued messages go over one at a time or all together.
+     * Whether steering messages go over one at a time or all together.
      *
-     * Upstream's pair, and the settings write is upstream's too: `agent-session.ts` tells the
+     * Upstream's pairs, and the settings write is upstream's too: `agent-session.ts` tells the
      * agent and the settings manager in the same method, so the choice survives the session it
      * was made in.
      */
-    public function queueMode(): QueueMode
+    public function steeringMode(): QueueMode
     {
-        return $this->agent->queueMode();
+        return $this->agent->steeringMode();
     }
 
-    public function setQueueMode(QueueMode $mode): void
+    public function setSteeringMode(QueueMode $mode): void
     {
-        $this->agent->setQueueMode($mode);
-        $this->settings?->setQueueMode($mode);
+        $this->agent->setSteeringMode($mode);
+        $this->settings?->setSteeringMode($mode);
+    }
+
+    /** Whether follow-up messages go over one at a time or all together, once the agent stops. */
+    public function followUpMode(): QueueMode
+    {
+        return $this->agent->followUpMode();
+    }
+
+    public function setFollowUpMode(QueueMode $mode): void
+    {
+        $this->agent->setFollowUpMode($mode);
+        $this->settings?->setFollowUpMode($mode);
     }
 
     /** Queue something for after the agent has finished the request it is on. `steer()` on the expansion. */
@@ -3079,9 +3105,12 @@ final class AgentSession
      * `retry.provider.maxRetryDelayMs`), and the request's headers through the
      * `before_provider_headers` handlers when there are any (`transformHeaders`).
      *
+     * `websocketConnectTimeoutMs` (the request's, else the setting) goes the same way, and so does
+     * `transport`, which upstream's agent carries from the setting into every request.
+     *
      * Not ported: upstream's provider attribution headers (`mergeProviderAttributionHeaders()`,
      * OpenRouter/NVIDIA/Cloudflare/OpenCode identification sent behind its install-telemetry
-     * setting) and `websocketConnectTimeoutMs` (no WebSocket transport).
+     * setting).
      */
     private function buildRequestOptions(SimpleStreamOptions $options): SimpleStreamOptions
     {
@@ -3104,6 +3133,8 @@ final class AgentSession
             'headers' => $headers,
             // Upstream's agent carries `thinkingBudgets` from the settings into every request.
             'thinkingBudgets' => $options->thinkingBudgets ?? $this->settings?->thinkingBudgets(),
+            'transport' => $options->transport ?? $this->settings?->transport(),
+            'websocketConnectTimeoutMs' => $options->websocketConnectTimeoutMs ?? $this->settings?->websocketConnectTimeoutMs(),
         ]);
     }
 

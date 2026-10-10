@@ -40,8 +40,10 @@ final readonly class SimpleStreamOptions extends StreamOptions
         ?\Closure $onResponse = null,
         ?\Closure $onProviderStreamEvent = null,
         ?array $env = null,
+        ?string $transport = null,
+        ?int $websocketConnectTimeoutMs = null,
         public ?array $thinkingBudgets = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
     }
 }

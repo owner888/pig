@@ -13,8 +13,8 @@ use Pig\Async\AbortSignal;
  * Upstream's `StreamOptions` with its `ProviderRequestOptions` base. Not ported, because PHP has
  * nothing for them to mean: `fetch` (upstream's custom `fetch` implementation — a provider here is
  * handed its `HttpClient` in its constructor, which is the same seam), the Anthropic `client`
- * (there is no SDK client to inject), `transport`/`websocketConnectTimeoutMs` (no WebSocket
- * transport), `telemetryContext` (no telemetry), and `samplingParams` (no model carries any).
+ * (there is no SDK client to inject), `telemetryContext` (no telemetry), and `samplingParams` (no
+ * model carries any).
  */
 readonly class StreamOptions
 {
@@ -45,6 +45,11 @@ readonly class StreamOptions
      *        `onProviderStreamEvent`: each parsed provider stream event, before pig reads it
      * @param array<string, string>|null $env upstream's `env` (`ProviderEnv`): provider-scoped
      *        environment values that win over the process environment (`getProviderEnvValue()`)
+     * @param string|null $transport upstream's `transport`, "for providers that support multiple
+     *        transports": `sse`, `websocket`, `websocket-cached` or `auto` — only Codex has a choice,
+     *        and `auto` is what it does when this is unset
+     * @param int|null $websocketConnectTimeoutMs upstream's `websocketConnectTimeoutMs`: how long a
+     *        WebSocket's connection and handshake may take (15,000 when unset, 0 for no limit)
      */
     public function __construct(
         public ?float $temperature = null,
@@ -62,6 +67,8 @@ readonly class StreamOptions
         public ?Closure $onResponse = null,
         public ?Closure $onProviderStreamEvent = null,
         public ?array $env = null,
+        public ?string $transport = null,
+        public ?int $websocketConnectTimeoutMs = null,
     ) {
     }
 
@@ -124,6 +131,8 @@ readonly class StreamOptions
             'onResponse' => $this->onResponse,
             'onProviderStreamEvent' => $this->onProviderStreamEvent,
             'env' => $this->env,
+            'transport' => $this->transport,
+            'websocketConnectTimeoutMs' => $this->websocketConnectTimeoutMs,
         ];
     }
 }

@@ -435,6 +435,34 @@ final class Settings
         $this->set('enableSkillCommands', $enabled);
     }
 
+    /** Upstream's `getCollapseChangelog()`: after an upgrade, one line in place of the release notes. Off by default. */
+    public function collapseChangelog(): bool
+    {
+        return $this->get('collapseChangelog') === true;
+    }
+
+    public function setCollapseChangelog(bool $collapsed): void
+    {
+        $this->set('collapseChangelog', $collapsed);
+    }
+
+    /**
+     * Upstream's `getDefaultProjectTrust()`: what an untrusted project gets when nothing else —
+     * an extension, a saved decision — has decided, `ask`, `always` or `never`. The person's file
+     * alone, as upstream's schema says ("Global setting only"): a project cannot vouch for itself.
+     */
+    public function defaultProjectTrust(): string
+    {
+        $value = $this->global['defaultProjectTrust'] ?? null;
+
+        return in_array($value, ['ask', 'always', 'never'], true) ? $value : 'ask';
+    }
+
+    public function setDefaultProjectTrust(string $value): void
+    {
+        $this->set('defaultProjectTrust', $value);
+    }
+
     /** Upstream's `getImageAutoResize()`: images are fitted inside the provider's limits on the way in. On by default. */
     public function imageAutoResize(): bool
     {
@@ -681,16 +709,52 @@ final class Settings
         $this->set('lastChangelogVersion', $version);
     }
 
-    public function queueMode(): QueueMode
+    /** Upstream's `getSteeringMode()`: how steering messages typed mid-run are handed over. */
+    public function steeringMode(): QueueMode
     {
-        $mode = $this->get('queueMode');
-
-        return is_string($mode) ? QueueMode::tryFrom($mode) ?? QueueMode::OneAtATime : QueueMode::OneAtATime;
+        return $this->queueModeAt('steeringMode');
     }
 
-    public function setQueueMode(QueueMode $mode): void
+    public function setSteeringMode(QueueMode $mode): void
     {
-        $this->set('queueMode', $mode->value);
+        $this->set('steeringMode', $mode->value);
+    }
+
+    /** Upstream's `getFollowUpMode()`: how follow-up messages are handed over once the agent stops. */
+    public function followUpMode(): QueueMode
+    {
+        return $this->queueModeAt('followUpMode');
+    }
+
+    public function setFollowUpMode(QueueMode $mode): void
+    {
+        $this->set('followUpMode', $mode->value);
+    }
+
+    /** Upstream's `Transport` values, in the order `/settings` offers them. */
+    public const array TRANSPORTS = ['sse', 'websocket', 'websocket-cached', 'auto'];
+
+    /**
+     * Upstream's `getTransport()`: how a provider with more than one way to answer is reached —
+     * `sse`, `websocket`, `websocket-cached` or `auto`, the default. Only Codex has a choice.
+     */
+    public function transport(): string
+    {
+        $value = $this->get('transport');
+
+        return in_array($value, self::TRANSPORTS, true) ? $value : 'auto';
+    }
+
+    public function setTransport(string $transport): void
+    {
+        $this->set('transport', $transport);
+    }
+
+    private function queueModeAt(string $key): QueueMode
+    {
+        $mode = $this->get($key);
+
+        return is_string($mode) ? QueueMode::tryFrom($mode) ?? QueueMode::OneAtATime : QueueMode::OneAtATime;
     }
 
     /**
@@ -699,17 +763,21 @@ final class Settings
      * A settings entry as well as an environment variable because the environment belongs to a
      * shell: pig started from a launcher, a desktop entry or another program has none, and the
      * network that needs a proxy needs it every time.
+     *
+     * Upstream's `httpProxy`, read as upstream reads it — `getGlobalSettings().httpProxy`, the
+     * person's file alone: a project does not get to send somebody's traffic through a machine of
+     * its choosing.
      */
-    public function proxyUrl(): ?string
+    public function httpProxy(): ?string
     {
-        $url = $this->get('proxy.url');
+        $url = $this->global['httpProxy'] ?? null;
 
         return is_string($url) && trim($url) !== '' ? trim($url) : null;
     }
 
-    public function setProxyUrl(?string $url): void
+    public function setHttpProxy(?string $url): void
     {
-        $this->set('proxy.url', $url === null || trim($url) === '' ? null : trim($url));
+        $this->set('httpProxy', $url === null || trim($url) === '' ? null : trim($url));
     }
 
     /**
@@ -1066,6 +1134,24 @@ final class Settings
         }
 
         return 300_000;
+    }
+
+    /**
+     * Upstream's `getWebSocketConnectTimeoutMs()`: `websocketConnectTimeoutMs`, read as
+     * `httpIdleTimeoutMs` is (`"disabled"` is 0) — how long a WebSocket's connection and handshake
+     * may take. Null when unset, which is the provider's 15 seconds; a value that is neither a
+     * number nor `"disabled"` is refused.
+     */
+    public function websocketConnectTimeoutMs(): ?int
+    {
+        $value = $this->get('websocketConnectTimeoutMs');
+        $parsed = self::parseHttpIdleTimeoutMs($value);
+
+        if ($parsed === null && $value !== null) {
+            throw new \RuntimeException('Invalid websocketConnectTimeoutMs setting: ' . \Pig\Ai\Utils\JsJson::toString($value));
+        }
+
+        return $parsed;
     }
 
     /** Upstream's `parseHttpIdleTimeoutMs()`. */

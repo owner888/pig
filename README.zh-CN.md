@@ -303,7 +303,7 @@ Logger::timeEnd('benchmark');
 
 **按模型、按工具。** `modelThinkingLevels` 按 `provider/id` 记住思考等级（`/settings` 里也有这一行），`thinkingBudgets` 按等级替换 token 预算，`enabledModels` 是没输入 `--models` 时的范围，`defaultTools` 设定内置工具（`["read", "bash"]`，或 `["+grep", "-write"]` 这样的增减；`-name` 也能去掉自定义工具）。`/skill:name 参数` 把技能当作消息发送（`enableSkillCommands`）。`compaction.modelOverrides` 按模型设定压缩预算，`branchSummary.reserveTokens` 和 `branchSummary.skipPrompt` 设定分支摘要的，`warnings.anthropicExtraUsage: false` 关掉 Claude 订阅提醒。
 
-**图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。
+**图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。`defaultProjectTrust`（`ask`、`always`、`never`）决定还没被决定过的项目（`-a`/`--approve` 或 `-na`/`--no-approve` 只替这一次运行决定，什么都不保存），`collapseChangelog: true` 在升级后只显示一行而不是完整更新说明，`steeringMode` / `followUpMode`（`one-at-a-time` 或 `all`）决定排队消息怎么交出去，`httpProxy` 是 `--proxy` 和环境变量都没给时用的代理，`transport`（`auto`、`websocket`、`websocket-cached`、`sse`）决定怎么连 ChatGPT 的 Codex 后端——默认走为会话保留的 WebSocket，失败时退回 SSE——`websocketConnectTimeoutMs` 是它握手的时限。
 
 ### 订阅账号登录
 
