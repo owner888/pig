@@ -485,7 +485,7 @@ if (!isset($options['no-extensions']) && $mode !== 'web') {
         $cliExtensionPaths,
         auth: $auth,
         projectTrusted: $trustUndecided ? $decideTrust : true,
-        disabled: isset($options['no-mcp']) ? ['pig-mcp'] : [],
+        disabled: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
         projectConfigured: static fn (): array => $settings->extensions(),
         packageExtensions: static fn (bool $trusted): array => $resolvePackages($trusted)->enabled('extensions'),
     );
@@ -716,7 +716,7 @@ try {
         projectTrusted: $projectTrusted,
         excludeTools: $excludeTools,
         // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`, by pig's directory name.
-        disabledExtensions: isset($options['no-mcp']) ? ['pig-mcp'] : [],
+        disabledExtensions: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
         // Every option, for the flags extensions declare (`registerFlag()`); the parser does not
         // refuse an option it has not heard of, which is what makes `--my-flag` reachable at all.
         flags: $options,

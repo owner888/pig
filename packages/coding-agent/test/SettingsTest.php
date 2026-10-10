@@ -521,6 +521,20 @@ final class SettingsTest extends TestCase
         $this->assertSame([], $settings->extensions());
     }
 
+    public function testDisabledExtensionsAreReadFromSettings(): void
+    {
+        $this->writeGlobal([
+            'disabledExtensions' => ['pig-android-use', 'pig-computer'],
+        ]);
+
+        $settings = $this->load();
+        $this->assertSame(['pig-android-use', 'pig-computer'], $settings->disabledExtensions());
+
+        $this->writeGlobal(['disabledExtensions' => 'not an array']);
+        $settings = $this->load();
+        $this->assertSame([], $settings->disabledExtensions());
+    }
+
     // ---- not writing ---------------------------------------------------------------------
 
     public function testInMemorySettingsAreNeverWrittenAnywhere(): void

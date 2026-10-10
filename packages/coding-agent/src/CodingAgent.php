@@ -255,7 +255,7 @@ final class CodingAgent
                 $cliExtensions,
                 auth: $auth,
                 projectTrusted: $projectTrusted,
-                disabled: $disabledExtensions,
+                disabled: array_values(array_unique([...$disabledExtensions, ...$settings->disabledExtensions()])),
                 packageExtensions: static fn (): array => $packageResources?->enabled('extensions') ?? [],
             ),
         };

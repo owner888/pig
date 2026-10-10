@@ -666,6 +666,18 @@ final class Settings
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
     }
 
+    /**
+     * Bundled or installed extensions disabled by name in the settings.
+     *
+     * @return list<string>
+     */
+    public function disabledExtensions(): array
+    {
+        $value = $this->get('disabledExtensions');
+
+        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+    }
+
     public function skillsEnabled(): bool
     {
         return $this->get('skills.enabled') !== false;

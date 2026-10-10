@@ -3189,6 +3189,7 @@ final class InteractiveMode
             $this->settings->extensions(),
             auth: $this->auth,
             projectTrusted: $this->projectTrusted,
+            disabled: $this->settings->disabledExtensions(),
         );
         $this->extensions = $loadedExtensions;
 

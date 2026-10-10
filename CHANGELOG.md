@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.21] - 2026-10-08
+
+### Added
+
+- **Disabled Extensions Configuration via Settings (`Settings::disabledExtensions`)**:
+  - Added support for disabling specific bundled or installed extensions by name via `disabledExtensions` in `settings.json` (e.g. `["pig-android-use", "pig-computer"]`), merging cleanly with CLI flags across interactive TUI, session startup, and `/reload`.
+
 ## [0.5.20] - 2026-10-08
 
 ### Fixed

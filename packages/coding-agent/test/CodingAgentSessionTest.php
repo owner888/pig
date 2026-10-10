@@ -1036,4 +1036,15 @@ PHP);
         $this->assertNotContains('zoo_feed', $started->customTools->names());
         $this->assertSame([], array_filter($started->extensions, static fn ($ext): bool => $ext->name === 'zoo'));
     }
+
+    public function testDisabledExtensionsFromSettingsAreRespected(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+        file_put_contents($this->home . '/settings.json', json_encode(['disabledExtensions' => ['zoo']]));
+
+        $started = $this->start();
+
+        $this->assertNotContains('zoo_feed', $started->customTools->names());
+        $this->assertSame([], array_filter($started->extensions, static fn ($ext): bool => $ext->name === 'zoo'));
+    }
 }
