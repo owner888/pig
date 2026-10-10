@@ -162,8 +162,11 @@ if (isset($options['help'])) {
       --no-proxy        ignore all of that and connect directly
       -v, --version     print the version, and stop
       -h, --help        this
-      --theme <name>    a theme name, or a light/dark pair like `light/dark`
+      --use-theme <name>
+                        a theme name, or a light/dark pair like `light/dark`
                         (default: the `theme` setting, else `system`)
+      --theme <path>    load a theme file or directory for this run (repeatable)
+      --no-themes       look for no themes but the built-in ones and --theme's
       --thinking <l>    off, minimal, low, medium, high, xhigh
       -t, --tools <list>
                         which tools the model gets, comma-separated; names or patterns
@@ -188,6 +191,9 @@ if (isset($options['help'])) {
       --export <file>   write a session file out as HTML and stop. A second word is
                         where it goes: `--export a.jsonl out.html`
       --skills-dir <d>  one more folder of skills, on top of the standard ones
+      --skill <path>    load a skill file or directory for this run (repeatable)
+      --prompt-template <path>
+                        load a prompt template file or directory for this run (repeatable)
       -ns, --no-skills  start without loading any skills, wherever they live
       -np, --no-prompt-templates
                         start without loading any prompt templates
@@ -196,7 +202,8 @@ if (isset($options['help'])) {
       --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
       --no-tool-files   start without loading ~/.pig/agent/tools or .pig/tools
       -e, --extension <s>   load an extension for this run: a file, a directory, or a package
-                        source (git:github.com/user/repo) cloned under tmp/ and not written to settings
+                        source (git:github.com/user/repo) cloned under tmp/ and not written to
+                        settings (repeatable)
       -ne, --no-extensions
                         start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
@@ -230,6 +237,18 @@ if (!is_dir($cwd)) {
 
     exit(1);
 }
+
+// Upstream's `resolveCliPaths()`: `--skill`, `--prompt-template` and `--theme` paths are the
+// shell's, so a relative one is from where pig was started — not `--cwd`'s directory.
+$cliPaths = static fn (string $option): array => array_map(
+    static fn (string $path): string => Pig\CodingAgent\Tools\Paths::resolve($path, getcwd() ?: '.'),
+    $arguments->values($option),
+);
+
+// Before any theme is looked up: upstream's `--theme <path>` loads theme files or directories for
+// this run, and `--no-themes` stops looking for any elsewhere.
+Themes::setCliThemePaths($cliPaths('theme'));
+Themes::useThemeDiscovery(!isset($options['no-themes']));
 
 // Which way in. Upstream's rule, kept: `--mode` given at all means no terminal, and `-p` is
 // the short way of saying `--mode text`. So the terminal is the default and nothing but the
@@ -287,7 +306,7 @@ foreach ($settings->problems() as $problem) {
 // is not yet allowed in.
 $askTrust = $interactive && $startsASession
     ? static function (array $choices) use ($cwd, $options, &$settings): ?Pig\CodingAgent\TrustChoice {
-        $themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
+        $themeSetting = $options['use-theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
         $themeError = Themes::initTheme(Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()));
         if ($themeError !== null) {
             fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
@@ -416,10 +435,11 @@ if (isset($options['extension'])) {
     $manager->setProgressCallback($packageProgress);
 
     try {
-        $temporaryResources = $manager->resolveExtensionSources([$options['extension']], temporary: true);
+        // Every `-e`, as upstream's "can be used multiple times".
+        $temporaryResources = $manager->resolveExtensionSources($arguments->values('extension'), temporary: true);
         $cliExtensionPaths = $temporaryResources->enabled('extensions');
     } catch (\Pig\CodingAgent\Packages\PackageError $error) {
-        fwrite(STDERR, Style::red("--extension {$options['extension']}: {$error->getMessage()}\n"));
+        fwrite(STDERR, Style::red("--extension: {$error->getMessage()}\n"));
 
         exit(1);
     }
@@ -493,7 +513,8 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
     return $trusted;
 };
 
-if (!isset($options['no-extensions']) && $mode !== 'web') {
+// Upstream's `--no-extensions` turns off every extension but the ones `-e` names.
+if ((!isset($options['no-extensions']) || $cliExtensionPaths !== []) && $mode !== 'web') {
     \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($settings);
     $preloadedExtensions = \Pig\CodingAgent\Extensions\ExtensionLoader::load(
         $cwd,
@@ -504,6 +525,7 @@ if (!isset($options['no-extensions']) && $mode !== 'web') {
         disabled: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
         projectConfigured: static fn (): array => $settings->extensions(),
         packageExtensions: static fn (bool $trusted): array => $resolvePackages($trusted)->enabled('extensions'),
+        discover: !isset($options['no-extensions']),
     );
 }
 
@@ -518,9 +540,9 @@ if (!$trustUndecided) {
 
 Timings::mark('extensions');
 
-// What `--theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
+// What `--use-theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
 // Null is upstream's default, the system theme.
-$themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
+$themeSetting = $options['use-theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
 
 
 // The web shell starts no session of its own: each tab in the page is a `pig --mode rpc` child,
@@ -580,7 +602,7 @@ if (isset($options['export'])) {
 // A theme named on the command line or in the environment that matches nothing is one line on the
 // shell, before anything has been loaded. One in the settings is reported by the interactive mode's
 // theme controller instead, which falls back to the system theme as upstream's does.
-if (isset($options['theme']) || (getenv('PIG_THEME') ?: '') !== '') {
+if (isset($options['use-theme']) || (getenv('PIG_THEME') ?: '') !== '') {
     $available = Themes::getAvailableThemes();
     $named = Themes::parseAutoThemeSetting($themeSetting);
     foreach ($named === null ? [$themeSetting] : [$named['lightTheme'], $named['darkTheme']] as $wanted) {
@@ -770,6 +792,8 @@ try {
         noTools: isset($options['no-tools']) ? 'all' : (isset($options['no-builtin-tools']) ? 'builtin' : null),
         withPromptTemplates: !isset($options['no-prompt-templates']),
         withContextFiles: !isset($options['no-context-files']),
+        skillPaths: $cliPaths('skill'),
+        promptTemplatePaths: $cliPaths('prompt-template'),
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying
@@ -888,9 +912,9 @@ if ($mode === 'rpc') {
         $session,
         $cwd,
         VERSION,
-        // Only an explicit `--theme` or `PIG_THEME`, which overrides the setting without saving it;
-        // otherwise the controller reads the setting.
-        $options['theme'] ?? (getenv('PIG_THEME') ?: null),
+        // Only an explicit `--use-theme` or `PIG_THEME`, which overrides the setting without saving
+        // it; otherwise the controller reads the setting.
+        $options['use-theme'] ?? (getenv('PIG_THEME') ?: null),
         contextFiles: $contextFiles,
         skills: $skills,
         fileCommands: $fileCommands,

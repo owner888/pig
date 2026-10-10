@@ -156,6 +156,31 @@ PHP);
         $this->assertSame('outside', $loaded[0]->name);
     }
 
+    public function testNoExtensionsStillLoadsTheOnesNamedOnTheCommandLine(): void
+    {
+        // Upstream's `--no-extensions`: "explicit -e paths still work".
+        $extension = <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+return function (ExtensionApi $pi): void {};
+PHP;
+        file_put_contents($this->homeDir . '/extensions/discovered.php', $extension);
+        is_dir($this->cwd . '/.pig/extensions') || mkdir($this->cwd . '/.pig/extensions', 0755, true);
+        file_put_contents($this->cwd . '/.pig/extensions/project.php', $extension);
+        file_put_contents($this->tempDir . '/named.php', $extension);
+
+        [$loaded] = ExtensionLoader::load(
+            $this->cwd,
+            configured: [$this->tempDir . '/named.php'],
+            cliPaths: [$this->tempDir . '/named.php'],
+            home: $this->homeDir,
+            packageExtensions: fn (): array => [$this->homeDir . '/extensions/discovered.php'],
+            discover: false,
+        );
+
+        $this->assertSame(['named'], array_map(static fn (object $e): string => $e->name, $loaded));
+    }
+
     public function testBackwardCompatibilityWithHookApiTypehint(): void
     {
         $legacy = $this->homeDir . '/extensions/legacy.php';

@@ -19,7 +19,7 @@ use Pig\CodingAgent\Mermaid\Span;
  * box at 40 columns. pig's has to be the same to the character.
  *
  * Upstream's fuzz corpus was run the same way while porting: every one of its 4,486 sources
- * matches too, but for the ones holding a tab, a soft hyphen, a keycap or a run of emoji, which
+ * matches too, but for the ones holding a tab, a soft hyphen or a keycap, which
  * upstream measures with its own `unicode-width` table and pig with `Width::visible()` — the
  * measure the rest of the screen is drawn with (see `Mermaid\Measure`).
  */

@@ -188,6 +188,12 @@ final class Themes
     /** @var list<string> the theme files the packages provide, see `setPackageThemeFiles()` */
     private static array $packageThemeFiles = [];
 
+    /** @var list<string> the files and directories `--theme` named, see `setCliThemePaths()` */
+    private static array $cliThemePaths = [];
+
+    /** False is upstream's `--no-themes`, see `useThemeDiscovery()`. */
+    private static bool $themeDiscovery = true;
+
     /** @var list<string> what the last custom theme listing skipped, and why (pig addition) */
     private static array $customThemeErrors = [];
 
@@ -326,6 +332,10 @@ final class Themes
      */
     public static function getCustomThemesDirs(): array
     {
+        if (!self::$themeDiscovery) {
+            return self::$extensionThemeDirs;
+        }
+
         $dirs = [Config::home() . '/themes', Config::piHome() . '/themes'];
         $cwd = self::$customThemesCwd;
         if ($cwd !== null && $cwd !== '') {
@@ -357,6 +367,26 @@ final class Themes
     public static function setPackageThemeFiles(array $files): void
     {
         self::$packageThemeFiles = array_values($files);
+    }
+
+    /**
+     * Upstream's `--theme <path>`: theme files, or directories of them, for this run — after every
+     * other source, as upstream's `additionalThemePaths` are, and loaded under `--no-themes` too.
+     *
+     * @param list<string> $paths absolute
+     */
+    public static function setCliThemePaths(array $paths): void
+    {
+        self::$cliThemePaths = array_values($paths);
+    }
+
+    /**
+     * Upstream's `--no-themes` when false: no theme is looked for in the four directories or the
+     * packages. The built-in ones, an extension's and `--theme`'s are still there.
+     */
+    public static function useThemeDiscovery(bool $enabled): void
+    {
+        self::$themeDiscovery = $enabled;
     }
 
     /** The project whose `.pig/themes` and `.pi/themes` are searched; null searches only the two homes. */
@@ -476,8 +506,8 @@ final class Themes
         }
 
         // After the directories: a package's theme ranks after every local one, so a name
-        // both have is the person's.
-        foreach (self::$packageThemeFiles as $themePath) {
+        // both have is the person's. `--theme`'s come last, as upstream's additional paths do.
+        foreach ([...(self::$themeDiscovery ? self::$packageThemeFiles : []), ...self::cliThemeFiles()] as $themePath) {
             try {
                 $packageTheme = self::loadThemeFromPath($themePath);
             } catch (Throwable $error) {
@@ -490,6 +520,27 @@ final class Themes
         }
 
         return $result;
+    }
+
+    /** @return list<string> `--theme`'s files, a directory's `.json` files in name order */
+    private static function cliThemeFiles(): array
+    {
+        $files = [];
+
+        foreach (self::$cliThemePaths as $path) {
+            if (is_dir($path)) {
+                $found = glob(rtrim($path, '/') . '/*.json') ?: [];
+                sort($found);
+                array_push($files, ...$found);
+            } elseif (is_file($path)) {
+                $files[] = $path;
+            } else {
+                // Upstream's diagnostic, under pig's list of theme problems.
+                self::$customThemeErrors[] = "{$path}: Theme path does not exist";
+            }
+        }
+
+        return $files;
     }
 
     private static function assertThemeNameIsValid(string $name): void

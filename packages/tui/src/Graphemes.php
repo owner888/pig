@@ -33,7 +33,50 @@ final class Graphemes
             throw new TuiError('Grapheme split failed: ' . preg_last_error_msg());
         }
 
-        return $matches[0];
+        $clusters = [];
+
+        foreach ($matches[0] as $cluster) {
+            // One codepoint is at most four bytes, and the bug needs two pictographs.
+            if (strlen($cluster) > 4 && preg_match_all('/\p{Extended_Pictographic}/u', $cluster) > 1) {
+                array_push($clusters, ...self::splitPictographs($cluster));
+            } else {
+                $clusters[] = $cluster;
+            }
+        }
+
+        return $clusters;
+    }
+
+    /**
+     * A cluster `\X` made of more than one emoji, cut back into them.
+     *
+     * **PCRE2 10.42 — the one PHP 8.3 bundles — joins adjacent pictographs into one cluster**:
+     * `🙂🙂🙂` came back as one grapheme, two columns wide, where the terminal draws six, and every
+     * cursor move after it landed short. UAX #29 joins two pictographs only across a ZWJ (GB11,
+     * `👨‍👩‍👧`), so the cut goes before each pictograph that does not follow one. On a PCRE that
+     * gets this right there is never such a cluster to cut.
+     *
+     * @return list<string>
+     */
+    private static function splitPictographs(string $cluster): array
+    {
+        $pieces = [];
+        $piece = '';
+        $previous = null;
+
+        foreach (mb_str_split($cluster, 1, 'UTF-8') as $codepoint) {
+            if ($piece !== '' && $previous !== "\u{200D}" && preg_match('/^\p{Extended_Pictographic}$/u', $codepoint) === 1) {
+                $pieces[] = $piece;
+                $piece = '';
+            }
+
+            $piece .= $codepoint;
+            $previous = $codepoint;
+        }
+
+        $pieces[] = $piece;
+
+        return $pieces;
     }
 
     /** The first codepoint, as an integer. Null for the empty string. */

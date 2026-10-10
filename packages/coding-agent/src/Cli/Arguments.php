@@ -28,8 +28,14 @@ final readonly class Arguments
     public const array TAKES_A_VALUE = [
         'model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models', 'proxy',
         'tools', 'exclude-tools', 'export', 'list-models', 'extension', 'session', 'web-host', 'web-port',
-        'mcp-host', 'mcp-port', 'session-dir', 'name',
+        'mcp-host', 'mcp-port', 'session-dir', 'name', 'use-theme', 'skill', 'prompt-template',
     ];
+
+    /**
+     * The options that may be given more than once, each time adding one — upstream's "can be used
+     * multiple times". `$options` still holds the last; `values()` has them all, in order.
+     */
+    public const array REPEATABLE = ['extension', 'skill', 'prompt-template', 'theme'];
 
     /**
      * The short ones, and the long option each stands for.
@@ -65,11 +71,13 @@ final readonly class Arguments
      * @param array<string, string> $options a flag is present with an empty value
      * @param list<string>          $messages what to say, in order
      * @param list<string>          $files    the `@file` paths, without their `@`
+     * @param array<string, list<string>> $repeated every value of each `REPEATABLE` option given
      */
     public function __construct(
         public array $options,
         public array $messages,
         public array $files,
+        public array $repeated = [],
     ) {
     }
 
@@ -77,6 +85,7 @@ final readonly class Arguments
     public static function parse(array $arguments): self
     {
         $options = [];
+        $repeated = [];
         $rest = [];
         $verbatim = [];
 
@@ -108,6 +117,10 @@ final readonly class Arguments
                     [$name, $value] = explode('=', $name, 2);
                     $options[$name] = $value;
 
+                    if (in_array($name, self::REPEATABLE, true)) {
+                        $repeated[$name][] = $value;
+                    }
+
                     continue;
                 }
             }
@@ -128,6 +141,10 @@ final readonly class Arguments
             // reading past the end of the array. Whoever validates it says what is wrong,
             // which is a better message than one from here about array bounds.
             $options[$name] = $arguments[++$at] ?? '';
+
+            if (in_array($name, self::REPEATABLE, true)) {
+                $repeated[$name][] = $options[$name];
+            }
         }
 
         [$messages, $files] = self::split($rest);
@@ -139,7 +156,7 @@ final readonly class Arguments
         // read — the platform doing for free what has to be said here.
         $said = array_map(Utf8::sanitize(...), [...$messages, ...$verbatim]);
 
-        return new self($options, $said, $files);
+        return new self($options, $said, $files, $repeated);
     }
 
     /**
@@ -194,6 +211,16 @@ final readonly class Arguments
     public function value(string $option): ?string
     {
         return $this->options[$option] ?? null;
+    }
+
+    /**
+     * Every value a `REPEATABLE` option was given, in order; empty when it was not given.
+     *
+     * @return list<string>
+     */
+    public function values(string $option): array
+    {
+        return $this->repeated[$option] ?? [];
     }
 
     /** `-p`, as the long option it means, or null when this is not a short option. */

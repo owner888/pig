@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.29] - 2026-10-08
+
+### Added
+
+- **Explicit CLI Resource Loading & Multi-Option Flags (`--skill`, `--prompt-template`, `--theme`, `--use-theme`, `--no-themes`)**:
+  - Added `--skill <path>` and `--prompt-template <path>` CLI options to explicitly load skill and prompt-template files/directories for single runs, taking precedence even when `--no-skills` or `--no-prompt-templates` are enabled.
+  - Aligned theme CLI options with upstream pi: `--theme <path>` loads themes from files/directories, `--use-theme <name>` sets the active theme name, and `--no-themes` disables all theme directory auto-discovery.
+  - Supported repeated usage for `-e`, `--skill`, `--prompt-template`, and `--theme`.
+
+### Changed
+
+- **`--theme` Takes Path, `--use-theme` Takes Name**:
+  - Aligned `--theme <path>` to accept file/directory paths and moved theme name selection to `--use-theme <name>`, strictly matching upstream pi.
+
+### Fixed
+
+- **Adjacent Emoji Grapheme Cluster Splitting under PCRE2 10.42 (`Graphemes::split()`)**:
+  - Implemented `splitPictographs()` in `Graphemes::split()` to work around the PCRE2 10.42 bug bundled in PHP 8.3 (where `\X` improperly joined adjacent pictographs lacking a ZWJ), ensuring `Width::visible("🙂🙂🙂")` computes as 6 columns matching terminal rendering and fixing cursor alignment and markdown wrapping.
+- **Explicit `-e` Options Preserved under `-ne`**:
+  - Allowed explicit `-e` extension paths to load even when `--no-extensions` (`-ne`) is passed, and properly preserved multiple `-e` options without dropping prior occurrences.
+
 ## [0.5.28] - 2026-10-08
 
 ### New Features

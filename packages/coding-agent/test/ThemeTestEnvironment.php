@@ -75,6 +75,8 @@ trait ThemeTestEnvironment
         Themes::setRegisteredThemes([]);
         Themes::setThemeJsonValidator(null);
         Themes::setCustomThemesCwd(null);
+        Themes::setCliThemePaths([]);
+        Themes::useThemeDiscovery(true);
         Themes::onThemeChange(null);
         TerminalImage::setCapabilityOverrides([]);
         TerminalImage::resetCapabilitiesCache();

@@ -18,6 +18,29 @@ final class WidthTest extends TestCase
         Width::clearCache();
     }
 
+    /**
+     * PCRE2 10.42's `\X` joins adjacent emoji into one cluster; these are the clusters
+     * `Intl.Segmenter` answers, which a ZWJ sequence, a skin tone and a flag pair keep whole.
+     *
+     * @return iterable<string, array{string, list<string>, int}>
+     */
+    public static function emojiRuns(): iterable
+    {
+        yield 'three in a row' => ["🙂🙂🙂", ["🙂", "🙂", "🙂"], 6];
+        yield 'with skin tones' => ["👍🏽👍🏽", ["👍🏽", "👍🏽"], 4];
+        yield 'two ZWJ families' => ["👨‍👩‍👧👨‍👩‍👧", ["👨‍👩‍👧", "👨‍👩‍👧"], 4];
+        yield 'text presentation then emoji' => ["⚠️🙂", ["⚠️", "🙂"], 4];
+        yield 'two flags' => ["🇯🇵🇺🇸", ["🇯🇵", "🇺🇸"], 4];
+    }
+
+    /** @param list<string> $clusters */
+    #[DataProvider('emojiRuns')]
+    public function testARunOfEmojiIsOneClusterEach(string $text, array $clusters, int $width): void
+    {
+        $this->assertSame($clusters, Graphemes::split($text));
+        $this->assertSame($width, Width::visible($text));
+    }
+
     /** @return list<array{string, int, string}> */
     public static function widths(): array
     {

@@ -46,6 +46,8 @@ final class ExtensionLoader
      * @param (Closure(bool): list<string>)|null $packageExtensions the extensions the configured
      *        packages provide (`PackageManager::resolve()`), asked once trust is decided and
      *        loaded last — a package's resource ranks after every local one, as upstream ranks it
+     * @param bool $discover false is upstream's `--no-extensions`: only `$cliPaths` load — nothing
+     *        discovered, configured, bundled, from the project or from a package
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -58,13 +60,14 @@ final class ExtensionLoader
         array $disabled = [],
         ?Closure $projectConfigured = null,
         ?Closure $packageExtensions = null,
+        bool $discover = true,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
-        $paths = self::discover($home . '/extensions');
+        $paths = $discover ? self::discover($home . '/extensions') : [];
 
-        foreach ([...$configured, ...$cliPaths] as $path) {
+        foreach ([...($discover ? $configured : []), ...$cliPaths] as $path) {
             $paths[] = Paths::resolve($path, $cwd);
         }
 
@@ -108,6 +111,10 @@ final class ExtensionLoader
 
         if ($projectTrusted instanceof Closure) {
             $projectTrusted = $projectTrusted(array_values($extensions));
+        }
+
+        if (!$discover) {
+            return [array_values($extensions), $errors];
         }
 
         // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An

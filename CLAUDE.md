@@ -4786,7 +4786,7 @@ the code) ported file for file: `Parse` is `parse.ts`, `Layout` `layout.ts`, `Se
 `layout-seq.ts`, `Canvas`, `Labels`, `SourceBox`, and `Mermaid::render()` is `render()`. **One
 deliberate difference: widths are pig's** (`Measure` is `Graphemes::split()` + `Width::visible()`),
 not the package's `unicode-width` table, because the rows go through pig's Markdown and onto pig's
-screen, which measure that way. It shows only on tabs, soft hyphens, keycaps and emoji runs.
+screen, which measure that way. It shows only on tabs, soft hyphens and keycaps.
 
 `MermaidTest` replays every block of upstream's hand-written cases as grok-mermaid drew them under
 Node (`test/fixtures/mermaid/cases.json`). The fuzz corpus (4,486 sources) was checked the same
@@ -4818,6 +4818,17 @@ old `--no-tools` is `--no-tool-files`** — it skips `~/.pig/agent/tools` and `.
 reader for the old spelling. `--name` (`-n`) names the session before the first turn (upstream's
 `appendSessionInfo()`), `--no-prompt-templates` (`-np`) and `--no-context-files` (`-nc`) switch off
 those loaders; every one of upstream's short forms is in `Arguments::SHORT`.
+
+**`--theme <path>` is upstream's too**: a theme file or directory for this run
+(`Themes::setCliThemePaths()`), and the theme to start on is `--use-theme <name>` — pig's old
+`--theme`, again with no reader for the old spelling. `--no-themes` (`Themes::useThemeDiscovery()`)
+looks in none of the four directories or the packages; the built-ins, an extension's and `--theme`'s
+stay. `--skill` and `--prompt-template` load files or directories (`CodingAgent::session(skillPaths:,
+promptTemplatePaths:)`), after everything else and **under `--no-skills` / `--no-prompt-templates`
+too** — naming one is asking for it — and a path that is neither is `<Kind> path does not exist`.
+These four and `-e` repeat (`Arguments::REPEATABLE`, `values()`), and `-e` loads under `-ne`
+(`ExtensionLoader::load(discover: false)`), as upstream's "explicit -e paths still work". A relative
+path is the shell's, not `--cwd`'s. `builtin:<name>` sources are not supported.
 
 ## Commands
 
@@ -4859,6 +4870,26 @@ below came out of exactly that — `proxy.ts`' event-stream reader dropping ever
 own sibling handles, `mom`'s diff renderer numbering the wrong lines, and the three disagreeing
 spellings of the sanitize composition, one of which is safe only because its caller had already
 cleaned the text.
+
+### A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
+
+**Symptom**: `Width::visible("🙂🙂🙂")` was 2 where the terminal draws 6, so a line of emoji wrapped
+late and the cursor landed short after it — the editor, wrapping and search all count through
+`Graphemes::split()`.
+
+**Cause**: PHP 8.3 bundles PCRE2 10.42, whose `\X` lets two `Extended_Pictographic` codepoints join
+with no ZWJ between them (fixed in 10.43). UAX #29 joins them only across a ZWJ (GB11, `👨‍👩‍👧`).
+
+**Rule**: `Graphemes::split()` cuts a cluster holding two or more pictographs back apart, before
+each one that does not follow a ZWJ — a no-op on a PCRE that gets it right. Compare a cluster
+question with `Intl.Segmenter` under Node, not with what PHP happens to answer on one machine.
+
+```php
+// 🙂🙂🙂 → ['🙂', '🙂', '🙂'];  👨‍👩‍👧👨‍👩‍👧 → two;  👍🏽👍🏽 → two (the skin tone is Extend)
+if (strlen($cluster) > 4 && preg_match_all('/\p{Extended_Pictographic}/u', $cluster) > 1) {
+    array_push($clusters, ...self::splitPictographs($cluster));
+}
+```
 
 ### `stream_socket_enable_crypto()` returns `0`, not just `true`/`false`
 

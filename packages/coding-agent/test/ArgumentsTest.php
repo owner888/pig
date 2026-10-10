@@ -353,6 +353,20 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testTheRepeatableOptionsKeepEveryValueInOrder(): void
+    {
+        $parsed = $this->parse('-e', 'a', '--skill', 's1', '--skill=s2', '--prompt-template', 'p', '--theme', 't1', '--theme', 't2', '--use-theme', 'dark', 'go');
+
+        $this->assertSame(['a'], $parsed->values('extension'));
+        $this->assertSame(['s1', 's2'], $parsed->values('skill'));
+        $this->assertSame(['p'], $parsed->values('prompt-template'));
+        $this->assertSame(['t1', 't2'], $parsed->values('theme'));
+        $this->assertSame('t2', $parsed->value('theme'), 'the last one, for whoever reads one');
+        $this->assertSame('dark', $parsed->value('use-theme'));
+        $this->assertSame([], $parsed->values('name'));
+        $this->assertSame(['go'], $parsed->messages);
+    }
+
     public function testShortToolsAndNameTakeTheirValues(): void
     {
         $parsed = $this->parse('-t', 'read,bash', '-xt', 'bash', '-n', 'Refactor auth', 'go');

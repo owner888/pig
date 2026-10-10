@@ -112,6 +112,31 @@ final class ThemeTest extends TestCase
         $this->assertSame(Themes::theme()->fg('muted', 'x'), ($editor->selectList->description)('x'));
     }
 
+    public function testThemePathsLoadEvenWhenNothingElseIsLookedFor(): void
+    {
+        // Upstream's `--theme <path>` and `--no-themes`: a file and a directory for this run, the
+        // custom directories left out, the built-ins kept, a missing path said by name.
+        is_dir($this->customThemesDir()) || mkdir($this->customThemesDir(), 0o777, true);
+        $theme = self::builtinThemeJson('dark');
+        file_put_contents($this->customThemesDir() . '/mine.json', json_encode([...$theme, 'name' => 'mine'], JSON_THROW_ON_ERROR));
+        mkdir($this->themeTestRoot . '/cli', 0o777, true);
+        file_put_contents($this->themeTestRoot . '/cli/one.json', json_encode([...$theme, 'name' => 'one'], JSON_THROW_ON_ERROR));
+        file_put_contents($this->themeTestRoot . '/two.json', json_encode([...$theme, 'name' => 'two'], JSON_THROW_ON_ERROR));
+
+        Themes::setCliThemePaths([$this->themeTestRoot . '/cli', $this->themeTestRoot . '/two.json', $this->themeTestRoot . '/gone']);
+        $this->assertContains('mine', Themes::getAvailableThemes());
+        $this->assertContains('one', Themes::getAvailableThemes());
+        $this->assertContains('two', Themes::getAvailableThemes());
+
+        Themes::useThemeDiscovery(false);
+        $available = Themes::getAvailableThemes();
+        $this->assertNotContains('mine', $available);
+        $this->assertContains('one', $available);
+        $this->assertContains('dark', $available);
+        $this->assertContains($this->themeTestRoot . '/gone: Theme path does not exist', Themes::getCustomThemeErrors());
+        $this->assertSame(['success' => true], Themes::setTheme('two'));
+    }
+
     public function testAProjectThemeIsFoundOnceTheProjectIsSet(): void
     {
         $project = $this->themeTestRoot . '/project';

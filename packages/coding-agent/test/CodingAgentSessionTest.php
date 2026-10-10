@@ -847,6 +847,27 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame(['bash'], $this->toolNames($this->start([], ['noTools' => 'all', 'tools' => ['bash']])));
     }
 
+    public function testSkillAndPromptTemplatePathsLoadEvenWithTheirDiscoveryOff(): void
+    {
+        mkdir($this->cwd . '/extra/review', 0o755, true);
+        file_put_contents($this->cwd . '/extra/review/SKILL.md', "---\nname: review\ndescription: Review closely\n---\nRead it.\n");
+        file_put_contents($this->cwd . '/tidy.md', "---\nname: tidy\ndescription: Tidy up\n---\nTidy.\n");
+        mkdir($this->cwd . '/prompts', 0o755, true);
+        file_put_contents($this->cwd . '/prompts/ship.md', "Ship it.\n");
+        file_put_contents($this->cwd . '/greet.md', "Hello \$1\n");
+
+        $started = $this->start([], [
+            'withSkills' => false,
+            'withPromptTemplates' => false,
+            'skillPaths' => [$this->cwd . '/extra', $this->cwd . '/tidy.md', $this->cwd . '/nowhere'],
+            'promptTemplatePaths' => [$this->cwd . '/prompts', $this->cwd . '/greet.md'],
+        ]);
+
+        $this->assertSame(['review', 'tidy'], array_map(static fn (object $s): string => $s->name, $started->skills));
+        $this->assertSame(['ship', 'greet'], array_map(static fn (object $c): string => $c->name, $started->fileCommands));
+        $this->assertContains("Skill path does not exist: {$this->cwd}/nowhere", $started->warnings);
+    }
+
     public function testNoPromptTemplatesAndNoContextFilesLeaveThemOut(): void
     {
         file_put_contents($this->cwd . '/AGENTS.md', 'Use tabs, obviously.');

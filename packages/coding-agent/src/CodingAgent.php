@@ -195,6 +195,8 @@ final class CodingAgent
      *        template is looked for, the packages' included; an extension's still arrive
      * @param bool $withContextFiles false is upstream's `--no-context-files`: no `AGENTS.md` or
      *        `CLAUDE.md` is read into the prompt
+     * @param list<string> $skillPaths upstream's `--skill`: skill files or directories, absolute
+     * @param list<string> $promptTemplatePaths upstream's `--prompt-template`, the same for templates
      * @param list<string> $disabledExtensions bundled extensions not to load this run, by their
      *        directory name — `pig-mcp` for `--no-mcp`
      * @param array<string, string> $flags every option the command line carried, for the ones an
@@ -242,6 +244,8 @@ final class CodingAgent
         ?string $noTools = null,
         bool $withPromptTemplates = true,
         bool $withContextFiles = true,
+        array $skillPaths = [],
+        array $promptTemplatePaths = [],
     ): StartedSession {
         $warnings = [];
 
@@ -258,8 +262,9 @@ final class CodingAgent
 
         $cliExtensions = $extensionPaths ?? [];
         [$loadedExtensions, $extensionProblems] = match (true) {
-            !$withExtensions => [[], []],
+            // A preloaded set first: under `--no-extensions` it is what `-e` named, which still loads.
             $preloadedExtensions !== null => $preloadedExtensions,
+            !$withExtensions => [[], []],
             default => ExtensionLoader::load(
                 $cwd,
                 $settings->extensions(),
@@ -442,6 +447,35 @@ final class CodingAgent
             }
 
             Themes::setPackageThemeFiles($packageResources->enabled('themes'));
+        }
+
+        // Upstream's `--skill` and `--prompt-template`: files or directories for this run, after
+        // everything else (its `additionalSkillPaths`), and loaded under `--no-skills` and
+        // `--no-prompt-templates` too — naming one is asking for it.
+        if ($skillPaths !== []) {
+            $cliSkills = self::cliResources($skillPaths, 'Skill', $warnings);
+            [$fromDirectories, $directoryWarnings] = Skills::fromDirectories($cliSkills['dirs']);
+            [$fromFiles, $fileWarnings] = Skills::fromFiles($cliSkills['files']);
+            $byName = [];
+
+            foreach ([...$skills, ...$fromDirectories, ...$fromFiles] as $skill) {
+                $byName[$skill->name] ??= $skill;
+            }
+
+            $skills = array_values($byName);
+
+            foreach ([...$directoryWarnings, ...$fileWarnings] as $warning) {
+                $warnings[] = "skill {$warning->path}: {$warning->message}";
+            }
+        }
+
+        if ($promptTemplatePaths !== []) {
+            $cliPrompts = self::cliResources($promptTemplatePaths, 'Prompt template', $warnings);
+            $fileCommands = [
+                ...$fileCommands,
+                ...SlashCommands::fromDirectories($cliPrompts['dirs']),
+                ...SlashCommands::fromFiles($cliPrompts['files']),
+            ];
         }
         Timings::mark('packages');
 
@@ -645,6 +679,31 @@ final class CodingAgent
             $resumed,
             extensions: $loadedExtensions,
         );
+    }
+
+    /**
+     * `--skill` or `--prompt-template` paths split into directories and files; one that is neither
+     * is upstream's diagnostic, `<kind> path does not exist`.
+     *
+     * @param list<string> $paths
+     * @param list<string> $warnings
+     * @return array{dirs: list<string>, files: list<string>}
+     */
+    private static function cliResources(array $paths, string $kind, array &$warnings): array
+    {
+        $found = ['dirs' => [], 'files' => []];
+
+        foreach ($paths as $path) {
+            if (is_dir($path)) {
+                $found['dirs'][] = $path;
+            } elseif (is_file($path)) {
+                $found['files'][] = $path;
+            } else {
+                $warnings[] = "{$kind} path does not exist: {$path}";
+            }
+        }
+
+        return $found;
     }
 
     /**
