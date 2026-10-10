@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\Stream;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -1070,7 +1071,7 @@ final class OpenAiCompletions
             $body['priority'] = $compat->vllmPriority;
         }
 
-        $budget = $this->thinkingBudget($body, $model, $options?->reasoning?->value);
+        $budget = $this->thinkingBudget($body, $model, $options?->reasoning?->value, $options?->thinkingBudgets);
         $this->thinking($body, $model, $compat, $options?->reasoning?->value, $budget);
 
         // Upstream: "Cap reasoning with a top-level budget field. Independent of thinkingFormat: the
@@ -1329,23 +1330,18 @@ final class OpenAiCompletions
      * Upstream's `resolveClampedThinkingBudget()`: the default budget for the level (upstream's
      * `DEFAULT_THINKING_BUDGETS`, `xhigh` clamped to `high`), cut so 1,024 tokens of the response
      * ceiling are left for the answer, or null when that leaves nothing or thinking is off.
-     * pig's `OpenAiOptions` carries no `thinkingBudgets` of the caller's own, so the defaults are
-     * all there is. Read by `{"$var": "thinking.budget"}` and by `thinkingTokenBudgetField`.
+     * The caller's `thinkingBudgets` replace the defaults level by level. Read by `{"$var": "thinking.budget"}` and by `thinkingTokenBudgetField`.
      *
      * @param array<string, mixed> $body
      */
-    private function thinkingBudget(array $body, Model $model, ?string $effort): ?int
+    private function thinkingBudget(array $body, Model $model, ?string $effort, ?array $custom = null): ?int
     {
         if ($effort === null || !$model->reasoning) {
             return null;
         }
 
         $ceiling = $body['max_tokens'] ?? $body['max_completion_tokens'] ?? $model->maxTokens;
-        $level = in_array($effort, ['xhigh', 'max'], true) ? 'high' : $effort;
-        $budget = min(
-            ['minimal' => 1024, 'low' => 2048, 'medium' => 8192, 'high' => 16384][$level] ?? 16384,
-            max(0, $ceiling - 1024),
-        );
+        $budget = min(Stream::thinkingBudgetForLevel($effort, $custom), max(0, $ceiling - 1024));
 
         return $budget > 0 ? $budget : null;
     }

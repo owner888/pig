@@ -98,6 +98,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
@@ -105,6 +106,7 @@ use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolLoadout;
+use Pig\CodingAgent\Utils\ImageProcess;
 use Pig\Agent\AgentTool;
 use Pig\Agent\ToolArguments;
 use Pig\CodingAgent\Tools\Run;
@@ -288,6 +290,31 @@ final class AgentSession
             }
         };
         $this->agent->maxRetryDelayMs = $this->settings?->providerRetrySettings()['maxRetryDelayMs'] ?? 60_000;
+
+        // Upstream's `convertToLlmWithBlockImages`, "defense-in-depth": with `images.blockImages` on,
+        // every picture in a user message or a tool result becomes the line "Image reading is
+        // disabled." on the way to the provider — a run of them one line — and the conversation
+        // keeps them. The setting is read on every request, so turning it on mid-session counts.
+        $convert = $this->agent->convertToLlm;
+        $this->agent->convertToLlm = fn (array $messages): array => $this->settings?->blockImages() === true
+            ? self::withoutImages($convert($messages))
+            : $convert($messages);
+
+        // Upstream's `_buildRuntime()` hands `read` its `autoResizeImages` and `bash` its
+        // `commandPrefix`, and `_afterToolCall()` fits every tool's pictures after the `tool_result`
+        // hooks have had them. Both are asked whenever the loadout is applied.
+        $this->loadout?->useToolOptions(fn (): array => [
+            'read' => [
+                'autoResizeImages' => $this->settings?->imageAutoResize() ?? true,
+                'resizeOptions' => fn (): ?array => $this->limitsModel()?->inputLimits['images']['resize'] ?? null,
+            ],
+            'bash' => ['commandPrefix' => $this->settings?->shellCommandPrefix()],
+        ]);
+        $this->loadout?->useResultImages(fn (array $content): array => ImageProcess::normalizeToolResult(
+            $content,
+            $this->settings?->imageAutoResize() ?? true,
+            $this->limitsModel()?->inputLimits['images']['resize'] ?? null,
+        ));
         $inner = $this->agent->streamFunction;
         $this->innerStream = $inner;
         $this->agent->streamFunction = function (Model $model, TranscriptContext $context, ?SimpleStreamOptions $options) use ($inner): mixed {
@@ -665,7 +692,15 @@ final class AgentSession
             fn (): string => $this->settings?->cacheWarmingMode() ?? 'streaming',
             fn (CacheWarmingDecisionEvent $event): string => $this->hooks?->emitCacheWarmingDecision($event) ?? $event->action,
             fn (): int => $this->lastPromptTokens(),
-            fn (string $kind, string $provider, string $model, Usage $usage, ?string $note): ?UsageEntry => $this->store?->appendUsage($kind, $provider, $model, $usage, $note),
+            function (string $kind, string $provider, string $model, Usage $usage, ?string $note): ?UsageEntry {
+                $entry = $this->store?->appendUsage($kind, $provider, $model, $usage, $note);
+
+                if ($entry !== null) {
+                    $this->announce(new CacheWarmedEvent($entry));
+                }
+
+                return $entry;
+            },
         );
     }
 
@@ -1488,9 +1523,9 @@ final class AgentSession
             return null;
         }
 
-        // A scope entry's own level, and the current one outside a scope — where ctrl+p means
-        // "the same question of a different model" and re-choosing the level is not part of it.
-        $this->setModel($next, $scope["{$next->provider}/{$next->id}"]->thinking ?? null, persistAsDefault: false);
+        // A scope entry's own level when its pattern named one; otherwise `setModel()`'s choice.
+        $entry = $scope["{$next->provider}/{$next->id}"] ?? null;
+        $this->setModel($next, $entry?->explicitThinking === true ? $entry->thinking : null, persistAsDefault: false);
 
         return new ModelChoice($next, $this->thinkingLevel());
     }
@@ -1532,9 +1567,54 @@ final class AgentSession
         // Web UI and lightweight switches pass persistAsDefault: false so they don't overwrite settings.json.
         if ($persistAsDefault) {
             $this->settings?->setDefaultModel($model->id, $model->provider);
+            $this->addPersistedDefaultToScope($model);
         }
 
-        $this->setThinkingLevel($this->clampThinking($thinking ?? $this->thinkingLevel()), persistAsDefault: $persistAsDefault);
+        // Upstream's `_getThinkingLevelForModelSwitch()`: the level asked for, the model's own
+        // `modelThinkingLevels` entry, `defaultThinkingLevel`, and only then the level already set.
+        // Not persisted as the default: saving a model as the default does not rewrite the thinking
+        // default, upstream's rule.
+        $level = $thinking
+            ?? $this->settings?->modelThinkingLevel($model->provider, $model->id)
+            ?? $this->settings?->defaultThinkingLevel()
+            ?? $this->thinkingLevel();
+
+        $this->setThinkingLevel($this->clampThinking($level));
+    }
+
+    /**
+     * Upstream's `_addPersistedDefaultToNonEmptyScope()`: a model saved as the default joins a
+     * scope it is not in, and `enabledModels` when that is where the scope came from — or the
+     * default would be a model ctrl+p could not reach.
+     */
+    private function addPersistedDefaultToScope(Model $model): void
+    {
+        if ($this->modelScope === []) {
+            return;
+        }
+
+        foreach ($this->modelScope as $choice) {
+            if ($choice->model->provider === $model->provider && $choice->model->id === $model->id) {
+                return;
+            }
+        }
+
+        $this->modelScope[] = new ModelChoice($model);
+        $enabled = $this->settings?->enabledModels() ?? [];
+
+        if ($enabled === []) {
+            return;
+        }
+
+        $reference = "{$model->provider}/{$model->id}";
+
+        foreach ($enabled as $pattern) {
+            if (strtolower($pattern) === strtolower($reference)) {
+                return;
+            }
+        }
+
+        $this->settings?->setEnabledModels([...$enabled, $reference]);
     }
 
     /**
@@ -1671,6 +1751,15 @@ final class AgentSession
         $options = new SystemPromptOptions();
         $note = $this->hooks?->emitBeforeAgentStart($text, $images, $options, $this->renderSystemPrompt(...));
 
+        // Upstream's `_normalizePromptImages()`, after the hooks and before the message is built:
+        // every picture fitted inside the model's limits, and what was done to one said after the
+        // text — an image that could not be fitted is left out and the sentence says so.
+        [$images, $hints] = $this->normalizePromptImages($images);
+
+        if ($hints !== []) {
+            $text .= "\n\n" . implode("\n", $hints);
+        }
+
         // Held-back `!` commands go in before the prompt, as upstream's `prompt()` flushes them.
         $this->flushBash();
 
@@ -1726,6 +1815,87 @@ final class AgentSession
      * a fallback papering over a failure.
      */
     /**
+     * Upstream's `convertToLlmWithBlockImages` body: images out of user messages and tool results,
+     * each run of them one "Image reading is disabled." line.
+     *
+     * @param list<mixed> $messages
+     * @return list<mixed>
+     */
+    public static function withoutImages(array $messages): array
+    {
+        $disabled = 'Image reading is disabled.';
+
+        return array_map(static function (mixed $message) use ($disabled): mixed {
+            if (!($message instanceof UserMessage || $message instanceof ToolResultMessage)) {
+                return $message;
+            }
+
+            $images = array_filter($message->content, static fn (mixed $block): bool => $block instanceof ImageContent);
+
+            if ($images === []) {
+                return $message;
+            }
+
+            $content = [];
+
+            foreach ($message->content as $block) {
+                $block = $block instanceof ImageContent ? new TextContent($disabled) : $block;
+                $last = $content === [] ? null : $content[count($content) - 1];
+
+                if ($block instanceof TextContent && $block->text === $disabled
+                    && $last instanceof TextContent && $last->text === $disabled) {
+                    continue;
+                }
+
+                $content[] = $block;
+            }
+
+            return $message instanceof UserMessage
+                ? new UserMessage($content, $message->timestamp)
+                : new ToolResultMessage(
+                    $message->toolCallId,
+                    $message->toolName,
+                    $content,
+                    $message->isError,
+                    $message->details,
+                    $message->timestamp,
+                    $message->usage,
+                );
+        }, $messages);
+    }
+
+    /**
+     * @param list<ImageContent> $images
+     * @return array{0: list<ImageContent>, 1: list<string>}
+     */
+    private function normalizePromptImages(array $images): array
+    {
+        $normalized = [];
+        $hints = [];
+
+        foreach ($images as $image) {
+            $bytes = base64_decode($image->data, true);
+            $processed = ImageProcess::process(
+                $bytes === false ? '' : $bytes,
+                $image->mimeType,
+                $this->settings?->imageAutoResize() ?? true,
+                $this->limitsModel()?->inputLimits['images']['resize'] ?? null,
+            );
+
+            if (!$processed['ok']) {
+                $hints[] = $processed['message'];
+
+                continue;
+            }
+
+            $normalized[] = new ImageContent($processed['data'], $processed['mimeType']);
+            $hints = [...$hints, ...$processed['hints']];
+        }
+
+        return [$normalized, $hints];
+    }
+
+    /**
      * What the `input` handlers made of a message, or null when one of them took it.
      * Upstream's `_runInputHandlers()`.
      *
@@ -1750,7 +1920,59 @@ final class AgentSession
 
     private function expandFileCommand(string $text): string
     {
+        $text = $this->expandSkillCommand($text);
+
         return SlashCommands::expand($text, $this->fileCommands) ?? $text;
+    }
+
+    /** @return list<Skill> the skills the system prompt names, as `/skill:name` reaches them */
+    public function skills(): array
+    {
+        return $this->loadout?->skills() ?? [];
+    }
+
+    /**
+     * Upstream's `_expandSkillCommand()`: `/skill:name args` becomes the skill's instructions in a
+     * `<skill>` block, the arguments after it. Before the file commands, as upstream orders the two,
+     * and whatever `enableSkillCommands` says — that setting is about the list, and a command typed
+     * by hand still works. An unknown name is the text as it was; a file that cannot be read is
+     * reported as a hook error would be and leaves the text as it was.
+     */
+    private function expandSkillCommand(string $text): string
+    {
+        if (!str_starts_with($text, '/skill:')) {
+            return $text;
+        }
+
+        $space = strpos($text, ' ');
+        $name = $space === false ? substr($text, 7) : substr($text, 7, $space - 7);
+        $args = $space === false ? '' : trim(substr($text, $space + 1));
+        $skill = null;
+
+        foreach ($this->skills() as $candidate) {
+            if ($candidate->name === $name) {
+                $skill = $candidate;
+
+                break;
+            }
+        }
+
+        if ($skill === null) {
+            return $text;
+        }
+
+        $content = is_readable($skill->path) ? file_get_contents($skill->path) : false;
+
+        if ($content === false) {
+            $this->hooks?->emitError(new HookError($skill->path, 'skill_expansion', "Could not read {$skill->path}"));
+
+            return $text;
+        }
+
+        $body = trim(Skills::stripFrontmatter($content));
+        $block = "<skill name=\"{$skill->name}\" location=\"{$skill->path}\">\nReferences are relative to {$skill->baseDir}.\n\n{$body}\n</skill>";
+
+        return $args !== '' ? "{$block}\n\n{$args}" : $block;
     }
 
     /**
@@ -2020,7 +2242,10 @@ final class AgentSession
                 $onOutput($block instanceof TextContent ? $block->text : '');
             };
 
-            $run = new Run($this->cwd, $command, $onUpdate);
+            // Upstream's `executeBash()`: `shellCommandPrefix` in front of the command, joined by a
+            // newline — the command itself is what is recorded.
+            $prefix = $this->settings?->shellCommandPrefix();
+            $run = new Run($this->cwd, $prefix !== null ? "{$prefix}\n{$command}" : $command, $onUpdate);
             $run->start();
             $exit = $run->wait($this->bash->signal, null);
             $truncation = Truncate::tail($run->output());
@@ -2475,14 +2700,18 @@ final class AgentSession
 
         [$messages, $read, $modified] = BranchSummarization::prepare(
             $leaving,
-            BranchSummarization::budget($model->contextWindow, $this->reserveTokens()),
+            // `branchSummary.reserveTokens`, upstream's own setting for this — not compaction's.
+            BranchSummarization::budget(
+                $model->contextWindow,
+                $this->settings?->branchSummaryReserveTokens(BranchSummarization::RESERVE_TOKENS) ?? BranchSummarization::RESERVE_TOKENS,
+            ),
         );
 
         if ($messages === []) {
             return null;
         }
 
-        $text = $this->summarise(
+        $answer = $this->summarise(
             $model,
             BranchSummarization::request($messages, $instructions),
             $signal,
@@ -2490,7 +2719,7 @@ final class AgentSession
             source: 'branchSummary',
         );
 
-        return $text === null ? false : new BranchSummary($text, $read, $modified, $oldLeaf);
+        return $answer === null ? false : new BranchSummary($answer[0], $read, $modified, $oldLeaf, usage: $answer[1]);
     }
 
     // ---- making room -------------------------------------------------------------------
@@ -2517,7 +2746,7 @@ final class AgentSession
 
     private function reserveTokens(): int
     {
-        return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS) ?? Compaction::RESERVE_TOKENS;
+        return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS, $this->model()) ?? Compaction::RESERVE_TOKENS;
     }
 
     // ---- one prompt, from its first run to `agent_settled` -------------------------------
@@ -2705,12 +2934,10 @@ final class AgentSession
 
             $this->fallbacksTried[$key] = true;
 
-            // The suffix is explicit when `parse()` would have read one; `ModelChoice` cannot say
-            // whether its `Off` was typed or defaulted, so the pattern is asked.
-            $colon = strrpos($pattern, ':');
-            $explicit = $colon !== false && ThinkingLevel::tryFrom(substr($pattern, $colon + 1)) !== null;
-
-            $this->setModel($choice->model, $explicit ? $choice->thinking : null, persistAsDefault: false);
+            // No suffix carries the current level over, which is this feature's own rule: a fallback
+            // is the same work on another key, so neither `modelThinkingLevels` nor the default
+            // gets a say.
+            $this->setModel($choice->model, $choice->explicitThinking ? $choice->thinking : $this->thinkingLevel(), persistAsDefault: false);
             $this->announce(new ModelFallbackEvent(
                 $current,
                 $choice->model,
@@ -2875,6 +3102,8 @@ final class AgentSession
             'maxRetries' => $options->maxRetries ?? $provider['maxRetries'],
             'maxRetryDelayMs' => $options->maxRetryDelayMs ?? $provider['maxRetryDelayMs'],
             'headers' => $headers,
+            // Upstream's agent carries `thinkingBudgets` from the settings into every request.
+            'thinkingBudgets' => $options->thinkingBudgets ?? $this->settings?->thinkingBudgets(),
         ]);
     }
 
@@ -3347,7 +3576,7 @@ final class AgentSession
 
         $cut = Compaction::cutPoint(
             $messages,
-            $this->settings?->compactionKeepRecentTokens(Compaction::KEEP_RECENT_TOKENS)
+            $this->settings?->compactionKeepRecentTokens(Compaction::KEEP_RECENT_TOKENS, $this->model())
                 ?? Compaction::KEEP_RECENT_TOKENS,
         );
 
@@ -3429,7 +3658,7 @@ final class AgentSession
             return $summary;
         }
 
-        $text = $this->summarise(
+        $answer = $this->summarise(
             $model,
             $request,
             $signal,
@@ -3439,14 +3668,16 @@ final class AgentSession
             thinkingLevel: $direct->thinkingLevel,
         );
 
-        if ($text === null) {
+        if ($answer === null) {
             return null;
         }
+
+        [$text, $usage] = $answer;
 
         // The cut as two different facts: which entry the kept part starts at, which is what the
         // file stores, and how many messages that came to, which is only ever a line on a screen.
         // Reading the file back derives the second from the first.
-        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, count($older), $compactedAt, systemMessage: $systemMessage);
+        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, count($older), $compactedAt, systemMessage: $systemMessage, usage: $usage);
 
         $this->agent->replaceMessages([...($systemMessage !== null ? [$systemMessage] : []), $summary, ...$kept]);
         $this->store?->append($summary);
@@ -3477,9 +3708,10 @@ final class AgentSession
      * @param string      $source     `compaction` or `branchSummary`, for the retry events
      * @param string|null $reason     a compaction's `manual`, `threshold` or `overflow`
      * @param ThinkingLevel|null $thinkingLevel the level to ask at; null asks for no reasoning
-     * @return string|null null when it was cancelled
+     * @return array{0: string, 1: Usage}|null the summary and what it cost — upstream records the
+     *         usage on the entry — or null when it was cancelled
      */
-    private function summarise(Model $model, string $request, ?AbortSignal $signal, int $maxTokens, string $source = 'compaction', ?string $reason = null, ?ThinkingLevel $thinkingLevel = null): ?string
+    private function summarise(Model $model, string $request, ?AbortSignal $signal, int $maxTokens, string $source = 'compaction', ?string $reason = null, ?ThinkingLevel $thinkingLevel = null): ?array
     {
         $stream = new SimpleStreamOptions(
             maxTokens: $model->maxTokens > 0 ? min($maxTokens, $model->maxTokens) : $maxTokens,
@@ -3551,7 +3783,7 @@ final class AgentSession
             throw new AgentError('The summariser said nothing, so there is nothing to carry forward.');
         }
 
-        return trim($text);
+        return [trim($text), $message->usage];
     }
 
     /** A fresh routing id for a one-off request — upstream's `uuidv7()` in `completeSummarization()`. */
@@ -3687,11 +3919,15 @@ final class AgentSession
         // classifier calls) and was paid for the same way; upstream's cost breakdown books it
         // under "Tools/summaries". A `usage` entry — a cache-warming refresh, pig's or pi's — is
         // money that bought no message, and upstream's `getSessionStats()` adds it the same way.
+        // So is a summary's.
         foreach ($this->store?->everyMessage() ?? $this->messages() as $message) {
             $usage = match (true) {
                 $message instanceof AssistantMessage => $message->usage,
                 $message instanceof ToolResultMessage => $message->usage,
                 $message instanceof UsageEntry => $message->usage,
+                // Upstream's compaction and branch-summary `usage`: "included in session token and
+                // cost totals".
+                $message instanceof CompactionSummary, $message instanceof BranchSummary => $message->usage,
                 default => null,
             };
 

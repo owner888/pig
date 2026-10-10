@@ -39,19 +39,25 @@ final class ToolSet
     /**
      * Build the named tools, bound to $cwd.
      *
+     * $options is upstream's `createAllToolDefinitions()` options, by tool: `read` takes
+     * `autoResizeImages` and `resizeOptions` (a closure asked per read, since the model can change),
+     * `bash` takes `commandPrefix`.
+     *
      * @param list<string> $names
+     * @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string}} $options
      * @return list<AgentTool>
      */
-    public static function create(string $cwd, array $names = self::CODING): array
+    public static function create(string $cwd, array $names = self::CODING, array $options = []): array
     {
-        return array_map(static fn (string $name): AgentTool => self::one($cwd, $name), array_values($names));
+        return array_map(static fn (string $name): AgentTool => self::one($cwd, $name, $options), array_values($names));
     }
 
-    public static function one(string $cwd, string $name): AgentTool
+    /** @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string}} $options */
+    public static function one(string $cwd, string $name, array $options = []): AgentTool
     {
         return match ($name) {
-            'read' => new ReadTool($cwd),
-            'bash' => new BashTool($cwd),
+            'read' => new ReadTool($cwd, $options['read']['autoResizeImages'] ?? true, $options['read']['resizeOptions'] ?? null),
+            'bash' => new BashTool($cwd, $options['bash']['commandPrefix'] ?? null),
             'edit' => new EditTool($cwd),
             'write' => new WriteTool($cwd),
             'grep' => new GrepTool($cwd),

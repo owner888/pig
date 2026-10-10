@@ -62,7 +62,7 @@ final class ModelResolver
             // level on top of that would be guessing at what was meant.
             return $choice->warning !== null
                 ? $choice
-                : new ModelChoice($choice->model, $level);
+                : new ModelChoice($choice->model, $level, explicitThinking: true);
         }
 
         return new ModelChoice(
@@ -150,6 +150,7 @@ final class ModelResolver
         }
 
         $level = ThinkingLevel::Off;
+        $explicit = false;
         $colon = strrpos($pattern, ':');
 
         if ($colon !== false) {
@@ -157,6 +158,7 @@ final class ModelResolver
 
             if ($suffix !== null) {
                 $level = $suffix;
+                $explicit = true;
                 $pattern = substr($pattern, 0, $colon);
             }
         }
@@ -168,7 +170,7 @@ final class ModelResolver
                 fnmatch($pattern, "{$model->provider}/{$model->id}", FNM_CASEFOLD)
                 || fnmatch($pattern, $model->id, FNM_CASEFOLD)
             ) {
-                $matched[] = new ModelChoice($model, $level);
+                $matched[] = new ModelChoice($model, $level, explicitThinking: $explicit);
             }
         }
 

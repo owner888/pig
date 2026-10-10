@@ -139,6 +139,7 @@ final class SessionEntries
                 // pi's `systemMessage`, written only when there is one, as `JSON.stringify` drops
                 // an undefined field.
                 ...($item->systemMessage === null ? [] : ['systemMessage' => MessageJson::encode($item->systemMessage)]),
+                ...($item->usage === null ? [] : ['usage' => MessageJson::encodeUsage($item->usage)]),
             ];
         }
 
@@ -156,6 +157,7 @@ final class SessionEntries
                     'readFiles' => $item->readFiles,
                     'modifiedFiles' => $item->modifiedFiles,
                 ],
+                ...($item->usage === null ? [] : ['usage' => MessageJson::encodeUsage($item->usage)]),
             ];
         }
 
@@ -258,6 +260,7 @@ final class SessionEntries
                 is_array($line['systemMessage'] ?? null) && ($line['systemMessage']['role'] ?? null) === 'system'
                     ? MessageJson::decode($line['systemMessage'])
                     : null,
+                is_array($line['usage'] ?? null) ? MessageJson::decodeUsage($line['usage']) : null,
             ),
 
             'branch_summary' => new BranchSummary(
@@ -269,6 +272,7 @@ final class SessionEntries
                 self::branchedFrom($line['fromId'] ?? null),
                 (bool) ($line['fromHook'] ?? false),
                 $at,
+                is_array($line['usage'] ?? null) ? MessageJson::decodeUsage($line['usage']) : null,
             ),
 
             default => null,

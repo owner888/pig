@@ -12,6 +12,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
+use Pig\CodingAgent\Utils\ImageProcess;
 use Pig\Tui\Images\ImageType;
 
 /**
@@ -49,8 +50,16 @@ use Pig\Tui\Images\ImageType;
  */
 final class ReadTool implements AgentTool
 {
-    public function __construct(private readonly string $cwd)
-    {
+    /**
+     * @param bool $autoResizeImages upstream's `autoResizeImages` (`images.autoResize`)
+     * @param (Closure(): ?array{maxWidth?: int, maxHeight?: int, maxBytes?: int, jpegQuality?: int})|null $resizeOptions
+     *        the model's `inputLimits.images.resize`, asked at each read because the model can change
+     */
+    public function __construct(
+        private readonly string $cwd,
+        private readonly bool $autoResizeImages = true,
+        private readonly ?Closure $resizeOptions = null,
+    ) {
     }
 
     #[\Override]
@@ -128,9 +137,23 @@ final class ReadTool implements AgentTool
             throw new AgentError("Could not read {$absolute}");
         }
 
+        // Upstream's `processImage()` with the read's own wording: an image that cannot be fitted
+        // inside the limits is not attached, and the text says why; one that was resized says how.
+        $processed = ImageProcess::process($bytes, $mimeType, $this->autoResizeImages, $this->resizeOptions !== null ? ($this->resizeOptions)() : null);
+
+        if (!$processed['ok']) {
+            return new AgentToolResult([new TextContent("Read image file [{$mimeType}]\n{$processed['message']}")]);
+        }
+
+        $note = "Read image file [{$processed['mimeType']}]";
+
+        if ($processed['hints'] !== []) {
+            $note .= "\n" . implode("\n", $processed['hints']);
+        }
+
         return new AgentToolResult([
-            new TextContent("Read image file [{$mimeType}]"),
-            new ImageContent(base64_encode($bytes), $mimeType),
+            new TextContent($note),
+            new ImageContent($processed['data'], $processed['mimeType']),
         ]);
     }
 

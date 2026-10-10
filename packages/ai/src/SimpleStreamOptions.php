@@ -18,6 +18,9 @@ final readonly class SimpleStreamOptions extends StreamOptions
      * @param string|null $toolChoice upstream's provider-neutral `ToolChoice`, `auto` or `none`:
      *        "When omitted, adapters use provider-specific behavior." Handed to the Anthropic and
      *        Responses providers as their own `toolChoice`, as upstream's `streamSimple()`s do
+     * @param array<string, int>|null $thinkingBudgets upstream's `thinkingBudgets`: the token budget
+     *        for `minimal`, `low`, `medium` and `high`, over `Stream`'s defaults, for the models that
+     *        think on a budget. From the `thinkingBudgets` setting
      */
     public function __construct(
         ?float $temperature = null,
@@ -37,6 +40,7 @@ final readonly class SimpleStreamOptions extends StreamOptions
         ?\Closure $onResponse = null,
         ?\Closure $onProviderStreamEvent = null,
         ?array $env = null,
+        public ?array $thinkingBudgets = null,
     ) {
         parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
     }

@@ -77,6 +77,7 @@ final class CacheWarmer
      * @param Closure(): int $lastPromptTokens the prompt size of the latest real request, as the
      *        provider reported it
      * @param Closure(string, string, string, Usage, ?string): ?UsageEntry $record writes the refresh down
+     *        and announces it
      * @param (Closure(): int)|null $now milliseconds since the epoch, for a test
      */
     public function __construct(
@@ -376,8 +377,8 @@ final class CacheWarmer
             }
 
             if ($message instanceof AssistantMessage && $message->stopReason !== StopReason::Error && $message->stopReason !== StopReason::Aborted) {
-                // Upstream also announces the entry, for a "Cache warmed: $x" line behind its
-                // `showCacheMissNotices` setting; pig has neither, and the cost is on `/session`.
+                // The session announces it (`CacheWarmedEvent`), for the terminal's "Cache warmed"
+                // line behind `showCacheMissNotices`.
                 ($this->record)(
                     'cache_warm',
                     $message->provider,
@@ -462,6 +463,15 @@ final class CacheWarmer
             $economicsAvailable,
             $expectedSavings >= self::MINIMUM_EXPECTED_SAVINGS ? 'warm' : 'stop',
         );
+    }
+
+    /** Upstream's `formatCacheWarmingUsage()`: `Cache warmed (note): $0.0153`, trailing zeros past three places dropped. */
+    public static function formatUsage(UsageEntry $entry): string
+    {
+        $note = $entry->note !== null && $entry->note !== '' ? " ({$entry->note})" : '';
+        $cost = (string) preg_replace('/(\.\d{3}\d*?)0+$/', '$1', sprintf('%.6f', $entry->usage->cost->total));
+
+        return "Cache warmed{$note}: \${$cost}";
     }
 
     /** One line for `/session` — upstream's `formatCacheWarmingStatus()`. */

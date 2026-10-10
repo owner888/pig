@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use Closure;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Agent\Agent;
@@ -25,6 +26,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallEndEvent;
+use Pig\Ai\Cost;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
@@ -422,6 +424,11 @@ final class InteractiveModeTest extends TestCase
         });
 
         return $stream;
+    }
+
+    private static function costing(Usage $usage, string $text = 'ok'): AssistantMessage
+    {
+        return new AssistantMessage([new TextContent($text)], Api::AnthropicMessages, 'anthropic', 'claude-test', $usage, StopReason::Stop);
     }
 
     private static function message(string $text): AssistantMessage
@@ -826,6 +833,128 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Press ctrl+o to show full startup help and loaded resources.', $screen);
         $this->assertStringContainsString('Pig can explain its own features', $screen);
         $this->assertStringNotContainsString('suspend', $screen);
+    }
+
+    public function testQuietStartupDropsTheHeaderAndTheResources(): void
+    {
+        $this->start(context: [new ContextFile('/somewhere/AGENTS.md', 'be careful')], settings: Settings::inMemory(['quietStartup' => true]));
+
+        $this->assertStringNotContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringNotContainsString('[Context]', $this->screen());
+    }
+
+    public function testQuietStartupHeaderKeepsTheHeaderAndDropsTheResources(): void
+    {
+        $this->start(context: [new ContextFile('/somewhere/AGENTS.md', 'be careful')], settings: Settings::inMemory(['quietStartup' => 'header']));
+
+        $this->assertStringContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringContainsString('Press ctrl+o to show full startup help.', $this->screen());
+        $this->assertStringNotContainsString('[Context]', $this->screen());
+    }
+
+    public function testEscapeTwiceOnAnEmptyPromptOpensTheTree(): void
+    {
+        $this->start(['an answer'], store: true);
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type(self::ESC);
+        $this->assertStringNotContainsString('Go back to', $this->screen(), 'one escape is not two');
+        $this->type(self::ESC);
+        $this->assertStringContainsString('Go back to', $this->screen());
+    }
+
+    public function testEscapeTwiceDoesNothingWhenTheSettingSaysNone(): void
+    {
+        $this->start(['an answer'], store: true, settings: Settings::inMemory(['doubleEscapeAction' => 'none']));
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type(self::ESC);
+        $this->type(self::ESC);
+        $this->assertStringNotContainsString('Go back to', $this->screen());
+    }
+
+    public function testTheTreeOpensOnTheFilterTheSettingNames(): void
+    {
+        $this->start(['an answer'], store: true, settings: Settings::inMemory(['treeFilterMode' => 'user-only']));
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('[user-only]', $this->screen());
+    }
+
+    public function testTheTabShowsProgressWhileATurnRunsWhenAskedTo(): void
+    {
+        $this->start(['an answer'], settings: Settings::inMemory(['terminal' => ['showTerminalProgress' => true]]));
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertNotSame([], $this->terminal->progress);
+        $this->assertTrue($this->terminal->progress[0]);
+        $this->assertFalse($this->terminal->progress[array_key_last($this->terminal->progress)], 'cleared when the turn ends');
+    }
+
+    public function testTheTabShowsNoProgressByDefault(): void
+    {
+        $this->start(['an answer']);
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame([], $this->terminal->progress);
+    }
+
+    #[DataProvider('shownOrNot')]
+    public function testACacheMissIsSaidWhenTheSettingAsksForIt(bool $shown): void
+    {
+        $this->start([
+            self::costing(new Usage(cacheWrite: 50_000, output: 10, cost: new Cost(cacheWrite: 0.19))),
+            self::costing(new Usage(input: 52_000, output: 10, cost: new Cost(input: 0.156))),
+        ], settings: Settings::inMemory(['showCacheMissNotices' => $shown]));
+
+        foreach (['one', 'two'] as $said) {
+            $this->type($said);
+            $this->type(self::ENTER);
+            $this->settle();
+        }
+
+        $shown
+            ? $this->assertMatchesRegularExpression('/Cache miss: 50k tokens re-billed \(~\$0\.\d\d\)/', $this->screenText())
+            : $this->assertStringNotContainsString('Cache miss', $this->screenText());
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function shownOrNot(): iterable
+    {
+        yield 'on' => [true];
+        yield 'off' => [false];
+    }
+
+    public function testACompactionSaysWhatItCostWhenTheSettingAsksForIt(): void
+    {
+        $this->start(
+            [self::costing(new Usage(input: 40_000, output: 500, cost: new Cost(input: 0.12, output: 0.0075, total: 0.1275)), 'a summary of it all')],
+            settings: Settings::inMemory(['showCacheMissNotices' => true]),
+        );
+
+        foreach (range(1, 6) as $ignored) {
+            $this->session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertMatchesRegularExpression('/Compaction: 41k tokens billed \(~\$0\.13\)/', $this->screenText());
+        $this->assertEqualsWithDelta(0.1275, $this->session->stats()->cost, 1e-9, 'and on the bill');
     }
 
     public function testCtrlOOpensTheFullListAndClosesItAgain(): void
@@ -1761,6 +1890,28 @@ final class InteractiveModeTest extends TestCase
         // read for what is on it, and the position is the `•` down the side.
         $this->assertStringContainsString('user:', $screen);
         $this->assertStringContainsString('assistant:', $screen);
+    }
+
+    public function testSkipPromptGoesBackWithoutAskingAboutASummary(): void
+    {
+        $this->start(['first answer', 'second answer'], store: true, settings: Settings::inMemory(['branchSummary' => ['skipPrompt' => true]]));
+
+        foreach (['hello', 'down the first road'] as $said) {
+            $this->type($said);
+            $this->type(self::ENTER);
+            $this->settle();
+        }
+
+        $leaf = $this->session->store()?->leaf();
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        $this->type("\e[A");
+        $this->type("\e[A");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringNotContainsString('Summarise the branch you are leaving?', $this->screen());
+        $this->assertNotSame($leaf, $this->session->store()?->leaf(), 'and it went');
     }
 
     public function testTreeShowsABranchThatWasAbandonedAndCanGoBackToIt(): void
@@ -2743,7 +2894,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testAnImageRidesOnTheFirstMessageOnly(): void
     {
-        $image = new ImageContent(base64_encode('bytes'), 'image/png');
+        $image = new ImageContent(TinyImages::PNG_BASE64, 'image/png');
         $this->start(
             answers: ['ok', 'ok again'],
             initialMessages: ['look', 'and again'],
@@ -4329,6 +4480,24 @@ final class InteractiveModeTest extends TestCase
 
     private const string ESCAPE = "\e";
 
+    private static function signedInToClaude(): Auth
+    {
+        $auth = Auth::inMemory();
+        $auth->setCredentials('anthropic', new Credentials('refresh', 'access', PHP_INT_MAX));
+
+        return $auth;
+    }
+
+    /** Down through a list until the selection is on the row with $label. */
+    private function typeUntilRow(string $label): void
+    {
+        for ($i = 0; $i < 60 && !str_contains($this->selectedRow(), $label); $i++) {
+            $this->type(self::DOWN);
+        }
+
+        $this->assertStringContainsString($label, $this->selectedRow());
+    }
+
     private function openSettings(): void
     {
         $this->type('/settings');
@@ -4360,6 +4529,83 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertSame('labra', $this->settings->theme());
         $this->assertSame('labra', Themes::theme()->name);
+    }
+
+    public function testSkillCommandsAreOfferedUnlessTheSettingSaysNot(): void
+    {
+        $skill = new Skill('review', 'Review code', '/somewhere/review/SKILL.md', '/somewhere/review', 'test');
+        $this->start(skills: [$skill]);
+        $this->type('/');
+        $this->type('skill:');
+        $this->assertStringContainsString('skill:review', $this->screen());
+    }
+
+    public function testSkillCommandsAreNotOfferedWhenTheSettingIsOff(): void
+    {
+        $skill = new Skill('review', 'Review code', '/somewhere/review/SKILL.md', '/somewhere/review', 'test');
+        $this->start(skills: [$skill], settings: Settings::inMemory(['enableSkillCommands' => false]));
+        $this->type('/');
+        $this->type('skill:');
+        $this->assertStringNotContainsString('skill:review', $this->screen());
+    }
+
+    public function testTheImageRowsAreInSlashSettingsAndChangeTheSetting(): void
+    {
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Auto-resize images');
+        $this->type(self::ENTER);
+        $this->assertFalse($this->settings->imageAutoResize());
+        $this->typeUntilRow('Block images');
+        $this->type(self::ENTER);
+        $this->assertTrue($this->settings->blockImages());
+    }
+
+    public function testTheWarningsRowTurnsTheAnthropicExtraUsageWarningOff(): void
+    {
+        $this->start();
+        $this->openSettings();
+        $this->typeUntilRow('Warnings');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Anthropic extra usage', $this->screen());
+        $this->type(self::ENTER);
+
+        $this->assertFalse($this->settings->warnAnthropicExtraUsage());
+    }
+
+    public function testAPerModelThinkingLevelIsSetFromSettings(): void
+    {
+        $this->start(reasoning: true);
+        $this->openSettings();
+        $this->typeUntilRow('Default thinking level');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Per-Model Thinking Level', $this->screen());
+
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Thinking Level for', $this->screen());
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        $this->assertSame(['anthropic/claude-test' => ThinkingLevel::Minimal], $this->settings->allModelThinkingLevels());
+        $this->assertStringContainsString('Per-Model Thinking Level', $this->screen(), 'back to the models, as upstream loops');
+        $this->type(self::ESC);
+        $this->assertStringContainsString('1 configured', $this->screen());
+    }
+
+    public function testASubscriptionTokenForAnthropicIsWarnedAboutOnce(): void
+    {
+        $this->start(auth: self::signedInToClaude());
+        $this->type('/model claude-test');
+        $this->type(self::ENTER);
+
+        $this->assertSame(1, substr_count($this->screenText(), 'Anthropic subscription auth is active'), 'at startup, and not again on a switch');
+    }
+
+    public function testTheSubscriptionWarningCanBeTurnedOff(): void
+    {
+        $this->start(auth: self::signedInToClaude(), settings: Settings::inMemory(['warnings' => ['anthropicExtraUsage' => false]]));
+
+        $this->assertStringNotContainsString('Anthropic subscription auth is active', $this->screenText());
     }
 
     public function testTurningOffAutoCompactIsRemembered(): void

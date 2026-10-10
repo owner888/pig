@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Pig\Ai\Usage;
 use Pig\Ai\Timestamp;
 
 /**
@@ -54,6 +55,8 @@ final readonly class BranchSummary
         public ?string $fromId = null,
         public bool $fromHook = false,
         ?int $timestamp = null,
+        /** Upstream's `BranchSummaryEntry.usage`, as `CompactionSummary::$usage`. */
+        public ?Usage $usage = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

@@ -269,6 +269,9 @@ final class CodingAgent
         // `--models sonnet:high,'anthropic/*'` narrows the session, which is what upstream's
         // `--models` means. Resolved against the models a key reaches, because a scope holding
         // one that cannot be spoken to is a scope ctrl+p walks into and fails on.
+        // Upstream's `parsed.models ?? settingsManager.getEnabledModels()`: the setting is the scope
+        // for a session nobody typed one for.
+        $models ??= $settings->enabledModels();
         [$scope, $scopeWarnings] = $models === null || $models === []
             ? [[], []]
             : ModelResolver::scope($models, $auth->availableModels());
@@ -282,7 +285,20 @@ final class CodingAgent
             // sits exactly here in the order: below `--model`, which is somebody naming one
             // model, and above the environment. A resumed conversation still wins over both —
             // `restoreSettings()` below puts the file's model back unless `--model` was typed.
+            //
+            // Unless the remembered default is in the scope: upstream opens on that one, so
+            // `enabledModels` narrows ctrl+p without overruling the model chosen last time.
+            $savedId = $settings->defaultModel();
+            $savedProvider = $settings->defaultProvider();
             $choice = $scope[0];
+
+            foreach ($scope as $scoped) {
+                if ($savedId !== null && $scoped->model->id === $savedId && ($savedProvider === null || $scoped->model->provider === $savedProvider)) {
+                    $choice = $scoped;
+
+                    break;
+                }
+            }
         } else {
             // The order stated at the top of `bin/pig`: what was typed, then the environment, then
             // what was chosen last time, then the built-in default.
@@ -328,11 +344,14 @@ final class CodingAgent
         $envThinking = self::fromEnvironment($environment, 'PIG_THINKING') ?? self::fromEnvironment($environment, 'PI_REASONING_LEVEL');
         $thinkingArg = $thinking ?? $envThinking;
 
+        // Upstream's order: what was typed, the pattern's own `:level`, the model's own
+        // `modelThinkingLevels` entry, `defaultThinkingLevel`, off. (A resumed conversation's
+        // recorded level beats all but the first, in `restoreSettings()`.)
         $level = $thinkingArg !== null
             ? ThinkingLevel::tryFrom($thinkingArg) ?? ThinkingLevel::Off
-            : ($choice->thinking === ThinkingLevel::Off
-                ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
-                : $choice->thinking);
+            : ($choice->explicitThinking
+                ? $choice->thinking
+                : ($settings->modelThinkingLevel($chosen->provider, $chosen->id) ?? $settings->defaultThinkingLevel() ?? ThinkingLevel::Off));
 
         // Clamped rather than refused: a model that cannot reason and a request that asks it to is
         // a request the provider rejects, and nobody typing `--thinking high` meant to be told no.
@@ -442,6 +461,23 @@ final class CodingAgent
         // because a model with seven tools spends more of every turn deciding between them, and
         // searching through `bash` with `rg` is what the prompt already tells it to do. pig is a
         // minimal agent: see the rule at the top of this file.
+        //
+        // `defaultTools` changes the four (upstream's `getDefaultTools() ?? DEFAULT_TOOL_NAMES`), and a
+        // `--tools` of only `+name`/`-name` entries changes whatever the default was rather than
+        // naming the whole set. pig registers every custom tool active, so for them only a `-name`
+        // means anything: it takes that tool away.
+        if ($tools !== null && ($toolListError = Settings::toolListError($tools)) !== null) {
+            throw new CodingAgentError("Invalid tools option: {$toolListError}");
+        }
+
+        $defaultTools = $settings->defaultTools();
+        $modifiers = $tools !== null && array_filter($tools, Settings::isToolModifier(...)) !== [] ? $tools : null;
+
+        if ($modifiers !== null) {
+            $defaultTools = Settings::applyToolModifiers($defaultTools ?? ToolSet::CODING, $modifiers);
+            $tools = null;
+        }
+
         $selection = $tools === null ? null : new ToolSelection($tools);
         $excluded = $excludeTools === null ? null : new ToolSelection($excludeTools);
         $builtIn = $readOnly ? ToolSet::READ_ONLY : ToolSet::CODING;
@@ -449,6 +485,21 @@ final class CodingAgent
         if ($selection !== null) {
             // `--tools` names the whole set: the built-ins it matches, in `ToolSet::ALL`'s order.
             $builtIn = array_values(array_filter(ToolSet::ALL, $selection->allows(...)));
+        } elseif ($defaultTools !== null && !$readOnly) {
+            $builtIn = array_values(array_filter(ToolSet::ALL, static fn (string $name): bool => in_array($name, $defaultTools, true)));
+        }
+
+        // The custom tools a `defaultTools` or `--tools` modifier took out by name.
+        $removedByDefault = [];
+
+        if ($defaultTools !== null && $selection === null) {
+            foreach ([...($settings->defaultToolEntries() ?? []), ...($modifiers ?? [])] as $entry) {
+                $name = substr($entry, 1);
+
+                if ($entry[0] === '-' && !in_array($name, $defaultTools, true) && !in_array($name, ToolSet::ALL, true)) {
+                    $removedByDefault[] = $name;
+                }
+            }
         }
 
         if ($excluded !== null) {
@@ -483,14 +534,16 @@ final class CodingAgent
         // The same two filters over the custom tools, now and every time an extension changes its
         // list — an MCP server's tools arrive after startup, and `--exclude-tools 'mcp__gh__*'`
         // has to reach them then. The filter is kept on the set so `onChange()` need not know.
-        if ($selection !== null || $excluded !== null) {
+        if ($selection !== null || $excluded !== null || $removedByDefault !== []) {
             // A `--tools` entry that names nothing anywhere is a typo, and saying so is what
             // stops `--tools raed` from quietly starting with no tools. Read before the filter is
             // applied, or the list would be what the typo left.
             $available = [...ToolSet::ALL, ...$customTools->names()];
 
             $customTools->keep(static fn (string $name): bool
-                => ($selection === null || $selection->allows($name)) && ($excluded === null || !$excluded->matches($name)));
+                => ($selection === null || $selection->allows($name))
+                    && ($excluded === null || !$excluded->matches($name))
+                    && !in_array($name, $removedByDefault, true));
 
             foreach ($selection?->unmatched($available) ?? [] as $entry) {
                 throw new CodingAgentError(

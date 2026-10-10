@@ -154,4 +154,19 @@ final class SessionEntriesTest extends TestCase
         $this->assertSame(0.015015, $back->usage->cost->total);
         $this->assertArrayNotHasKey('note', SessionEntries::encode(new UsageEntry('cache_warm', 'anthropic', 'm', $usage), 'abcd1234', null));
     }
+
+    public function testWhatASummaryCostIsWrittenWithItAndOnlyWhenItIsKnown(): void
+    {
+        $usage = new Usage(input: 40_000, output: 500, totalTokens: 40_500, cost: new Cost(0.12, 0.0075, 0.0, 0.0, 0.1275));
+
+        foreach ([new CompactionSummary('s', usage: $usage), new BranchSummary('s', usage: $usage)] as $summary) {
+            $line = SessionEntries::encode($summary, 'abcd1234', null);
+            $this->assertSame(40_000, $line['usage']['input']);
+            $this->assertSame(0.1275, SessionEntries::decode($line)->usage?->cost->total);
+        }
+
+        // A hook's summary, and every file written before the field, has none.
+        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new CompactionSummary('s'), 'abcd1234', null));
+        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new BranchSummary('s'), 'abcd1234', null));
+    }
 }

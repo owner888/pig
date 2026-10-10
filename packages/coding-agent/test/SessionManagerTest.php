@@ -48,6 +48,7 @@ final class SessionManagerTest extends TestCase
     {
         putenv('PIG_HOME');
         putenv('PI_HOME');
+        SessionManager::useSessionDir(null);
         self::remove($this->home);
         self::remove($this->home . '-pi');
     }
@@ -595,6 +596,37 @@ final class SessionManagerTest extends TestCase
      * moment anybody resumes something. Start A on Monday and B on Tuesday, spend Wednesday in A,
      * and a name sort hands back B: the one conversation you were demonstrably not working on.
      */
+    public function testASessionDirHoldsEveryProjectsSessionsAndEachSeesItsOwn(): void
+    {
+        $shared = $this->home . '/shared';
+        SessionManager::useSessionDir($shared);
+
+        foreach (['/project/a' => 'from a', '/project/b' => 'from b'] as $cwd => $said) {
+            $session = SessionManager::create($cwd);
+            $session->append(new UserMessage($said));
+            $session->append($this->answer());
+            $this->assertSame($shared, dirname($session->path));
+        }
+
+        $this->assertSame(['from a'], array_map(static fn (SessionInfo $info): string => $info->opening, SessionManager::listFor('/project/a')));
+        $this->assertSame('from b', SessionManager::latestFor('/project/b')?->opening);
+        $this->assertSame([], SessionManager::listFor('/project/c'));
+    }
+
+    public function testWithASessionDirPisDirectoryIsNotRead(): void
+    {
+        $pi = SessionManager::directory('/project/a', $this->home . '-pi');
+        $session = SessionManager::create('/project/a', "{$pi}/2026-01-01T00-00-00-000Z_pi.jsonl");
+        $session->append(new UserMessage('in pi'));
+        $session->append($this->answer());
+        $this->assertCount(1, SessionManager::listFor('/project/a'));
+
+        SessionManager::useSessionDir($this->home . '/shared');
+
+        $this->assertSame([], SessionManager::listFor('/project/a'));
+        $this->assertNull(SessionManager::latestPathFor('/project/a'));
+    }
+
     public function testContinueOpensTheOneLastWorkedOnRatherThanTheOneStartedLast(): void
     {
         $directory = SessionManager::directory('/some/project');

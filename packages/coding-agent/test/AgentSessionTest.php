@@ -19,6 +19,7 @@ use Pig\Ai\Context;
 use Pig\Ai\Cost;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Pricing;
@@ -42,6 +43,10 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Tools\ToolLoadout;
+use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
@@ -617,6 +622,117 @@ final class AgentSessionTest extends TestCase
         $this->assertStringContainsString('Additional focus: the parser bug', self::textOf($asked->messages[1]));
     }
 
+    // ---- images and the shell ---------------------------------------------------------
+
+    public function testWithBlockImagesNoPictureReachesTheProviderAndTheConversationKeepsThem(): void
+    {
+        $sent = null;
+        $session = $this->session(
+            [],
+            streamFn: function (Model $model, TranscriptContext $context) use (&$sent): AssistantMessageEventStream {
+                $sent = $context;
+
+                return $this->replay('ok');
+            },
+            settings: Settings::inMemory(['images' => ['blockImages' => true]]),
+        );
+        $image = new ImageContent(TinyImages::PNG_BASE64, 'image/png');
+
+        Async::run(static fn () => $session->prompt('look', [$image, $image]));
+
+        $user = array_values(array_filter($sent->messages, static fn (mixed $m): bool => $m instanceof UserMessage))[0];
+        $this->assertEquals([new TextContent('look'), new TextContent('Image reading is disabled.')], $user->content, 'two pictures, one line');
+        $this->assertInstanceOf(ImageContent::class, $session->messages()[0]->content[1]);
+    }
+
+    public function testWithoutImagesLeavesAMessageWithNoneAlone(): void
+    {
+        $plain = new UserMessage('just words');
+        $result = new ToolResultMessage('c', 'read', [new ImageContent('x', 'image/png'), new TextContent('note')]);
+
+        $out = AgentSession::withoutImages([$plain, $result]);
+
+        $this->assertSame($plain, $out[0]);
+        $this->assertEquals([new TextContent('Image reading is disabled.'), new TextContent('note')], $out[1]->content);
+        $this->assertSame('c', $out[1]->toolCallId);
+    }
+
+    public function testAPromptsImageThatCannotBeReadIsLeftOutAndTheTextSaysSo(): void
+    {
+        $session = $this->session(['ok']);
+
+        Async::run(static fn () => $session->prompt('look', [new ImageContent(base64_encode('not a picture'), 'image/tiff')]));
+
+        $this->assertEquals(
+            [new TextContent("look\n\n[Image omitted: could not be converted to a supported inline image format.]")],
+            $session->messages()[0]->content,
+        );
+    }
+
+    public function testEveryToolsPicturesAreFittedAndReadTakesTheSessionsImageSettings(): void
+    {
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+        $agent->setModel($this->model());
+        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), ['read', 'bash'], new CustomToolSet(), new HookRunner());
+        $loadout->apply();
+        new AgentSession($agent, sys_get_temp_dir(), settings: Settings::inMemory([
+            'images' => ['autoResize' => false],
+            'shellCommandPrefix' => 'GREETING=hello',
+        ]), loadout: $loadout);
+
+        $tools = $agent->tools();
+        $this->assertContainsOnlyInstancesOf(\Pig\CodingAgent\Tools\ResultImagesTool::class, $tools);
+
+        // Read built with `autoResizeImages: false`: an oversized picture is sent as it is.
+        $path = sys_get_temp_dir() . '/pig-wide-' . bin2hex(random_bytes(4)) . '.png';
+        $png = "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00";
+        file_put_contents($path, $png);
+        $read = $tools[0]->execute('c1', ['path' => $path]);
+        unlink($path);
+        $this->assertSame(base64_encode($png), $read->content[1]->data);
+
+        // And bash with the prefix.
+        $said = Async::run(static fn () => $tools[1]->execute('c2', ['command' => 'echo $GREETING']));
+        $this->assertSame("hello\n", $said->content[0]->text);
+    }
+
+    public function testTheShellCommandPrefixRunsInFrontOfATypedCommand(): void
+    {
+        $session = $this->session([], settings: Settings::inMemory(['shellCommandPrefix' => 'GREETING=hello']));
+
+        $execution = Async::run(static fn () => $session->executeBash('echo $GREETING'));
+
+        $this->assertSame('hello', trim($execution->output));
+        $this->assertSame('echo $GREETING', $execution->command, 'what is recorded is what was typed');
+    }
+
+    // ---- skill commands --------------------------------------------------------------
+
+    public function testASkillCommandSendsTheSkillsInstructionsAndTheArgumentsAfterThem(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-skillcmd-' . bin2hex(random_bytes(4)) . '/review';
+        mkdir($dir, 0o755, true);
+        file_put_contents("{$dir}/SKILL.md", "---\nname: review\ndescription: Review code\n---\n\nRead the diff first.\n");
+
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider(['ok', 'ok'], null), apiKey: 'test-key'));
+        $agent->setModel($this->model());
+        $skill = new Skill('review', 'Review code', "{$dir}/SKILL.md", $dir, 'test');
+        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), [], new CustomToolSet(), new HookRunner(), [], [$skill]);
+        $session = new AgentSession($agent, sys_get_temp_dir(), loadout: $loadout);
+
+        Async::run(static fn () => $session->prompt('/skill:review src/a.php'));
+
+        $said = self::textOf($session->messages()[0]);
+        $this->assertSame(
+            "<skill name=\"review\" location=\"{$dir}/SKILL.md\">\nReferences are relative to {$dir}.\n\nRead the diff first.\n</skill>\n\nsrc/a.php",
+            $said,
+        );
+
+        // An unknown name is the text as it was typed.
+        Async::run(static fn () => $session->prompt('/skill:nope'));
+        $this->assertContains('/skill:nope', array_map(self::textOf(...), array_filter($session->messages(), static fn (mixed $m): bool => $m instanceof UserMessage)));
+    }
+
     // ---- switching models ------------------------------------------------------------
 
     public function testSwitchingToAModelThatCannotThinkDropsTheThinkingLevel(): void
@@ -640,6 +756,38 @@ final class AgentSessionTest extends TestCase
 
         $this->assertSame(ThinkingLevel::Medium, $session->thinkingLevel());
         $this->assertSame('test-thinker-2', $session->model()?->id);
+    }
+
+    public function testAModelsOwnThinkingLevelComesBeforeTheDefaultAndTheCurrentOne(): void
+    {
+        $settings = Settings::inMemory(['modelThinkingLevels' => ['anthropic/test-thinker-2' => 'high']]);
+        $session = $this->session([], null, $this->thinkingModel(), settings: $settings);
+        $session->setThinkingLevel(ThinkingLevel::Low);
+
+        $session->setModel($this->thinkingModel('test-thinker-2'));
+        $this->assertSame(ThinkingLevel::High, $session->thinkingLevel(), "the model's own");
+
+        $settings->setDefaultThinkingLevel(ThinkingLevel::Medium);
+        $session->setModel($this->thinkingModel('test-thinker-3'));
+        $this->assertSame(ThinkingLevel::Medium, $session->thinkingLevel(), 'then the default, as upstream switches');
+
+        $session->setModel($this->thinkingModel('test-thinker-2'), ThinkingLevel::Minimal);
+        $this->assertSame(ThinkingLevel::Minimal, $session->thinkingLevel(), 'and what was asked for beats both');
+    }
+
+    public function testSavingADefaultOutsideTheScopeAddsItToTheScopeAndToEnabledModels(): void
+    {
+        $settings = Settings::inMemory(['enabledModels' => ['anthropic/test-thinker']]);
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+        $agent->setModel($this->thinkingModel());
+        $session = new AgentSession($agent, sys_get_temp_dir(), null, $settings, modelScope: [new ModelChoice($this->thinkingModel())]);
+
+        $session->setModel($this->thinkingModel('test-thinker-2'), persistAsDefault: true);
+
+        $this->assertCount(2, $session->modelScope());
+        $this->assertSame(['anthropic/test-thinker', 'anthropic/test-thinker-2'], $settings->enabledModels());
+        $this->assertSame('test-thinker-2', $settings->defaultModel());
+        $this->assertNull($settings->defaultThinkingLevel(), 'saving the model is not saving the level');
     }
 
     public function testAskingForALevelAModelLacksLandsOnTheNearestItHas(): void

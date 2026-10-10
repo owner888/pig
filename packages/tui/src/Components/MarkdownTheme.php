@@ -44,6 +44,8 @@ final readonly class MarkdownTheme
         public Closure $strikethrough,
         public Closure $underline,
         public ?Closure $highlightCode = null,
+        /** Upstream's `codeBlockIndent`: what each line of a fenced block is indented with. */
+        public string $codeBlockIndent = '  ',
     ) {
     }
 

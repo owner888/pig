@@ -196,7 +196,7 @@ final class HookWiringTest extends TestCase
             'before_agent_start' => static fn () => new BeforeAgentStartEventResult('note'),
         ]);
 
-        Async::run(static fn () => $session->prompt('look at this', [new \Pig\Ai\ImageContent('AAA', 'image/png')]));
+        Async::run(static fn () => $session->prompt('look at this', [new \Pig\Ai\ImageContent(TinyImages::PNG_BASE64, 'image/png')]));
 
         $this->assertCount(2, $session->messages()[1]->content);
     }

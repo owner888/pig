@@ -176,6 +176,7 @@ if (isset($options['help'])) {
       -c, --continue    pick up the most recent session here
       -r, --resume      choose from a list; `--resume <file>` opens one by path
       --session <id>    resume a session by its ID or path
+      --session-dir <d> keep every session in this one directory
       --no-save         do not write this session to disk
       --export <file>   write a session file out as HTML and stop. A second word is
                         where it goes: `--export a.jsonl out.html`
@@ -582,6 +583,9 @@ if (isset($options['theme']) || (getenv('PIG_THEME') ?: '') !== '') {
 // Upstream's `initTheme()` in `main()`, for every mode: the session picker draws before the
 // interactive mode exists, and a hook asking `ui->theme()` in print mode gets an answer. The
 // interactive mode's theme controller takes over from here.
+// Upstream's `setCapabilityOverrides()` in `main()`: `terminal.images`, `trueColor` and `hyperlinks`
+// from the settings, before the theme picks its colour mode from them.
+\Pig\Tui\Images\TerminalImage::setCapabilityOverrides($settings->terminalCapabilityOverrides());
 $themeError = Themes::initTheme(Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()));
 if ($themeError !== null && !$interactive) {
     fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
@@ -628,6 +632,15 @@ if (isset($options['exclude-tools'])) {
         exit(1);
     }
 }
+
+// Upstream's `sessionDir`: `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the
+// setting — the project's read before trust, as upstream reads it — and with none each project
+// has its own directory as before. A relative path is the working directory's. Set before
+// anything looks a session up.
+$sessionDir = ($options['session-dir'] ?? '') !== '' ? $options['session-dir']
+    : ((string) getenv('PIG_CODING_AGENT_SESSION_DIR') !== '' ? (string) getenv('PIG_CODING_AGENT_SESSION_DIR')
+    : (isset($options['no-save']) ? null : Settings::startupSessionDir($cwd)));
+SessionManager::useSessionDir($sessionDir === null ? null : Pig\CodingAgent\Tools\Paths::resolve($sessionDir, $cwd));
 
 // Resolved here rather than inside the assembly, because choosing one draws a list on the
 // terminal and `CodingAgent::session()` has no screen: it takes a path, or nothing.
@@ -755,7 +768,7 @@ Timings::mark('assembled');
 // mistakes and before the expensive setup, and it is the one positional argument that can
 // fail.
 try {
-    $files = FileArguments::read($fileArgs, $cwd);
+    $files = FileArguments::read($fileArgs, $cwd, $settings->imageAutoResize());
 } catch (Throwable $error) {
     fwrite(STDERR, Style::red($error->getMessage() . "\n"));
 

@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.26] - 2026-10-08
+
+### New Features
+
+- **Comprehensive Upstream Settings Parity (Batches 1-3)**:
+  - **Display & Terminal Settings**: Added `showCacheMissNotices` (`CacheStats`), `terminal.images`/`trueColor`/`hyperlinks` overrides, `terminal.imageWidthCells`, `terminal.showTerminalProgress` (OSC 9;4 progress reporting), `markdown.codeBlockIndent`, `quietStartup`, `autocompleteMaxVisible`, `doubleEscapeAction` (Escape twice on empty prompt opens `/tree` or `/fork`), and `treeFilterMode`.
+  - **Model, Tool & Summary Settings**: Added `modelThinkingLevels` (`ModelThinkingSubmenu`), `thinkingBudgets` custom budget tables, `enabledModels` default scope, `defaultTools` (`+name`/`-name` modifications), `enableSkillCommands` (`/skill:name args`), `compaction.modelOverrides` per-model budgets, `branchSummary.reserveTokens`, and `branchSummary.skipPrompt`.
+  - **Images, Shell & Storage Settings**: Added `images.autoResize` (`Utils\ImageProcess`, EXIF rotation and dimensions fitting via optional `ext-gd`), `images.blockImages` (masking images to text placeholders), `shellCommandPrefix` command prepending, and `sessionDir` / `--session-dir` centralized session directories.
+
+### Added
+
+- Added token and cost accounting (`usage`) to compaction and branch summary entries, aggregated in `/session` totals.
+
 ## [0.5.25] - 2026-10-08
 
 ### New Features

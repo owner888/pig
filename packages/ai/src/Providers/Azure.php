@@ -97,6 +97,7 @@ final class Azure
             'toolChoice' => $options->toolChoice,
             'serviceTier' => $options->serviceTier,
             'reasoningSummary' => $options->reasoningSummary,
+            'thinkingBudgets' => $options->thinkingBudgets,
             'onPayload' => static function (mixed $payload, Model $payloadModel) use ($deploymentName, $onPayload): mixed {
                 $params = [...(array) $payload, 'model' => $deploymentName];
 

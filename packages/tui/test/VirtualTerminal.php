@@ -450,4 +450,10 @@ final class VirtualTerminal implements Terminal
     {
         $this->write($status->format());
     }
+
+    #[\Override]
+    public function setProgress(bool $active): void
+    {
+        $this->write($active ? "\x1b]9;4;3\x07" : "\x1b]9;4;0\x07");
+    }
 }

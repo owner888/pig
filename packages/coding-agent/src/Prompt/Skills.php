@@ -441,6 +441,20 @@ final class Skills
      *
      * @return array{0: array<string, string>, 1: list<string>} values, then every key seen
      */
+    /** Upstream's `stripFrontmatter()`: the body, without a byte-order mark, with `\n` line ends. */
+    public static function stripFrontmatter(string $content): string
+    {
+        $content = str_replace(["\r\n", "\r"], "\n", str_starts_with($content, "\u{FEFF}") ? substr($content, 3) : $content);
+
+        if (!str_starts_with($content, '---')) {
+            return $content;
+        }
+
+        $end = strpos($content, "\n---", 3);
+
+        return $end === false ? $content : trim(substr($content, $end + 4));
+    }
+
     private static function frontmatter(string $content): array
     {
         $content = str_replace(["\r\n", "\r"], "\n", $content);

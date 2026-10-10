@@ -299,6 +299,12 @@ Logger::timeEnd('benchmark');
 
 **提示缓存预热。** 工具运行时间超过提供商的缓存寿命（Anthropic 为五分钟）时，pig 会在缓存条目过期前，以 1 个 token 的上限重发上一次请求——只在预计能省下至少 $0.05 时才发——让下一次请求从缓存读取提示，而不是再付一次写入的全价。每次预热都记在会话文件里，计入 `/session` 的花费。全局 `settings.json` 的 `cacheWarming`（或 `/settings` 里的 *Cache warming* 一行）默认 `streaming`（agent 运行期间），可设为 `idle`（两次运行之间也预热，最多 30 分钟）或 `off`。扩展可以通过 `cache_warming_decision` 事件否决或强制每一次预热。`-p` 从不预热。
 
+**缓存花了多少。** `showCacheMissNotices: true` 会在本该从缓存读取的提示被重新计费时（2 万 token 或 1 角钱以上）、预热时、以及压缩或分支摘要计费时各加一行提示；`/session` 显示重新计费的总额。其他沿用 pi 键名的显示设置：`quietStartup`（`true` 或 `header`）、`autocompleteMaxVisible`、`doubleEscapeAction`（`tree`、`fork`、`none`）、`treeFilterMode`、`markdown.codeBlockIndent`、`terminal.imageWidthCells`、`terminal.showTerminalProgress`（在终端标签页显示进度），以及覆盖 pig 自动检测结果的 `terminal.images` / `trueColor` / `hyperlinks`。
+
+**按模型、按工具。** `modelThinkingLevels` 按 `provider/id` 记住思考等级（`/settings` 里也有这一行），`thinkingBudgets` 按等级替换 token 预算，`enabledModels` 是没输入 `--models` 时的范围，`defaultTools` 设定内置工具（`["read", "bash"]`，或 `["+grep", "-write"]` 这样的增减；`-name` 也能去掉自定义工具）。`/skill:name 参数` 把技能当作消息发送（`enableSkillCommands`）。`compaction.modelOverrides` 按模型设定压缩预算，`branchSummary.reserveTokens` 和 `branchSummary.skipPrompt` 设定分支摘要的，`warnings.anthropicExtraUsage: false` 关掉 Claude 订阅提醒。
+
+**图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。
+
 ### 订阅账号登录
 
 在 pig 里输入 `/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`。四个提供商，流程均与 pi 一致：

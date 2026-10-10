@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Tools;
 
+use Closure;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentTool;
 use Pig\Ai\SystemMessage;
@@ -57,6 +58,12 @@ final class ToolLoadout
     /** @var list<string>|null every tool registered as of the last `apply()`; null before the first */
     private ?array $registered = null;
 
+    /** @var (Closure(): array<string, array<string, mixed>>)|null upstream's tool options, asked at each `apply()` */
+    private ?Closure $toolOptions = null;
+
+    /** @var (Closure(list<mixed>): list<mixed>)|null what a tool's pictures go through after the hooks */
+    private ?Closure $resultImages = null;
+
     /**
      * @param list<string>            $builtIn      built-in tool names, as `ToolSet` knows them
      * @param list<ContextFile>|null  $contextFiles
@@ -96,6 +103,12 @@ final class ToolLoadout
         $this->apply();
     }
 
+    /** @return list<Skill> the skills the prompt names now, extensions' included */
+    public function skills(): array
+    {
+        return $this->skills;
+    }
+
     /**
      * The skills extensions added through `resources_discover`, on top of what was loaded off
      * disk; a same-named one replaces it, as a later root replaces an earlier one in `Skills`.
@@ -112,6 +125,38 @@ final class ToolLoadout
 
         $this->skills = array_values($byName);
         $this->apply();
+    }
+
+    /**
+     * Upstream's `_buildRuntime()` options for the built-in tools — `read`'s image settings,
+     * `bash`'s command prefix — asked each time the tools are built, so a setting changed in the
+     * session reaches the next build. A loadout already applied is applied again.
+     *
+     * @param Closure(): array<string, array<string, mixed>> $options
+     */
+    public function useToolOptions(Closure $options): void
+    {
+        $this->toolOptions = $options;
+        $this->reapply();
+    }
+
+    /**
+     * Upstream's image half of `_afterToolCall()`: every tool's result, after the `tool_result`
+     * hooks, goes through $normalize. A loadout already applied is applied again.
+     *
+     * @param Closure(list<mixed>): list<mixed> $normalize
+     */
+    public function useResultImages(Closure $normalize): void
+    {
+        $this->resultImages = $normalize;
+        $this->reapply();
+    }
+
+    private function reapply(): void
+    {
+        if ($this->registered !== null) {
+            $this->apply();
+        }
     }
 
     /**
@@ -132,7 +177,12 @@ final class ToolLoadout
             fn (AgentTool $tool): bool => $this->active === null || in_array($tool->definition()->name, $this->active, true),
         ));
 
-        $tools = HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn), ...$custom], $this->hooks);
+        $tools = HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->hooks);
+
+        if ($this->resultImages !== null) {
+            $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);
+        }
+
         $this->agent->setTools($this->prepared($tools));
 
         // Upstream's `_setActiveTools()`: a pending tool that is active now is pending no longer.

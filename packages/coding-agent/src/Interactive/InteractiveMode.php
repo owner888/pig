@@ -18,6 +18,7 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Agent\ToolExecutionUpdateEvent;
+use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
@@ -49,6 +50,7 @@ use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
+use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
@@ -83,7 +85,11 @@ use Pig\CodingAgent\Tools\ToolInstaller;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
+use Pig\CodingAgent\Session\CacheMiss;
+use Pig\CodingAgent\Session\CacheStats;
+use Pig\CodingAgent\Session\CacheWarmedEvent;
 use Pig\CodingAgent\Session\CacheWarmer;
+use Pig\CodingAgent\Session\UsageEntry;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\ExtensionResources;
@@ -396,6 +402,7 @@ final class InteractiveMode
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
+        Themes::setCodeBlockIndent($this->settings->codeBlockIndent());
         $this->renderer = $this->createRenderer($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->settings->showHardwareCursor());
         $this->renderer->setClearOnShrink($this->settings->clearOnShrink());
         $this->tui = TuiRenderer::createInteractiveTuiReference(fn (): TuiBase => $this->renderer);
@@ -420,6 +427,7 @@ final class InteractiveMode
         $this->customFooter = new Container();
         $this->defaultEditor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
         $this->defaultEditor->setPaddingX($this->settings->editorPaddingX());
+        $this->defaultEditor->setAutocompleteMaxVisible($this->settings->autocompleteMaxVisible());
         $this->editor = $this->defaultEditor;
         $this->editorSlot = new Container();
         $this->editorSlot->addChild($this->editor);
@@ -569,6 +577,8 @@ final class InteractiveMode
             $this->sayWarning(CrashLog::notice($crash));
         }
 
+        $this->maybeWarnAboutAnthropicSubscriptionAuth();
+
         $this->running = true;
         $this->hooks?->emit(new SessionStartEvent());
         $this->takeExtensionResources($this->session->discoverResources('startup'));
@@ -607,6 +617,11 @@ final class InteractiveMode
     private function replay(): void
     {
         $tools = [];
+        // Upstream's `renderSessionItems()`: a miss is not written down, unlike a warming refresh,
+        // so it is worked out again from the file and drawn after the message that paid for it.
+        $misses = $this->settings->showCacheMissNotices()
+            ? CacheStats::collect($this->session->store()?->everyMessage() ?? $this->session->messages())
+            : null;
 
         foreach ($this->session->messages() as $message) {
             if ($message instanceof UserMessage) {
@@ -654,12 +669,14 @@ final class InteractiveMode
 
             if ($message instanceof CompactionSummary) {
                 $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad));
+                $this->addSummaryCostNotice($message);
 
                 continue;
             }
 
             if ($message instanceof BranchSummary) {
                 $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad));
+                $this->addSummaryCostNotice($message);
 
                 continue;
             }
@@ -677,6 +694,10 @@ final class InteractiveMode
                     if ($block instanceof ToolCall) {
                         $tools[$block->id] = $this->addTool($block->id, $block->name, $block->arguments);
                     }
+                }
+
+                if ($misses !== null && isset($misses[$message]) && !in_array($message->stopReason, [StopReason::Aborted, StopReason::Error], true)) {
+                    $this->addCacheMissNotice($misses[$message]);
                 }
 
                 continue;
@@ -764,6 +785,7 @@ final class InteractiveMode
 
         $this->running = false;
         Logger::setConsoleOutput(true);
+        $this->terminalProgress(false);
         // Stopping the web server winds its children down and suspends while it does, and this
         // runs from a key handler — inside the loop's callback — so it goes in a fiber of its own.
         if ($this->webServer !== null) {
@@ -879,17 +901,21 @@ final class InteractiveMode
     {
         // Upstream's `BuiltInHeader`: built on demand, so it follows theme changes. It reads the
         // key bindings, which change only on `/reload`, and that invalidates it.
-        $this->builtInHeader = new ExpandableText(
-            fn (): string => $this->builtInHeaderText(expanded: false),
-            fn (): string => $this->builtInHeaderText(expanded: true),
-            $this->expanded,
-            1,
-            0,
-        );
         $headerContainer = new Container();
-        $headerContainer->addChild(new Spacer(1));
-        $headerContainer->addChild($this->builtInHeader);
-        $headerContainer->addChild(new Spacer(1));
+
+        // `quietStartup: true` silences the header too; upstream mounts an empty text in its place.
+        if ($this->shouldShowStartupHeader()) {
+            $this->builtInHeader = new ExpandableText(
+                fn (): string => $this->builtInHeaderText(expanded: false),
+                fn (): string => $this->builtInHeaderText(expanded: true),
+                $this->expanded,
+                1,
+                0,
+            );
+            $headerContainer->addChild(new Spacer(1));
+            $headerContainer->addChild($this->builtInHeader);
+            $headerContainer->addChild(new Spacer(1));
+        }
 
         // One component tree for both renderers, as upstream keeps it: regular mode mounts these
         // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
@@ -1011,6 +1037,10 @@ final class InteractiveMode
         $nextUi->start();
         $this->ui->rebindTerminalInputListeners();
         $this->themeController->rebindTui();
+        // Stopping the old renderer stopped the terminal, which cleared the tab's progress.
+        if ($this->session->isStreaming() || $this->session->isCompacting()) {
+            $this->terminalProgress(true);
+        }
 
         return true;
     }
@@ -1062,7 +1092,7 @@ final class InteractiveMode
         if (!$expanded) {
             return implode("\n", [
                 ...$lines,
-                Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.'),
+                Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help' . ($this->shouldShowStartupDetails() ? ' and loaded resources' : '') . '.'),
                 '',
                 $onboarding,
             ]);
@@ -1164,12 +1194,18 @@ final class InteractiveMode
     }
 
     /**
-     * Upstream's `shouldShowStartupDetails()`. pig has no `quietStartup` setting and no `--verbose`,
-     * so this is upstream's answer with the setting at `false`: the listing always shows.
+     * Upstream's `shouldShowStartupHeader()`: hidden only by `quietStartup: true`. pig has no
+     * `--verbose`, which upstream lets override it.
      */
+    private function shouldShowStartupHeader(): bool
+    {
+        return $this->settings->quietStartup() !== true;
+    }
+
+    /** Upstream's `shouldShowStartupDetails()`: the loaded resources, hidden by `quietStartup: true` or `header`. */
     private function shouldShowStartupDetails(): bool
     {
-        return true;
+        return $this->settings->quietStartup() === false;
     }
 
     /**
@@ -1396,6 +1432,29 @@ final class InteractiveMode
      * Same shape and same reason as `useHideThinking()`: the setting is one a transcript
      * already drawn has an opinion about, so every `ToolExecutionComponent` in it is told.
      */
+    /** Upstream's `onAutocompleteMaxVisibleChange`: saved, and on the editor that is up. */
+    private function useAutocompleteMaxVisible(int $maxVisible): void
+    {
+        $this->settings->setAutocompleteMaxVisible($maxVisible);
+        $this->defaultEditor->setAutocompleteMaxVisible($maxVisible);
+
+        if ($this->editor !== $this->defaultEditor) {
+            $this->editor->setAutocompleteMaxVisible($maxVisible);
+        }
+    }
+
+    /** Upstream's `onImageWidthCellsChange`: saved, and on every picture already drawn. */
+    private function useImageWidthCells(int $width): void
+    {
+        $this->settings->setImageWidthCells($width);
+
+        foreach ($this->chat->children() as $child) {
+            if ($child instanceof ToolExecutionComponent) {
+                $child->setImageWidthCells($width);
+            }
+        }
+    }
+
     private function useShowImages(bool $show): void
     {
         $this->showImages = $show;
@@ -1415,6 +1474,33 @@ final class InteractiveMode
      * changed their mind about what they asked for, and the words they typed while
      * waiting are the start of what they want instead.
      */
+    /** When the last Escape on an empty prompt was pressed, for `doubleEscape()`. */
+    private float $lastEscapeAt = 0.0;
+
+    /**
+     * Upstream's double-escape: Escape twice within half a second on an empty prompt opens `/tree`,
+     * or `/fork`'s list, as `doubleEscapeAction` says — or nothing at all with `none`.
+     */
+    private function doubleEscape(): void
+    {
+        $action = $this->settings->doubleEscapeAction();
+
+        if (trim($this->editor->text()) !== '' || $action === 'none') {
+            return;
+        }
+
+        $now = microtime(true);
+
+        if ($now - $this->lastEscapeAt >= 0.5) {
+            $this->lastEscapeAt = $now;
+
+            return;
+        }
+
+        $this->lastEscapeAt = 0.0;
+        $action === 'tree' ? $this->showTree() : $this->showForkPoints();
+    }
+
     private function interrupt(): void
     {
         // First, because it is the most recent thing the person started and the only one that
@@ -1438,6 +1524,8 @@ final class InteractiveMode
         }
 
         if ($this->working === null) {
+            $this->doubleEscape();
+
             return;
         }
 
@@ -1636,6 +1724,37 @@ final class InteractiveMode
     }
 
     /** ctrl+p, and shift+ctrl+p the other way: the next model along, without opening the list. */
+    private const string ANTHROPIC_SUBSCRIPTION_AUTH_WARNING = 'Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.';
+
+    private bool $anthropicSubscriptionWarningShown = false;
+
+    /**
+     * Upstream's `maybeWarnAboutAnthropicSubscriptionAuth()`: once a session, when the model is
+     * Anthropic's and the way in is a Claude subscription — a sign-in, or an `sk-ant-oat` token —
+     * say that the turns are billed as extra usage. Behind `warnings.anthropicExtraUsage`. A key
+     * that cannot be looked up says nothing; this is a warning, not a check.
+     */
+    private function maybeWarnAboutAnthropicSubscriptionAuth(?Model $model = null): void
+    {
+        $model ??= $this->session->model();
+
+        if (!$this->settings->warnAnthropicExtraUsage() || $this->anthropicSubscriptionWarningShown || $model?->provider !== 'anthropic') {
+            return;
+        }
+
+        try {
+            $subscription = $this->auth?->kind('anthropic') === 'oauth'
+                || str_starts_with($this->session->keyFor($model) ?? '', 'sk-ant-oat');
+        } catch (Throwable) {
+            return;
+        }
+
+        if ($subscription) {
+            $this->anthropicSubscriptionWarningShown = true;
+            $this->sayWarning(self::ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
+        }
+    }
+
     private function cycleModel(bool $backward = false): void
     {
         try {
@@ -1659,6 +1778,8 @@ final class InteractiveMode
 
         $this->footer->invalidate();
         $this->paintBorder();
+
+        $this->maybeWarnAboutAnthropicSubscriptionAuth($choice->model);
 
         // The level is said too, because switching models can change it under you — a scope
         // entry may name its own — and finding that out from a bill is worse than reading it here.
@@ -1728,6 +1849,12 @@ final class InteractiveMode
                     ),
                     array_values($this->hookCommands),
                 ),
+                // Upstream's skill commands, behind `enableSkillCommands`: the list only, since a
+                // `/skill:name` typed by hand is expanded either way.
+                ...($this->settings->enableSkillCommands() ? array_map(
+                    static fn (Skill $skill): SlashCommand => new SlashCommand("skill:{$skill->name}", $skill->description),
+                    $this->skills,
+                ) : []),
             ],
             $this->cwd,
             // Only if it is already here. Reaching for the network to draw a completion
@@ -1779,6 +1906,9 @@ final class InteractiveMode
         }
 
         $this->editor = $editor;
+        // Upstream copies the appearance settings onto an extension's editor.
+        $this->editor->setPaddingX($this->settings->editorPaddingX());
+        $this->editor->setAutocompleteMaxVisible($this->settings->autocompleteMaxVisible());
         $this->editor->setText($text);
         $this->editorSlot->clear();
         $this->editorSlot->addChild($this->editor);
@@ -2073,6 +2203,7 @@ final class InteractiveMode
 
         $this->showLoader($this->compactionLabel($reason), timer: true);
         $this->programStatus->compactionStart();
+        $this->terminalProgress(true);
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -2087,6 +2218,7 @@ final class InteractiveMode
         } finally {
             $this->compaction = null;
             $this->hideLoader();
+            $this->terminalProgress(false);
             $this->programStatus->compactionEnd($reason, aborted: $summary === null && $failure === null, errorMessage: $failure);
         }
 
@@ -2111,6 +2243,7 @@ final class InteractiveMode
         // The transcript above is left where it is: it is what was said, and the summary
         // is a note about it, not a replacement for anyone's memory of reading it.
         $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad));
+        $this->addSummaryCostNotice($summary);
         $this->footer->invalidate();
         $this->tui->requestRender();
     }
@@ -2851,7 +2984,20 @@ final class InteractiveMode
             $warming .= sprintf(' · miss penalty $%.3f · refresh $%.3f', $status->decision->missCost, $status->decision->warmCost);
         }
 
-        return static fn (): string => Themes::theme()->fg('muted', $summary) . "\n" . Themes::theme()->fg('muted', $warming);
+        $lines = [$summary, $warming];
+
+        // Upstream's "Cache Re-billed" line, under the cost: what was in the previous request's
+        // prompt and billed again rather than read from the cache.
+        $waste = CacheStats::waste($this->session->store()?->everyMessage() ?? $this->session->messages());
+
+        if ($waste['missedTokens'] > 0) {
+            $detail = number_format($waste['missedTokens']) . ' tokens, ' . ($waste['missCount'] === 1 ? '1 miss' : "{$waste['missCount']} misses");
+            $lines[] = $waste['missedCost'] >= 0.0001
+                ? sprintf('Cache re-billed: $%.3f (%s)', $waste['missedCost'], $detail)
+                : "Cache re-billed: {$detail}";
+        }
+
+        return static fn (): string => implode("\n", array_map(static fn (string $line): string => Themes::theme()->fg('muted', $line), $lines));
     }
 
     /**
@@ -3388,7 +3534,9 @@ final class InteractiveMode
             $this->sayWarning($choice->warning);
         }
 
-        $this->useModel($choice->model, $choice->thinking);
+        // A level only when the pattern named one: `/model sonnet` leaves it to the model's own
+        // `modelThinkingLevels` entry and the default, as upstream's `setModel()` does.
+        $this->useModel($choice->model, $choice->explicitThinking ? $choice->thinking : null);
     }
 
     private function useModel(Model $model, ?ThinkingLevel $thinking = null, bool $persistAsDefault = false): void
@@ -3406,6 +3554,8 @@ final class InteractiveMode
 
         $this->footer->invalidate();
         $this->paintBorder();
+
+        $this->maybeWarnAboutAnthropicSubscriptionAuth($model);
 
         $level = $this->session->thinkingLevel();
 
@@ -3461,7 +3611,7 @@ final class InteractiveMode
         // `tree()`, not `branch()`. The branch is the path being talked on; a conversation that went
         // back has another one beside it, still in the file with its parents intact, and listing
         // only the current path made it unreachable — `goTo()` needs an id and nothing showed one.
-        $picker = new TreeList($tree, $store->leaf(), 12, $initialSelectedId);
+        $picker = new TreeList($tree, $store->leaf(), 12, $initialSelectedId, $this->settings->treeFilterMode());
         $picker->setSelectHandler(function (string $id): void {
             $this->closePicker();
 
@@ -3876,8 +4026,10 @@ final class InteractiveMode
     {
         $leaving = $this->session->store()?->abandoning($entryId) ?? [];
 
+        // `branchSummary.skipPrompt`: no question, and no summary — upstream's default answer.
         $wants = $leaving !== []
             && $this->session->model() !== null
+            && !$this->settings->branchSummarySkipPrompt()
             && $this->ui->confirm('Summarise the branch you are leaving?', self::summarise($leaving));
 
         try {
@@ -3915,6 +4067,7 @@ final class InteractiveMode
 
         if ($jump->summary !== null) {
             $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad));
+            $this->addSummaryCostNotice($jump->summary);
         }
 
         // Back in the prompt, to be asked differently — which is what going back to something you
@@ -4205,6 +4358,10 @@ final class InteractiveMode
                 $this->say($credentials === null
                     ? 'Signing in was cancelled.'
                     : "Signed in with {$provider->label()}.");
+
+                if ($credentials !== null) {
+                    $this->maybeWarnAboutAnthropicSubscriptionAuth();
+                }
             } catch (Throwable $problem) {
                 $this->sayError($problem->getMessage());
             } finally {
@@ -4701,6 +4858,17 @@ final class InteractiveMode
             'Whether a picture in a tool result is drawn, on terminals that can.',
             values: ['drawn', 'named'],
         );
+
+        // Upstream offers the width only on a terminal that draws pictures.
+        if (TerminalImage::getCapabilities()->images !== null) {
+            $rows[] = new SettingItem(
+                'imageWidthCells',
+                'Image width',
+                (string) $this->settings->imageWidthCells(),
+                'Preferred inline image width in terminal cells',
+                values: ['60', '80', '120'],
+            );
+        }
         $rows[] = new SettingItem(
             'queueMode',
             'Queued messages',
@@ -4730,6 +4898,64 @@ final class InteractiveMode
             'off; streaming while the agent runs; idle also between runs while continuation stays profitable',
             values: Settings::CACHE_WARMING_MODES,
         );
+        // Upstream's rows, with its labels and descriptions.
+        $rows[] = new SettingItem(
+            'showCacheMissNotices',
+            'Cache miss notices',
+            $this->settings->showCacheMissNotices() ? 'true' : 'false',
+            'Show transcript notices for cache costs and provider recovery diagnostics',
+            values: ['true', 'false'],
+        );
+        $quiet = $this->settings->quietStartup();
+        $rows[] = new SettingItem(
+            'quietStartup',
+            'Quiet startup',
+            $quiet === true ? 'true' : ($quiet === 'header' ? 'header' : 'false'),
+            'Disable verbose printing at startup (header: keep only the startup header)',
+            values: ['true', 'header', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'doubleEscapeAction',
+            'Double-escape action',
+            $this->settings->doubleEscapeAction(),
+            'Action when pressing Escape twice with empty editor',
+            values: ['tree', 'fork', 'none'],
+        );
+        $rows[] = new SettingItem(
+            'treeFilterMode',
+            'Tree filter mode',
+            $this->settings->treeFilterMode(),
+            'Default filter when opening /tree',
+            values: Settings::TREE_FILTER_MODES,
+        );
+        $rows[] = new SettingItem(
+            'warnings',
+            'Warnings',
+            'configure',
+            'Enable or disable individual warnings',
+            submenu: fn (string $current, Closure $done): Component => $this->warningsSubmenu($done),
+        );
+        $rows[] = new SettingItem(
+            'modelThinking',
+            'Default thinking level per model',
+            ModelThinkingSubmenu::summary($this->settings->allModelThinkingLevels()),
+            'Override the default thinking level for specific models. ' . $this->keybindings->keyText('app.thinking.cycle') . ' cycles in-session.',
+            submenu: fn (string $current, Closure $done): Component => new ModelThinkingSubmenu(
+                $this->modelsForThinkingOverrides(),
+                $this->settings->allModelThinkingLevels(),
+                ($model = $this->session->model()) !== null ? "{$model->provider}/{$model->id}" : null,
+                ($id = $this->settings->defaultModel()) !== null ? ($this->settings->defaultProvider() ?? '') . "/{$id}" : null,
+                $this->settings->defaultThinkingLevel() ?? ThinkingLevel::Off,
+                self::THINKING_DESCRIPTIONS,
+                function (Model $model, ?ThinkingLevel $level): void {
+                    $level === null
+                        ? $this->settings->removeModelThinkingLevel($model->provider, $model->id)
+                        : $this->settings->setModelThinkingLevel($model->provider, $model->id, $level);
+                    $this->tui->requestRender();
+                },
+                $done,
+            ),
+        );
 
         // Upstream's two padding rows, with its labels and values.
         $rows[] = new SettingItem(
@@ -4745,6 +4971,41 @@ final class InteractiveMode
             (string) $this->outputPad,
             'Horizontal padding for messages, tool output, and command output',
             values: ['0', '1'],
+        );
+        $rows[] = new SettingItem(
+            'autocompleteMaxVisible',
+            'Autocomplete max items',
+            (string) $this->settings->autocompleteMaxVisible(),
+            'Max visible items in autocomplete dropdown (3-20)',
+            values: ['3', '5', '7', '10', '15', '20'],
+        );
+        $rows[] = new SettingItem(
+            'showTerminalProgress',
+            'Terminal progress',
+            $this->settings->showTerminalProgress() ? 'true' : 'false',
+            'Show OSC 9;4 progress indicators in the terminal tab bar',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'autoResizeImages',
+            'Auto-resize images',
+            $this->settings->imageAutoResize() ? 'true' : 'false',
+            'Resize large images to 2000x2000 max for better model compatibility',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'blockImages',
+            'Block images',
+            $this->settings->blockImages() ? 'true' : 'false',
+            'Prevent images from being sent to LLM providers',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
+            'enableSkillCommands',
+            'Skill commands',
+            $this->settings->enableSkillCommands() ? 'true' : 'false',
+            'Register skills as /skill:name commands',
+            values: ['true', 'false'],
         );
 
         // Upstream's TUI rows. The mode switches renderers in place (`switchTuiMode()`).
@@ -4856,6 +5117,60 @@ final class InteractiveMode
         );
     }
 
+    /** Upstream's `THINKING_DESCRIPTIONS`, for the per-model submenu. */
+    private const array THINKING_DESCRIPTIONS = [
+        'off' => 'No reasoning',
+        'minimal' => 'Very brief reasoning (~1k tokens)',
+        'low' => 'Light reasoning (~2k tokens)',
+        'medium' => 'Moderate reasoning (~8k tokens)',
+        'high' => 'Deep reasoning (~16k tokens)',
+        'xhigh' => 'Maximum reasoning (~32k tokens)',
+    ];
+
+    /**
+     * Upstream's `availableDefaultModels`: what a key reaches, with the model in use first even
+     * when the registry has no row for it (one an extension or a test built), since it is the one
+     * somebody opening this row most likely means.
+     *
+     * @return list<Model>
+     */
+    private function modelsForThinkingOverrides(): array
+    {
+        $models = $this->auth?->availableModels() ?? Models::all();
+        $current = $this->session->model();
+
+        foreach ($models as $model) {
+            if ($current === null || ($model->provider === $current->provider && $model->id === $current->id)) {
+                return $models;
+            }
+        }
+
+        return [$current, ...$models];
+    }
+
+    /** Upstream's `WarningSettingsSubmenu`: one row per warning, applied as it changes. @param Closure(?string): void $done */
+    private function warningsSubmenu(Closure $done): Component
+    {
+        $list = new SettingsList([
+            new SettingItem(
+                'anthropicExtraUsage',
+                'Anthropic extra usage',
+                $this->settings->warnAnthropicExtraUsage() ? 'true' : 'false',
+                'Warn when Anthropic subscription auth may use paid extra usage',
+                values: ['true', 'false'],
+            ),
+        ], 10, Themes::getSettingsListTheme());
+        $list->setChangeHandler(function (string $id, string $value) use ($list): void {
+            $this->settings->setWarnAnthropicExtraUsage($value === 'true');
+            $list->setValue($id, $value);
+        });
+        $list->setCloseHandler(static function () use ($done): void {
+            $done(null);
+        });
+
+        return $list;
+    }
+
     /** One row of `/settings`, applied. Unknown ids are impossible: this list built them. */
     private function applySetting(string $id, string $value): void
     {
@@ -4874,12 +5189,29 @@ final class InteractiveMode
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
             'cacheWarming' => $this->session->setCacheWarmingMode($value),
+            'showCacheMissNotices' => $this->settings->setShowCacheMissNotices($value === 'true'),
+            'quietStartup' => $this->settings->setQuietStartup($value === 'header' ? 'header' : $value === 'true'),
+            'doubleEscapeAction' => $this->settings->setDoubleEscapeAction($value),
+            'treeFilterMode' => $this->settings->setTreeFilterMode($value),
+            'autoResizeImages' => $this->settings->setImageAutoResize($value === 'true'),
+            'blockImages' => $this->settings->setBlockImages($value === 'true'),
+            'enableSkillCommands' => $this->useSkillCommands($value === 'true'),
+            'imageWidthCells' => $this->useImageWidthCells((int) $value),
+            'autocompleteMaxVisible' => $this->useAutocompleteMaxVisible((int) $value),
+            'showTerminalProgress' => $this->settings->setShowTerminalProgress($value === 'true'),
             'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
             'fullscreenScrollbar' => $this->useFullscreenScrollbar($value),
             'fullscreenCopyOnSelect' => $this->useFullscreenCopyOnSelect($value === 'true'),
             'fullscreenWheelScrollLines' => $this->useFullscreenWheelScrollLines($value === 'auto' ? 'auto' : (int) $value),
             default => null,
         };
+    }
+
+    /** Upstream's `onEnableSkillCommandsChange`: saved, and the completion list rebuilt to match. */
+    private function useSkillCommands(bool $enabled): void
+    {
+        $this->settings->setEnableSkillCommands($enabled);
+        $this->setupAutocompleteProvider();
     }
 
     /** Upstream's `onEditorPaddingXChange`: saved, and on the editor that is up. */
@@ -4998,6 +5330,7 @@ final class InteractiveMode
 
         match (true) {
             $event instanceof AgentStartEvent => $this->onStart(),
+            $event instanceof TurnStartEvent => $this->terminalProgress(true),
             $event instanceof MessageStartEvent => $this->onMessageStart($event),
             $event instanceof MessageUpdateEvent => $this->onMessageUpdate($event),
             $event instanceof MessageEndEvent => $this->onMessageEnd($event),
@@ -5008,6 +5341,7 @@ final class InteractiveMode
 
             // The session's own, from between one run and the next. See `AgentEvent`.
             $event instanceof ModelFallbackEvent => $this->onModelFallback($event),
+            $event instanceof CacheWarmedEvent => $this->addCacheWarmingUsage($event->entry),
             $event instanceof RetryStartEvent => $this->onRetryStart($event),
             $event instanceof RetryEndEvent => $this->onRetryEnd($event),
             $event instanceof AutoCompactionStartEvent => $this->onOverflow(),
@@ -5197,9 +5531,131 @@ final class InteractiveMode
             foreach ($this->tools as $tool) {
                 $tool->setArgsComplete();
             }
+
+            $this->maybeShowThinkingDropNotice($event->message);
+            $this->maybeShowCacheMissNotice($event->message);
         }
 
         $this->streaming = null;
+    }
+
+    // ---- what cache traffic cost, behind `showCacheMissNotices` ------------------------------
+
+    /** Upstream's `addCacheWarmingUsage()`. */
+    private function addCacheWarmingUsage(UsageEntry $entry): void
+    {
+        if (!$this->settings->showCacheMissNotices()) {
+            return;
+        }
+
+        $usage = CacheWarmer::formatUsage($entry);
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('dim', $usage), 1, 0));
+    }
+
+    /** Upstream's `addCompactionCostNotice()`: what a summary billed, from the usage on its entry. */
+    private function addSummaryCostNotice(CompactionSummary|BranchSummary $summary): void
+    {
+        if (!$this->settings->showCacheMissNotices() || $summary->usage === null) {
+            return;
+        }
+
+        $usage = $summary->usage;
+        $tokens = $usage->input + $usage->output + $usage->cacheRead + $usage->cacheWrite;
+        $cost = $usage->cost->total >= 0.01 ? sprintf(' (~$%.2f)', $usage->cost->total) : '';
+        $label = $summary instanceof CompactionSummary ? 'Compaction' : 'Branch summary';
+        $line = "{$label}: " . FooterComponent::tokens($tokens) . " tokens billed{$cost}";
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('warning', $line), 1, 0));
+    }
+
+    private static function countDroppedThinkingBlocks(AssistantMessage $message): int
+    {
+        $count = 0;
+
+        foreach ($message->diagnostics ?? [] as $diagnostic) {
+            if ($diagnostic->type !== 'anthropic_input_transformations') {
+                continue;
+            }
+
+            foreach ((array) ($diagnostic->details['transformations'] ?? []) as $transformation) {
+                if (is_array($transformation) && ($transformation['type'] ?? null) === 'thinking_dropped') {
+                    $count++;
+                }
+            }
+        }
+
+        return $count;
+    }
+
+    /** Upstream's `maybeShowThinkingDropNotice()`: said when Anthropic dropped more thinking than last turn. */
+    private function maybeShowThinkingDropNotice(AssistantMessage $message): void
+    {
+        if (!$this->settings->showCacheMissNotices()) {
+            return;
+        }
+
+        $dropped = self::countDroppedThinkingBlocks($message);
+
+        if ($dropped === 0) {
+            return;
+        }
+
+        // The file already holds this message, which upstream's does not at this moment; the
+        // previous response is the last assistant message before it.
+        $previousDropped = 0;
+        $branch = $this->session->store()?->branch() ?? [];
+
+        for ($i = count($branch) - 1; $i >= 0; $i--) {
+            $entry = $branch[$i]['message'];
+
+            if ($entry instanceof AssistantMessage && $entry !== $message) {
+                $previousDropped = self::countDroppedThinkingBlocks($entry);
+
+                break;
+            }
+        }
+
+        if ($dropped <= $previousDropped) {
+            return;
+        }
+
+        $noun = $dropped === 1 ? 'thinking block' : 'thinking blocks';
+        $line = "Anthropic dropped {$dropped} {$noun} (details in session)";
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('warning', $line), 1, 0));
+    }
+
+    /** Upstream's `maybeShowCacheMissNotice()`. */
+    private function maybeShowCacheMissNotice(AssistantMessage $message): void
+    {
+        if (!$this->settings->showCacheMissNotices()) {
+            return;
+        }
+
+        $miss = CacheStats::detect($this->session->store()?->everyMessage() ?? $this->session->messages(), $message);
+
+        if ($miss !== null) {
+            $this->addCacheMissNotice($miss);
+        }
+    }
+
+    /** Upstream's `addCacheMissNotice()`: only a miss of 20,000 tokens or ten cents is worth a line. */
+    private function addCacheMissNotice(CacheMiss $miss): void
+    {
+        if ($miss->missedTokens < 20_000 && $miss->missedCost < 0.1) {
+            return;
+        }
+
+        $cost = $miss->missedCost >= 0.01 ? sprintf(' (~$%.2f)', $miss->missedCost) : '';
+        $label = match (true) {
+            $miss->modelChanged => 'Cache miss after model switch',
+            $miss->idleMs >= CacheStats::CACHE_TTL_MS => 'Cache miss after ' . (int) round($miss->idleMs / 60_000) . 'm idle',
+            default => 'Cache miss',
+        };
+        $line = "{$label}: " . FooterComponent::tokens($miss->missedTokens) . " tokens re-billed{$cost}";
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('warning', $line), 1, 0));
     }
 
     private function onToolStart(ToolExecutionStartEvent $event): void
@@ -5233,6 +5689,7 @@ final class InteractiveMode
 
     private function onEnd(): void
     {
+        $this->terminalProgress(false);
         $this->hideLoader();
         $this->streaming = null;
         $this->tools = [];
@@ -5353,8 +5810,17 @@ final class InteractiveMode
         $this->sayError($event->error ?? 'Giving up after ' . $event->attempts . ' attempts.');
     }
 
+    /** Upstream's `terminal.setProgress()` calls, behind `terminal.showTerminalProgress`. */
+    private function terminalProgress(bool $active): void
+    {
+        if ($this->settings->showTerminalProgress()) {
+            $this->renderer->terminal->setProgress($active);
+        }
+    }
+
     private function onOverflow(): void
     {
+        $this->terminalProgress(true);
         // Enter does nothing for the length of it, which is upstream's one use of this flag and
         // the only answer that does not lose the message. Without it the submit handler clears
         // the editor and spawns a turn that parks on the compaction — and when the compaction's
@@ -5390,11 +5856,13 @@ final class InteractiveMode
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void
     {
+        $this->terminalProgress(false);
         $this->editor->disableSubmit(false);
         $this->hideLoader();
 
         if ($event->summary !== null) {
             $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad));
+            $this->addSummaryCostNotice($event->summary);
 
             return;
         }
@@ -5475,6 +5943,7 @@ final class InteractiveMode
             toolRenderers: $this->toolRenderers($name, $custom),
             startedAt: microtime(true),
             outputPad: $this->outputPad,
+            imageWidthCells: $this->settings->imageWidthCells(),
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);

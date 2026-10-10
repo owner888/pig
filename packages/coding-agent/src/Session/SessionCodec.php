@@ -41,6 +41,7 @@ final class SessionCodec
                 'firstKeptEntryId' => $message->firstKeptEntryId,
                 'fromHook' => $message->fromHook,
                 ...($message->systemMessage === null ? [] : ['systemMessage' => MessageJson::encode($message->systemMessage)]),
+                ...($message->usage === null ? [] : ['usage' => MessageJson::encodeUsage($message->usage)]),
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BranchSummary => [
@@ -52,6 +53,7 @@ final class SessionCodec
                 // the translation lives. This is pig's own wire, where "there was no leaf" says so.
                 'fromId' => $message->fromId,
                 'fromHook' => $message->fromHook,
+                ...($message->usage === null ? [] : ['usage' => MessageJson::encodeUsage($message->usage)]),
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof HookMessage => [
@@ -103,6 +105,7 @@ final class SessionCodec
                 is_array($entry['systemMessage'] ?? null) && ($entry['systemMessage']['role'] ?? null) === 'system'
                     ? MessageJson::decode($entry['systemMessage'])
                     : null,
+                is_array($entry['usage'] ?? null) ? MessageJson::decodeUsage($entry['usage']) : null,
             ),
             'branchSummary' => new BranchSummary(
                 (string) ($entry['summary'] ?? ''),
@@ -111,6 +114,7 @@ final class SessionCodec
                 isset($entry['fromId']) ? (string) $entry['fromId'] : null,
                 (bool) ($entry['fromHook'] ?? false),
                 $timestamp,
+                is_array($entry['usage'] ?? null) ? MessageJson::decodeUsage($entry['usage']) : null,
             ),
             'custom' => new HookMessage(
                 (string) ($entry['customType'] ?? ''),

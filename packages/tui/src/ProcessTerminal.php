@@ -54,6 +54,13 @@ final class ProcessTerminal implements Terminal
     /** Latest program status, kept across stop() so start() can report it again. */
     private ?ProgramStatus $programStatus = null;
 
+    /** Upstream's `progressInterval`: the OSC 9;4;3 keepalive, re-sent every second while active. */
+    private ?string $progressTimer = null;
+
+    private const string PROGRESS_ACTIVE = "\x1b]9;4;3\x07";
+
+    private const string PROGRESS_CLEAR = "\x1b]9;4;0\x07";
+
     /** Whether the terminal confirmed OSC 7501 support since the last start(), or `PIG_PROGRAM_STATUS=1`. */
     private bool $programStatusSupported = false;
 
@@ -230,6 +237,10 @@ final class ProcessTerminal implements Terminal
     #[\Override]
     public function stop(): void
     {
+        if ($this->clearProgressTimer()) {
+            $this->write(self::PROGRESS_CLEAR);
+        }
+
         // Remove the status while stopped, after exit or while suspended. start() reports it again.
         if ($this->programStatusSupported && $this->programStatus !== null) {
             $this->write((new ProgramStatus('clear'))->format());
@@ -414,6 +425,39 @@ final class ProcessTerminal implements Terminal
         if ($this->programStatusSupported && $this->programStatus !== null) {
             $this->write($this->programStatus->format());
         }
+    }
+
+    #[\Override]
+    public function setProgress(bool $active): void
+    {
+        if (!$active) {
+            $this->clearProgressTimer();
+            $this->write(self::PROGRESS_CLEAR);
+
+            return;
+        }
+
+        $this->write(self::PROGRESS_ACTIVE);
+
+        if ($this->progressTimer === null) {
+            $keepAlive = function () use (&$keepAlive): void {
+                $this->write(self::PROGRESS_ACTIVE);
+                $this->progressTimer = Loop::get()->delay(1.0, $keepAlive);
+            };
+            $this->progressTimer = Loop::get()->delay(1.0, $keepAlive);
+        }
+    }
+
+    private function clearProgressTimer(): bool
+    {
+        if ($this->progressTimer === null) {
+            return false;
+        }
+
+        Loop::get()->cancel($this->progressTimer);
+        $this->progressTimer = null;
+
+        return true;
     }
 
     #[\Override]

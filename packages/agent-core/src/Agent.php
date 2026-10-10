@@ -102,7 +102,13 @@ final class Agent
 
     private ?AbortController $controller = null;
 
-    private readonly Closure $convertToLlm;
+    /**
+     * Upstream's `Agent.convertToLlm`, a public field there too: a session wraps it, as upstream's
+     * `createAgentSession()` wraps it to take images out when `images.blockImages` is on.
+     *
+     * @var Closure(list<mixed>): list<mixed>
+     */
+    public Closure $convertToLlm;
 
     /**
      * Upstream's `Agent.transformContext`, a public field there too: a session wraps it to project

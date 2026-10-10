@@ -28,7 +28,7 @@ final readonly class Arguments
     public const array TAKES_A_VALUE = [
         'model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models', 'proxy',
         'tools', 'exclude-tools', 'export', 'list-models', 'extension', 'session', 'web-host', 'web-port',
-        'mcp-host', 'mcp-port',
+        'mcp-host', 'mcp-port', 'session-dir',
     ];
 
     /**

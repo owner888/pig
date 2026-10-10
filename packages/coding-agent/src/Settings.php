@@ -8,6 +8,9 @@ use Pig\Ai\Utils\Retry;
 
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
+use Pig\Ai\Model;
+use Pig\CodingAgent\Tools\ToolSet;
+use Pig\Tui\Images\ImageProtocol;
 
 /**
  * What someone chose last time, and what this project insists on.
@@ -80,6 +83,26 @@ final class Settings
         $settings->problems = array_values(array_filter([$globalProblem, $projectProblem]));
 
         return $settings;
+    }
+
+    /**
+     * Upstream's `startupSettingsManager.getSessionDir()`: `sessionDir` from the person's file and
+     * the project's, the project's winning, **whether or not the project is trusted** — upstream
+     * reads it while choosing the session, before trust is decided, and the docs say so.
+     */
+    public static function startupSessionDir(string $cwd, ?string $home = null): ?string
+    {
+        $value = null;
+
+        foreach ([($home ?? Config::home()) . '/' . self::FILE, rtrim($cwd, '/') . '/.pig/' . self::FILE] as $path) {
+            $dir = self::read($path)[0]['sessionDir'] ?? null;
+
+            if (is_string($dir) && $dir !== '') {
+                $value = $dir;
+            }
+        }
+
+        return $value;
     }
 
     /**
@@ -308,6 +331,268 @@ final class Settings
     }
 
     /**
+     * Upstream's `getModelThinkingLevel()`: the level this model opens with, from
+     * `modelThinkingLevels["provider/id"]`, over `defaultThinkingLevel`.
+     */
+    public function modelThinkingLevel(string $provider, string $id): ?ThinkingLevel
+    {
+        return $this->allModelThinkingLevels()["{$provider}/{$id}"] ?? null;
+    }
+
+    /** @return array<string, ThinkingLevel> keyed `provider/id` */
+    public function allModelThinkingLevels(): array
+    {
+        $levels = $this->get('modelThinkingLevels');
+        $known = [];
+
+        foreach (is_array($levels) ? $levels : [] as $key => $level) {
+            if (is_string($level) && ($found = ThinkingLevel::tryFrom($level)) !== null) {
+                $known[(string) $key] = $found;
+            }
+        }
+
+        return $known;
+    }
+
+    /** Set as a whole map rather than through `set()`, which splits its key on dots — and model ids have them. */
+    public function setModelThinkingLevel(string $provider, string $id, ThinkingLevel $level): void
+    {
+        $levels = is_array($this->global['modelThinkingLevels'] ?? null) ? $this->global['modelThinkingLevels'] : [];
+        $levels["{$provider}/{$id}"] = $level->value;
+        $this->global['modelThinkingLevels'] = $levels;
+        $this->save();
+    }
+
+    /** Upstream's `removeModelThinkingLevel()`: the key goes when the last entry does. */
+    public function removeModelThinkingLevel(string $provider, string $id): void
+    {
+        if (!is_array($this->global['modelThinkingLevels'] ?? null)) {
+            return;
+        }
+
+        unset($this->global['modelThinkingLevels']["{$provider}/{$id}"]);
+
+        if ($this->global['modelThinkingLevels'] === []) {
+            unset($this->global['modelThinkingLevels']);
+        }
+
+        $this->save();
+    }
+
+    /**
+     * Upstream's `getThinkingBudgets()`: the token budgets for `minimal`, `low`, `medium` and
+     * `high` over the built-in ones, for the models that think on a budget. Only those four keys,
+     * and only numbers.
+     *
+     * @return array<string, int>|null
+     */
+    public function thinkingBudgets(): ?array
+    {
+        $budgets = $this->get('thinkingBudgets');
+
+        if (!is_array($budgets)) {
+            return null;
+        }
+
+        $known = [];
+
+        foreach (['minimal', 'low', 'medium', 'high'] as $level) {
+            if (is_int($budgets[$level] ?? null) || is_float($budgets[$level] ?? null)) {
+                $known[$level] = (int) $budgets[$level];
+            }
+        }
+
+        return $known;
+    }
+
+    /**
+     * Upstream's `getEnabledModels()`: the patterns `--models` would have narrowed the session to,
+     * for when it was not typed.
+     *
+     * @return list<string>|null
+     */
+    public function enabledModels(): ?array
+    {
+        $patterns = $this->get('enabledModels');
+
+        return is_array($patterns) ? array_values(array_filter($patterns, is_string(...))) : null;
+    }
+
+    /** @param list<string>|null $patterns */
+    public function setEnabledModels(?array $patterns): void
+    {
+        $this->set('enabledModels', $patterns);
+    }
+
+    /** Upstream's `getEnableSkillCommands()`: each skill is a `/skill:name` command. On by default. */
+    public function enableSkillCommands(): bool
+    {
+        return $this->get('enableSkillCommands') !== false;
+    }
+
+    public function setEnableSkillCommands(bool $enabled): void
+    {
+        $this->set('enableSkillCommands', $enabled);
+    }
+
+    /** Upstream's `getImageAutoResize()`: images are fitted inside the provider's limits on the way in. On by default. */
+    public function imageAutoResize(): bool
+    {
+        return $this->get('images.autoResize') !== false;
+    }
+
+    public function setImageAutoResize(bool $enabled): void
+    {
+        $this->set('images.autoResize', $enabled);
+    }
+
+    /** Upstream's `getBlockImages()`: no image reaches a provider, each one a line saying so. Off by default. */
+    public function blockImages(): bool
+    {
+        return $this->get('images.blockImages') === true;
+    }
+
+    public function setBlockImages(bool $blocked): void
+    {
+        $this->set('images.blockImages', $blocked);
+    }
+
+    /** Upstream's `getShellCommandPrefix()`: a line run in front of every command, `bash` and `!` alike. */
+    public function shellCommandPrefix(): ?string
+    {
+        $prefix = $this->get('shellCommandPrefix');
+
+        return is_string($prefix) && $prefix !== '' ? $prefix : null;
+    }
+
+    /** Upstream's `getSessionDir()`: one directory for every project's sessions, in place of one per project. */
+    public function sessionDir(): ?string
+    {
+        $dir = $this->get('sessionDir');
+
+        return is_string($dir) && $dir !== '' ? $dir : null;
+    }
+
+    /** Upstream's `getWarnings().anthropicExtraUsage`: say so when a Claude subscription is billed per token. On by default. */
+    public function warnAnthropicExtraUsage(): bool
+    {
+        return $this->get('warnings.anthropicExtraUsage') !== false;
+    }
+
+    public function setWarnAnthropicExtraUsage(bool $enabled): void
+    {
+        $this->set('warnings.anthropicExtraUsage', $enabled);
+    }
+
+    /**
+     * Upstream's `getDefaultTools()`: the tools a session starts with when `--tools` did not say.
+     * Plain names replace the built-in four; `+name` adds and `-name` removes, in order. A project's
+     * list of only `+`/`-` entries is applied after the person's (`mergeDefaultTools()`), where a
+     * list with a plain name replaces it as any other list does. Null when neither file says.
+     *
+     * @return list<string>|null
+     */
+    public function defaultTools(): ?array
+    {
+        $entries = $this->defaultToolEntries();
+
+        if ($entries === null) {
+            return null;
+        }
+
+        $plain = array_values(array_filter($entries, static fn (string $e): bool => !self::isToolModifier($e)));
+
+        return self::applyToolModifiers($plain !== [] || $entries === [] ? $plain : ToolSet::CODING, $entries);
+    }
+
+    /**
+     * The `defaultTools` entries as the two files merge them, before they are resolved — what a
+     * `-name` took out is only visible here.
+     *
+     * @return list<string>|null
+     */
+    public function defaultToolEntries(): ?array
+    {
+        $global = $this->global['defaultTools'] ?? null;
+        $project = $this->project['defaultTools'] ?? null;
+
+        $entries = match (true) {
+            $project === null => $global,
+            !is_array($global) || !is_array($project) || array_filter($project, static fn (mixed $e): bool => !self::isToolModifier($e)) !== [] => $project,
+            default => [...$global, ...$project],
+        };
+
+        if ($entries === null) {
+            return null;
+        }
+
+        return is_array($entries) ? array_values(array_filter($entries, is_string(...))) : [];
+    }
+
+    /** Upstream's `isToolModifier()`: `+name` or `-name`. */
+    public static function isToolModifier(mixed $entry): bool
+    {
+        return is_string($entry) && (str_starts_with($entry, '+') || str_starts_with($entry, '-'));
+    }
+
+    /**
+     * Upstream's `applyToolModifiers()`: each `+name` not there yet is added at the end, each
+     * `-name` there is taken out; plain names are skipped.
+     *
+     * @param list<string> $base
+     * @param list<string> $entries
+     * @return list<string>
+     */
+    public static function applyToolModifiers(array $base, array $entries): array
+    {
+        $tools = $base;
+
+        foreach ($entries as $entry) {
+            if (!self::isToolModifier($entry)) {
+                continue;
+            }
+
+            $name = substr($entry, 1);
+            $index = array_search($name, $tools, true);
+
+            if ($entry[0] === '+' && $index === false && $name !== '') {
+                $tools[] = $name;
+            } elseif ($entry[0] === '-' && $index !== false) {
+                array_splice($tools, $index, 1);
+            }
+        }
+
+        return $tools;
+    }
+
+    /**
+     * Upstream's `getToolListError()`: `--tools` is either names and patterns, or only `+`/`-`
+     * entries with exact names. Null when the list is one of the two.
+     *
+     * @param list<string> $entries
+     */
+    public static function toolListError(array $entries): ?string
+    {
+        $modifiers = array_values(array_filter($entries, self::isToolModifier(...)));
+
+        if ($modifiers === []) {
+            return null;
+        }
+
+        if (count($modifiers) < count($entries)) {
+            return 'tool names cannot be mixed with +name or -name entries';
+        }
+
+        foreach ($modifiers as $entry) {
+            if (str_contains($entry, '*')) {
+                return "+name and -name entries take exact tool names, not patterns: {$entry}";
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * The models a turn moves on to when the current one has run out of quota, in order.
      *
      * pig's own key, with no upstream counterpart: `fallbackModels`, a list of patterns in
@@ -488,18 +773,49 @@ final class Settings
         $this->set('compaction.enabled', $enabled);
     }
 
-    public function compactionReserveTokens(int $fallback): int
+    /**
+     * `compaction.reserveTokens`, under the model's own `compaction.modelOverrides["provider/id"]`
+     * entry when there is one — upstream's `getCompactionReserveTokens(model)`: the override, then
+     * the ordinary setting, then the default. A value that is not a positive whole number is not
+     * one, as it never was here.
+     */
+    public function compactionReserveTokens(int $fallback, ?Model $model = null): int
     {
-        $value = $this->get('compaction.reserveTokens');
+        return $this->compactionTokens('reserveTokens', $fallback, $model);
+    }
+
+    public function compactionKeepRecentTokens(int $fallback, ?Model $model = null): int
+    {
+        return $this->compactionTokens('keepRecentTokens', $fallback, $model);
+    }
+
+    private function compactionTokens(string $field, int $fallback, ?Model $model): int
+    {
+        $overrides = $this->get('compaction.modelOverrides');
+        $entry = $model !== null && is_array($overrides) ? ($overrides["{$model->provider}/{$model->id}"] ?? null) : null;
+        $override = is_array($entry) ? ($entry[$field] ?? null) : null;
+
+        if (is_int($override) && $override > 0) {
+            return $override;
+        }
+
+        $value = $this->get("compaction.{$field}");
 
         return is_int($value) && $value > 0 ? $value : $fallback;
     }
 
-    public function compactionKeepRecentTokens(int $fallback): int
+    /** Upstream's `getBranchSummarySettings().reserveTokens`: what `/tree`'s summary leaves of the window, 16,384 by default. */
+    public function branchSummaryReserveTokens(int $fallback): int
     {
-        $value = $this->get('compaction.keepRecentTokens');
+        $value = $this->get('branchSummary.reserveTokens');
 
         return is_int($value) && $value > 0 ? $value : $fallback;
+    }
+
+    /** Upstream's `getBranchSummarySkipPrompt()`: `/tree` goes without asking, and without a summary. */
+    public function branchSummarySkipPrompt(): bool
+    {
+        return $this->get('branchSummary.skipPrompt') === true;
     }
 
     /**
@@ -551,6 +867,141 @@ final class Settings
     public function setCacheWarmingMode(string $mode): void
     {
         $this->set('cacheWarming', $mode);
+    }
+
+    /**
+     * Upstream's `getShowCacheMissNotices()`: whether the transcript says what cache traffic cost —
+     * a significant miss, a warming refresh, what a summary billed, a thinking block Anthropic
+     * dropped. Off by default.
+     */
+    public function showCacheMissNotices(): bool
+    {
+        return $this->get('showCacheMissNotices') === true;
+    }
+
+    public function setShowCacheMissNotices(bool $shown): void
+    {
+        $this->set('showCacheMissNotices', $shown);
+    }
+
+    /**
+     * Upstream's `getTerminalCapabilityOverrides()`: `terminal.images` (`kitty`, `iterm2`, or `false`
+     * for none), `terminal.trueColor` and `terminal.hyperlinks`; anything else — `auto` included —
+     * leaves that capability to detection.
+     *
+     * @return array{images?: ?ImageProtocol, trueColor?: bool, hyperlinks?: bool}
+     */
+    public function terminalCapabilityOverrides(): array
+    {
+        $images = $this->get('terminal.images');
+        $trueColor = $this->get('terminal.trueColor');
+        $hyperlinks = $this->get('terminal.hyperlinks');
+        $overrides = [];
+
+        if ($images === 'kitty' || $images === 'iterm2') {
+            $overrides['images'] = ImageProtocol::from($images);
+        } elseif ($images === false) {
+            $overrides['images'] = null;
+        }
+
+        if (is_bool($trueColor)) {
+            $overrides['trueColor'] = $trueColor;
+        }
+
+        if (is_bool($hyperlinks)) {
+            $overrides['hyperlinks'] = $hyperlinks;
+        }
+
+        return $overrides;
+    }
+
+    /** Upstream's `getImageWidthCells()`: the preferred width of an inline picture, 60 cells by default. */
+    public function imageWidthCells(): int
+    {
+        $width = $this->get('terminal.imageWidthCells');
+
+        return is_int($width) || (is_float($width) && is_finite($width)) ? max(1, (int) floor($width)) : 60;
+    }
+
+    public function setImageWidthCells(int $width): void
+    {
+        $this->set('terminal.imageWidthCells', max(1, $width));
+    }
+
+    /** Upstream's `getShowTerminalProgress()`: OSC 9;4 progress in the terminal's tab while working. */
+    public function showTerminalProgress(): bool
+    {
+        return $this->get('terminal.showTerminalProgress') === true;
+    }
+
+    public function setShowTerminalProgress(bool $enabled): void
+    {
+        $this->set('terminal.showTerminalProgress', $enabled);
+    }
+
+    /** Upstream's `getCodeBlockIndent()`: what a rendered code block is indented with. */
+    public function codeBlockIndent(): string
+    {
+        $indent = $this->get('markdown.codeBlockIndent');
+
+        return is_string($indent) ? $indent : '  ';
+    }
+
+    /**
+     * Upstream's `getQuietStartup()`: `true` prints no startup details, `header` keeps only the
+     * header, `false` (the default) prints everything.
+     */
+    public function quietStartup(): bool|string
+    {
+        $value = $this->get('quietStartup');
+
+        return $value === true || $value === 'header' ? $value : false;
+    }
+
+    public function setQuietStartup(bool|string $quiet): void
+    {
+        $this->set('quietStartup', $quiet);
+    }
+
+    /** Upstream's `getAutocompleteMaxVisible()`: rows in the completion list, 5 by default. */
+    public function autocompleteMaxVisible(): int
+    {
+        $value = $this->get('autocompleteMaxVisible');
+
+        return is_int($value) ? $value : 5;
+    }
+
+    public function setAutocompleteMaxVisible(int $maxVisible): void
+    {
+        $this->set('autocompleteMaxVisible', max(3, min(20, $maxVisible)));
+    }
+
+    /** Upstream's `getDoubleEscapeAction()`: what Escape twice on an empty prompt opens — `tree`, `fork` or `none`. */
+    public function doubleEscapeAction(): string
+    {
+        $action = $this->get('doubleEscapeAction');
+
+        return is_string($action) ? $action : 'tree';
+    }
+
+    public function setDoubleEscapeAction(string $action): void
+    {
+        $this->set('doubleEscapeAction', $action);
+    }
+
+    public const array TREE_FILTER_MODES = ['default', 'no-tools', 'user-only', 'labeled-only', 'all'];
+
+    /** Upstream's `getTreeFilterMode()`: the filter `/tree` opens with. */
+    public function treeFilterMode(): string
+    {
+        $mode = $this->get('treeFilterMode');
+
+        return is_string($mode) && in_array($mode, self::TREE_FILTER_MODES, true) ? $mode : 'default';
+    }
+
+    public function setTreeFilterMode(string $mode): void
+    {
+        $this->set('treeFilterMode', $mode);
     }
 
     /**

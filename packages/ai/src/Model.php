@@ -38,8 +38,9 @@ final readonly class Model
      *        preprocessing metadata" — the largest request in bytes, how many images one message or
      *        one request may carry, and the resize profile an image gets before it enters the
      *        history. Null is upstream's undefined. `Models` writes it the way upstream's generator
-     *        (`applyImageInputMetadata()`) does, `models.json` may say it; pig has no image
-     *        preprocessing that reads it yet (see CLAUDE.md), so it is carried and sent on.
+     *        (`applyImageInputMetadata()`) does, `models.json` may say it. Its `images.resize` is what
+     *        `Pig\CodingAgent\Utils\ImageProcess` fits a picture inside; the counts are carried and
+     *        sent on.
      * @param array{short?: int|float, long?: int|float}|null $promptCache upstream's `promptCache`
      *        (`ModelPromptCache`): "Prompt cache lifetimes per retention tier. Unset when the
      *        provider's cache behavior is unknown." Seconds per `cacheRetention` tier — direct

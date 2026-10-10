@@ -72,6 +72,19 @@ final class Stream
     ];
 
     /**
+     * Upstream's `thinkingBudgetForLevel()`: the caller's budget for the level over the defaults,
+     * `xhigh` and `max` counting as `high`.
+     *
+     * @param array<string, int>|null $custom
+     */
+    public static function thinkingBudgetForLevel(string $level, ?array $custom = null): int
+    {
+        $level = in_array($level, ['xhigh', 'max'], true) ? 'high' : $level;
+
+        return [...self::DEFAULT_THINKING_BUDGETS, ...($custom ?? [])][$level];
+    }
+
+    /**
      * Provider-independent options, mapped and sent.
      *
      * Upstream: streamSimple(), which folds the context's `systemPrompt` and `tools` into a leading
@@ -373,6 +386,7 @@ final class Stream
                 ...$base,
                 reasoning: self::clampedReasoning($model, $options?->reasoning),
                 toolChoice: $options?->toolChoice,
+                thinkingBudgets: $options?->thinkingBudgets,
             ),
             // Upstream's `streamSimple()` in `openai-responses.ts`: the level clamped to the ones
             // the model has (`clampThinkingLevel()`, which reads the `thinkingLevelMap`), `off`
@@ -453,7 +467,7 @@ final class Stream
      *   budget would take it all, clamps the result to the context again, and the budget to what
      *   is left above 1,024.
      *
-     * Upstream's caller-supplied `thinkingBudgets` are not ported: nothing in pig sets them.
+     * A caller's `thinkingBudgets` replace the defaults level by level.
      */
     /** @param array<string, mixed> $base `buildBaseOptions()` as named arguments */
     private static function anthropicSimple(Model $model, TranscriptContext $context, ?SimpleStreamOptions $options, array $base): AnthropicOptions
@@ -480,8 +494,7 @@ final class Stream
         // `adjustMaxTokensForThinking(base.maxTokens, model.maxTokens, reasoning)`: the base is
         // always set here (`buildBaseOptions()` sets it), so the ceiling is the base plus the budget,
         // capped at the model's.
-        $level = in_array($reasoning->value, ['xhigh', 'max'], true) ? 'high' : $reasoning->value;
-        $thinkingBudget = self::DEFAULT_THINKING_BUDGETS[$level];
+        $thinkingBudget = self::thinkingBudgetForLevel($reasoning->value, $options->thinkingBudgets);
         $adjusted = min($maxTokens + $thinkingBudget, $model->maxTokens);
 
         if ($adjusted <= $thinkingBudget) {
@@ -592,17 +605,22 @@ final class Stream
             return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: GoogleShared::toGoogleThinkingLevel($resolvedLevel));
         }
 
-        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $resolvedLevel));
+        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $resolvedLevel, $options?->thinkingBudgets));
     }
 
     /**
      * Upstream's `getGoogleBudget()`, from the level the model's map resolved to.
      *
-     * Upstream also takes the caller's own `thinkingBudgets` first; pig's `SimpleStreamOptions` has
-     * no such field, so the table is the whole answer. https://ai.google.dev/gemini-api/docs/thinking#set-budget
+     * The caller's own `thinkingBudgets` come first. https://ai.google.dev/gemini-api/docs/thinking#set-budget
+     *
+     * @param array<string, int>|null $custom
      */
-    private static function geminiBudget(Model $model, string $level): int
+    private static function geminiBudget(Model $model, string $level, ?array $custom = null): int
     {
+        if (isset($custom[$level])) {
+            return $custom[$level];
+        }
+
         if (str_contains($model->id, '2.5-pro')) {
             return ['minimal' => 128, 'low' => 2048, 'medium' => 8192, 'high' => 32768][$level];
         }
@@ -642,12 +660,20 @@ final class Stream
             return new GoogleVertexOptions(...$base, thinkingEnabled: true, thinkingLevel: GoogleShared::toGoogleThinkingLevel($resolvedLevel), toolChoice: $toolChoice);
         }
 
-        return new GoogleVertexOptions(...$base, thinkingEnabled: true, thinkingBudget: self::vertexBudget($model, $resolvedLevel), toolChoice: $toolChoice);
+        return new GoogleVertexOptions(...$base, thinkingEnabled: true, thinkingBudget: self::vertexBudget($model, $resolvedLevel, $options?->thinkingBudgets), toolChoice: $toolChoice);
     }
 
-    /** Upstream's `getGoogleBudget()` in `google-vertex.ts`; the caller's `thinkingBudgets` are not ported. */
-    private static function vertexBudget(Model $model, string $level): int
+    /**
+     * Upstream's `getGoogleBudget()` in `google-vertex.ts`, the caller's `thinkingBudgets` first.
+     *
+     * @param array<string, int>|null $custom
+     */
+    private static function vertexBudget(Model $model, string $level, ?array $custom = null): int
     {
+        if (isset($custom[$level])) {
+            return $custom[$level];
+        }
+
         if (str_contains($model->id, '2.5-pro')) {
             return ['minimal' => 128, 'low' => 2048, 'medium' => 8192, 'high' => 32768][$level];
         }
@@ -677,9 +703,11 @@ final class Stream
             return new BedrockOptions(...$base, toolChoice: $toolChoice);
         }
 
+        $custom = $options?->thinkingBudgets;
+
         if (Bedrock::isAnthropicClaudeModel($model) && !Bedrock::supportsAdaptiveThinking($model)) {
             $level = $reasoning === 'xhigh' || $reasoning === 'max' ? 'high' : $reasoning;
-            $thinkingBudget = self::DEFAULT_THINKING_BUDGETS[$level];
+            $thinkingBudget = self::thinkingBudgetForLevel($level, $custom);
             $adjusted = min($base['maxTokens'] + $thinkingBudget, $model->maxTokens);
 
             if ($adjusted <= $thinkingBudget) {
@@ -692,11 +720,11 @@ final class Stream
                 ...[...$base, 'maxTokens' => $maxTokens],
                 toolChoice: $toolChoice,
                 reasoning: $reasoning,
-                thinkingBudgets: [$level => min($thinkingBudget, max(0, $maxTokens - self::MIN_ANSWER_TOKENS))],
+                thinkingBudgets: [...($custom ?? []), $level => min($thinkingBudget, max(0, $maxTokens - self::MIN_ANSWER_TOKENS))],
             );
         }
 
-        return new BedrockOptions(...$base, toolChoice: $toolChoice, reasoning: $reasoning);
+        return new BedrockOptions(...$base, toolChoice: $toolChoice, reasoning: $reasoning, thinkingBudgets: $custom);
     }
 
     /** The key is resolved late; a caller's own Vertex options are otherwise kept whole. */
@@ -838,6 +866,7 @@ final class Stream
                 toolChoice: $options->toolChoice,
                 serviceTier: $options->serviceTier,
                 reasoningSummary: $options->reasoningSummary,
+                thinkingBudgets: $options->thinkingBudgets,
             );
         }
 

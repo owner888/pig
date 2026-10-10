@@ -179,4 +179,14 @@ final class FakeTerminal implements Terminal
         $this->programStatuses[] = $status;
         $this->write($status->format());
     }
+
+    /** @var list<bool> each `setProgress()` call, in order */
+    public array $progress = [];
+
+    #[\Override]
+    public function setProgress(bool $active): void
+    {
+        $this->progress[] = $active;
+        $this->write($active ? "\x1b]9;4;3\x07" : "\x1b]9;4;0\x07");
+    }
 }

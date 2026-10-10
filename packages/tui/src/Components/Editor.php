@@ -55,7 +55,6 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private const int PASTE_MARKER_CHARS = 1000;
 
     private const int HISTORY_LIMIT = 100;
-    private const int SUGGESTIONS_SHOWN = 5;
 
     /** @var non-empty-list<string> */
     private array $lines = [''];
@@ -133,6 +132,9 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     public bool $disableSubmit = false;
 
     private EditorTheme $theme;
+
+    /** Rows the completion list shows — upstream's `autocompleteMaxVisible`, 3 to 20. */
+    private int $autocompleteMaxVisible = 5;
 
     /** @var ?Closure(int): string */
     private ?Closure $borderStatus = null;
@@ -320,6 +322,17 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     public function setPaddingX(int $padding): void
     {
         $this->paddingX = max(0, $padding);
+    }
+
+    public function autocompleteMaxVisible(): int
+    {
+        return $this->autocompleteMaxVisible;
+    }
+
+    /** Upstream's `setAutocompleteMaxVisible()`, clamped to 3–20 as upstream clamps it. */
+    public function setAutocompleteMaxVisible(int $maxVisible): void
+    {
+        $this->autocompleteMaxVisible = max(3, min(20, $maxVisible));
     }
 
     public function paddingX(?int $width = null): int
@@ -1285,7 +1298,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
                     => new SelectItem($item->value, $item->label, $item->description),
                 $suggestions->items,
             ),
-            self::SUGGESTIONS_SHOWN,
+            $this->autocompleteMaxVisible,
             $this->theme->selectList,
         );
     }

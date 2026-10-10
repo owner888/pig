@@ -22,6 +22,14 @@ final class ArgumentsTest extends TestCase
 
     // ---- options ------------------------------------------------------------------------
 
+    public function testSessionDirTakesTheNextWordAsItsValue(): void
+    {
+        $arguments = Arguments::parse(['--session-dir', '/tmp/s', 'hello']);
+
+        $this->assertSame('/tmp/s', $arguments->options['session-dir']);
+        $this->assertSame(['hello'], $arguments->messages);
+    }
+
     public function testExportTakesThePathAfterItAndNotTheOneAfterThat(): void
     {
         // The trap `TAKES_A_VALUE` exists for: a session path does not begin with a dash, so an

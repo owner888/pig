@@ -345,7 +345,7 @@ final class PrintModeTest extends TestCase
     public function testTheImagesRideOnTheFirstMessageOnly(): void
     {
         $this->answers = ['ok', 'ok again'];
-        $image = new ImageContent(base64_encode('bytes'), 'image/png');
+        $image = new ImageContent(TinyImages::PNG_BASE64, 'image/png');
         $this->execute(['look', 'and again'], images: [$image]);
 
         $messages = $this->session->messages();

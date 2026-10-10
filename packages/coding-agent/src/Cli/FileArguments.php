@@ -8,6 +8,7 @@ use Pig\Agent\AgentError;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Tools\Paths;
+use Pig\CodingAgent\Utils\ImageProcess;
 use Pig\Tui\Images\ImageType;
 
 /**
@@ -43,10 +44,14 @@ final readonly class FileArguments
     /**
      * Read every one of them, in the order they were given.
      *
+     * An image goes through upstream's `processImage()` (`images.autoResize`): one that cannot be
+     * fitted inside the limits is not attached, and its `<file>` element says why; one that was
+     * resized carries the note in its element.
+     *
      * @param list<string> $paths as they were written, without the `@`
      * @throws AgentError for a path that is not there or cannot be read
      */
-    public static function read(array $paths, string $cwd): self
+    public static function read(array $paths, string $cwd, bool $autoResizeImages = true): self
     {
         $text = '';
         $images = [];
@@ -73,11 +78,19 @@ final readonly class FileArguments
             }
 
             if ($mimeType !== null) {
-                $images[] = new ImageContent(base64_encode($bytes), $mimeType);
+                $processed = ImageProcess::process($bytes, $mimeType, $autoResizeImages);
 
-                // The element is empty, and still worth sending: it is what tells the model
-                // which file the picture beside it came from.
-                $text .= "<file name=\"{$absolute}\"></file>\n";
+                if (!$processed['ok']) {
+                    $text .= "<file name=\"{$absolute}\">{$processed['message']}</file>\n";
+
+                    continue;
+                }
+
+                $images[] = new ImageContent($processed['data'], $processed['mimeType']);
+
+                // The element is empty unless the picture was changed, and still worth sending:
+                // it is what tells the model which file the picture beside it came from.
+                $text .= "<file name=\"{$absolute}\">" . implode("\n", $processed['hints']) . "</file>\n";
 
                 continue;
             }

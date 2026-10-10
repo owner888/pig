@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Pig\Ai\Usage;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\Timestamp;
 
@@ -76,6 +77,12 @@ final readonly class CompactionSummary
         ?int $timestamp = null,
         public bool $fromHook = false,
         public ?SystemMessage $systemMessage = null,
+        /**
+         * Upstream's `CompactionEntry.usage`: what generating the summary cost. In the session's
+         * totals, never in the model's context; null for a hook's summary and for a file written
+         * before the field.
+         */
+        public ?Usage $usage = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

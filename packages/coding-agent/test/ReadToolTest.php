@@ -283,11 +283,51 @@ final class ReadToolTest extends ToolTestCase
         $this->assertSame(base64_encode($png), $result->content[1]->data);
     }
 
+    #[\PHPUnit\Framework\Attributes\RequiresFunction('imagecreatetruecolor')]
+    public function testAnOversizedImageIsFittedAndTheReadSaysHow(): void
+    {
+        $image = imagecreatetruecolor(3000, 1000);
+        ob_start();
+        imagepng($image);
+        $this->file('wide.png', (string) ob_get_clean());
+
+        $result = $this->execute($this->read(), ['path' => 'wide.png']);
+
+        $this->assertStringStartsWith("Read image file [image/", $this->textOf($result));
+        $this->assertStringContainsString('original 3000x1000, displayed at 2000x667', $this->textOf($result));
+        $this->assertInstanceOf(ImageContent::class, $result->content[1]);
+    }
+
+    public function testAnImageThatCannotBeFittedIsNotAttachedAndTheReadSaysWhy(): void
+    {
+        \Pig\CodingAgent\Utils\ImageProcess::$codec = false;
+
+        try {
+            $this->file('wide.png', "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00");
+            $result = $this->execute($this->read(), ['path' => 'wide.png']);
+        } finally {
+            \Pig\CodingAgent\Utils\ImageProcess::$codec = null;
+        }
+
+        $this->assertCount(1, $result->content);
+        $this->assertSame("Read image file [image/png]\n[Image omitted: could not be resized below the inline image size limit.]", $this->textOf($result));
+    }
+
+    public function testWithAutoResizeOffAnOversizedImageIsSentAsItIs(): void
+    {
+        $png = "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00";
+        $this->file('wide.png', $png);
+
+        $result = $this->execute(new ReadTool($this->cwd, autoResizeImages: false), ['path' => 'wide.png']);
+
+        $this->assertSame(base64_encode($png), $result->content[1]->data);
+    }
+
     public function testTheFormatIsDecidedByTheBytesNotTheExtension(): void
     {
         // A screenshot tool that writes JPEG into a .png would otherwise be sent as PNG,
         // and the provider rejects the whole request.
-        $this->file('lying.png', "\xff\xd8\xff\xe0" . str_repeat("\x00", 20));
+        $this->file('lying.png', TinyImages::jpeg());
 
         $result = $this->execute($this->read(), ['path' => 'lying.png']);
 

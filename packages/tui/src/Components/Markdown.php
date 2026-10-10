@@ -248,11 +248,11 @@ final class Markdown implements Component
 
         if ($this->theme->highlightCode !== null) {
             foreach (($this->theme->highlightCode)($token->code, $token->language) as $line) {
-                $lines[] = '  ' . $line;
+                $lines[] = $this->theme->codeBlockIndent . $line;
             }
         } else {
             foreach (explode("\n", $token->code) as $line) {
-                $lines[] = '  ' . ($this->theme->codeBlock)($line);
+                $lines[] = $this->theme->codeBlockIndent . ($this->theme->codeBlock)($line);
             }
         }
 

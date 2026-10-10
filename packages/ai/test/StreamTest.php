@@ -273,6 +273,35 @@ final class StreamTest extends TestCase
         $this->restoreEnv();
     }
 
+    public function testACallersThinkingBudgetsReplaceTheDefaultsLevelByLevel(): void
+    {
+        // Upstream's `thinkingBudgets`, from the setting of that name: medium is the caller's 4,000
+        // rather than 8,192, and the ceiling goes up by that instead.
+        $body = $this->sendAndCaptureBody(new SimpleStreamOptions(maxTokens: 700, apiKey: 'k', reasoning: ReasoningEffort::Medium, thinkingBudgets: ['medium' => 4_000]));
+
+        $this->assertSame(4_700, $body['max_tokens']);
+        $this->assertSame(3_676, $body['thinking']['budget_tokens']);
+
+        $this->restoreEnv();
+    }
+
+    public function testAGeminiBudgetModelTakesTheCallersBudgetFirst(): void
+    {
+        $model = new Model('gemini-2.5-flash', 'Gemini 2.5 Flash', Api::GoogleGenerativeAi, 'google', 'http://127.0.0.1:1', 1_000_000, 65_536, reasoning: true, pricing: new Pricing());
+        $translate = new \ReflectionMethod(Stream::class, 'translate');
+        $context = new \Pig\Ai\TranscriptContext([new UserMessage('hi')]);
+
+        $this->assertSame(8_192, $translate->invoke(null, $model, $context, new SimpleStreamOptions(apiKey: 'k', reasoning: ReasoningEffort::Medium))->thinkingBudget);
+        $this->assertSame(3_000, $translate->invoke(null, $model, $context, new SimpleStreamOptions(apiKey: 'k', reasoning: ReasoningEffort::Medium, thinkingBudgets: ['medium' => 3_000]))->thinkingBudget);
+    }
+
+    public function testThinkingBudgetForLevelIsTheDefaultsUnderTheCallers(): void
+    {
+        $this->assertSame(16_384, Stream::thinkingBudgetForLevel('xhigh'));
+        $this->assertSame(2_048, Stream::thinkingBudgetForLevel('low', ['high' => 1]));
+        $this->assertSame(1, Stream::thinkingBudgetForLevel('max', ['high' => 1]));
+    }
+
     public function testToolChoiceMetadataAndTheSessionReachAnthropic(): void
     {
         // Upstream's `streamSimple()` passes `toolChoice` and `buildBaseOptions()` passes

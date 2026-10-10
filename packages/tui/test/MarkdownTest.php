@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
+use Pig\Tui\Components\MarkdownTheme;
 use Pig\Tui\Markdown\Blockquote;
 use Pig\Tui\Markdown\CodeBlock;
 use Pig\Tui\Markdown\CodeSpan;
@@ -411,6 +412,18 @@ final class MarkdownTest extends TestCase
     {
         $this->assertStringContainsString('(https://example.com)', $this->rows('[docs](https://example.com)')[0]);
         $this->assertSame(1, substr_count($this->rows('<https://example.com>')[0], 'example.com'));
+    }
+
+    public function testACodeBlockIsIndentedWithWhatTheThemeSays(): void
+    {
+        $fence = "```\nx = 1\n```";
+        $default = MarkdownTheme::default();
+        $flush = new MarkdownTheme(...[...get_object_vars($default), 'codeBlockIndent' => '']);
+
+        $codeLine = static fn (array $lines): string => array_values(array_filter(array_map(Ansi::strip(...), $lines), static fn (string $l): bool => str_contains($l, 'x = 1')))[0];
+
+        $this->assertStringStartsWith('  x = 1', $codeLine((new Markdown($fence, paddingX: 0))->render(30)));
+        $this->assertStringStartsWith('x = 1', $codeLine((new Markdown($fence, paddingX: 0, theme: $flush))->render(30)));
     }
 
     public function testTheDefaultStyleIsPutBackAfterAStyledSpan(): void

@@ -789,6 +789,7 @@ final class SessionManager
             $summary->timestamp,
             $summary->fromHook,
             $summary->systemMessage,
+            $summary->usage,
         );
     }
 
@@ -1167,6 +1168,7 @@ final class SessionManager
             $summary->timestamp,
             $summary->fromHook,
             $summary->systemMessage,
+            $summary->usage,
         );
     }
 
@@ -1484,10 +1486,72 @@ final class SessionManager
 
     // ---- finding one again --------------------------------------------------------------
 
+    /** `sessionDir` / `--session-dir`, when one was given: see `useSessionDir()`. */
+    private static ?string $sessionDir = null;
+
+    /**
+     * Upstream's `sessionDir`: one directory for every session, in place of one per project.
+     * Process-wide for `Shell::useShellPath()`'s reason — `bin/pig` sets it once, and `/new`,
+     * `/resume`, `--continue` and the web mode all reach it through `directory()`.
+     *
+     * With it set, pi's directory is not read, and the listings keep only the sessions whose
+     * header names this project — upstream's `filterCwd`, which it skips when the directory given
+     * is the project's own default.
+     */
+    public static function useSessionDir(?string $dir): void
+    {
+        self::$sessionDir = $dir === null || $dir === '' ? null : rtrim($dir, '/');
+    }
+
+    public static function sessionDir(): ?string
+    {
+        return self::$sessionDir;
+    }
+
     /** Where $cwd's sessions live: one directory per project, named after its path. */
     public static function directory(string $cwd, ?string $home = null): string
     {
+        if ($home === null && self::$sessionDir !== null) {
+            return self::$sessionDir;
+        }
+
         return ($home ?? Config::home()) . '/sessions/' . self::slug($cwd);
+    }
+
+    /**
+     * The session files to look through for $cwd, and whether each must be checked for naming it.
+     *
+     * @return array{0: list<string>, 1: bool}
+     */
+    private static function candidates(string $cwd): array
+    {
+        if (self::$sessionDir !== null) {
+            $filter = self::$sessionDir !== Config::home() . '/sessions/' . self::slug($cwd);
+
+            return [glob(self::$sessionDir . '/*.jsonl') ?: [], $filter];
+        }
+
+        return [[
+            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
+            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
+        ], false];
+    }
+
+    /** Upstream's `sessionCwdMatches()`: whether the file's header names $cwd. */
+    private static function namesCwd(string $path, string $cwd): bool
+    {
+        $handle = is_readable($path) ? fopen($path, 'r') : false;
+
+        if ($handle === false) {
+            return false;
+        }
+
+        $line = fgets($handle);
+        fclose($handle);
+        $header = $line === false ? null : json_decode(trim($line), true);
+        $named = is_array($header) && is_string($header['cwd'] ?? null) ? $header['cwd'] : '';
+
+        return $named !== '' && (realpath($named) ?: $named) === (realpath($cwd) ?: $cwd);
     }
 
     /**
@@ -1516,10 +1580,11 @@ final class SessionManager
         // pi's directory as well as pig's. The file format is the same now, so a
         // conversation started in one opens in the other — and somebody who has been using
         // pi should not have to go and find the file by hand.
-        $paths = [
-            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
-            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
-        ];
+        [$paths, $filter] = self::candidates($cwd);
+
+        if ($filter) {
+            $paths = array_values(array_filter($paths, static fn (string $path): bool => self::namesCwd($path, $cwd)));
+        }
 
         // **Newest is when it was last written to, not when it was started**, which is
         // upstream's `findMostRecentSession` and is the only reading of "newest" that answers
@@ -1566,10 +1631,11 @@ final class SessionManager
      */
     public static function latestPathFor(string $cwd): ?string
     {
-        $paths = [
-            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
-            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
-        ];
+        [$paths, $filter] = self::candidates($cwd);
+
+        if ($filter) {
+            $paths = array_values(array_filter($paths, static fn (string $path): bool => self::namesCwd($path, $cwd)));
+        }
 
         $times = [];
 
@@ -1662,7 +1728,7 @@ final class SessionManager
         }
 
         // Local project session directory (pig and pi)
-        $localDirs = [
+        $localDirs = self::$sessionDir !== null ? [self::$sessionDir] : [
             self::directory($cwd),
             self::directory($cwd, Config::piHome()),
         ];
@@ -1700,7 +1766,8 @@ final class SessionManager
         }
 
         // Global search across all project session directories
-        $globalRoots = [
+        // With a `sessionDir` every session is already in that one directory, searched above.
+        $globalRoots = self::$sessionDir !== null ? [] : [
             Config::home() . '/sessions',
             Config::piHome() . '/sessions',
         ];

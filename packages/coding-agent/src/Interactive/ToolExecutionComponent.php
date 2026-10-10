@@ -21,6 +21,7 @@ use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Box;
 use Pig\Tui\Components\Image;
+use Pig\Tui\Components\ImageOptions;
 use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
@@ -137,6 +138,8 @@ final class ToolExecutionComponent extends Container
         private ?float $startedAt = null,
         /** Upstream's `options.outputPad`: the blank column either side of the box. */
         int $outputPad = 1,
+        /** Upstream's `options.imageWidthCells`: how wide a picture is drawn, in cells. */
+        private int $imageWidthCells = 60,
     ) {
         $this->addChild(new Spacer(1));
 
@@ -316,6 +319,7 @@ final class ToolExecutionComponent extends Container
                 $block->data,
                 $block->mimeType,
                 new ImageTheme(fn (string $text): string => Themes::theme()->fg('toolOutput', $text)),
+                new ImageOptions(maxWidthCells: $this->imageWidthCells),
             ));
         }
     }
@@ -335,6 +339,19 @@ final class ToolExecutionComponent extends Container
         }
 
         $this->showImages = $show;
+        $this->drawImages();
+    }
+
+    /** Upstream's `setImageWidthCells()`, for the `/settings` row while a transcript is on screen. */
+    public function setImageWidthCells(int $width): void
+    {
+        $width = max(1, $width);
+
+        if ($width === $this->imageWidthCells) {
+            return;
+        }
+
+        $this->imageWidthCells = $width;
         $this->drawImages();
     }
 

@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\QueueMode;
 use Pig\CodingAgent\Settings;
+use Pig\Tui\Images\ImageProtocol;
 
 /** What someone chose last time, and what the project insists on. */
 final class SettingsTest extends TestCase
@@ -585,5 +586,166 @@ final class SettingsTest extends TestCase
         $settings = Settings::inMemory();
         $settings->setCacheWarmingMode('off');
         $this->assertSame('off', $settings->cacheWarmingMode());
+    }
+
+    public function testTheDisplaySettingsHaveUpstreamsDefaults(): void
+    {
+        $settings = Settings::inMemory();
+
+        $this->assertFalse($settings->showCacheMissNotices());
+        $this->assertSame([], $settings->terminalCapabilityOverrides());
+        $this->assertSame(60, $settings->imageWidthCells());
+        $this->assertFalse($settings->showTerminalProgress());
+        $this->assertSame('  ', $settings->codeBlockIndent());
+        $this->assertFalse($settings->quietStartup());
+        $this->assertSame(5, $settings->autocompleteMaxVisible());
+        $this->assertSame('tree', $settings->doubleEscapeAction());
+        $this->assertSame('default', $settings->treeFilterMode());
+    }
+
+    public function testTheTerminalOverridesNameOnlyWhatTheFileDecides(): void
+    {
+        $this->assertSame(
+            ['images' => ImageProtocol::Kitty, 'trueColor' => false],
+            Settings::inMemory(['terminal' => ['images' => 'kitty', 'trueColor' => false, 'hyperlinks' => 'auto']])->terminalCapabilityOverrides(),
+        );
+        // `false` means "draw no pictures", which is not the same as leaving the key out.
+        $this->assertSame(['images' => null, 'hyperlinks' => true], Settings::inMemory(['terminal' => ['images' => false, 'hyperlinks' => true]])->terminalCapabilityOverrides());
+        $this->assertSame([], Settings::inMemory(['terminal' => ['images' => 'auto']])->terminalCapabilityOverrides());
+    }
+
+    public function testTheDisplayValuesTheFileCannotMeanAreTheDefaults(): void
+    {
+        $this->assertSame(1, Settings::inMemory(['terminal' => ['imageWidthCells' => 0]])->imageWidthCells());
+        $this->assertSame(40, Settings::inMemory(['terminal' => ['imageWidthCells' => 40.9]])->imageWidthCells());
+        $this->assertSame(60, Settings::inMemory(['terminal' => ['imageWidthCells' => '40']])->imageWidthCells());
+        $this->assertSame('header', Settings::inMemory(['quietStartup' => 'header'])->quietStartup());
+        $this->assertFalse(Settings::inMemory(['quietStartup' => 'yes'])->quietStartup());
+        $this->assertSame('default', Settings::inMemory(['treeFilterMode' => 'everything'])->treeFilterMode());
+        $this->assertSame('user-only', Settings::inMemory(['treeFilterMode' => 'user-only'])->treeFilterMode());
+
+        $settings = Settings::inMemory();
+        $settings->setAutocompleteMaxVisible(99);
+        $this->assertSame(20, $settings->autocompleteMaxVisible());
+        $settings->setAutocompleteMaxVisible(1);
+        $this->assertSame(3, $settings->autocompleteMaxVisible());
+    }
+
+    public function testAPerModelThinkingLevelSurvivesADotInTheModelsId(): void
+    {
+        $settings = $this->load();
+        $settings->setModelThinkingLevel('openai', 'gpt-5.2', ThinkingLevel::High);
+        $settings->setModelThinkingLevel('anthropic', 'claude-sonnet-4-5', ThinkingLevel::Low);
+
+        $reread = $this->load();
+        $this->assertSame(ThinkingLevel::High, $reread->modelThinkingLevel('openai', 'gpt-5.2'));
+        $this->assertNull($reread->modelThinkingLevel('openai', 'gpt-5'));
+
+        $reread->removeModelThinkingLevel('openai', 'gpt-5.2');
+        $reread->removeModelThinkingLevel('anthropic', 'claude-sonnet-4-5');
+        $this->assertSame([], $this->load()->allModelThinkingLevels());
+        $this->assertStringNotContainsString('modelThinkingLevels', (string) file_get_contents($this->home . '/settings.json'), 'the key goes with its last entry');
+    }
+
+    public function testThinkingBudgetsAreTheFourLevelsAndOnlyNumbers(): void
+    {
+        $this->assertNull(Settings::inMemory()->thinkingBudgets());
+        $this->assertSame(
+            ['low' => 1000, 'high' => 30000],
+            Settings::inMemory(['thinkingBudgets' => ['low' => 1000, 'medium' => 'lots', 'high' => 30000.0, 'xhigh' => 5]])->thinkingBudgets(),
+        );
+    }
+
+    public function testDefaultToolsReplaceOrModifyTheFour(): void
+    {
+        $this->assertNull(Settings::inMemory()->defaultTools());
+        $this->assertSame(['read', 'grep'], Settings::inMemory(['defaultTools' => ['read', 'grep']])->defaultTools());
+        $this->assertSame(['read', 'edit', 'write', 'codemode'], Settings::inMemory(['defaultTools' => ['-bash', '+codemode']])->defaultTools());
+        $this->assertSame([], Settings::inMemory(['defaultTools' => []])->defaultTools());
+    }
+
+    public function testAProjectsModifiersApplyAfterThePersonsList(): void
+    {
+        $this->writeGlobal(['defaultTools' => ['read', 'bash']]);
+        $this->writeProject(['defaultTools' => ['+grep', '-bash']]);
+        $this->assertSame(['read', 'grep'], $this->load()->defaultTools());
+
+        $this->writeProject(['defaultTools' => ['ls']]);
+        $this->assertSame(['ls'], $this->load()->defaultTools(), 'a plain name replaces the list');
+    }
+
+    public function testAToolListIsNamesOrModifiersAndNotBoth(): void
+    {
+        $this->assertNull(Settings::toolListError(['read', 'mcp__*']));
+        $this->assertNull(Settings::toolListError(['+grep', '-bash']));
+        $this->assertSame('tool names cannot be mixed with +name or -name entries', Settings::toolListError(['read', '+grep']));
+        $this->assertSame('+name and -name entries take exact tool names, not patterns: -mcp__*', Settings::toolListError(['-mcp__*']));
+    }
+
+    public function testACompactionOverrideForTheModelBeatsTheOrdinarySetting(): void
+    {
+        $settings = Settings::inMemory(['compaction' => [
+            'reserveTokens' => 9000,
+            'modelOverrides' => ['openai/gpt-5.2' => ['reserveTokens' => 40000, 'keepRecentTokens' => 'many']],
+        ]]);
+        $model = new \Pig\Ai\Model('gpt-5.2', 'GPT-5.2', \Pig\Ai\Api::OpenAiResponses, 'openai', 'http://127.0.0.1:1', 400_000, 128_000);
+        $other = new \Pig\Ai\Model('gpt-5', 'GPT-5', \Pig\Ai\Api::OpenAiResponses, 'openai', 'http://127.0.0.1:1', 400_000, 128_000);
+
+        $this->assertSame(40000, $settings->compactionReserveTokens(16_384, $model));
+        $this->assertSame(9000, $settings->compactionReserveTokens(16_384, $other));
+        $this->assertSame(9000, $settings->compactionReserveTokens(16_384));
+        $this->assertSame(20_000, $settings->compactionKeepRecentTokens(20_000, $model), 'an override that is not a number is not one');
+    }
+
+    public function testTheRestOfBatchTwoHasUpstreamsDefaults(): void
+    {
+        $settings = Settings::inMemory();
+
+        $this->assertNull($settings->enabledModels());
+        $this->assertTrue($settings->enableSkillCommands());
+        $this->assertTrue($settings->warnAnthropicExtraUsage());
+        $this->assertFalse($settings->branchSummarySkipPrompt());
+        $this->assertSame(16_384, $settings->branchSummaryReserveTokens(16_384));
+        $this->assertSame(['anthropic/*'], Settings::inMemory(['enabledModels' => ['anthropic/*', 3]])->enabledModels());
+        $this->assertSame(8000, Settings::inMemory(['branchSummary' => ['reserveTokens' => 8000]])->branchSummaryReserveTokens(16_384));
+    }
+
+    public function testTheStartupSessionDirIsReadFromTheProjectBeforeTrust(): void
+    {
+        $root = sys_get_temp_dir() . '/pig-sessiondir-' . bin2hex(random_bytes(4));
+        mkdir("{$root}/home", 0o755, true);
+        mkdir("{$root}/project/.pig", 0o755, true);
+        file_put_contents("{$root}/home/settings.json", json_encode(['sessionDir' => '/mine']));
+
+        $this->assertSame('/mine', Settings::startupSessionDir("{$root}/project", "{$root}/home"));
+
+        file_put_contents("{$root}/project/.pig/settings.json", json_encode(['sessionDir' => 'local-sessions']));
+        $this->assertSame('local-sessions', Settings::startupSessionDir("{$root}/project", "{$root}/home"), 'the project wins, trusted or not');
+        $this->assertSame('/mine', Settings::load("{$root}/project", "{$root}/home", projectTrusted: false)->sessionDir(), 'the ordinary settings still wait for trust');
+    }
+
+    public function testTheImageShellAndSessionSettingsHaveUpstreamsDefaults(): void
+    {
+        $settings = Settings::inMemory();
+
+        $this->assertTrue($settings->imageAutoResize());
+        $this->assertFalse($settings->blockImages());
+        $this->assertNull($settings->shellCommandPrefix());
+        $this->assertNull($settings->sessionDir());
+
+        $set = Settings::inMemory([
+            'images' => ['autoResize' => false, 'blockImages' => true],
+            'shellCommandPrefix' => 'shopt -s expand_aliases',
+            'sessionDir' => '~/sessions',
+        ]);
+        $this->assertFalse($set->imageAutoResize());
+        $this->assertTrue($set->blockImages());
+        $this->assertSame('shopt -s expand_aliases', $set->shellCommandPrefix());
+        $this->assertSame('~/sessions', $set->sessionDir());
+
+        $settings->setBlockImages(true);
+        $settings->setImageAutoResize(false);
+        $this->assertTrue($settings->blockImages());
+        $this->assertFalse($settings->imageAutoResize());
     }
 }

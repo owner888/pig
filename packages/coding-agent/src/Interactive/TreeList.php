@@ -116,7 +116,13 @@ final class TreeList implements Component, InputHandler
         private readonly ?string $leaf,
         private readonly int $maxVisible,
         ?string $initialSelectedId = null,
+        /** Upstream's `initialFilterMode`, from `treeFilterMode`; one this list does not know is the default. */
+        ?string $initialFilter = null,
     ) {
+        if ($initialFilter !== null && in_array($initialFilter, self::FILTERS, true)) {
+            $this->filter = $initialFilter;
+        }
+
         $this->manyRoots = count($tree) > 1;
         $this->flat = $this->flatten($tree);
         $this->buildActivePath();

@@ -440,8 +440,8 @@ final class FooterComponent implements Component
         )));
     }
 
-    /** Short enough to sit in a corner: 950, 9.5k, 95k, 9.5M. */
-    private static function tokens(int $count): string
+    /** Upstream's `formatTokens()`: short enough to sit in a corner — 950, 9.5k, 95k, 9.5M. */
+    public static function tokens(int $count): string
     {
         return match (true) {
             $count < 1_000 => (string) $count,

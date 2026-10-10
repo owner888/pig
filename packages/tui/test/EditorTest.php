@@ -406,6 +406,30 @@ final class EditorTest extends TestCase
         $this->assertStringContainsString('mode', $lines[4]);
     }
 
+    public function testTheCommandListShowsAsManyRowsAsItIsToldAndNoMore(): void
+    {
+        $commands = array_map(static fn (int $i): SlashCommand => new SlashCommand("cmd{$i}"), range(1, 30));
+        $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider($commands));
+        $rowsFor = function (): int {
+            $this->typeText('/cmd');
+            $rows = count(array_filter(array_map(Ansi::strip(...), $this->editor->render(40)), static fn (string $l): bool => preg_match('/\bcmd\d+\b/', $l) === 1 && !str_contains($l, '/cmd')));
+            $this->editor->setText('');
+
+            return $rows;
+        };
+
+        $this->assertSame(5, $this->editor->autocompleteMaxVisible(), "upstream's default");
+        $this->assertSame(5, $rowsFor());
+
+        $this->editor->setAutocompleteMaxVisible(8);
+        $this->assertSame(8, $rowsFor());
+
+        $this->editor->setAutocompleteMaxVisible(99);
+        $this->assertSame(20, $this->editor->autocompleteMaxVisible());
+        $this->editor->setAutocompleteMaxVisible(0);
+        $this->assertSame(3, $this->editor->autocompleteMaxVisible());
+    }
+
     public function testArrowKeysMoveThroughTheListInsteadOfTheText(): void
     {
         $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider([

@@ -46,6 +46,15 @@ final class BashToolTest extends ToolTestCase
         $this->assertSame("hello\n", $this->textOf($this->bash(['command' => 'echo hello'])));
     }
 
+    public function testTheCommandPrefixRunsInFrontOfTheCommand(): void
+    {
+        $tool = new BashTool($this->cwd, 'GREETING=hello');
+
+        $result = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'echo $GREETING']));
+
+        $this->assertSame("hello\n", $this->textOf($result));
+    }
+
     public function testRunsInTheWorkingDirectory(): void
     {
         $this->file('marker.txt');

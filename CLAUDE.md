@@ -220,6 +220,7 @@ same thing either way — "this machine has no `wl-paste`" is a capability, not 
 | `wl-paste`, `xclip` | clipboard text and images | Wayland, X11 |
 | `powershell.exe`, `wslpath` | clipboard images | WSL |
 | `fd` | the `@` file picker in `pig/tui` | anywhere; `@` offers nothing without it |
+| `ext-gd` (an extension, not a binary) | fitting an image inside the provider's limits | anywhere; without it an in-limits image goes through and an oversized one is left out |
 
 **`fd` and `rg` are required by the `find` and `grep` tools**, as upstream requires them. A PHP
 walk with `.gitignore` support was written and measured first — about 220ms over a 100k-file
@@ -1459,9 +1460,10 @@ Six things decided where pig differs:
   id, and the message list captured at the request is a prefix of the agent's list, object by object.
 - **`writeTo()` cancels**, because pig switches files inside one `AgentSession` where upstream
   replaces the session and disposes the old one. `dispose()` cancels too.
-- **No transcript line.** Upstream also announces each refresh as "Cache warmed: $x", behind its
-  `showCacheMissNotices` setting (default off); pig has neither, so the cost is on `/session` only.
-  The prompt size is read off the agent's last assistant message where upstream reads the branch's;
+- **The "Cache warmed" line is live only.** Upstream announces each refresh as `Cache warmed: $x`
+  behind `showCacheMissNotices`, and so does pig (`CacheWarmedEvent`). A transcript rebuilt from the
+  file does not draw the old ones again: usage entries are not on `messages()`, which is what
+  `replay()` walks. The cost is still on `/session`. The prompt size is read off the agent's last assistant message where upstream reads the branch's;
   the two differ only when the last turn failed and was taken off the state.
 
 The `cache_warming_decision` hook (`HookRunner::emitCacheWarmingDecision()`) is upstream's: every
@@ -1474,6 +1476,94 @@ Regression tests: `CacheWarmerTest` (16 — the delay table, TTL by retention, r
 options and record, each mode, both hook directions, context changes, the status line) and
 `CacheWarmingSessionTest` (6 — through `AgentSession`: an idle refresh on the bill and in the file,
 streaming stopping at settle, not enabled meaning nothing, the hook, the mode setter, `writeTo()`).
+
+### The settings upstream had and pig did not
+
+The site's settings page listed upstream's keys and pig read about half of them. The developer's
+call was to port the rest, in batches, under upstream's names and defaults (`settings-defaults.ts`),
+rather than take the rows off the page. The first batch is the display and terminal ones:
+
+| Key | Default | Where |
+|---|---|---|
+| `showCacheMissNotices` | `false` | `CacheStats` (upstream's `cache-stats.ts`): a line when a prompt that should have been read was billed again — 20,000 tokens or ten cents, a 1,024-token noise floor, reset at a compaction or branch summary, the idle gap named past the 5-minute TTL — plus `Cache warmed`, `Compaction: N tokens billed` and the dropped-thinking line. `/session` adds `Cache re-billed` |
+| `terminal.images` / `trueColor` / `hyperlinks` | detected | `TerminalImage::setCapabilityOverrides()`, from `bin/pig` only |
+| `terminal.imageWidthCells` | 60 | `ToolExecutionComponent`, `/settings` row only where pictures draw |
+| `terminal.showTerminalProgress` | `false` | `Terminal::setProgress()`: OSC 9;4;3 while a turn or a compaction runs, 9;4;0 after, re-sent every second |
+| `markdown.codeBlockIndent` | two spaces | `MarkdownTheme::$codeBlockIndent` |
+| `quietStartup` | `false` | `true` drops the header, `header` keeps it and drops the loaded resources |
+| `autocompleteMaxVisible` | 5 | `Editor::setAutocompleteMaxVisible()`, clamped 3–20 |
+| `doubleEscapeAction` | `tree` | Escape twice within half a second on an empty prompt: `tree`, `fork` or `none` |
+| `treeFilterMode` | `default` | `TreeList`'s opening filter |
+
+Two things came with them. A compaction and a branch summary now carry what generating them cost
+(`usage`, upstream's field on both entries), which `stats()` adds to the bill — before this a
+summarisation was the one model call the session never charged for. And `FooterComponent::tokens()`
+is public, because the notices count tokens the way the footer does.
+
+`terminal.*` overrides are set in `bin/pig` and not in `InteractiveMode`'s constructor: the
+capabilities are process-wide, and a mode setting them would undo whatever a test fixture had set.
+
+Regression tests: `CacheStatsTest` (8), `SettingsTest`'s three display cases, the `quietStartup`,
+double-escape, tree-filter, tab-progress, cache-miss and compaction-cost cases in
+`InteractiveModeTest`, `EditorTest::testTheCommandListShowsAsManyRowsAsItIsToldAndNoMore`,
+`MarkdownTest::testACodeBlockIsIndentedWithWhatTheThemeSays` and
+`SessionEntriesTest::testWhatASummaryCostIsWrittenWithItAndOnlyWhenItIsKnown`.
+
+The second batch is the model, tool and summary ones:
+
+| Key | Default | Where |
+|---|---|---|
+| `modelThinkingLevels` | none | `provider/id` → level, written whole because ids hold dots. A switch takes the level typed on the pattern, then this, then `defaultThinkingLevel`, then the current one — upstream's `_getThinkingLevelForModelSwitch()` — and saving a default model no longer saves the level with it. `/settings` row *Default thinking level per model* (`ModelThinkingSubmenu`, upstream's two-step submenu) |
+| `thinkingBudgets` | upstream's table | `SimpleStreamOptions::$thinkingBudgets` → `Stream::thinkingBudgetForLevel()`, laid over the table level by level for Anthropic, Bedrock, Gemini 2.x, Vertex and the completions budget field |
+| `enabledModels` | none | the `--models` scope when none was typed; the remembered default is opened when it is in the scope, and saving a default outside it adds it |
+| `defaultTools` | the four | names replace the four, `+name`/`-name` modify them, a project list of modifiers alone is appended to the global one (`mergeDefaultTools()`), and `--tools` of modifiers alone applies to it. Mixing the two kinds is refused with upstream's sentence |
+| `enableSkillCommands` | `true` | `/skill:name args` sends the skill as upstream's `<skill name location>` block (`AgentSession::expandSkillCommand()`), offered in the autocomplete |
+| `warnings.anthropicExtraUsage` | `true` | upstream's one-time warning on a Claude subscription sign-in, `/settings` → *Warnings* |
+| `compaction.modelOverrides` | none | `provider/id` → `reserveTokens`/`keepRecentTokens`, before the ordinary values |
+| `branchSummary.reserveTokens` / `skipPrompt` | 16384 / `false` | the branch summary's own budget (it used compaction's before), and `/tree` without the question |
+
+**`defaultTools` reaches the built-ins and a `-name`, not every custom tool.** Upstream's active set
+starts from the list, so a custom tool it does not name is inactive; pig registers every custom tool
+active, so a name in the list that is not built in changes nothing and only `-name` takes one away.
+Making the list exclusive would switch off every extension's tools for anybody who set it, which is
+a decision rather than a port.
+
+`ModelChoice::$explicitThinking` exists because `parse('sonnet')` and `parse('sonnet:off')` came
+back the same, and the switch order above turns on telling them apart.
+
+Regression tests: `SettingsTest`'s seven batch-two cases, `StreamTest`'s three budget cases,
+the scope, per-model, `defaultTools` and `--tools` cases in `CodingAgentSessionTest`,
+`AgentSessionTest`'s per-model, scope and skill-block cases, and the skip-prompt, skill-command,
+warnings, per-model submenu and subscription-warning cases in `InteractiveModeTest`.
+
+The third batch is images, the shell and where sessions live:
+
+| Key | Default | Where |
+|---|---|---|
+| `images.autoResize` | `true` | `Utils\ImageProcess` — upstream's `image-process.ts`, `image-resize-core.ts`, `tool-result-images.ts` and `exif-orientation.ts`. A picture from `read`, `@file`, a prompt and every tool's result is put in a format the providers take and fitted inside 2000×2000 and 4.5MB of base64, or the model's `inputLimits.images.resize`, with upstream's note on mapping coordinates back. `/settings` row |
+| `images.blockImages` | `false` | `Agent::$convertToLlm` (now public, as upstream's is) wrapped by the session: a picture in a user message or a tool result reaches the provider as "Image reading is disabled.", a run of them as one line, and the conversation keeps them. `/settings` row |
+| `shellCommandPrefix` | none | a line in front of every command, the `bash` tool's and a typed `!command`'s alike, joined by a newline; the command recorded is the one typed |
+| `sessionDir` / `--session-dir` | per project | `SessionManager::useSessionDir()`, process-wide for `Shell::useShellPath()`'s reason: every session in one directory, the listings keeping the ones whose header names this project, and pi's directory not read. `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the setting — the project's read before trust (`Settings::startupSessionDir()`), as upstream reads it; a relative path is the working directory's |
+
+**GD is the codec and it is optional.** Upstream bundles Photon (WASM); PHP's equivalent is
+`ext-gd`, which pig does not require. Without it an image is measured from its header and the EXIF
+orientation, which need no codec: one inside the limits goes through as it is, one outside them is
+left out with upstream's sentence. Upstream with no Photon leaves every image out, in-limits ones
+too — that is the one deviation, and `ImageProcess::$codec` is the seam the tests turn it off with.
+
+**The tools get their options when the loadout builds them.** `ToolLoadout::useToolOptions()` is
+upstream's `_buildRuntime()` options (`read`'s `autoResizeImages` and resize profile, `bash`'s
+`commandPrefix`), asked at each `apply()`; `useResultImages()` wraps each tool in a
+`ResultImagesTool` outside `HookedTool`, so a picture a `tool_result` hook put in is fitted too —
+upstream's `_afterToolCall()` order. Both re-apply only a loadout that was already applied, or a
+session built on a fresh loadout would gain a system message it never asked for.
+
+Regression tests: `Utils\ImageProcessTest` (12), the image, block, prefix and loadout cases in
+`AgentSessionTest`, `ReadToolTest`'s and `FileArgumentsTest`'s resize cases,
+`BashToolTest::testTheCommandPrefixRunsInFrontOfTheCommand`, the two `sessionDir` cases in
+`SessionManagerTest`, `SettingsTest`'s image-shell-session defaults, and the image rows in
+`InteractiveModeTest`. Test pictures are `TinyImages` — real 4×3 PNG and JPEG bytes — because
+eight bytes of PNG signature are a picture that cannot be read now, and left out.
 
 ### `/settings`, and why its list is shorter than upstream's
 
@@ -8247,9 +8337,9 @@ base URL, and rewrite the rows. Five things about it are the decisions rather th
 - **`inputLimits` and `promptCache` are upstream's generator metadata**, written in `Models::table()`
   (`inputLimits()`, `promptCache()`) like the maps: per-provider image limits plus the 2000px / 4.5 MiB
   resize profile on every image model, and `{short: 300, long: 3600}` on direct Anthropic.
-  `promptCache` is read by `Session\CacheWarmer` for the cache lifetime; `inputLimits`' readers
-  upstream are its image preprocessing (agent session and `read`), which pig has not; `StreamProxy`
-  sends both and `models.json` may set both.
+  `promptCache` is read by `Session\CacheWarmer` for the cache lifetime; `inputLimits.images.resize`
+  by `Utils\ImageProcess`, as upstream's image preprocessing reads it; `StreamProxy` sends both and
+  `models.json` may set both.
 
 `--from <file>` reads a saved `api.json` and `--dry-run` prints the rows instead of writing them.
 Neither is a seam for a test: models.dev is unreachable from the dev container (`CONNECT tunnel

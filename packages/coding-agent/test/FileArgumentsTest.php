@@ -81,7 +81,7 @@ final class FileArgumentsTest extends TestCase
 
     public function testAnImageBecomesAnAttachmentAndAnEmptyElement(): void
     {
-        $png = "\x89PNG\r\n\x1a\n" . str_repeat("\x00", 16);
+        $png = TinyImages::png();
         $path = $this->write('shot.png', $png);
 
         $read = FileArguments::read(['shot.png'], $this->cwd);
@@ -94,9 +94,39 @@ final class FileArgumentsTest extends TestCase
         $this->assertSame("<file name=\"{$path}\"></file>\n", $read->text);
     }
 
+    public function testAnImageThatCannotBeFittedSaysSoInItsElement(): void
+    {
+        \Pig\CodingAgent\Utils\ImageProcess::$codec = false;
+
+        try {
+            $path = $this->write('wide.png', "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00");
+            $read = FileArguments::read(['wide.png'], $this->cwd);
+        } finally {
+            \Pig\CodingAgent\Utils\ImageProcess::$codec = null;
+        }
+
+        $this->assertSame([], $read->images);
+        $this->assertSame("<file name=\"{$path}\">[Image omitted: could not be resized below the inline image size limit.]</file>\n", $read->text);
+    }
+
+    #[\PHPUnit\Framework\Attributes\RequiresFunction('imagecreatetruecolor')]
+    public function testAResizedImageCarriesItsNoteInItsElement(): void
+    {
+        $image = imagecreatetruecolor(3000, 1000);
+        ob_start();
+        imagepng($image);
+        $this->write('wide.png', (string) ob_get_clean());
+
+        $read = FileArguments::read(['wide.png'], $this->cwd);
+
+        $this->assertCount(1, $read->images);
+        $this->assertStringContainsString('original 3000x1000', $read->text);
+        $this->assertSame(base64_encode((string) file_get_contents($this->cwd . '/wide.png')), FileArguments::read(['wide.png'], $this->cwd, autoResizeImages: false)->images[0]->data);
+    }
+
     public function testTheMimeTypeIsReadFromTheBytesNotTheName(): void
     {
-        $this->write('lying.txt', "\x89PNG\r\n\x1a\n" . str_repeat("\x00", 16));
+        $this->write('lying.txt', TinyImages::png());
 
         $this->assertCount(1, FileArguments::read(['lying.txt'], $this->cwd)->images);
     }

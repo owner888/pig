@@ -465,6 +465,46 @@ final class CodingAgentSessionTest extends TestCase
         }
     }
 
+    public function testEnabledModelsIsTheScopeWhenNoneWasTyped(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+
+        try {
+            $this->writeSettings(['enabledModels' => ['zzp-plain', 'zzp-alpha']]);
+            $started = $this->start();
+
+            $this->assertSame('zzp-plain', $started->model->id);
+            $this->assertCount(2, $started->session->modelScope());
+        } finally {
+            putenv('ANTHROPIC_API_KEY');
+        }
+    }
+
+    public function testTheRememberedDefaultWinsWhenItIsInTheScope(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+
+        try {
+            // Upstream's `savedInScope`: the scope narrows ctrl+p, it does not overrule the model
+            // the person chose last time.
+            $this->writeSettings(['enabledModels' => ['zzp-plain', 'zzp-alpha'], 'defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
+
+            $this->assertSame('zzp-alpha', $this->start()->model->id);
+        } finally {
+            putenv('ANTHROPIC_API_KEY');
+        }
+    }
+
+    public function testAModelOpensOnItsOwnThinkingLevelUnlessOneWasTyped(): void
+    {
+        $this->writeSettings(['defaultThinkingLevel' => 'low', 'modelThinkingLevels' => ['anthropic/zzp-alpha' => 'high']]);
+
+        $this->assertSame(ThinkingLevel::High, $this->start([], ['model' => 'zzp-alpha'])->thinking);
+        $this->assertSame(ThinkingLevel::Medium, $this->start([], ['model' => 'zzp-alpha:medium'])->thinking);
+        $this->assertSame(ThinkingLevel::Off, $this->start([], ['model' => 'zzp-alpha:off'])->thinking, 'an off that was typed is not a default');
+        $this->assertSame(ThinkingLevel::Low, $this->start([], ['model' => 'zzp-beta-20250101'])->thinking);
+    }
+
     // ---- the key for this run ------------------------------------------------------------------
 
     public function testARuntimeKeyGoesToTheModelsOwnProvider(): void
@@ -859,6 +899,28 @@ final class CodingAgentSessionTest extends TestCase
     public function testReadOnlyStillSwapsTheWholeSetRatherThanNarrowingIt(): void
     {
         $this->assertSame(ToolSet::READ_ONLY, $this->toolNames($this->start([], ['readOnly' => true])));
+    }
+
+    public function testDefaultToolsChangesTheFour(): void
+    {
+        $this->writeSettings(['defaultTools' => ['-edit', '+grep']]);
+
+        $this->assertSame(['read', 'bash', 'write', 'grep'], $this->toolNames($this->start()));
+    }
+
+    public function testAToolsListOfModifiersChangesTheDefaultRatherThanNamingTheSet(): void
+    {
+        $this->writeSettings(['defaultTools' => ['read', 'bash']]);
+
+        $this->assertSame(['read', 'bash', 'ls'], $this->toolNames($this->start([], ['tools' => ['+ls']])));
+        $this->assertSame(['read'], $this->toolNames($this->start([], ['tools' => ['-bash']])));
+    }
+
+    public function testAToolsListMixingNamesAndModifiersIsRefusedByName(): void
+    {
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start([], ['tools' => ['read', '+grep']]));
+
+        $this->assertSame('Invalid tools option: tool names cannot be mixed with +name or -name entries', $error->getMessage());
     }
 
     /** @return list<string> */

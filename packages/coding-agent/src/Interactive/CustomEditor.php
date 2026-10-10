@@ -180,6 +180,12 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
         $this->editor->setAutocompleteProvider($provider);
     }
 
+    /** Upstream's `setAutocompleteMaxVisible()`, which the `/settings` row calls. */
+    public function setAutocompleteMaxVisible(int $maxVisible): void
+    {
+        $this->editor->setAutocompleteMaxVisible($maxVisible);
+    }
+
     /** Upstream's `setPaddingX()`, which the `/settings` row for `editorPaddingX` calls. */
     public function setPaddingX(int $padding): void
     {

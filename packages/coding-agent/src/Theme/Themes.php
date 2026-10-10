@@ -1150,7 +1150,20 @@ final class Themes
             strikethrough: static fn (string $text): string => self::theme()->strikethrough($text),
             underline: static fn (string $text): string => self::theme()->underline($text),
             highlightCode: static fn (string $code, ?string $lang = null): array => self::highlightCode($code, $lang),
+            codeBlockIndent: self::$codeBlockIndent,
         );
+    }
+
+    /**
+     * `markdown.codeBlockIndent`, which upstream lays over this theme in its interactive mode
+     * (`getMarkdownThemeWithSettings()`) and hands to each component. pig's components ask for the
+     * theme themselves, so the mode sets the indent here once instead.
+     */
+    private static string $codeBlockIndent = '  ';
+
+    public static function setCodeBlockIndent(string $indent): void
+    {
+        self::$codeBlockIndent = $indent;
     }
 
     /**

@@ -55,4 +55,10 @@ interface Terminal
      * status is re-sent when support is confirmed or the terminal restarts.
      */
     public function setProgramStatus(ProgramStatus $status): void;
+
+    /**
+     * Upstream's `setProgress()`: an indeterminate progress indicator in the terminal's tab bar
+     * (OSC 9;4;3), or clear it (OSC 9;4;0).
+     */
+    public function setProgress(bool $active): void;
 }

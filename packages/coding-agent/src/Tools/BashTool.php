@@ -30,7 +30,11 @@ use Pig\Async\AbortSignal;
  */
 final class BashTool implements AgentTool
 {
-    public function __construct(private readonly string $cwd)
+    /**
+     * @param ?string $commandPrefix upstream's `commandPrefix` (`shellCommandPrefix`): a line run in
+     *        front of the command — `shopt -s expand_aliases`, say — joined to it with a newline
+     */
+    public function __construct(private readonly string $cwd, private readonly ?string $commandPrefix = null)
     {
     }
 
@@ -83,7 +87,7 @@ final class BashTool implements AgentTool
         $command = (string) $arguments['command'];
         $timeout = isset($arguments['timeout']) ? (float) $arguments['timeout'] : null;
 
-        $run = new Run($this->cwd, $command, $onUpdate);
+        $run = new Run($this->cwd, $this->commandPrefix !== null ? "{$this->commandPrefix}\n{$command}" : $command, $onUpdate);
         $run->start();
         $exit = $run->wait($signal, $timeout);
         $output = $run->output();

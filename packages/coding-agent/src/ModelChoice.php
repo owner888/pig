@@ -18,11 +18,17 @@ use Pig\Ai\Model;
  */
 final readonly class ModelChoice
 {
-    /** @param string|null $warning what was understood differently from what was typed */
+    /**
+     * @param string|null $warning what was understood differently from what was typed
+     * @param bool $explicitThinking whether the level was typed (`sonnet:high`) rather than left
+     *        out. Upstream keeps a scoped model's level undefined when the pattern names none, and
+     *        "none named" is what lets `modelThinkingLevels` and `defaultThinkingLevel` decide
+     */
     public function __construct(
         public Model $model,
         public ThinkingLevel $thinking = ThinkingLevel::Off,
         public ?string $warning = null,
+        public bool $explicitThinking = false,
     ) {
     }
 }
