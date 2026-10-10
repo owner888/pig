@@ -2125,8 +2125,21 @@ in turns to log each other out — whichever refreshes first wins, and the other
 again. One file is the only arrangement where signing in once means signing in once. `Config`'s
 docblock says so too, because it used to claim pig never writes in there.
 
-Five things about it:
+Six things about it:
 
+- **A renewal is taken under the file's lock, and the file is read again once it is held.**
+  Anthropic rotates refresh tokens, so two pigs renewing one expired token at the same instant —
+  two terminals open on one account is all it takes — both send the same refresh token, the
+  provider rotates it on the first and refuses the second, and that pig is signed out. Upstream's
+  `refreshStoredOAuthCredential()` is double-checked locking over `proper-lockfile`;
+  `Auth::fresh()` is the same over `Pig\CodingAgent\FileLock`, which is `flock()` on
+  `auth.json.lock`: in PHP core, and released by the kernel when the holder dies, so there is no
+  stale lock to detect and no `onCompromised`. The wait polls `LOCK_NB` every 100ms through
+  `Async::delay()` so the loop keeps serving the keyboard, and gives up after 25s (upstream's
+  `REFRESH_LOCK_WAIT_MS`) with the file named. The MCP extension's refresh takes the same lock, per
+  server. Regression tests: `FileLockTest` (a second `php` holding the file),
+  `AuthTest::testARenewalWaitsForAnotherProcessAndUsesTheTokenItWrote`,
+  `testARenewalNobodyElseIsDoingGoesAheadUnderTheLock`.
 - **The order is upstream's**: what was typed, then a stored API key, then a stored OAuth token,
   then the environment. The last step is `Stream::envApiKey()` rather than a second table of
   variable names — it is upstream's `getEnvApiKey()` and it already knows that
@@ -3307,9 +3320,10 @@ and the dialogs. Four things decided on the way:
 - **A 401 is `needs-auth` only for a server that *uses* OAuth** — an HTTP server with no
   `Authorization` header of its own. One *with* a header that answers 401 has a wrong header, and
   saying "sign in" would send somebody to a browser for a typo.
-- **The cross-process refresh lock is not ported.** Upstream takes `proper-lockfile` for it; pig
-  takes no dependency, and the cost of two pigs refreshing one rotating token at the same instant
-  is the cost a lost lock has there: one of them signs in again.
+- **The cross-process refresh lock is `FileLock`**, a lock file per server beside `mcp-auth.json`
+  as upstream keeps one — `flock()` where it takes `proper-lockfile` — and the tokens are read
+  again once it is held, so a pig that arrives second finds the first's and sends nothing. See the
+  `Auth` entry on renewing under a lock.
 
 **The resource tools are one set with one exposure**, upstream's rule: the widest among the
 servers that have resources. With pig's deferred-is-not-registered arrangement that means

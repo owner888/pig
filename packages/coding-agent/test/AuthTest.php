@@ -7,6 +7,8 @@ namespace Pig\CodingAgent\Test;
 use Closure;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Extension\Provider as ExtensionProvider;
+use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
@@ -57,6 +59,7 @@ final class AuthTest extends TestCase
     protected function tearDown(): void
     {
         $this->restoreProviderKeys();
+        ProviderRegistry::forget();
 
         self::remove($this->home);
     }
@@ -468,6 +471,108 @@ final class AuthTest extends TestCase
 
         $this->assertSame('sk-ant-oat-live', $auth->freshCredentials(Provider::Anthropic)?->access);
         $this->assertNull($auth->freshCredentials(Provider::GithubCopilot));
+    }
+
+    // ---- renewing under a lock, against another pig ---------------------------------------------
+
+    public function testARenewalWaitsForAnotherProcessAndUsesTheTokenItWrote(): void
+    {
+        // Two pigs with one expired token both hold the same refresh token; the provider rotates
+        // it on the first refresh and refuses the second, and one pig is signed out. So the renewal
+        // takes the file's lock and reads the file again once it holds it — upstream's
+        // double-checked locking, `flock()` where it takes `proper-lockfile`. Here the other
+        // process holds the lock, writes a fresh token, and lets go: this one must send nothing.
+        $refreshed = 0;
+        ProviderRegistry::register(new ExtensionProvider('zzp-locked', 'Locked', [], oauth: self::flow('zzp-locked', $refreshed)));
+        $auth = $this->given('{"zzp-locked": {"type": "oauth", "refresh": "r-old", "access": "sk-expired", "expires": 1}}');
+
+        $fresh = json_encode(['zzp-locked' => ['type' => 'oauth', 'refresh' => 'r-rotated', 'access' => 'sk-from-the-other-pig', 'expires' => 9_000_000_000_000]]);
+        $other = self::otherPigRenewing($this->home . '/auth.json', $fresh, 0.5);
+
+        $key = Async::run(static fn (): ?string => $auth->apiKey('zzp-locked'));
+
+        $this->assertSame('sk-from-the-other-pig', $key);
+        $this->assertSame(0, $refreshed, 'the other pig had already renewed it; sending our refresh token would be refused');
+        proc_close($other);
+    }
+
+    public function testARenewalNobodyElseIsDoingGoesAheadUnderTheLock(): void
+    {
+        $refreshed = 0;
+        ProviderRegistry::register(new ExtensionProvider('zzp-locked', 'Locked', [], oauth: self::flow('zzp-locked', $refreshed)));
+        $auth = $this->given('{"zzp-locked": {"type": "oauth", "refresh": "r-old", "access": "sk-expired", "expires": 1}}');
+
+        $key = Async::run(static fn (): ?string => $auth->apiKey('zzp-locked'));
+
+        $this->assertSame('sk-renewed', $key);
+        $this->assertSame(1, $refreshed);
+        $this->assertFileExists($this->home . '/auth.json.lock');
+        $this->assertSame(0o600, fileperms($this->home . '/auth.json.lock') & 0o777);
+        $this->assertStringContainsString('sk-renewed', (string) file_get_contents($this->home . '/auth.json'));
+    }
+
+    /** A flow whose refresh counts itself and answers a token that will last. */
+    private static function flow(string $id, int &$refreshed): OauthFlow
+    {
+        return new class($id, $refreshed) implements OauthFlow {
+            public function __construct(private readonly string $id, private int &$refreshed)
+            {
+            }
+
+            public function id(): string
+            {
+                return $this->id;
+            }
+
+            public function label(): string
+            {
+                return 'Locked';
+            }
+
+            public function isSubscription(): bool
+            {
+                return false;
+            }
+
+            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+            {
+                return null;
+            }
+
+            public function refresh(Credentials $credentials): Credentials
+            {
+                $this->refreshed++;
+
+                return new Credentials('r-new', 'sk-renewed', 9_000_000_000_000);
+            }
+
+            public function apiKey(Credentials $credentials): string
+            {
+                return $credentials->access;
+            }
+        };
+    }
+
+    /**
+     * Another pig mid-renewal: holds `auth.json.lock`, writes $contents into the file after
+     * $seconds, and lets go. Ready before this returns.
+     *
+     * @return resource
+     */
+    private static function otherPigRenewing(string $file, string $contents, float $seconds)
+    {
+        $script = sprintf(
+            '$h = fopen(%s, "c"); flock($h, LOCK_EX); echo "held\n"; usleep(%d); file_put_contents(%s, %s); flock($h, LOCK_UN);',
+            var_export($file . '.lock', true),
+            (int) ($seconds * 1_000_000),
+            var_export($file, true),
+            var_export($contents, true),
+        );
+        $process = proc_open([PHP_BINARY, '-r', $script], [1 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        self::assertSame("held\n", fgets($pipes[1]));
+
+        return $process;
     }
 
     // ---- signing in ----------------------------------------------------------------------

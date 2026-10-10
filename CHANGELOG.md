@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.24] - 2026-10-08
+
+### Fixed
+
+- **Cross-Process OAuth Refresh Lock & Double-Checked Locking (`FileLock`, `Auth::fresh`, `McpOauth`)**:
+  - Implemented pure-PHP zero-dependency cross-process file locking via kernel-managed `flock()` with non-blocking async event loop polling (`Pig\CodingAgent\FileLock`).
+  - Added double-checked locking to `Auth::fresh()` and `McpOauth`: re-reading credentials immediately upon acquiring the lock, reusing tokens freshly renewed by peer processes, and completely eliminating token rotation desync race conditions between concurrent sessions.
+
 ## [0.5.23] - 2026-10-08
 
 ### Changed

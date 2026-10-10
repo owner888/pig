@@ -589,24 +589,53 @@ final class Auth
 
         $id = $provider instanceof Provider ? $provider->value : $provider->id();
 
+        // Under the file's lock, and double-checked once it is held: another pig may have renewed
+        // this token while we waited, and the refresh token we hold is then the one the provider
+        // just rotated away. The file is read again and its token used when it is still good —
+        // upstream's `refreshStoredOAuthCredential()`. No file means nothing to share.
+        $renew = function () use ($provider, $credentials, $id): Credentials {
+            if ($this->path !== null) {
+                $this->reload();
+                $stored = $this->credentials($id);
+
+                if ($stored !== null && !$stored->hasExpired()) {
+                    return $stored;
+                }
+
+                $credentials = $stored ?? $credentials;
+            }
+
+            try {
+                $renewed = $provider->refresh($credentials);
+            } catch (Throwable $problem) {
+                throw new OauthError(
+                    "Could not renew the {$id} token: {$problem->getMessage()}",
+                    0,
+                    $problem,
+                );
+            }
+
+            $this->setCredentials($id, $renewed);
+
+            // And into the second store, if the provider keeps one — see `useSecondStore()`.
+            if (isset($this->secondStores[$id])) {
+                ($this->secondStores[$id][1])($credentials, $renewed);
+            }
+
+            return $renewed;
+        };
+
+        if ($this->path === null) {
+            return $renew();
+        }
+
         try {
-            $renewed = $provider->refresh($credentials);
+            return FileLock::hold($this->path . '.lock', $renew);
+        } catch (OauthError $problem) {
+            throw $problem;
         } catch (Throwable $problem) {
-            throw new OauthError(
-                "Could not renew the {$id} token: {$problem->getMessage()}",
-                0,
-                $problem,
-            );
+            throw new OauthError("Could not renew the {$id} token: {$problem->getMessage()}", 0, $problem);
         }
-
-        $this->setCredentials($id, $renewed);
-
-        // And into the second store, if the provider keeps one — see `useSecondStore()`.
-        if (isset($this->secondStores[$id])) {
-            ($this->secondStores[$id][1])($credentials, $renewed);
-        }
-
-        return $renewed;
     }
 
     /**

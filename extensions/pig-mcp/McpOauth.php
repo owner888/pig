@@ -11,6 +11,7 @@ use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
+use Pig\CodingAgent\FileLock;
 use Pig\Mcp\Oauth\Discovery;
 use Pig\Mcp\Oauth\Flow;
 use Pig\Mcp\Oauth\McpOauthAuthorizationRequiredError;
@@ -32,9 +33,10 @@ use RuntimeException;
  *
  * Credentials live in `<agent-dir>/mcp-auth.json`, keyed by server URL, `0600`.
  *
- * Not ported: upstream's cross-process refresh lock (`proper-lockfile`). Two pigs refreshing one
- * rotating token at the same instant lose the grant and one of them has to sign in again, which
- * is the same cost a lost lock has there; the lock is a dependency pig does not take.
+ * A refresh is taken under a per-server lock file beside `mcp-auth.json` (`FileLock`, which is
+ * `flock()` where upstream takes `proper-lockfile`), and the stored tokens are read again once it
+ * is held: two pigs refreshing one rotating token at the same instant would otherwise lose the
+ * grant, and one of them would have to sign in again.
  */
 final class McpOauth
 {
@@ -223,7 +225,12 @@ final class McpOauth
         $store = $this->forServer($name, $serverUrl);
         $fetch = Discovery::fetcher($fetch);
 
-        return new class ($serverUrl, $store, $settings, $onChallenge, $fetch) implements AuthProvider {
+        // A lock file per server, as upstream keeps one: refreshing one server does not wait on
+        // another's. Named by a hash of the key, which holds a URL.
+        $lock = dirname($this->path) . '/mcp-auth-refresh-' . substr(hash('sha256', self::keys($name, $serverUrl)['key']), 0, 16) . '.lock';
+        $withRefreshLock = static fn (Closure $fn): mixed => FileLock::hold($lock, $fn);
+
+        return new class ($serverUrl, $store, $settings, $onChallenge, $fetch, $withRefreshLock) implements AuthProvider {
             private ?Deferred $refreshing = null;
 
             public function __construct(
@@ -232,6 +239,7 @@ final class McpOauth
                 private readonly Closure $settings,
                 private readonly Closure $onChallenge,
                 private readonly Closure $fetch,
+                private readonly Closure $withRefreshLock,
             ) {
             }
 
@@ -249,32 +257,36 @@ final class McpOauth
                 $this->refreshing = new Deferred();
 
                 try {
-                    $state = $this->store->load();
+                    // Under the server's lock across processes, and the tokens read again once it
+                    // is held: ones that changed meanwhile (the person signed in, or another pig
+                    // refreshed first) are used without refreshing.
+                    ($this->withRefreshLock)(function () use ($staleToken, $challenge): void {
+                        $state = $this->store->load();
 
-                    // Tokens that changed meanwhile (the person signed in) are used without refreshing.
-                    if (($state['tokens']['access_token'] ?? null) !== $staleToken) {
-                        return;
-                    }
+                        if (($state['tokens']['access_token'] ?? null) !== $staleToken) {
+                            return;
+                        }
 
-                    if (!is_string($state['tokens']['refresh_token'] ?? null)) {
-                        throw new McpOauthAuthorizationRequiredError();
-                    }
+                        if (!is_string($state['tokens']['refresh_token'] ?? null)) {
+                            throw new McpOauthAuthorizationRequiredError();
+                        }
 
-                    $settings = ($this->settings)();
-                    $redirectUrl = McpOauth::callbackSettings($settings)['fixedRedirectUrl']
-                        ?? ($state['clientInformation']['redirect_uris'][0] ?? null)
-                        ?? 'http://' . McpOauth::CALLBACK_HOST . McpOauth::CALLBACK_PATH;
-                    $provider = McpOauth::provider($this->serverUrl, $this->store, $settings, $redirectUrl, static fn () => null);
+                        $settings = ($this->settings)();
+                        $redirectUrl = McpOauth::callbackSettings($settings)['fixedRedirectUrl']
+                            ?? ($state['clientInformation']['redirect_uris'][0] ?? null)
+                            ?? 'http://' . McpOauth::CALLBACK_HOST . McpOauth::CALLBACK_PATH;
+                        $provider = McpOauth::provider($this->serverUrl, $this->store, $settings, $redirectUrl, static fn () => null);
 
-                    $result = Flow::authorize($provider, [
-                        'serverUrl' => $this->serverUrl,
-                        'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
-                        'scope' => $challenge['scope'] ?? null,
-                    ], $this->fetch);
+                        $result = Flow::authorize($provider, [
+                            'serverUrl' => $this->serverUrl,
+                            'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
+                            'scope' => $challenge['scope'] ?? null,
+                        ], $this->fetch);
 
-                    if ($result === Flow::REDIRECT) {
-                        throw new McpOauthAuthorizationRequiredError();
-                    }
+                        if ($result === Flow::REDIRECT) {
+                            throw new McpOauthAuthorizationRequiredError();
+                        }
+                    });
                 } catch (\Throwable $error) {
                     $this->refreshing->error($error);
                     $this->refreshing = null;
