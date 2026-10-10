@@ -53,6 +53,12 @@ final class ExtensionDiscovery
                 }
 
                 $path = $dir . '/' . $entry;
+
+                // Not loaded either: a copy of a built-in (`BuiltinExtensions::isStaleCopy()`).
+                if (BuiltinExtensions::isStaleCopy($path)) {
+                    continue;
+                }
+
                 $real = realpath($path) ?: $path;
                 if (isset($seen[$real])) {
                     continue;

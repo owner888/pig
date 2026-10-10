@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Extension;
 
+use Pig\Ai\ClassifierModel;
 use Pig\Ai\Model;
 
 /**
@@ -33,6 +34,11 @@ final readonly class Provider
      *        generator, for the built-in rows only
      * @param list<string> $envKeys environment variable names that carry this provider's key,
      *        first one set wins — `Stream::envApiKey()`'s table for one more row
+     * @param ApiKeyAuth|null $apiKeyAuth upstream's `auth.apiKey`: a sign-in that stores an
+     *        `api_key` credential, and the answer to whether the provider is configured and with
+     *        what key — asked by `CodingAgent\Auth` before `$envKeys`
+     * @param list<ClassifierModel> $classifiers the classifier half of upstream's `getAllModels()`,
+     *        each with `provider` set to `$id`
      */
     public function __construct(
         public string $id,
@@ -42,12 +48,20 @@ final readonly class Provider
         public ?OauthFlow $oauth = null,
         public array $envKeys = [],
         public bool $resold = false,
+        public ?ApiKeyAuth $apiKeyAuth = null,
+        public array $classifiers = [],
     ) {
         if ($id === '' || $name === '') {
             throw new \InvalidArgumentException('A provider needs an id and a name.');
         }
 
         foreach ($models as $model) {
+            if ($model->provider !== $id) {
+                throw new \InvalidArgumentException("Model '{$model->id}' says provider '{$model->provider}', not '{$id}'.");
+            }
+        }
+
+        foreach ($classifiers as $model) {
             if ($model->provider !== $id) {
                 throw new \InvalidArgumentException("Model '{$model->id}' says provider '{$model->provider}', not '{$id}'.");
             }

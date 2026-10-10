@@ -248,9 +248,13 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 | **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, 429 failover to the next account inside the request (as pi-antigravity does), `/antigravity.usage`, `/antigravity.accounts`, and the `generate_image` tool. |
 | **`pig-web-search`** | `extensions/pig-web-search/` | Real-time web search (`web_search`), readable article extraction (`fetch_web_page`), headless Chrome DOM rendering (`browse_web_page`), `/search <query>`. |
 | **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
-| **`pig-codemode`** | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
-| **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
+| **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | The `llama.cpp` provider: models from a running `llama-server` router, `/login llama.cpp` for its URL and key, `/llama` to load, unload and download (Hugging Face search) models. |
+| **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
+| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`: BM25 over the tools an extension deferred (MCP's `deferred` exposure), loading the matches. |
+| **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
 | **`pig-vless`** | `extensions/pig-vless/` | A VLESS inbound beside the agent so a phone (Shadowrocket, v2rayNG) can go through this machine. TCP only, one UUID, TLS when a cert is given. Loading it writes a UUID and listen address into `settings.json`; nothing listens until `/vless start` (`stop`, `restart`, `status`), and `/vless` prints the `vless://` link. |
+
+The four marked `builtin:` are **built in**, as pi's are: they load from pig itself on every run, after every other extension, and `pig update` does not copy them anywhere. `-builtin:mcp` (or `!builtin:*`) in the `extensions` setting turns one off, a project's `+`/`-` entry decides over yours, `pig config` lists them under *Built-in*, `-e builtin:<name>` loads one under `--no-extensions`, and `--no-mcp` leaves out `mcp`. `codemode`, `tool-search` and `mcp` step aside, with a warning, for another extension that registers one of their tools or commands. A leftover copy of one of them in `~/.pig/agent/extensions` is not loaded — pig says so; delete it.
 
 ### What an extension can do
 
@@ -258,7 +262,7 @@ An extension is a PHP file (or a folder with `index.php`) returning `function (E
 
 | | |
 | :--- | :--- |
-| **Bring a provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))` — the models go into the registry, the protocol behind `Api::Extension`, the sign-in into `/login`. `unregisterProvider()` takes it back. |
+| **Bring a provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold, apiKeyAuth: ApiKeyAuth, classifiers))` — the models go into the registry, the protocol behind `Api::Extension`, the sign-in (OAuth or an api-key flow) into `/login`. `unregisterProvider()` takes it back. |
 | **Tools, commands, renderers** | `registerTool()`, `removeTools()`, `registerCommand()`, `registerMessageRenderer()`, `registerLocale()`. |
 | **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and upstream's provider events — `before_provider_request` (replace the payload), `before_provider_headers` (edit the headers in place), `after_provider_response` (status and headers), `provider_stream_event` (each raw stream event) — plus `model_select`, `thinking_level_select`. |
 | **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |

@@ -33,6 +33,7 @@ final class ProviderRegistry
 
         self::$providers[$provider->id] = $provider;
         Models::register($provider->models);
+        Models::registerClassifiers($provider->classifiers);
     }
 
     public static function unregister(string $id): void
@@ -80,6 +81,17 @@ final class ProviderRegistry
         }
 
         return $out;
+    }
+
+    public static function apiKeyAuthFor(string $id): ?ApiKeyAuth
+    {
+        return self::$providers[$id]->apiKeyAuth ?? null;
+    }
+
+    /** @return list<Provider> the providers with an api-key sign-in, for a list to offer */
+    public static function apiKeyProviders(): array
+    {
+        return array_values(array_filter(self::$providers, static fn (Provider $provider): bool => $provider->apiKeyAuth !== null));
     }
 
     /** @return list<string> */

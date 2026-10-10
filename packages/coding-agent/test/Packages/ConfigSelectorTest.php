@@ -6,6 +6,8 @@ namespace Pig\CodingAgent\Test\Packages;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Cli\ConfigSelector;
+use Pig\CodingAgent\Extensions\BuiltinExtensions;
+use Pig\CodingAgent\Packages\ResolvedPaths;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Test\GlobalThemeFixture;
@@ -94,6 +96,33 @@ final class ConfigSelectorTest extends TestCase
         $this->assertSame([], $this->projectPackages());
     }
 
+    public function testABuiltInRowWritesItsSwitchIntoTheUsersExtensionsAndTheProjectOverridesIt(): void
+    {
+        $selector = $this->selector([], builtins: true);
+        $screen = implode("\n", array_map(Ansi::strip(...), $selector->render(80)));
+        $this->assertStringContainsString('Built-in', $screen);
+        $this->assertStringContainsString('[x] mcp', $screen);
+
+        foreach (str_split('mcp') as $key) {
+            $selector->handleInput($key);
+        }
+
+        $selector->handleInput(' ');
+        $this->assertSame(['-builtin:mcp'], $this->userExtensions());
+        $selector->handleInput(' ');
+        $this->assertSame(['+builtin:mcp'], $this->userExtensions());
+
+        // The project: inherit → unload writes a `-` there, which decides over the user's.
+        $selector->handleInput("\t");
+        $selector->handleInput(' ');
+        $project = json_decode((string) file_get_contents("{$this->cwd}/.pig/settings.json"), true)['extensions'] ?? [];
+        $this->assertContains('-builtin:mcp', $project);
+        $this->assertNotContains('mcp', array_map(
+            static fn (string $path): ?string => BuiltinExtensions::nameOf($path),
+            Settings::load($this->cwd, $this->home)->builtinExtensions(),
+        ));
+    }
+
     public function testTypingFiltersTheRows(): void
     {
         $selector = $this->selector(['packages' => ['../project/tools']]);
@@ -108,12 +137,24 @@ final class ConfigSelectorTest extends TestCase
     }
 
     /** @param array<string, mixed> $user */
-    private function selector(array $user): ConfigSelector
+    private function selector(array $user, bool $builtins = false): ConfigSelector
     {
-        file_put_contents("{$this->home}/settings.json", json_encode($user));
+        file_put_contents("{$this->home}/settings.json", json_encode($user === [] ? new \stdClass() : $user));
         $settings = Settings::load($this->cwd, $this->home);
         $global = (new PackageManager($this->cwd, Settings::load($this->cwd, $this->home, projectTrusted: false), $this->home))->resolve();
         $project = (new PackageManager($this->cwd, $settings, $this->home))->resolve();
+
+        if ($builtins) {
+            // As `pig config` adds them (`PackageCommands`).
+            $with = static fn (ResolvedPaths $resolved, array $projectEntries): ResolvedPaths => new ResolvedPaths(
+                [...$resolved->extensions, ...BuiltinExtensions::resources($settings->extensionEntries('user'), $projectEntries)],
+                $resolved->skills,
+                $resolved->prompts,
+                $resolved->themes,
+            );
+            $global = $with($global, []);
+            $project = $with($project, $settings->extensionEntries('project'));
+        }
 
         return new ConfigSelector($global, $project, $settings, $this->cwd, $this->home);
     }
@@ -122,6 +163,12 @@ final class ConfigSelectorTest extends TestCase
     private function userPackages(): array
     {
         return json_decode((string) file_get_contents("{$this->home}/settings.json"), true)['packages'] ?? [];
+    }
+
+    /** @return list<mixed> */
+    private function userExtensions(): array
+    {
+        return json_decode((string) file_get_contents("{$this->home}/settings.json"), true)['extensions'] ?? [];
     }
 
     /** @return list<mixed> */

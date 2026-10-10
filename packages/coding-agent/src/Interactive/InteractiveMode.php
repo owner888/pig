@@ -28,6 +28,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Extension\Provider as ExtensionProvider;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Logger;
 use Pig\Async\AbortController;
@@ -2393,7 +2394,7 @@ final class InteractiveMode
             'diff' => $this->handleDiffCommand(trim(substr($text, strlen($name) + 1))),
             'commit' => $this->handleCommitCommand(trim(substr($text, strlen($name) + 1))),
             'web' => $this->handleWebCommand(trim(substr($text, strlen($name) + 1))),
-            'login' => $this->showSignIns('login'),
+            'login' => $this->showSignIns('login', trim(substr($text, strlen($name) + 1))),
             'logout' => $this->showSignIns('logout'),
             'theme' => $this->handleThemeCommand(trim(substr($text, strlen($name) + 1))),
             'settings' => $this->showSettings(),
@@ -4257,7 +4258,7 @@ final class InteractiveMode
      * A provider pig cannot sign in with is shown greyed and **says why** when it is chosen.
      * Upstream ignores the key, which reads as the list being broken.
      */
-    private function showSignIns(string $mode): void
+    private function showSignIns(string $mode, string $providerRef = ''): void
     {
         if ($this->auth === null) {
             $this->sayWarning('This session has nowhere to keep a sign-in.');
@@ -4268,6 +4269,31 @@ final class InteractiveMode
         $signingIn = $mode === 'login';
         $items = [];
         $providers = [];
+
+        // Upstream's `findLoginProviderOptions(providerRef)`: `/login <provider>` starts that
+        // provider's sign-in when exactly one matches its id or its name, ignoring case.
+        if ($signingIn && $providerRef !== '') {
+            $wanted = strtolower($providerRef);
+            $matches = [];
+
+            foreach ([...Auth::signIns(), ...ProviderRegistry::apiKeyProviders()] as $provider) {
+                [$id, $name] = match (true) {
+                    $provider instanceof Provider => [$provider->value, $provider->label()],
+                    $provider instanceof ExtensionProvider => [$provider->id, $provider->name],
+                    default => [$provider->id(), $provider->label()],
+                };
+
+                if (strtolower($id) === $wanted || strtolower($name) === $wanted) {
+                    $matches[] = $provider;
+                }
+            }
+
+            if (count($matches) === 1) {
+                $matches[0] instanceof ExtensionProvider ? $this->signInWithApiKey($matches[0]) : $this->signIn($matches[0]);
+
+                return;
+            }
+        }
 
         // The built-in two and then whatever the loaded extensions brought — an extension's
         // `OauthFlow` is a row here like any other, which is the whole point of the registry.
@@ -4292,6 +4318,30 @@ final class InteractiveMode
             );
         }
 
+        // An extension provider's api-key sign-in — upstream's `authType: "api_key"` rows, with the
+        // status `formatAuthSelectorProviderStatus()` gives one: configured from the stored
+        // credential, or from the environment variable `check()` names.
+        foreach (ProviderRegistry::apiKeyProviders() as $provider) {
+            \assert($provider->apiKeyAuth !== null);
+            $stored = $this->auth->kind($provider->id) === 'api_key';
+
+            if (!$signingIn && !$stored) {
+                continue;
+            }
+
+            $source = $provider->apiKeyAuth->check($this->auth->apiKeyCredential($provider->id));
+            $providers[] = $provider;
+            $items[] = new SelectItem(
+                (string) (count($providers) - 1),
+                $provider->name,
+                match (true) {
+                    $source === null => 'not configured',
+                    $stored => 'API key configured',
+                    default => preg_match('/^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/', $source) === 1 ? "env: {$source}" : $source,
+                },
+            );
+        }
+
         if ($items === []) {
             $this->say('Nothing is signed in. /login first.');
 
@@ -4302,6 +4352,12 @@ final class InteractiveMode
         $picker->setSelectHandler(function (SelectItem $item) use ($providers, $signingIn): void {
             $this->closePicker();
             $provider = $providers[(int) $item->value];
+
+            if ($provider instanceof ExtensionProvider) {
+                $signingIn ? $this->signInWithApiKey($provider) : $this->signOutApiKey($provider);
+
+                return;
+            }
 
             $signingIn ? $this->signIn($provider) : $this->signOut($provider);
         });
@@ -4399,6 +4455,66 @@ final class InteractiveMode
 
             $this->tui->requestRender();
         });
+    }
+
+    /**
+     * An extension provider's api-key sign-in — upstream's `showApiKeyLoginDialog()`: the flow's
+     * prompts in the same box OAuth's paste uses, the credential kept, and upstream's wording for
+     * what happened — `Saved API key for <name>`, or `Failed to save API key for <name>: <error>`.
+     * llama.cpp's guidance is upstream's `llamaCppPostLoginGuidance()`, said when no model is
+     * selected yet.
+     */
+    private function signInWithApiKey(ExtensionProvider $provider): void
+    {
+        $apiKeyAuth = $provider->apiKeyAuth;
+        \assert($apiKeyAuth !== null);
+
+        Async::spawn(function () use ($provider, $apiKeyAuth): void {
+            $controller = new AbortController();
+            $this->signingIn = $controller;
+            $this->programStatus->setBlocked('login', new BlockedStatus('auth', "Log in to {$provider->name}"));
+
+            try {
+                $credential = $this->auth?->loginApiKey(
+                    $provider->id,
+                    $apiKeyAuth,
+                    fn (string $message, string $placeholder, bool $allowEmpty, ?AbortSignal $closing = null): ?string
+                        => $this->ui->input($message, $placeholder, $closing),
+                    $controller->signal,
+                );
+
+                if ($credential === null) {
+                    $this->say('Signing in was cancelled.');
+                } else {
+                    $actionLabel = "Saved API key for {$provider->name}";
+                    $this->say("{$actionLabel}. Credentials saved to {$this->auth?->path()}");
+
+                    if ($provider->id === 'llama.cpp' && $this->session->model() === null) {
+                        $loaded = count(array_filter(Models::all(), static fn (Model $model): bool => $model->provider === 'llama.cpp'));
+                        $this->sayError($loaded === 0
+                            ? "{$actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
+                            : "{$actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.");
+                    }
+                }
+            } catch (Throwable $problem) {
+                $this->sayError("Failed to save API key for {$provider->name}: {$problem->getMessage()}");
+            } finally {
+                $this->signingIn = null;
+                $this->programStatus->setBlocked('login', null);
+            }
+
+            $this->tui->requestRender();
+        });
+    }
+
+    private function signOutApiKey(ExtensionProvider $provider): void
+    {
+        try {
+            $this->auth?->remove($provider->id);
+            $this->say("Forgot the {$provider->name} sign-in.");
+        } catch (Throwable $problem) {
+            $this->sayError($problem->getMessage());
+        }
     }
 
     private function signOut(Provider|OauthFlow $provider): void

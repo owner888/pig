@@ -2691,6 +2691,25 @@ final class Models
     }
 
     /**
+     * @var list<ClassifierModel> classifier models a provider declared elsewhere — see
+     *      `registerClassifiers()`
+     */
+    private static array $registeredClassifiers = [];
+
+    /**
+     * Add classifier models the table does not know about — the classifier half of an extension
+     * provider's `getAllModels()`, which upstream's llama.cpp provider fills from the router's
+     * catalog. A built-in row wins a collision, as `register()` has it for chat models.
+     *
+     * @param list<ClassifierModel> $models
+     */
+    public static function registerClassifiers(array $models): void
+    {
+        self::$registeredClassifiers = [...self::$registeredClassifiers, ...$models];
+        self::$classifiers = null;
+    }
+
+    /**
      * @var array<string, Model> virtual models, keyed `provider/id` — upstream's `withVirtualModels()`:
      *      laid over the table last, and **hiding** a physical chat model of the same id, which a
      *      catalogue refresh can add after the registration
@@ -2703,7 +2722,9 @@ final class Models
         self::$registered = [];
         self::$replacing = [];
         self::$virtual = [];
+        self::$registeredClassifiers = [];
         self::$models = null;
+        self::$classifiers = null;
     }
 
     /**
@@ -2759,7 +2780,9 @@ final class Models
         $keep = static fn (Model $model): bool => $model->provider !== $provider;
         self::$registered = array_values(array_filter(self::$registered, $keep));
         self::$replacing = array_values(array_filter(self::$replacing, $keep));
+        self::$registeredClassifiers = array_values(array_filter(self::$registeredClassifiers, static fn (ClassifierModel $model): bool => $model->provider !== $provider));
         self::$models = null;
+        self::$classifiers = null;
     }
 
     /**
@@ -2960,6 +2983,11 @@ final class Models
             [$name, $api, $baseUrl, $window, $input, $in, $out, $read, $write] = $row;
             [$provider, $id] = explode('/', $key, 2);
             $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []));
+        }
+
+        // Last, and only where nothing is already: see `registerClassifiers()`.
+        foreach (self::$registeredClassifiers as $model) {
+            $models[$model->provider . '/' . $model->id] ??= $model;
         }
 
         return self::$classifiers = $models;

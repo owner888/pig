@@ -87,8 +87,10 @@ final class PackageUpdateCheck
 
             $path = "{$userDir}/{$item}";
 
-            // 1. Core built-in extensions (check if user installed copy differs from core package)
-            if (is_dir($path) && $coreDir !== null && is_dir("{$coreDir}/{$item}")) {
+            // 1. Core built-in extensions (check if user installed copy differs from core package).
+            // Upstream's built-ins load from pig itself; a copy of one is not offered an update.
+            if (is_dir($path) && $coreDir !== null && is_dir("{$coreDir}/{$item}")
+                && !in_array($item, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) {
                 if ($this->hasDirectoryChanges("{$coreDir}/{$item}", $path)) {
                     $updates[] = $item;
                     continue;

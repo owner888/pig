@@ -8,6 +8,10 @@ use Closure;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
+use Pig\Ai\Extension\ApiKeyAuth;
+use Pig\Ai\Extension\ApiKeyCredential;
+use Pig\Ai\Extension\AuthResult;
+use Pig\Ai\Extension\ModelAuth;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\Anthropic;
@@ -176,7 +180,19 @@ final class Auth
      */
     public function hasKeyFor(string $provider): bool
     {
-        if (isset($this->runtime[$provider]) || isset($this->data[$provider])) {
+        if (isset($this->runtime[$provider])) {
+            return true;
+        }
+
+        // An extension's api-key sign-in answers for its provider — upstream's `checkProviderAuth()`:
+        // `check()` with the stored `api_key` credential, when nothing OAuth is stored.
+        $apiKeyAuth = ProviderRegistry::apiKeyAuthFor($provider);
+
+        if ($apiKeyAuth !== null && $this->kind($provider) !== 'oauth') {
+            return $apiKeyAuth->check($this->apiKeyCredential($provider)) !== null;
+        }
+
+        if (isset($this->data[$provider])) {
             return true;
         }
 
@@ -295,6 +311,75 @@ final class Auth
         $this->save();
     }
 
+    /**
+     * The stored `api_key` credential with its `env`, or null — upstream's `credentials.read()`
+     * narrowed to that type, as its `resolveRefreshCredential()` does.
+     */
+    public function apiKeyCredential(string $provider): ?ApiKeyCredential
+    {
+        $entry = $this->data[$provider] ?? null;
+
+        if ($entry === null || ($entry['type'] ?? null) !== 'api_key') {
+            return null;
+        }
+
+        $env = [];
+
+        foreach (is_array($entry['env'] ?? null) ? $entry['env'] : [] as $name => $value) {
+            if (is_string($value)) {
+                $env[(string) $name] = $value;
+            }
+        }
+
+        return new ApiKeyCredential(self::text($entry, 'key'), $env);
+    }
+
+    /** Keep an `api_key` credential, `env` and all, in upstream's shape: the key only when there is one. */
+    public function setApiKeyCredential(string $provider, ApiKeyCredential $credential): void
+    {
+        $this->data[$provider] = [
+            'type' => 'api_key',
+            ...($credential->key !== null ? ['key' => $credential->key] : []),
+            ...($credential->env !== [] ? ['env' => $credential->env] : []),
+        ];
+        $this->save();
+    }
+
+    /**
+     * Upstream's `modelRegistry.getProviderAuth(provider)`: the resolved auth for a provider — its
+     * api-key sign-in's `resolve()` with the stored credential, or the key `apiKey()` finds for
+     * any other — or null when it is not configured.
+     */
+    public function providerAuth(string $provider): ?AuthResult
+    {
+        $apiKeyAuth = ProviderRegistry::apiKeyAuthFor($provider);
+
+        if ($apiKeyAuth !== null && !isset($this->runtime[$provider]) && $this->kind($provider) !== 'oauth') {
+            return $apiKeyAuth->resolve($this->apiKeyCredential($provider));
+        }
+
+        $key = $this->apiKey($provider);
+
+        return $key === null ? null : new AuthResult(new ModelAuth($key));
+    }
+
+    /**
+     * Sign in with an extension provider's api-key flow, and remember it — upstream's
+     * `modelRuntime.login(providerId, "api_key", interaction)`. Null means nobody finished.
+     *
+     * @param Closure(string, string, bool, ?AbortSignal=): ?string $onPrompt
+     */
+    public function loginApiKey(string $provider, ApiKeyAuth $auth, Closure $onPrompt, ?AbortSignal $signal = null): ?ApiKeyCredential
+    {
+        $credential = $auth->login($onPrompt, $signal);
+
+        if ($credential !== null) {
+            $this->setApiKeyCredential($provider, $credential);
+        }
+
+        return $credential;
+    }
+
     public function setCredentials(Provider|string $provider, Credentials $credentials): void
     {
         $this->data[$provider instanceof Provider ? $provider->value : $provider] = array_filter(
@@ -348,6 +433,14 @@ final class Auth
     {
         if (isset($this->runtime[$provider])) {
             return $this->runtime[$provider];
+        }
+
+        // An extension's api-key sign-in resolves its provider's key, as upstream's
+        // `resolveProviderAuth()` asks `auth.apiKey.resolve()` when nothing OAuth is stored.
+        $apiKeyAuth = ProviderRegistry::apiKeyAuthFor($provider);
+
+        if ($apiKeyAuth !== null && $this->kind($provider) !== 'oauth') {
+            return $apiKeyAuth->resolve($this->apiKeyCredential($provider))?->auth->apiKey;
         }
 
         if ($this->kind($provider) === 'api_key') {

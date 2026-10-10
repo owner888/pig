@@ -6,13 +6,14 @@ namespace Pig\Codemode;
 
 /**
  * Tool discovery — upstream's `extensions/tool-search/tool.js`: a BM25 ranker over tool metadata,
- * shared by the `tool_search` tool (the MCP extension) and `search_tools()` in codemode scripts,
+ * shared by the `tool_search` tool (`pig-tool-search`) and `search_tools()` in codemode scripts,
  * which is why it lives in this package and not in either extension.
  *
  * Upstream keeps a loadout with an active set per tool and records activation in the transcript,
- * so a loaded tool survives `/tree` and resume. pig has no loadout: a `deferred` MCP tool is simply
- * **not registered** until `tool_search` names it, and then it is registered like any other —
- * which reaches the agent through the same door a connecting server uses. The cost is that a
+ * so a loaded tool survives `/tree` and resume. pig has no exposure in its loadout: a `deferred`
+ * tool is simply **not registered** until `tool_search` names it — it waits in `DeferredTools` —
+ * and then it is registered like any other, which reaches the agent through the same door a
+ * connecting server uses. The cost is that a
  * resumed session starts with the deferred tools unloaded again, and the model searches once more.
  * That is the smaller mechanism and the one with no second copy of what the agent's tools are.
  */

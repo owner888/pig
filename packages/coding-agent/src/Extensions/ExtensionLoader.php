@@ -48,6 +48,8 @@ final class ExtensionLoader
      *        loaded last — a package's resource ranks after every local one, as upstream ranks it
      * @param bool $discover false is upstream's `--no-extensions`: only `$cliPaths` load — nothing
      *        discovered, configured, bundled, from the project or from a package
+     * @param list<string> $builtins upstream's built-in extensions this run loads
+     *        (`Settings::builtinExtensions()`), after everything else, as upstream ranks them
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -61,6 +63,7 @@ final class ExtensionLoader
         ?Closure $projectConfigured = null,
         ?Closure $packageExtensions = null,
         bool $discover = true,
+        array $builtins = [],
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
@@ -81,6 +84,16 @@ final class ExtensionLoader
                 $real = realpath($path) ?: $path;
 
                 if (isset($seen[$real])) {
+                    continue;
+                }
+
+                // A folder named as a built-in's that is not the built-in: the copy goes stale, and
+                // the built-in loads anyway (`BuiltinExtensions::isStaleCopy()`).
+                if (BuiltinExtensions::isStaleCopy($path)) {
+                    $seen[$real] = true;
+                    $folder = self::nameOf($path);
+                    $errors[] = new ExtensionError($path, 'load', "not loaded: `{$folder}` is built into pig now, so this copy would be an older one; remove it");
+
                     continue;
                 }
 
@@ -114,7 +127,7 @@ final class ExtensionLoader
         }
 
         if (!$discover) {
-            return [array_values($extensions), $errors];
+            return [self::omitReplaced(array_values($extensions), $errors), $errors];
         }
 
         // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An
@@ -136,7 +149,64 @@ final class ExtensionLoader
             $loadAll(self::entryFiles($packageExtensions($projectTrusted)));
         }
 
-        return [array_values($extensions), $errors];
+        $loadAll($builtins);
+
+        return [self::omitReplaced(array_values($extensions), $errors), $errors];
+    }
+
+    /**
+     * Upstream's `omitReplacedExtensions()`: a replaceable built-in — `codemode`, `tool-search`,
+     * `mcp` — gives way to another extension that registers one of its tools or commands, and says
+     * so. (Upstream compares flags too; pig's flags are process-wide, not an extension's.)
+     *
+     * @param list<LoadedExtension> $extensions
+     * @param list<ExtensionError> $errors
+     * @return list<LoadedExtension>
+     */
+    private static function omitReplaced(array $extensions, array &$errors): array
+    {
+        $replaceable = static function (LoadedExtension $extension): ?string {
+            $name = BuiltinExtensions::nameOf($extension->resolved);
+
+            return $name !== null && in_array($name, BuiltinExtensions::REPLACEABLE, true) ? $name : null;
+        };
+        $names = static fn (LoadedExtension $extension): array => [
+            ...array_map(static fn (object $tool): string => "tool:{$tool->name}", $extension->api->tools()),
+            ...array_map(static fn (string|int $command): string => "command:{$command}", array_keys($extension->api->commands())),
+        ];
+        $taken = [];
+
+        foreach ($extensions as $extension) {
+            if ($replaceable($extension) === null) {
+                foreach ($names($extension) as $name) {
+                    $taken[$name] ??= $extension;
+                }
+            }
+        }
+
+        return array_values(array_filter($extensions, static function (LoadedExtension $extension) use ($replaceable, $names, $taken, &$errors): bool {
+            $builtin = $replaceable($extension);
+
+            if ($builtin === null) {
+                return true;
+            }
+
+            foreach ($names($extension) as $name) {
+                if (isset($taken[$name])) {
+                    [$kind, $raw] = explode(':', $name, 2);
+                    $registered = $kind === 'command' ? "/{$raw}" : $raw;
+                    $errors[] = new ExtensionError(
+                        BuiltinExtensions::PREFIX . $builtin,
+                        'load',
+                        "Extension {$taken[$name]->path} registers {$kind} `{$registered}`, so built-in extension `{$builtin}` was not loaded. To use `{$builtin}`, run `pig config` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.",
+                    );
+
+                    return false;
+                }
+            }
+
+            return true;
+        }));
     }
 
     /**

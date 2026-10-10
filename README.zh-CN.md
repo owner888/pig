@@ -237,9 +237,13 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts` 与 `generate_image` 工具。 |
 | **`pig-web-search`** | `extensions/pig-web-search/` | 实时网络搜索（`web_search`）、网页文本抓取（`fetch_web_page`）、无头 Chrome 动态渲染（`browse_web_page`）、`/search <query>` 命令。 |
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
-| **`pig-codemode`** | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
-| **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
+| **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | `llama.cpp` provider：模型来自运行中的 `llama-server` router，`/login llama.cpp` 填地址和 key，`/llama` 加载、卸载、下载模型（含 Hugging Face 搜索）。 |
+| **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
+| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在扩展延后注册的工具（MCP 的 `deferred` 暴露方式）里做 BM25 检索，并加载命中的工具。 |
+| **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
 | **`pig-vless`** | `extensions/pig-vless/` | 挂在 agent 旁边的 VLESS 入站，手机通过这台机器上网。仅 TCP、单 UUID，给了证书就走 TLS。加载时把 UUID 和监听地址写进 `settings.json`，但要 `/vless start` 才监听（`stop`、`restart`、`status`）；`/vless` 打印 `vless://` 链接。 |
+
+标了 `builtin:` 的四个是**内置扩展**，与 pi 一致：每次都从 pig 自身加载、排在所有扩展之后，`pig update` 不再把它们复制到任何地方。在 `extensions` 设置里写 `-builtin:mcp`（或 `!builtin:*`）关掉，项目里的 `+`/`-` 条目优先于你的，`pig config` 在 *Built-in* 分组列出它们，`-e builtin:<name>` 在 `--no-extensions` 下也能单独加载，`--no-mcp` 不加载 `mcp`。若另一个扩展注册了同名工具或命令，`codemode`、`tool-search`、`mcp` 会让位并给出警告。`~/.pig/agent/extensions` 里残留的旧副本不会加载，pig 会提示，删掉即可。
 
 ### 扩展能做什么
 
@@ -247,7 +251,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 
 | | |
 | :--- | :--- |
-| **自带 provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))`——模型进注册表、协议挂在 `Api::Extension` 后面、登录进 `/login` 列表。`unregisterProvider()` 收回。 |
+| **自带 provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold, apiKeyAuth: ApiKeyAuth, classifiers))`——模型进注册表、协议挂在 `Api::Extension` 后面、登录（OAuth 或 api-key 流程）进 `/login` 列表。`unregisterProvider()` 收回。 |
 | **工具、命令、渲染器** | `registerTool()`、`removeTools()`、`registerCommand()`、`registerMessageRenderer()`、`registerLocale()`。 |
 | **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及与上游一致的 provider 事件——`before_provider_request`（替换请求 payload）、`before_provider_headers`（原地改 header）、`after_provider_response`（状态码与 header）、`provider_stream_event`（每个原始流事件）——还有 `model_select`、`thinking_level_select`。 |
 | **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |

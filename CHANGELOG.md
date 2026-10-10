@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.30] - 2026-10-08
+
+### New Features
+
+- **Upstream Built-in Extensions Architecture (`builtin:*`, `BuiltinExtensions`)**:
+  - Embedded upstream's four core built-ins directly from repository source: `builtin:llama.cpp` (`pig-llama`), `builtin:codemode` (`pig-codemode`), `builtin:tool-search` (`pig-tool-search`), and `builtin:mcp` (`pig-mcp`).
+  - Supported toggling built-in extensions in `settings.json` (`-builtin:<name>`, `+builtin:<name>`, `!builtin:*`) and interactive `pig config` under the *Built-in* group.
+  - Allowed explicit loading via `-e builtin:<name>` even with `--no-extensions` enabled.
+  - Automatically omitted built-in extensions when overridden by user/external extensions (`omitReplaced`) and warned against stale copies in `~/.pig/agent/extensions`.
+- **Native `pig-llama` Extension & Extension API Key Auth (`extensions/pig-llama`, `ApiKeyAuth`)**:
+  - Ported upstream's `extensions/llama` extension providing the local `llama.cpp` provider and runtime model discovery from `/v1/models`.
+  - Added `Provider::$apiKeyAuth` enabling extensions to register interactive API key authentication flows (`/login llama.cpp`).
+- **Decoupled Tool Search Extension (`extensions/pig-tool-search`, `DeferredTools`)**:
+  - Decoupled `tool_search` from the MCP extension into a dedicated built-in extension, dynamically activating when any MCP server has deferred tools via `DeferredTools`.
+
 ## [0.5.29] - 2026-10-08
 
 ### Added

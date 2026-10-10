@@ -345,15 +345,15 @@ file's patterns), so porting it would be a third notion of "ignored" beside git'
 only**: the top-level `extensions` / `skills` settings and the auto-discovered directories stay
 with the four loaders, which already had them, and a package's resources are appended after
 theirs — `ResolvedPaths::rank()` is upstream's order, and "first wins" in each loader does the
-rest. For the same reason **`pig config` shows package rows only**: upstream's
-`toggleTopLevelResource()` and its built-in extension rows have nothing to stand on here, and the
-`origin === 'top-level'` arms are left out of `ConfigSelector` rather than carried as code nothing
-reaches. What is there is upstream's to the line: the two write scopes on Tab, `+path` / `-path`
+rest. For the same reason **`pig config` shows package rows and the built-in extensions only**:
+upstream's `toggleTopLevelResource()` has nothing to stand on here, and that `origin ===
+'top-level'` arm is left out of `ConfigSelector` rather than carried as code nothing reaches; the
+Built-in rows are upstream's (see [Built-in extensions](#built-in-extensions)). What is there is upstream's to the line: the two write scopes on Tab, `+path` / `-path`
 written into the package's entry, the project's inherit → load/unload cycle with an
 `autoload: false` delta made and removed as needed, dimmed inherited rows, the search box.
 **`update` keeps pig's own half**: `--extensions` also refreshes the bundled
 extensions' copies under `~/.pig/agent/extensions` (`SelfUpdate::updateExtensions()`), which are
-not packages and have no other updater.
+not packages and have no other updater — all but the four built-ins, which are not copied at all.
 
 **Where the resources go in:** `bin/pig` resolves once trust is known (`$resolvePackages`),
 hands the extension files to `ExtensionLoader::load(packageExtensions:)` — loaded last, in the
@@ -3378,6 +3378,14 @@ for what the config file means. Two things are pig's own and both are consequenc
   `tool_search` load in the transcript, so a loaded tool survives `/tree` and resume. pig has no
   such record: a deferred tool is simply **not registered** until `tool_search` names it, then
   registered like any other, through the same `adopt()`/`onChange()` door a connecting server uses.
+  `tool_search` itself is **`extensions/pig-tool-search/`'s**, as upstream's is the built-in
+  `tool-search` extension's, not the MCP extension's: pig-mcp lists each deferred tool in the
+  static `Pig\Codemode\DeferredTools` (description and schema for the search, the server as its
+  namespace, a `load` closure that registers it through pig-mcp's own API, and `loaded`), and
+  pig-tool-search registers `tool_search` while that list is non-empty and loads the matches
+  through it. It stands in for upstream's `getAllTools()` by exposure plus `setActiveTools()`,
+  which pig's loadout cannot express. Both are built-ins, so they load together; one without the
+  other leaves deferred tools unreachable (`--no-extensions -e builtin:mcp -e builtin:tool-search`).
   The cost is that a resumed session starts with the deferred tools unloaded and the model searches
   again; the gain is no second copy of what the agent's tools are. `ToolSearch` is upstream's
   `tool-search/tool.js` arithmetic for arithmetic — tokenizer, stemmer, Okapi BM25 — and the one
@@ -3461,12 +3469,11 @@ and the dialogs. Four things decided on the way:
 
 **The resource tools are one set with one exposure**, upstream's rule: the widest among the
 servers that have resources. With pig's deferred-is-not-registered arrangement that means
-they go into `$deferred` under a pseudo-source `mcp resources` when no resource server is
-direct, and `tool_search` lists that source beside the servers. The thing to keep straight is
-the **order inside `registerTools()`**: `syncResourceTools()` runs after the server's own tools
-and before `syncToolSearch()`, because the first decides whether `tool_search` has anything to
-offer and the second registers it — swap them and a deferred resource-only server has no
-`tool_search` until the next change.
+they go into `DeferredTools` under a pseudo-source `mcp resources` when no resource server is
+direct, and `tool_search` lists that source beside the servers. `tool_search` follows the list
+on every change (`DeferredTools::onChange()`), so there is no sync step to order any more; what
+is ordered is that a deferred tool already loaded (or pending from a resumed transcript) is
+registered **before** it is listed, so `tool_search` is re-registered after it and stays last.
 
 **Nothing of upstream's MCP extension is left out now**, codemode aside, and the live checks were
 `server-filesystem` (stdio, tools), GitHub (streamable HTTP, 46 tools with a header; OAuth
@@ -4828,7 +4835,37 @@ promptTemplatePaths:)`), after everything else and **under `--no-skills` / `--no
 too** — naming one is asking for it — and a path that is neither is `<Kind> path does not exist`.
 These four and `-e` repeat (`Arguments::REPEATABLE`, `values()`), and `-e` loads under `-ne`
 (`ExtensionLoader::load(discover: false)`), as upstream's "explicit -e paths still work". A relative
-path is the shell's, not `--cwd`'s. `builtin:<name>` sources are not supported.
+path is the shell's, not `--cwd`'s; `builtin:<name>` is one of the [built-ins](#built-in-extensions).
+
+### Built-in extensions
+
+Upstream's four (`extensions/index.ts`) are pig's folders: `builtin:llama.cpp` is `pig-llama`,
+`codemode` `pig-codemode`, `tool-search` `pig-tool-search`, `mcp` `pig-mcp`
+(`Extensions\BuiltinExtensions::FOLDERS`). They load **from the package itself, after every other
+extension** (`ExtensionLoader::load(builtins:)`), unless the `extensions` setting turns one off:
+`!pattern`, `+exact` and `-exact` entries, upstream's `isEnabledByOverrides()`, with a project
+entry deciding over the person's and the last match winning (`enabled()`). Those entries are
+switches, not paths, so `Settings::extensions()` leaves them out and `extensionEntries()` has
+them; `pig config` writes them from its Built-in rows. `-e builtin:<name>` loads one by name (an
+unknown name is upstream's `Unknown built-in extension: builtin:x`), `--no-extensions` loads none
+but those, `--no-mcp` leaves out `mcp`. `codemode`, `tool-search` and `mcp` are replaceable:
+another extension registering one of their tools or commands keeps it and the built-in is dropped
+with upstream's warning (`omitReplaced()`; upstream compares flags too, pig's flags are
+process-wide).
+
+**A folder with a built-in's name anywhere else is not loaded** (`isStaleCopy()`), with a warning
+to remove it. `pig update` used to copy these four into `~/.pig/agent/extensions`, and such a copy
+is whatever version it was the day it was made — the stale `pig-mcp` copy under
+[MCP servers](#mcp-servers-and-the-tool-that-arrives-after-startup) cost an hour. The developer
+chose ignoring over loading it; `pig update` copies the other bundled extensions and skips these.
+
+**`pig-llama`** is upstream's `extensions/llama`: the provider registered with an api-key sign-in
+(`Pig\Ai\Extension\ApiKeyAuth`, `Provider::$apiKeyAuth` and `$classifiers`), which
+`CodingAgent\Auth` asks before its own table (`hasKeyFor()`, `apiKey()`, `providerAuth()`) and
+`/login` lists beside OAuth — `/login <provider>` starts one directly, as upstream's
+`findLoginProviderOptions()`. Not ported: the model registry's post-login refresh (the extension
+refreshes its own models), the refresh warnings after a sign-in, `SelectList`'s column widths,
+and an api-key login in `pig-ai`.
 
 ## Commands
 
@@ -12857,7 +12894,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **Trap rules**:
 - Restoring goes only through `AgentSession::restore()` → `restoreToolsFromTranscript()`; pending lives only in `ToolLoadout` (`restore()`/`refresh()`/`clearPending()`/`isPending()`), and every `apply()` moves the activated ones out of pending.
 - Registry changes go only through `ToolLoadout::refresh()` (`onChange` is wired to it, not `apply()`): in a narrowed set, a newly registered tool is activated (upstream's `_isActivatedOnRegistration()`), and so is a pending one.
-- pig's deferred MCP tools are not registered before `tool_search`, so pig-mcp registers one directly when `ExtensionApi::isToolPending()` is true — that is what upstream's "register but do not activate, then pending activates" looks like in pig.
+- pig's deferred MCP tools are not registered before `tool_search`, so pig-mcp registers one directly (and lists it in `DeferredTools` as `loaded`) when `ExtensionApi::isToolPending()` is true — that is what upstream's "register but do not activate, then pending activates" looks like in pig.
 - Extra sections go only through `SystemPrompt::withSections()`: the name matches `/^[a-z][a-z0-9_-]*$/` and is not `preamble`, the content is wrapped as `<name>\n…\n</name>`, and empty content does not appear; pig's own sections are not tagged.
 - The turn's options live in `AgentSession::$runSystemPromptOptions`, cleared when `runAgentPrompt()` ends; the projection is installed on `Agent::$transformContext` (now public, as upstream).
 - Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
@@ -12948,7 +12985,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - `openrouter-images` goes through `SdkRequest` (the `openai` SDK's headers, timeout, `APIError`); usage is computed from the four unit prices, ignoring tiers — upstream's own `parseUsage()` does the same.
 - Rows were written from the `@earendil-works/pi-ai` 1.1.0 release catalog (models.dev, OpenRouter, Vercel unreachable): Cloudflare 74 rows, classifiers 25, images 61, compared row by row (maps in order); of the Cloudflare rows only the 25 the id rules cannot reproduce carry a final `thinkingLevelMap`, and the next regeneration writes `effortLevelMap` from the sources. `openai/gpt-6-luna`'s `openai-decisions` classifier is not in the reference commit (98d2e1947) and was not written. Generator: `DIRECT`'s `cloudflare-workers-ai`, `cloudflareAiGatewayRows()`, `classifierRows()`/`imageRows()` (`--decisions-from`, `--openrouter-decisions-from`, `--openrouter-images-from` offline), `HAND_KEPT_CLASSIFIERS`.
 - faux: `Providers\Faux` (`fauxText()` and the rest, with `fauxProvider()`) + `FauxProvider` (`StreamApi`, `provider()` handed to `ProviderRegistry`). Through `Stream` a key is still required (every pig extension protocol needs one); calling `->stream()` directly does not.
-- Not ported: `cloudflare-ai-binding.ts` beyond the sentinel and `createAiBindingFetch()`'s check (`StreamOptions` has no `fetch`, and there is no binding outside a Worker); faux's deferred; `pig-codemode`'s `models` namespace; coding-agent's llama extension; `api/lazy.ts` and `*.lazy.ts` (PHP autoloads, with no observable difference: no asynchronous loading, so no load-failure error stream); `classifier-shared`, `openai-decisions` and `context.images`, which arrived in 1.1.0.
+- Not ported: `cloudflare-ai-binding.ts` beyond the sentinel and `createAiBindingFetch()`'s check (`StreamOptions` has no `fetch`, and there is no binding outside a Worker); faux's deferred; `pig-codemode`'s `models` namespace; `api/lazy.ts` and `*.lazy.ts` (PHP autoloads, with no observable difference: no asynchronous loading, so no load-failure error stream); `classifier-shared`, `openai-decisions` and `context.images`, which arrived in 1.1.0.
 - Tests: `SystemOneTest` (upstream `typesafe-system-one.test.ts`, `cloudflare-workers-ai-system-one.test.ts`, `classifier-models.test.ts`), `LlamaCppClassifyTest`, `OpenRouterImagesTest`, `CloudflareTest`, `FauxProviderTest`, `ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`, and in `GenerateModelsTest` the Workers AI, gateway, classifier, image and unreachable scenarios.
 
 ### It just stopped: a TypeError in a listener walked into `Agent`'s catch and the whole turn vanished silently

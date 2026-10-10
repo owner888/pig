@@ -179,6 +179,24 @@ final class Settings
         $this->save();
     }
 
+    /**
+     * One file's `extensions` entries replaced — `pig config` switching a built-in on or off.
+     *
+     * @param list<string> $entries
+     */
+    public function setExtensionEntries(array $entries, string $scope = 'user'): void
+    {
+        if ($scope === 'project') {
+            $this->project['extensions'] = array_values($entries);
+            $this->saveProject();
+
+            return;
+        }
+
+        $this->global['extensions'] = array_values($entries);
+        $this->save();
+    }
+
     // ---- the ones something reads ------------------------------------------------------
 
     public function tuiMode(): string
@@ -1247,7 +1265,9 @@ final class Settings
     /**
      * Extension files or directories named in the settings.
      *
-     * Upstream's key exactly: a top-level `extensions` array of paths.
+     * Upstream's key exactly: a top-level `extensions` array of paths. Its `+`, `-` and `!` entries
+     * and its `builtin:<name>` ones are switches rather than paths, and are not here — see
+     * `extensionEntries()` and `BuiltinExtensions::enabled()`.
      *
      * @return list<string>
      */
@@ -1255,7 +1275,41 @@ final class Settings
     {
         $value = $this->get('extensions');
 
+        return is_array($value)
+            ? array_values(array_filter(
+                array_map(strval(...), $value),
+                static fn (string $entry): bool => !\Pig\CodingAgent\Extensions\BuiltinExtensions::isOverride($entry)
+                    && !str_starts_with($entry, \Pig\CodingAgent\Extensions\BuiltinExtensions::PREFIX),
+            ))
+            : [];
+    }
+
+    /**
+     * One file's `extensions` entries as written, switches and all: `user`, or `project` — empty
+     * for a project nobody trusted, whose file is never read.
+     *
+     * @return list<string>
+     */
+    public function extensionEntries(string $scope): array
+    {
+        $value = ($scope === 'project' ? $this->project : $this->global)['extensions'] ?? null;
+
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+    }
+
+    /**
+     * Upstream's built-ins this run loads, as entry files — see `BuiltinExtensions::enabled()`.
+     *
+     * @param list<string> $disabled built-in names left out, `mcp` for `--no-mcp`
+     * @return list<string>
+     */
+    public function builtinExtensions(array $disabled = []): array
+    {
+        return \Pig\CodingAgent\Extensions\BuiltinExtensions::enabled(
+            $this->extensionEntries('user'),
+            $this->extensionEntries('project'),
+            $disabled,
+        );
     }
 
     /**

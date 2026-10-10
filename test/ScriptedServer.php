@@ -13,12 +13,12 @@ use RuntimeException;
  * `fetch` that routes by path and records what it was sent; pig's providers take no `fetch`, so the
  * same routing sits behind a socket.
  *
- * The closure gets the request (`method`, `path`, lowercased `headers`, raw `body`) and answers
+ * The closure gets the request (`method`, `path`, lowercased `headers`, raw `body`, the raw `query`) and answers
  * `[status, headers, body]`, or null to leave the connection hanging (for a timeout).
  */
 final class ScriptedServer
 {
-    /** @var list<array{method: string, path: string, headers: array<string, string>, body: string}> */
+    /** @var list<array{method: string, path: string, headers: array<string, string>, body: string, query: string}> */
     public array $requests = [];
 
     /** @var list<resource> */
@@ -110,7 +110,7 @@ final class ScriptedServer
 
                 Loop::get()->cancel((string) $reader);
                 [$method, $target] = explode(' ', $lines[0]);
-                $request = ['method' => $method, 'path' => (string) parse_url($target, PHP_URL_PATH), 'headers' => $headers, 'body' => $body];
+                $request = ['method' => $method, 'path' => (string) parse_url($target, PHP_URL_PATH), 'headers' => $headers, 'body' => $body, 'query' => (string) parse_url($target, PHP_URL_QUERY)];
                 $this->requests[] = $request;
                 $reply = $answer($request);
 

@@ -141,7 +141,12 @@ final class SelfUpdate
                     continue;
                 }
 
-                // 3. Core built-in extension sync
+                // 3. Core built-in extension sync. Upstream's built-ins load from pig itself, so a
+                // copy of one is left alone — the loader skips it and says so.
+                if (in_array($item, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) {
+                    continue;
+                }
+
                 if (is_dir($path) && $coreDir !== null && is_dir("{$coreDir}/{$item}")) {
                     $changes = self::syncDirectory("{$coreDir}/{$item}", $path);
                     if ($changes > 0) {
@@ -156,7 +161,8 @@ final class SelfUpdate
         if ($coreDir !== null && is_dir($coreDir)) {
             $coreItems = scandir($coreDir) ?: [];
             foreach ($coreItems as $coreItem) {
-                if ($coreItem === '.' || $coreItem === '..' || !is_dir("{$coreDir}/{$coreItem}")) {
+                if ($coreItem === '.' || $coreItem === '..' || !is_dir("{$coreDir}/{$coreItem}")
+                    || in_array($coreItem, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) {
                     continue;
                 }
 

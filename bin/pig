@@ -430,14 +430,32 @@ $packageProgress = static function (string $type, string $action, string $source
 // configured packages' below.
 $cliExtensionPaths = [];
 $temporaryResources = null;
-if (isset($options['extension'])) {
+$extensionSources = $arguments->values('extension');
+
+// `-e builtin:<name>`: one of upstream's built-ins, by name, from pig itself. An unknown name is
+// upstream's error, said and not fatal.
+foreach ($extensionSources as $source) {
+    if (str_starts_with($source, \Pig\CodingAgent\Extensions\BuiltinExtensions::PREFIX)) {
+        $builtin = \Pig\CodingAgent\Extensions\BuiltinExtensions::pathOf($source);
+        $builtin === null
+            ? fwrite(STDERR, Style::yellow("Unknown built-in extension: {$source}\n"))
+            : $cliExtensionPaths[] = $builtin;
+    }
+}
+
+$packageSources = array_values(array_filter(
+    $extensionSources,
+    static fn (string $source): bool => !str_starts_with($source, \Pig\CodingAgent\Extensions\BuiltinExtensions::PREFIX),
+));
+
+if ($packageSources !== []) {
     $manager = new \Pig\CodingAgent\Packages\PackageManager($cwd, $settings);
     $manager->setProgressCallback($packageProgress);
 
     try {
         // Every `-e`, as upstream's "can be used multiple times".
-        $temporaryResources = $manager->resolveExtensionSources($arguments->values('extension'), temporary: true);
-        $cliExtensionPaths = $temporaryResources->enabled('extensions');
+        $temporaryResources = $manager->resolveExtensionSources($packageSources, temporary: true);
+        $cliExtensionPaths = [...$cliExtensionPaths, ...$temporaryResources->enabled('extensions')];
     } catch (\Pig\CodingAgent\Packages\PackageError $error) {
         fwrite(STDERR, Style::red("--extension: {$error->getMessage()}\n"));
 
@@ -526,6 +544,8 @@ if ((!isset($options['no-extensions']) || $cliExtensionPaths !== []) && $mode !=
         projectConfigured: static fn (): array => $settings->extensions(),
         packageExtensions: static fn (bool $trusted): array => $resolvePackages($trusted)->enabled('extensions'),
         discover: !isset($options['no-extensions']),
+        // Upstream's built-ins, last; none under `--no-extensions`, and `--no-mcp` leaves `mcp` out.
+        builtins: isset($options['no-extensions']) ? [] : $settings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
     );
 }
 

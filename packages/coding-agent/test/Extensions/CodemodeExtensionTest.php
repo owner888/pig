@@ -167,7 +167,9 @@ final class CodemodeExtensionTest extends TestCase
 
         // Upstream 1.0's lean description: the intro, one line per global, and the path of the
         // reference the model reads when it needs a detail — not the whole reference, every turn.
-        $this->assertLessThan(1500, strlen($codemode->description), 'the description is read on every request');
+        // Measured without that path, whose length is wherever pig is installed: a checkout under
+        // a deep temporary directory went over by the path alone.
+        $this->assertLessThan(1500, strlen(str_replace(CodemodeDescription::DOCS_PATH, '', $codemode->description)), 'the description is read on every request');
         $this->assertStringContainsString(CodemodeDescription::DOCS_PATH, $codemode->description);
         $this->assertFileExists(CodemodeDescription::DOCS_PATH);
         $this->assertStringContainsString('## Store values', (string) file_get_contents(CodemodeDescription::DOCS_PATH));

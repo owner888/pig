@@ -25,7 +25,7 @@ use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
-use Pig\Codemode\ToolSearch;
+use Pig\Codemode\DeferredTools;
 
 // Class files beside the entry. Loading them twice, or beside another copy, is the loader's
 // business — `DeclaredSymbols` — not this file's.
@@ -45,12 +45,13 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResour
  * Every call runs through pig's tool pipeline, so `tool_call` and `tool_result` hooks — the
  * permission gate among them — apply to MCP tools exactly as they apply to `bash`.
  *
- * A `deferred` tool is not declared to the model until `tool_search` loads it: that tool is
- * registered as soon as a connected server has a deferred tool, searches the ones not yet loaded
- * with BM25 over their names, descriptions and schemas, and registers the matches — which reach
- * the model from the next call. A deferred tool a resumed session's transcript declared is
- * registered as soon as its server connects (`ExtensionApi::isToolPending()`), as upstream's
- * session restores it. `codemode` and `codemode-deferred` tools go to the codemode registry.
+ * A `deferred` tool is not declared to the model until `tool_search` loads it. `tool_search` is
+ * not this extension's — it is `pig-tool-search`'s, as upstream's is the `tool-search`
+ * extension's: this one lists each deferred tool in `DeferredTools` with how to register it, and
+ * `tool_search` loads the matches, which reach the model from the next call. A deferred tool a
+ * resumed session's transcript declared is registered as soon as its server connects
+ * (`ExtensionApi::isToolPending()`), as upstream's session restores it. `codemode` and
+ * `codemode-deferred` tools go to the codemode registry.
  *
  * Every prompt lists the servers with codemode or deferred tools in the `mcp_servers` prompt
  * section (`McpServersSection`), as they are when it starts.
@@ -107,88 +108,8 @@ return static function (ExtensionApi $pi): void {
     $toolOwners = [];
     /** @var array<string, list<string>> server => the pig tool names it currently offers */
     $serverTools = [];
-    /** @var array<string, array{server: string, tool: array<string, mixed>, connection: ServerConnection}> deferred tools not yet loaded, by pig name */
-    $deferred = [];
-    /** @var array<string, array{server: string, connection: ServerConnection}> deferred tools `tool_search` has loaded, by pig name — they stay loaded across a reconnect */
-    $loaded = [];
-    $toolSearchRegistered = false;
     /** @var 'direct'|'deferred'|'hidden'|null the exposure the resource tools were last registered with */
     $resourceToolsExposure = null;
-    /** @var array<string, array{server: string, tool: array<string, mixed>, connection: ServerConnection}> resource tools waiting for tool_search, under their own names */
-    $deferredResourceTools = [];
-
-    // Declared before it is defined: the closure below refers to itself by reference, and a
-    // `use (&$x)` of a variable that does not exist yet captures null.
-    $syncToolSearch = null;
-
-    /** Register `tool_search` the first time a deferred tool exists, and keep its description current. */
-    $syncToolSearch = static function () use ($pi, &$deferred, &$loaded, &$toolSearchRegistered, &$syncToolSearch): void {
-        $names = array_merge(array_keys($deferred), array_keys($loaded));
-
-        if ($names === []) {
-            if ($toolSearchRegistered) {
-                $pi->removeTools(static fn ($tool): bool => $tool->name === ToolSearch::TOOL_NAME);
-                $toolSearchRegistered = false;
-            }
-
-            return;
-        }
-
-        // The sources are every server with a deferred tool, loaded or not — upstream lists by
-        // exposure, and a server whose tools are all loaded is still where they came from.
-        $sources = [];
-
-        foreach ([...$deferred, ...$loaded] as $one) {
-            $sources[$one['server']] ??= ['name' => $one['server'], 'description' => $one['connection']?->instructions];
-        }
-
-        $toolSearchRegistered = true;
-        $pi->registerTool(new \Pig\CodingAgent\CustomTools\CustomTool(
-            name: ToolSearch::TOOL_NAME,
-            label: ToolSearch::TOOL_NAME,
-            description: ToolSearch::description(array_values($sources)),
-            parameters: ToolSearch::parameters(),
-            execute: static function (string $id, array $params) use ($pi, &$deferred, &$loaded, &$syncToolSearch): \Pig\Agent\AgentToolResult {
-                $query = trim((string) ($params['query'] ?? ''));
-
-                if ($query === '') {
-                    throw new \Pig\Agent\AgentError('query must not be empty');
-                }
-
-                $max = $params['limit'] ?? ToolSearch::DEFAULT_LIMIT;
-
-                if (!is_numeric($max) || (float) $max !== floor((float) $max) || (int) $max <= 0) {
-                    throw new \Pig\Agent\AgentError('limit must be a positive integer');
-                }
-
-                $documents = [];
-
-                foreach ($deferred as $name => $one) {
-                    $documents[] = ToolSearch::document($name, $one['tool'], $one['server'], $one['connection']?->instructions);
-                }
-
-                $matches = ToolSearch::rank($query, $documents, (int) $max);
-                $lines = [];
-
-                foreach ($matches as $match) {
-                    $one = $deferred[$match['name']];
-                    unset($deferred[$match['name']]);
-                    $loaded[$match['name']] = ['server' => $one['server'], 'connection' => $one['connection']];
-                    $defined = $one['define']();
-                    $pi->registerTool($defined);
-                    $lines[] = "- {$match['name']}: " . trim((string) strtok(trim($defined->description), "\r\n"));
-                }
-
-                $syncToolSearch();
-
-                $text = $lines === []
-                    ? 'No matching tools found.'
-                    : sprintf("Loaded %d tool%s. They are available from your next call:\n%s", count($lines), count($lines) === 1 ? '' : 's', implode("\n", $lines));
-
-                return new \Pig\Agent\AgentToolResult([new \Pig\Ai\TextContent($text)], ['loaded' => array_map(static fn (array $m): string => $m['name'], $matches)]);
-            },
-        ));
-    };
 
     $describeState = static function (ServerEntry $entry, ?ServerConnection $connection, bool $withError = true): string {
         if (!$entry->isEnabled()) {
@@ -231,7 +152,7 @@ return static function (ExtensionApi $pi): void {
      * Register the resource tools with the widest exposure of the servers they reach: `direct` when
      * one of them is direct, `deferred` otherwise; gone when no server has resources.
      */
-    $syncResourceTools = static function () use ($pi, &$entries, &$connections, &$resourceToolsExposure, &$deferred, &$loaded, $resourceServers, &$syncToolSearch): void {
+    $syncResourceTools = static function () use ($pi, &$entries, &$connections, &$resourceToolsExposure, $resourceServers): void {
         $exposures = [];
 
         foreach ($resourceServers() as $connection) {
@@ -249,31 +170,27 @@ return static function (ExtensionApi $pi): void {
 
         // Whatever they were before comes off; what they are now goes on by the exposure's door.
         $pi->removeTools(static fn ($tool): bool => in_array($tool->name, McpResources::NAMES, true));
-
-        foreach (McpResources::NAMES as $name) {
-            unset($deferred[$name], $loaded[$name]);
-        }
+        DeferredTools::remove(static fn (array $one): bool => in_array($one['name'], McpResources::NAMES, true));
 
         foreach ($tools as $tool) {
             if ($next === 'direct') {
                 $pi->registerTool($tool);
             } elseif ($next === 'deferred') {
-                $deferred[$tool->name] = [
-                    'server' => 'mcp resources',
-                    'tool' => ['name' => $tool->name, 'description' => $tool->description, 'inputSchema' => $tool->parameters],
-                    'connection' => null,
-                    'define' => static fn () => $tool,
-                ];
+                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pi, $tool): \Pig\CodingAgent\CustomTools\CustomTool {
+                    $pi->registerTool($tool);
+
+                    return $tool;
+                });
             }
         }
     };
 
     // Whether a resource link in a result should name `read_mcp_resource`: only while the resource tools are on the model.
-    $resourcesReadable = static function () use (&$resourceToolsExposure, &$loaded): bool {
-        return $resourceToolsExposure === 'direct' || isset($loaded[McpResources::READ]);
+    $resourcesReadable = static function () use (&$resourceToolsExposure): bool {
+        return $resourceToolsExposure === 'direct' || DeferredTools::isLoaded(McpResources::READ);
     };
 
-    $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$deferred, &$loaded, &$syncToolSearch, &$syncResourceTools, $resourcesReadable): void {
+    $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
         $current = [];
         /** @var array<string, true> the names that went to the codemode registry this pass */
@@ -282,11 +199,7 @@ return static function (ExtensionApi $pi): void {
         $declared = [];
 
         // Whatever this server deferred last time is re-read from its new list below.
-        foreach ($deferred as $name => $one) {
-            if ($one['server'] === $server) {
-                unset($deferred[$name]);
-            }
-        }
+        DeferredTools::remove(static fn (array $one): bool => !$one['loaded'] && $one['namespace']['name'] === $server);
 
         foreach ($connection->tools as $tool) {
             $toolName = (string) $tool['name'];
@@ -326,20 +239,40 @@ return static function (ExtensionApi $pi): void {
                 continue;
             }
 
-            if ($exposure === 'deferred' && !isset($loaded[$name])) {
-                // Upstream registers a deferred tool inactive and the session's restored loadout
-                // activates it; pig registers one only once it is asked for, and a session waiting
-                // for it is asking.
-                if (!$pi->isToolPending($name)) {
-                    $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection, 'define' => $define];
+            // Upstream registers a deferred tool inactive, `tool_search` activates it, and so does
+            // the session's restored loadout; pig lists one in `DeferredTools` for `tool_search`
+            // and registers it once it is asked for — and a session waiting for it is asking.
+            // A loaded one is registered first and listed after, so `tool_search` goes after it.
+            $list = null;
+
+            if ($exposure === 'deferred') {
+                $loaded = DeferredTools::isLoaded($name) || $pi->isToolPending($name);
+                $list = static fn () => DeferredTools::register(
+                    $name,
+                    (string) ($tool['description'] ?? ''),
+                    $tool['inputSchema'] ?? null,
+                    ['name' => $server, 'description' => $connection->instructions],
+                    static function () use ($pi, $define): \Pig\CodingAgent\CustomTools\CustomTool {
+                        $defined = $define();
+                        $pi->registerTool($defined);
+
+                        return $defined;
+                    },
+                    $loaded,
+                );
+
+                if (!$loaded) {
+                    $list();
                     continue;
                 }
-
-                $loaded[$name] = ['server' => $server, 'connection' => $connection];
             }
 
             $declared[] = $name;
             $pi->registerTool($define());
+
+            if ($list !== null) {
+                $list();
+            }
         }
 
         // Tools the server dropped are taken away, and so is one that was declared last time and
@@ -349,9 +282,7 @@ return static function (ExtensionApi $pi): void {
         if ($gone !== []) {
             $pi->removeTools(static fn ($tool): bool => in_array($tool->name, $gone, true));
 
-            foreach ($gone as $name) {
-                unset($loaded[$name]);
-            }
+            DeferredTools::remove(static fn (array $one): bool => $one['loaded'] && in_array($one['name'], $gone, true));
         }
 
         // And the ones that left the codemode registry: not codemode any more, or dropped.
@@ -359,10 +290,9 @@ return static function (ExtensionApi $pi): void {
 
         $serverTools[$server] = $current;
         $syncResourceTools();
-        $syncToolSearch();
     };
 
-    $hideTools = static function (string $server) use ($pi, &$serverTools, &$deferred, &$loaded, &$syncToolSearch, &$syncResourceTools): void {
+    $hideTools = static function (string $server) use ($pi, &$serverTools, &$syncResourceTools): void {
         $names = $serverTools[$server] ?? [];
 
         if ($names !== []) {
@@ -370,13 +300,10 @@ return static function (ExtensionApi $pi): void {
             \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $names, true));
         }
 
-        foreach ($names as $name) {
-            unset($deferred[$name], $loaded[$name]);
-        }
+        DeferredTools::remove(static fn (array $one): bool => in_array($one['name'], $names, true));
 
         $serverTools[$server] = [];
         $syncResourceTools();
-        $syncToolSearch();
     };
 
     /** One message for everything that needs the user after startup. */
@@ -537,7 +464,7 @@ return static function (ExtensionApi $pi): void {
         return null;
     };
 
-    $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$overridden, &$deferred, $describeState): string {
+    $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$overridden, $describeState): string {
         if ($entries === [] && $configErrors === [] && $overridden === []) {
             return 'No MCP servers configured. Add them to ' . Config::home() . '/mcp.json or .pig/mcp.json.';
         }
@@ -559,7 +486,7 @@ return static function (ExtensionApi $pi): void {
             $tools = $connection?->state === 'connected' ? ', ' . count($connection->tools) . ' tools' : '';
 
             if ($connection?->state === 'connected' && $exposure === 'deferred') {
-                $hidden = count(array_filter($deferred, static fn (array $one): bool => $one['server'] === $entry->name));
+                $hidden = count(array_filter(DeferredTools::all(), static fn (array $one): bool => !$one['loaded'] && $one['namespace']['name'] === $entry->name));
                 $tools .= " ({$hidden} waiting for tool_search)";
             }
             $error = $connection !== null && $connection->error !== null && $connection->state !== 'connected'

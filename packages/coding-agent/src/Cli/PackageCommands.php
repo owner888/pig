@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Extensions\BuiltinExtensions;
 use Pig\CodingAgent\Packages\PackageError;
 use Pig\CodingAgent\Packages\PackageManager;
+use Pig\CodingAgent\Packages\ResolvedPaths;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Settings;
 use Pig\Async\Async;
@@ -202,6 +204,15 @@ final class PackageCommands
         try {
             $global = (new PackageManager($cwd, Settings::load($cwd, $home, projectTrusted: false), $home))->resolve();
             $project = $trusted ? (new PackageManager($cwd, $settings, $home))->resolve() : $global;
+            // Upstream's Built-in rows: the person's switches alone, and with the project's.
+            $withBuiltins = static fn (ResolvedPaths $resolved, array $projectEntries): ResolvedPaths => new ResolvedPaths(
+                [...$resolved->extensions, ...BuiltinExtensions::resources($settings->extensionEntries('user'), $projectEntries)],
+                $resolved->skills,
+                $resolved->prompts,
+                $resolved->themes,
+            );
+            $global = $withBuiltins($global, []);
+            $project = $withBuiltins($project, $trusted ? $settings->extensionEntries('project') : []);
         } catch (PackageError $error) {
             fwrite(STDERR, Style::red("Error: {$error->getMessage()}") . "\n");
 

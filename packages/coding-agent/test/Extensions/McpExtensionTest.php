@@ -43,6 +43,7 @@ final class McpExtensionTest extends TestCase
         $this->setUpGlobalTheme();
         Loop::reset();
         \Pig\Codemode\Registry::reset();
+        \Pig\Codemode\DeferredTools::reset();
         McpServerRegistry::reset();
         $this->root = sys_get_temp_dir() . '/pig-mcp-ext-' . bin2hex(random_bytes(4));
         $this->home = $this->root . '/home';
@@ -531,12 +532,7 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
         ]]));
 
-        $repo = dirname(__DIR__, 4);
-        [$loaded] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
-        $this->extension = $loaded[0];
-        $set = new CustomToolSet([]);
-        $set->adopt($this->extension);
-        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
+        [$set, $hooks] = $this->load();
         $hooks->initialize(static fn () => null, ui: new NoticingUi());
         $agent = new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions());
         $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $hooks, [], []);
@@ -626,27 +622,6 @@ final class McpExtensionTest extends TestCase
         $this->assertMatchesRegularExpression('/^- … \d+ more servers; find their tools with searchTools\(\)$/u', end($lines));
         preg_match('/(\d+) more/', end($lines), $match);
         $this->assertSame(200, count($lines) - 2 + (int) $match[1]);
-    }
-
-    public function testToolSearchRefusesAnEmptyQueryAndABadLimit(): void
-    {
-        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
-            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
-        ]]));
-        [$set, $hooks] = $this->start();
-        $search = $set->find('tool_search');
-        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
-
-        foreach ([['query' => '  '], ['query' => 'x', 'limit' => 0], ['query' => 'x', 'limit' => 1.5]] as $params) {
-            try {
-                Async::run(static fn () => ($search->execute)('1', $params, null, $ctx, null));
-                $this->fail('refused: ' . json_encode($params));
-            } catch (AgentError $error) {
-                $this->assertMatchesRegularExpression('/query must not be empty|limit must be a positive integer/', $error->getMessage());
-            }
-        }
-
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
     }
 
     // ---- the manager ----------------------------------------------------------------------------
@@ -1280,13 +1255,7 @@ final class McpExtensionTest extends TestCase
      */
     private function start(): array
     {
-        $repo = dirname(__DIR__, 4);
-        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
-        $this->assertSame([], $errors);
-        $this->extension = $loaded[0];
-        $set = new CustomToolSet([]);
-        $set->adopt($this->extension);
-        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
+        [$set, $hooks] = $this->load();
         $ui = new NoticingUi();
         $hooks->initialize(static fn () => null, ui: $ui);
 
@@ -1296,5 +1265,29 @@ final class McpExtensionTest extends TestCase
         });
 
         return [$set, $hooks, $ui];
+    }
+
+    /**
+     * Load the MCP extension and the `tool_search` one beside it, as `bin/pig` loads them, with one
+     * tool set adopting both — `tool_search` is `pig-tool-search`'s, the deferred tools pig-mcp's.
+     *
+     * @return array{CustomToolSet, HookRunner}
+     */
+    private function load(): array
+    {
+        $repo = dirname(__DIR__, 4);
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php', $repo . '/extensions/pig-tool-search/index.php'], home: $this->home);
+        $this->assertSame([], $errors);
+        $this->assertCount(2, $loaded);
+        $this->extension = $loaded[0];
+        $set = new CustomToolSet([]);
+        $hooks = [];
+
+        foreach ($loaded as $extension) {
+            $set->adopt($extension);
+            $hooks[] = new LoadedHook($extension->path, $extension->resolved, $extension->api);
+        }
+
+        return [$set, new HookRunner($hooks, $this->cwd)];
     }
 }

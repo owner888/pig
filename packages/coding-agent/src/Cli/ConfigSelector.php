@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Closure;
+use Pig\CodingAgent\Extensions\BuiltinExtensions;
 use Pig\CodingAgent\Packages\LocalSource;
 use Pig\CodingAgent\Packages\PackageSource;
 use Pig\CodingAgent\Packages\ResolvedPaths;
@@ -29,11 +30,11 @@ use Pig\Tui\Width;
  * `autoload: false` delta for a user package the project has no entry for; a resource the
  * project only inherits is dimmed until it has a verdict of its own.
  *
- * Only package resources are here, because `PackageManager::resolve()` resolves only packages
- * (the loaders own the top-level `extensions` / `skills` settings and the auto-discovered
- * directories — see `CLAUDE.md`). Upstream's `toggleTopLevelResource()` and the built-in
- * extension rows are therefore not ported; the `origin === 'top-level'` arms are left out rather
- * than carried as code nothing reaches.
+ * Package resources and upstream's built-in extensions are here; `PackageManager::resolve()`
+ * resolves only packages (the loaders own the top-level `extensions` / `skills` settings and the
+ * auto-discovered directories — see `CLAUDE.md`), so the one top-level kind is the built-ins
+ * (`BuiltinExtensions::resources()`), switched by `+builtin:<name>` / `-builtin:<name>` in the
+ * `extensions` setting as upstream's `toggleTopLevelResource()` does.
  */
 final class ConfigSelector extends Container implements Focusable, InputHandler
 {
@@ -259,9 +260,36 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
         }
 
         $enabled = !$item['enabled'];
-        $this->writeGlobalPattern($item, $enabled);
+
+        if ($item['metadata']->source === 'builtin') {
+            $this->writeBuiltinEntry($item, $enabled ? 'load' : 'unload', $item['metadata']->scope === 'project' ? 'project' : 'user');
+        } else {
+            $this->writeGlobalPattern($item, $enabled);
+        }
 
         return $enabled;
+    }
+
+    /**
+     * Upstream's `toggleTopLevelResource()` and `setProjectTopLevelOverride()` for a built-in:
+     * that file's `extensions` lose every switch on `builtin:<name>`, then gain `+` or `-` for it —
+     * or nothing, for a project going back to `inherit`. A built-in needs no plain entry first.
+     *
+     * @param array<string, mixed> $item
+     * @param 'inherit'|'load'|'unload' $state
+     */
+    private function writeBuiltinEntry(array $item, string $state, string $scope): void
+    {
+        $updated = array_values(array_filter(
+            $this->settings->extensionEntries($scope),
+            fn (string $entry): bool => !(BuiltinExtensions::isOverride($entry) && $this->target($entry) === $item['path']),
+        ));
+
+        if ($state !== 'inherit') {
+            $updated[] = ($state === 'load' ? '+' : '-') . $item['path'];
+        }
+
+        $this->settings->setExtensionEntries($updated, $scope);
     }
 
     /**
@@ -301,6 +329,12 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
      */
     private function setProjectOverride(array $item, string $state): bool
     {
+        if ($item['metadata']->source === 'builtin') {
+            $this->writeBuiltinEntry($item, $state, 'project');
+
+            return true;
+        }
+
         $packages = $this->settings->packages('project');
         $itemScope = $item['metadata']->scope === 'project' ? 'project' : 'user';
         $index = $this->findPackage($packages, $item['metadata']->source, $itemScope, 'project');
@@ -370,6 +404,19 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
     {
         if ($this->writeScope !== 'project') {
             return 'inherit';
+        }
+
+        // Upstream's top-level arm: the project's last switch on this path.
+        if ($item['metadata']->source === 'builtin') {
+            $state = 'inherit';
+
+            foreach ($this->settings->extensionEntries('project') as $entry) {
+                if (BuiltinExtensions::isOverride($entry) && $this->target($entry) === $item['path']) {
+                    $state = str_starts_with($entry, '+') ? 'load' : 'unload';
+                }
+            }
+
+            return $state;
         }
 
         $packages = $this->settings->packages('project');
@@ -554,7 +601,11 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
             foreach ($resolved->of($type) as $resource) {
                 $metadata = $resource->metadata;
                 $key = "{$metadata->origin}:{$metadata->scope}:{$metadata->source}:" . ($metadata->baseDir ?? '');
-                $groups[$key] ??= ['key' => $key, 'label' => "{$metadata->source} ({$metadata->scope})", 'scope' => $metadata->scope, 'source' => $metadata->source, 'subgroups' => []];
+                // Upstream's `getGroupLabel()`: a built-in's group is "Built-in", or the project's.
+                $label = $metadata->source === 'builtin'
+                    ? ($metadata->scope === 'user' ? 'Built-in' : 'Built-in (project override)')
+                    : "{$metadata->source} ({$metadata->scope})";
+                $groups[$key] ??= ['key' => $key, 'label' => $label, 'scope' => $metadata->scope, 'source' => $metadata->source, 'subgroups' => []];
                 $groups[$key]['subgroups'][$type] ??= ['type' => $type, 'label' => self::TYPE_LABELS[$type], 'items' => []];
                 $groups[$key]['subgroups'][$type]['items'][] = [
                     'path' => $resource->path,
@@ -584,6 +635,10 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
 
     private static function displayName(ResolvedResource $resource, string $type): string
     {
+        if ($resource->metadata->source === 'builtin') {
+            return substr($resource->path, strlen(BuiltinExtensions::PREFIX));
+        }
+
         $file = basename($resource->path);
         $parent = basename(dirname($resource->path));
 
