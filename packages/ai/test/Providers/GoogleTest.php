@@ -581,6 +581,19 @@ final class GoogleTest extends TestCase
         $this->assertFalse($declared['additionalProperties']);
     }
 
+    public function testAToolWithNoParametersDeclaresAnEmptyMapAndNotAList(): void
+    {
+        // `'properties' => []` is what a tool that takes nothing writes, and PHP encodes an
+        // empty array as `[]`. Google's OpenAPI path refused the whole request over it:
+        // `Cannot bind a list to map for field 'properties'`. Measured on `pig-computer`'s
+        // `computer_doctor` through Antigravity.
+        $tools = GoogleShared::tools([new Tool('doctor', 'Diagnose', ['type' => 'object', 'properties' => []])]);
+
+        $encoded = json_encode($tools[0]['functionDeclarations'][0]['parameters']);
+
+        $this->assertSame('{"type":"object","properties":{}}', $encoded);
+    }
+
     public function testGeminiThreeCallsAStrictToolInValidatedMode(): void
     {
         // Upstream's `resolveGoogleFunctionCallingMode()`: a tool that asks for strict sampling,

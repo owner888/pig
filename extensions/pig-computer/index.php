@@ -254,7 +254,6 @@ return static function (ExtensionApi $pi): void {
                 ],
                 'click_count' => [
                     'type' => 'integer',
-                    'enum' => [1, 2],
                     'description' => '1 for single click, 2 for double click. Default 1.',
                 ],
                 'observe' => [

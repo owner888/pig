@@ -644,7 +644,11 @@ final class GoogleShared
                 continue;
             }
 
-            $result[$key] = self::sanitizeForOpenApi($value);
+            // An empty `properties` is a map, and PHP's empty array encodes as a list: Google
+            // refuses `[]` where it wants `{}` ("Cannot bind a list to map for field 'properties'").
+            $result[$key] = $key === 'properties' && $value === []
+                ? new stdClass()
+                : self::sanitizeForOpenApi($value);
         }
 
         return $result;

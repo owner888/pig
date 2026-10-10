@@ -12699,6 +12699,24 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **Tests**: `AgentTest::testAThrowThatEscapesTheLoopIsAFailedTurnEveryListenerSees` (red if changed back to agent_end only), `InteractiveModeTest::testTheModelCallingACustomToolIsDrawnRatherThanEndingTheTurnInSilence` (red without the import), `PrintModeTest::testAHookGetsTheSessionsKeyHereToo`, `RpcModeTest::testAHookGetsTheSessionsKeyHereToo`; each of the five lint imports removed in turn is reported, and a synthetic probe file hits all 11 spellings.
 
+### A tool with no parameters sent `properties: []`, and an integer enum, both refused on the Antigravity path
+
+**Symptom**: with `pig-computer` loaded, every Antigravity turn was a 400: `Invalid value at
+'request.tools[0].function_declarations[16].parameters' (Map), Cannot bind a list to map for field
+'properties'` and `…[19].parameters.properties[3].value.enum[0] (TYPE_STRING), 1`. The same tools
+worked on Claude and on `google/` direct.
+
+**Cause**: `GoogleShared::sanitizeForOpenApi()` passed `'properties' => []` through, and PHP encodes
+an empty array as `[]` — the third shape from the index, already fixed for `args` at line 745 and
+not here. And `computer_click`'s `click_count` was `type: integer, enum: [1, 2]`; Gemini's OpenAPI
+subset allows `enum` on strings only. Only the Code Assist `parameters` path is affected; the direct
+API's `parametersJsonSchema` is full JSON Schema.
+
+**Rule**: an empty `properties` goes out as `new stdClass()` from `sanitizeForOpenApi()`; a tool
+declaration carries no non-string `enum` (say it in the description instead).
+
+**Test**: `GoogleTest::testAToolWithNoParametersDeclaresAnEmptyMapAndNotAList`.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

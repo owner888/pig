@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.20] - 2026-10-08
+
+### Fixed
+
+- **Empty Tool Parameters Encoding & Non-String Enum Rejections on Antigravity / Google (`GoogleShared`, `pig-computer`)**:
+  - Enforced `new stdClass()` serialization for empty `'properties' => []` schemas in `GoogleShared::sanitizeForOpenApi()`, preventing Antigravity 400 errors (`Cannot bind a list to map for field 'properties'`).
+  - Removed integer enum declaration on `computer_click.click_count`, complying with Gemini OpenAPI string-only enum restrictions.
+
 ## [0.5.19] - 2026-10-08
 
 ### New Features
