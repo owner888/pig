@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Extensions;
 use Closure;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Hooks\DeclaredSymbols;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Tools\Paths;
@@ -199,43 +200,63 @@ final class ExtensionLoader
             return [null, new ExtensionError($path, 'load', 'not a readable file')];
         }
 
-        $symbolError = HookLoader::checkTopLevelSymbols($resolved);
-
-        if ($symbolError !== null) {
-            return [null, new ExtensionError($path, 'load', $symbolError)];
-        }
-
         $name = self::nameOf($path);
         $api = new ExtensionApi($cwd, $path, $name, $auth, events: $events);
+        $note = null;
 
-        // A package that ships its own libraries ships its own `vendor/` — pig runs no composer
-        // (see `PackageManager`). Beside the file, or one level up for a file under `extensions/`.
-        foreach ([dirname($resolved), dirname($resolved, 2)] as $root) {
-            if (is_file("{$root}/vendor/autoload.php")) {
-                require_once "{$root}/vendor/autoload.php";
+        // A file that declares a class or a function cannot be `require`d twice, so on a reload it
+        // is the factory from its first load that runs — and a class another file already declared
+        // is refused by name rather than let the second `require` fatal. `DeclaredSymbols` says why.
+        $declared = DeclaredSymbols::in($resolved);
+        $hash = $declared === [] ? '' : DeclaredSymbols::hashOf($resolved);
+        $kept = $declared === [] ? null : DeclaredSymbols::recall($resolved, $hash);
 
-                break;
+        if ($kept !== null) {
+            $factory = $kept['factory'];
+
+            if ($kept['changed']) {
+                $note = new ExtensionError($path, 'reload', 'declares ' . HookLoader::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
             }
-        }
+        } else {
+            $conflict = DeclaredSymbols::conflict($resolved, $declared);
 
-        ob_start();
+            if ($conflict !== null) {
+                return [null, new ExtensionError($path, 'load', "declares {$conflict}, which is already in memory; two different copies of one extension cannot both be loaded")];
+            }
 
-        try {
-            $factory = self::evaluate($resolved);
-        } catch (Throwable $error) {
-            ob_end_clean();
+            // A package that ships its own libraries ships its own `vendor/` — pig runs no composer
+            // (see `PackageManager`). Beside the file, or one level up for a file under `extensions/`.
+            foreach ([dirname($resolved), dirname($resolved, 2)] as $root) {
+                if (is_file("{$root}/vendor/autoload.php")) {
+                    require_once "{$root}/vendor/autoload.php";
 
-            return [null, new ExtensionError($path, 'load', self::describe($error))];
-        }
+                    break;
+                }
+            }
 
-        $printed = ob_get_clean();
+            ob_start();
 
-        if (is_string($printed) && trim($printed) !== '') {
-            return [null, new ExtensionError($path, 'load', 'printed to standard output while loading: ' . trim($printed))];
-        }
+            try {
+                $factory = self::evaluate($resolved);
+            } catch (Throwable $error) {
+                ob_end_clean();
 
-        if (!is_callable($factory)) {
-            return [null, new ExtensionError($path, 'load', 'must return a callable, got ' . get_debug_type($factory))];
+                return [null, new ExtensionError($path, 'load', self::describe($error))];
+            }
+
+            $printed = ob_get_clean();
+
+            if (is_string($printed) && trim($printed) !== '') {
+                return [null, new ExtensionError($path, 'load', 'printed to standard output while loading: ' . trim($printed))];
+            }
+
+            if (!is_callable($factory)) {
+                return [null, new ExtensionError($path, 'load', 'must return a callable, got ' . get_debug_type($factory))];
+            }
+
+            if ($declared !== []) {
+                DeclaredSymbols::remember($resolved, Closure::fromCallable($factory), $hash);
+            }
         }
 
         try {
@@ -244,7 +265,7 @@ final class ExtensionLoader
             return [null, new ExtensionError($path, 'load', self::describe($error))];
         }
 
-        return [new LoadedExtension($path, $resolved, $name, $api), null];
+        return [new LoadedExtension($path, $resolved, $name, $api), $note];
     }
 
     private static function evaluate(string $path): mixed

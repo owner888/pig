@@ -174,38 +174,63 @@ PHP);
         $this->assertSame('legacy', $loaded[0]->name);
     }
 
-    public function testTopLevelNamedFunctionIsRejected(): void
+    public function testAFolderExtensionsClassesAreSeenInItsSiblingFilesToo(): void
     {
-        $file = $this->homeDir . '/extensions/bad_fn.php';
-        file_put_contents($file, <<<'PHP'
+        // The entry `require_once`s a class file beside it, as every bundled extension does. The
+        // scan covers the folder, so a reload of the entry runs the first factory rather than a
+        // second `require` of the sibling — which is the fatal the `class_exists` guards used to
+        // stand in front of.
+        $dir = $this->homeDir . '/extensions/with-sibling';
+        mkdir($dir . '/src', 0755, true);
+        file_put_contents($dir . '/src/Helper.php', <<<'PHP'
 <?php
-function myGlobalExtensionHelper() {}
-return function ($pi) {};
+namespace ExtLoaderTestA;
+class Helper { public static int $runs = 0; }
+PHP);
+        file_put_contents($dir . '/index.php', <<<'PHP'
+<?php
+require_once __DIR__ . '/src/Helper.php';
+return function ($pi): void { \ExtLoaderTestA\Helper::$runs++; };
 PHP);
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+        $this->assertCount(1, $loaded);
+        $this->assertSame([], $errors);
 
-        $this->assertCount(0, $loaded);
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+        $this->assertCount(1, $loaded);
+        $this->assertSame([], $errors);
+        $this->assertSame(2, \ExtLoaderTestA\Helper::$runs);
+
+        file_put_contents($dir . '/src/Helper.php', "<?php\nnamespace ExtLoaderTestA;\nclass Helper { public static int \$runs = 100; }\n");
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+        $this->assertCount(1, $loaded, 'still loaded, from memory');
         $this->assertCount(1, $errors);
-        $this->assertStringContainsString("defines top-level named function 'myGlobalExtensionHelper()'", $errors[0]->message);
-        $this->assertStringContainsString('use scoped closures', $errors[0]->message);
+        $this->assertSame('reload', $errors[0]->stage);
+        $this->assertStringContainsString('declares ExtLoaderTestA\Helper, which PHP cannot unload', $errors[0]->message);
+        $this->assertStringContainsString('restart pig', $errors[0]->message);
+        $this->assertSame(3, \ExtLoaderTestA\Helper::$runs);
     }
 
-    public function testTopLevelNamedClassIsRejected(): void
+    public function testADifferentCopyOfAnExtensionsClassIsRefusedByName(): void
     {
-        $file = $this->homeDir . '/extensions/bad_class.php';
-        file_put_contents($file, <<<'PHP'
-<?php
-class MyGlobalExtensionClass {}
-return function ($pi) {};
-PHP);
+        $global = $this->homeDir . '/extensions/twice';
+        $project = $this->cwd . '/extensions/twice';
+        mkdir($global, 0755, true);
+        mkdir($project, 0755, true);
+        $entry = "<?php\nnamespace ExtLoaderTestB;\nclass Shared {}\nreturn function (\$pi): void {};\n";
+        file_put_contents($global . '/index.php', $entry);
+        file_put_contents($project . '/index.php', $entry . "// edited in the checkout\n");
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
 
-        $this->assertCount(0, $loaded);
+        $this->assertCount(1, $loaded);
+        $this->assertSame($global . '/index.php', $loaded[0]->path);
         $this->assertCount(1, $errors);
-        $this->assertStringContainsString("defines top-level named class 'MyGlobalExtensionClass'", $errors[0]->message);
-        $this->assertStringContainsString('use anonymous classes', $errors[0]->message);
+        $this->assertSame($project . '/index.php', $errors[0]->path);
+        $this->assertStringContainsString('declares ExtLoaderTestB\Shared from ' . realpath($global) . '/index.php', $errors[0]->message);
+        $this->assertStringContainsString('two different copies of one extension cannot both be loaded', $errors[0]->message);
     }
 
     public function testLaterExtensionWithSameNameOverridesEarlierOne(): void

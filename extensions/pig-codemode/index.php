@@ -42,11 +42,7 @@ use Pig\CodingAgent\Tools\Truncate;
 use Pig\Tui\Components\Text;
 use PigCodemode\CodemodeDescription;
 
-foreach (['CodemodeDescription'] as $class) {
-    if (!class_exists("PigCodemode\\{$class}", false)) {
-        require __DIR__ . "/{$class}.php";
-    }
-}
+require_once __DIR__ . '/CodemodeDescription.php';
 
 /**
  * The `codemode` tool — upstream's `extensions/codemode`, with PHP where it has JavaScript and

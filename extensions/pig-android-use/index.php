@@ -17,12 +17,10 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
  * Zero Python, zero Node.js, and zero runtime dependencies beyond PHP itself.
  */
 return static function (ExtensionApi $pi): void {
-    if (!class_exists(AdbClient::class, false)) {
-        require_once __DIR__ . '/src/AdbClient.php';
-        require_once __DIR__ . '/src/ScreenCapture.php';
-        require_once __DIR__ . '/src/InputManager.php';
-        require_once __DIR__ . '/src/TreeParser.php';
-    }
+    require_once __DIR__ . '/src/AdbClient.php';
+    require_once __DIR__ . '/src/ScreenCapture.php';
+    require_once __DIR__ . '/src/InputManager.php';
+    require_once __DIR__ . '/src/TreeParser.php';
 
     $adb = new AdbClient();
     /** @var array{float, float} Last observed pixel-to-point scaling ratio */

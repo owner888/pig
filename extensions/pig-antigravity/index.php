@@ -60,12 +60,10 @@ use PigAntigravity\LazyAntigravityOauth;
 use PigAntigravity\Models;
 use PigAntigravity\QuotaClient;
 
-// Class files beside the entry, guarded by class and not by `require_once`: the same class can
-// live at two paths (a global copy and the repository's), and `require_once` dedups by path.
+// Class files beside the entry. Loading them twice, or beside another copy, is the loader's
+// business — `DeclaredSymbols` — not this file's.
 foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
-    if (!class_exists("PigAntigravity\\{$class}", false)) {
-        require __DIR__ . "/src/{$class}.php";
-    }
+    require_once __DIR__ . "/src/{$class}.php";
 }
 
 return function (ExtensionApi $pi): void {

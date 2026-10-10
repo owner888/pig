@@ -316,36 +316,77 @@ final class HookLoaderTest extends TestCase
         $this->assertSame('b.php', basename($errors[0]->hookPath));
     }
 
-    public function testTopLevelNamedFunctionIsRejectedToPreventReloadFatalError(): void
+    // ---- a hook with a class in it, which PHP cannot unload -------------------------------------
+
+    public function testAHookMayDeclareAClassAndAReloadRunsTheFactoryItFirstLoaded(): void
     {
-        $this->write($this->home . '/hooks', 'global_fn.php', <<<'PHP'
+        // Refused outright until this: every bundled extension kept its classes in sibling files
+        // behind a hand-written `class_exists` guard, which made `/reload` run new closures against
+        // old classes in silence. A named class is ordinary now, and the loader is what knows a
+        // second `require` would fatal.
+        $file = $this->write($this->home . '/hooks', 'with_class.php', <<<'PHP'
             <?php
-            function badHelperFunction(): void {}
-            return function ($pi): void {};
+            namespace HookLoaderTestA;
+            class Counter { public static int $built = 0; }
+            function helper(): string { return 'v1'; }
+            return static function ($pi): void {
+                Counter::$built++;
+                $pi->on('agent_end', static fn () => null);
+            };
             PHP);
 
         [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
 
-        $this->assertCount(0, $hooks);
+        $this->assertCount(1, $hooks);
+        $this->assertSame([], $errors);
+        $this->assertSame(1, \HookLoaderTestA\Counter::$built);
+
+        // The same file again, unchanged — `/reload`: no `require`, no fatal, no complaint, and the
+        // factory ran against the fresh api.
+        [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
+
+        $this->assertCount(1, $hooks);
+        $this->assertSame([], $errors);
+        $this->assertSame(2, \HookLoaderTestA\Counter::$built);
+        $this->assertCount(1, $hooks[0]->api->handlers('agent_end'));
+
+        // Changed on disk: still loaded, from memory, and said so — the one thing a reload cannot do.
+        file_put_contents($file, str_replace("'v1'", "'v2'", (string) file_get_contents($file)));
+
+        [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
+
+        $this->assertCount(1, $hooks);
         $this->assertCount(1, $errors);
-        $this->assertStringContainsString("defines top-level named function 'badHelperFunction()'", $errors[0]->error);
-        $this->assertStringContainsString('use scoped closures', $errors[0]->error);
+        $this->assertSame('reload', $errors[0]->event);
+        $this->assertStringContainsString('declares HookLoaderTestA\Counter, HookLoaderTestA\helper, which PHP cannot unload', $errors[0]->error);
+        $this->assertStringContainsString('restart pig to pick up the change', $errors[0]->error);
+        $this->assertSame('v1', \HookLoaderTestA\helper(), 'the running version is the one loaded first');
     }
 
-    public function testTopLevelNamedClassIsRejectedToPreventReloadFatalError(): void
+    public function testASecondDifferentCopyOfAClassIsRefusedByNameAndAnIdenticalOneIsNot(): void
     {
-        $this->write($this->home . '/hooks', 'global_class.php', <<<'PHP'
+        $body = <<<'PHP'
             <?php
-            class BadGlobalClass {}
-            return function ($pi): void {};
-            PHP);
+            namespace HookLoaderTestB;
+            class Thing {}
+            return static function ($pi): void {};
+            PHP;
+        $this->write($this->home . '/hooks', 'a_first.php', $body);
+        $this->write($this->home . '/hooks', 'b_same_again.php', $body);
+        $this->write($this->home . '/hooks', 'c_different.php', $body . "\n// not the same file\n");
 
         [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
 
-        $this->assertCount(0, $hooks);
+        // Loaded in name order. `c_different.php` declares a class `a_first.php` already put in
+        // memory, and is not the same code: refused, naming where the class came from.
+        // `b_same_again.php` is the same code at another path — an installed copy beside a
+        // checkout — and is served by the first's factory. (`b_same_again.php` is the same code at
+        $this->assertCount(2, $hooks);
         $this->assertCount(1, $errors);
-        $this->assertStringContainsString("defines top-level named class 'BadGlobalClass'", $errors[0]->error);
-        $this->assertStringContainsString('use anonymous classes', $errors[0]->error);
+        $this->assertSame('c_different.php', basename($errors[0]->hookPath));
+        $first = realpath($this->home . '/hooks/a_first.php') ?: ($this->home . '/hooks/a_first.php');
+        $this->assertStringContainsString('declares HookLoaderTestB\Thing from ' . $first, $errors[0]->error);
+        $this->assertStringContainsString('two different copies of one hook cannot both be loaded', $errors[0]->error);
     }
 
     public function testAnonymousClassAndScopedClosuresAreAccepted(): void

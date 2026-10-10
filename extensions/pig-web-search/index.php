@@ -12,13 +12,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
 use PigWebSearch\HeadlessBrowser;
 
-// A class file beside the entry. Guarded by *class* and not by `require_once`, which dedups by
-// path: a global copy under `~/.pig/agent/extensions` and a project copy are two paths holding
-// one class, and the second `require` of either is a fatal redeclaration. Whichever loaded first
-// serves both; the entry files are deduplicated by name upstream of this anyway.
-if (!class_exists(HeadlessBrowser::class, false)) {
-    require __DIR__ . '/HeadlessBrowser.php';
-}
+require_once __DIR__ . '/HeadlessBrowser.php';
 
 /**
  * Pure PHP web search and web page reading extension for pig.

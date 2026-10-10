@@ -169,7 +169,7 @@ pig
   - `/fork`: Pick one of your messages and fork the conversation up to before it into a new session file, with that message back in the prompt; `/clone` copies the conversation as it stands into a new file. The new file names the old one as its `parentSession`.
   - `/compact`: Manually trigger conversation summarization.
   - `/export [file.html]`: Export the session as a standalone offline HTML document with syntax highlighting.
-  - `/reload`: Hot-reload extensions, skills, tools, and context files without restarting `pig`.
+  - `/reload`: Hot-reload extensions, skills, tools, and context files without restarting `pig`. An extension that declares PHP classes keeps running the version loaded at startup (PHP cannot unload a class) and the reload says so when its files changed — restart `pig` to pick that up.
   - `/doctor`: Run system diagnostic checks on PHP extensions, tools, permissions, and network endpoints.
 
 ### 2. Web UI Interface (`pig web`)

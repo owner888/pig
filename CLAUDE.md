@@ -11451,28 +11451,42 @@ Aligned `AgentSession::dispose()` with upstream `agent-session.ts`'s `dispose()`
 **Test**:
 `InteractiveModeTest::testQuittingWhileTheAgentIsWorkingAbortsTheAgentAndStops`.
 
-### `/reload` boundary and the extension redeclaration fatal error
+### `/reload` and a class PHP cannot unload: say it, rather than fatal or `class_exists`
 
-**Phenomenon**: When `/reload` was executed, if any loaded `.php` extension defined top-level named functions or classes (e.g. `function sendSystemNotification() {}`), PHP threw `PHP Fatal error: Cannot redeclare function ...` and crashed the session. Furthermore, updates to `pig`'s own core package classes (`packages/`) cannot take effect via `/reload`.
+**Phenomenon**: `/reload` on an extension that declared a class or a function was `PHP Fatal error:
+Cannot redeclare …`. The first answer was two wrong ones at once: the loaders refused any entry file
+with a named class in it, and every bundled extension therefore kept its classes in sibling files
+behind a hand-written `if (!class_exists(X::class, false)) require` — which made `/reload` run new
+closures against the old classes in silence, and let two copies of an extension (the installed one
+under `~/.pig/agent/extensions` and a checkout's) pick a winner by load order, also in silence.
 
-**Cause**:
-Unlike Node.js modules which are wrapped in a private closure and whose module cache can be cleared, PHP files `require`d in the same process register top-level named functions and classes directly in PHP's global symbol tables. Re-`require`ing the file on `/reload` attempts to re-declare those symbols, causing a fatal error. Additionally, PHP does not support class unloading; once a class is compiled into memory by Composer, its definition cannot be replaced in the running process.
+**Cause**: Node drops a module from `require.cache`; a PHP class or function, once `require`d, is in
+the process for good. Nothing can make a second `require` of the same file work, so the only honest
+answers are "do not `require` it again" and "say so".
 
-**Countermeasure**:
-1. All extensions should use scoped closures and pass helpers via closure `use` or `HookContext $ctx` instead of declaring global functions or classes. `HookContext` now provides `$ctx->set()`, `$ctx->get()`, and `$ctx->has()` backed by a shared `HookState` instance for passing shared services and middleware state across handlers. The standard extensions (`copy.php`, `system-notify.php`, `smart-session.php`, `permission-gate.php`, `gemini-video.php`) were refactored to this scoped closure pattern so they can be reloaded repeatedly with zero conflicts.
-2. `HookLoader::checkTopLevelSymbols()` was added to `HookLoader` and `ExtensionLoader`: before `require`ing an extension or hook, it tokenizes the file with `PhpToken::tokenize()`. If any top-level named function or named class is detected, loading is safely refused as a structured `HookError` / `ExtensionError` with guidance, completely preventing PHP fatal redeclaration crashes.
-3. Clearly document `/reload`'s boundary across `README.md`, `README.zh-CN.md`, `bin/pig --help`, and `CLAUDE.md`: `/reload` live-refreshes extensions, skills, custom commands, tools, settings, and context files (`CLAUDE.md` / `AGENTS.md`), but upgrading `pig`'s own core engine classes still requires restarting `pig`.
+**Rule** (`Hooks\DeclaredSymbols`, used by `HookLoader` and `ExtensionLoader` alike): a named class
+is allowed. Before a `require`, the loader tokenizes the file — the whole folder for an `index.php`,
+`vendor/`, `node_modules/` and tests left out — for named classes, interfaces, traits, enums and
+functions, namespace included.
+- **A reload of a file with declarations runs the factory from its first load** against the fresh
+  api, so the extension does not vanish on `/reload`; when the files have changed since, the load
+  reports `reload: declares X, Y, which PHP cannot unload — running the version loaded at startup;
+  restart pig to pick up the change`. A file of nothing but closures reloads whole, as before.
+- **A class already in memory from outside the extension's own files** refuses the load:
+  `declares X from /that/file, which is already in memory; two different copies of one extension
+  cannot both be loaded`. Two *identical* copies (same content, any paths) are one extension, and the
+  second is served by the first's factory without a word — the fingerprint is the files' contents
+  with paths relative to the entry.
+- Extensions `require_once` their class files plainly and keep no guard; the bundled seven were
+  changed in the same batch. A test that `require`s an extension's classes before loading its entry
+  is "the extension's own files" and is not a conflict.
 
-**An extension with a class file beside its entry has the same problem one level up**, and
-`require_once` does not solve it. `pig-web-search` keeps `HeadlessBrowser` in its own file; the
-entry `require_once`d it, and the full suite died with `Cannot redeclare class
-PigWebSearch\HeadlessBrowser (previously declared in ~/.pig/agent/extensions/…)`. `require_once`
-deduplicates by **path**, and the same class lives at two paths — the installed copy under
-`~/.pig/agent/extensions` and the repository's — so a process that touches both (the test suite;
-in production, one pig moving between a project with its own copy and one without) loads the class
-twice. The entry guards by *class* now: `if (!class_exists(HeadlessBrowser::class, false)) require`.
-Whichever copy loaded first serves both, which is the trade; the alternative is a loader that
-refuses a second copy of a class, which is the fatal error with a politer message.
+Still true: `pig`'s own `packages/` classes cannot be reloaded either — that is a restart.
+
+Regression tests: `HookLoaderTest::testAHookMayDeclareAClassAndAReloadRunsTheFactoryItFirstLoaded`,
+`testASecondDifferentCopyOfAClassIsRefusedByNameAndAnIdenticalOneIsNot`,
+`ExtensionLoaderTest::testAFolderExtensionsClassesAreSeenInItsSiblingFilesToo`,
+`testADifferentCopyOfAnExtensionsClassIsRefusedByName`.
 
 ### Footer session name display, `/name` command, and full `smart-session` telemetry parity
 

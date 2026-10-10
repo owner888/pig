@@ -19,11 +19,9 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
  * Fully aligned with iPhone Use & Android Use architectures.
  */
 return static function (ExtensionApi $pi): void {
-    if (!class_exists(DesktopClient::class, false)) {
-        require_once __DIR__ . '/src/DesktopClient.php';
-        require_once __DIR__ . '/src/ScreenScaler.php';
-        require_once __DIR__ . '/src/InputManager.php';
-    }
+    require_once __DIR__ . '/src/DesktopClient.php';
+    require_once __DIR__ . '/src/ScreenScaler.php';
+    require_once __DIR__ . '/src/InputManager.php';
 
     $desktop = new DesktopClient();
     /** @var array{float, float} Last observed pixel-to-point scaling ratio */

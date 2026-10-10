@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Hooks;
 
+use Closure;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Tools\Paths;
 use Throwable;
@@ -81,12 +82,12 @@ final class HookLoader
 
             $seen[$real] = true;
 
+            // Both can be set: a reload of a file whose classes are already in memory loads and
+            // says so — see `DeclaredSymbols`.
             [$hook, $error] = self::one($path, $real, $cwd);
 
             if ($error !== null) {
                 $errors[] = $error;
-
-                continue;
             }
 
             if ($hook !== null) {
@@ -141,35 +142,55 @@ final class HookLoader
             return [null, new HookError($path, 'load', 'not a readable file')];
         }
 
-        $symbolError = self::checkTopLevelSymbols($resolved);
-
-        if ($symbolError !== null) {
-            return [null, new HookError($path, 'load', $symbolError)];
-        }
-
         $api = new HookApi($cwd, $path);
+        $note = null;
 
-        // Anything the file prints would land in the middle of the terminal UI, which
-        // redraws over it and leaves a session that looks corrupted for a reason nobody
-        // can see. Captured and reported as what it is instead.
-        ob_start();
+        // A file that declares a class or a function cannot be `require`d twice, so on a reload it
+        // is the factory from its first load that runs — and a class another file already declared
+        // is refused by name rather than let the second `require` fatal. `DeclaredSymbols` says why.
+        $declared = DeclaredSymbols::in($resolved);
+        $hash = $declared === [] ? '' : DeclaredSymbols::hashOf($resolved);
+        $kept = $declared === [] ? null : DeclaredSymbols::recall($resolved, $hash);
 
-        try {
-            $factory = self::evaluate($resolved);
-        } catch (Throwable $error) {
-            ob_end_clean();
+        if ($kept !== null) {
+            $factory = $kept['factory'];
 
-            return [null, new HookError($path, 'load', self::describe($error))];
-        }
+            if ($kept['changed']) {
+                $note = new HookError($path, 'reload', 'declares ' . self::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
+            }
+        } else {
+            $conflict = DeclaredSymbols::conflict($resolved, $declared);
 
-        $printed = ob_get_clean();
+            if ($conflict !== null) {
+                return [null, new HookError($path, 'load', "declares {$conflict}, which is already in memory; two different copies of one hook cannot both be loaded")];
+            }
 
-        if ($printed !== false && trim($printed) !== '') {
-            return [null, new HookError($path, 'load', 'printed to standard output while loading: ' . trim($printed))];
-        }
+            // Anything the file prints would land in the middle of the terminal UI, which
+            // redraws over it and leaves a session that looks corrupted for a reason nobody
+            // can see. Captured and reported as what it is instead.
+            ob_start();
 
-        if (!is_callable($factory)) {
-            return [null, new HookError($path, 'load', 'must return a callable, got ' . get_debug_type($factory))];
+            try {
+                $factory = self::evaluate($resolved);
+            } catch (Throwable $error) {
+                ob_end_clean();
+
+                return [null, new HookError($path, 'load', self::describe($error))];
+            }
+
+            $printed = ob_get_clean();
+
+            if ($printed !== false && trim($printed) !== '') {
+                return [null, new HookError($path, 'load', 'printed to standard output while loading: ' . trim($printed))];
+            }
+
+            if (!is_callable($factory)) {
+                return [null, new HookError($path, 'load', 'must return a callable, got ' . get_debug_type($factory))];
+            }
+
+            if ($declared !== []) {
+                DeclaredSymbols::remember($resolved, Closure::fromCallable($factory), $hash);
+            }
         }
 
         try {
@@ -178,7 +199,21 @@ final class HookLoader
             return [null, new HookError($path, 'load', self::describe($error))];
         }
 
-        return [new LoadedHook($path, $resolved, $api), null];
+        return [new LoadedHook($path, $resolved, $api), $note];
+    }
+
+    /**
+     * The declared names for a message: the first few and a count, because an extension with
+     * twelve classes is twelve names nobody needs to read.
+     *
+     * @param list<string> $names
+     */
+    public static function listOf(array $names): string
+    {
+        $shown = array_slice($names, 0, 3);
+        $rest = count($names) - count($shown);
+
+        return implode(', ', $shown) . ($rest > 0 ? " and {$rest} more" : '');
     }
 
     /**
@@ -190,82 +225,6 @@ final class HookLoader
     private static function evaluate(string $pigHookPath): mixed
     {
         return (static fn (): mixed => require $pigHookPath)();
-    }
-
-    /**
-     * Inspect for top-level named functions or classes that would break `/reload`.
-     *
-     * In PHP, top-level named functions and classes cannot be unloaded and will fatal
-     * with `Cannot redeclare function/class` on subsequent `require`s.
-     * Extensions and hooks must use scoped closures or anonymous classes instead.
-     */
-    public static function checkTopLevelSymbols(string $path): ?string
-    {
-        $code = file_get_contents($path);
-
-        if ($code === false) {
-            return null;
-        }
-
-        $tokens = \PhpToken::tokenize($code);
-        $depth = 0;
-        $classDepth = [];
-        $count = count($tokens);
-
-        for ($i = 0; $i < $count; $i++) {
-            $token = $tokens[$i];
-
-            if ($token->is([T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM])) {
-                $isAnonymous = false;
-
-                for ($k = $i - 1; $k >= 0; $k--) {
-                    if ($tokens[$k]->isIgnorable()) {
-                        continue;
-                    }
-                    if ($tokens[$k]->is(T_NEW)) {
-                        $isAnonymous = true;
-                    }
-                    break;
-                }
-
-                $classDepth[] = $depth;
-
-                if (!$isAnonymous && count($classDepth) === 1) {
-                    for ($j = $i + 1; $j < $count; $j++) {
-                        if ($tokens[$j]->isIgnorable()) {
-                            continue;
-                        }
-                        if ($tokens[$j]->is(T_STRING)) {
-                            return "defines top-level named class '{$tokens[$j]->text}'. To support /reload without fatal redeclaration conflicts, use anonymous classes (\$obj = new class {}) or closures instead.";
-                        }
-                        break;
-                    }
-                }
-            }
-
-            if ($token->text === '{' || $token->is(T_CURLY_OPEN)) {
-                $depth++;
-            } elseif ($token->text === '}') {
-                $depth--;
-                if ($classDepth !== [] && end($classDepth) === $depth) {
-                    array_pop($classDepth);
-                }
-            }
-
-            if ($token->is(T_FUNCTION) && $classDepth === []) {
-                for ($j = $i + 1; $j < $count; $j++) {
-                    if ($tokens[$j]->isIgnorable()) {
-                        continue;
-                    }
-                    if ($tokens[$j]->is(T_STRING)) {
-                        return "defines top-level named function '{$tokens[$j]->text}()'. To support /reload without fatal redeclaration conflicts, use scoped closures (\$fn = function() ...) instead.";
-                    }
-                    break;
-                }
-            }
-        }
-
-        return null;
     }
 
     /** A throwable as one line, with where it came from when that is not obvious. */

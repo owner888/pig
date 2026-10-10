@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.23] - 2026-10-08
+
+### Changed
+
+- **Extensions and hooks may declare classes, and `/reload` says what it cannot do (`Hooks\DeclaredSymbols`)**:
+  - A named class or function in an extension no longer refuses the load. On `/reload`, a file with declarations runs the factory it first loaded with (PHP cannot unload a class), and when its files changed since, the reload reports it and says to restart pig. A different copy of an extension whose classes are already in memory is refused by name; an identical copy at another path is served by the first. The bundled extensions dropped their `class_exists` guards.
+
 ## [0.5.22] - 2026-10-08
 
 ### New Features

@@ -9,9 +9,7 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Logger;
 use PigVless\VlessServer;
 
-if (!class_exists(VlessServer::class, false)) {
-    require __DIR__ . '/VlessServer.php';
-}
+require_once __DIR__ . '/VlessServer.php';
 
 /**
  * A VLESS inbound beside the agent, so a phone can go through this machine.

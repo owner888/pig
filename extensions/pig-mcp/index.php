@@ -27,12 +27,10 @@ use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
 use Pig\Codemode\ToolSearch;
 
-// Class files beside the entry, guarded by class and not by `require_once`: the same class can
-// live at two paths (a global copy and the repository's), and `require_once` dedups by path.
+// Class files beside the entry. Loading them twice, or beside another copy, is the loader's
+// business — `DeclaredSymbols` — not this file's.
 foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog', 'McpServersSection'] as $class) {
-    if (!class_exists("PigMcp\\{$class}", false)) {
-        require __DIR__ . "/{$class}.php";
-    }
+    require_once __DIR__ . "/{$class}.php";
 }
 
 /**
