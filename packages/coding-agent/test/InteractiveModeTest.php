@@ -1663,6 +1663,83 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('why does', $screen);
     }
 
+    public function testForkMovesToANewFileWithTheChosenQuestionBackInThePrompt(): void
+    {
+        $this->start(['first answer', 'second answer'], store: true);
+
+        $this->type('the first question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type('the second question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $first = $this->session->store()->path;
+
+        $this->type('/fork');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('Fork from', $screen);
+        $this->assertStringContainsString('the second question', $screen);
+
+        // The cursor starts on the newest message, which is the one a fork is nearly always made from.
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertNotSame($first, $this->session->store()->path);
+        $this->assertSame($first, $this->session->store()->parentSession);
+        $this->assertSame('the second question', $this->editorText());
+        $this->assertStringContainsString('Forked to new session', $this->screenText());
+        // Up to before the second question: the first and its answer.
+        $this->assertSame(
+            ['the first question', 'first answer'],
+            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', self::said($this->session->messages())),
+        );
+        $this->assertCount(2, SessionManager::listFor($this->cwd));
+    }
+
+    public function testCloneCopiesTheConversationIntoANewFileAndCarriesOnThere(): void
+    {
+        $this->start(['the answer', 'and another'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $first = $this->session->store()->path;
+
+        $this->type('/clone');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $second = $this->session->store()->path;
+        $this->assertNotSame($first, $second);
+        $this->assertStringContainsString('Cloned to new session', $this->screenText());
+        $this->assertSame('', $this->editorText());
+
+        $this->type('carrying on');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Written to the clone and not to the original.
+        $this->assertCount(2, self::said(SessionManager::open($first)->messages()));
+        $this->assertCount(4, self::said(SessionManager::open($second)->messages()));
+    }
+
+    public function testForkAndCloneSayWhyWhenThereIsNothingToForkYet(): void
+    {
+        $this->start(['the answer'], store: true);
+
+        $this->type('/fork');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('No messages to fork from', $this->screenText());
+
+        $this->type('/clone');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Nothing to clone yet', $this->screenText());
+    }
+
     public function testTreeOffersThePointsInThisConversation(): void
     {
         $this->start(['the answer'], store: true);

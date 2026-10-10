@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.22] - 2026-10-08
+
+### New Features
+
+- **Session Branch Forking & Cloning (`/fork`, `/clone`, `SessionManager::fork`, `AgentSession::fork`)**:
+  - Added `/fork` command (upstream's `user-message-selector.ts`): lists historical user prompts across all branches, forks the conversation prior to the chosen turn into an independent `.jsonl` session file, and restores the prompt text into the editor.
+  - Added `/clone` command: clones the active conversation branch at the current leaf into a new session file.
+  - Implemented `SessionManager::fork($leafId)` with upstream `createBranchedSession()` parity: re-chaining labels off the new leaf, remapping compaction `firstKeptEntryId` cuts, and recording `parentSession` lineage in the session header.
+  - Integrated `session_before_fork` hook interception, lifecycle transitions (`session_shutdown('fork')` -> `session_start('fork')`), and tool notifications with reason `fork`.
+  - Added RPC commands `fork`, `clone`, and `get_fork_messages` along with client wrapper methods in `RpcClient`.
+
 ## [0.5.21] - 2026-10-08
 
 ### Added

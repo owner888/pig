@@ -452,12 +452,11 @@ The rest of `messages.ts` matched, and one difference is pig's own with a reason
 the command output before fencing it, so `"hi\n"` does not come out as a fence with a blank line in
 it and an output of nothing but newlines reads as `(no output)` rather than an empty fence.
 
-`AgentSession` is 1901 lines upstream and ~1000 here, because the one thing it coordinates that
-is not ported is not there to coordinate: branching to a second session file.
-What is left is the conversation, the event fan-out,
-the queue of messages someone typed while the agent was working, the thinking level, what the
-session has cost, persistence, compaction, tree navigation and the hook events. Each of the
-rest can arrive on its own when something needs it.
+`AgentSession` is 1901 lines upstream and ~1000 here. What is here is the conversation, the event
+fan-out, the queue of messages someone typed while the agent was working, the thinking level, what
+the session has cost, persistence, compaction, tree navigation, forking a branch into a file of its
+own (`fork()`, below) and the hook events. Each of the rest can arrive on its own when something
+needs it.
 
 Themes are ported from upstream's `theme.ts` / `theme-json.ts` / `system-theme.ts` / `theme-controller.ts` (the developer asked for 100% alignment; the old `Theme\Palette` is deleted, with no alias left behind): `Theme\Themes` is `theme.ts`'s module functions and the global theme (`Themes::theme()` is upstream's `theme` proxy), `Theme\Theme` is upstream's `Theme` class, and the color math lives in `Pig\Tui\Colors` / `Pig\Tui\Oklab` (`colors.ts` / `oklab.ts`). The built-in `dark.json` / `light.json` are upstream's byte for byte (OKHSL notation); `labra.json` is a built-in theme pig keeps in addition. With no theme setting, upstream's `system` theme applies: grayscale until the terminal reports its colors, then `InteractiveThemeController` generates one from `TUI::queryTerminalColors()`, following DEC 2031 light/dark switches automatically (and switching between the pair when the setting is a `light/dark` pair).
 
@@ -616,8 +615,9 @@ two are broken.
 **The class docblock had inventoried what was missing**, and every item on the list had since been
 ported: the tree, labels, the model and thinking-level entries, the migrations. *A docblock that
 lists absences is a docblock that goes stale silently* — the fourth shape from the index, at its
-largest, since the list was four items long and wrong about all four. It says what is there now, and
-the one real absence (`branch()` in upstream's sense — forking into a second file) is named.
+largest, since the list was four items long and wrong about all four. It says what is there now; the
+one absence it then named — `branch()` in upstream's sense, forking into a second file — has since
+arrived as `fork()`, see [Forking a branch into a session file of its own](#forking-a-branch-into-a-session-file-of-its-own).
 
 ### What a conversation was being had with
 
@@ -675,6 +675,37 @@ Four things about it:
 
 The name is shown *beside* the message rather than instead of it: the name is what you were
 thinking and the message is what was actually said, and only one of those is a fact.
+
+### Forking a branch into a session file of its own
+
+`/fork` and `/clone` are upstream's — `createBranchedSession()` in `session-manager.ts`, `fork()`
+in `agent-session-runtime.ts`, the `fork` / `clone` / `get_fork_messages` RPC commands and the
+`session_before_fork` event. `/tree` moves inside one file and leaves every branch where it was;
+this is for when one branch should *become* a conversation: resumable on its own, listed on its
+own, the other branches no longer in it. `/fork` lists every message somebody typed, on any branch
+(an abandoned branch is forked back into a conversation this way), and the fork holds everything up
+to *before* the chosen one, whose words come back in the prompt — `goTo()`'s rule, in a new file.
+`/clone` forks at the leaf: this conversation as it stands, in a second file.
+
+`SessionManager::fork($leafId)` hands back a **new instance** rather than turning this one into the
+fork, because `$path` and `$id` are readonly and `AgentSession::writeTo()` is how a session changes
+files. Three things from upstream are kept because each is a file pi could not read otherwise: labels
+are taken off the path and written again at the end, hanging off the new leaf (a label is a real
+entry with children, so the path is re-chained around it); a compaction's `firstKeptEntryId` that
+named a removed label names the next kept entry; and the file is written now only when the path has
+an assistant message in it — `append()`'s own rule, so a fork of nothing but a question leaves no
+file until something answers. The header carries `parentSession`, which `open()` reads back as
+`SessionManager::$parentSession`.
+
+`AgentSession::fork($entryId, $position)` is `startNew()`/`switchTo()`'s recipe with the hook asked
+first: refused with `switched: false` when a hook says no, thrown for a session not being saved
+(`--no-save` has nothing to fork; upstream forks one in memory, pig has no second in-memory
+conversation to put it in), for one with no file yet (upstream's sentence), and for `before` on a
+point nobody said. Custom tools hear it as `fork`.
+
+Regression tests: `SessionManagerTest`'s five `testAFork…` cases, `AgentSessionTest`'s seven under
+"forking a branch into a file of its own", `RpcModeTest::testForkingFromAMessage…`,
+`testCloning…`, and `InteractiveModeTest::testForkMovesToANewFile…`, `testCloneCopies…`.
 
 `Session\SessionCodec` has no upstream counterpart at all: a message there is a plain
 object and `JSON.stringify` is the whole persistence layer. PHP objects do not survive
@@ -2381,8 +2412,9 @@ line:
   *an entry you cannot use is still an entry other entries point at.*
 - **The label cases are pinned three ways already**: out of the conversation (`isSaid()`), last one
   wins (read in file order), refused on an id nothing has.
-- **The `createBranchedSession` cases are not pig's**, being the fork into a second session file that
-  pig does not do — `/tree` is the answer to the same wish and has its own tests.
+- **The `createBranchedSession` cases are `SessionManager::fork()`'s now** — the path to the leaf,
+  labels re-chained and written again, a compaction's cut remapped — in `SessionManagerTest`'s fork
+  cases.
 
 `build-context.test.ts`'s remaining claims — the thinking level and model tracked from their own
 entries *and* from the last assistant message, a summary in front of the kept messages, the latest of
@@ -2813,9 +2845,9 @@ The event names are upstream HEAD's (`HookApi::EVENTS`), with the shapes they ha
 builds a new one, pig keeps the same hooks and tells them the same two things. `session_switch`,
 which upstream no longer has, went with no alias. `ui_prompt_start`/`ui_prompt_end` are said
 around every blocking dialog by `Hooks\PromptingUi`, upstream's `wrapUIPromptContext()`.
-`session_before_fork` is refused by name: it is about forking a conversation into a second
-session file, and pig branches inside one file instead (`session_before_tree`). A typo is refused
-the same way, since the names are a list here rather than TypeScript overloads.
+`session_before_fork` is asked by `AgentSession::fork()` with the entry and the position (`before`
+for `/fork`, `at` for `/clone`), and the pair it fires afterwards carries the reason `fork`. A typo
+is refused by name, since the names are a list here rather than TypeScript overloads.
 
 **Four of upstream's events and its virtual models arrive in pig's own arrangement, and the
 arrangement is the thing to know before reading any of them:**
@@ -2903,7 +2935,8 @@ Upstream gives a slash command's handler four methods an event handler does not 
 `waitForIdle()`, `newSession()`, `branch()` and `navigateTree()` — walled off that way because
 calling them from inside the agent loop deadlocks. pig has one `HookContext` for both, with
 everything that can be read at any moment plus `abort()`. The four are not ported, and not as an
-oversight: `branch()` is the session-file fork pig does not do, `navigateTree()` is `goTo()`, whose
+oversight: `branch()` is `AgentSession::fork()`, which a mode calls and a hook does not get,
+`navigateTree()` is `goTo()`, whose
 answer is a summary, an abort or text for the prompt rather than a yes; and the other two would need
 a second context class to be safe from the deadlock upstream avoids by having one. Two context types
 so a hook command can restart the session is more machinery than the thing is worth — see the rule
@@ -3129,12 +3162,12 @@ Five things worth keeping straight:
   is a screen; `CustomToolApi::ui()` answers as `NoUi` until the mode calls `withUi()` on the
   one shared API object every factory closed over. That is why `bin/pig` constructs the API
   itself and hands it to both the loader and the set.
-- **`onSession` is fired from the interactive mode, not from the session.** All four moments
-  a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting — are things someone
-  did in the UI, and the UI is the only place with somewhere to report a callback that
-  failed. Routing them through the hook runner was the other option and was worse: `/hooks`
-  would then list tool files as hooks. Upstream's fifth reason, `branch`, is the fork into a
-  second session file that pig does not do.
+- **`onSession` is fired from the interactive mode, not from the session.** All five moments
+  a tool hears about — startup, `/new` and `/resume`, `/fork` and `/clone`, `/tree`, quitting — are
+  things someone did in the UI, and the UI is the only place with somewhere to report a callback
+  that failed. Routing them through the hook runner was the other option and was worse: `/hooks`
+  would then list tool files as hooks. Upstream's `branch` reason is `fork` here, the word its
+  session events use for the same thing now.
 
 `--no-tools` loads none of them. Settings name extra entry files under upstream's key,
 `customTools`. The system prompt's "Available tools" list stays the built-ins, as upstream's
@@ -3906,7 +3939,7 @@ seam: the pieces for pi-web's shape already exist and the pieces for same-proces
 
 | pi-web needs | pig has |
 |---|---|
-| a `--mode rpc` child | `RpcMode`, 24 commands, pi's wire format |
+| a `--mode rpc` child | `RpcMode`, 27 commands, pi's wire format |
 | a client that spawns it and matches responses by id | **`Rpc\RpcClient`** — it is `rpc-client.ts`, and `RpcClientTest` already starts `bin/pig` |
 | HTTP + WebSocket | `HttpServer`, `TcpConnection`, `Protocols\Websocket` |
 | a pool keyed `cwd::sessionFile` with idle reaping | **the one new piece** |
@@ -4201,14 +4234,13 @@ needs decide the shapes.
 |---|---|
 | `queue_message` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace it, rather than guessing which one a `queue_message` meant. **`set_queue_mode` used to be on this row and did not belong**: the split is about queuing a message and says nothing about the mode — see the trap below |
 | `cycle_model` | `get_available_models` and `set_model` are what it is made of |
-| `branch` | upstream forks a conversation into a second session file; pig branches inside one, as `go_to` with `get_branch` for the points to go to |
 | `export_html` | it is `export` here, and it honours `outputPath` |
 
-Twenty-four commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
+Twenty-seven commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
 `get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
 `set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
 `set_auto_retry`, `abort_retry`, `set_queue_mode`, `bash`, `abort_bash`, `get_branch`, `go_to`,
-`new_session`, `switch_session` and `export`.
+`new_session`, `switch_session`, `fork`, `clone`, `get_fork_messages` and `export`.
 
 Every failure is a `success: false` response rather than a disconnection: a host asking for
 something impossible should be told, not dropped. Warnings that the interactive mode would
@@ -4226,7 +4258,7 @@ What is left unported, across every package, each for a reason:
 | Upstream | Why not |
 |---|---|
 | eleven of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
-| `coding-agent/modes/interactive/components/user-message-selector.ts` | the **twelfth** selector, and the one that is not here as something else: it is `/branch`'s list, and `/branch` forks a conversation into a second session file, which pig does not do. `/tree` is pig's answer to the same wish and has its own list. Upstream also opens this one on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here. If a key for "go back to something I said" is ever wanted, `/tree` is what it should open and this row is where to start |
+| `coding-agent/modes/interactive/components/user-message-selector.ts` | the **twelfth** selector, here as `InteractiveMode::showForkPoints()` — `/fork`'s list of every message somebody typed, a `SelectList` rather than a component of its own, as `/login` and `/model` are. Upstream also opens it on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here |
 | `/share`, in `interactive-mode.ts` | **Deliberate, and the one command left out on its merits rather than for want of a subsystem.** It runs `gh gist create --public=false` on the exported HTML and prints a URL on upstream's own viewer domain. Two reasons: a "secret" gist is unlisted and not private, so a conversation — which holds whatever the model read — goes to GitHub behind a link anyone with it can open; and the URL hands it to a third party's JavaScript viewer, which is the dependency `HtmlExport` was written to avoid. `/export` already writes the file, and `gh gist create` on it is one command with the person looking at what they are uploading. If it is ever wanted, the piece pig lacks is nothing: `BorderedLoader` is ported and already cancellable |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
@@ -7063,8 +7095,8 @@ are fired. What it never mentioned is `HookCommandContext`: upstream gives a sla
 because calling them inside the agent loop deadlocks. pig has one `HookContext` for both and none of
 the four.
 
-Left unported, deliberately and now in writing: `branch()` is the session-file fork pig does not do,
-`navigateTree()` is `goTo()` — whose answer is a summary, an abort or text for the prompt rather than
+Left unported, deliberately and now in writing: `branch()` is `AgentSession::fork()`, which a mode
+reaches and a hook context does not, `navigateTree()` is `goTo()` — whose answer is a summary, an abort or text for the prompt rather than
 a yes — and the other two would need a second context class to be safe from the deadlock upstream
 avoids by having one. Two context types so that a hook command can restart the session is more
 machinery than the thing is worth. A hook that wants a handoff can say so with `sendMessage()`.
@@ -9476,8 +9508,7 @@ Left out of `rpc-mode.ts` with reasons rather than by oversight:
 
 | Upstream | Why not |
 |---|---|
-| `get_branch_messages` | `getUserMessagesForBranching()` feeds the twelfth selector, which is `/branch`'s list — the fork into a second session file pig does not do. `get_branch` is pig's answer: the tree, which is where pig's branches are |
-| `new_session`'s `parentSession` | a field pi writes into the session **header** for lineage and **nothing in either tool reads back** — not the migrations, not the picker, not the export. pig's header is otherwise pi's field for field, so this is the one gap in that claim, and it is recorded here rather than filled because filling it threads a value through `create()`, `startNew()` and the command for a fact no reader wants yet. A pi file that carries one is read fine: an unknown header key is ignored |
+| `new_session`'s `parentSession` | the header field `fork()` writes and `SessionManager::open()` reads back as `$parentSession`; a `new_session` command naming one by hand has no reader that wants it, so the field is not taken from the command |
 
 ### `/model son` offered file names, and the one method that knew better had no caller
 

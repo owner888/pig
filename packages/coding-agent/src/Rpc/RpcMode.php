@@ -55,14 +55,12 @@ use Throwable;
  * class two streams, so nothing checked the binary starting, a line crossing a pipe, or a field
  * name. The first thing `RpcClient` found was that `bin/pig --mode rpc` could not start at all.
  *
- * **Four of upstream's commands are not here**, and the reasons divide in two:
+ * **Two of upstream's commands are not here under their names:**
  *
- * - `queue_message` and `set_queue_mode`: the anchor commit split the agent's one queue into
- *   `steer()` and `followUp()`, so there is no single queue to add to or set a mode on.
- *   `steer` and `follow_up` are the two commands that replace them, which is honest rather
- *   than guessing which one a `queue_message` meant.
- * - `branch`: upstream forks a conversation into a second session file. pig branches inside
- *   one — `go_to`, with `get_branch` for the points to go to.
+ * - `queue_message`: the anchor commit split the agent's one queue into `steer()` and
+ *   `followUp()`, so there is no single queue to add to. `steer` and `follow_up` are the two
+ *   commands that replace it, which is honest rather than guessing which one a `queue_message`
+ *   meant.
  * - `export_html`'s `outputPath` is honoured, but the command is `export` here.
  */
 final class RpcMode
@@ -309,6 +307,9 @@ final class RpcMode
             'go_to' => $this->goTo($command),
             'new_session' => $this->newSession(),
             'switch_session' => $this->switchSession($command),
+            'fork' => $this->fork($command),
+            'clone' => $this->cloneSession(),
+            'get_fork_messages' => ['messages' => $this->session->userMessagesForForking()],
             'export' => $this->export($command),
 
             // Four the web shell used to answer over HTTP from its one session and cannot now,
@@ -706,6 +707,46 @@ final class RpcMode
             'sessionFile' => $this->session->store()?->path,
             'isPersisted' => $this->session->store()?->isPersisted() ?? false,
         ];
+    }
+
+    /**
+     * Fork the conversation into a new session file from before one of the person's messages,
+     * answering upstream's `{text, cancelled}` — the message's words, for the host to put in its
+     * prompt.
+     *
+     * @param array<string, mixed> $command
+     */
+    private function fork(array $command): array
+    {
+        $fork = $this->session->fork(self::text($command, 'entryId'));
+
+        if (!$fork->switched) {
+            return ['cancelled' => true];
+        }
+
+        $this->report($this->customTools?->notify('fork', $fork->previous) ?? []);
+
+        return ['text' => $fork->editorText ?? '', 'cancelled' => false];
+    }
+
+    /** This conversation as it stands, in a new session file — upstream's `clone`. */
+    private function cloneSession(): array
+    {
+        $leaf = $this->session->store()?->leaf();
+
+        if ($leaf === null) {
+            throw new \RuntimeException('Cannot clone session: no current entry selected');
+        }
+
+        $fork = $this->session->fork($leaf, 'at');
+
+        if (!$fork->switched) {
+            return ['cancelled' => true];
+        }
+
+        $this->report($this->customTools?->notify('fork', $fork->previous) ?? []);
+
+        return ['cancelled' => false];
     }
 
     /**

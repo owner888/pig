@@ -14,7 +14,9 @@ namespace Pig\CodingAgent\Session;
  *
  * `previous` is the file being left, which is what both the `session_start` hook and the
  * custom tools are told, and it is null for a session that was never being written down.
- * `messages` is how many came back, for a caller that says so on screen.
+ * `messages` is how many came back, for a caller that says so on screen. `editorText` is what
+ * `fork()` hands back for the prompt when the chosen point was something somebody said — the
+ * same thing `TreeJump::$editorText` is for `goTo()`, and null everywhere else.
  */
 final readonly class SessionSwitch
 {
@@ -22,6 +24,7 @@ final readonly class SessionSwitch
         public bool $switched,
         public ?string $previous = null,
         public int $messages = 0,
+        public ?string $editorText = null,
     ) {
     }
 }

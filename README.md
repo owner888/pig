@@ -166,6 +166,7 @@ pig
   - `/name <new-name>`: View or change the active session title (reflected in footer and Web UI).
   - `/label <name>`: Bookmark the current point in the session tree.
   - `/tree`: Visualize conversation branches as an interactive tree and jump between forks.
+  - `/fork`: Pick one of your messages and fork the conversation up to before it into a new session file, with that message back in the prompt; `/clone` copies the conversation as it stands into a new file. The new file names the old one as its `parentSession`.
   - `/compact`: Manually trigger conversation summarization.
   - `/export [file.html]`: Export the session as a standalone offline HTML document with syntax highlighting.
   - `/reload`: Hot-reload extensions, skills, tools, and context files without restarting `pig`.

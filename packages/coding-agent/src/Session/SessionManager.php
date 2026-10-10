@@ -28,9 +28,10 @@ use Pig\CodingAgent\Config;
  * and had stopped being true of every item on the list. A docblock that inventories what is missing
  * is a docblock that goes stale silently; this one now says what is here.
  *
- * What is not ported is `branch()` in upstream's sense: forking a conversation into a **second
- * session file**. pig branches inside one file, which is `goTo()` plus `tree()`, and the reason is
- * in CLAUDE.md. Everything else in that file has a counterpart here.
+ * Upstream's `createBranchedSession()` — forking the path to one leaf into a **second session
+ * file** — is `fork()` here, and it hands back a new instance rather than turning this one into
+ * the fork, because `$path` and `$id` are readonly and `AgentSession::writeTo()` is how a session
+ * changes files. Everything else in that file has a counterpart here.
  */
 final class SessionManager
 {
@@ -78,6 +79,8 @@ final class SessionManager
         public readonly string $id,
         public readonly string $cwd,
         private readonly int $createdAt,
+        /** The file this one was forked from — pi's `parentSession` on the header. Null otherwise. */
+        public readonly ?string $parentSession = null,
     ) {
     }
 
@@ -118,7 +121,7 @@ final class SessionManager
     }
 
     /** A session that will be written to $cwd's directory once it has something to say. */
-    public static function create(string $cwd, ?string $path = null): self
+    public static function create(string $cwd, ?string $path = null, ?string $parentSession = null): self
     {
         $id = self::uuid();
         $now = Timestamp::nowMs();
@@ -133,6 +136,7 @@ final class SessionManager
             $id,
             $cwd,
             $now,
+            $parentSession,
         );
     }
 
@@ -240,6 +244,7 @@ final class SessionManager
             (string) ($header['id'] ?? ''),
             (string) ($header['cwd'] ?? ''),
             SessionEntries::millis($header['timestamp'] ?? null),
+            is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
         );
 
         $session->started = true;
@@ -275,6 +280,7 @@ final class SessionManager
             (string) ($header['id'] ?? ''),
             (string) ($header['cwd'] ?? ''),
             SessionEntries::millis($header['timestamp'] ?? null),
+            is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
         );
 
         $session->started = true;
@@ -494,6 +500,24 @@ final class SessionManager
     }
 
     /**
+     * Every message somebody typed, on any branch, in file order, with the id `fork()` takes.
+     *
+     * @return list<array{id: string, message: UserMessage}>
+     */
+    public function everyUserMessage(): array
+    {
+        $found = [];
+
+        foreach ($this->entries as $id => $entry) {
+            if ($entry['message'] instanceof UserMessage) {
+                $found[] = ['id' => (string) $id, 'message' => $entry['message']];
+            }
+        }
+
+        return $found;
+    }
+
+    /**
      * Which entry the message at $index of `messages()` came from.
      *
      * The join between the conversation and the file, and the reason it has to exist: a
@@ -645,6 +669,126 @@ final class SessionManager
     public function leaf(): ?string
     {
         return $this->leaf;
+    }
+
+    /**
+     * The path from the root down to $leafId, as a session file of its own — upstream's
+     * `createBranchedSession()`.
+     *
+     * `goTo()` moves inside one file and leaves every branch where it was; this is for when one
+     * branch should *become* a conversation — resumable on its own, listed on its own, with the
+     * other branches no longer in it. The new file's header names this one as `parentSession`,
+     * which is pi's shape, so a fork made in either tool reads in the other.
+     *
+     * Three things from upstream, kept because each is a file pi could not read otherwise:
+     *
+     * - **Labels are taken off the path and written again at the end.** A label is a real entry
+     *   with children of its own, so an entry after one on the path has it as a parent; the path
+     *   is re-chained around them, and every label on a kept entry is written last, hanging off
+     *   the new leaf, with the timestamp it had.
+     * - **A compaction's `firstKeptEntryId` follows the re-chaining.** It can name a label that is
+     *   gone, in which case it names the next kept entry instead.
+     * - **Written now only when the path holds a conversation**, the same rule `append()` applies
+     *   to a new session: a fork of nothing but a user message is held back until something
+     *   answers it, so a changed mind leaves no file behind.
+     *
+     * @throws AgentError when there is no such point in this session
+     */
+    public function fork(string $leafId): self
+    {
+        $path = $this->pathTo($leafId);
+
+        if ($path === []) {
+            throw new AgentError('No such point in this conversation.');
+        }
+
+        $fork = self::create($this->cwd, parentSession: $this->path);
+
+        $previous = null;
+        $replacement = [];
+        $pendingLabels = [];
+
+        foreach ($path as $id) {
+            $item = $this->entries[$id]['message'];
+
+            if ($item instanceof Label) {
+                $pendingLabels[] = $id;
+
+                continue;
+            }
+
+            foreach ($pendingLabels as $labelId) {
+                $replacement[$labelId] = $id;
+            }
+
+            $pendingLabels = [];
+
+            if ($item instanceof CompactionSummary && $item->firstKeptEntryId !== null && $item->firstKeptEntryId !== $id) {
+                $item = self::withFirstKept($item, $replacement[$item->firstKeptEntryId] ?? $item->firstKeptEntryId);
+            }
+
+            $fork->entries[$id] = ['message' => $item, 'parent' => $previous];
+            $previous = $id;
+        }
+
+        $fork->leaf = $previous;
+        $fork->sessionName = $this->sessionName;
+
+        foreach ($this->labels as $targetId => $label) {
+            if (!isset($fork->entries[$targetId])) {
+                continue;
+            }
+
+            $labelId = self::newId($fork->entries);
+            $fork->entries[$labelId] = [
+                'message' => new Label((string) $targetId, $label, $this->labelTimestamp((string) $targetId)),
+                'parent' => $fork->leaf,
+            ];
+            $fork->labels[$targetId] = $label;
+            $fork->leaf = $labelId;
+        }
+
+        foreach ($fork->entries as $entry) {
+            if ($this->worthKeeping($entry['message'])) {
+                $fork->appendLines($fork->prologue($fork->entries));
+                $fork->started = true;
+
+                break;
+            }
+        }
+
+        return $fork;
+    }
+
+    /** When $targetId was last given the name it has, read off the entries in file order. */
+    private function labelTimestamp(string $targetId): ?int
+    {
+        $at = null;
+
+        foreach ($this->entries as $entry) {
+            $item = $entry['message'];
+
+            if ($item instanceof Label && $item->targetId === $targetId && $item->label !== null) {
+                $at = $item->timestamp;
+            }
+        }
+
+        return $at;
+    }
+
+    private static function withFirstKept(CompactionSummary $summary, string $firstKeptEntryId): CompactionSummary
+    {
+        return new CompactionSummary(
+            $summary->summary,
+            $summary->readFiles,
+            $summary->modifiedFiles,
+            $summary->tokensBefore,
+            $firstKeptEntryId,
+            $summary->replaced,
+            $summary->timestamp,
+            $summary->fromHook,
+            $summary->systemMessage,
+        );
     }
 
     /**
@@ -1250,44 +1394,68 @@ final class SessionManager
             return;
         }
 
-        $directory = dirname($this->path);
-
-        if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
-            throw new AgentError("Could not create {$directory}");
-        }
-
         $lines = '';
 
         if (!$this->started) {
             // Everything before the first assistant message was held back; it goes out
             // now, in front, so the file reads in the order it happened.
-            $lines .= self::line([
-                'type' => 'session',
-                'version' => self::VERSION,
-                'id' => $this->id,
-                'timestamp' => SessionEntries::iso($this->createdAt),
-                'cwd' => $this->cwd,
-            ]);
-
             // Everything held back so far, in the order it was appended and with the ids
             // and parents it was given — so the tree in memory is the tree the file
             // describes. In order because that is the order it happened: notes and messages
             // go through one `append()` now, so there is nothing left to interleave.
-            foreach (array_slice($this->entries, 0, -1, true) as $id => $earlier) {
-                // Cast, because PHP turns an array key that looks like an integer into one:
-                // an id is eight hex characters and about one in forty is all digits, so
-                // `"12345678"` comes back out of this loop as `12345678`. See CLAUDE.md.
-                $encoded = SessionEntries::encode($earlier['message'], (string) $id, $earlier['parent']);
-
-                if ($encoded !== null) {
-                    $lines .= self::line($encoded);
-                }
-            }
-
+            $lines .= $this->prologue(array_slice($this->entries, 0, -1, true));
             $this->started = true;
         }
 
         $lines .= self::line($entry);
+
+        $this->appendLines($lines);
+    }
+
+    /**
+     * The header line, then $entries as they stand — what the file opens with.
+     *
+     * @param array<string, array{message: mixed, parent: string|null}> $entries
+     */
+    private function prologue(array $entries): string
+    {
+        $header = [
+            'type' => 'session',
+            'version' => self::VERSION,
+            'id' => $this->id,
+            'timestamp' => SessionEntries::iso($this->createdAt),
+            'cwd' => $this->cwd,
+        ];
+
+        // Only on a fork, as pi writes it: a key that is absent and a key that is null read the
+        // same, and pi's own header has no key when there is no parent.
+        if ($this->parentSession !== null) {
+            $header['parentSession'] = $this->parentSession;
+        }
+
+        $lines = self::line($header);
+
+        foreach ($entries as $id => $entry) {
+            // Cast, because PHP turns an array key that looks like an integer into one:
+            // an id is eight hex characters and about one in forty is all digits, so
+            // `"12345678"` comes back out of this loop as `12345678`. See CLAUDE.md.
+            $encoded = SessionEntries::encode($entry['message'], (string) $id, $entry['parent']);
+
+            if ($encoded !== null) {
+                $lines .= self::line($encoded);
+            }
+        }
+
+        return $lines;
+    }
+
+    private function appendLines(string $lines): void
+    {
+        $directory = dirname($this->path);
+
+        if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
+            throw new AgentError("Could not create {$directory}");
+        }
 
         if (file_put_contents($this->path, $lines, FILE_APPEND | LOCK_EX) === false) {
             throw new AgentError("Could not write the session to {$this->path}");

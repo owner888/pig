@@ -24,6 +24,7 @@ use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
 use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
 use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
 use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeForkEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
@@ -40,6 +41,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\BoundaryResult;
 use Pig\CodingAgent\Hooks\Results\ProjectTrustEventResult;
 use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
@@ -991,6 +993,12 @@ final class HookRunner
         return $valid
             ? new BoundaryDispatch($entries, $continue, $preview, true)
             : new BoundaryDispatch([], false, $preview, false);
+    }
+
+    /** Ask whether to fork this conversation. The first refusal stops the rest. */
+    public function emitBeforeFork(SessionBeforeForkEvent $event): ?SessionBeforeForkResult
+    {
+        return $this->ask($event, SessionBeforeForkResult::class, static fn (object $r): bool => $r->cancel);
     }
 
     /** Ask whether to leave this conversation. The first refusal stops the rest. */

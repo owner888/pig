@@ -43,6 +43,7 @@ use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
@@ -53,6 +54,7 @@ use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Session\SessionSwitch;
 use Pig\CodingAgent\Settings;
 use Pig\Test\AssertsThrows;
 use Throwable;
@@ -2251,6 +2253,135 @@ final class AgentSessionTest extends TestCase
 
         $this->assertSame(['resume', $fresh], $seen[1] ?? null, 'and the other door says which it was');
         $this->assertSame(['resume', (string) $other->store()?->path], $shutdowns[1] ?? null);
+    }
+
+    // ---- forking a branch into a file of its own --------------------------------------------
+
+    public function testForkingBeforeAQuestionMovesToANewFileAndHandsTheQuestionBack(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one', 'two'], store: $store);
+        Async::run(static fn () => $session->prompt('first question'));
+        Async::run(static fn () => $session->prompt('second question'));
+        $second = $session->userMessagesForForking()[1]['entryId'];
+
+        $fork = Async::run(static fn (): SessionSwitch => $session->fork($second));
+
+        $this->assertTrue($fork->switched);
+        $this->assertSame($store->path, $fork->previous);
+        $this->assertSame('second question', $fork->editorText);
+
+        // Writing somewhere else now, to a file naming the old one as its parent …
+        $this->assertNotSame($store->path, $session->store()?->path);
+        $this->assertSame($store->path, $session->store()?->parentSession);
+        // … holding the conversation up to before the question that was taken back.
+        $this->assertCount(2, $session->messages());
+        $this->assertCount(2, SessionManager::open((string) $session->store()?->path)->messages());
+        // And the old file still has all four.
+        $this->assertCount(4, SessionManager::open($store->path)->messages());
+    }
+
+    public function testCloningForksAtThePointItselfAndHandsNothingBack(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], store: $store);
+        Async::run(static fn () => $session->prompt('a question'));
+
+        $fork = Async::run(static fn (): SessionSwitch => $session->fork((string) $store->leaf(), 'at'));
+
+        $this->assertTrue($fork->switched);
+        $this->assertNull($fork->editorText);
+        $this->assertSame(2, $fork->messages);
+        $this->assertCount(2, SessionManager::open((string) $session->store()?->path)->messages());
+    }
+
+    public function testForkingBeforeTheFirstQuestionIsAnEmptySessionWithAParent(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], store: $store);
+        Async::run(static fn () => $session->prompt('the opening'));
+        $first = $session->userMessagesForForking()[0]['entryId'];
+
+        $fork = Async::run(static fn (): SessionSwitch => $session->fork($first));
+
+        $this->assertTrue($fork->switched);
+        $this->assertSame('the opening', $fork->editorText);
+        $this->assertSame([], $session->messages());
+        $this->assertSame($store->path, $session->store()?->parentSession);
+        // Nothing answered in it yet, so nothing on disk yet — `append()`'s rule.
+        $this->assertFileDoesNotExist((string) $session->store()?->path);
+    }
+
+    public function testAHookCanRefuseAForkAndIsToldWhichKindItWas(): void
+    {
+        $asked = [];
+        $hooks = $this->hooks([
+            'session_before_fork' => function (mixed $event) use (&$asked): SessionBeforeForkResult {
+                $asked[] = $event->position;
+
+                return new SessionBeforeForkResult(cancel: true);
+            },
+        ]);
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], store: $store, hooks: $hooks);
+        Async::run(static fn () => $session->prompt('a question'));
+        $leaf = (string) $store->leaf();
+
+        $this->assertFalse(Async::run(static fn (): SessionSwitch => $session->fork($leaf, 'at'))->switched);
+        $this->assertSame($store->path, $session->store()?->path, 'still writing where it was');
+        $this->assertSame(['at'], $asked);
+    }
+
+    public function testTheHooksHearAForkAsAForkOnceItHasHappened(): void
+    {
+        $seen = [];
+        $hooks = $this->hooks([
+            'session_shutdown' => function (mixed $event) use (&$seen): null {
+                $seen[] = ['shutdown', $event->reason, $event->targetSessionFile];
+
+                return null;
+            },
+            'session_start' => function (mixed $event) use (&$seen): null {
+                $seen[] = ['start', $event->reason, $event->previousSessionFile];
+
+                return null;
+            },
+        ]);
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], store: $store, hooks: $hooks);
+        Async::run(static fn () => $session->prompt('a question'));
+
+        Async::run(static fn (): SessionSwitch => $session->fork((string) $store->leaf(), 'at'));
+
+        $this->assertSame([
+            ['shutdown', 'fork', (string) $session->store()?->path],
+            ['start', 'fork', $store->path],
+        ], $seen);
+    }
+
+    public function testAForkIsRefusedWhereThereIsNothingOnDiskToForkFrom(): void
+    {
+        $unsaved = $this->session(['one']);
+        Async::run(static fn () => $unsaved->prompt('hi'));
+        $this->assertThrows(AgentError::class, static fn () => $unsaved->fork('whatever'));
+
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session([], store: $store);
+        // A question with no answer yet is a session not written anywhere.
+        $session->agent->appendMessage(new UserMessage('not answered'));
+        $this->assertThrows(AgentError::class, static fn () => $session->fork('whatever'));
+    }
+
+    public function testForkingBeforeSomethingNobodySaidIsRefusedByName(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], store: $store);
+        Async::run(static fn () => $session->prompt('a question'));
+
+        // The leaf is the answer, and `before` an answer is not a thing to ask differently.
+        $error = $this->assertThrows(AgentError::class, static fn () => $session->fork((string) $store->leaf()));
+        $this->assertStringContainsString('something you said', $error->getMessage());
+        $this->assertThrows(AgentError::class, static fn () => $session->fork('nope0000', 'at'));
     }
 
     public function testResumingComesBackOnWhatThatConversationWasHadWith(): void

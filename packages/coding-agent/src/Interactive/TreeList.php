@@ -681,7 +681,7 @@ final class TreeList implements Component, InputHandler
      * `/tree` was a dead session. Escapes go too, or a coloured line from a model would paint over
      * the selected row's background.
      */
-    private static function oneLine(string $text): string
+    public static function oneLine(string $text): string
     {
         return trim((string) preg_replace('/[\n\t]+/', ' ', Shell::sanitize($text)));
     }

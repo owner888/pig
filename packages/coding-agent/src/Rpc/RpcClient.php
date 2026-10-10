@@ -493,6 +493,24 @@ final class RpcClient
         return $this->send(['type' => 'switch_session', 'sessionPath' => $sessionPath]) ?? [];
     }
 
+    /** @return array<string, mixed> `{text, cancelled}` — the forked-before message's words */
+    public function fork(string $entryId): array
+    {
+        return $this->send(['type' => 'fork', 'entryId' => $entryId]) ?? [];
+    }
+
+    /** @return array<string, mixed> `{cancelled}` */
+    public function cloneSession(): array
+    {
+        return $this->send(['type' => 'clone']) ?? [];
+    }
+
+    /** @return array<string, mixed> `{messages: [{entryId, text}]}` */
+    public function forkMessages(): array
+    {
+        return $this->send(['type' => 'get_fork_messages']) ?? [];
+    }
+
     /** @return array<string, mixed> `{path}` — `outputPath` on the wire */
     public function export(?string $outputPath = null): array
     {

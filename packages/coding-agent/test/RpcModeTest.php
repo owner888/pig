@@ -1006,6 +1006,51 @@ final class RpcModeTest extends TestCase
         $this->assertCount(3, SessionManager::open($second)->messages());
     }
 
+    public function testForkingFromAMessageMovesToANewFileAndHandsItsWordsBack(): void
+    {
+        $this->start(answers: ['one', 'two'], store: true);
+        $this->send(['type' => 'prompt', 'message' => 'first']);
+        $this->send(['type' => 'prompt', 'message' => 'second']);
+        $first = $this->data(['type' => 'get_state'])['sessionFile'];
+
+        $messages = $this->data(['type' => 'get_fork_messages'])['messages'];
+        $this->assertSame(['first', 'second'], array_column($messages, 'text'));
+
+        $fork = $this->data(['type' => 'fork', 'entryId' => $messages[1]['entryId']]);
+
+        // Upstream's answer: the message's words for the host's prompt, and not cancelled.
+        $this->assertSame(['text' => 'second', 'cancelled' => false], $fork);
+
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertNotSame($first, $state['sessionFile']);
+        // The system message, the first question and its answer — up to before the second.
+        $this->assertSame(3, $state['messageCount']);
+        $this->assertSame($first, SessionManager::open($state['sessionFile'])->parentSession);
+        $this->assertCount(5, SessionManager::open($first)->messages(), 'the original keeps everything');
+    }
+
+    public function testCloningCopiesTheConversationAsItStandsIntoANewFile(): void
+    {
+        $this->start(answers: ['one'], store: true);
+        $this->send(['type' => 'prompt', 'message' => 'first']);
+        $first = $this->data(['type' => 'get_state'])['sessionFile'];
+
+        $this->assertSame(['cancelled' => false], $this->data(['type' => 'clone']));
+
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertNotSame($first, $state['sessionFile']);
+        $this->assertSame(3, $state['messageCount']);
+        $this->assertCount(3, SessionManager::open($state['sessionFile'])->messages());
+    }
+
+    public function testCloningBeforeAnythingWasSaidIsAnErrorAndForkingNothingIsOne(): void
+    {
+        $this->start(answers: [], store: true);
+
+        $this->assertFalse($this->response(['type' => 'clone'])['success']);
+        $this->assertFalse($this->response(['type' => 'fork', 'entryId' => 'nope0000'])['success']);
+    }
+
     public function testSwitchingSessionsRestoresTheOtherConversation(): void
     {
         $this->start(answers: ['one'], store: true);

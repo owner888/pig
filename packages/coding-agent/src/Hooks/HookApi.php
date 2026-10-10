@@ -47,6 +47,7 @@ class HookApi
     public const array EVENTS = [
         'session_start',
         'session_before_switch',
+        'session_before_fork',
         'session_before_compact',
         'session_compact',
         'session_before_tree',
@@ -84,16 +85,6 @@ class HookApi
         'project_trust',
         'resources_discover',
         'agent_before_settle',
-    ];
-
-    /**
-     * Upstream events pig does not fire, and why, so subscribing to one says so.
-     *
-     * `session_before_fork` is about forking a conversation into a second session file.
-     * pig branches inside one file instead — `/tree` — which is `session_before_tree`.
-     */
-    private const array UNPORTED = [
-        'session_before_fork' => 'pig branches inside one session file; use session_before_tree',
     ];
 
     /** How long a command a hook runs may take before it is killed. */
@@ -140,10 +131,6 @@ class HookApi
      */
     public function on(string $event, callable $handler): void
     {
-        if (isset(self::UNPORTED[$event])) {
-            throw new InvalidArgumentException("No event called '{$event}': " . self::UNPORTED[$event]);
-        }
-
         if (!in_array($event, self::EVENTS, true)) {
             throw new InvalidArgumentException(
                 "No event called '{$event}'. There is: " . implode(', ', self::EVENTS),

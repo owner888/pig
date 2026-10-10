@@ -1196,6 +1196,96 @@ final class SessionManagerTest extends TestCase
         $this->assertSame('Normal Title', SessionManager::cleanSessionName('Normal Title'));
     }
 
+    // ---- forking a branch into a file of its own ------------------------------------------------
+
+    public function testAForkHoldsThePathToTheLeafAndNotTheBranchThatWasLeft(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $this->converse($session, 'B — about to be abandoned');
+        $after = $session->branch()[1]['id'];
+        $session->goTo($after);
+        $this->converse($session, 'C — a different direction');
+
+        $fork = $session->fork($session->leaf());
+
+        $this->assertNotSame($session->path, $fork->path);
+        $this->assertSame($session->path, $fork->parentSession);
+        $this->assertStringContainsString('"parentSession":"' . $session->path . '"', (string) file($fork->path)[0]);
+
+        $said = array_map(static fn (mixed $m): string => $m->content[0]->text, SessionManager::open($fork->path)->messages());
+        $this->assertSame(['A', 're: A', 'C — a different direction', 're: C — a different direction'], $said);
+
+        // The original is untouched: both branches are still in it.
+        $this->assertCount(4, $session->branch());
+        $this->assertCount(2, $session->tree()[0]['children'][0]['children']);
+    }
+
+    public function testAForkIsWrittenOnlyOnceTheBranchHasAnAnswerInIt(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $session->append(new UserMessage('just asked'));
+
+        $fork = $session->fork($session->leaf());
+
+        // Nothing answered yet, so no file — the same rule `append()` applies to a new session.
+        $this->assertFileDoesNotExist($fork->path);
+
+        $fork->append($this->answer());
+        $this->assertFileExists($fork->path);
+        $this->assertCount(2, SessionManager::open($fork->path)->messages());
+    }
+
+    public function testAForkReChainsAroundLabelsAndWritesThemAgainAtTheEnd(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $first = $session->branch()[0]['id'];
+        $session->appendLabel($first, 'the start');
+        // The next turn hangs off the label entry, so taking the label out of the path has to
+        // re-parent it — or the fork's second turn names a parent the fork does not have.
+        $this->converse($session, 'B');
+
+        $fork = SessionManager::open($session->fork($session->leaf())->path);
+
+        $this->assertSame('the start', $fork->labelOf($first));
+        $this->assertCount(4, $fork->messages());
+        $this->assertCount(4, $fork->branch());
+
+        // Every entry's parent is in the file: a label's children were re-chained past it.
+        foreach ($fork->tree() as $root) {
+            $this->assertSame($first, $root['id']);
+        }
+
+        $this->assertCount(1, $fork->tree());
+    }
+
+    public function testAForkedCompactionStillNamesWhereItsKeptPartStarts(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $this->converse($session, 'B');
+        $kept = $session->branch()[2]['id'];
+        $session->appendLabel($kept, 'kept from here');
+        $session->append(new CompactionSummary('A happened', [], [], 0, $kept));
+        $this->converse($session, 'C');
+
+        $fork = SessionManager::open($session->fork($session->leaf())->path);
+        $messages = $fork->messages();
+
+        $this->assertInstanceOf(CompactionSummary::class, $messages[0]);
+        $this->assertSame($kept, $messages[0]->firstKeptEntryId);
+        $this->assertCount(5, $messages);
+    }
+
+    public function testAForkOfAPointThisFileHasNotGotIsRefused(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+
+        $this->assertThrows(AgentError::class, static fn () => $session->fork('nope0000'));
+    }
+
     private function cwd(): string
     {
         return $this->home . '/project';

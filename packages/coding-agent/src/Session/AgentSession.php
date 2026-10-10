@@ -59,6 +59,7 @@ use Pig\CodingAgent\Hooks\Events\MessageEndEvent as HookMessageEnd;
 use Pig\CodingAgent\Hooks\Events\MessageStartEvent as HookMessageStart;
 use Pig\CodingAgent\Hooks\Events\MessageUpdateEvent as HookMessageUpdate;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeForkEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
@@ -2100,6 +2101,113 @@ final class AgentSession
         $said = array_filter($opened->messages(), static fn (mixed $message): bool => !$message instanceof SystemMessage);
 
         return new SessionSwitch(switched: true, previous: $previous, messages: count($said));
+    }
+
+    /**
+     * Fork a branch of this conversation into a session file of its own — upstream's `fork()`.
+     *
+     * `/tree` moves inside one file; this is for when one branch should become a conversation
+     * of its own, resumable and listed on its own. The new file holds the path from the root to
+     * the chosen point and names this file as its parent (`SessionManager::fork()`), and the
+     * conversation carries on there: the hook is asked, the turn in flight and the queue end here
+     * as they do for `switchTo()`, and the hooks hear `session_shutdown` then `session_start` with
+     * the reason `fork`.
+     *
+     * **`before` goes back to before the chosen point**, which has to be something somebody said:
+     * the message leaves the conversation and its words come back in `SessionSwitch::$editorText`
+     * to be asked differently — `goTo()`'s rule, in a new file. A user message that opened the
+     * conversation forks to an empty session, as upstream's does. **`at` ends the fork on the
+     * point itself**, which is what `/clone` is: this conversation as it stands, in a second
+     * file.
+     *
+     * Not for a session that is not being written down: upstream forks one in memory, and pig
+     * has no second in-memory conversation to put it in — `--no-save` means there is nothing to
+     * fork from, as there is nowhere to go back to.
+     *
+     * @param 'before'|'at' $position
+     * @throws AgentError when there is no session on disk, nothing has been answered yet, there is
+     *                    no such point, or `before` was asked of a point nobody said
+     */
+    public function fork(string $entryId, string $position = 'before'): SessionSwitch
+    {
+        if ($this->store === null) {
+            throw new AgentError('This session is not being saved, so there is nothing to fork.');
+        }
+
+        if (!$this->store->isPersisted()) {
+            // Upstream's sentence: a file that does not exist yet has no path to copy.
+            throw new AgentError('This session has not been saved yet. Send a message before cloning or forking it.');
+        }
+
+        $previous = $this->store->path;
+
+        $refusal = $this->hooks?->emitBeforeFork(new SessionBeforeForkEvent($entryId, $position));
+
+        if ($refusal !== null && $refusal->cancel) {
+            return new SessionSwitch(switched: false, previous: $previous);
+        }
+
+        $entry = $this->store->entry($entryId);
+
+        if ($entry === null) {
+            throw new AgentError('No such point in this conversation.');
+        }
+
+        $editorText = null;
+
+        if ($position === 'at') {
+            $leaf = $entryId;
+        } else {
+            if (!$entry['message'] instanceof UserMessage) {
+                throw new AgentError('Only something you said can be forked from.');
+            }
+
+            // A root's parent is written as its own id in a pi file.
+            $leaf = $entry['parent'] === $entryId ? null : $entry['parent'];
+            $editorText = self::textOf($entry['message']);
+        }
+
+        // The file is made before anything is thrown away, as `startNew()` makes its: a path
+        // that cannot be written costs this conversation nothing.
+        $forked = $leaf === null
+            ? SessionManager::create($this->cwd, parentSession: $previous)
+            : $this->store->fork($leaf);
+
+        $this->abort()->await();
+        $this->clearQueue();
+        $this->hooks?->emit(new SessionShutdownEvent('fork', $forked->path));
+
+        $this->writeTo($forked);
+        $this->restore($forked->messages());
+        $this->restoreSettings();
+        $this->hooks?->emit(new SessionStartEvent('fork', $previous));
+        $this->tellSwitched('fork', $previous);
+
+        $said = array_filter($forked->messages(), static fn (mixed $message): bool => !$message instanceof SystemMessage);
+
+        return new SessionSwitch(switched: true, previous: $previous, messages: count($said), editorText: $editorText);
+    }
+
+    /**
+     * Every message somebody typed, on any branch, in file order, with its text — upstream's
+     * `getUserMessagesForForking()`, which is what `/fork`'s list is made of. Every branch, not
+     * the one being talked on: a fork is how an abandoned branch becomes a conversation again.
+     *
+     * @return list<array{entryId: string, text: string}>
+     */
+    public function userMessagesForForking(): array
+    {
+        $found = [];
+
+        foreach ($this->store?->everyUserMessage() ?? [] as $point) {
+            $text = self::textOf($point['message']);
+
+            if ($text !== '') {
+                $found[] = ['entryId' => $point['id'], 'text' => $text];
+            }
+        }
+
+        return $found;
     }
 
     /**

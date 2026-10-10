@@ -2127,6 +2127,8 @@ final class InteractiveMode
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
+        ['fork', 'Fork the conversation into a new session file from one of your messages'],
+        ['clone', 'Copy this conversation into a new session file and carry on there'],
         ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
         ['name', 'Show or set the session name'],
         ['diff', 'Show git working tree changes (/diff [--staged])'],
@@ -2221,6 +2223,8 @@ final class InteractiveMode
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
+            'fork' => $this->showForkPoints(),
+            'clone' => $this->cloneSession(),
             'label' => $this->label(trim(substr($text, strlen($name) + 1))),
             'name' => $this->handleNameCommand(trim(substr($text, strlen($name) + 1))),
             'diff' => $this->handleDiffCommand(trim(substr($text, strlen($name) + 1))),
@@ -3909,6 +3913,112 @@ final class InteractiveMode
         }
 
         $this->sayToolProblems($this->customTools?->notify('tree') ?? []);
+    }
+
+    /**
+     * `/fork` — pick one of your own messages, and the conversation up to before it becomes a
+     * session file of its own, with that message back in the prompt to be asked differently.
+     *
+     * Upstream's `showUserMessageSelector()`, as a `SelectList` over every message somebody typed,
+     * on any branch, newest last and the cursor on the newest — which is the one a fork is
+     * nearly always made from.
+     */
+    private function showForkPoints(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        $messages = $this->session->userMessagesForForking();
+
+        if ($messages === []) {
+            $this->say('No messages to fork from');
+
+            return;
+        }
+
+        $items = [];
+
+        foreach ($messages as $index => $message) {
+            // `TreeList`'s one-line rule, because this is the same text in a list of the same kind:
+            // sanitised, or one byte that is not UTF-8 ends the session, and a newline would be two rows.
+            $items[] = new SelectItem((string) $index, TreeList::oneLine($message['text']));
+        }
+
+        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
+        $picker->setSelectedIndex(count($items) - 1);
+        $picker->setSelectHandler(function (SelectItem $item) use ($messages): void {
+            $this->closePicker();
+            Async::spawn(fn () => $this->forkAt($messages[(int) $item->value]['entryId'], 'before'));
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Fork from — enter to choose, esc to cancel'), 1, 0));
+        $this->overlay->addChild($picker);
+        $this->overlay->addChild(new Spacer(1));
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    /** `/clone` — this conversation as it stands, in a session file of its own. */
+    private function cloneSession(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        $leaf = $this->session->store()?->leaf();
+
+        if ($leaf === null) {
+            $this->say('Nothing to clone yet');
+
+            return;
+        }
+
+        // In a fiber: `fork()` awaits the abort, which suspends. Same reason `send()` spawns.
+        Async::spawn(fn () => $this->forkAt($leaf, 'at'));
+    }
+
+    /**
+     * The fork itself, for both doors: the hook, the new file and the restored conversation are
+     * `AgentSession::fork()`'s, and what is left here is the screen.
+     *
+     * @param 'before'|'at' $position
+     */
+    private function forkAt(string $entryId, string $position): void
+    {
+        try {
+            $fork = $this->session->fork($entryId, $position);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        if (!$fork->switched) {
+            $this->say('A hook stopped that.');
+
+            return;
+        }
+
+        $this->chat->clear();
+        $this->pending->clear();
+        $this->replay();
+        $this->footer->invalidate();
+        $this->say($position === 'at' ? 'Cloned to new session' : 'Forked to new session');
+
+        // The message that was forked before, back in the prompt — upstream's
+        // `editor.setText(result.selectedText ?? "")`, which also clears it for a clone.
+        $this->editor->setText($fork->editorText ?? '');
+
+        $this->sayToolProblems($this->customTools?->notify('fork', $fork->previous) ?? []);
     }
 
     /**

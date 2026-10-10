@@ -7,13 +7,13 @@ namespace Pig\CodingAgent\CustomTools;
 /**
  * Something happened to the session that a tool holding state should know about.
  *
- * Four reasons rather than upstream's five: `branch` is about forking a conversation into
- * a second session file, which pig does not do — `/tree` branches inside one file and
- * arrives here as `tree`.
+ * Upstream's five reasons, with its `branch` under the name upstream's session events use for
+ * the same thing now — `fork`, a conversation forked into a second session file — and one of
+ * pig's own, `tree`, for `/tree` moving inside one file.
  */
 final readonly class CustomToolSessionEvent
 {
-    /** @param 'start'|'switch'|'tree'|'shutdown' $reason */
+    /** @param 'start'|'switch'|'fork'|'tree'|'shutdown' $reason */
     public function __construct(
         public string $reason,
         public ?string $previousSessionFile = null,
