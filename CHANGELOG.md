@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.4] - 2026-10-11
+
+### Fixed
+
+- **System trash/recycle bin integration for session deletion**: Replaced direct hard `unlink()` in Web session deletion (`/api/sessions/delete`) with OS-native trash integration (`SessionList::deleteSessionFile()`). Enhanced trash handling across macOS (`osascript` Finder delete / `trash` CLI), Linux (`gio trash` / `trash-put`), and Windows (PowerShell RecycleBin), safely moving deleted sessions into the operating system's native Recycle Bin with clean fallback to `unlink()`. Corrected dialog prompt text to accurately indicate system trash rather than a nonexistent subfolder.
+
 ## [0.6.3] - 2026-10-11
 
 ### Changed

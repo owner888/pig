@@ -568,12 +568,10 @@ final class HttpServer
                 return;
             }
 
-            set_error_handler(static fn () => true);
-            $ok = unlink($safePath);
-            restore_error_handler();
+            $err = \Pig\CodingAgent\Cli\SessionList::deleteSessionFile($safePath);
 
-            if (!$ok) {
-                $conn->sendResponse(500, $headers, json_encode(['success' => false, 'error' => 'Failed to delete session file']));
+            if ($err !== null) {
+                $conn->sendResponse(500, $headers, json_encode(['success' => false, 'error' => $err]));
                 return;
             }
 

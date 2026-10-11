@@ -126,6 +126,21 @@ final class SessionPickerTest extends TestCase
         rmdir($dir);
     }
 
+    public function testDeleteSessionFileUsesSystemTrashAndRemovesFile(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-trash-test-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+        $file = "{$dir}/test.jsonl";
+        file_put_contents($file, 'test');
+        $this->assertFileExists($file);
+
+        $err = SessionList::deleteSessionFile($file);
+        $this->assertNull($err);
+        $this->assertFileDoesNotExist($file);
+
+        rmdir($dir);
+    }
+
     public function testCtrlPShowsEachSessionsPath(): void
     {
         $list = new SessionList([self::session('/tmp/where/a.jsonl', 'first')]);

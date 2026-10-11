@@ -176,34 +176,19 @@ final class SessionList implements Component, Focusable, InputHandler
     }
 
     /**
-     * Upstream's `deleteSessionFile()`: the `trash` command first, when there is one, so a slip
-     * of the key can be undone; `unlink()` when that is not there or did not take the file.
+     * Upstream's `deleteSessionFile()`: moves the file to the system trash/recycle bin using OS-native
+     * commands first, so a slip of the key can be undone; `unlink()` when that is not available.
      *
      * @return string|null why the file is still there, or null when it is gone
      */
     public static function deleteSessionFile(string $path): ?string
     {
-        $trashError = null;
-        $trash = self::onPath('trash');
+        if (!file_exists($path)) {
+            return null;
+        }
 
-        if ($trash !== null) {
-            $process = proc_open(
-                [$trash, ...(str_starts_with($path, '-') ? ['--'] : []), $path],
-                [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['pipe', 'w']],
-                $pipes,
-            );
-
-            if (is_resource($process)) {
-                $stderr = trim((string) stream_get_contents($pipes[2]));
-                fclose($pipes[2]);
-                $status = proc_close($process);
-
-                if ($status === 0 || !file_exists($path)) {
-                    return null;
-                }
-
-                $trashError = $stderr === '' ? "trash: exit {$status}" : 'trash: ' . mb_substr(explode("\n", $stderr)[0], 0, 200);
-            }
+        if (self::moveToSystemTrash($path)) {
+            return null;
         }
 
         $error = null;
@@ -223,9 +208,73 @@ final class SessionList implements Component, Focusable, InputHandler
             return null;
         }
 
-        $error ??= 'could not remove the file';
+        return $error ?? 'could not remove the file';
+    }
 
-        return $trashError === null ? $error : "{$error} ({$trashError})";
+    /**
+     * Moves a file to the system trash/recycle bin using OS-native commands.
+     */
+    public static function moveToSystemTrash(string $path): bool
+    {
+        $realPath = realpath($path) ?: $path;
+
+        // 1. Dedicated `trash` CLI if available on PATH (macOS/Linux/Windows)
+        $trash = self::onPath('trash');
+        if ($trash !== null && self::runTrashCommand([$trash, ...(str_starts_with($path, '-') ? ['--'] : []), $path])) {
+            if (!file_exists($path)) {
+                return true;
+            }
+        }
+
+        // 2. macOS native AppleScript (Finder delete moves directly to system .Trash)
+        if (PHP_OS_FAMILY === 'Darwin' && self::onPath('osascript') !== null) {
+            $script = sprintf('tell application "Finder" to delete POSIX file "%s"', addcslashes($realPath, "\"\\"));
+            if (self::runTrashCommand(['osascript', '-e', $script]) && !file_exists($path)) {
+                return true;
+            }
+        }
+
+        // 3. Linux native `gio trash` or `trash-put`
+        if (PHP_OS_FAMILY === 'Linux') {
+            $gio = self::onPath('gio');
+            if ($gio !== null && self::runTrashCommand([$gio, 'trash', $path]) && !file_exists($path)) {
+                return true;
+            }
+
+            $trashPut = self::onPath('trash-put');
+            if ($trashPut !== null && self::runTrashCommand([$trashPut, $path]) && !file_exists($path)) {
+                return true;
+            }
+        }
+
+        // 4. Windows native PowerShell RecycleBin
+        if (PHP_OS_FAMILY === 'Windows') {
+            $ps = self::onPath('powershell.exe') ?? self::onPath('pwsh.exe');
+            if ($ps !== null) {
+                $winPath = str_replace("'", "''", $path);
+                $cmd = "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('{$winPath}', 'OnlyErrorDialogs', 'SendToRecycleBin')";
+                if (self::runTrashCommand([$ps, '-NoProfile', '-NonInteractive', '-Command', $cmd]) && !file_exists($path)) {
+                    return true;
+                }
+            }
+        }
+
+        return !file_exists($path);
+    }
+
+    private static function runTrashCommand(array $cmd): bool
+    {
+        $proc = @proc_open(
+            $cmd,
+            [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+            $pipes,
+        );
+
+        if (!is_resource($proc)) {
+            return false;
+        }
+
+        return proc_close($proc) === 0;
     }
 
     /** The executable called $name on `PATH`, or null — also how `/share` looks for `gh`. */
