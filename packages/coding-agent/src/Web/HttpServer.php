@@ -420,7 +420,17 @@ final class HttpServer
             return;
         }
 
-        // 1.2 Modular static assets (/assets/..., /css/..., /js/...) with path traversal guard
+        // 1.2 Theme colours, written from the TUI theme files
+        if ($path === '/theme.css') {
+            $conn->sendResponse(200, [
+                'Content-Type' => 'text/css; charset=utf-8',
+                'Cache-Control' => 'no-cache',
+            ], ThemeStylesheet::css());
+
+            return;
+        }
+
+        // 1.3 Modular static assets (/assets/..., /css/..., /js/...) with path traversal guard
         if (str_starts_with($path, '/assets/') || str_starts_with($path, '/css/') || str_starts_with($path, '/js/')) {
             $rel = str_starts_with($path, '/assets/') ? substr($path, 8) : ltrim($path, '/');
             $assetBase = realpath(__DIR__ . '/assets') ?: (__DIR__ . '/assets');
@@ -455,6 +465,13 @@ final class HttpServer
         // 2. Available models list — a fact about this machine's keys, not about any session.
         if ($path === '/api/models') {
             $conn->sendResponse(200, $json, json_encode($this->getModelsPayload()));
+
+            return;
+        }
+
+        // 2.1 The themes the page can show, for its theme picker.
+        if ($path === '/api/themes') {
+            $conn->sendResponse(200, $json, json_encode(ThemeStylesheet::payload()));
 
             return;
         }

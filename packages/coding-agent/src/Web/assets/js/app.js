@@ -4,7 +4,7 @@
 
 import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales } from "./i18n.js";
-import { THEMES, currentTheme, applyTheme, openThemeModal, initTheme } from "./theme.js";
+import { openThemeModal, initTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
 import { renderMarkdown, renderDiff, renderDiffFromUnified, copyCode } from "./markdown.js";
 import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateHook } from "./accounts.js";
@@ -1056,7 +1056,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
           const data = await active.rpc({ type: "bug", hint, includeTranscript });
           const block = document.createElement("div");
           block.className = "msg-block msg-assistant prose";
-          block.innerHTML = `<p>\u2713 Bug report written to <code>${escapeHtml(data.path)}</code>.</p><p><a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" style="color:#38bdf8;">Open a GitHub issue with it prefilled \u2197</a></p>`;
+          block.innerHTML = `<p>\u2713 Bug report written to <code>${escapeHtml(data.path)}</code>.</p><p><a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" style="color:var(--color-primary);">Open a GitHub issue with it prefilled \u2197</a></p>`;
           chatScroll.appendChild(block);
           if (navigator.clipboard) navigator.clipboard.writeText(data.report).catch(() => {});
         } catch (err) { appendErrorMessage(err.message); }
@@ -2076,9 +2076,9 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         title: t("rename_session"),
         bodyHtml: `
           <div style="display:flex; flex-direction:column; gap:10px;">
-            <label style="color:var(--text-muted); font-size:12px;">${escapeHtml(t("rename_label"))}</label>
+            <label style="color:var(--color-text-secondary); font-size:12px;">${escapeHtml(t("rename_label"))}</label>
             <input class="modal-input" id="rename-session-input" type="text" value="${escapeHtml(currentCleanName)}" placeholder="${escapeHtml(t("rename_placeholder"))}" autocomplete="off">
-            <div style="color:var(--text-dim); font-size:11px; font-family:var(--font-mono); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(session.filename)}">
+            <div style="color:var(--color-dim); font-size:11px; font-family:var(--font-mono); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(session.filename)}">
               ${escapeHtml(t("file_label"))}${escapeHtml(session.filename)}
             </div>
           </div>
@@ -2136,10 +2136,10 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         bodyHtml: `
           <div style="line-height:1.6; font-size:13px;">
             ${escapeHtml(t("delete_confirm"))}
-            <div style="margin:12px 0; padding:10px 12px; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:6px; font-weight:600; color:var(--text); word-break:break-word;">
+            <div style="margin:12px 0; padding:10px 12px; background:var(--color-hover); border:1px solid var(--color-border); border-radius:6px; font-weight:600; color:var(--color-text-primary); word-break:break-word;">
               ${escapeHtml(displayName)}
             </div>
-            <div style="color:#f87171; font-size:12px;">⚠️ ${escapeHtml(t("delete_hint"))}</div>
+            <div style="color:var(--color-error); font-size:12px;">⚠️ ${escapeHtml(t("delete_hint"))}</div>
           </div>
         `,
         confirmText: t("delete"),

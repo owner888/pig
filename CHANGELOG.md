@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.7] - 2026-10-11
+
+### New Features
+
+- **TUI-synchronized theme engine for Web UI (`ThemeStylesheet`, `/theme.css`, `/api/themes`)**:
+  - Web UI now sources all themes directly from the TUI's theme files (`packages/coding-agent/src/Theme/*.json`), dynamically generating `/theme.css` with semantic CSS variables (`--color-*`) per theme and serving dynamic theme lists via `/api/themes`.
+  - Replaced hard-coded color definitions across Web components (terminal palettes, modal dialogs, input fields, tool cards, language settings, and node workbench) with dynamic theme variables.
+  - Implemented `HtmlExport::deriveExportColors()` to automatically compute page, card, and info backgrounds from base user message colors for themes without explicit export blocks.
+
 ## [0.6.6] - 2026-10-11
 
 ### Fixed

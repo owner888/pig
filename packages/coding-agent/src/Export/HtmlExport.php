@@ -450,6 +450,83 @@ final class HtmlExport
     }
 
     /**
+     * Upstream's `deriveExportColors()`: the page, card and info backgrounds of a theme whose JSON has
+     * no `export` section, derived from a base colour (upstream passes `userMessageBg`). The web UI's
+     * `ThemeStylesheet` takes its backgrounds from here for such themes.
+     *
+     * @return array{pageBg: string, cardBg: string, infoBg: string}
+     */
+    public static function deriveExportColors(string $baseColor): array
+    {
+        $parsed = self::parseColor($baseColor);
+        if ($parsed === null) {
+            return [
+                'pageBg' => 'rgb(24, 24, 30)',
+                'cardBg' => 'rgb(30, 30, 36)',
+                'infoBg' => 'rgb(60, 55, 40)',
+            ];
+        }
+
+        $luminance = self::getLuminance($parsed['r'], $parsed['g'], $parsed['b']);
+        $isLight = $luminance > 0.5;
+
+        if ($isLight) {
+            return [
+                'pageBg' => self::adjustBrightness($baseColor, 0.96),
+                'cardBg' => $baseColor,
+                'infoBg' => 'rgb(' . min(255, $parsed['r'] + 10) . ', ' . min(255, $parsed['g'] + 5) . ', ' . max(0, $parsed['b'] - 20) . ')',
+            ];
+        }
+
+        return [
+            'pageBg' => self::adjustBrightness($baseColor, 0.7),
+            'cardBg' => self::adjustBrightness($baseColor, 0.85),
+            'infoBg' => 'rgb(' . min(255, $parsed['r'] + 20) . ', ' . min(255, $parsed['g'] + 15) . ', ' . $parsed['b'] . ')',
+        ];
+    }
+
+    /**
+     * Upstream's `parseColor()`: `#RRGGBB` or `rgb(r, g, b)`, null for anything else.
+     *
+     * @return array{r: int, g: int, b: int}|null
+     */
+    private static function parseColor(string $color): ?array
+    {
+        if (preg_match('/^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/', $color, $hex) === 1) {
+            return ['r' => (int) hexdec($hex[1]), 'g' => (int) hexdec($hex[2]), 'b' => (int) hexdec($hex[3])];
+        }
+        if (preg_match('/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/', $color, $rgb) === 1) {
+            return ['r' => (int) $rgb[1], 'g' => (int) $rgb[2], 'b' => (int) $rgb[3]];
+        }
+
+        return null;
+    }
+
+    /** Upstream's `getLuminance()`: relative luminance, 0-1, higher = lighter. */
+    private static function getLuminance(int $r, int $g, int $b): float
+    {
+        $toLinear = static function (int $c): float {
+            $s = $c / 255;
+
+            return $s <= 0.03928 ? $s / 12.92 : (($s + 0.055) / 1.055) ** 2.4;
+        };
+
+        return 0.2126 * $toLinear($r) + 0.7152 * $toLinear($g) + 0.0722 * $toLinear($b);
+    }
+
+    /** Upstream's `adjustBrightness()`: factor > 1 lightens, < 1 darkens. */
+    private static function adjustBrightness(string $color, float $factor): string
+    {
+        $parsed = self::parseColor($color);
+        if ($parsed === null) {
+            return $color;
+        }
+        $adjust = static fn (int $c): int => (int) min(255, max(0, round($c * $factor)));
+
+        return 'rgb(' . $adjust($parsed['r']) . ', ' . $adjust($parsed['g']) . ', ' . $adjust($parsed['b']) . ')';
+    }
+
+    /**
      * The highlighter's class names, and which theme colour each one is.
      *
      * `Highlight` paints `syntaxOperator` and `syntaxPunctuation` as plain text — it has no

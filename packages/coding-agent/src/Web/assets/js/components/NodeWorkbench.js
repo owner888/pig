@@ -3,36 +3,7 @@ import { escapeHtml, openModal } from "../utils.js";
 import { t } from "../i18n.js";
 import { Terminal } from "../vendor/xterm.mjs";
 import { FitAddon } from "../vendor/addon-fit.mjs";
-
-/** Build xterm color scheme for node terminal */
-function getTermTheme() {
-  const theme = document.documentElement.getAttribute("data-theme") || "dark";
-  if (theme === "light") {
-    return {
-      background: "#ffffff",
-      foreground: "#1e293b",
-      cursor: "#0284c7",
-      cursorAccent: "#ffffff",
-      selectionBackground: "rgba(2, 132, 199, 0.3)",
-    };
-  }
-  if (theme === "labra") {
-    return {
-      background: "#121714",
-      foreground: "#e2e6e3",
-      cursor: "#ff66cc",
-      cursorAccent: "#121714",
-      selectionBackground: "rgba(255, 102, 204, 0.35)",
-    };
-  }
-  return {
-    background: "#070a12",
-    foreground: "#e2e8f0",
-    cursor: "#38bdf8",
-    cursorAccent: "#070a12",
-    selectionBackground: "rgba(56, 189, 248, 0.3)",
-  };
-}
+import { terminalTheme } from "../theme.js";
 
 /**
  * NodeWorkbench Component
@@ -459,7 +430,7 @@ export class NodeWorkbench {
     this.terminalInstancesEl.appendChild(container);
 
     const term = new Terminal({
-      theme: getTermTheme(),
+      theme: terminalTheme(),
       fontFamily: '"SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
       fontSize: 13,
       cursorBlink: true,
@@ -570,7 +541,7 @@ export class NodeWorkbench {
         <tr class="node-sftp-row" data-name="${escapeHtml(item.name)}" data-is-dir="${isDir ? "1" : "0"}">
           <td style="text-align:center;">${icon}</td>
           <td class="node-sftp-name ${isDir ? "dir" : "file"}">${escapeHtml(item.name)}</td>
-          <td style="text-align:right; color:var(--text-dim);">${sizeStr}</td>
+          <td style="text-align:right; color:var(--color-dim);">${sizeStr}</td>
         </tr>
       `;
     }
@@ -617,7 +588,7 @@ export class NodeWorkbench {
           <button class="modal-close-btn" id="sftp-edit-close">✕</button>
         </div>
         <div style="padding:14px;">
-          <textarea class="node-editor-textarea" style="width:100%; height:380px; font-family:var(--font-mono); font-size:12.5px; background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; resize:none;" spellcheck="false">${escapeHtml(text)}</textarea>
+          <textarea class="node-editor-textarea" style="width:100%; height:380px; font-family:var(--font-mono); font-size:12.5px; background:var(--color-background); border:1px solid var(--color-border); color:var(--color-text-primary); padding:10px; border-radius:6px; resize:none;" spellcheck="false">${escapeHtml(text)}</textarea>
         </div>
         <div class="modal-footer" style="padding:10px 14px; display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary" id="sftp-edit-cancel">取消</button>
@@ -654,8 +625,8 @@ export class NodeWorkbench {
           <button class="modal-close-btn" id="fp-close">✕</button>
         </div>
         <div style="padding:16px; font-size:13px; line-height:1.6;">
-          <p style="color:var(--text-muted); margin-bottom:12px;">检测到远程服务器的主机密钥指纹尚未加入信任列表，请核对是否可信：</p>
-          <div style="font-family:var(--font-mono); font-size:12px; background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.25); color:#38bdf8; padding:8px 12px; border-radius:6px; word-break:break-all;">${escapeHtml(fingerprint)}</div>
+          <p style="color:var(--color-text-secondary); margin-bottom:12px;">检测到远程服务器的主机密钥指纹尚未加入信任列表，请核对是否可信：</p>
+          <div style="font-family:var(--font-mono); font-size:12px; background:color-mix(in srgb, var(--color-primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); color:var(--color-primary); padding:8px 12px; border-radius:6px; word-break:break-all;">${escapeHtml(fingerprint)}</div>
         </div>
         <div class="modal-footer" style="padding:12px 16px; display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary" id="fp-cancel">取消</button>
@@ -693,31 +664,31 @@ export class NodeWorkbench {
         <div style="padding:16px; display:flex; flex-direction:column; gap:12px; font-size:13px;">
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">名称 / Name</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">名称 / Name</label>
               <input type="text" id="f-name" class="node-input" value="${escapeHtml(node?.name || "")}" placeholder="生产服务器">
             </div>
             <div style="width:130px;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">分组 / Group</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">分组 / Group</label>
               <input type="text" id="f-group" class="node-input" value="${escapeHtml(node?.group || "Default")}" placeholder="Default">
             </div>
           </div>
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">主机地址 / Host</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">主机地址 / Host</label>
               <input type="text" id="f-host" class="node-input" value="${escapeHtml(node?.host || "")}" placeholder="192.168.1.100">
             </div>
             <div style="width:90px;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">端口 / Port</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">端口 / Port</label>
               <input type="number" id="f-port" class="node-input" value="${node?.port || 22}">
             </div>
           </div>
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">用户名 / Username</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">用户名 / Username</label>
               <input type="text" id="f-user" class="node-input" value="${escapeHtml(node?.username || "root")}">
             </div>
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--text-muted);">认证方式 / Auth</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">认证方式 / Auth</label>
               <select id="f-auth" class="node-input">
                 <option value="key" ${node?.auth === "key" ? "selected" : ""}>私钥 (Private Key)</option>
                 <option value="password" ${node?.auth === "password" ? "selected" : ""}>密码 (Password)</option>
@@ -726,15 +697,15 @@ export class NodeWorkbench {
             </div>
           </div>
           <div id="f-key-row" style="display:${node?.auth === "password" || node?.auth === "agent" ? "none" : "block"};">
-            <label style="display:block; margin-bottom:4px; color:var(--text-muted);">私钥路径 / Key Path</label>
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">私钥路径 / Key Path</label>
             <input type="text" id="f-keypath" class="node-input" value="${escapeHtml(node?.keyPath || "~/.ssh/id_ed25519")}" placeholder="~/.ssh/id_ed25519">
           </div>
           <div id="f-secret-row">
-            <label style="display:block; margin-bottom:4px; color:var(--text-muted);" id="f-secret-label">${node?.auth === "password" ? "SSH 密码 / Password" : "密钥口令 / Passphrase (可选)"}</label>
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);" id="f-secret-label">${node?.auth === "password" ? "SSH 密码 / Password" : "密钥口令 / Passphrase (可选)"}</label>
             <input type="password" id="f-secret" class="node-input" placeholder="${isEdit ? "（保持不变请留空）" : ""}">
           </div>
           <div>
-            <label style="display:block; margin-bottom:4px; color:var(--text-muted);">默认远端目录 / Default Directory</label>
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">默认远端目录 / Default Directory</label>
             <input type="text" id="f-dir" class="node-input" value="${escapeHtml(node?.defaultDir || "/")}">
           </div>
         </div>

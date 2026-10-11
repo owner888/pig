@@ -631,6 +631,31 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testThemeEndpointsServeCssAndThemeList(): void
+    {
+        $port = 28103;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port): void {
+            $server->start();
+            $http = new HttpClient();
+
+            $css = $http->send(new Request('GET', "http://127.0.0.1:{$port}/theme.css"));
+            $this->assertSame(200, $css->status);
+            $this->assertSame('text/css; charset=utf-8', $css->headers['content-type'] ?? null);
+            $this->assertStringContainsString(':root[data-theme="dark"]', $css->body->all());
+
+            $themes = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/themes"));
+            $this->assertSame(200, $themes->status);
+            $this->assertSame('application/json', $themes->headers['content-type'] ?? null);
+            $list = json_decode($themes->body->all(), true);
+            $this->assertSame('dark', $list['default'] ?? null);
+            $this->assertNotEmpty($list['themes'] ?? []);
+
+            $server->stop();
+        });
+    }
+
     /**
      * Every JS module the page loads must parse. A stray brace from a botched edit shipped once
      * and left the whole UI stuck on "Loading session…" — nothing in the PHP suite could see it,

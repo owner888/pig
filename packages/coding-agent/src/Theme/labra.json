@@ -74,5 +74,9 @@
 		"thinkingXhigh": "accent",
 		"thinkingMax": "#ee585d",
 		"bashMode": "green"
+	},
+	"export": {
+		"pageBg": "bg",
+		"cardBg": "#070c07"
 	}
 }

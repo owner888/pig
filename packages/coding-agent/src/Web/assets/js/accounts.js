@@ -33,9 +33,9 @@ export async function openAccounts() {
         </span>
       </div>
       <div class="modal-body">
-        <div id="accounts-list"><span style="color:var(--text-dim)">${escapeHtml(t("loading_session"))}</span></div>
+        <div id="accounts-list"><span style="color:var(--color-dim)">${escapeHtml(t("loading_session"))}</span></div>
         <div class="modal-section">${escapeHtml(t("quota_active"))}</div>
-        <div id="accounts-usage"><span style="color:var(--text-dim)">...</span></div>
+        <div id="accounts-usage"><span style="color:var(--color-dim)">...</span></div>
       </div>
     </div>`;
   document.body.appendChild(accountsModal);
@@ -62,11 +62,11 @@ export function renderAccounts(d) {
   if (!list) return;
   list.innerHTML = "";
   if (!d.ok) {
-    list.innerHTML = `<span style="color:var(--error)">${escapeHtml(d.error || "Could not read accounts")}</span>`;
+    list.innerHTML = `<span style="color:var(--color-error)">${escapeHtml(d.error || "Could not read accounts")}</span>`;
     return;
   }
   if (!d.accounts || d.accounts.length === 0) {
-    list.innerHTML = `<span style="color:var(--text-dim)">${t("no_accounts")}</span>`;
+    list.innerHTML = `<span style="color:var(--color-dim)">${t("no_accounts")}</span>`;
     return;
   }
   for (const a of d.accounts) {
@@ -88,7 +88,7 @@ export function renderAccounts(d) {
   }
   for (const p of d.problems || []) {
     const line = document.createElement("div");
-    line.style.cssText = "color:var(--error); font-size:11px; margin-top:6px;";
+    line.style.cssText = "color:var(--color-error); font-size:11px; margin-top:6px;";
     line.textContent = p;
     list.appendChild(line);
   }
@@ -161,25 +161,25 @@ export function resetLabel(iso) {
 export async function loadUsage() {
   const box = document.getElementById("accounts-usage");
   if (!box) return;
-  box.innerHTML = `<span style="color:var(--text-dim)">${escapeHtml(__t("quota_fetching"))}</span>`;
+  box.innerHTML = `<span style="color:var(--color-dim)">${escapeHtml(__t("quota_fetching"))}</span>`;
   try {
     const res = await fetch("/api/accounts/usage");
     const d = await res.json();
     if (!document.getElementById("accounts-usage")) return;
     if (!d.ok) {
-      box.innerHTML = `<span style="color:var(--error)">${escapeHtml(d.error || __t("quota_unavailable"))}</span>`;
+      box.innerHTML = `<span style="color:var(--color-error)">${escapeHtml(d.error || __t("quota_unavailable"))}</span>`;
       return;
     }
     const u = d.usage;
     box.innerHTML = "";
     if (u.planLabel) {
       const plan = document.createElement("div");
-      plan.style.cssText = "color:var(--text-muted); margin-bottom:8px;";
+      plan.style.cssText = "color:var(--color-text-secondary); margin-bottom:8px;";
       plan.textContent = u.planLabel;
       box.appendChild(plan);
     }
     if (!u.groups || u.groups.length === 0) {
-      box.innerHTML += `<span style="color:var(--text-dim)">${escapeHtml(u.quotaError || __t("quota_empty_groups"))}</span>`;
+      box.innerHTML += `<span style="color:var(--color-dim)">${escapeHtml(u.quotaError || __t("quota_empty_groups"))}</span>`;
       return;
     }
     for (const g of u.groups) {
@@ -205,6 +205,6 @@ export async function loadUsage() {
       box.appendChild(el);
     }
   } catch (e) {
-    if (box.isConnected) box.innerHTML = `<span style="color:var(--error)">${escapeHtml(__t("unreachable", { error: "network" }))}</span>`;
+    if (box.isConnected) box.innerHTML = `<span style="color:var(--color-error)">${escapeHtml(__t("unreachable", { error: "network" }))}</span>`;
   }
 }

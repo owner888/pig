@@ -561,7 +561,7 @@ import { applyTheme, currentTheme } from "./theme.js";
     function openLanguageModal() {
       const renderModalBody = () => {
         let html = `
-          <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:600;">
+          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
             ${escapeHtml(t("lang_select_label"))}
           </div>
           <div id="lang-list-container" style="display:flex; flex-direction:column; gap:6px; margin-bottom:18px;">
@@ -608,8 +608,8 @@ import { applyTheme, currentTheme } from "./theme.js";
 
         html += `
           </div>
-          <div style="border-top:1px solid var(--border); padding-top:14px; display:flex; flex-direction:column; gap:10px;">
-            <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+          <div style="border-top:1px solid var(--color-border); padding-top:14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:11px; color:var(--color-dim); line-height:1.4;">
               ${escapeHtml(t("import_pack_hint"))}
             </div>
             <div style="display:flex; gap:8px;">

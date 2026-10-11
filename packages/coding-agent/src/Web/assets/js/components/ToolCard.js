@@ -253,7 +253,7 @@ if (typeof window !== "undefined") {
     navigator.clipboard.writeText(text).then(() => {
       const orig = btn.innerText;
       btn.innerText = "✓";
-      btn.style.color = "var(--diff-add-text)";
+      btn.style.color = "var(--color-tool-diff-added)";
       setTimeout(() => {
         btn.innerText = orig;
         btn.style.color = "";

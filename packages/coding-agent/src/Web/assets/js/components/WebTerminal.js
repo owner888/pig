@@ -1,87 +1,7 @@
 import { network } from "../network.js";
 import { Terminal } from "../vendor/xterm.mjs";
 import { FitAddon } from "../vendor/addon-fit.mjs";
-
-/** Build xterm color scheme matching pig's active UI theme */
-function getTermTheme() {
-  const theme = document.documentElement.getAttribute("data-theme") || "dark";
-  if (theme === "light") {
-    return {
-      background: "#ffffff",
-      foreground: "#1e293b",
-      cursor: "#0284c7",
-      cursorAccent: "#ffffff",
-      selectionBackground: "rgba(2, 132, 199, 0.3)",
-      black: "#1e293b",
-      red: "#e11d48",
-      green: "#16a34a",
-      yellow: "#ca8a04",
-      blue: "#2563eb",
-      magenta: "#9333ea",
-      cyan: "#0891b2",
-      white: "#f8fafc",
-      brightBlack: "#64748b",
-      brightRed: "#f43f5e",
-      brightGreen: "#22c55e",
-      brightYellow: "#eab308",
-      brightBlue: "#3b82f6",
-      brightMagenta: "#a855f7",
-      brightCyan: "#06b6d4",
-      brightWhite: "#ffffff",
-    };
-  }
-
-  if (theme === "labra") {
-    return {
-      background: "#121714",
-      foreground: "#e2e6e3",
-      cursor: "#ff66cc",
-      cursorAccent: "#121714",
-      selectionBackground: "rgba(255, 102, 204, 0.35)",
-      black: "#1a1e1b",
-      red: "#f87171",
-      green: "#4ade80",
-      yellow: "#facc15",
-      blue: "#60a5fa",
-      magenta: "#ff66cc",
-      cyan: "#22d3ee",
-      white: "#e2e6e3",
-      brightBlack: "#4b5563",
-      brightRed: "#ef4444",
-      brightGreen: "#22c55e",
-      brightYellow: "#eab308",
-      brightBlue: "#3b82f6",
-      brightMagenta: "#f472b6",
-      brightCyan: "#06b6d4",
-      brightWhite: "#ffffff",
-    };
-  }
-
-  // Dark default
-  return {
-    background: "#070a12",
-    foreground: "#e2e8f0",
-    cursor: "#38bdf8",
-    cursorAccent: "#070a12",
-    selectionBackground: "rgba(56, 189, 248, 0.3)",
-    black: "#0f172a",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#eab308",
-    blue: "#3b82f6",
-    magenta: "#a855f7",
-    cyan: "#06b6d4",
-    white: "#f8fafc",
-    brightBlack: "#64748b",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#facc15",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#c084fc",
-    brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
-  };
-}
+import { terminalTheme } from "../theme.js";
 
 /**
  * WebTerminal Component
@@ -91,7 +11,7 @@ function getTermTheme() {
  * - Multi-tab terminal sessions (create, close, switch tabs)
  * - 16ms micro-batching non-blocking streaming
  * - Window sizing and auto-fit on drawer resize / maximize
- * - Theme-synchronized terminal palettes (Dark, Labra, Light)
+ * - Terminal palette from the active theme's tokens (terminalTheme())
  * - Native clipboard copy / paste
  */
 export class WebTerminal {
@@ -220,7 +140,7 @@ export class WebTerminal {
 
   observeTheme() {
     const observer = new MutationObserver(() => {
-      const newTheme = getTermTheme();
+      const newTheme = terminalTheme();
       for (const t of this.tabs) {
         if (t.term) {
           t.term.options.theme = newTheme;
@@ -241,7 +161,7 @@ export class WebTerminal {
     this.viewportEl.appendChild(container);
 
     const term = new Terminal({
-      theme: getTermTheme(),
+      theme: terminalTheme(),
       fontFamily: '"SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
       fontSize: 13,
       cursorBlink: true,
