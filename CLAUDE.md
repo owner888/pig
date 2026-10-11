@@ -4356,9 +4356,21 @@ the decisions were the developer's: a hook's question during a run **waits** for
 Claude app waits for approval, the form offers presets **and** a custom cron, and there is **no
 minute jitter** — a task runs at the minute it says.
 
-`Web\Schedule\ScheduleManager` arms one `Loop::delay()` per task; `SessionPool::launch()` starts a run
-as a child nobody is bound to, so the run is an ordinary session file the sidebar lists and the page
-binds to like any other. `ScheduledTask` stores the schedule as `manual`, a five-field cron
+`Web\Schedule\ScheduleManager` arms one `Loop::delay()` per task. **A task has one conversation**,
+as the Claude app's does (the developer's choice over one conversation per run):
+`ScheduledTask::$sessionFile`, made when the task is saved — named after it and written at once with
+`SessionManager::persist()`, since pi writes a file only after the first answer — so it is in the
+sidebar with its clock before any run. A run is a prompt in it: `SessionPool::open()` gives the child a
+tab already has on that file, or starts one nobody is bound to. A run that finds that child mid-turn is
+`skipped`. Moving the task to another folder starts a new conversation there; one deleted from the
+sidebar is started again at the next run; no client can name the file.
+
+**A finished run is unread** until its conversation is on screen, as the Claude app's blue dot: each
+run carries `seen: false` from its start (a run written before this has none and counts as read), the
+sidebar row of the task's conversation and the Scheduled entry show a dot (`ScheduleManager::unread()`,
+`scheduledUnread` in `/api/sessions/all`), and the page posts `/api/scheduled/seen` when that
+conversation is the active tab of a visible page (`markScheduledSeen()` in `app.js`). Kept in the tasks
+file, so it is the same on every device; a question waiting for an answer keeps its own amber dot. `ScheduledTask` stores the schedule as `manual`, a five-field cron
 (`CronExpression`, hand-written, Vixie semantics: `7` is Sunday, two restricted day fields OR) or
 `once`, in the **browser's** timezone. Tasks and runs are `~/.pig/agent/scheduled-tasks.json`.
 
@@ -13321,6 +13333,19 @@ calls a tab. And `applyI18n()` runs once at startup, before `NodeWorkbench` buil
 **Rule**: inside a loop or callback whose variable is `t`, translate with `__t()`; a component that
 builds `data-i18n` markup calls `applyI18n(itsElement)` after appending it. `WebI18nTest` checks
 that every key used is in both languages — not shadowing, which only the browser shows.
+
+### The Antigravity accounts panel said "no accounts" while the conversation used one
+
+**Symptom**: after `/login antigravity` in a terminal, chatting worked but the web page's Accounts
+panel (and `/antigravity.accounts`) said there were no accounts — on a machine without pi-antigravity.
+
+**Cause**: pig's sign-in writes `auth.json` only, and the list read `antigravity-accounts.json` only.
+Upstream runs `syncCurrentAuth()` before every listing, filing what `auth.json` holds into the store;
+pig had left it out. The page's server also kept the store it read at start, so a later sign-in in a
+terminal never reached it.
+
+**Rule**: everything in `pig-antigravity` that lists or picks accounts calls `$sync()` first
+(`Accounts::syncCurrentAuth()`, with `auth.json` read again).
 
 ### Answering an extension's question in the page never reached the child
 

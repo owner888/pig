@@ -10,6 +10,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Rpc\RpcClient;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\ManagedSession;
 use Pig\CodingAgent\Web\Schedule\ScheduledTask;
 use Pig\CodingAgent\Web\Schedule\ScheduleManager;
@@ -35,12 +36,17 @@ final class ScheduleManagerTest extends TestCase
     /** @var list<SessionPool> */
     private array $pools = [];
 
+    private string|false $previousHome = false;
+
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         $this->dir = sys_get_temp_dir() . '/pig-schedule-' . bin2hex(random_bytes(4));
         mkdir($this->dir, 0700, true);
+        // A task's conversation is a session file, written under the agent directory's `sessions/`.
+        $this->previousHome = getenv('PIG_CODING_AGENT_DIR');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->dir);
     }
 
     #[\Override]
@@ -56,13 +62,8 @@ final class ScheduleManagerTest extends TestCase
             }
         });
 
-        foreach (glob($this->dir . '/{,.}*', GLOB_BRACE) ?: [] as $file) {
-            if (is_file($file)) {
-                unlink($file);
-            }
-        }
-
-        rmdir($this->dir);
+        putenv($this->previousHome === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $this->previousHome);
+        exec('rm -rf ' . escapeshellarg($this->dir));
         Loop::reset();
     }
 
@@ -144,7 +145,7 @@ final class ScheduleManagerTest extends TestCase
             self::assertCount(1, $manager->runs($id));
             self::assertSame('schedule', $run['trigger']);
             self::assertNull($run['error']);
-            self::assertStringStartsWith('/tmp/fake-', $run['sessionFile']);
+            self::assertSame($manager->list()[0]['sessionFile'], $run['sessionFile'], 'a turn in the task\'s conversation');
             self::assertSame([basename($run['sessionFile']) => 'Morning brief'], $manager->sessionTasks());
         });
     }
@@ -207,6 +208,133 @@ final class ScheduleManagerTest extends TestCase
             self::assertSame('manual', self::lastRun($manager, $id)['trigger']);
             self::assertSame($next, $manager->list()[0]['nextRunAt']);
         });
+    }
+
+    // ---- the task's conversation -------------------------------------------------------------
+
+    public function testATaskHasItsConversationInTheSidebarFromTheMomentItIsSaved(): void
+    {
+        $manager = $this->manager();
+        $manager->start();
+        $task = $manager->save($this->task());
+
+        self::assertNotNull($task->sessionFile);
+        self::assertFileExists($task->sessionFile);
+        self::assertStringStartsWith(SessionManager::directory($this->dir), $task->sessionFile, 'in its folder\'s sessions');
+        self::assertSame('Morning brief', SessionManager::open($task->sessionFile)->getSessionName());
+        self::assertSame([basename($task->sessionFile) => 'Morning brief'], $manager->sessionTasks(), 'the sidebar\'s clock');
+        self::assertSame($task->sessionFile, $this->manager()->list()[0]['sessionFile'] ?? null, 'kept in the tasks file');
+    }
+
+    public function testEveryRunIsATurnInTheSameConversation(): void
+    {
+        Async::run(function (): void {
+            $manager = $this->manager();
+            $manager->start();
+            $task = $manager->save($this->task(['schedule' => 'manual', 'cron' => null]));
+
+            foreach ([1, 2] as $n) {
+                $manager->runNow($task->id);
+                $this->until(static fn (): bool => count($manager->runs($task->id)) === $n && $manager->runs($task->id)[0]['status'] === ScheduleManager::DONE, "run {$n}");
+            }
+
+            self::assertSame([$task->sessionFile, $task->sessionFile], array_column($manager->runs($task->id), 'sessionFile'));
+        });
+    }
+
+    public function testAnEditKeepsTheConversationAndAnotherFolderStartsOneThere(): void
+    {
+        $manager = $this->manager();
+        $manager->start();
+        $first = $manager->save($this->task());
+
+        $renamed = $manager->save($this->task(['id' => $first->id, 'name' => 'Evening brief', 'sessionFile' => '/etc/passwd']));
+        self::assertSame($first->sessionFile, $renamed->sessionFile, 'the same conversation, and not one a client names');
+
+        mkdir($this->dir . '/elsewhere');
+        $moved = $manager->save($this->task(['id' => $first->id, 'cwd' => $this->dir . '/elsewhere']));
+        self::assertNotSame($first->sessionFile, $moved->sessionFile);
+        self::assertStringStartsWith(SessionManager::directory($this->dir . '/elsewhere'), (string) $moved->sessionFile);
+        self::assertFileExists((string) $first->sessionFile, 'the old one is a conversation like any other, and stays');
+    }
+
+    public function testAConversationThatWasDeletedIsStartedAgainAtTheNextRun(): void
+    {
+        Async::run(function (): void {
+            $manager = $this->manager();
+            $manager->start();
+            $task = $manager->save($this->task(['schedule' => 'manual', 'cron' => null]));
+            unlink((string) $task->sessionFile);
+
+            $manager->runNow($task->id);
+            $this->until(static fn (): bool => ($manager->runs($task->id)[0]['status'] ?? null) === ScheduleManager::DONE, 'the run');
+
+            $now = $manager->list()[0]['sessionFile'];
+            self::assertNotSame($task->sessionFile, $now);
+            self::assertFileExists($now);
+            self::assertSame($now, self::lastRun($manager, $task->id)['sessionFile']);
+        });
+    }
+
+    public function testARunThatFindsItsConversationBusyIsSkipped(): void
+    {
+        Async::run(function (): void {
+            $manager = $this->manager();
+            $manager->start();
+            $task = $manager->save($this->task(['schedule' => 'manual', 'cron' => null]));
+
+            // Somebody is in the middle of a turn in the task's conversation — parked on a question.
+            $theirs = end($this->pools)->open($this->dir, (string) $task->sessionFile);
+            $theirs->client->prompt('ask: mine');
+            $this->until(static fn (): bool => $theirs->running, 'their turn to start');
+
+            $manager->runNow($task->id);
+            $this->until(static fn (): bool => ($manager->runs($task->id)[0]['status'] ?? null) === ScheduleManager::SKIPPED, 'the run to be let go');
+            self::assertSame('Its conversation was busy with another turn.', self::lastRun($manager, $task->id)['error']);
+        });
+    }
+
+    public function testAFinishedRunIsUnreadUntilItsConversationIsOpened(): void
+    {
+        Async::run(function (): void {
+            $manager = $this->manager();
+            $manager->start();
+            $task = $manager->save($this->task(['schedule' => 'manual', 'cron' => null]));
+            self::assertSame([], $manager->unread());
+            self::assertFalse($manager->list()[0]['unread']);
+
+            $manager->runNow($task->id);
+            self::assertSame([], $manager->unread(), 'not while it is going');
+            $this->until(static fn (): bool => ($manager->runs($task->id)[0]['status'] ?? null) === ScheduleManager::DONE, 'the run');
+
+            $file = basename((string) $task->sessionFile);
+            self::assertSame([$file => true], $manager->unread());
+            self::assertTrue($manager->list()[0]['unread']);
+
+            $changes = $this->changes;
+            $manager->markSeen('some-other.jsonl');
+            self::assertSame($changes, $this->changes, 'a conversation no task has changes nothing');
+
+            $manager->markSeen($file);
+            self::assertSame([], $manager->unread());
+            self::assertSame($changes + 1, $this->changes, 'every page hears it');
+            self::assertSame([], $this->manager()->unread(), 'kept in the tasks file');
+
+            $manager->markSeen($file);
+            self::assertSame($changes + 1, $this->changes, 'read twice is one change');
+        });
+    }
+
+    public function testRunsFromBeforeUnreadWasKeptCountAsRead(): void
+    {
+        file_put_contents($this->dir . '/scheduled-tasks.json', json_encode([
+            'tasks' => [[...$this->task(), 'id' => 'told', 'createdAt' => self::NINE_AM, 'anchorAt' => self::NINE_AM, 'sessionFile' => $this->dir . '/x.jsonl']],
+            'runs' => ['told' => [['id' => 'r1', 'status' => 'done', 'startedAt' => self::NINE_AM, 'finishedAt' => self::NINE_AM]]],
+        ]));
+
+        $manager = $this->manager();
+        $manager->start();
+        self::assertSame([], $manager->unread());
     }
 
     public function testATurnThatEndsInAnErrorIsAFailedRunThatSaysWhy(): void

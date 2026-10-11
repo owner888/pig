@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.27] - 2026-10-11
+
+### Fixed
+
+- **The Antigravity accounts panel said there were no accounts after `/login antigravity`**: the sign-in was in `auth.json` and the list read only `antigravity-accounts.json`. As pi-antigravity does, the signed-in account is now filed in the store and made active whenever the accounts are listed or chosen — in the Web UI, `/antigravity.accounts` and the 429 failover — and the page's server sees a sign-in made in a terminal after it started.
+
+### Changed
+
+- **A scheduled task has a conversation of its own**, as in the Claude app: it is in the sidebar, with the clock, the moment the task is saved — from the Scheduled page or by asking — and every run carries on in it, so a run sees what the last one found. "Open conversation" on the task's page opens it. A run that comes due while you are mid-turn in that conversation is skipped; moving the task to another folder starts a new conversation there. Tasks saved before get theirs at their next run.
+- **A finished scheduled run is marked unread**: a blue dot on its conversation in the sidebar and beside Scheduled, gone once you open the conversation — on any device, since it is kept with the tasks. A run waiting for your answer keeps its amber dot.
+
 ## [0.6.26] - 2026-10-11
 
 ### Fixed

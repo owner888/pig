@@ -52,7 +52,7 @@ final class ScheduleTool
     public static function description(): string
     {
         return 'Create and manage scheduled tasks: a prompt pig runs on its own on a schedule — every day at 9, '
-            . 'on weekdays, once at a given time, or only when asked — each run a new conversation in a given folder, '
+            . 'on weekdays, once at a given time, or only when asked — each in the task\'s own conversation in a given folder (in the sidebar from the moment it is created), '
             . 'listed in the web UI\'s Scheduled page. Runs happen while `pig web` runs on this machine. '
             . 'Every change is shown to the user to confirm first. '
             . "Actions: list; runs (a task's recent runs); create; update; delete; enable; disable; run (now). "
@@ -69,7 +69,7 @@ final class ScheduleTool
                 'action' => ['type' => 'string', 'enum' => self::ACTIONS, 'description' => 'What to do'],
                 'id' => ['type' => 'string', 'description' => 'The task, for every action but list and create'],
                 'name' => ['type' => 'string', 'description' => 'A short name for the task'],
-                'prompt' => ['type' => 'string', 'description' => 'What each run is asked. A run starts a new conversation that knows nothing of this one, so say everything: the repository or files, what to check, what to report, and what to ask before doing'],
+                'prompt' => ['type' => 'string', 'description' => 'What each run is asked, in the task\'s own conversation — which knows nothing of this one, so say everything: the repository or files, what to check, what to report, and what to ask before doing'],
                 'cwd' => ['type' => 'string', 'description' => 'The folder each run starts in; defaults to the current one'],
                 'cron' => ['type' => 'string', 'description' => 'Five-field cron expression: minute hour day-of-month month day-of-week'],
                 'at' => ['type' => 'string', 'description' => "One run at this local time, e.g. '2026-10-12 09:00'"],
@@ -85,7 +85,7 @@ final class ScheduleTool
     /** One line for the system prompt's tool list. */
     public static function promptSnippet(): string
     {
-        return 'schedule: set up tasks pig runs on its own on a schedule (cron), each run a new conversation';
+        return 'schedule: set up tasks pig runs on its own on a schedule (cron), each task with a conversation of its own';
     }
 
     /** @return list<string> */
@@ -93,7 +93,7 @@ final class ScheduleTool
     {
         return [
             'When the user asks for something to happen on a schedule ("every morning", "each Monday", "tomorrow at 9"), use the schedule tool rather than describing how to set it up.',
-            'A scheduled run starts a new conversation that remembers nothing of this one: write its prompt to stand on its own — the repository or folder, what to check, what to report.',
+            'A scheduled task runs in a conversation of its own that knows nothing of this one: write its prompt to stand on its own — the repository or folder, what to check, what to report.',
             'A scheduled run reports by default: unless the user asked otherwise, write its prompt so that it asks before pulling, merging, committing or editing files.',
         ];
     }
@@ -173,7 +173,7 @@ final class ScheduleTool
 
         $saved = $client->save($data);
 
-        return self::text(($update ? 'Saved' : 'Created') . " scheduled task {$saved['id']}.\n" . self::summary(ScheduledTask::fromArray($saved)));
+        return self::text(($update ? 'Saved' : 'Created') . " scheduled task {$saved['id']}; its runs carry on in its own conversation, in the sidebar under its name.\n" . self::summary(ScheduledTask::fromArray($saved)));
     }
 
     /** @param array<string, mixed> $task */
@@ -184,7 +184,7 @@ final class ScheduleTool
             'delete' => ["Delete scheduled task '{$name}'?", 'It and the record of its runs are removed. Conversations its runs wrote are kept.'],
             'enable' => ["Switch on scheduled task '{$name}'?", self::when($task)],
             'disable' => ["Switch off scheduled task '{$name}'?", 'It stays in the list and runs only when asked again.'],
-            default => ["Run scheduled task '{$name}' now?", 'A new conversation starts in ' . $task['cwd'] . ' with its prompt.'],
+            default => ["Run scheduled task '{$name}' now?", 'Its prompt is sent in its conversation, in ' . $task['cwd'] . '.'],
         };
 
         if (!$ctx->ui->confirm($question[0], $question[1])) {

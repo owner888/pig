@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\ManagedSession;
 use Pig\CodingAgent\Web\SessionPool;
 use RuntimeException;
@@ -18,10 +19,10 @@ use Throwable;
  * Scheduled tasks for the web shell: when each one runs, starting the run, and what became of it.
  *
  * pig's own, after the Claude app's scheduled tasks; upstream has none. It needs no machinery of its
- * own beyond a timer per task, because the rest is already here: a run is a `pig --mode rpc` child
- * from the `SessionPool` that nobody is bound to (`SessionPool::launch()`), its conversation is an
- * ordinary session file the sidebar lists, and opening it from the page binds to the running child
- * like any other.
+ * own beyond a timer per task, because the rest is already here: a task's conversation is an
+ * ordinary session file the sidebar lists, made when the task is saved (`ScheduledTask::$sessionFile`),
+ * and a run is a turn in it — sent to the child a tab already has on that file, or to one the
+ * `SessionPool` starts for it (`SessionPool::open()`), which opening the conversation then binds to.
  *
  * Five rules, each the developer's or the Claude app's:
  *
@@ -196,6 +197,7 @@ final class ScheduleManager
                 'nextRunAt' => $this->nextRunAt($task),
                 'running' => $this->activeRunOf($id) !== null,
                 'lastRun' => $last,
+                'unread' => $this->hasUnread($id),
             ];
         }
 
@@ -213,8 +215,8 @@ final class ScheduleManager
     }
 
     /**
-     * Basename of every session file a run wrote => the name of the task that ran it, for the
-     * sidebar's clock.
+     * Basename of every task's conversation — and of each conversation a run had to itself before
+     * tasks had one — => the task's name, for the sidebar's clock.
      *
      * @return array<string, string>
      */
@@ -222,6 +224,13 @@ final class ScheduleManager
     {
         $map = [];
 
+        foreach ($this->tasks as $task) {
+            if ($task->sessionFile !== null) {
+                $map[basename($task->sessionFile)] = $task->name;
+            }
+        }
+
+        // Runs from before tasks had a conversation of their own were one conversation each.
         foreach ($this->runs as $taskId => $runs) {
             $name = isset($this->tasks[$taskId]) ? $this->tasks[$taskId]->name : null;
 
@@ -233,6 +242,50 @@ final class ScheduleManager
         }
 
         return $map;
+    }
+
+    /**
+     * Basename of each task's conversation that has a run nobody has looked at since it finished,
+     * => true: the sidebar's dot, as the Claude app puts one on a task whose run has news.
+     *
+     * @return array<string, true>
+     */
+    public function unread(): array
+    {
+        $map = [];
+
+        foreach ($this->tasks as $id => $task) {
+            if ($task->sessionFile !== null && $this->hasUnread($id)) {
+                $map[basename($task->sessionFile)] = true;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * Somebody has the conversation `$sessionFile` (a path or its basename) on screen: every
+     * finished run of the task it belongs to is read. Nothing for a conversation no task has.
+     */
+    public function markSeen(string $sessionFile): void
+    {
+        $this->mustOwn();
+        $name = basename($sessionFile);
+
+        foreach ($this->tasks as $id => $task) {
+            if ($task->sessionFile === null || basename($task->sessionFile) !== $name || !$this->hasUnread($id)) {
+                continue;
+            }
+
+            foreach ($this->runs[$id] as $at => $run) {
+                if (($run['seen'] ?? true) === false && in_array($run['status'], [self::DONE, self::ERROR], true)) {
+                    $this->runs[$id][$at]['seen'] = true;
+                }
+            }
+
+            $this->write();
+            ($this->onChange)();
+        }
     }
 
     /**
@@ -257,8 +310,15 @@ final class ScheduleManager
             ...$data,
             'createdAt' => $existing?->createdAt ?? ($this->now)(),
             'anchorAt' => ($this->now)(),
+            'sessionFile' => null,
         ]);
         $this->refuseAPast($task);
+
+        // The task keeps its conversation; one moved to another folder starts a new one there,
+        // since a conversation's folder is where its file lives.
+        $task = $task->with(sessionFile: $existing !== null && $existing->cwd === $task->cwd && $existing->sessionFile !== null
+            ? $existing->sessionFile
+            : $this->conversationFor($task));
 
         $this->tasks[$task->id] = $task;
         $this->write();
@@ -418,6 +478,9 @@ final class ScheduleManager
             'startedAt' => ($this->now)(),
             'cwd' => $task->cwd,
             'status' => self::RUNNING,
+            // Unread once it has finished, until its conversation is opened (`markSeen()`). Runs
+            // written before this was kept have no `seen` and count as read.
+            'seen' => false,
         ];
 
         if ($this->activeRunOf($task->id) !== null) {
@@ -426,6 +489,7 @@ final class ScheduleManager
                 'status' => self::SKIPPED,
                 'finishedAt' => $run['startedAt'],
                 'error' => 'The previous run was still going.',
+                'seen' => true,
             ]);
             $this->write();
             ($this->onChange)();
@@ -443,10 +507,20 @@ final class ScheduleManager
 
     private function launch(ScheduledTask $task, string $runId): void
     {
+        $entry = ['task' => $task->id, 'run' => $runId];
+
         try {
-            $managed = $this->pool->launch($task->cwd);
+            // A task saved before tasks had conversations, or whose conversation was deleted from
+            // the sidebar, gets a new one now.
+            if ($task->sessionFile === null || !is_file($task->sessionFile)) {
+                $task = $task->with(sessionFile: $this->conversationFor($task));
+                $this->tasks[$task->id] = $task;
+                $this->write();
+            }
+
+            $managed = $this->pool->open($task->cwd, (string) $task->sessionFile);
         } catch (Throwable $e) {
-            $this->updateRun(['task' => $task->id, 'run' => $runId], [
+            $this->updateRun($entry, [
                 'status' => self::ERROR,
                 'error' => 'Could not start the agent: ' . $e->getMessage(),
                 'finishedAt' => ($this->now)(),
@@ -455,8 +529,24 @@ final class ScheduleManager
             return;
         }
 
+        $this->updateRun($entry, ['sessionFile' => $task->sessionFile]);
+
+        // Somebody is talking in the task's conversation: a prompt now would be queued behind
+        // their turn and answered as part of it, so this occurrence is let go, as one that finds
+        // the last run still going is.
+        if ($managed->running) {
+            $this->updateRun($entry, [
+                'status' => self::SKIPPED,
+                'error' => 'Its conversation was busy with another turn.',
+                'finishedAt' => ($this->now)(),
+                'seen' => true,
+            ]);
+
+            return;
+        }
+
         $key = spl_object_id($managed);
-        $this->active[$key] = ['task' => $task->id, 'run' => $runId, 'error' => null];
+        $this->active[$key] = [...$entry, 'error' => null];
         $client = $managed->client;
 
         try {
@@ -469,21 +559,24 @@ final class ScheduleManager
                 $client->setThinkingLevel($task->thinkingLevel);
             }
 
-            $started = ScheduledTask::dateTime(($this->now)(), $task->timezone)->format('Y-m-d H:i');
-            $client->setSessionName("{$task->name} · {$started}");
-
-            $file = $client->getState()['sessionFile'] ?? null;
-
-            if (is_string($file) && $file !== '') {
-                $this->pool->remember($managed, $file);
-                $this->updateRun($this->active[$key] ?? ['task' => $task->id, 'run' => $runId], ['sessionFile' => $file]);
-            }
-
             $client->prompt($task->prompt);
         } catch (Throwable $e) {
             // The child is the pool's: with no turn running, its idle timer stops it.
             $this->finish($key, self::ERROR, $e->getMessage());
         }
+    }
+
+    /**
+     * A new conversation for `$task`, in its folder and under its name, written at once so the
+     * sidebar lists it before the first run. The path of its file.
+     */
+    private function conversationFor(ScheduledTask $task): string
+    {
+        $session = SessionManager::create($task->cwd);
+        $session->setSessionName($task->name);
+        $session->persist();
+
+        return $session->path;
     }
 
     private function finish(int $key, string $status, ?string $error): void
@@ -515,6 +608,18 @@ final class ScheduleManager
         }
 
         return null;
+    }
+
+    /** Whether a run of `$taskId` has finished, done or failed, since its conversation was last open. */
+    private function hasUnread(string $taskId): bool
+    {
+        foreach ($this->runs[$taskId] ?? [] as $run) {
+            if (($run['seen'] ?? true) === false && in_array($run['status'], [self::DONE, self::ERROR], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $run */

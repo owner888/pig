@@ -689,6 +689,7 @@ final class HttpServer
             $query = trim((string) ($req['query']['q'] ?? ''));
 
             $scheduled = $this->schedules->sessionTasks();
+            $unread = $this->schedules->unread();
 
             if ($query === '') {
                 [$sessions, $total] = SessionManager::listAll($limit, $offset);
@@ -708,6 +709,7 @@ final class HttpServer
                 // timestamp is when the conversation started.
                 'modified' => filemtime($s->path) * 1000,
                 'scheduledTask' => $scheduled[basename($s->path)] ?? null,
+                'scheduledUnread' => isset($unread[basename($s->path)]),
             ], $sessions);
 
             $conn->sendResponse(200, [
@@ -1497,7 +1499,7 @@ final class HttpServer
     }
 
     /**
-     * `/api/scheduled` and the four writes under it. A mistake in what was sent is a 400 with the
+     * `/api/scheduled` and the five writes under it. A mistake in what was sent is a 400 with the
      * reason, and a write to a schedule another server owns is a 409.
      *
      * @param array{method: string, path: string, query: array<string, string>, body: string} $req
@@ -1539,6 +1541,7 @@ final class HttpServer
                 '/api/scheduled/delete' => $this->schedules->delete($id) ?? [],
                 '/api/scheduled/toggle' => $this->schedules->setEnabled($id, ($data['enabled'] ?? false) === true) ?? [],
                 '/api/scheduled/run' => $this->schedules->runNow($id) ?? [],
+                '/api/scheduled/seen' => $this->schedules->markSeen(is_string($data['sessionFile'] ?? null) ? $data['sessionFile'] : '') ?? [],
                 default => null,
             };
         } catch (\InvalidArgumentException $e) {

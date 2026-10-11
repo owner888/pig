@@ -49,6 +49,31 @@ final class AntigravityPanelTest extends TestCase
         ];
     }
 
+    public function testTheAccountsPanelListsASignInThatIsOnlyInAuthJson(): void
+    {
+        // The page's server loads the extension once; a terminal signs in afterwards, writing
+        // `auth.json` and no store. Opening the panel then lists that account.
+        $dir = sys_get_temp_dir() . '/pig-ag-panel-' . bin2hex(random_bytes(4));
+        mkdir($dir . '/project', 0o700, true);
+        $auth = \Pig\CodingAgent\Auth::discover($dir . '/auth.json');
+
+        try {
+            [, $errors] = \Pig\CodingAgent\Extensions\ExtensionLoader::load($dir . '/project', cliPaths: [dirname(__DIR__, 4) . '/extensions/pig-antigravity/index.php'], home: $dir, auth: $auth);
+            self::assertSame([], $errors);
+
+            file_put_contents($dir . '/auth.json', json_encode(['antigravity' => ['type' => 'oauth', 'refresh' => 'r', 'access' => 'a', 'expires' => self::NOW, 'projectId' => 'p', 'email' => 'me@example.com']]));
+
+            $blocks = \Pig\CodingAgent\Web\WebPanels::answer('/api/panels/' . AccountsPanel::ID, ['method' => 'GET', 'body' => '', 'query' => ['locale' => 'en']])['body']['blocks'];
+            $list = array_values(array_filter($blocks, static fn (array $b): bool => $b['type'] === 'list'))[0];
+
+            self::assertSame(['me@example.com'], array_column($list['items'], 'title'));
+            self::assertTrue($list['items'][0]['active']);
+        } finally {
+            \Pig\CodingAgent\Extensions\ExtensionApi::forgetWebPanels();
+            exec('rm -rf ' . escapeshellarg($dir));
+        }
+    }
+
     public function testTheAccountsAreAListWithTheirButtons(): void
     {
         $blocks = AccountsPanel::blocks(self::rows(), ['bad entry skipped'], 'en', self::NOW);

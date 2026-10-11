@@ -1782,6 +1782,24 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       refreshSidebar();
     }
 
+    /** The task conversations with a run nobody has looked at yet, by file name (`watchScheduledTasks`). */
+    let unreadTasks = new Set();
+
+    /**
+     * The conversation on screen, if it is a task's with news, is read now — on screen meaning the
+     * active tab of a page that is not in the background.
+     */
+    function markScheduledSeen() {
+      const file = active?.sessionFile;
+      if (!file || !unreadTasks.has(file) || document.visibilityState !== "visible") return;
+      unreadTasks.delete(file);
+      fetch("/api/scheduled/seen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionFile: file }),
+      }).catch(() => { /* the next scheduled_update asks again */ });
+    }
+
     function applyActiveTabToChrome() {
       const cur = active;
       if (!cur) return;
@@ -1792,6 +1810,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         sessionTitleDisplay.innerText = cleanName ? ` • ${cleanName}` : "";
       }
       updateSessionFileBadge(cur);
+      markScheduledSeen();
       // The sidebar row of the conversation on screen follows the tab, without a refetch.
       sidebarList.querySelectorAll(".session-item").forEach((el) => {
         el.classList.toggle("active", !!cur.sessionPath && el.dataset.sessionPath === cur.sessionPath);
@@ -2132,6 +2151,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
 
       item.append(label, folder, moreBtn);
+      // A run has finished there since it was last open: the dot goes once it is (`markScheduledSeen()`).
+      if (s.scheduledUnread) {
+        const dot = document.createElement("span");
+        dot.className = "drawer-unread-dot";
+        dot.title = t("sched_unread");
+        item.insertBefore(dot, folder);
+      }
       item.addEventListener("click", () => {
         closeSessionDropdown();
         onOpen?.();
@@ -2590,12 +2616,22 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     });
     window.webTerminal = webTerminal;
 
-    // Scheduled tasks: the panel, and the dot that says a run is waiting for an answer.
+    // Scheduled tasks: the panel, and the dot beside it — a run waiting for an answer, or else a run
+    // that has finished since its conversation was last open, as the Claude app marks one.
     const scheduledDot = document.getElementById("scheduled-tasks-dot");
     document.getElementById("scheduled-tasks-btn")?.addEventListener("click", () => {
       openScheduledTasks({ onOpenConversation: (cwd, sessionFile) => switchSession(null, sessionFile, cwd) });
     });
-    watchScheduledTasks({ onAttention: (waiting) => { if (scheduledDot) scheduledDot.hidden = !waiting; } });
+    watchScheduledTasks({ onAttention: (waiting, tasks) => {
+      unreadTasks = new Set(tasks.filter((task) => task.unread && task.sessionFile).map((task) => task.sessionFile.split("/").pop()));
+      if (scheduledDot) {
+        scheduledDot.hidden = !waiting && unreadTasks.size === 0;
+        scheduledDot.classList.toggle("unread", !waiting);
+        scheduledDot.title = t(waiting ? "sched_status_needs_input" : "sched_unread");
+      }
+      markScheduledSeen();
+    } });
+    document.addEventListener("visibilitychange", () => markScheduledSeen());
     // A run is a new conversation, and its time in the list moves as it works.
     network.addMessageListener((m) => { if (m.type === "scheduled_update") refreshSidebar(); });
 

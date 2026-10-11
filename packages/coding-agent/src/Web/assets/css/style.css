@@ -492,7 +492,9 @@
       border-radius: 50%;
       background: var(--color-warning);
     }
+    .sidebar-nav-dot.unread { background: var(--color-primary); }
     .sidebar-nav-dot[hidden] { display: none; }
+    .drawer-unread-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary); margin: 0 6px; }
     .drawer-scheduled {
       display: inline-flex;
       vertical-align: -1px;

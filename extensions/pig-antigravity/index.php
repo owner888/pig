@@ -80,6 +80,17 @@ foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigr
 return function (ExtensionApi $pi): void {
     $auth = $pi->auth() ?? Auth::discover();
     $accounts = Accounts::beside($auth->path());
+
+    /**
+     * pi-antigravity's `syncCurrentAuth()`, run first wherever the accounts are listed or chosen, as
+     * upstream's are: `/login antigravity` writes `auth.json` only, and this files that sign-in in
+     * the store. `auth.json` is read again for the page's server, which outlives a terminal's sign-in.
+     */
+    $sync = static function () use ($auth, $accounts): void {
+        $auth->reload();
+        $accounts->syncCurrentAuth($auth->kind(Models::PROVIDER) === 'oauth' ? $auth->credentials(Models::PROVIDER) : null);
+    };
+
     $http = new HttpClient();
 
     /**
@@ -131,7 +142,8 @@ return function (ExtensionApi $pi): void {
      *
      * @param list<string> $tried
      */
-    $failover = static function (array $tried) use ($auth, $accounts): ?string {
+    $failover = static function (array $tried) use ($auth, $accounts, $sync): ?string {
+        $sync();
         for ($i = 0, $total = $accounts->count(); $i < $total; $i++) {
             $next = $accounts->rotateNext();
 
@@ -359,7 +371,8 @@ return function (ExtensionApi $pi): void {
     // ---- the web UI's accounts panel ----------------------------------------------------
 
     /** The accounts as the panel lists them. */
-    $payload = static function () use ($accounts): array {
+    $payload = static function () use ($accounts, $sync): array {
+        $sync();
         $rows = [];
 
         foreach ($accounts->accounts() as $id => $entry) {
@@ -401,7 +414,8 @@ return function (ExtensionApi $pi): void {
                 return [['type' => 'text', 'text' => $e->getMessage(), 'tone' => 'error']];
             }
         },
-        static function (string $action, array $args, array $request) use ($activate, $remove, $rotate): ?string {
+        static function (string $action, array $args, array $request) use ($activate, $remove, $rotate, $sync): ?string {
+            $sync();
             $id = is_string($args['id'] ?? null) ? $args['id'] : '';
             $noSuch = AccountsPanel::say($request['locale'], 'no_such_account', ['id' => $id]);
 
@@ -467,7 +481,8 @@ return function (ExtensionApi $pi): void {
 
     $pi->registerCommand(
         'antigravity.accounts',
-        static function (string $args, HookContext $ctx) use ($accounts, $emit, $activate, $remove, $rotate, $find): void {
+        static function (string $args, HookContext $ctx) use ($accounts, $emit, $activate, $remove, $rotate, $find, $sync): void {
+            $sync();
             $trimmed = trim($args);
 
             if ($trimmed === 'rotate') {

@@ -133,17 +133,18 @@ final class SessionPool
     }
 
     /**
-     * Start a child that nobody is looking at — a scheduled run.
+     * The child on `$sessionFile` — a scheduled run's, in its task's conversation: the one a tab has
+     * open if there is one, so the run is drawn there as it goes, or a child of its own nobody is
+     * bound to yet.
      *
-     * Not `bind()`: there is no connection to subscribe. The idle timer is armed at once, so a child
-     * whose prompt never starts a turn is stopped like any other; `agent_start` disarms it. A browser
-     * that opens the conversation later finds it by its session file, as for any other child.
+     * The idle timer is armed for a child nobody is bound to, so one whose prompt never starts a
+     * turn is stopped like any other; `agent_start` disarms it.
      *
      * @throws \Throwable whatever `RpcClient::start()` throws when the child cannot be started
      */
-    public function launch(string $cwd): ManagedSession
+    public function open(string $cwd, string $sessionFile): ManagedSession
     {
-        $managed = $this->spawnSession($cwd, null, self::key($cwd, null, 'launched-' . bin2hex(random_bytes(6))));
+        $managed = $this->find($cwd, $sessionFile) ?? $this->spawnSession($cwd, $sessionFile, self::key($cwd, $sessionFile));
         $this->reapIfIdle($managed);
 
         return $managed;

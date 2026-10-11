@@ -301,6 +301,54 @@ final class AntigravityAccountsTest extends TestCase
         self::assertNull($accounts->active());
     }
 
+    public function testASignInOnlyAuthJsonHasIsFiledAndMadeActive(): void
+    {
+        // pig's `/login antigravity` writes `auth.json` only; the list read the store only, and said
+        // there were no accounts while the conversation was using one.
+        $accounts = $this->accounts();
+        $accounts->syncCurrentAuth(new Credentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
+
+        $id = 'account-' . substr(hash('sha256', 'refresh-new'), 0, 16);
+        self::assertSame([$id], array_keys($accounts->accounts()), 'no email: upstream\'s hashed id');
+        self::assertSame($id, $accounts->activeId());
+        self::assertSame('0600', substr(sprintf('%o', fileperms($this->directory . '/' . Accounts::FILE)), -4));
+        self::assertSame(['version', 'activeAccountId', 'accounts'], array_keys($this->read()));
+        self::assertSame('project-new', $this->read()['accounts'][$id]['projectId']);
+
+        $written = filemtime($this->directory . '/' . Accounts::FILE);
+        clearstatcache();
+        touch($this->directory . '/' . Accounts::FILE, $written - 10);
+        clearstatcache();
+        $this->accounts()->syncCurrentAuth(new Credentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
+        clearstatcache();
+        self::assertSame($written - 10, filemtime($this->directory . '/' . Accounts::FILE), 'nothing new: not written again');
+    }
+
+    public function testASignInTheStoreKnowsUpdatesItsEntryAndBecomesActive(): void
+    {
+        $this->write([
+            'version' => 1,
+            'activeAccountId' => 'first@example',
+            'accounts' => ['first@example' => $this->account('first@example'), 'second@example' => $this->account('second@example')],
+        ]);
+
+        $this->accounts()->syncCurrentAuth(new Credentials('refresh-second@example', 'access-renewed', 9_100_000_000_000, null, null, 'Second@Example '));
+
+        $store = $this->read();
+        self::assertSame('second@example', $store['activeAccountId']);
+        self::assertSame(['first@example', 'second@example'], array_keys($store['accounts']), 'the other one is left as it was');
+        self::assertSame('access-renewed', $store['accounts']['second@example']['access']);
+        self::assertSame('project-second@example', $store['accounts']['second@example']['projectId'], 'what auth.json does not say is kept');
+        self::assertSame(1, $store['accounts']['second@example']['addedAt']);
+    }
+
+    public function testNoSignInChangesNothing(): void
+    {
+        $this->accounts()->syncCurrentAuth(null);
+
+        self::assertFileDoesNotExist($this->directory . '/' . Accounts::FILE);
+    }
+
     /** @return array<string, mixed> */
     private function account(string $email): array
     {

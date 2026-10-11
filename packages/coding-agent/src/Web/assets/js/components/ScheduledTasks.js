@@ -211,6 +211,7 @@ export function openScheduledTasks({ onOpenConversation }) {
       <div class="sched-detail-head">
         <div class="sched-detail-name">${escapeHtml(task.name)}</div>
         <div class="sched-actions">
+          ${task.sessionFile ? `<button class="modal-btn sched-open">${escapeHtml(t("sched_open_task_conversation"))}</button>` : ""}
           <button class="modal-btn primary sched-run" ${state.owner && !task.running ? "" : "disabled"}>${escapeHtml(t("sched_run_now"))}</button>
           <button class="modal-btn sched-edit" ${state.owner ? "" : "disabled"}>${escapeHtml(t("sched_edit"))}</button>
           <button class="modal-btn danger sched-delete" ${state.owner ? "" : "disabled"}>${escapeHtml(t("sched_delete"))}</button>
@@ -230,6 +231,10 @@ export function openScheduledTasks({ onOpenConversation }) {
 
     body.querySelector(".sched-back").addEventListener("click", () => go({ name: "list" }));
     body.querySelector(".sched-edit").addEventListener("click", () => go({ name: "form", task }));
+    body.querySelector(".sched-open")?.addEventListener("click", () => {
+      close();
+      onOpenConversation(task.cwd, task.sessionFile.split("/").pop());
+    });
     body.querySelector(".sched-run").addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
       try { await api("/api/scheduled/run", { id: task.id }); } catch (err) { showError(err.message); }
@@ -414,7 +419,7 @@ export function watchScheduledTasks({ onAttention }) {
     try { data = await api("/api/scheduled"); } catch (err) { return; }
 
     const now = new Map(data.tasks.map((task) => [task.id, task]));
-    onAttention(data.tasks.some((task) => task.lastRun?.status === "needs_input"));
+    onAttention(data.tasks.some((task) => task.lastRun?.status === "needs_input"), data.tasks);
 
     if (last && "Notification" in window && Notification.permission === "granted") {
       for (const task of data.tasks) {

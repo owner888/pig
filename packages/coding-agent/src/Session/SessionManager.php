@@ -228,6 +228,21 @@ final class SessionManager
         return self::open($fork->path);
     }
 
+    /**
+     * Write the file now, with what it holds so far. pi writes a session once the model has
+     * answered; a scheduled task's conversation (`ScheduleManager`) is written when the task is
+     * saved, with only its name, so it is in the sidebar before its first run.
+     */
+    public function persist(): void
+    {
+        if ($this->started || $this->preview) {
+            return;
+        }
+
+        $this->appendLines($this->prologue($this->entries));
+        $this->started = true;
+    }
+
     /** Whether this session has been written to disk. */
     public function isPersisted(): bool
     {

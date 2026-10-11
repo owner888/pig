@@ -27,9 +27,10 @@ use Pig\Ai\Utils\Oauth\Credentials;
  * - **the tokens pig renews itself**, which have to be written back to *both* or the store goes
  *   stale and the extension's next failover reaches for a token that was replaced hours ago.
  *
- * Deliberately not ported: choosing an account, removing one, and the 429 failover that walks
- * the others. Those are the extension's commands, they write the person's files on their say-so,
- * and pig has nowhere to ask. pig reads the active account and keeps what it renews honest.
+ * And upstream's `syncCurrentAuth()` (`syncCurrentAuth()` here), which every listing runs first: a
+ * sign-in pig's own `/login antigravity` made lands in `auth.json` only, and without it the
+ * accounts list said there were none while the conversation used the account — on a machine with
+ * no pi-antigravity to have written the store, always.
  *
  * The file's shape, which is `normalizeStore()`'s reading of it rather than a guess:
  *
@@ -201,6 +202,50 @@ final class Accounts
             $this->active = $id;
         }
 
+        $this->save();
+    }
+
+    /**
+     * Upstream's `syncCurrentAuth()`: the credential `auth.json` holds (`$current`) is filed in the
+     * store — matched to an account by refresh token or email, or added — and made the active one.
+     * The store is read again first, since the page's server outlives sign-ins made in a terminal.
+     *
+     * Written only when that changes something, where upstream writes on every call: the page asks
+     * for the list each time it is opened.
+     */
+    public function syncCurrentAuth(?Credentials $current): void
+    {
+        $this->reload();
+
+        if ($current === null || $current->refresh === '' || $this->path === null) {
+            return;
+        }
+
+        $existing = $this->find($current);
+        $id = $existing ?? self::idFor($current) ?? 'account-' . substr(hash('sha256', $current->refresh), 0, 16);
+        $was = $existing === null ? [] : $this->accounts[$existing];
+
+        $same = $existing !== null && $this->active === $existing
+            && ($was['refresh'] ?? null) === $current->refresh && ($was['access'] ?? null) === $current->access;
+
+        if ($same) {
+            return;
+        }
+
+        $now = Timestamp::nowMs();
+        $this->accounts[$id] = array_filter([
+            ...$was,
+            'type' => 'oauth',
+            'refresh' => $current->refresh,
+            'access' => $current->access,
+            'expires' => $current->expires,
+            'projectId' => $current->projectId ?? ($was['projectId'] ?? null),
+            'email' => $current->email ?? ($was['email'] ?? null),
+            'accountId' => $id,
+            'addedAt' => is_int($was['addedAt'] ?? null) ? $was['addedAt'] : $now,
+            'lastUsedAt' => $now,
+        ], static fn (mixed $value): bool => $value !== null);
+        $this->active = $id;
         $this->save();
     }
 

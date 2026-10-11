@@ -12,9 +12,10 @@ use Pig\Agent\ThinkingLevel;
 /**
  * One scheduled task: a prompt, the directory it runs in, and when.
  *
- * pig's own, modelled on the Claude app's scheduled tasks — upstream has none. Each run is a fresh
- * conversation in a `pig --mode rpc` child, so nothing here carries state from one run to the next
- * except the run log `ScheduleManager` keeps beside it.
+ * pig's own, modelled on the Claude app's scheduled tasks — upstream has none. A task has one
+ * conversation of its own, `$sessionFile`, made when the task is saved so it is in the sidebar at
+ * once, and every run is a turn in it: the next run sees what the last one found, as the Claude app's
+ * task conversation does. `ScheduleManager` gives it the file; nothing a client sends sets it.
  *
  * Three kinds of `schedule`:
  *
@@ -53,6 +54,7 @@ final class ScheduledTask
         public readonly bool $enabled,
         public readonly int $createdAt,
         public readonly int $anchorAt,
+        public readonly ?string $sessionFile = null,
     ) {
     }
 
@@ -124,6 +126,7 @@ final class ScheduledTask
             enabled: (bool) ($data['enabled'] ?? true),
             createdAt: $createdAt,
             anchorAt: isset($data['anchorAt']) ? self::int($data, 'anchorAt') : $now,
+            sessionFile: is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null,
         );
     }
 
@@ -144,6 +147,7 @@ final class ScheduledTask
             'enabled' => $this->enabled,
             'createdAt' => $this->createdAt,
             'anchorAt' => $this->anchorAt,
+            'sessionFile' => $this->sessionFile,
         ];
     }
 
@@ -169,16 +173,16 @@ final class ScheduledTask
     }
 
     /**
-     * The same task switched on or off, or counted from another moment. Not re-validated: these two
-     * are the scheduler's, and a task whose folder has gone still has to be able to record that its
-     * run could not start.
+     * The same task switched on or off, counted from another moment, or with its conversation. Not
+     * re-validated: these are the scheduler's, and a task whose folder has gone still has to be able
+     * to record that its run could not start.
      */
-    public function with(?bool $enabled = null, ?int $anchorAt = null): self
+    public function with(?bool $enabled = null, ?int $anchorAt = null, ?string $sessionFile = null): self
     {
         return new self(
             $this->id, $this->name, $this->prompt, $this->cwd, $this->schedule, $this->cron, $this->runAt,
             $this->timezone, $this->model, $this->thinkingLevel,
-            $enabled ?? $this->enabled, $this->createdAt, $anchorAt ?? $this->anchorAt,
+            $enabled ?? $this->enabled, $this->createdAt, $anchorAt ?? $this->anchorAt, $sessionFile ?? $this->sessionFile,
         );
     }
 
