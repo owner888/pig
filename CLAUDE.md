@@ -4313,6 +4313,19 @@ AccountsPanel.php`, its strings with it); the page has no accounts code, buttons
 Regression tests: `WebPanelsTest`, `AntigravityPanelTest` (the real blocks through `panels.js`
 under Node) and `WebModeTest::testAnExtensionsPanelIsServedFromAFiberInThePagesLanguage`.
 
+### The folder a new conversation starts in
+
+The terminal's `pig` starts where it was run; the page asks. While a tab's conversation is empty
+(`Tab.emptyState` — its setter redraws the chip), a 📁 chip by the model pickers shows its folder and
+opens `components/CwdPicker.js`: the folders conversations were held in (`/api/folders`), a path
+typed with its subfolders completed, and a walk through the tree (`/api/dirs`, `DirectoryListing`:
+subfolders only, hidden ones left out, `~` and relative paths read as typed, 500 at most — any
+folder this process can read, since the page already has a terminal). Choosing one replaces the
+empty tab with a new one there, which is a new child started in that directory; after the first
+message the chip is gone, as a conversation's folder does not change under it. The path handling is
+`cwd.js`, run under Node by `DirectoryListingTest`. A project's own extensions in the folder load
+by `defaultProjectTrust`, as for any web child: nothing in the page asks yet.
+
 ### Scheduled tasks: a timer per task over the session pool
 
 pig's own, after the Claude app's; upstream has none. The developer asked for it in the web UI and

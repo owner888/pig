@@ -17,6 +17,7 @@ import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, n
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
 import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledTasks.js";
+import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -71,7 +72,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         this.toolCards = new Map();
         this.bashCards = new Map();   // rpc id -> ToolCard for a `!command`
         this.bashRunning = false;     // a `!command` is in flight (Stop sends abort_bash)
-        this.emptyState = null;
+        this._emptyState = null;
         this.hook = createHookState();  // what this child's extensions have put on screen
         this.commands = [];             // `get_commands`: extension, prompt template and skill commands
         this.messagesLoaded = false;    // until the first `get_messages` is drawn, which clears the chat
@@ -102,6 +103,14 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
           }
         }).observe(this.scroller, { childList: true });
         chatArea.appendChild(this.scroller);
+      }
+
+      // The welcome shown until the first message. While it is there the conversation has not
+      // started, and its folder can still be changed (`drawCwdChip()`).
+      get emptyState() { return this._emptyState; }
+      set emptyState(value) {
+        this._emptyState = value;
+        if (this === active) drawCwdChip();
       }
 
       get key() { return (this.cwd || "") + "::" + (this.sessionFile || ("__new__::" + clientId + ":" + this.id)); }
@@ -1726,9 +1735,41 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     }
 
     /** The header, the dropdowns and the telemetry line all describe the active tab. */
+    // ---- the folder a new conversation starts in ------------------------------------------
+    //
+    // The terminal's `pig` starts where it was run; here the person chooses, until the first
+    // message: the chip by the model pickers shows the folder and opens the picker. Choosing
+    // another folder replaces the empty tab with one there — a new child in that directory.
+    const cwdChip = document.getElementById("cwd-chip");
+    function drawCwdChip() {
+      if (!cwdChip) return;
+      const tab = active;
+      const open = !!tab && !!tab.emptyState && !tab.isRunning;
+      cwdChip.hidden = !open;
+      if (!open) return;
+      cwdChip.textContent = "📁 " + folderName(tab.cwd || serverCwd || "~");
+      cwdChip.title = (tab.cwd || serverCwd || "") + "\n" + t("cwd_chip_title");
+    }
+    cwdChip?.addEventListener("click", () => {
+      const tab = active;
+      if (!tab?.emptyState) return;
+      openCwdPicker({ current: tab.cwd || serverCwd || "", onPick: (path) => moveEmptyTab(tab, path) });
+    });
+    function moveEmptyTab(tab, path) {
+      if (!tab.emptyState || path === tab.cwd) return;
+      const at = tabs.indexOf(tab);
+      if (at === -1) return;
+      const fresh = new Tab(path, null);
+      tabs.splice(at, 1, fresh);
+      tab.close();
+      openTab(fresh);
+      refreshSidebar();
+    }
+
     function applyActiveTabToChrome() {
       const cur = active;
       if (!cur) return;
+      drawCwdChip();
       cwdDisplay.innerText = cur.cwd ? (cur.cwd.split("/").filter(Boolean).pop() || cur.cwd) : "~";
       if (sessionTitleDisplay) {
         const cleanName = cleanSessionTitle(cur.name || cur.opening);

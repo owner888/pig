@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.21] - 2026-10-11
+
+### Added
+
+- **The Web UI lets a new conversation start in any folder**: until the first message, a 📁 chip by the model pickers opens a picker with the folders used before, a path field that completes subfolders, and a folder browser — as the terminal starts wherever `pig` is run.
+
 ## [0.6.20] - 2026-10-11
 
 ### Added

@@ -545,6 +545,21 @@ final class HttpServer
             return;
         }
 
+        // 8b. A directory's subdirectories, for the working-directory picker of a new conversation
+        if ($path === '/api/dirs') {
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], (string) json_encode(DirectoryListing::list(
+                (string) ($req['query']['path'] ?? ''),
+                $this->cwd,
+                getenv('HOME') ?: '/',
+                ($req['query']['hidden'] ?? '') === '1',
+            )));
+
+            return;
+        }
+
         // 9. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
         if ($path === '/api/sessions') {
             $targetCwd = $req['query']['cwd'] ?? $this->cwd;
