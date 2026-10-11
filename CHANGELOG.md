@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.3] - 2026-10-11
+
+### Changed
+
+- **Modernized sidebar navigation SVG icons**: Replaced tiny and inconsistent Unicode characters (`＋`, `⌕`, `⏱`) on sidebar navigation buttons ("New session", "Search", "Scheduled tasks") with crisp, balanced 16×16 vector SVG icons for a professional, elegant aesthetic.
+
 ## [0.6.2] - 2026-10-11
 
 ### Added

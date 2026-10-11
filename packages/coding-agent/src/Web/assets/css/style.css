@@ -569,10 +569,26 @@
       cursor: default;
     }
     .sidebar-nav-icon {
-      width: 16px;
-      text-align: center;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       color: var(--text-muted);
       flex-shrink: 0;
+      transition: color 0.15s ease;
+    }
+    .sidebar-nav-icon svg {
+      width: 16px;
+      height: 16px;
+      stroke-width: 2;
+      display: block;
+    }
+    .sidebar-nav-item:hover:not(:disabled) .sidebar-nav-icon {
+      color: var(--text);
+    }
+    .sidebar-nav-item:disabled .sidebar-nav-icon {
+      opacity: 0.6;
     }
     .sidebar-nav-soon {
       margin-left: auto;

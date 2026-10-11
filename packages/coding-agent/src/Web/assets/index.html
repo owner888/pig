@@ -14,13 +14,31 @@
   <aside id="sidebar" class="collapsed">
     <nav class="sidebar-nav">
       <button id="new-session-btn" class="sidebar-nav-item" data-i18n-attr="title:new_session_title">
-        <span class="sidebar-nav-icon">＋</span><span data-i18n="new_session">New session</span>
+        <span class="sidebar-nav-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </span>
+        <span data-i18n="new_session">New session</span>
       </button>
       <button id="search-sessions-btn" class="sidebar-nav-item" data-i18n-attr="title:search_sessions_title">
-        <span class="sidebar-nav-icon">⌕</span><span data-i18n="search_sessions">Search</span>
+        <span class="sidebar-nav-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </span>
+        <span data-i18n="search_sessions">Search</span>
       </button>
       <button id="scheduled-tasks-btn" class="sidebar-nav-item" disabled data-i18n-attr="title:coming_soon">
-        <span class="sidebar-nav-icon">⏱</span><span data-i18n="scheduled_tasks">Scheduled</span>
+        <span class="sidebar-nav-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </span>
+        <span data-i18n="scheduled_tasks">Scheduled</span>
         <span class="sidebar-nav-soon" data-i18n="coming_soon">Soon</span>
       </button>
     </nav>
