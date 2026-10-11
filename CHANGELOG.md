@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.23] - 2026-10-11
+
+### Changed
+
+- **Removed deprecated docker browser service** in favor of native desktop controller.
+
+### Fixed
+
+- **The Web UI is fully translated**: the SSH node workbench (which showed Chinese in English), its forms and dialogs, the web terminal's buttons, an extension's question dialogs (Yes / No / OK / hints), the tab bar, the export, diff, doctor and bug-report messages, and the connection banner now follow the page's language. Both languages have the same keys, and a test keeps every key the page uses in both.
+- **The SSH node workbench's own dialogs opened behind it** (add / edit node, host-key fingerprint, SFTP editor) and could not be clicked; they now open on top.
+
 ## [0.6.22] - 2026-10-11
 
 ### Added

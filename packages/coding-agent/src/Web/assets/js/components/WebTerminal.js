@@ -1,4 +1,6 @@
 import { network } from "../network.js";
+import { __t } from "../i18n.js";
+import { escapeHtml } from "../utils.js";
 import { Terminal } from "../vendor/xterm.mjs";
 import { FitAddon } from "../vendor/addon-fit.mjs";
 import { terminalTheme } from "../theme.js";
@@ -47,16 +49,16 @@ export class WebTerminal {
           </span>
           <div class="web-term-tabs-container">
             <div class="web-term-tabs-list" id="web-term-tabs-list"></div>
-            <button class="web-term-add-tab-btn" id="web-term-add-tab-btn" title="New Terminal Tab">+</button>
+            <button class="web-term-add-tab-btn" id="web-term-add-tab-btn" title="${escapeHtml(__t("term_new_tab"))}">+</button>
           </div>
-          <span class="web-term-cwd" title="Click to copy path">~</span>
+          <span class="web-term-cwd" title="${escapeHtml(__t("term_copy_path"))}">~</span>
         </div>
         <div class="web-term-header-right">
           <button class="web-term-quick-btn" data-cmd="git status" title="git status">git status</button>
           <button class="web-term-quick-btn" data-cmd="ls -la" title="ls -la">ls -la</button>
-          <button class="web-term-btn web-term-clear-btn" title="Clear (Ctrl+L)">🧹</button>
-          <button class="web-term-btn web-term-max-btn" title="Toggle Fullscreen">⛶</button>
-          <button class="web-term-btn web-term-close-btn" title="Close">✕</button>
+          <button class="web-term-btn web-term-clear-btn" title="${escapeHtml(__t("term_clear"))}">🧹</button>
+          <button class="web-term-btn web-term-max-btn" title="${escapeHtml(__t("term_fullscreen"))}">⛶</button>
+          <button class="web-term-btn web-term-close-btn" title="${escapeHtml(__t("close"))}">✕</button>
         </div>
       </div>
       <div class="web-term-viewport" id="web-term-viewport"></div>
@@ -81,7 +83,7 @@ export class WebTerminal {
       const activeCwd = this.getActiveCwd() || this.cwd;
       navigator.clipboard.writeText(activeCwd).then(() => {
         const orig = this.cwdBadge.textContent;
-        this.cwdBadge.textContent = "✓ Copied";
+        this.cwdBadge.textContent = "✓ " + __t("copied");
         setTimeout(() => this.updateCwdBadge(), 1200);
       });
     });
@@ -305,7 +307,7 @@ export class WebTerminal {
       tabEl.innerHTML = `
         <span class="web-term-tab-name">${t.name}</span>
         ${t.exitCode !== null ? `<span class="web-term-tab-status">[exit]</span>` : ""}
-        <button class="web-term-tab-close" title="Close">×</button>
+        <button class="web-term-tab-close" title="${escapeHtml(__t("close"))}">×</button>
       `;
 
       tabEl.addEventListener("click", () => this.switchTab(t.id));

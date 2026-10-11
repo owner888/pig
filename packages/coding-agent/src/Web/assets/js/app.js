@@ -178,7 +178,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           this.bound = false;
           this.ended = true;
           this.failPending("the agent exited");
-          this.render(() => { setRunningState(false); appendErrorMessage("The agent for this conversation exited" + (m.reason ? ": " + m.reason : ".") + " Send a message to start it again."); });
+          this.render(() => { setRunningState(false); appendErrorMessage(t("agent_exited", { reason: m.reason ? ": " + m.reason : "" })); });
           agentWorkingChanged();
           return;
         }
@@ -254,7 +254,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         try {
           this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
           if (this === active) slashAutocomplete?.setExtraCommands(extraCommands(this));
-        } catch (err) { if (this === active && !this.ended) pigUnreachable("the command list", err); }
+        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_command_list"), err); }
       }
 
       async refreshState() {
@@ -277,7 +277,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           this.render(() => setRunningState(this.isRunning));
           saveTabs(); renderTabs();
           if (this === active) applyActiveTabToChrome();
-        } catch (err) { if (this === active && !this.ended) pigUnreachable("the session state", err); }
+        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_session_state"), err); }
         // Apart, so a child that cannot list its commands still has its state drawn — and after
         // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
         this.loadCommands();
@@ -294,7 +294,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             this.render(() => this.earlyNotices.forEach(drawNotify));
             this.earlyNotices = [];
           }
-        } catch (err) { if (this === active && !this.ended) pigUnreachable("the conversation", err); }
+        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_conversation"), err); }
       }
 
       close() {
@@ -658,8 +658,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const item = document.createElement("div");
         item.className = "pending-img-item";
         item.innerHTML = `
-          <img src="${img.url}" class="pending-img-thumb" alt="attachment">
-          <div class="pending-img-del" title="Remove">×</div>
+          <img src="${img.url}" class="pending-img-thumb" alt="${escapeHtml(t("attach_title"))}">
+          <div class="pending-img-del" title="${escapeHtml(t("remove_image"))}">×</div>
         `;
         item.querySelector(".pending-img-del").addEventListener("click", () => {
           pendingImages.splice(idx, 1);
@@ -729,7 +729,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           const imgEl = document.createElement("img");
           imgEl.src = `/api/file?path=${encodeURIComponent(imgPath)}`;
           imgEl.className = "msg-image-thumb";
-          imgEl.title = "Local clipboard image: " + imgPath;
+          imgEl.title = t("clipboard_image", { path: imgPath });
           imgEl.addEventListener("click", () => openImageLightbox(imgEl.src));
           grid.appendChild(imgEl);
           block.appendChild(grid);
@@ -744,7 +744,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           const imgEl = document.createElement("img");
           imgEl.src = src;
           imgEl.className = "msg-image-thumb";
-          imgEl.title = "Click to open full view";
+          imgEl.title = t("open_full_image");
           imgEl.addEventListener("click", () => openImageLightbox(src));
           grid.appendChild(imgEl);
         }
@@ -906,7 +906,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // bar is re-read so it shows where the session went.
         (tab ? tab.refreshState() : Promise.resolve()).then(() => {
           const level = tab?.state?.thinkingLevel;
-          const suffix = level && level !== "off" ? ` · thinking ${level}` : "";
+          const suffix = level && level !== "off" ? ` · ${t("thinking_level_suffix", { level })}` : "";
           appendNoticeMessage(t("model_fallback_notice", { from: `${evt.from.provider}/${evt.from.id}`, to: `${evt.to.provider}/${evt.to.id}` }) + suffix);
         });
       } else if (evt.type === "summarization_retry_scheduled") {
@@ -943,7 +943,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const last = messages[messages.length - 1];
       if (!last) return null;
       if (last.errorMessage) return last.errorMessage;
-      if (last.stopReason === "error") return "An error occurred during generation.";
+      if (last.stopReason === "error") return t("generation_error");
       return null;
     }
 
@@ -1094,7 +1094,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           card.innerHTML = `
             <div class="tool-header">
               <span class="tool-header-title">pig doctor</span>
-              <span class="tool-header-status">diagnostics</span>
+              <span class="tool-header-status">${escapeHtml(t("doctor_status"))}</span>
             </div>
             <div class="tool-body"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
           `;
@@ -1110,7 +1110,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (text === "/bug" || text.startsWith("/bug ")) {
         appendUserMessage(text);
         const hint = text.slice(4).trim();
-        const includeTranscript = confirm("Include the session transcript in the bug report?\n\nIt holds your messages, the model's output, and every file and command result read this session.");
+        const includeTranscript = confirm(t("bug_include_transcript"));
         try {
           const data = await active.rpc({ type: "bug", hint, includeTranscript });
           const block = document.createElement("div");
@@ -1130,7 +1130,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const asMd = asPr || sub === "md" || sub === "markdown";
         const loading = document.createElement("div");
         loading.className = "msg-block msg-assistant";
-        loading.innerText = asPr ? "Generating Pull Request description from session…" : "Exporting…";
+        loading.innerText = t(asPr ? "export_pr_generating" : "exporting");
         chatScroll.appendChild(loading);
         scrollToBottomIfNeeded();
         try {
@@ -1169,7 +1169,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             card.innerHTML = `
               <div class="tool-header">
                 <span class="tool-header-title">git diff</span>
-                <span class="tool-header-status">working tree</span>
+                <span class="tool-header-status">${escapeHtml(t("diff_status"))}</span>
               </div>
               <div class="tool-body">${renderDiffFromUnified(data.diff)}</div>
             `;
@@ -1177,7 +1177,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           } else {
             const empty = document.createElement("div");
             empty.className = "msg-block msg-assistant";
-            empty.innerText = "No git changes in working tree.";
+            empty.innerText = t("diff_empty");
             chatScroll.appendChild(empty);
           }
         } catch (err) { appendErrorMessage(err.message); }
@@ -1195,7 +1195,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           promptInput.value = text;
           pendingImages = imgsToSend;
           renderPendingImages();
-          appendErrorMessage("Could not reach the agent for this conversation.");
+          appendErrorMessage(t("agent_unreachable"));
           return;
         }
       }
@@ -1217,7 +1217,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         promptInput.value = text;
         pendingImages = imgsToSend;
         renderPendingImages();
-        appendErrorMessage(err.message || "Failed to send message.");
+        appendErrorMessage(err.message || t("send_failed"));
       }
     }
 
@@ -1239,14 +1239,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
      */
     async function runBangCommand(tab, command, remember) {
       if (tab.bashRunning) {
-        appendErrorMessage("A command is already running. Press Stop first.");
+        appendErrorMessage(t("command_running"));
         return;
       }
       if (tab.ended || !tab.bound) {
         tab.subscribe();
         const until = Date.now() + 10000;
         while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
-        if (!tab.bound) { appendErrorMessage("Could not reach the agent for this conversation."); return; }
+        if (!tab.bound) { appendErrorMessage(t("agent_unreachable")); return; }
       }
 
       tab.render(() => {
@@ -1258,7 +1258,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (!remember) {
         const title = card.element.querySelector(".tool-header-title");
         if (title) title.textContent = "$$ " + command;
-        card.element.title = "!! — not added to the conversation";
+        card.element.title = t("bang_not_added");
       }
       tab.render(() => { chatScroll.appendChild(card.element); scrollToBottomIfNeeded(); });
 
@@ -1337,24 +1337,24 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       let body = "";
       if (req.method === "confirm") {
         body = `<div class="hook-message">${escapeHtml(req.message || "")}</div>
-          <div class="hook-actions"><button class="mini-btn" data-no>No</button><button class="mini-btn" data-yes autofocus>Yes</button></div>
-          <div class="hook-hint">enter yes · esc no</div>`;
+          <div class="hook-actions"><button class="mini-btn" data-no>${escapeHtml(t("hook_no"))}</button><button class="mini-btn" data-yes autofocus>${escapeHtml(t("hook_yes"))}</button></div>
+          <div class="hook-hint">${escapeHtml(t("hook_hint_confirm"))}</div>`;
       } else if (req.method === "select") {
         body = `<div>${(req.options || []).map((o, i) => `<div class="hook-option" data-i="${i}">${escapeHtml(o)}</div>`).join("")}</div>
-          <div class="hook-hint">↑↓ move · enter choose · esc cancel</div>`;
+          <div class="hook-hint">${escapeHtml(t("hook_hint_select"))}</div>`;
       } else if (req.method === "input") {
         body = `<input class="hook-input" placeholder="${escapeHtml(req.placeholder || "")}" autofocus>
-          <div class="hook-actions"><button class="mini-btn" data-cancel>Cancel</button><button class="mini-btn" data-ok>OK</button></div>
-          <div class="hook-hint">enter submit · esc cancel</div>`;
+          <div class="hook-actions"><button class="mini-btn" data-cancel>${escapeHtml(t("cancel"))}</button><button class="mini-btn" data-ok>${escapeHtml(t("hook_ok"))}</button></div>
+          <div class="hook-hint">${escapeHtml(t("hook_hint_input"))}</div>`;
       } else if (req.method === "editor") {
         body = `<textarea class="hook-editor" autofocus>${escapeHtml(req.prefill || "")}</textarea>
-          <div class="hook-actions"><button class="mini-btn" data-cancel>Cancel</button><button class="mini-btn" data-ok>Submit</button></div>
-          <div class="hook-hint">ctrl+enter submit · esc cancel</div>`;
+          <div class="hook-actions"><button class="mini-btn" data-cancel>${escapeHtml(t("cancel"))}</button><button class="mini-btn" data-ok>${escapeHtml(t("hook_submit"))}</button></div>
+          <div class="hook-hint">${escapeHtml(t("hook_hint_editor"))}</div>`;
       } else {
         return;
       }
 
-      const title = req.title || "A hook asks";
+      const title = req.title || t("hook_asks");
       let remaining = timeoutSeconds(req);
       el.innerHTML = `<div class="modal"><div class="modal-header"><span class="hook-title">${escapeHtml(remaining === null ? title : countdownTitle(title, remaining))}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
       document.body.appendChild(el);
@@ -1657,7 +1657,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const close = document.createElement("span");
         close.className = "session-tab-close";
         close.textContent = "×";
-        close.title = "Close tab";
+        close.title = __t("close_tab"); // `t` is the tab here
         close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
         el.appendChild(label);
         el.appendChild(close);
@@ -1667,7 +1667,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const plus = document.createElement("div");
       plus.className = "session-tab-new";
       plus.textContent = "+";
-      plus.title = "New session";
+      plus.title = t("new_session");
       plus.addEventListener("click", () => startNewSession(active?.cwd));
       sessionTabs.appendChild(plus);
     }
@@ -1841,9 +1841,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
     async function loadModels() {
       try {
-        availableModels = await fetchJson("/api/models", "the model list");
+        availableModels = await fetchJson("/api/models", t("what_model_list"));
         populateProviders(availableModels);
-      } catch (err) { pigUnreachable("the model list", err); }
+      } catch (err) { pigUnreachable(t("what_model_list"), err); }
     }
 
     function populateProviders(models) {
@@ -2297,7 +2297,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             });
             const data = await res.json();
             if (!data.success) {
-              alert(data.error || "Failed to rename session");
+              alert(data.error || t("rename_failed"));
               return false;
             }
             labelEl.textContent = newName;
@@ -2344,7 +2344,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             });
             const data = await res.json();
             if (!data.success) {
-              alert(data.error || "Failed to delete session");
+              alert(data.error || t("delete_failed"));
               return false;
             }
 
@@ -2536,7 +2536,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       let saved = null;
       try { saved = JSON.parse(localStorage.getItem(TABS_KEY) || "null"); } catch (e) {}
       try {
-        const r = await fetchJson("/api/running", "the server");
+        const r = await fetchJson("/api/running", t("what_server"));
         serverCwd = r.cwd;
       } catch (err) { serverCwd = null; }
 

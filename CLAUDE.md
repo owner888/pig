@@ -13276,6 +13276,31 @@ and every `agent_end` stopped half way through its handler — no error anywhere
 **Rule**: after touching `assets/js`, grep each new bare name for its `let`/`const`/`function`; the
 sidebar is now `refreshSidebar()` with no view state at all.
 
+### A web string in a loop over tabs called the tab, and a component's `data-i18n` was never applied
+
+**Symptom**: the tab bar and the terminal's tab list drew nothing (`TypeError: t is not a function`);
+the SSH node workbench showed Chinese in an English page.
+
+**Cause**: `for (const t of tabs)` shadows the imported `t()`, so a `t("close_tab")` inside the loop
+calls a tab. And `applyI18n()` runs once at startup, before `NodeWorkbench` builds its markup, so its
+`data-i18n` elements kept their Chinese defaults.
+
+**Rule**: inside a loop or callback whose variable is `t`, translate with `__t()`; a component that
+builds `data-i18n` markup calls `applyI18n(itsElement)` after appending it. `WebI18nTest` checks
+that every key used is in both languages — not shadowing, which only the browser shows.
+
+### `phpunit | tail` hung after the whole suite had passed
+
+**Symptom**: the full suite ran to the end, and the command never returned; with output to a file
+instead of a pipe it finished.
+
+**Cause**: `InteractiveModeTest::testSlashWebStatusAndRestartCommand` types `/web restart`, which
+starts a real `pig web start -d` daemon in the test's home, and nothing stopped it: the daemon held
+the pipe `tail` waits on, and port 8088.
+
+**Rule**: a test that starts a daemon stops it in a `finally` (`/web stop`); after a run,
+`ps -eo args | grep "[m]ode web"` shows nothing.
+
 ### The web chat stopped short of the bottom when a new block came in
 
 **Symptom**: in `pig --mode web`, a new block (a tool card, a long reply, an image) often left the

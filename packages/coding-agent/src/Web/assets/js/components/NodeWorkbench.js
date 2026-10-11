@@ -1,6 +1,6 @@
 import { network } from "../network.js";
 import { escapeHtml, openModal } from "../utils.js";
-import { t } from "../i18n.js";
+import { t, applyI18n } from "../i18n.js";
 import { Terminal } from "../vendor/xterm.mjs";
 import { FitAddon } from "../vendor/addon-fit.mjs";
 import { terminalTheme } from "../theme.js";
@@ -47,14 +47,14 @@ export class NodeWorkbench {
           <div class="node-sidebar-header">
             <div class="node-sidebar-title-row">
               <span class="node-sidebar-title" data-i18n="nodes_title">SSH 节点工作台</span>
-              <button class="node-btn-icon node-add-btn" title="添加节点 / Add Node">+</button>
+              <button class="node-btn-icon node-add-btn" data-i18n-attr="title:add_node" title="Add Node">+</button>
             </div>
             <div class="node-sidebar-search-row">
-              <input type="text" class="node-search-input" placeholder="搜索节点 / Search..." spellcheck="false">
+              <input type="text" class="node-search-input" data-i18n-attr="placeholder:node_search_placeholder" placeholder="Search..." spellcheck="false">
             </div>
           </div>
           <div class="node-sidebar-list" id="node-sidebar-list">
-            <div class="node-empty-hint">加载中 / Loading...</div>
+            <div class="node-empty-hint" data-i18n="loading">Loading...</div>
           </div>
           <div class="node-sidebar-footer">
             <button class="node-import-btn" id="node-import-ssh-btn" data-i18n="node_import_ssh">从 ~/.ssh/config 导入</button>
@@ -66,7 +66,7 @@ export class NodeWorkbench {
             <div class="node-header-info">
               <span class="node-header-name" id="node-header-name">Node</span>
               <span class="node-header-target" id="node-header-target">user@host:22</span>
-              <span class="node-badge" id="node-badge-status">未连接</span>
+              <span class="node-badge" id="node-badge-status" data-i18n="node_disconnected">Not connected</span>
               <span class="node-badge-fp" id="node-badge-fp" style="display:none;"></span>
             </div>
             <div class="node-header-actions">
@@ -84,7 +84,7 @@ export class NodeWorkbench {
               <button class="node-subtab-btn" data-subtab="sftp" data-i18n="node_sftp">SFTP 文件</button>
             </div>
             <div class="node-subtabs-right" id="node-terminal-tabs-ctrl">
-              <button class="node-subtab-add-term" id="node-add-term-btn" title="新建 SSH 终端 / New Terminal">+</button>
+              <button class="node-subtab-add-term" id="node-add-term-btn" data-i18n-attr="title:node_new_terminal" title="New Terminal">+</button>
             </div>
           </div>
 
@@ -92,7 +92,7 @@ export class NodeWorkbench {
           <div class="node-empty-view" id="node-empty-view">
             <div class="node-empty-icon">🖥️</div>
             <div class="node-empty-title" data-i18n="nodes_title">SSH 节点工作台</div>
-            <div class="node-empty-desc">在左侧选择或添加远程 SSH 节点以连接终端或管理 SFTP 文件。</div>
+            <div class="node-empty-desc" data-i18n="node_empty_desc"></div>
           </div>
 
           <!-- Terminal Workspace Pane -->
@@ -103,7 +103,7 @@ export class NodeWorkbench {
           <!-- SFTP Workspace Pane -->
           <div class="node-pane-sftp" id="node-pane-sftp" style="display:none;">
             <div class="node-sftp-toolbar">
-              <button class="node-sftp-up-btn" id="node-sftp-up-btn" title="上一级 / Up">↑</button>
+              <button class="node-sftp-up-btn" id="node-sftp-up-btn" data-i18n-attr="title:node_up" title="Up">↑</button>
               <input type="text" class="node-sftp-path-input" id="node-sftp-path-input" value="/">
               <button class="node-sftp-browse-btn" id="node-sftp-browse-btn" data-i18n="node_browse">浏览</button>
             </div>
@@ -134,6 +134,8 @@ export class NodeWorkbench {
 
     this.bindEvents();
     document.body.appendChild(this.element);
+    // Its `data-i18n` markup is built after the page's own pass at startup.
+    applyI18n(this.element);
   }
 
   bindEvents() {
@@ -235,7 +237,7 @@ export class NodeWorkbench {
     }
 
     if (msg.event === "failure") {
-      alert(`[SSH Error] ${msg.message || "Operation failed"}`);
+      alert(t("node_ssh_error", { message: msg.message || t("node_operation_failed") }));
       return;
     }
 
@@ -287,7 +289,7 @@ export class NodeWorkbench {
 
     if (filtered.length === 0) {
       this.sidebarListEl.innerHTML = `<div class="node-empty-hint">${
-        this.nodes.length === 0 ? "点击顶部 + 添加第一台 SSH 节点" : "未找到匹配节点"
+        escapeHtml(t(this.nodes.length === 0 ? "node_empty_first" : "node_no_match"))
       }</div>`;
       return;
     }
@@ -313,7 +315,7 @@ export class NodeWorkbench {
               <div class="node-item-name">${escapeHtml(node.name)}</div>
               <div class="node-item-target">${escapeHtml(node.username)}@${escapeHtml(node.host)}:${node.port}</div>
             </div>
-            <button class="node-item-delete-btn" data-delete-id="${node.id}" title="删除 / Delete">×</button>
+            <button class="node-item-delete-btn" data-delete-id="${node.id}" title="${escapeHtml(t("delete"))}">×</button>
           </div>
         `;
       }
@@ -333,7 +335,7 @@ export class NodeWorkbench {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const id = btn.getAttribute("data-delete-id");
-        if (id && confirm("确定删除该节点吗？")) {
+        if (id && confirm(t("node_delete_confirm"))) {
           network.send({
             type: "node_request",
             action: "delete",
@@ -373,7 +375,7 @@ export class NodeWorkbench {
     this.headerTargetEl.textContent = `${node.username}@${node.host}:${node.port}`;
 
     const isConnected = this.connectedNodeIds.has(id);
-    this.statusBadgeEl.textContent = isConnected ? "已连接" : "未连接";
+    this.statusBadgeEl.textContent = t(isConnected ? "node_connected" : "node_disconnected");
     this.statusBadgeEl.className = "node-badge " + (isConnected ? "connected" : "");
 
     if (node.fingerprint) {
@@ -517,7 +519,7 @@ export class NodeWorkbench {
 
   renderSftpFiles() {
     if (!this.remoteEntries.length) {
-      this.sftpFileListEl.innerHTML = `<div class="node-empty-hint">空目录 / Empty directory</div>`;
+      this.sftpFileListEl.innerHTML = `<div class="node-empty-hint">${escapeHtml(t("node_empty_dir"))}</div>`;
       return;
     }
 
@@ -526,8 +528,8 @@ export class NodeWorkbench {
         <thead>
           <tr>
             <th style="width:40px;"></th>
-            <th>名称 / Name</th>
-            <th style="width:100px; text-align:right;">大小 / Size</th>
+            <th>${escapeHtml(t("node_name"))}</th>
+            <th style="width:100px; text-align:right;">${escapeHtml(t("node_size"))}</th>
           </tr>
         </thead>
         <tbody>
@@ -580,7 +582,7 @@ export class NodeWorkbench {
 
   showFileEditor(path, text) {
     const modal = document.createElement("div");
-    modal.className = "modal-backdrop";
+    modal.className = "modal-backdrop node-workbench-dialog";
     modal.innerHTML = `
       <div class="modal-card" style="width:720px; max-width:92vw;">
         <div class="modal-header">
@@ -591,8 +593,8 @@ export class NodeWorkbench {
           <textarea class="node-editor-textarea" style="width:100%; height:380px; font-family:var(--font-mono); font-size:12.5px; background:var(--color-background); border:1px solid var(--color-border); color:var(--color-text-primary); padding:10px; border-radius:6px; resize:none;" spellcheck="false">${escapeHtml(text)}</textarea>
         </div>
         <div class="modal-footer" style="padding:10px 14px; display:flex; justify-content:flex-end; gap:8px;">
-          <button class="btn btn-secondary" id="sftp-edit-cancel">取消</button>
-          <button class="btn btn-primary" id="sftp-edit-save">保存写回远端</button>
+          <button class="btn btn-secondary" id="sftp-edit-cancel">${escapeHtml(t("cancel"))}</button>
+          <button class="btn btn-primary" id="sftp-edit-save">${escapeHtml(t("node_save_remote"))}</button>
         </div>
       </div>
     `;
@@ -617,20 +619,20 @@ export class NodeWorkbench {
 
   showFingerprintPrompt(nodeId, fingerprint) {
     const modal = document.createElement("div");
-    modal.className = "modal-backdrop";
+    modal.className = "modal-backdrop node-workbench-dialog";
     modal.innerHTML = `
       <div class="modal-card" style="width:480px; max-width:90vw;">
         <div class="modal-header">
-          <div class="modal-title">🔒 验证主机密钥指纹</div>
+          <div class="modal-title">🔒 ${escapeHtml(t("node_verify_fp"))}</div>
           <button class="modal-close-btn" id="fp-close">✕</button>
         </div>
         <div style="padding:16px; font-size:13px; line-height:1.6;">
-          <p style="color:var(--color-text-secondary); margin-bottom:12px;">检测到远程服务器的主机密钥指纹尚未加入信任列表，请核对是否可信：</p>
+          <p style="color:var(--color-text-secondary); margin-bottom:12px;">${escapeHtml(t("node_fingerprint_prompt"))}</p>
           <div style="font-family:var(--font-mono); font-size:12px; background:color-mix(in srgb, var(--color-primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); color:var(--color-primary); padding:8px 12px; border-radius:6px; word-break:break-all;">${escapeHtml(fingerprint)}</div>
         </div>
         <div class="modal-footer" style="padding:12px 16px; display:flex; justify-content:flex-end; gap:8px;">
-          <button class="btn btn-secondary" id="fp-cancel">取消</button>
-          <button class="btn btn-primary" id="fp-trust">信任并连接</button>
+          <button class="btn btn-secondary" id="fp-cancel">${escapeHtml(t("cancel"))}</button>
+          <button class="btn btn-primary" id="fp-trust">${escapeHtml(t("node_trust"))}</button>
         </div>
       </div>
     `;
@@ -654,64 +656,64 @@ export class NodeWorkbench {
   showEditModal(node = null) {
     const isEdit = node !== null;
     const modal = document.createElement("div");
-    modal.className = "modal-backdrop";
+    modal.className = "modal-backdrop node-workbench-dialog";
     modal.innerHTML = `
       <div class="modal-card" style="width:520px; max-width:92vw;">
         <div class="modal-header">
-          <div class="modal-title">${isEdit ? "编辑 SSH 节点" : "添加 SSH 节点"}</div>
+          <div class="modal-title">${escapeHtml(t(isEdit ? "edit_node" : "add_node"))}</div>
           <button class="modal-close-btn" id="node-form-close">✕</button>
         </div>
         <div style="padding:16px; display:flex; flex-direction:column; gap:12px; font-size:13px;">
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">名称 / Name</label>
-              <input type="text" id="f-name" class="node-input" value="${escapeHtml(node?.name || "")}" placeholder="生产服务器">
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_name"))}</label>
+              <input type="text" id="f-name" class="node-input" value="${escapeHtml(node?.name || "")}" placeholder="${escapeHtml(t("node_name_placeholder"))}">
             </div>
             <div style="width:130px;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">分组 / Group</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_group"))}</label>
               <input type="text" id="f-group" class="node-input" value="${escapeHtml(node?.group || "Default")}" placeholder="Default">
             </div>
           </div>
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">主机地址 / Host</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_host"))}</label>
               <input type="text" id="f-host" class="node-input" value="${escapeHtml(node?.host || "")}" placeholder="192.168.1.100">
             </div>
             <div style="width:90px;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">端口 / Port</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_port"))}</label>
               <input type="number" id="f-port" class="node-input" value="${node?.port || 22}">
             </div>
           </div>
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">用户名 / Username</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_user"))}</label>
               <input type="text" id="f-user" class="node-input" value="${escapeHtml(node?.username || "root")}">
             </div>
             <div style="flex:1;">
-              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">认证方式 / Auth</label>
+              <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_auth"))}</label>
               <select id="f-auth" class="node-input">
-                <option value="key" ${node?.auth === "key" ? "selected" : ""}>私钥 (Private Key)</option>
-                <option value="password" ${node?.auth === "password" ? "selected" : ""}>密码 (Password)</option>
+                <option value="key" ${node?.auth === "key" ? "selected" : ""}>${escapeHtml(t("node_auth_key"))}</option>
+                <option value="password" ${node?.auth === "password" ? "selected" : ""}>${escapeHtml(t("node_auth_password"))}</option>
                 <option value="agent" ${node?.auth === "agent" ? "selected" : ""}>SSH Agent</option>
               </select>
             </div>
           </div>
           <div id="f-key-row" style="display:${node?.auth === "password" || node?.auth === "agent" ? "none" : "block"};">
-            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">私钥路径 / Key Path</label>
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_key_path"))}</label>
             <input type="text" id="f-keypath" class="node-input" value="${escapeHtml(node?.keyPath || "~/.ssh/id_ed25519")}" placeholder="~/.ssh/id_ed25519">
           </div>
           <div id="f-secret-row">
-            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);" id="f-secret-label">${node?.auth === "password" ? "SSH 密码 / Password" : "密钥口令 / Passphrase (可选)"}</label>
-            <input type="password" id="f-secret" class="node-input" placeholder="${isEdit ? "（保持不变请留空）" : ""}">
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);" id="f-secret-label">${escapeHtml(t(node?.auth === "password" ? "node_ssh_password" : "node_passphrase"))}</label>
+            <input type="password" id="f-secret" class="node-input" placeholder="${isEdit ? escapeHtml(t("node_secret_keep")) : ""}">
           </div>
           <div>
-            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">默认远端目录 / Default Directory</label>
+            <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_default_dir"))}</label>
             <input type="text" id="f-dir" class="node-input" value="${escapeHtml(node?.defaultDir || "/")}">
           </div>
         </div>
         <div class="modal-footer" style="padding:12px 16px; display:flex; justify-content:flex-end; gap:8px;">
-          <button class="btn btn-secondary" id="node-form-cancel">取消</button>
-          <button class="btn btn-primary" id="node-form-save">保存</button>
+          <button class="btn btn-secondary" id="node-form-cancel">${escapeHtml(t("cancel"))}</button>
+          <button class="btn btn-primary" id="node-form-save">${escapeHtml(t("save"))}</button>
         </div>
       </div>
     `;
@@ -725,7 +727,7 @@ export class NodeWorkbench {
     authSelect.addEventListener("change", () => {
       const val = authSelect.value;
       keyRow.style.display = val === "key" ? "block" : "none";
-      secretLabel.textContent = val === "password" ? "SSH 密码 / Password" : "密钥口令 / Passphrase (可选)";
+      secretLabel.textContent = t(val === "password" ? "node_ssh_password" : "node_passphrase");
     });
 
     modal.querySelector("#node-form-close").addEventListener("click", () => modal.remove());
@@ -795,6 +797,6 @@ export class NodeWorkbench {
       }
     }
 
-    alert(`已发起导入 ${importedCount} 台 SSH 节点！`);
+    alert(t("node_imported", { count: importedCount }));
   }
 }

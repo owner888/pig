@@ -227,7 +227,7 @@ export class ToolCard {
 
     let imagesHtml = "";
     if (images.length > 0) {
-      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data)}" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="Click to view full image">`).join("")}</div>`;
+      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data)}" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="${escapeHtml(t("open_full_image"))}">`).join("")}</div>`;
     }
 
     if (!this.isError && this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {

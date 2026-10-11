@@ -2,6 +2,8 @@
  * Shared physical WebSocket connection for multiplexed tabs.
  */
 
+import { t } from "./i18n.js";
+
 export const clientId = (() => {
   try {
     let v = sessionStorage.getItem("pig-client-id");
@@ -82,7 +84,7 @@ export class SharedNetwork {
         this.ws.close();
       } catch (e) {}
     }
-    this.showStatus("Connecting to server...");
+    this.showStatus(t("connecting"));
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${location.host}/ws`);
     this.ws = ws;
@@ -149,7 +151,7 @@ export class SharedNetwork {
 
   scheduleReconnect() {
     if (this.reconnectTimer || this.closed) return;
-    this.showStatus("Connecting to server...");
+    this.showStatus(t("connecting"));
     const delay = this.reconnectDelay + Math.floor(Math.random() * 500);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

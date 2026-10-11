@@ -5252,14 +5252,22 @@ final class InteractiveModeTest extends TestCase
             'Expected status output on /web status'
         );
 
-        $this->type('/web restart');
-        $this->type(self::ENTER);
-        self::turnTheLoop(4);
+        // `/web restart` starts a real daemon in this test's home; it is stopped again here, or it
+        // outlives the run — holding the pipe `phpunit | tail` waits on, and the port.
+        try {
+            $this->type('/web restart');
+            $this->type(self::ENTER);
+            self::turnTheLoop(4);
 
-        $this->assertTrue(
-            str_contains($this->screen(), 'started') || str_contains($this->screen(), 'Web UI'),
-            'Expected restart confirmation on /web restart'
-        );
+            $this->assertTrue(
+                str_contains($this->screen(), 'started') || str_contains($this->screen(), 'Web UI'),
+                'Expected restart confirmation on /web restart'
+            );
+        } finally {
+            $this->type('/web stop');
+            $this->type(self::ENTER);
+            self::turnTheLoop(4);
+        }
     }
 
     public function testExternalEditorCommandResolution(): void

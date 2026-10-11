@@ -3,6 +3,8 @@
  *
  * Fullscreen ambient image viewer with backdrop blur and smooth transitions.
  */
+import { t } from "../i18n.js";
+import { escapeHtml } from "../utils.js";
 let activeLightbox = null;
 
 export function openImageLightbox(src) {
@@ -12,9 +14,9 @@ export function openImageLightbox(src) {
   const overlay = document.createElement("div");
   overlay.className = "image-lightbox-overlay";
   overlay.innerHTML = `
-    <button class="image-lightbox-close" title="Close (Esc)">✕</button>
+    <button class="image-lightbox-close" title="${escapeHtml(t("close_esc"))}">✕</button>
     <div class="image-lightbox-content">
-      <img src="${src}" class="image-lightbox-img" alt="Preview">
+      <img src="${src}" class="image-lightbox-img" alt="${escapeHtml(t("image_preview"))}">
     </div>
   `;
 

@@ -2437,6 +2437,8 @@
     }
 
     /* Node Workbench Window & Modal */
+    /* The workbench's own dialogs (node form, fingerprint, SFTP editor) go over the workbench. */
+    .node-workbench-dialog { z-index: 11100; }
     .node-workbench-modal {
       position: fixed;
       inset: 0;
