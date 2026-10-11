@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.5] - 2026-10-11
+
+### Changed
+
+- **Polished Web UI sidebar aesthetics and interaction stability**: Verified and unified sidebar navigation layout, crisp SVG icons, and smooth transitions for session item hover states.
+
+### Fixed
+
+- **Consistent system trash and web session cleanup**: Ensured session deletion across Web UI and CLI interfaces routes through OS-native trash commands (macOS Finder delete / Linux `gio trash` / Windows PowerShell RecycleBin) and verified clean restart workflows.
+
 ## [0.6.4] - 2026-10-11
 
 ### Fixed
