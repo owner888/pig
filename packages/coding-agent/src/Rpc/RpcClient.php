@@ -159,18 +159,33 @@ final class RpcClient
             throw new RpcError('start', "No pig at {$binary}");
         }
 
+        if (!is_dir($this->cwd)) {
+            throw new RpcError('start', "Working directory does not exist: {$this->cwd}");
+        }
+
         $command = self::withoutInheritedFds([PHP_BINARY, $binary, '--mode', 'rpc', ...$this->arguments]);
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $process = proc_open(
-            $command,
-            $descriptors,
-            $pipes,
-            $this->cwd,
-            $this->environment === [] ? null : [...getenv(), ...$this->environment],
-        );
+        $warning = null;
+        set_error_handler(static function (int $errno, string $errstr) use (&$warning): bool {
+            $warning = $errstr;
+            return true;
+        });
+
+        try {
+            $process = proc_open(
+                $command,
+                $descriptors,
+                $pipes,
+                $this->cwd,
+                $this->environment === [] ? null : [...getenv(), ...$this->environment],
+            );
+        } finally {
+            restore_error_handler();
+        }
 
         if (!is_resource($process)) {
-            throw new RpcError('start', "Could not start {$binary}");
+            $reason = $warning !== null ? ": {$warning}" : '';
+            throw new RpcError('start', "Could not start {$binary}{$reason}");
         }
 
         $this->process = $process;

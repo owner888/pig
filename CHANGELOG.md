@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.6] - 2026-10-11
+
+### Fixed
+
+- **Working directory validation and warning suppression in `RpcClient::start()`**: Checked that the target `$cwd` exists before invoking `proc_open()`, throwing a clear `RpcError` instead of letting `proc_open()` fail with a raw PHP `posix_spawn() failed: No such file or directory` warning. Captured potential `proc_open()` warnings using a scoped `set_error_handler` to prevent raw warnings from leaking onto TUI or CLI streams. Ensured `HttpServer` safely falls back to the server root when a restored or client-supplied session tab points to a deleted directory.
+
 ## [0.6.5] - 2026-10-11
 
 ### Changed

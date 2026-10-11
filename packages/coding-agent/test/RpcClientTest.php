@@ -825,6 +825,18 @@ final class RpcClientTest extends TestCase
         unlink($agent);
     }
 
+    public function testMissingWorkingDirectoryThrowsRpcError(): void
+    {
+        $nonExistentDir = $this->root . '/no-such-dir-' . bin2hex(random_bytes(4));
+        $client = new RpcClient(cwd: $nonExistentDir);
+
+        $error = $this->assertThrows(RpcError::class, static function () use ($client): void {
+            $client->start();
+        });
+
+        $this->assertStringContainsString('Working directory does not exist', $error->getMessage());
+    }
+
     public function testStoppingTwiceIsHarmless(): void
     {
         $this->serveOneTurn('unused');
