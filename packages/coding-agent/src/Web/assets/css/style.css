@@ -80,6 +80,8 @@
       color: var(--color-text-primary);
       font-family: var(--font-sans);
       height: 100vh;
+      /* What can be seen of the page — less what the keyboard covers (viewport.js). */
+      height: var(--app-height, 100dvh);
       display: flex;
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
@@ -1510,8 +1512,8 @@
     }
     .web-terminal-drawer.maximized {
       top: 0;
-      height: 100vh !important;
-      max-height: 100vh !important;
+      height: var(--app-height, 100dvh) !important;
+      max-height: var(--app-height, 100dvh) !important;
       border-top: none;
     }
     .web-term-header {
@@ -2285,10 +2287,6 @@
        Mobile Viewport & Touch Optimization (< 768px)
        ========================================================================== */
     @media (max-width: 768px) {
-      body {
-        height: 100dvh;
-      }
-
       /* Sidebar becomes a drawer covering up to 85% of mobile screen width */
       #sidebar {
         position: fixed;

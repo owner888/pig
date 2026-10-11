@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.24] - 2026-10-11
+
+### Fixed
+
+- **iPad Safari kept the Web UI's header off screen while typing**: focusing the prompt brought up the keyboard or the floating input bar, Safari scrolled the page to keep the field visible, and the header (language, accounts, theme) went off the top. The page now takes its height from what is visible and stays in place; the floating input bar itself is iPadOS's own.
+
 ## [0.6.23] - 2026-10-11
 
 ### Changed

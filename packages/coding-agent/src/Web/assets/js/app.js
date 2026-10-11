@@ -2,6 +2,7 @@
  * Main application controller for pig web UI (Native ES Module).
  */
 
+import "./viewport.js";
 import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
