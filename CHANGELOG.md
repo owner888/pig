@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.22] - 2026-10-11
+
+### Added
+
+- **The Web UI asks for a password**: always, on 127.0.0.1 too. The first time, `pig web start` prints a one-time setup code to set the password with on the page; `pig web password` sets or changes it. Sessions last 30 days and survive a restart; logging out is in the header and the mobile menu.
+
+### Fixed
+
+- **Other websites can no longer reach the Web UI's API or WebSocket**: requests from another origin are refused and the API no longer sends `Access-Control-Allow-Origin: *` — before, any page open in the same browser could call `127.0.0.1:8088`, terminal included.
+- **README's default web port** is 8088, as the server uses, not 8080.
+
 ## [0.6.21] - 2026-10-11
 
 ### Added

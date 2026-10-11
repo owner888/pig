@@ -143,7 +143,7 @@ if (in_array($argv[1] ?? '', PackageCommands::COMMANDS, true)) {
     exit(PackageCommands::main(array_slice($argv, 1), getcwd() ?: '.'));
 }
 
-// `pig web start|stop|status|restart` — the browser UI as a daemon. `start` without `-d` becomes
+// `pig web start|stop|status|restart|password` — the browser UI as a daemon, and its password. `start` without `-d` becomes
 // `pig --mode web` by exec, so there is one web server and not two.
 if (($argv[1] ?? '') === 'web') {
     exit((new WebDaemon($argv[0]))->run(array_slice($argv, 2)));

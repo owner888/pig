@@ -181,13 +181,15 @@ pig --mode web
 # 或在终端交互模式下随时键入 /web 启动并自动唤起浏览器
 
 # 生产级后台持久守护进程（推荐）
-pig web start -d              # 后台常驻启动（默认监听 127.0.0.1:8080，支持 --port / --host）
+pig web start -d              # 后台常驻启动（默认监听 127.0.0.1:8088，支持 --port / --host）
 pig web status                # 查看守护进程运行状态与 PID
 pig web restart               # 重启 Web 服务
 pig web stop                  # 安全平滑终止 Web 进程
+pig web password              # 设置或修改 Web UI 的密码
 ```
 
-使用浏览器或手机访问 `http://localhost:8080`：
+使用浏览器或手机访问 `http://localhost:8088`：
+- **登录**：Web UI 能在你的机器上开终端、跑 agent，所以始终要求密码。第一次启动时 `pig web start` 会打印一次性设置码，在网页上填入设置码并设定密码即可（也可以用 `pig web password` 设置）。来自其他网站的请求一律拒绝。
 - **本地交互式 PTY 终端抽屉**：随时按快捷键 <code>Ctrl+`</code> 或 <code>Cmd+`</code>（或点击顶栏终端图标）呼出集成 `xterm.js` 的全功能多标签页伪终端，原生支持 `vim`、`nvim`、`nano`、`htop`、`tmux` 等全屏按键控制。
 - **SSH 远程节点工作台与 SFTP 文件管理**：点击顶栏 `🖥️ 节点` 管理远程服务器资产，SHA-256 主机指纹安全校验，`~/.ssh/config` 一键导入，远程交互终端（`ssh -tt`）与 SFTP 文件在线浏览/编辑（上限 512 KiB）。
 - **自动唤起默认浏览器**：在终端 TUI 会话中敲 `/web` 会在端口绑定后自动唤起系统默认浏览器打开界面，无需手动复制 URL。

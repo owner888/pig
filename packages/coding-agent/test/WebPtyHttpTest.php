@@ -22,7 +22,7 @@ final class WebPtyHttpTest extends TestCase
     public function testTerminalMessagesOverWebSocket(): void
     {
         $port = 19890;
-        $server = new HttpServer(sys_get_temp_dir(), $port, '127.0.0.1', Auth::inMemory());
+        $server = new HttpServer(sys_get_temp_dir(), $port, '127.0.0.1', Auth::inMemory(), login: \Pig\CodingAgent\Web\WebLogin::off());
         $server->start();
 
         $outputCollected = '';

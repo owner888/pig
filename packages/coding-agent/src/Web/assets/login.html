@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>pig agent</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body class="login-body">
+  <!-- `WebLogin`: the first password with the setup code, or the password. Drawn by login.js. -->
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="login-title">🐷 pig</div>
+    <div id="login-hint" class="login-hint"></div>
+    <input id="login-code" class="login-field" autocomplete="off" spellcheck="false" hidden>
+    <input id="login-password" class="login-field" type="password" autocomplete="current-password" required>
+    <input id="login-confirm" class="login-field" type="password" autocomplete="new-password" hidden>
+    <div id="login-error" class="login-error" hidden></div>
+    <button id="login-submit" class="modal-btn primary login-submit" type="submit"></button>
+  </form>
+  <script type="module" src="/assets/js/login.js"></script>
+</body>
+</html>

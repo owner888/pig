@@ -22,7 +22,7 @@ final class WebNodeHttpTest extends TestCase
     public function testNodeWorkbenchOverWebSocket(): void
     {
         $port = 19891;
-        $server = new HttpServer(sys_get_temp_dir(), $port, '127.0.0.1', Auth::inMemory());
+        $server = new HttpServer(sys_get_temp_dir(), $port, '127.0.0.1', Auth::inMemory(), login: \Pig\CodingAgent\Web\WebLogin::off());
         $server->start();
 
         $receivedEvents = [];

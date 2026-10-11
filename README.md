@@ -198,13 +198,15 @@ pig --mode web
 # or type /web from inside any interactive terminal session to start and auto-launch browser
 
 # Persistent background daemon (recommended)
-pig web start -d              # Start daemon on 127.0.0.1:8080 (or specify --port / --host)
+pig web start -d              # Start daemon on 127.0.0.1:8088 (or specify --port / --host)
 pig web status                # Check status and PID
 pig web restart               # Restart daemon
 pig web stop                  # Stop daemon gracefully
+pig web password              # Set or change the web UI's password
 ```
 
-Open `http://localhost:8080` in your browser or mobile phone:
+Open `http://localhost:8088` in your browser or mobile phone:
+- **Login**: the web UI runs a terminal and agents on your machine, so it always asks for a password. The first time, `pig web start` prints a one-time setup code; enter it on the page and choose a password (or set one with `pig web password`). Requests from other websites are refused.
 - **Interactive Local PTY Terminals**: Press <code>Ctrl+`</code> or <code>Cmd+`</code> (or click the terminal icon) to slide out a full multi-tab terminal drawer powered by `xterm.js` and a native Unix PTY engine, with full support for `vim`, `nvim`, `htop`, `tmux`, and `nano`.
 - **SSH Node Workbench & SFTP File Explorer**: Click `🖥️ Nodes` to manage server inventory, verify SHA-256 host key fingerprints, import from `~/.ssh/config`, open remote interactive SSH terminals, and view/edit remote files via SFTP (up to 512 KiB).
 - **Auto Browser Launch**: Running `/web` inside an interactive TUI session starts the server and automatically opens your default system browser.

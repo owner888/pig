@@ -4326,6 +4326,29 @@ message the chip is gone, as a conversation's folder does not change under it. T
 `cwd.js`, run under Node by `DirectoryListingTest`. A project's own extensions in the folder load
 by `defaultProjectTrust`, as for any web child: nothing in the page asks yet.
 
+### Logging in to the web UI
+
+The developer wanted the page behind a login always, 127.0.0.1 included, because another site's
+page in the same browser can otherwise reach `127.0.0.1:8088` — a terminal and agents. Every HTTP
+request, WebSocket handshakes included, goes through `HttpServer`'s middlewares (`Web\Middleware`,
+smart-book's `handle(ctx, $next)` shape without OmniPHP) before `route()`:
+
+1. `SameOriginMiddleware` — a request whose `Origin` is not the `Host` it was sent to is a 403. No
+   `Access-Control-Allow-Origin` anywhere: only the page itself reads the API.
+2. `LoginMiddleware` — without a session, a page is a 302 to `/login`, anything else a 401;
+   `LoginMiddleware::PUBLIC` is what the login page needs.
+
+`WebLogin` is one password (`password_hash` in `web-login.json`, 0600) and sessions (a random token
+in an HttpOnly, SameSite=Strict `pig_session` cookie; only its SHA-256 kept, 30 days, surviving a
+restart). The first password is set on the page with a one-time setup code that `pig web start`
+(and `-d`, `status`, the TUI's `/web`) prints and `web-setup-code` keeps, so whoever reaches the page
+first cannot take it. `pig web password` sets or changes it and logs every browser out; ten tries a
+minute per address. Failures carry a `reason` (`WebLogin::REASONS`) the login page words in its
+language. A session ended elsewhere takes effect at the page's next connection: the WebSocket
+already open stays until it drops, and the page then goes to `/login`. Tests of everything else
+build the server with `WebLogin::off()`; regression tests: `WebLoginTest` and
+`WebModeTest::testNothingButTheLoginPageWithoutLoggingIn`.
+
 ### Scheduled tasks: a timer per task over the session pool
 
 pig's own, after the Claude app's; upstream has none. The developer asked for it in the web UI and

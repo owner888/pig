@@ -77,7 +77,7 @@ final class HttpProtocolTest extends TestCase
 
     public function testDefaultSpawnDoesNotPassSessionForNonExistentFile(): void
     {
-        $server = new HttpServer(sys_get_temp_dir());
+        $server = new HttpServer(sys_get_temp_dir(), login: \Pig\CodingAgent\Web\WebLogin::off());
         $pool = $server->pool();
 
         $ref = new \ReflectionClass($pool);

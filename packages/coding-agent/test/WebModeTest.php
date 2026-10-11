@@ -13,6 +13,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Web\HttpServer;
+use Pig\CodingAgent\Web\WebLogin;
 use Pig\CodingAgent\Web\WebMode;
 
 /**
@@ -74,8 +75,11 @@ final class WebModeTest extends TestCase
         rmdir($dir);
     }
 
-    /** A server whose children are the fake agent, and whose idle reaping is quick. */
-    private function server(int $port, ?Auth $auth = null): HttpServer
+    /**
+     * A server whose children are the fake agent, and whose idle reaping is quick — with no login
+     * unless one is given: the login has tests of its own below.
+     */
+    private function server(int $port, ?Auth $auth = null, ?WebLogin $login = null): HttpServer
     {
         return new HttpServer(
             $this->cwd,
@@ -92,6 +96,7 @@ final class WebModeTest extends TestCase
                 );
             },
             idleTtl: 0.2,
+            login: $login ?? WebLogin::off(),
         );
     }
 
@@ -457,6 +462,7 @@ final class WebModeTest extends TestCase
             $port,
             auth: Auth::inMemory(),
             spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(cwd: $cwd, binary: '/nowhere/pig'),
+            login: WebLogin::off(),
         );
 
         Async::run(function () use ($server, $port) {
@@ -718,6 +724,80 @@ final class WebModeTest extends TestCase
         } finally {
             ExtensionApi::forgetWebPanels();
         }
+    }
+
+    /** The status line of a WebSocket handshake sent with `$headers`. */
+    private function wsStatus(int $port, array $headers = []): string
+    {
+        $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+        $this->assertIsResource($client);
+        stream_set_blocking($client, false);
+        $extra = implode('', array_map(static fn (string $k, string $v): string => "{$k}: {$v}\r\n", array_keys($headers), $headers));
+        fwrite($client, "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{$port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            . 'Sec-WebSocket-Key: ' . base64_encode(random_bytes(16)) . "\r\nSec-WebSocket-Version: 13\r\n{$extra}\r\n");
+
+        $resp = '';
+        for ($i = 0; $i < 50 && !str_contains($resp, "\r\n"); $i++) {
+            Async::delay(0.01);
+            $resp .= (string) fread($client, 4096);
+        }
+        fclose($client);
+
+        return strtok($resp, "\r\n") ?: '';
+    }
+
+    public function testNothingButTheLoginPageWithoutLoggingIn(): void
+    {
+        // `WebLogin` behind `LoginMiddleware` and `SameOriginMiddleware`, through the server: the
+        // page sends you to /login, the API and the WebSocket say 401, the first password needs the
+        // setup code, and the session cookie it sets opens everything — but not to another site.
+        $port = 28107;
+        $home = $this->cwd . '/login-home';
+        $login = WebLogin::at($home);
+        $server = $this->server($port, login: $login);
+        $code = (string) $login->setupCode();
+
+        Async::run(function () use ($server, $port, $code): void {
+            $server->start();
+            $http = new HttpClient();
+            $url = "http://127.0.0.1:{$port}";
+            $post = fn (string $path, array $body, array $headers = []): \Pig\Ai\Http\Response => $http->send(new Request('POST', $url . $path, ['Content-Type' => 'application/json', ...$headers], json_encode($body)));
+
+            $page = $http->send(new Request('GET', "{$url}/"));
+            $this->assertSame([302, '/login'], [$page->status, $page->header('location')]);
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/login"))->status);
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/assets/js/login.js"))->status, 'what the login page needs');
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/assets/js/app.js"))->status, 'but not the rest');
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models"))->status);
+            $this->assertSame(['loggedIn' => false, 'setup' => true], json_decode($http->send(new Request('GET', "{$url}/api/login/state"))->body->all(), true));
+            $this->assertStringContainsString('401', $this->wsStatus($port), 'no conversation, no terminal');
+
+            $this->assertSame(401, $post('/api/login/setup', ['code' => 'WRON-GCOD', 'password' => 'long enough'])->status);
+            $set = $post('/api/login/setup', ['code' => $code, 'password' => 'long enough']);
+            $this->assertSame(200, $set->status);
+            $cookie = (string) $set->header('set-cookie');
+            $this->assertStringContainsString('HttpOnly; SameSite=Strict', $cookie);
+            $session = ['Cookie' => strtok($cookie, ';')];
+
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/api/models", $session))->status);
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/", $session))->status);
+            $this->assertStringContainsString('101', $this->wsStatus($port, $session));
+            $this->assertNull($http->send(new Request('GET', "{$url}/api/models", $session))->header('access-control-allow-origin'), 'no other site may read it');
+
+            // Another site's page, with the cookie the browser would attach: refused at the door.
+            $this->assertSame(403, $post('/api/terminal/exec', ['command' => 'id'], [...$session, 'Origin' => 'http://evil.example'])->status);
+            $this->assertStringContainsString('403', $this->wsStatus($port, [...$session, 'Origin' => 'http://evil.example']));
+            $this->assertStringContainsString('101', $this->wsStatus($port, [...$session, 'Origin' => "http://127.0.0.1:{$port}"]));
+
+            $this->assertSame(401, $post('/api/login', ['password' => 'wrong one'])->status);
+            $again = $post('/api/login', ['password' => 'long enough']);
+            $this->assertSame(200, $again->status);
+
+            $this->assertSame(200, $post('/api/logout', [], $session)->status);
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models", $session))->status, 'logged out');
+
+            $server->stop();
+        });
     }
 
     public function testRenameAndDeleteSessionEndpoints(): void

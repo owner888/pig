@@ -57,6 +57,12 @@ export class SharedNetwork {
   }
 
   connectionLost() {
+    // A connection refused or dropped because the session is gone (logged out elsewhere, a new
+    // password) is a trip to the login page, not a reconnect loop.
+    fetch("/api/login/state", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((state) => { if (state.loggedIn === false) location.replace("/login"); })
+      .catch(() => {});
     for (const t of this.getTabs()) t.onConnectionLost();
     for (const listener of this.closeListeners) {
       try { listener(); } catch (err) { console.error("Close listener error:", err); }

@@ -1532,6 +1532,18 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       });
     }
 
+    // Logging out (`WebLogin`): the session ends on the server, and the page goes to the login.
+    async function logOut() {
+      try { await fetch("/api/logout", { method: "POST" }); } catch {}
+      location.replace("/login");
+    }
+    document.getElementById("logout-btn")?.addEventListener("click", logOut);
+    document.getElementById("more-logout-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMoreMenu(false);
+      logOut();
+    });
+
     // The extensions' panels: the list opens from `panels.js`; here the menu only closes.
     document.getElementById("more-panels-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();

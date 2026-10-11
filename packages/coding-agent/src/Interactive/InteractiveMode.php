@@ -4670,6 +4670,10 @@ final class InteractiveMode
 
         $url = "http://127.0.0.1:{$port}";
         $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', 'Web UI started at ') . Themes::theme()->fg('accent', $url));
+        $code = $this->webServer->login()->setupCode();
+        if ($code !== null) {
+            $this->sayThemed(static fn (): string => Themes::theme()->fg('warning', 'First visit: set a password with the setup code ') . Themes::theme()->fg('accent', $code));
+        }
         $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
         self::openInBrowser($url);
     }

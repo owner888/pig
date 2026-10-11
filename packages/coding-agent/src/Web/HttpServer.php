@@ -113,11 +113,19 @@ final class HttpServer
     private readonly NodeManager $nodeManager;
     private readonly ScheduleManager $schedules;
 
+    /** Who may use the page — see `WebLogin` — and what every request passes through first. */
+    private readonly WebLogin $login;
+
+    /** @var list<Middleware> in order: a request from another site is refused before the login is asked */
+    private readonly array $middlewares;
+
     /**
      * @param string $cwd where a new conversation opens when the page names no directory
      * @param (Closure(string, ?string): RpcClient)|null $spawn how a child is made; the default
      *        starts `bin/pig --mode rpc` in the conversation's directory, with `--session <file>`
      *        when it has one. Injectable so a test can hand back a client over a fixture.
+     * @param WebLogin|null $login the password and sessions kept in the agent directory unless
+     *        given; `WebLogin::off()` only for tests of everything else
      */
     public function __construct(
         private readonly string $cwd,
@@ -126,8 +134,11 @@ final class HttpServer
         ?Auth $auth = null,
         ?Closure $spawn = null,
         float $idleTtl = SessionPool::IDLE_TTL,
+        ?WebLogin $login = null,
     ) {
         $this->auth = $auth ?? Auth::discover();
+        $this->login = $login ?? WebLogin::at(\Pig\CodingAgent\Config::home());
+        $this->middlewares = [new Middlewares\SameOriginMiddleware(), new Middlewares\LoginMiddleware($this->login)];
         $this->nodeManager = new NodeManager();
         $this->pool = new SessionPool(
             spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null): RpcClient {
@@ -150,6 +161,12 @@ final class HttpServer
      * The scheduled tasks. `start()` does not start them: `WebMode` does, so a test that serves
      * the page from the developer's own home cannot fire the developer's tasks.
      */
+    /** The login the page is behind: what `pig web start` asks for the setup code. */
+    public function login(): WebLogin
+    {
+        return $this->login;
+    }
+
     public function schedules(): ScheduleManager
     {
         return $this->schedules;
@@ -399,12 +416,107 @@ final class HttpServer
     // ---- HTTP: the page and the lists ------------------------------------------------------
 
     /**
+     * Every request through the middlewares (`Middleware`), then to `route()`.
+     *
      * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
      */
     private function handleRequest(Connection $conn, array $req, int $connectionId): void
     {
+        $next = function () use ($conn, $req, $connectionId): void {
+            $this->route($conn, $req, $connectionId);
+        };
+        foreach (array_reverse($this->middlewares) as $middleware) {
+            $next = static fn () => $middleware->handle($req, $conn, $next);
+        }
+        $next();
+    }
+
+    /**
+     * The login page and its four endpoints (`WebLogin`), which `LoginMiddleware` lets through
+     * without a session: whether one is needed and how (`state`), the first password with the setup
+     * code (`setup`), the password (`/api/login`), and logging out. Answers whether it was one.
+     *
+     * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
+     */
+    private function routeLogin(Connection $conn, array $req): bool
+    {
         $path = $req['path'];
-        $json = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
+        $json = ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store'];
+
+        if ($path === '/login') {
+            $conn->sendResponse(200, ['Content-Type' => 'text/html; charset=utf-8', 'Cache-Control' => 'no-store'], (string) file_get_contents(__DIR__ . '/assets/login.html'));
+
+            return true;
+        }
+
+        if ($path === '/api/login/state') {
+            $conn->sendResponse(200, $json, (string) json_encode([
+                'loggedIn' => $this->login->isLoggedIn($req['headers']),
+                'setup' => $this->login->enabled() && !$this->login->hasPassword(),
+            ]));
+
+            return true;
+        }
+
+        if ($path === '/api/logout') {
+            $this->login->logOut($req['headers']);
+            $conn->sendResponse(200, [...$json, 'Set-Cookie' => WebLogin::cookie(null)], (string) json_encode(['ok' => true]));
+
+            return true;
+        }
+
+        if ($path !== '/api/login' && $path !== '/api/login/setup') {
+            return false;
+        }
+
+        if ($req['method'] !== 'POST') {
+            $conn->sendResponse(405, $json, (string) json_encode(['ok' => false, 'error' => 'POST only.']));
+
+            return true;
+        }
+
+        $data = json_decode($req['body'], true);
+        $data = is_array($data) ? $data : [];
+        $password = is_string($data['password'] ?? null) ? $data['password'] : '';
+        $address = self::addressOf($conn);
+
+        [$reason, $token] = $path === '/api/login/setup'
+            ? $this->login->setUp(is_string($data['code'] ?? null) ? $data['code'] : '', $password, $address)
+            : $this->login->logIn($password, $address);
+
+        if ($token === null) {
+            $conn->sendResponse(401, $json, (string) json_encode(['ok' => false, 'reason' => $reason, 'error' => WebLogin::REASONS[$reason] ?? $reason]));
+
+            return true;
+        }
+
+        $conn->sendResponse(200, [...$json, 'Set-Cookie' => WebLogin::cookie($token)], (string) json_encode(['ok' => true]));
+
+        return true;
+    }
+
+    /** The address a request came from, without its port: what login tries are counted by. */
+    private static function addressOf(Connection $conn): string
+    {
+        $name = stream_socket_get_name($conn->socket, true);
+        if ($name === false) {
+            return 'unknown';
+        }
+
+        return preg_replace('/:\d+$/', '', $name) ?? $name;
+    }
+
+    /**
+     * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
+     */
+    private function route(Connection $conn, array $req, int $connectionId): void
+    {
+        $path = $req['path'];
+        $json = ['Content-Type' => 'application/json'];
+
+        if ($this->routeLogin($conn, $req)) {
+            return;
+        }
 
         // 0. WebSocket upgrade handling (RFC 6455)
         if ($path === '/ws' || ($req['headers']['upgrade'] ?? '') === 'websocket') {
@@ -414,16 +526,6 @@ final class HttpServer
 
                 return;
             }
-        }
-
-        if ($req['method'] === 'OPTIONS') {
-            $conn->sendResponse(204, [
-                'Access-Control-Allow-Origin' => '*',
-                'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers' => 'Content-Type, Authorization',
-            ], '');
-
-            return;
         }
 
         // 1. Static HTML page
@@ -442,7 +544,6 @@ final class HttpServer
             $conn->sendResponse(200, [
                 'Content-Type' => 'image/svg+xml; charset=utf-8',
                 'Cache-Control' => 'public, max-age=86400',
-                'Access-Control-Allow-Origin' => '*',
             ], self::FAVICON_SVG);
 
             return;
@@ -479,7 +580,6 @@ final class HttpServer
                 $conn->sendResponse(200, [
                     'Content-Type' => $mime,
                     'Cache-Control' => 'no-cache',
-                    'Access-Control-Allow-Origin' => '*',
                 ], file_get_contents($target) ?: '');
 
                 return;
@@ -536,7 +636,6 @@ final class HttpServer
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], json_encode([
                 'currentCwd' => $currentCwd,
                 'workspaces' => $workspaces,
@@ -549,7 +648,6 @@ final class HttpServer
         if ($path === '/api/dirs') {
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], (string) json_encode(DirectoryListing::list(
                 (string) ($req['query']['path'] ?? ''),
                 $this->cwd,
@@ -574,7 +672,6 @@ final class HttpServer
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], json_encode($items));
 
             return;
@@ -610,7 +707,6 @@ final class HttpServer
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], json_encode(['sessions' => $items, 'total' => $total]));
 
             return;
@@ -620,7 +716,6 @@ final class HttpServer
         if ($path === '/api/sessions/delete') {
             $headers = [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ];
 
             if ($req['method'] !== 'POST') {
@@ -654,7 +749,6 @@ final class HttpServer
         if ($path === '/api/sessions/rename') {
             $headers = [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ];
 
             if ($req['method'] !== 'POST') {
@@ -700,7 +794,6 @@ final class HttpServer
                 };
                 $conn->sendResponse(200, [
                     'Content-Type' => $mime,
-                    'Access-Control-Allow-Origin' => '*',
                     'Cache-Control' => 'max-age=86400',
                 ], file_get_contents($realPath));
 
@@ -722,7 +815,7 @@ final class HttpServer
             : (str_starts_with($path, '/api/') ? ExtensionApi::httpRouteFor($path) : null);
         if ($route !== null) {
             \Pig\Async\Async::spawn(function () use ($conn, $route, $path, $req): void {
-                $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
+                $headers = ['Content-Type' => 'application/json'];
 
                 try {
                     $answer = $route($path, ['method' => $req['method'], 'body' => $req['body'], 'query' => $req['query'] ?? []]);
@@ -748,7 +841,6 @@ final class HttpServer
         if ($path === '/api/locales') {
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], (string) json_encode([
                 'success' => true,
                 'locales' => ExtensionApi::registeredLocales(),
@@ -766,7 +858,6 @@ final class HttpServer
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ], (string) json_encode([
                 'success' => true,
                 'user' => $user,
@@ -782,7 +873,6 @@ final class HttpServer
         if ($path === '/api/terminal/complete') {
             $headers = [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ];
 
             $line = (string) ($req['query']['line'] ?? '');
@@ -802,7 +892,6 @@ final class HttpServer
         if ($path === '/api/terminal/exec') {
             $headers = [
                 'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
             ];
 
             if ($req['method'] !== 'POST') {

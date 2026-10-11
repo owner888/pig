@@ -73,7 +73,8 @@ final class ExtensionLocaleTest extends TestCase
         $server = new HttpServer(
             cwd: sys_get_temp_dir(),
             port: 0,
-            host: '127.0.0.1'
+            host: '127.0.0.1',
+            login: \Pig\CodingAgent\Web\WebLogin::off(),
         );
 
         [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);

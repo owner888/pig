@@ -56,6 +56,7 @@ final class WebMode
 
         $url = "http://{$this->host}:{$port}";
         echo Style::green("✔ Web UI running at: ") . Style::bold($url) . "\n";
+        \Pig\CodingAgent\Cli\WebDaemon::sayCode($this->server->login()->setupCode());
 
         if (!$this->server->schedules()->owns()) {
             echo Style::dim("Scheduled tasks are run by another pig web server in this home.\n");

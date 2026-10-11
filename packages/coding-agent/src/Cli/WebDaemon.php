@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Web\WebLogin;
 use Pig\Tui\Style;
 
 /**
- * `pig web start|stop|status|restart [-d] [--port N] [--host H]` — the web UI as a daemon.
+ * `pig web start|stop|status|restart [-d] [--port N] [--host H]` — the web UI as a daemon — and
+ * `pig web password`, the password the page is behind (`Web\WebLogin`).
  *
  * Step ① of the web mode's new process model (the entry in CLAUDE.md under "Three ways in"):
  * the subcommand and the daemon, over `--mode web` exactly as it stands. The session pool and
@@ -89,6 +91,7 @@ final class WebDaemon
             'stop' => $this->stop(),
             'status' => $this->status(),
             'restart' => $this->restart($rest),
+            'password' => $this->password(),
             default => $this->unknown($command),
         };
     }
@@ -171,6 +174,10 @@ final class WebDaemon
             return 1;
         }
 
+        // Made here rather than by the daemon, whose output goes to its log: the code is printed
+        // below, and the daemon reads the same file.
+        $code = WebLogin::at($home)->setupCode();
+
         try {
             $pid = $this->daemonise($argv);
         } catch (\RuntimeException $e) {
@@ -181,6 +188,7 @@ final class WebDaemon
 
         echo Style::green('✔ Web UI daemon started') . Style::dim(" (pid {$pid}) at ") . Style::bold("http://{$host}:{$port}") . "\n";
         echo Style::dim("  log: {$this->logFile()}\n  stop: pig web stop\n");
+        self::sayCode($code);
 
         return 0;
     }
@@ -233,8 +241,70 @@ final class WebDaemon
         }
 
         echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}, log {$this->logFile()})") . "\n";
+        self::sayCode(WebLogin::at($this->home ?? Config::home())->setupCode());
 
         return 0;
+    }
+
+    /**
+     * `pig web password`: set or change the web UI's password. Asked twice with the terminal's echo
+     * off, or read from standard input when that is not a terminal (`… | pig web password`).
+     * Every browser logged in before has to log in again.
+     */
+    private function password(): int
+    {
+        $login = WebLogin::at($this->home ?? Config::home());
+        $terminal = stream_isatty(STDIN);
+
+        $first = self::ask($terminal ? 'New password: ' : null);
+        $second = $terminal ? self::ask('Once more: ') : $first;
+
+        if ($first !== $second) {
+            fwrite(STDERR, Style::red("Error: the two passwords differ.\n"));
+
+            return 1;
+        }
+
+        try {
+            $login->setPassword($first);
+        } catch (\InvalidArgumentException $e) {
+            fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
+
+            return 1;
+        }
+
+        echo Style::green('✔ Web UI password set.') . Style::dim(' Browsers logged in before log in again.') . "\n";
+
+        return 0;
+    }
+
+    /** One line from standard input; with `$prompt`, typed without echo. */
+    private static function ask(?string $prompt): string
+    {
+        if ($prompt === null) {
+            return rtrim((string) fgets(STDIN), "\r\n");
+        }
+
+        fwrite(STDOUT, $prompt);
+        shell_exec('stty -echo 2>/dev/null');
+        try {
+            $line = rtrim((string) fgets(STDIN), "\r\n");
+        } finally {
+            shell_exec('stty echo 2>/dev/null');
+            fwrite(STDOUT, "\n");
+        }
+
+        return $line;
+    }
+
+    /** The setup code, while there is no password yet: what the first visit to the page asks for. */
+    public static function sayCode(?string $code): void
+    {
+        if ($code === null) {
+            return;
+        }
+
+        echo Style::yellow('  First visit: set a password with the setup code ') . Style::bold($code) . Style::dim(' (or run `pig web password`)') . "\n";
     }
 
     /** @param list<string> $args */
@@ -438,6 +508,7 @@ final class WebDaemon
           pig web stop                                stop the daemon
           pig web status                              is it running? (exit 0 yes, 3 no)
           pig web restart [--port N] [--host H]       stop, then start -d
+          pig web password                            set or change the web UI's password
 
         Defaults: --host 127.0.0.1 --port 8088. The daemon writes its pid and log under
         \$PIG_CODING_AGENT_DIR (~/.pig/agent): web.pid and web.log.
