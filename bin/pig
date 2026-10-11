@@ -1228,23 +1228,25 @@ if ($mode === 'rpc') {
     if (!isset($options['continue']) && !isset($options['resume'])) {
         $seen = $settings->lastChangelogVersion();
         $entries = Changelog::parse();
-        // If the user already saw this exact version (e.g. dev-main or same release),
-        // no changelog needs to be displayed.
-        if ($seen !== null && $seen === VERSION) {
-            $unseen = [];
+
+        if ($seen === null) {
+            // Fresh install — record current version so later upgrades compare against it,
+            // but do not dump the whole project history onto the screen on first run (matching upstream pi).
+            $toRecord = Version::isRelease(VERSION) ? VERSION : ($entries[0]->version ?? VERSION);
+            $settings->setLastChangelogVersion($toRecord);
+        } elseif ($seen === VERSION) {
             // In a dev checkout (e.g. dev-main), self-heal settings to the latest changelog version
             // so subsequent runs compare against a valid semantic version rather than dev-main.
             if (!Version::isRelease(VERSION) && isset($entries[0])) {
                 $settings->setLastChangelogVersion($entries[0]->version);
             }
         } else {
-            $unseen = $seen === null ? $entries : Changelog::newerThan($entries, $seen);
-        }
-
-        if ($unseen !== []) {
-            $changelog = Changelog::join($unseen);
-            $toRecord = Version::isRelease(VERSION) ? VERSION : ($entries[0]->version ?? VERSION);
-            $settings->setLastChangelogVersion($toRecord);
+            $unseen = Changelog::newerThan($entries, $seen);
+            if ($unseen !== []) {
+                $changelog = Changelog::join($unseen);
+                $toRecord = Version::isRelease(VERSION) ? VERSION : ($entries[0]->version ?? VERSION);
+                $settings->setLastChangelogVersion($toRecord);
+            }
         }
     }
 

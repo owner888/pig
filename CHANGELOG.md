@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.14] - 2026-10-11
+
+### Fixed
+
+- **Suppressed full historical changelog dump on fresh installations (aligned with upstream `pi`)**:
+  - `bin/pig` now records the active version into `lastChangelogVersion` on first run without dumping the entire multi-year changelog history onto the screen.
+  - Startup changelog display is now reserved strictly for incremental upgrades newer than the previously recorded version, keeping initial onboarding clean and distraction-free.
+
 ## [0.6.13] - 2026-10-11
 
 ### Added
