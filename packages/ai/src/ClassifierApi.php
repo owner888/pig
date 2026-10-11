@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Pig\Ai;
 
 /**
- * The protocol a classifier model speaks — upstream's `KnownClassifierApi`, which is to
- * `ClassifierModel` what `Api` is to a chat `Model`.
+ * The protocol a classifier model speaks — upstream's `ClassifierApi`, `KnownClassifierApi |
+ * (string & {})`, which is to `ClassifierModel` what `Api` is to a chat `Model`: the known ones as
+ * cases, and every API an extension brings as the one `Extension` case.
  */
 enum ClassifierApi: string
 {
@@ -18,4 +19,12 @@ enum ClassifierApi: string
     case LlamaCppClassify = 'llama-cpp-classify';
     /** OpenAI's Decisions API, `POST /v1/decisions` (`Providers\OpenAiDecisions`) — the one classifier that takes images. */
     case OpenAiDecisions = 'openai-decisions';
+
+    /**
+     * A classifier API an extension brought — upstream's provider `classifiers` implementation for an
+     * api id it does not know: `Models::classify()` finds it through
+     * `Extension\ProviderRegistry::classifierApiFor()` by the model's provider, as `Api::Extension`
+     * finds a `StreamApi`.
+     */
+    case Extension = 'extension';
 }

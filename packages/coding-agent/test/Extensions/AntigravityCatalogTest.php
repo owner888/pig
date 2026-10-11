@@ -93,6 +93,17 @@ final class AntigravityCatalogTest extends TestCase
         self::assertSame(['images' => ['resize' => $resize]], Models::find('antigravity', 'gemini-3.8-flash')?->inputLimits);
     }
 
+    public function testInstallingTheCatalogueKeepsTheProvidersImageModels(): void
+    {
+        // The catalogue is chat models only, and `forgetProvider()` takes every type.
+        self::assertNotNull(Models::findOfType(\Pig\Ai\ModelType::Image, 'antigravity', 'gemini-3.1-flash-image'));
+
+        $this->writeStore(['gemini-3.8-flash' => []]);
+        Catalog::discover()->install();
+
+        self::assertNotNull(Models::findOfType(\Pig\Ai\ModelType::Image, 'antigravity', 'gemini-3.1-flash-image'));
+    }
+
     public function testTheCatalogueReplacesTheRowRatherThanSittingBesideIt(): void
     {
         $this->writeStore(['gemini-3.8-flash' => []]);

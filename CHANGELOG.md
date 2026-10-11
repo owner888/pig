@@ -43,6 +43,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.2] - 2026-10-11
+
+### Added
+
+- **`composer:` package sources**: `pig install composer:vendor/name` (or `@<constraint>`; an exact version is pinned) installs a package with Composer into a shared project per scope — `~/.pig/agent/composer`, `.pig/composer` with `-l`, a temporary one for `-e` — as pi installs `npm:` packages into its npm root. `pig remove`, `pig update` (unpinned only), `pig list`, the startup update check and settings changes of the constraint all work as they do for npm in pi. The shared project replaces `pigagent/pig`, so a package that requires pig never installs a second copy, and blocks Composer plugins. Packages published to Packagist can now be installed this way.
+- **Extension provider image generation & classification APIs (`Pig\Ai\Extension\ImageGenerationApi`, `Pig\Ai\Extension\ClassificationApi`)**: Extensions registering custom providers via `registerProvider()` can now implement custom image generation (`images: [...]`) and classifier evaluation (`classifiers: [...]`), fully integrated with `codemode` sandbox `$models->getAvailableOfType()` and `$models->generateImages()`.
+- **Claude-style sidebar session actions and dropdown menu**: Redesigned session items in the Web drawer with folder tags right-aligned, seamlessly hidden on hover to reveal a three-dots (`···`) action button. Added a Claude-aligned floating dropdown menu supporting session rename and danger-styled deletion.
+
+### Changed
+
+- **Web sidebar hover aesthetics and height stability**: Locked `.drawer-item` vertical line height and dimensions to ensure zero height jumping between default badge and hover action states. Replaced harsh border styling with pure rounded background blocks on hover.
+
+### Fixed
+
+- **Antigravity image generation model discovery and registration**: Restored Antigravity image models registration during catalog installation and discovery, enabling seamless script access via `codemode`.
+
 ## [0.6.1] - 2026-10-11
 
 ### Fixed

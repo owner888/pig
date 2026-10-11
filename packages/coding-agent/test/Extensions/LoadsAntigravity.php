@@ -18,7 +18,7 @@ trait LoadsAntigravity
     {
         $src = dirname(__DIR__, 4) . '/extensions/pig-antigravity/src';
 
-        foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
+        foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator'] as $class) {
             if (!class_exists("PigAntigravity\\{$class}", false)) {
                 require $src . "/{$class}.php";
             }
@@ -27,10 +27,11 @@ trait LoadsAntigravity
 
     /**
      * What `index.php` does on load, minus the sign-in and the catalogue: the fallback models on
-     * the registry under `Api::Extension`, with this protocol behind them. For a test of the
+     * the registry under `Api::Extension`, with this protocol behind them, and the image models
+     * under `ImageApi::Extension` with `ImageGenerator` behind them. For a test of the
      * provider that does not go through `ExtensionLoader`.
      */
-    private static function registerAntigravity(?\PigAntigravity\AntigravityApi $api = null): void
+    private static function registerAntigravity(?\PigAntigravity\AntigravityApi $api = null, ?\PigAntigravity\ImageGenerator $images = null): void
     {
         self::loadAntigravity();
         \Pig\Ai\Extension\ProviderRegistry::register(new \Pig\Ai\Extension\Provider(
@@ -39,6 +40,8 @@ trait LoadsAntigravity
             models: \PigAntigravity\Models::fallback(),
             api: $api ?? new \PigAntigravity\AntigravityApi(),
             resold: true,
+            images: \PigAntigravity\ImageGenerator::models(),
+            imageApi: $images ?? new \PigAntigravity\ImageGenerator(),
         ));
     }
 }

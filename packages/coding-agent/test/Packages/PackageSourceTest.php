@@ -6,13 +6,14 @@ namespace Pig\CodingAgent\Test\Packages;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Packages\ComposerSource;
 use Pig\CodingAgent\Packages\GitSource;
 use Pig\CodingAgent\Packages\LocalSource;
 use Pig\CodingAgent\Packages\PackageError;
 use Pig\CodingAgent\Packages\PackageSource;
 
 /**
- * Upstream's `git.test.ts` cases for `parseGitUrl()`, and `parseSource()`'s two kinds.
+ * Upstream's `git.test.ts` cases for `parseGitUrl()`, and `parseSource()`'s three kinds.
  */
 final class PackageSourceTest extends TestCase
 {
@@ -70,14 +71,46 @@ final class PackageSourceTest extends TestCase
         $this->assertNull(PackageSource::parseGit('git:github.com/user'), 'at least two segments');
     }
 
-    public function testRegistrySourcesAreRefusedByName(): void
+    public function testNpmIsRefusedByName(): void
     {
-        foreach (['npm:@example/pi-tools', 'composer:vendor/package'] as $source) {
+        try {
+            PackageSource::parse('npm:@example/pi-tools');
+            $this->fail('npm: was accepted');
+        } catch (PackageError $error) {
+            $this->assertStringContainsString('not supported', $error->getMessage());
+        }
+    }
+
+    /** @return iterable<string, array{string, string, string|null, string, bool}> */
+    public static function composerSources(): iterable
+    {
+        yield 'bare name' => ['composer:acme/tools', 'acme/tools', null, 'acme/tools', false];
+        yield 'constraint' => ['composer:acme/tools@^1.2', 'acme/tools', '^1.2', 'acme/tools:^1.2', false];
+        yield 'exact version' => ['composer:acme/tools@1.2.3', 'acme/tools', '1.2.3', 'acme/tools:1.2.3', true];
+        yield 'v-prefixed' => ['composer:acme/tools@v2.0.0', 'acme/tools', 'v2.0.0', 'acme/tools:v2.0.0', true];
+        yield 'stability flag' => ['composer:acme/tools@^1.0@dev', 'acme/tools', '^1.0@dev', 'acme/tools:^1.0@dev', false];
+        yield 'dashes and dots' => [' composer: my-org/pig.tools--x ', 'my-org/pig.tools--x', null, 'my-org/pig.tools--x', false];
+    }
+
+    #[DataProvider('composerSources')]
+    public function testAComposerSourceIsANameAndAnOptionalConstraint(string $source, string $name, ?string $version, string $requirement, bool $pinned): void
+    {
+        $parsed = PackageSource::parse($source);
+
+        $this->assertInstanceOf(ComposerSource::class, $parsed);
+        $this->assertSame([$name, $version, $requirement, $pinned], [$parsed->name, $parsed->version, $parsed->requirement(), $parsed->pinned()]);
+        $this->assertFalse(PackageSource::isLocalPath($source));
+    }
+
+    public function testAComposerNameThatIsNotOneIsRefusedBeforeComposerIsAsked(): void
+    {
+        // It becomes a path under the install root's `vendor/`, so nothing that could leave it.
+        foreach (['composer:tools', 'composer:Acme/Tools', 'composer:acme/../etc', 'composer:acme/tools/extra', 'composer:'] as $source) {
             try {
                 PackageSource::parse($source);
                 $this->fail("{$source} was accepted");
             } catch (PackageError $error) {
-                $this->assertStringContainsString('not supported', $error->getMessage());
+                $this->assertStringContainsString('Not a Composer package name', $error->getMessage());
             }
         }
     }

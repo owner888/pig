@@ -65,10 +65,12 @@ pig update --models      # Refresh and update model catalogs
 
 ### Packages
 
-Extensions, skills, prompt templates and themes travel together as a **package** — a git
-repository or a local directory, as in pi, minus npm:
+Extensions, skills, prompt templates and themes travel together as a **package** — a Composer
+package, a git repository or a local directory, as in pi, with Composer where pi has npm:
 
 ```bash
+pig install composer:user/pig-tools              # composer require into ~/.pig/agent/composer
+pig install composer:user/pig-tools@^1.2         # a constraint; an exact version (@1.2.3) is pinned
 pig install git:github.com/user/pig-tools        # cloned under ~/.pig/agent/git/github.com/user/pig-tools
 pig install git:github.com/user/pig-tools@v1     # pinned: updates reconcile to v1 and never past it
 pig install https://github.com/user/pig-tools    # a URL is a git source
@@ -108,6 +110,9 @@ every GitHub repository with the topic `pig-package` is listed, with no registra
 2. Check it installs: `pig install git:github.com/user/repo`, then `pig list` shows its resources.
 3. Add the topic `pig-package` on the repository page (About → Topics). The list refreshes hourly; the card
    shows the repository description, stars and last push, so the description is the card's text.
+4. Optionally submit it to [Packagist](https://packagist.org) as well, so it installs with
+   `pig install composer:user/repo` and its version constraints — pi's `npm publish`. A package published
+   this way declares its libraries in `require` and does not commit `vendor/`.
 
 Optional `extra.pig.image` / `extra.pig.video` in `composer.json` (a path in the repository or an `https://`
 URL) give the card a preview; pig itself ignores them. Removing the topic removes the package. Only GitHub is
@@ -120,10 +125,17 @@ for none, `!glob` to exclude, `+path` / `-path` for one exact file:
 { "packages": [{ "source": "git:github.com/user/pig-tools", "extensions": ["!extensions/legacy.php"], "skills": [] }] }
 ```
 
-pig runs no package manager inside a package: a package that needs libraries ships its own
+A `composer:` package is installed with Composer (it has to be on the PATH) into one shared
+project per scope — `~/.pig/agent/composer`, or `.pig/composer` with `-l` — whose `composer.json`
+replaces `pigagent/pig`, so a package that requires pig gets the running pig rather than a second
+copy, and blocks Composer plugins. Its libraries come from that project's `vendor/`; two packages
+that need incompatible versions of one library are refused at install, by Composer. `pig update`
+requires an unpinned package again — within its constraint, or the newest release without one.
+
+pig runs no package manager inside a git or local package: one that needs libraries ships its own
 `vendor/` (pig requires `vendor/autoload.php` when it is there), and `Pig\*` comes from the host —
-do not `require` `pigagent/pig` in a package. Packages are PHP-only; `npm:` and `composer:`
-sources are refused by name.
+do not `require` `pigagent/pig` in such a package. Packages are PHP-only; `npm:` sources are
+refused by name.
 
 ---
 

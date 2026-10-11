@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Packages\ComposerSource;
 use Pig\CodingAgent\Packages\GitSource;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Packages\PackageSource;
@@ -39,8 +40,8 @@ final class PackageUpdateCheck
 
     /**
      * Upstream's `checkForPackageUpdates()`: each configured git package whose `origin` has
-     * moved past the checkout, by `git ls-remote`. A pinned package is never reported — its ref
-     * is where it was asked to stay.
+     * moved past the checkout, by `git ls-remote`, and each Composer package `pig update` would
+     * move. A pinned package is never reported — it is where it was asked to stay.
      *
      * @return list<string>
      */
@@ -53,6 +54,14 @@ final class PackageUpdateCheck
 
         foreach ($manager->listConfiguredPackages() as $package) {
             $source = PackageSource::parse($package['source']);
+
+            if ($source instanceof ComposerSource) {
+                if (!$source->pinned() && $manager->composerHasAvailableUpdate($package['source'], $package['scope'])) {
+                    $updates[] = $package['source'];
+                }
+
+                continue;
+            }
 
             if (!$source instanceof GitSource || $source->pinned() || $package['installedPath'] === null) {
                 continue;

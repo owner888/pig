@@ -8,23 +8,30 @@ use Closure;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Paths;
+use Pig\CodingAgent\Version;
 use Pig\Tui\Process;
+use stdClass;
 
 /**
  * Packages: extensions, skills, prompts and themes installed as one unit — upstream's
- * `DefaultPackageManager`, for git repositories and local directories.
+ * `DefaultPackageManager`, for Composer packages, git repositories and local directories.
  *
- * Two sources where upstream has three. `npm:` has no PHP counterpart, and `composer:` is reserved
- * (`PackageSource`). A git package is cloned under `<home>/git/<host>/<path>` — `.pig/git/…` for a
- * project one (`-l`), which is read only once the project is trusted — and reconciled by `update`:
- * a pinned ref is fetched and reset to, an unpinned one follows its upstream branch. A local
- * package is loaded from where it is.
+ * Three sources, as upstream has three, with `composer:` in `npm:`'s place. A Composer package is
+ * installed into one shared Composer project per scope — `<home>/composer`, `.pig/composer` for a
+ * project one, `<home>/tmp/extensions/composer/<hash>` for `-e` — exactly where upstream keeps its
+ * npm root, and lands in its `vendor/<vendor>/<name>`. That project's `composer.json` replaces
+ * `pigagent/pig`, upstream's `--omit=peer`: a package that requires pig is not handed a second
+ * copy of it, whose autoloader would otherwise win for every `Pig\` class the host had not loaded
+ * yet. A git package is cloned under `<home>/git/<host>/<path>` — `.pig/git/…` for a project one
+ * (`-l`), which is read only once the project is trusted — and reconciled by `update`: a pinned
+ * ref is fetched and reset to, an unpinned one follows its upstream branch. A local package is
+ * loaded from where it is.
  *
- * pig runs no package manager inside a package. Upstream runs `npm install` in a cloned package
- * that has a `package.json`; here a package that needs libraries ships its own `vendor/`, which
- * `ExtensionLoader` requires when it is there, and `Pig\*` comes from the host. Written down in
- * the docs rather than enforced: a `require` on `pigagent/pig` in a package's `composer.json` is
- * the author's mistake to see in the docs, not a check to run on every start.
+ * pig runs no package manager inside a git or local package. Upstream runs `npm install` in a
+ * cloned package that has a `package.json`; here such a package ships its own `vendor/`, which
+ * `ExtensionLoader` requires when it is there, and `Pig\*` comes from the host. A Composer
+ * package's libraries are the shared project's `vendor/`, which `ExtensionLoader` finds by walking
+ * up from the extension.
  *
  * `resolve()` reads the `packages` of both scopes, reconciles them by identity (a project entry
  * replaces the user's; with `autoload: false` it is a delta over it), installs what is missing
@@ -251,24 +258,47 @@ final class PackageManager
                 continue;
             }
 
-            $installedPath = $this->gitInstallPath($parsed, $resolvedScope);
-
-            if (!is_dir($installedPath)) {
+            // Upstream's `installMissing()`: false when the package is to be left out.
+            $installMissing = function () use ($onMissing, $resolvedSource, $parsed, $resolvedScope): bool {
                 if (self::offline()) {
-                    continue;
+                    return false;
                 }
 
                 $action = $onMissing === null ? 'install' : $onMissing($resolvedSource);
 
                 if ($action === 'skip') {
-                    continue;
+                    return false;
                 }
 
                 if ($action === 'error') {
                     throw new PackageError("Missing source: {$resolvedSource}");
                 }
 
-                $this->installGit($parsed, $resolvedScope);
+                $parsed instanceof ComposerSource
+                    ? $this->installComposer($parsed, $resolvedScope)
+                    : $this->installGit($parsed, $resolvedScope);
+
+                return true;
+            };
+
+            if ($parsed instanceof ComposerSource) {
+                $installedPath = $this->composerInstallPath($parsed, $resolvedScope);
+
+                if ((!is_dir($installedPath) || !$this->composerMatchesConfigured($parsed, $resolvedScope)) && !$installMissing()) {
+                    continue;
+                }
+
+                $this->collectPackageResources($installedPath, $accumulator, $filter, $metadata->with($installedPath, $installedPath));
+
+                continue;
+            }
+
+            $installedPath = $this->gitInstallPath($parsed, $resolvedScope);
+
+            if (!is_dir($installedPath)) {
+                if (!$installMissing()) {
+                    continue;
+                }
             } elseif ($resolvedScope === 'temporary' && !$parsed->pinned() && !self::offline()) {
                 $this->refreshTemporary($parsed, $resolvedSource);
             }
@@ -517,9 +547,11 @@ final class PackageManager
     public function installedPath(string $source, string $scope): ?string
     {
         $parsed = PackageSource::parse($source);
-        $path = $parsed instanceof GitSource
-            ? $this->gitInstallPath($parsed, $scope)
-            : Paths::resolve($parsed->path, $this->baseDirFor($scope));
+        $path = match (true) {
+            $parsed instanceof GitSource => $this->gitInstallPath($parsed, $scope),
+            $parsed instanceof ComposerSource => $this->composerInstallPath($parsed, $scope),
+            default => Paths::resolve($parsed->path, $this->baseDirFor($scope)),
+        };
 
         return file_exists($path) ? $path : null;
     }
@@ -570,7 +602,7 @@ final class PackageManager
 
     // ---- install / remove / update --------------------------------------------------------------
 
-    /** Upstream's `install()`: a clone for git, an existence check for a path. */
+    /** Upstream's `install()`: `composer require`, a clone for git, an existence check for a path. */
     public function install(string $source, bool $local = false): void
     {
         $parsed = PackageSource::parse($source);
@@ -578,6 +610,12 @@ final class PackageManager
         $this->assertProjectTrusted($scope);
 
         $this->withProgress('install', $source, "Installing {$source}...", function () use ($parsed, $scope): void {
+            if ($parsed instanceof ComposerSource) {
+                $this->installComposer($parsed, $scope);
+
+                return;
+            }
+
             if ($parsed instanceof GitSource) {
                 $this->installGit($parsed, $scope);
 
@@ -598,7 +636,7 @@ final class PackageManager
         $this->addSourceToSettings($source, $local);
     }
 
-    /** Upstream's `remove()`: the checkout deleted for git, nothing for a path. */
+    /** Upstream's `remove()`: `composer remove`, the checkout deleted for git, nothing for a path. */
     public function remove(string $source, bool $local = false): void
     {
         $parsed = PackageSource::parse($source);
@@ -606,6 +644,10 @@ final class PackageManager
         $this->assertProjectTrusted($scope);
 
         $this->withProgress('remove', $source, "Removing {$source}...", function () use ($parsed, $scope): void {
+            if ($parsed instanceof ComposerSource) {
+                $this->removeComposer($parsed, $scope);
+            }
+
             if ($parsed instanceof GitSource) {
                 $this->removeGit($parsed, $scope);
             }
@@ -655,6 +697,19 @@ final class PackageManager
         foreach ($targets as ['source' => $sourceString, 'scope' => $scope]) {
             $parsed = PackageSource::parse($sourceString);
 
+            // Pinned Composer versions are fixed, as upstream's pinned npm versions are. Unpinned,
+            // `composer require` again is upstream's `npm install name@latest`: within a
+            // constraint when there is one, the newest release when there is not.
+            if ($parsed instanceof ComposerSource) {
+                if (!$parsed->pinned()) {
+                    $this->withProgress('update', $sourceString, "Updating {$sourceString}...", function () use ($parsed, $scope): void {
+                        $this->installComposer($parsed, $scope);
+                    });
+                }
+
+                continue;
+            }
+
             if (!$parsed instanceof GitSource) {
                 continue;
             }
@@ -684,6 +739,163 @@ final class PackageManager
         $remote = $this->remoteHead($installedPath);
 
         return $remote !== null && trim($local) !== $remote;
+    }
+
+    /**
+     * Whether `pig update` would move a Composer package — upstream's `npmHasAvailableUpdate()`,
+     * for the startup check. With a constraint, what `composer update --dry-run` would upgrade
+     * within it; without one, whether a newer release exists at all, since `update` requires the
+     * name again with no constraint. False offline, and for anything that could not be asked.
+     */
+    public function composerHasAvailableUpdate(string $source, string $scope): bool
+    {
+        $parsed = PackageSource::parse($source);
+
+        if (self::offline() || !$parsed instanceof ComposerSource || !is_dir($this->composerInstallPath($parsed, $scope))) {
+            return false;
+        }
+
+        $root = $this->composerInstallRoot($scope);
+
+        if ($parsed->version !== null) {
+            $answer = $this->captureComposer(['update', $parsed->name, '--dry-run'], $root);
+
+            return $answer !== null && preg_match('/- Upgrading ' . preg_quote($parsed->name, '/') . ' \(/', $answer) === 1;
+        }
+
+        $answer = $this->captureComposer(['outdated', $parsed->name, '--direct', '--format=json'], $root);
+        $report = $answer === null ? null : json_decode($answer, true);
+
+        return is_array($report)
+            && isset($report['latest'], $report['versions'][0])
+            && is_string($report['latest'])
+            && $report['latest'] !== $report['versions'][0];
+    }
+
+    // ---- composer -------------------------------------------------------------------------------
+
+    /**
+     * Upstream's `installNpm()`: `composer require` into the scope's shared project, which writes
+     * the constraint into that project's `composer.json` — so `composerMatchesConfigured()` can
+     * tell when the settings ask for another one.
+     */
+    private function installComposer(ComposerSource $source, string $scope): void
+    {
+        $root = $this->composerInstallRoot($scope);
+        $this->ensureComposerProject($root);
+        $this->composer(['require', $source->requirement(), '--update-no-dev'], $root);
+    }
+
+    /** Upstream's `uninstallNpm()`: nothing to do when the scope never installed anything. */
+    private function removeComposer(ComposerSource $source, string $scope): void
+    {
+        $root = $this->composerInstallRoot($scope);
+
+        if (is_file("{$root}/composer.json")) {
+            $this->composer(['remove', $source->name, '--update-no-dev'], $root);
+        }
+    }
+
+    /**
+     * Upstream's `installedNpmMatchesConfiguredVersion()`, by what the project was asked for
+     * rather than by what is installed: Composer resolved the constraint when it installed, so a
+     * constraint that is still the one written in `require` is satisfied. Comparing an installed
+     * version against a range here would be a second constraint solver beside Composer's.
+     */
+    private function composerMatchesConfigured(ComposerSource $source, string $scope): bool
+    {
+        if ($source->version === null) {
+            return true;
+        }
+
+        $path = $this->composerInstallRoot($scope) . '/composer.json';
+        $manifest = is_file($path) ? json_decode((string) file_get_contents($path), true) : null;
+
+        return is_array($manifest) && ($manifest['require'][$source->name] ?? null) === $source->version;
+    }
+
+    /**
+     * Upstream's `ensureNpmProject()`. `replace` is what keeps a second pig out of `vendor/`
+     * (see the class docblock); `allow-plugins: false` keeps a package's Composer plugin from
+     * running on install, since pig runs nothing a package brings; `version` only stops Composer
+     * warning that a project with no git history has none.
+     */
+    private function ensureComposerProject(string $root): void
+    {
+        $this->ensureGitIgnore($root);
+
+        if (is_file("{$root}/composer.json")) {
+            return;
+        }
+
+        $manifest = [
+            'name' => 'pig/extensions',
+            'description' => 'The packages pig installed from composer: sources.',
+            'version' => '1.0.0',
+            'require' => new stdClass(),
+            'replace' => [Version::PACKAGE => '*'],
+            'config' => ['allow-plugins' => false],
+        ];
+
+        if (file_put_contents("{$root}/composer.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n") === false) {
+            throw new PackageError("Could not write {$root}/composer.json");
+        }
+    }
+
+    /** `<root>/vendor/<vendor>/<name>` — upstream's `getManagedNpmInstallPath()`. */
+    private function composerInstallPath(ComposerSource $source, string $scope): string
+    {
+        return $this->managed($this->composerInstallRoot($scope) . '/vendor', $source->name);
+    }
+
+    /** Upstream's `getNpmInstallRoot()`. */
+    private function composerInstallRoot(string $scope): string
+    {
+        if ($scope === 'temporary') {
+            return $this->temporaryDir('composer', '', null);
+        }
+
+        if ($scope === 'project') {
+            $this->assertProjectTrusted($scope);
+
+            return rtrim($this->cwd, '/') . '/.pig/composer';
+        }
+
+        return $this->home() . '/composer';
+    }
+
+    /**
+     * Run Composer in $root, and throw with its words when it fails. A machine with no Composer
+     * is told so by name: `proc_open` answers STOPPED with nothing said for a program that is not
+     * on the PATH, which would otherwise read as "composer failed" with no reason.
+     *
+     * @param list<string> $arguments
+     */
+    private function composer(array $arguments, string $root): void
+    {
+        [$exit, , $stderr] = Process::run(['composer', ...$arguments, '--no-interaction', '--no-progress', "--working-dir={$root}"], self::CLONE_TIMEOUT);
+
+        if ($exit === Process::STOPPED && trim($stderr) === '') {
+            throw new PackageError('composer was not found on the PATH; install Composer, or use a git or local source.');
+        }
+
+        if ($exit !== 0) {
+            $detail = trim($stderr);
+
+            throw new PackageError('composer ' . implode(' ', $arguments) . ' failed' . ($detail !== '' ? ": {$detail}" : ''));
+        }
+    }
+
+    /**
+     * @param list<string> $arguments
+     * @return string|null standard output, or null when Composer failed or is not there
+     */
+    private function captureComposer(array $arguments, string $root): ?string
+    {
+        [$exit, $stdout, $stderr] = Process::run(['composer', ...$arguments, '--no-interaction', "--working-dir={$root}"], self::NETWORK_TIMEOUT * 6);
+
+        // `--dry-run` reports its plan on standard error, `outdated --format=json` on standard output.
+        return $exit === 0 ? $stdout . $stderr : null;
     }
 
     // ---- git ------------------------------------------------------------------------------------
@@ -948,12 +1160,17 @@ final class PackageManager
     // ---- identity -------------------------------------------------------------------------------
 
     /**
-     * Upstream's `getPackageIdentity()`: what two declarations of one package share — the host
-     * and path for git, so SSH and HTTPS spellings are one package; the resolved path for local.
+     * Upstream's `getPackageIdentity()`: what two declarations of one package share — the name
+     * for Composer, so two constraints are one package; the host and path for git, so SSH and
+     * HTTPS spellings are one package; the resolved path for local.
      */
     private function identity(string $source, ?string $scope = null): string
     {
         $parsed = PackageSource::parse($source);
+
+        if ($parsed instanceof ComposerSource) {
+            return "composer:{$parsed->name}";
+        }
 
         if ($parsed instanceof GitSource) {
             return "git:{$parsed->host}/{$parsed->path}";
@@ -1030,6 +1247,17 @@ final class PackageManager
 
         foreach ($configured as $candidate) {
             $parsed = PackageSource::parse($candidate);
+
+            // Upstream's `findSuggestedConfiguredSource()`: the bare name, or name and constraint.
+            if ($parsed instanceof ComposerSource) {
+                $spec = $parsed->version === null ? $parsed->name : "{$parsed->name}@{$parsed->version}";
+
+                if ($trimmed === $parsed->name || $trimmed === $spec) {
+                    return "No matching package found for {$source}. Did you mean {$candidate}?";
+                }
+
+                continue;
+            }
 
             if (!$parsed instanceof GitSource) {
                 continue;

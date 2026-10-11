@@ -1412,10 +1412,27 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     }
 
     document.addEventListener("click", (e) => {
+      if (activeSessionDropdown) {
+        if (!activeSessionDropdown.menu.contains(e.target) && !activeSessionDropdown.btn.contains(e.target)) {
+          closeSessionDropdown();
+        }
+      }
       if (moreMenuDropdown && moreMenuDropdown.style.display !== "none") {
         if (!moreMenuDropdown.contains(e.target) && !moreMenuBtn.contains(e.target)) {
           toggleMoreMenu(false);
         }
+      }
+    });
+
+    window.addEventListener("scroll", (e) => {
+      if (activeSessionDropdown && !activeSessionDropdown.menu.contains(e.target)) {
+        closeSessionDropdown();
+      }
+    }, true);
+    window.addEventListener("resize", closeSessionDropdown);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && activeSessionDropdown) {
+        closeSessionDropdown();
       }
     });
 
@@ -1807,7 +1824,87 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       return el;
     }
 
-    /** One conversation: its name, the folder it belongs to, rename and delete on hover. */
+    let activeSessionDropdown = null;
+
+    function closeSessionDropdown() {
+      if (!activeSessionDropdown) return;
+      activeSessionDropdown.item.classList.remove("menu-open");
+      activeSessionDropdown.menu.remove();
+      activeSessionDropdown = null;
+    }
+
+    function toggleSessionDropdown(item, btn, s, labelEl) {
+      if (activeSessionDropdown?.btn === btn) {
+        closeSessionDropdown();
+        return;
+      }
+      closeSessionDropdown();
+
+      item.classList.add("menu-open");
+
+      const menu = document.createElement("div");
+      menu.className = "session-dropdown-menu";
+
+      // 1. 重命名 (Rename)
+      const renameItem = document.createElement("button");
+      renameItem.className = "session-dropdown-item";
+      renameItem.type = "button";
+      renameItem.innerHTML = `
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+          <path d="m15 5 4 4"/>
+        </svg>
+        <span>${escapeHtml(t("rename") || t("rename_session"))}</span>
+      `;
+      renameItem.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeSessionDropdown();
+        startRenameSession(item, labelEl, s, s.cwd);
+      });
+
+      // 2. 删除 (Delete)
+      const deleteItem = document.createElement("button");
+      deleteItem.className = "session-dropdown-item danger";
+      deleteItem.type = "button";
+      deleteItem.innerHTML = `
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18"/>
+          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+          <line x1="10" y1="11" x2="10" y2="17"/>
+          <line x1="14" y1="11" x2="14" y2="17"/>
+        </svg>
+        <span>${escapeHtml(t("delete") || t("delete_session"))}</span>
+      `;
+      deleteItem.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeSessionDropdown();
+        confirmDeleteSession(item, s, s.cwd);
+      });
+
+      menu.append(renameItem, deleteItem);
+      document.body.appendChild(menu);
+
+      const rect = btn.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+
+      let left = rect.right - menuRect.width;
+      if (left < 8) left = 8;
+      if (left + menuRect.width > window.innerWidth - 8) {
+        left = window.innerWidth - menuRect.width - 8;
+      }
+      menu.style.left = `${left}px`;
+
+      let top = rect.bottom + 4;
+      if (top + menuRect.height > window.innerHeight - 8 && rect.top > menuRect.height + 8) {
+        top = rect.top - menuRect.height - 4;
+      }
+      menu.style.top = `${top}px`;
+
+      activeSessionDropdown = { item, btn, menu };
+    }
+
+    /** One conversation: its name, the folder it belongs to, more options menu on hover. */
     function sessionRow(s, onOpen = null) {
       const item = document.createElement("div");
       item.className = "drawer-item session-item" + (active?.sessionPath === s.path ? " active" : "");
@@ -1823,30 +1920,26 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       folder.title = s.cwd;
       folder.textContent = s.cwd.split("/").filter(Boolean).pop() || s.cwd;
 
-      const actions = document.createElement("div");
-      actions.className = "drawer-item-actions";
-
-      const editBtn = document.createElement("button");
-      editBtn.className = "drawer-action-btn edit-btn";
-      editBtn.title = t("rename_session");
-      editBtn.textContent = "✏️";
-      editBtn.addEventListener("click", (e) => {
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "drawer-more-btn";
+      moreBtn.type = "button";
+      moreBtn.title = t("more_options");
+      moreBtn.setAttribute("aria-label", t("more_options"));
+      moreBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="3" cy="8" r="1.5"></circle>
+          <circle cx="8" cy="8" r="1.5"></circle>
+          <circle cx="13" cy="8" r="1.5"></circle>
+        </svg>
+      `;
+      moreBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        startRenameSession(item, label, s, s.cwd);
+        toggleSessionDropdown(item, moreBtn, s, label);
       });
 
-      const delBtn = document.createElement("button");
-      delBtn.className = "drawer-action-btn delete-btn";
-      delBtn.title = t("delete_session");
-      delBtn.textContent = "🗑️";
-      delBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        confirmDeleteSession(item, s, s.cwd);
-      });
-
-      actions.append(editBtn, delBtn);
-      item.append(label, folder, actions);
+      item.append(label, folder, moreBtn);
       item.addEventListener("click", () => {
+        closeSessionDropdown();
         onOpen?.();
         switchSession(s.path, s.filename, s.cwd);
       });
@@ -1869,6 +1962,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       // Two refreshes in flight (agent_end and session_info_changed arrive together): the later one draws.
       if (mine !== sidebarSeq) return;
 
+      closeSessionDropdown();
       sidebarList.replaceChildren();
       if (data.sessions.length === 0) {
         sidebarList.appendChild(emptyNote(t("no_sessions")));

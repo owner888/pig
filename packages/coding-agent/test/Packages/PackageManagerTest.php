@@ -40,6 +40,9 @@ final class PackageManagerTest extends TestCase
         putenv('GIT_CONFIG_COUNT');
         putenv('GIT_CONFIG_KEY_0');
         putenv('GIT_CONFIG_VALUE_0');
+        putenv('COMPOSER_HOME');
+        putenv('COMPOSER_NO_AUDIT');
+        putenv('COMPOSER_ALLOW_SUPERUSER');
         self::rm($this->root);
     }
 
@@ -300,9 +303,176 @@ final class PackageManagerTest extends TestCase
         $this->assertSame('<?php // one', file_get_contents("{$installed}/extensions/a.php"));
     }
 
+    // ---- composer -----------------------------------------------------------------------------
+
+    public function testAComposerPackageIsRequiredIntoTheSharedProjectAndRemovedFromIt(): void
+    {
+        $this->composerRepository([
+            ['acme/tools', '1.2.0', ['extensions/tools.php' => '<?php']],
+            ['acme/needs-pig', '0.1.0', ['skills/s/SKILL.md' => "---\ndescription: s\n---\n"], ['pigagent/pig' => '^0.6', 'acme/tools' => '^1.0']],
+        ]);
+        $manager = $this->manager();
+        $root = "{$this->home}/composer";
+
+        $manager->installAndPersist('composer:acme/needs-pig');
+
+        $this->assertSame(['composer:acme/needs-pig'], $this->userPackages());
+        $this->assertDirectoryExists("{$root}/vendor/acme/needs-pig");
+        $this->assertDirectoryExists("{$root}/vendor/acme/tools", 'its dependency, in the same vendor/');
+        $this->assertDirectoryDoesNotExist("{$root}/vendor/pigagent", 'pig is the host, never a second copy');
+        $this->assertFileExists("{$root}/.gitignore");
+        $this->assertSame("{$root}/vendor/acme/needs-pig", $manager->installedPath('composer:acme/needs-pig', 'user'));
+
+        $resolved = $manager->resolve();
+        $this->assertSame(["{$root}/vendor/acme/needs-pig/skills/s/SKILL.md"], $resolved->enabled('skills'));
+        $this->assertSame("{$root}/vendor/acme/needs-pig", $resolved->skills[0]->metadata->packageRoot);
+
+        $this->assertTrue($manager->removeAndPersist('composer:acme/needs-pig'));
+        $this->assertSame([], $this->userPackages());
+        $this->assertDirectoryDoesNotExist("{$root}/vendor/acme/needs-pig");
+        $this->assertDirectoryDoesNotExist("{$root}/vendor/acme/tools", 'nothing else required it');
+    }
+
+    public function testTwoConstraintsOfOnePackageAreOneEntry(): void
+    {
+        $this->composerRepository([['acme/tools', '1.2.0', ['extensions/a.php' => '<?php']]]);
+        $manager = $this->manager();
+
+        $manager->installAndPersist('composer:acme/tools');
+        $manager->installAndPersist('composer:acme/tools@^1.0');
+
+        $this->assertSame(['composer:acme/tools@^1.0'], $this->userPackages(), 'replaced, not appended');
+    }
+
+    public function testResolveRequiresWhatIsConfiguredAndAConstraintTheProjectWasNotAskedFor(): void
+    {
+        $this->composerRepository([
+            ['acme/tools', '1.2.0', ['extensions/one.php' => '<?php']],
+            ['acme/tools', '2.0.0', ['extensions/two.php' => '<?php']],
+        ]);
+        $root = "{$this->home}/composer";
+
+        $first = $this->manager(['packages' => ['composer:acme/tools@1.2.0']])->resolve();
+        $this->assertSame(["{$root}/vendor/acme/tools/extensions/one.php"], $first->enabled('extensions'), 'missing, so required');
+
+        // The settings now ask for another version: upstream re-installs when the installed one
+        // does not match, and here the project's `require` is what is compared.
+        $second = $this->manager(['packages' => ['composer:acme/tools@2.0.0']])->resolve();
+        $this->assertSame(["{$root}/vendor/acme/tools/extensions/two.php"], $second->enabled('extensions'));
+
+        putenv('PIG_OFFLINE=1');
+        try {
+            $offline = $this->manager(['packages' => ['composer:acme/missing']])->resolve();
+            $this->assertSame([], $offline->enabled('extensions'), 'offline, a missing package is skipped');
+        } finally {
+            putenv('PIG_OFFLINE');
+        }
+    }
+
+    public function testUpdateMovesAnUnpinnedPackageAndLeavesAPinnedOneWhereItIs(): void
+    {
+        $this->composerRepository([
+            ['acme/tools', '1.2.0', ['extensions/a.php' => '<?php']],
+            ['acme/tools', '1.3.0', ['extensions/a.php' => '<?php']],
+            ['acme/tools', '2.0.0', ['extensions/a.php' => '<?php']],
+        ]);
+        $pinned = $this->manager(['packages' => ['composer:acme/tools@1.2.0']]);
+        $pinned->install('composer:acme/tools@1.2.0');
+
+        $this->assertFalse($pinned->composerHasAvailableUpdate('composer:acme/tools@1.2.0', 'user'));
+        $updated = [];
+        $pinned->setProgressCallback(static function (string $type, string $action, string $source) use (&$updated): void {
+            $updated[] = "{$type} {$action} {$source}";
+        });
+        $pinned->update();
+        $this->assertSame([], $updated, 'pinned: update does not even ask Composer');
+        $this->assertSame('1.2.0', $this->installedComposerVersion('acme/tools'));
+
+        $ranged = $this->manager(['packages' => ['composer:acme/tools@^1.2']]);
+        $ranged->install('composer:acme/tools@^1.2');
+        $this->assertSame('1.3.0', $this->installedComposerVersion('acme/tools'));
+        $this->assertFalse($ranged->composerHasAvailableUpdate('composer:acme/tools@^1.2', 'user'), '2.0.0 is outside ^1.2');
+
+        $unconstrained = $this->manager(['packages' => ['composer:acme/tools']]);
+        $this->assertTrue($unconstrained->composerHasAvailableUpdate('composer:acme/tools', 'user'), 'a newer release, and no constraint holding it back');
+        $unconstrained->update('composer:acme/tools');
+        $this->assertSame('2.0.0', $this->installedComposerVersion('acme/tools'));
+        $this->assertFalse($unconstrained->composerHasAvailableUpdate('composer:acme/tools', 'user'));
+    }
+
+    public function testUpdatingByTheBareNameSuggestsTheConfiguredSource(): void
+    {
+        try {
+            $this->manager(['packages' => ['composer:acme/tools@^1.2']])->update('acme/tools');
+            $this->fail('matched nothing');
+        } catch (PackageError $error) {
+            $this->assertSame('No matching package found for acme/tools. Did you mean composer:acme/tools@^1.2?', $error->getMessage());
+        }
+    }
+
+    public function testAProjectComposerPackageGoesIntoTheProjectsOwnComposerProject(): void
+    {
+        $this->composerRepository([['acme/tools', '1.2.0', ['extensions/a.php' => '<?php']]]);
+        $manager = $this->manager();
+
+        $manager->installAndPersist('composer:acme/tools', local: true);
+
+        $this->assertDirectoryExists("{$this->cwd}/.pig/composer/vendor/acme/tools");
+        $this->assertDirectoryDoesNotExist("{$this->home}/composer");
+    }
+
     // ---- plumbing -----------------------------------------------------------------------------
 
     private string $work = '';
+
+    /**
+     * A Composer repository on disk, and Packagist switched off: `COMPOSER_HOME`'s own
+     * `config.json` is read by every Composer this process starts, the way `GIT_CONFIG_*` is
+     * read by every git, so the install root pig writes stays an ordinary one.
+     *
+     * @param list<array{0: string, 1: string, 2: array<string, string>, 3?: array<string, string>}> $packages
+     *        name, version, files, require
+     */
+    private function composerRepository(array $packages): void
+    {
+        if (trim((string) shell_exec('command -v composer')) === '') {
+            $this->markTestSkipped('composer is not on the PATH');
+        }
+
+        foreach ($packages as $index => $package) {
+            [$name, $version, $files] = $package;
+            $this->package("../repository/{$index}", $files + ['composer.json' => json_encode(array_filter([
+                'name' => $name,
+                'version' => $version,
+                'require' => $package[3] ?? null,
+            ]))]);
+        }
+
+        // One repository for every directory: Composer treats each repository as canonical, so
+        // two versions of one package in two repositories would hide the second.
+        $repositories = [
+            ['type' => 'path', 'url' => "{$this->root}/repository/*", 'options' => ['symlink' => false]],
+            ['packagist.org' => false],
+        ];
+        mkdir("{$this->root}/composer-home", 0o700, true);
+        file_put_contents("{$this->root}/composer-home/config.json", json_encode(['repositories' => $repositories]));
+        putenv("COMPOSER_HOME={$this->root}/composer-home");
+        putenv('COMPOSER_NO_AUDIT=1');
+        putenv('COMPOSER_ALLOW_SUPERUSER=1');
+    }
+
+    private function installedComposerVersion(string $name): ?string
+    {
+        $installed = json_decode((string) file_get_contents("{$this->home}/composer/vendor/composer/installed.json"), true);
+
+        foreach ($installed['packages'] ?? [] as $package) {
+            if ($package['name'] === $name) {
+                return $package['version'];
+            }
+        }
+
+        return null;
+    }
 
     /** @param array<string, mixed> $user */
     private function manager(array $user = []): PackageManager

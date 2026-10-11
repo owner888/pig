@@ -202,9 +202,16 @@ final readonly class Catalog
 
         // pi-antigravity's `applyAntigravityCatalog()` replaces the provider's model list, and the
         // routing is replaced with it: a row kept from the list before has no routing any more.
+        // The catalogue is the chat models; the provider's image models (`ImageGenerator::models()`) are
+        // not in it, and `forgetProvider()` takes every type, so they are put back as they were.
+        $images = array_values(array_filter(
+            Registry::allOfType(\Pig\Ai\ModelType::Image),
+            static fn (\Pig\Ai\ImageModel $model): bool => $model->provider === Models::PROVIDER,
+        ));
         Routing::useTables($this->routing, $this->enums);
         Registry::forgetProvider(Models::PROVIDER);
         Registry::register($this->models, replace: true);
+        Registry::registerImages($images);
     }
 
     /**

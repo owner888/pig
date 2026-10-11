@@ -2976,6 +2976,10 @@ final class Models
      * dispatches a chat model: upstream's providers each register `typesafe-system-one`, or Workers
      * AI's own, under the API name, so the two pick the same implementation for every built-in row.
      * A llama.cpp model needs no key — upstream's llama extension resolves it keyless.
+     *
+     * `ClassifierApi::Extension` is upstream's provider-supplied `classifiers` implementation: the
+     * `Extension\ClassificationApi` the model's provider registered, after the same input check and
+     * with the same key, its result returned as it is and a throw turned into an error result.
      */
     public static function classify(ClassifierModel $model, ClassifierContext $context, ?ClassifierOptions $options = null): ClassifierResult
     {
@@ -2993,6 +2997,9 @@ final class Models
                 ClassifierApi::CloudflareWorkersAiSystemOne => (new Providers\CloudflareWorkersAiSystemOne())->classify($requestModel, $context, $requestOptions),
                 ClassifierApi::LlamaCppClassify => (new Providers\LlamaCppClassify())->classify($requestModel, $context, $requestOptions),
                 ClassifierApi::OpenAiDecisions => (new Providers\OpenAiDecisions())->classify($requestModel, $context, $requestOptions),
+                ClassifierApi::Extension => (Extension\ProviderRegistry::classifierApiFor($requestModel)
+                    ?? throw new ProviderError("No extension provides classification for {$model->provider}/{$model->id}. Is its extension loaded?"))
+                    ->classify($requestModel, $context, $requestOptions),
             };
         } catch (\Throwable $error) {
             return ClassifierResult::error($model, $error, $options?->signal?->aborted() ?? false);
@@ -3003,6 +3010,12 @@ final class Models
      * "Generate images through the owning provider with auth resolved like `stream()`. Never rejects:
      * unknown providers, unconfigured auth, and providers without `generateImages` return an error
      * `AssistantImages`." — upstream's `Models.generateImages()`, dispatched by the model's API.
+     *
+     * `ImageApi::Extension` is upstream's provider-supplied `images` implementation: the
+     * `Extension\ImageGenerationApi` the model's provider registered, handed the same key, and its
+     * result returned as it is — or, when it throws, the same error result as any other failure. A
+     * model of a provider whose extension is not loaded is refused by name, as `Stream` refuses an
+     * `Api::Extension` chat model.
      */
     public static function generateImages(ImageModel $model, ImagesContext $context, ?ImagesOptions $options = null): AssistantImages
     {
@@ -3019,6 +3032,9 @@ final class Models
 
             return match ($model->api) {
                 ImageApi::OpenRouterImages => (new Providers\OpenRouterImages())->generateImages($model, $context, $requestOptions),
+                ImageApi::Extension => (Extension\ProviderRegistry::imageApiFor($model)
+                    ?? throw new ProviderError("No extension provides image generation for {$model->provider}/{$model->id}. Is its extension loaded?"))
+                    ->generateImages($model, $context, $requestOptions),
             };
         } catch (\Throwable $error) {
             return AssistantImages::error($model, $error, $options?->signal?->aborted() ?? false);

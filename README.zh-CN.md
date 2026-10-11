@@ -65,9 +65,11 @@ pig update --models      # 刷新并重新对齐模型目录
 
 ### 包管理
 
-扩展、技能、提示模板、主题可以打成一个**包**一起分发——和 pi 一样是一个 git 仓库或本地目录，只是没有 npm：
+扩展、技能、提示模板、主题可以打成一个**包**一起分发——和 pi 一样，可以是 Composer 包、git 仓库或本地目录，Composer 对应 pi 的 npm：
 
 ```bash
+pig install composer:user/pig-tools              # composer require 到 ~/.pig/agent/composer
+pig install composer:user/pig-tools@^1.2         # 版本约束；写确切版本（@1.2.3）就是钉住
 pig install git:github.com/user/pig-tools        # 克隆到 ~/.pig/agent/git/github.com/user/pig-tools
 pig install git:github.com/user/pig-tools@v1     # 钉住：update 只对齐到 v1，不会往前走
 pig install https://github.com/user/pig-tools    # URL 按 git 处理
@@ -104,6 +106,7 @@ pig -e git:github.com/user/pig-tools             # 只在这一次运行里试�
 1. 把包放进一个独立的 GitHub 仓库——上面的约定目录，或带 `extra.pig` 的 `composer.json`。需要第三方库的包自己把 `vendor/` 提交进去。
 2. 确认能装：`pig install git:github.com/user/repo`，再 `pig list` 看资源有没有被识别。
 3. 在仓库页面（About → Topics）加上 topic `pig-package`。列表每小时刷新；卡片上的描述、star、最后推送时间都来自 GitHub，所以仓库 description 就是卡片文案。
+4. 也可以再提交到 [Packagist](https://packagist.org)，这样就能用 `pig install composer:user/repo` 安装并带版本约束——相当于 pi 的 `npm publish`。这样发布的包把依赖写在 `require` 里，不提交 `vendor/`。
 
 `composer.json` 里可选的 `extra.pig.image` / `extra.pig.video`（仓库内路径或 `https://` 地址）给卡片加预览，pig 本体忽略它们。去掉 topic 就下架。只收录 GitHub——别的 git 托管上的包能装，但市场里搜不到。
 
@@ -113,7 +116,9 @@ settings 里的条目可以收窄要加载的内容，语法与 pi 相同——�
 { "packages": [{ "source": "git:github.com/user/pig-tools", "extensions": ["!extensions/legacy.php"], "skills": [] }] }
 ```
 
-pig 不会在包里跑任何包管理器：需要第三方库的包自带 `vendor/`（有 `vendor/autoload.php` pig 会 require），`Pig\*` 由宿主提供——包里不要 `require` `pigagent/pig`。包只支持 PHP；`npm:` 和 `composer:` 来源会被按名拒绝。
+`composer:` 包用 Composer 安装（需要在 PATH 上），每个作用域共用一个 Composer 项目——`~/.pig/agent/composer`，加 `-l` 时是 `.pig/composer`。这个项目的 `composer.json` 用 `replace` 声明替代 `pigagent/pig`，所以依赖 pig 的包拿到的是正在运行的 pig，而不会再装一份；同时禁用 Composer 插件。包的依赖来自这个项目的 `vendor/`；两个包要求同一个库的不兼容版本时，Composer 在安装时就会拒绝。`pig update` 会重新 require 没钉住的包——有约束就在约束内更新，没有约束就更新到最新版。
+
+pig 不会在 git 包和本地包里跑任何包管理器：需要第三方库的这类包自带 `vendor/`（有 `vendor/autoload.php` pig 会 require），`Pig\*` 由宿主提供——这类包里不要 `require` `pigagent/pig`。包只支持 PHP；`npm:` 来源会被按名拒绝。
 
 ---
 

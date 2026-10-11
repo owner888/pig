@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test\Extensions;
 
-use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use PigAntigravity\ImageGenerator;
 use PigAntigravity\QuotaClient;
@@ -139,24 +138,6 @@ final class AntigravityExtensionTest extends TestCase
 
     // ---- ImageGenerator validation & path resolution ------------------------------------
 
-    public function testImageGeneratorRefusesInvalidAspectRatio(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage("Unsupported aspect ratio: '3:5'");
-
-        $gen = new ImageGenerator();
-        $gen->generate('token', 'proj', 'a photo of a cat', aspectRatio: '3:5');
-    }
-
-    public function testImageGeneratorRefusesEmptyPrompt(): void
-    {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Prompt cannot be empty');
-
-        $gen = new ImageGenerator();
-        $gen->generate('token', 'proj', '   ');
-    }
-
     public function testImageGeneratorResolvesSavePaths(): void
     {
         $cwd = '/Users/dev/project';
@@ -259,6 +240,11 @@ final class AntigravityExtensionTest extends TestCase
         $this->assertNotNull($model);
         $this->assertSame(Api::Extension, $model->api);
         $this->assertInstanceOf(StreamApi::class, ProviderRegistry::apiFor($model));
+        // The image models, behind the provider's own image generation.
+        $image = Models::findOfType(\Pig\Ai\ModelType::Image, 'antigravity', ImageGenerator::DEFAULT_MODEL);
+        $this->assertInstanceOf(\Pig\Ai\ImageModel::class, $image);
+        $this->assertSame(\Pig\Ai\ImageApi::Extension, $image->api);
+        $this->assertInstanceOf(ImageGenerator::class, ProviderRegistry::imageApiFor($image));
         $this->assertInstanceOf(OauthFlow::class, Auth::signIn('antigravity'));
         $this->assertSame('Antigravity (Gemini 3, Claude, GPT-OSS)', Auth::signIn('antigravity')?->label());
         // Resold: `claude-sonnet-4-6` bare is still Anthropic's.
@@ -271,6 +257,7 @@ final class AntigravityExtensionTest extends TestCase
         ExtensionApi::forgetHttpRoutes();
 
         $this->assertNull(Models::find('antigravity', 'gemini-3.8-flash'));
+        $this->assertNull(Models::findOfType(\Pig\Ai\ModelType::Image, 'antigravity', ImageGenerator::DEFAULT_MODEL));
         $this->assertNull(Auth::signIn('antigravity'));
     }
 

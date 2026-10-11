@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Extension;
 
+use Pig\Ai\ClassifierModel;
+use Pig\Ai\ImageModel;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 
@@ -16,7 +18,8 @@ use Pig\Ai\Models;
  * leak providers into each other, and for `/reload`, which loads the extensions again.
  *
  * What registering does: the models go into `Models` through `register()`, so every lookup
- * already written finds them; the protocol is found by `Stream::start()` through `apiFor()`; the
+ * already written finds them; the protocol is found by `Stream::start()` through `apiFor()` (and
+ * image generation and classification by `Models` through `imageApiFor()` / `classifierApiFor()`); the
  * sign-in by `Auth` through `oauthFor()`; the key's variable names by `Stream::envApiKey()`.
  * Unregistering takes all four back.
  */
@@ -70,6 +73,18 @@ final class ProviderRegistry
     public static function apiFor(Model $model): ?StreamApi
     {
         return self::$providers[$model->provider]->api ?? null;
+    }
+
+    /** The image generation `Models::generateImages()` hands an `ImageApi::Extension` model to. */
+    public static function imageApiFor(ImageModel $model): ?ImageGenerationApi
+    {
+        return self::$providers[$model->provider]->imageApi ?? null;
+    }
+
+    /** The classification `Models::classify()` hands a `ClassifierApi::Extension` model to. */
+    public static function classifierApiFor(ClassifierModel $model): ?ClassificationApi
+    {
+        return self::$providers[$model->provider]->classifierApi ?? null;
     }
 
     public static function oauthFor(string $id): ?OauthFlow

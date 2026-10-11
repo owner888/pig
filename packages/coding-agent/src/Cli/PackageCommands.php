@@ -472,6 +472,8 @@ final class PackageCommands
               -na, --no-approve Ignore project-local files for this command
 
             Examples:
+              pig install composer:vendor/package
+              pig install composer:vendor/package@^1.2
               pig install git:github.com/user/repo
               pig install git:github.com/user/repo@v1
               pig install git:git@github.com:user/repo
@@ -493,7 +495,7 @@ final class PackageCommands
               -na, --no-approve Ignore project-local files for this command
 
             Examples:
-              pig remove git:github.com/user/repo
+              pig remove composer:vendor/package
               pig uninstall git:github.com/user/repo
 
             TEXT,

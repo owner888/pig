@@ -6,13 +6,26 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
+use Pig\Ai\AssistantImages;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ClassifierApi;
+use Pig\Ai\ClassifierBoolAnswer;
+use Pig\Ai\ClassifierBoolQuestion;
+use Pig\Ai\ClassifierContext;
+use Pig\Ai\ClassifierModel;
+use Pig\Ai\ClassifierOptions;
+use Pig\Ai\ClassifierResult;
+use Pig\Ai\Cost;
+use Pig\Ai\Extension\ClassificationApi;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Extension\RefreshModelsContext;
 use Pig\Ai\ImageApi;
+use Pig\Ai\ImageContent;
+use Pig\Ai\ImageModel;
+use Pig\Ai\ImagesContext;
+use Pig\Ai\ImagesOptions;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\ModelType;
@@ -21,6 +34,7 @@ use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\Stream;
 use Pig\Ai\TextContent;
+use Pig\Ai\Timestamp;
 use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
@@ -169,9 +183,12 @@ final class ProviderConfigTest extends TestCase
 
         foreach ([
             [['streamSimple' => static fn () => null], '"api" is required when registering streamSimple'],
-            [['images' => ['media-images' => new \stdClass()]], '"images" implementations are not supported'],
-            [['classifiers' => ['media-classifier' => new \stdClass()]], '"classifiers" implementations are not supported'],
-            [['models' => [['type' => 'image', 'id' => 'i', 'api' => 'media-images', 'baseUrl' => 'https://x']]], 'pig has no image API "media-images"'],
+            [['images' => ['media-images' => new \stdClass()]], '"images": "media-images" must be a Closure or a Pig\\Ai\\Extension\\ImageGenerationApi'],
+            [['classifiers' => ['media-classifier' => 'classify']], '"classifiers": "media-classifier" must be a Closure or a Pig\\Ai\\Extension\\ClassificationApi'],
+            [['images' => [static fn () => null]], '"images" must be an array of implementations keyed by API name'],
+            [['images' => ['extension' => static fn () => null]], '"extension" is not an API name'],
+            [['models' => [['type' => 'image', 'id' => 'i', 'api' => 'media-images', 'baseUrl' => 'https://x']]], 'pig has no image API "media-images", and "images" does not implement it'],
+            [['models' => [['type' => 'image', 'id' => 'i', 'api' => 'extension', 'baseUrl' => 'https://x']]], 'pig has no image API "extension"'],
             [['baseUrl' => 'https://x', 'models' => [['id' => 'c']]], 'no "api" specified'],
         ] as [$config, $says]) {
             try {
@@ -181,6 +198,99 @@ final class ProviderConfigTest extends TestCase
                 $this->assertStringContainsString($says, $error->getMessage());
             }
         }
+    }
+
+    /**
+     * custom-provider.md's mixed-operation example as written: image and classifier models on API names pig
+     * has never heard of, and the `images` / `classifiers` implementations keyed by those names.
+     */
+    public function testImagesAndClassifiersMapsImplementTheModelsOnTheirApiNames(): void
+    {
+        $seen = [];
+        // A plain closure, not an arrow function: an arrow function would capture `$seen` by value.
+        $answer = static function (string $by) use (&$seen): \Closure {
+            return static function (ImageModel $model, ImagesContext $context, ImagesOptions $options) use (&$seen, $by): AssistantImages {
+                $seen[] = [$by, $model->id, $options->apiKey];
+
+                return new AssistantImages($model->api, $model->provider, $model->id, [new ImageContent('aGk=', 'image/png')], StopReason::Stop, Timestamp::nowMs(), usage: new Usage(1, 2, 0, 0, 3, new Cost(0.1, 0.2, 0.0, 0.0, 0.3)));
+            };
+        };
+        $classifier = new class ($seen) implements ClassificationApi {
+            public function __construct(private array &$seen)
+            {
+            }
+
+            public function classify(ClassifierModel $model, ClassifierContext $context, ClassifierOptions $options): ClassifierResult
+            {
+                $this->seen[] = ['classifier', $model->id, $options->apiKey];
+
+                return new ClassifierResult($model->api, $model->provider, $model->id, ['ok' => new ClassifierBoolAnswer(0.75)], StopReason::Stop, Timestamp::nowMs());
+            }
+        };
+
+        $api = new ExtensionApi('.', 'media.php', 'media', Auth::inMemory());
+        $api->registerProvider('media-tools', [
+            'baseUrl' => 'https://media.example.com/v1',
+            'apiKey' => 'literal-media-key',
+            'api' => 'openai-completions',
+            'models' => [
+                ['id' => 'chat-v1', 'name' => 'Chat V1'],
+                ['type' => 'image', 'id' => 'image-v1', 'name' => 'Image V1', 'api' => 'media-images', 'input' => ['text'], 'output' => ['image'], 'cost' => ['input' => 1, 'output' => 2, 'cacheRead' => 0, 'cacheWrite' => 0]],
+                ['type' => 'image', 'id' => 'image-v2', 'name' => 'Image V2', 'api' => 'media-images-2', 'input' => ['text'], 'output' => ['image']],
+                ['type' => 'image', 'id' => 'router', 'name' => 'Router', 'api' => 'openrouter-images'],
+                ['type' => 'classifier', 'id' => 'classifier-v1', 'name' => 'Classifier V1', 'api' => 'media-classifier', 'contextWindow' => 64_000],
+            ],
+            'images' => ['media-images' => $answer('first'), 'media-images-2' => $answer('second')],
+            'classifiers' => ['media-classifier' => $classifier],
+        ]);
+
+        $image = Models::findOfType(ModelType::Image, 'media-tools', 'image-v1');
+        $this->assertInstanceOf(ImageModel::class, $image);
+        $this->assertSame(ImageApi::Extension, $image->api);
+        $this->assertSame(ImageApi::OpenRouterImages, Models::findOfType(ModelType::Image, 'media-tools', 'router')?->api, 'a name "images" does not implement stays built in');
+        $this->assertSame(ClassifierApi::Extension, Models::findOfType(ModelType::Classifier, 'media-tools', 'classifier-v1')?->api);
+
+        $first = Models::generateImages($image, new ImagesContext([new TextContent('a cat')]), new ImagesOptions(apiKey: 'sk-1'));
+        $second = Models::generateImages(Models::findOfType(ModelType::Image, 'media-tools', 'image-v2') ?? throw new \LogicException(), new ImagesContext([new TextContent('a dog')]), new ImagesOptions(apiKey: 'sk-2'));
+        $judged = Models::classify(Models::findOfType(ModelType::Classifier, 'media-tools', 'classifier-v1') ?? throw new \LogicException(), new ClassifierContext(['x' => 1], ['ok' => new ClassifierBoolQuestion('ok?', [])]), new ClassifierOptions(apiKey: 'sk-3'));
+
+        $this->assertSame(StopReason::Stop, $first->stopReason);
+        $this->assertSame(0.3, $first->usage?->cost->total);
+        $this->assertSame(StopReason::Stop, $second->stopReason);
+        $this->assertSame(0.75, $judged->answers['ok']->probability ?? null);
+        $this->assertSame([['first', 'image-v1', 'sk-1'], ['second', 'image-v2', 'sk-2'], ['classifier', 'classifier-v1', 'sk-3']], $seen, 'each model to the implementation of its own api name');
+
+        // An implementation that answers with something else is an error result, not a throw.
+        $api->registerProvider('media-bad', [
+            'baseUrl' => 'https://bad.example',
+            'models' => [['type' => 'image', 'id' => 'b', 'name' => 'B', 'api' => 'bad-images']],
+            'images' => ['bad-images' => static fn (): string => 'not a result'],
+        ]);
+        $bad = Models::generateImages(Models::findOfType(ModelType::Image, 'media-bad', 'b') ?? throw new \LogicException(), new ImagesContext([new TextContent('x')]), new ImagesOptions(apiKey: 'k'));
+        $this->assertSame(StopReason::Error, $bad->stopReason);
+        $this->assertStringContainsString('did not return a Pig\\Ai\\AssistantImages', (string) $bad->errorMessage);
+    }
+
+    /** Upstream's composer: an extension's implementation for a built-in API's name wins over the base provider's. */
+    public function testAnImplementationForABuiltInApiNameTakesTheProvidersModelsOver(): void
+    {
+        $seen = [];
+        $api = new ExtensionApi('.', 'proxy.php', 'proxy');
+        $api->registerProvider('openrouter', [
+            'images' => ['openrouter-images' => static function (ImageModel $model) use (&$seen): AssistantImages {
+                $seen[] = $model->id;
+
+                return new AssistantImages($model->api, $model->provider, $model->id, [], StopReason::Stop, Timestamp::nowMs());
+            }],
+        ]);
+
+        $model = Models::findOfType(ModelType::Image, 'openrouter', 'openai/gpt-image-1');
+        $this->assertSame(ImageApi::Extension, $model?->api, 'the built-in rows stay, on the extension');
+        Models::generateImages($model ?? throw new \LogicException(), new ImagesContext([new TextContent('x')]), new ImagesOptions(apiKey: 'k'));
+        $this->assertSame(['openai/gpt-image-1'], $seen);
+
+        $api->unregisterProvider('openrouter');
+        $this->assertSame(ImageApi::OpenRouterImages, Models::findOfType(ModelType::Image, 'openrouter', 'openai/gpt-image-1')?->api);
     }
 
     /** "Legacy `ProviderConfig.refreshModels` returns mixed-operation model definitions. pig replaces that registration's live models." */
@@ -206,5 +316,27 @@ final class ProviderConfigTest extends TestCase
         $this->assertSame([], $result->errors);
         $this->assertNotNull(Models::find('zzlive', 'fetched'));
         $this->assertNull(Models::find('zzlive', 'cached'));
+    }
+
+    public function testRefreshedImageModelsGoToTheirImplementationToo(): void
+    {
+        $auth = Auth::inMemory();
+        $api = new ExtensionApi('.', 'live.php', 'live', $auth);
+        $api->registerProvider('zzlivepic', [
+            'baseUrl' => 'https://live.example',
+            'apiKey' => 'literal-key',
+            'models' => [['type' => 'image', 'id' => 'first', 'name' => 'First', 'api' => 'live-images']],
+            'refreshModels' => static fn (RefreshModelsContext $context): array => [
+                ['type' => 'image', 'id' => $context->allowNetwork ? 'fetched' : 'cached', 'name' => 'Live', 'api' => 'live-images'],
+            ],
+            'images' => ['live-images' => static fn (ImageModel $model): AssistantImages => new AssistantImages($model->api, $model->provider, $model->id, [new TextContent("from {$model->id}")], StopReason::Stop, Timestamp::nowMs())],
+        ]);
+
+        $this->assertSame([], Async::run(static fn () => ModelRefresh::refresh($auth, ['zzlivepic']))->errors);
+        $fetched = Models::findOfType(ModelType::Image, 'zzlivepic', 'fetched');
+        $this->assertInstanceOf(ImageModel::class, $fetched);
+        $result = Models::generateImages($fetched, new ImagesContext([new TextContent('x')]), new ImagesOptions(apiKey: 'k'));
+        $this->assertSame(StopReason::Stop, $result->stopReason, (string) $result->errorMessage);
+        $this->assertSame('from fetched', $result->output[0]->text ?? null);
     }
 }

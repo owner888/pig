@@ -372,24 +372,33 @@ That was not hypothetical: deleting the read of SOCKS5's bound address makes fou
 `Malformed status line: "  8HTTP/1.1 200 OK"`, which is the bound address arriving where the
 response was meant to be. Asserting only on the bytes pig *sends* would have passed.
 
-### Packages: upstream's package manager, for git and local sources only
+### Packages: upstream's package manager, with Composer where upstream has npm
 
 `pig install | remove | update | list | config`, `-e <source>` and the `packages` setting are
 upstream's `package-manager.ts` + `package-manager-cli.ts` + `config-selector.ts`, ported into
 `packages/coding-agent/src/Packages/`, `Cli/PackageCommands.php` and `Cli/ConfigSelector.php`,
 with the developer's three decisions on what PHP changes:
 
-- **No `npm:`, and `composer:` reserved.** Both are refused by name in `PackageSource::parse()`
-  rather than read as a local path. Packagist would mean a composer binary at runtime and a
-  `vendor/` per package that could load `Pig\*` twice; git and local paths are where PHP
-  extensions live anyway.
+- **`composer:` in `npm:`'s place, and `npm:` refused by name.** `composer:vendor/name[@<constraint>]`
+  is upstream's `npm:name[@version]` line for line: one shared Composer project per scope
+  (`~/.pig/agent/composer`, `.pig/composer` for `-l`, `tmp/extensions/composer/<hash>` for `-e`)
+  where upstream keeps its npm root, `composer require` / `composer remove` for install / remove,
+  an exact version pinned and left by `update`, identity by name. The two reasons this was once
+  reserved both have answers: Composer is how pig itself is installed, so it is on the machine,
+  and the project's `composer.json` **replaces `pigagent/pig`** — upstream's `--omit=peer` — so a
+  package that requires pig never puts a second copy in `vendor/`, whose autoloader (Composer
+  prepends it) would otherwise win for every `Pig\` class the host had not loaded yet. Plugins
+  are blocked (`allow-plugins: false`), since pig runs nothing a package brings. A missing
+  Composer is refused by name rather than read as a failed install.
 - **The manifest is `composer.json`'s `extra.pig`**, upstream's `package.json` `pi` key under the
   place composer keeps what is not its own. Same four fields, same globs and `!` / `+` / `-`
   patterns. No `composer.json` → the conventional `extensions/ skills/ prompts/ themes/`.
-- **pig runs nothing inside a package.** Upstream runs `npm install` in a cloned package;
-  pig requires `vendor/autoload.php` beside an extension (or one level up) when the author shipped
-  it, and otherwise loads the PHP that is there. `Pig\*` comes from the host and a package's
-  `require` must not name `pigagent/pig` — the docs say so; nothing checks.
+- **pig runs nothing inside a git or local package.** Upstream runs `npm install` in a cloned
+  package; pig requires `vendor/autoload.php` beside an extension (or one level up) when the
+  author shipped it, and otherwise loads the PHP that is there. A `composer:` package's libraries
+  are the shared project's `vendor/`, which `ExtensionLoader` finds above the last `/vendor/` in
+  the extension's path. `Pig\*` comes from the host and a git or local package's `require` must
+  not name `pigagent/pig` — the docs say so; nothing checks.
 
 What is upstream's to the line: the source grammar (`PackageSource`, `hosted-git-info`'s
 shorthand table replaced by the five hosts a source string can use), the install layout
@@ -398,6 +407,17 @@ shorthand table replaced by the five hosts a source string can use), the install
 `autoload: false` deltas, the filters (`PackageFilter`), `ensureGitRef`'s fetch-then-reset and
 the `@{upstream}` / `origin/HEAD` fallback, the CLI's parser and every refusal, `list`'s output,
 and the startup `ls-remote` check (`PackageUpdateCheck`).
+
+Where `composer:` differs from upstream's npm, and why: **an installed constraint is matched by
+what the project was asked for**, not by what is installed — upstream checks the installed
+version satisfies the range; here `resolve()` re-requires when the project's `require` holds a
+different constraint than the settings, because comparing an installed version against a range
+would be a second constraint solver beside Composer's. **The update check is two Composer
+questions**: with a constraint, `composer update <name> --dry-run` (what `update` would actually
+do); without one, `composer outdated <name>` (any newer release, since `update` requires the bare
+name again). `composer outdated` alone reports the newest version and ignores the constraint.
+Tests reach a path repository through `COMPOSER_HOME`'s `config.json` with Packagist switched off,
+the way the git tests reach a bare repository through `GIT_CONFIG_*`.
 
 What is not: **`.gitignore` is not read while discovering a package's files** — upstream uses
 the `ignore` package; pig skips dot entries, `vendor` and `node_modules` and stops there, the

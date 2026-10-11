@@ -9,8 +9,14 @@ use InvalidArgumentException;
 use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
+use Pig\Ai\AssistantImages;
 use Pig\Ai\ClassifierApi;
+use Pig\Ai\ClassifierContext;
 use Pig\Ai\ClassifierModel;
+use Pig\Ai\ClassifierOptions;
+use Pig\Ai\ClassifierResult;
+use Pig\Ai\Extension\ClassificationApi;
+use Pig\Ai\Extension\ImageGenerationApi;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
@@ -18,6 +24,8 @@ use Pig\Ai\Extension\RefreshModelsContext;
 use Pig\Ai\Extension\StreamApi;
 use Pig\Ai\ImageApi;
 use Pig\Ai\ImageModel;
+use Pig\Ai\ImagesContext;
+use Pig\Ai\ImagesOptions;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\ModelType;
@@ -48,6 +56,12 @@ use UnexpectedValueException;
  * - `streamSimple(Model, TranscriptContext, ?SimpleStreamOptions): AssistantMessageEventStream` speaks
  *   for the models whose `api` is the config's `api` — they become `Api::Extension` models — and `api` is
  *   then required. Every other model goes to the built-in protocol its `api` names.
+ * - `images` and `classifiers` are upstream's implementations keyed by API name — each an
+ *   `Extension\ImageGenerationApi` / `Extension\ClassificationApi`, or a Closure of the same shape as its
+ *   one method. An image (classifier) model whose `api` is a key of the map becomes an
+ *   `ImageApi::Extension` (`ClassifierApi::Extension`) model and goes to that implementation — a key that
+ *   is a built-in API's name included, as upstream's composer lets an extension's implementation win over
+ *   the base provider's; every other image or classifier model goes to the built-in API its `api` names.
  * - `refreshModels(RefreshModelsContext): list<definition>` replaces the registration's models with what
  *   it returns, through `$context->publish`, after checking them.
  *
@@ -56,9 +70,10 @@ use UnexpectedValueException;
  *   part of the model. A header that cannot be resolved fails the registration in upstream's words.
  * - `oauth` is a pig `OauthFlow`, the shape a native provider's sign-in already has; upstream's object of
  *   callbacks has no PHP form.
- * - `images` and `classifiers` — implementations keyed by a custom API name — are refused: pig's image
- *   and classifier APIs are a fixed set (`ImageApi`, `ClassifierApi`). An image or classifier model on one
- *   of those APIs is accepted.
+ * - An implementation is handed the model with `api` set to the `Extension` case, not to the API name it
+ *   was registered under: pig's `ImageApi` / `ClassifierApi` are closed. Which implementation a model goes
+ *   to is decided here, by the name its definition gave, so a map of several names still dispatches as
+ *   upstream's `images[model.api]` does.
  */
 final class ProviderConfig
 {
@@ -90,11 +105,12 @@ final class ProviderConfig
             throw new InvalidArgumentException("{$where}: \"api\" is required when registering streamSimple.");
         }
 
-        foreach (['images', 'classifiers'] as $key) {
-            if (($config[$key] ?? []) !== []) {
-                throw new InvalidArgumentException("{$where}: \"{$key}\" implementations are not supported by pig — its image and classifier APIs are a fixed set; give the models a built-in api instead.");
-            }
-        }
+        $imageImplementations = self::implementations($config['images'] ?? null, ImageGenerationApi::class, "{$where}: \"images\"");
+        $classifierImplementations = self::implementations($config['classifiers'] ?? null, ClassificationApi::class, "{$where}: \"classifiers\"");
+        // Which implementation each `Extension` model goes to, by model id; kept current with the models
+        // themselves, a `refreshModels` included.
+        $imageRouter = $imageImplementations === [] ? null : self::imageRouter($id, $imageImplementations);
+        $classifierRouter = $classifierImplementations === [] ? null : self::classifierRouter($id, $classifierImplementations);
 
         $oauth = $config['oauth'] ?? null;
 
@@ -128,8 +144,14 @@ final class ProviderConfig
             ModelType::Classifier->value => self::ofProvider(Models::allOfType(ModelType::Classifier), $id),
             ModelType::Image->value => self::ofProvider(Models::allOfType(ModelType::Image), $id),
         ];
-        $build = static fn (?array $definitions): array => self::models($id, $config, $definitions, $existing, $headers, $baseUrl, $api, $streamSimple !== null);
-        [$chat, $classifiers, $images] = $build(isset($config['models']) ? self::list($config['models'], "{$where}: \"models\"") : null);
+        $apis = [ModelType::Image->value => array_keys($imageImplementations), ModelType::Classifier->value => array_keys($classifierImplementations)];
+        $build = static fn (?array $definitions): array => self::models($id, $config, $definitions, $existing, $headers, $baseUrl, $api, $streamSimple !== null, $apis);
+        [$chat, $classifiers, $images, $routes] = $build(isset($config['models']) ? self::list($config['models'], "{$where}: \"models\"") : null);
+        $route = static function (array $routes) use ($imageRouter, $classifierRouter): void {
+            $imageRouter?->route($routes[ModelType::Image->value]);
+            $classifierRouter?->route($routes[ModelType::Classifier->value]);
+        };
+        $route($routes);
 
         $refresh = $config['refreshModels'] ?? null;
 
@@ -145,7 +167,7 @@ final class ProviderConfig
             oauth: $oauth,
             apiKeyAuth: $rawKey === null ? null : new ConfiguredApiKeyAuth($id, $rawKey),
             classifiers: $classifiers,
-            refreshModels: $refresh === null ? null : static function (RefreshModelsContext $context) use ($refresh, $build, $id): void {
+            refreshModels: $refresh === null ? null : static function (RefreshModelsContext $context) use ($refresh, $build, $id, $route): void {
                 // "The returned list replaces extension-provided models." Checked before it is published,
                 // as upstream validates before publishing the new synchronous list.
                 $definitions = $refresh($context);
@@ -158,11 +180,16 @@ final class ProviderConfig
                     throw new UnexpectedValueException("Provider {$id}: refreshModels must return a list of model definitions.");
                 }
 
-                [$chat, $classifiers, $images] = $build($definitions);
-                ($context->publish)(null, static fn () => Models::replaceProvider($id, $chat, $classifiers, $images));
+                [$chat, $classifiers, $images, $routes] = $build($definitions);
+                ($context->publish)(null, static function () use ($id, $chat, $classifiers, $images, $routes, $route): void {
+                    $route($routes);
+                    Models::replaceProvider($id, $chat, $classifiers, $images);
+                });
             },
             images: $images,
             replacesModels: true,
+            imageApi: $imageRouter,
+            classifierApi: $classifierRouter,
         );
     }
 
@@ -174,17 +201,33 @@ final class ProviderConfig
      * @param list<mixed>|null $definitions
      * @param array<string, list<Model|ClassifierModel|ImageModel>> $existing by `ModelType` value
      * @param array<string, string> $headers the provider's, resolved
-     * @return array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>}
+     * @param array<string, list<string>> $apis the API names `images` / `classifiers` implement, by `ModelType` value
+     * @return array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>, 3: array<string, array<string, string>>}
+     *         the models, and by `ModelType` value which API name each `Extension` model's id goes to
      */
-    private static function models(string $id, array $config, ?array $definitions, array $existing, array $headers, ?string $baseUrl, ?string $api, bool $hasStream): array
+    private static function models(string $id, array $config, ?array $definitions, array $existing, array $headers, ?string $baseUrl, ?string $api, bool $hasStream, array $apis): array
     {
+        $routes = [ModelType::Image->value => [], ModelType::Classifier->value => []];
+
         if ($definitions === null) {
-            $rebased = static fn (Model|ClassifierModel|ImageModel $model): array => [...get_object_vars($model), 'baseUrl' => $baseUrl ?? $model->baseUrl, 'headers' => [...$model->headers, ...$headers]];
+            // The models stay, and an implementation for a built-in API's name takes those of that API over —
+            // upstream's `extensionImages?.[model.api]` ahead of the base provider's `generateImages`.
+            $rebased = static function (Model|ClassifierModel|ImageModel $model, ?ModelType $type = null) use ($baseUrl, $headers, $apis, &$routes): array {
+                $args = [...get_object_vars($model), 'baseUrl' => $baseUrl ?? $model->baseUrl, 'headers' => [...$model->headers, ...$headers]];
+
+                if ($type !== null && in_array($model->api->value, $apis[$type->value], true)) {
+                    $routes[$type->value][$model->id] = $model->api->value;
+                    $args['api'] = $type === ModelType::Image ? ImageApi::Extension : ClassifierApi::Extension;
+                }
+
+                return $args;
+            };
 
             return [
                 array_map(static fn (Model $model): Model => new Model(...$rebased($model)), $existing[ModelType::Chat->value]),
-                array_map(static fn (ClassifierModel $model): ClassifierModel => new ClassifierModel(...$rebased($model)), $existing[ModelType::Classifier->value]),
-                array_map(static fn (ImageModel $model): ImageModel => new ImageModel(...$rebased($model)), $existing[ModelType::Image->value]),
+                array_map(static fn (ClassifierModel $model): ClassifierModel => new ClassifierModel(...$rebased($model, ModelType::Classifier)), $existing[ModelType::Classifier->value]),
+                array_map(static fn (ImageModel $model): ImageModel => new ImageModel(...$rebased($model, ModelType::Image)), $existing[ModelType::Image->value]),
+                $routes,
             ];
         }
 
@@ -197,16 +240,20 @@ final class ProviderConfig
 
             $type = ModelType::tryFrom((string) ($definition['type'] ?? 'chat'))
                 ?? throw new InvalidArgumentException("Provider {$id}: model {$position} has an unknown \"type\".");
-            $model = self::model($id, $config, $definition, $type, $existing[$type->value], $headers, $baseUrl, $api, $hasStream);
+            [$model, $implemented] = self::model($id, $config, $definition, $type, $existing[$type->value], $headers, $baseUrl, $api, $hasStream, $apis[$type->value] ?? []);
 
             match (true) {
                 $model instanceof Model => $chat[] = $model,
                 $model instanceof ClassifierModel => $classifiers[] = $model,
                 default => $images[] = $model,
             };
+
+            if ($implemented !== null) {
+                $routes[$type->value][$model->id] = $implemented;
+            }
         }
 
-        return [$chat, $classifiers, $images];
+        return [$chat, $classifiers, $images, $routes];
     }
 
     /**
@@ -216,8 +263,11 @@ final class ProviderConfig
      * @param array<mixed> $definition
      * @param list<Model|ClassifierModel|ImageModel> $existing the provider's models of this type
      * @param array<string, string> $headers
+     * @param list<string> $implemented the API names the config's `images` / `classifiers` implement, for this type
+     * @return array{0: Model|ClassifierModel|ImageModel, 1: string|null} the model, and the API name whose
+     *         implementation it goes to when it is an `Extension` one
      */
-    private static function model(string $id, array $config, array $definition, ModelType $type, array $existing, array $headers, ?string $baseUrl, ?string $api, bool $hasStream): Model|ClassifierModel|ImageModel
+    private static function model(string $id, array $config, array $definition, ModelType $type, array $existing, array $headers, ?string $baseUrl, ?string $api, bool $hasStream, array $implemented): array
     {
         $modelId = $definition['id'] ?? null;
 
@@ -245,19 +295,33 @@ final class ProviderConfig
         $inputLimits = is_array($definition['inputLimits'] ?? null) ? $definition['inputLimits'] : null;
         $contextWindow = self::positive($definition, 'contextWindow', self::DEFAULT_CONTEXT_WINDOW, $where);
 
+        // The name the definition gave (or the existing model's): one the config's `images` / `classifiers`
+        // implements goes to that implementation, any other must be a built-in API — `extension` itself is not
+        // one a definition can name.
+        $apiName = $modelApi instanceof \BackedEnum ? (string) $modelApi->value : (string) $modelApi;
+        $route = in_array($apiName, $implemented, true) ? $apiName : null;
+
         if ($type === ModelType::Image) {
-            $imageApi = $modelApi instanceof ImageApi ? $modelApi : ImageApi::tryFrom((string) $modelApi)
-                ?? throw new InvalidArgumentException("{$where}: pig has no image API \"{$modelApi}\".");
+            $imageApi = match (true) {
+                $route !== null => ImageApi::Extension,
+                $modelApi instanceof ImageApi => $modelApi,
+                default => ($apiName === ImageApi::Extension->value ? null : ImageApi::tryFrom($apiName))
+                    ?? throw new InvalidArgumentException("{$where}: pig has no image API \"{$apiName}\", and \"images\" does not implement it."),
+            };
             $output = array_values(array_filter(is_array($definition['output'] ?? null) ? $definition['output'] : ['image'], static fn (mixed $one): bool => $one === 'text' || $one === 'image'));
 
-            return new ImageModel($modelId, $name, $imageApi, $id, rtrim($modelBaseUrl, '/'), $input ?: ['text'], $output ?: ['image'], $pricing, $modelHeaders, $inputLimits);
+            return [new ImageModel($modelId, $name, $imageApi, $id, rtrim($modelBaseUrl, '/'), $input ?: ['text'], $output ?: ['image'], $pricing, $modelHeaders, $inputLimits), $route];
         }
 
         if ($type === ModelType::Classifier) {
-            $classifierApi = $modelApi instanceof ClassifierApi ? $modelApi : ClassifierApi::tryFrom((string) $modelApi)
-                ?? throw new InvalidArgumentException("{$where}: pig has no classifier API \"{$modelApi}\".");
+            $classifierApi = match (true) {
+                $route !== null => ClassifierApi::Extension,
+                $modelApi instanceof ClassifierApi => $modelApi,
+                default => ($apiName === ClassifierApi::Extension->value ? null : ClassifierApi::tryFrom($apiName))
+                    ?? throw new InvalidArgumentException("{$where}: pig has no classifier API \"{$apiName}\", and \"classifiers\" does not implement it."),
+            };
 
-            return new ClassifierModel($modelId, $name, $classifierApi, $id, rtrim($modelBaseUrl, '/'), $contextWindow, $input ?: ['text'], $pricing, $modelHeaders, $inputLimits);
+            return [new ClassifierModel($modelId, $name, $classifierApi, $id, rtrim($modelBaseUrl, '/'), $contextWindow, $input ?: ['text'], $pricing, $modelHeaders, $inputLimits), $route];
         }
 
         // A chat model on the config's own api, when `streamSimple` speaks it, goes to the extension;
@@ -270,7 +334,7 @@ final class ProviderConfig
         };
         $compat = $definition['compat'] ?? null;
 
-        return new Model(
+        return [new Model(
             $modelId,
             $name,
             $chatApi,
@@ -292,7 +356,7 @@ final class ProviderConfig
             CustomModels::thinkingLevelMap(is_array($definition['thinkingLevelMap'] ?? null) ? $definition['thinkingLevelMap'] : null),
             $inputLimits,
             is_array($definition['promptCache'] ?? null) ? $definition['promptCache'] : null,
-        );
+        ), null];
     }
 
     /**
@@ -330,6 +394,122 @@ final class ProviderConfig
         }
 
         return ProviderRegistry::get($id)->name ?? $oauth?->label() ?? $id;
+    }
+
+    /**
+     * Upstream's `images` / `classifiers` map, checked: API names to an implementation — the interface, or a
+     * Closure of its one method's shape.
+     *
+     * @param class-string $interface
+     * @return array<string, object> by API name
+     */
+    private static function implementations(mixed $map, string $interface, string $what): array
+    {
+        if ($map === null) {
+            return [];
+        }
+
+        if (!is_array($map) || ($map !== [] && array_is_list($map))) {
+            throw new InvalidArgumentException("{$what} must be an array of implementations keyed by API name.");
+        }
+
+        foreach ($map as $name => $implementation) {
+            if (!is_string($name) || $name === '' || $name === 'extension') {
+                throw new InvalidArgumentException("{$what}: \"{$name}\" is not an API name an implementation can be registered under.");
+            }
+
+            if (!$implementation instanceof Closure && !$implementation instanceof $interface) {
+                throw new InvalidArgumentException("{$what}: \"{$name}\" must be a Closure or a {$interface}.");
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * The config's `images` as the provider's one `ImageGenerationApi`: upstream's
+     * `images[model.api]`, with the API name each model was defined under standing in for `model.api`.
+     *
+     * @param array<string, ImageGenerationApi|Closure> $implementations
+     */
+    private static function imageRouter(string $provider, array $implementations): ImageGenerationApi
+    {
+        return new class ($provider, $implementations) implements ImageGenerationApi {
+            /** @var array<string, string> model id => API name */
+            private array $routes = [];
+
+            /** @param array<string, ImageGenerationApi|Closure> $implementations */
+            public function __construct(private readonly string $provider, private readonly array $implementations)
+            {
+            }
+
+            /** @param array<string, string> $routes */
+            public function route(array $routes): void
+            {
+                $this->routes = $routes;
+            }
+
+            public function generateImages(ImageModel $model, ImagesContext $context, ImagesOptions $options): AssistantImages
+            {
+                $name = $this->routes[$model->id] ?? null;
+                $implementation = $name === null ? null : $this->implementations[$name];
+
+                if ($implementation === null) {
+                    // Upstream's `imageErrorResult(model, …"has no image generation implementation"…)`.
+                    return AssistantImages::error($model, new UnexpectedValueException("Provider {$this->provider} has no image generation implementation for \"{$model->id}\"."));
+                }
+
+                $result = $implementation instanceof Closure ? $implementation($model, $context, $options) : $implementation->generateImages($model, $context, $options);
+
+                if (!$result instanceof AssistantImages) {
+                    throw new UnexpectedValueException("images[\"{$name}\"] for {$model->provider}/{$model->id} did not return a Pig\\Ai\\AssistantImages.");
+                }
+
+                return $result;
+            }
+        };
+    }
+
+    /**
+     * The config's `classifiers` as the provider's one `ClassificationApi` — `imageRouter()`'s twin.
+     *
+     * @param array<string, ClassificationApi|Closure> $implementations
+     */
+    private static function classifierRouter(string $provider, array $implementations): ClassificationApi
+    {
+        return new class ($provider, $implementations) implements ClassificationApi {
+            /** @var array<string, string> model id => API name */
+            private array $routes = [];
+
+            /** @param array<string, ClassificationApi|Closure> $implementations */
+            public function __construct(private readonly string $provider, private readonly array $implementations)
+            {
+            }
+
+            /** @param array<string, string> $routes */
+            public function route(array $routes): void
+            {
+                $this->routes = $routes;
+            }
+
+            public function classify(ClassifierModel $model, ClassifierContext $context, ClassifierOptions $options): ClassifierResult
+            {
+                $name = $this->routes[$model->id] ?? null;
+                $implementation = $name === null ? null : $this->implementations[$name];
+
+                if ($implementation === null) {
+                    return ClassifierResult::error($model, new UnexpectedValueException("Provider {$this->provider} has no classifier implementation for \"{$model->id}\"."));
+                }
+
+                $result = $implementation instanceof Closure ? $implementation($model, $context, $options) : $implementation->classify($model, $context, $options);
+
+                if (!$result instanceof ClassifierResult) {
+                    throw new UnexpectedValueException("classifiers[\"{$name}\"] for {$model->provider}/{$model->id} did not return a Pig\\Ai\\ClassifierResult.");
+                }
+
+                return $result;
+            }
+        };
     }
 
     /** `streamSimple` as pig's `StreamApi`: the simple options carried through with the key on them. */

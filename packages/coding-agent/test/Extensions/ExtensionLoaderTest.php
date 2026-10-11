@@ -156,6 +156,34 @@ PHP);
         $this->assertSame('outside', $loaded[0]->name);
     }
 
+    public function testAComposerPackagesExtensionGetsTheSharedProjectsAutoloader(): void
+    {
+        // `pig install composer:acme/tools` puts the package at `<root>/vendor/acme/tools`, and its
+        // libraries are `<root>/vendor` — three directories above `extensions/`, where the
+        // beside-or-one-up rule for a git package's own `vendor/` would never look.
+        $root = $this->tempDir . '/composer';
+        $constant = 'PIG_TEST_AUTOLOADED_' . bin2hex(random_bytes(4));
+        mkdir("{$root}/vendor/acme/tools/extensions", 0755, true);
+        file_put_contents("{$root}/vendor/autoload.php", "<?php define('{$constant}', true);");
+        file_put_contents("{$root}/vendor/acme/tools/extensions/tools.php", <<<PHP
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+if (!defined('{$constant}')) {
+    throw new RuntimeException('the shared vendor/autoload.php was not loaded');
+}
+return function (ExtensionApi \$pi): void {};
+PHP);
+
+        [$loaded, $errors] = ExtensionLoader::load(
+            $this->cwd,
+            home: $this->homeDir,
+            packageExtensions: fn (): array => ["{$root}/vendor/acme/tools/extensions/tools.php"],
+        );
+
+        $this->assertSame([], $errors);
+        $this->assertContains('tools', array_map(static fn (object $e): string => $e->name, $loaded));
+    }
+
     public function testNoExtensionsStillLoadsTheOnesNamedOnTheCommandLine(): void
     {
         // Upstream's `--no-extensions`: "explicit -e paths still work".

@@ -16,8 +16,10 @@ declare(strict_types=1);
  * What the core gives it, and why each is a hook and not a special case:
  *
  * - **`registerProvider()`** puts the models in the registry, the protocol behind
- *   `Api::Extension`, and the sign-in in `/login`'s list. Install the extension and
- *   `--model antigravity/gemini-3.8-flash` works; remove it and the name means nothing.
+ *   `Api::Extension`, the image models behind `ImageApi::Extension` (`ImageGenerator`, so
+ *   codemode's `$models->generateImages()` reaches them like any image model), and the sign-in in
+ *   `/login`'s list. Install the extension and `--model antigravity/gemini-3.8-flash` works; remove
+ *   it and the name means nothing.
  * - **`Auth::useSecondStore()`** is where `antigravity-accounts.json` meets `auth.json`: the
  *   session reads the active account when `auth.json` has none, and tells the store about a
  *   renewal so the extension's copy of a token does not go stale.
@@ -39,7 +41,12 @@ declare(strict_types=1);
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\Extension\Provider;
+use Pig\Ai\AssistantImages;
 use Pig\Ai\ImageContent;
+use Pig\Ai\ImagesContext;
+use Pig\Ai\ImagesOptions;
+use Pig\Ai\ModelType;
+use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
@@ -62,7 +69,7 @@ use PigAntigravity\QuotaClient;
 
 // Class files beside the entry. Loading them twice, or beside another copy, is the loader's
 // business — `DeclaredSymbols` — not this file's.
-foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
+foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator'] as $class) {
     require_once __DIR__ . "/src/{$class}.php";
 }
 
@@ -194,6 +201,8 @@ return function (ExtensionApi $pi): void {
             static fn (Credentials $credentials) => $refreshInBackground($credentials),
         ),
         resold: true,
+        images: ImageGenerator::models(),
+        imageApi: new ImageGenerator(failover: $failover),
     ));
 
     // And then the catalog on disk — pig's own store, which `Discovery` keeps, or pi's — which is a
@@ -296,6 +305,42 @@ return function (ExtensionApi $pi): void {
         }
 
         return [$auth, $cred->access, $cred->projectId ?? 'antigravity-default', $cred];
+    };
+
+    /**
+     * The `generate_image` tool's and `/antigravity.image`'s request: `Models::generateImages()` on
+     * this provider's image model — the path codemode's `$models->generateImages()` takes — with the
+     * active account's key, then the images saved. A registered model, or the id as asked for.
+     *
+     * @return array{0: AssistantImages, 1: list<string>} the answer and the paths written
+     * @throws RuntimeException with the answer's own error when there is no image
+     */
+    $generateAndSave = static function (string $prompt, string $ratio, string $model, ?string $targetPath, string $cwd, ?AbortSignal $signal) use ($getAuthAndToken): array {
+        $authData = $getAuthAndToken();
+
+        if ($authData === null) {
+            throw new RuntimeException('No Antigravity credentials. Run /login antigravity first.');
+        }
+
+        [, $token, $projectId] = $authData;
+        $id = trim($model) !== '' ? trim($model) : ImageGenerator::DEFAULT_MODEL;
+        $imageModel = \Pig\Ai\Models::findOfType(ModelType::Image, Models::PROVIDER, $id) ?? ImageGenerator::model($id);
+        \assert($imageModel instanceof \Pig\Ai\ImageModel);
+        $result = \Pig\Ai\Models::generateImages(
+            $imageModel,
+            new ImagesContext([new TextContent($prompt)]),
+            new ImagesOptions(
+                signal: $signal,
+                apiKey: (string) json_encode(['token' => $token, 'projectId' => $projectId]),
+                metadata: ['aspectRatio' => $ratio],
+            ),
+        );
+
+        if ($result->stopReason !== StopReason::Stop) {
+            throw new RuntimeException($result->errorMessage ?? 'Image generation failed.');
+        }
+
+        return [$result, ImageGenerator::save($result, $targetPath, $cwd)];
     };
 
     $emit = static function (HookContext $ctx, string $text, string $type = 'info'): void {
@@ -527,7 +572,7 @@ return function (ExtensionApi $pi): void {
 
     $pi->registerCommand(
         'antigravity.image',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $emit): void {
+        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $generateAndSave, $emit): void {
             $usage = 'Usage: /antigravity.image [--ratio 16:9] [--model gemini-3-pro-image] [--path file.png] <prompt>';
             $tokens = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
@@ -569,12 +614,11 @@ return function (ExtensionApi $pi): void {
                 return;
             }
 
-            [, $token, $projectId] = $authData;
             $emit($ctx, 'Generating Antigravity image…', 'info');
 
             try {
-                $result = (new ImageGenerator())->generate($token, $projectId, $prompt, $ratio, $model, $targetPath, $ctx->cwd);
-                $emit($ctx, 'Saved image to ' . implode(', ', $result->savedPaths), 'info');
+                [, $savedPaths] = $generateAndSave($prompt, $ratio, $model, $targetPath, $ctx->cwd, null);
+                $emit($ctx, 'Saved image to ' . implode(', ', $savedPaths), 'info');
             } catch (Throwable $e) {
                 $emit($ctx, 'Antigravity image failed: ' . $e->getMessage(), 'error');
             }
@@ -587,7 +631,7 @@ return function (ExtensionApi $pi): void {
     $pi->registerTool(new CustomTool(
         name: 'generate_image',
         label: 'Generate image',
-        description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pi/generated-images/ unless path is set.',
+        description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pig/generated-images/ unless path is set.',
         parameters: [
             'type' => 'object',
             'properties' => [
@@ -598,21 +642,12 @@ return function (ExtensionApi $pi): void {
             ],
             'required' => ['prompt'],
         ],
-        execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($getAuthAndToken): AgentToolResult {
-            $authData = $getAuthAndToken();
-            if ($authData === null) {
-                throw new RuntimeException('No Antigravity credentials. Run /login antigravity first.');
-            }
-
-            [, $token, $projectId] = $authData;
-
+        execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($generateAndSave): AgentToolResult {
             if ($onUpdate !== null) {
                 $onUpdate(new AgentToolResult([new TextContent('Generating image…')]));
             }
 
-            $result = (new ImageGenerator())->generate(
-                $token,
-                $projectId,
+            [$result, $savedPaths] = $generateAndSave(
                 (string) ($params['prompt'] ?? ''),
                 (string) ($params['aspectRatio'] ?? '1:1'),
                 (string) ($params['model'] ?? ImageGenerator::DEFAULT_MODEL),
@@ -621,14 +656,17 @@ return function (ExtensionApi $pi): void {
                 $signal,
             );
 
-            $notes = trim(implode(' ', $result->text));
-            $contents = [new TextContent('Saved image to ' . implode(', ', $result->savedPaths) . ($notes !== '' ? ". {$notes}" : ''))];
+            $notes = trim(implode(' ', array_map(static fn (TextContent $text): string => $text->text, array_values(array_filter($result->output, static fn ($block): bool => $block instanceof TextContent)))));
+            $contents = [new TextContent('Saved image to ' . implode(', ', $savedPaths) . ($notes !== '' ? ". {$notes}" : ''))];
 
-            foreach ($result->images as $img) {
-                $contents[] = new ImageContent($img['data'], $img['mimeType']);
+            foreach ($result->output as $block) {
+                if ($block instanceof ImageContent) {
+                    $contents[] = $block;
+                }
             }
 
-            return new AgentToolResult($contents, ['model' => $result->model, 'savedPaths' => $result->savedPaths]);
+            // The usage goes on the result, where the session bills it like any model call's.
+            return new AgentToolResult($contents, ['model' => $result->model, 'savedPaths' => $savedPaths], $result->usage);
         },
     ));
 };

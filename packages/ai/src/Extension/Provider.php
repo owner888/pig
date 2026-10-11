@@ -14,8 +14,9 @@ use Pig\Ai\Model;
  *
  * Everything a built-in provider is spread across `Models`, `Api`, `Stream` and
  * `Utils\Oauth\Provider`, in one object: the models it sells, the protocol they speak (or null
- * for one pig already has — `Model::$api` names it), the sign-in (or null for a key), and which
- * environment variables carry that key. `ProviderRegistry::register()` takes one of these and
+ * for one pig already has — `Model::$api` names it), the image generation and classification its
+ * image and classifier models use when pig has neither (upstream's `generateImages()` / `classify()`),
+ * the sign-in (or null for a key), and which environment variables carry that key. `ProviderRegistry::register()` takes one of these and
  * the four core classes ask the registry when their own tables come up empty.
  *
  * `resold` is `Models::RESOLD`'s dynamic half: a provider that serves other providers' models
@@ -50,6 +51,12 @@ final readonly class Provider
      * @param bool $replacesModels upstream's legacy `registerProvider(name, config)`: these lists
      *        **replace** every row the provider has, built-in ones included, until it is unregistered
      *        (`Models::replaceProvider()`), rather than being added where nothing is already
+     * @param ImageGenerationApi|null $imageApi upstream's provider `generateImages()` — the `images`
+     *        implementation — for the image models in `$images` whose `api` is `ImageApi::Extension`;
+     *        an image model on a built-in `ImageApi` keeps going to pig's own
+     * @param ClassificationApi|null $classifierApi upstream's provider `classify()` — the
+     *        `classifiers` implementation — for the classifier models whose `api` is
+     *        `ClassifierApi::Extension`
      */
     public function __construct(
         public string $id,
@@ -64,6 +71,8 @@ final readonly class Provider
         public ?Closure $refreshModels = null,
         public array $images = [],
         public bool $replacesModels = false,
+        public ?ImageGenerationApi $imageApi = null,
+        public ?ClassificationApi $classifierApi = null,
     ) {
         if ($id === '' || $name === '') {
             throw new \InvalidArgumentException('A provider needs an id and a name.');

@@ -7,9 +7,10 @@ namespace Pig\CodingAgent\Packages;
 /**
  * What a `packages` entry's source string means — upstream's `parseSource()` and `parseGitUrl()`.
  *
- * Two kinds here where upstream has three: `npm:` has no PHP counterpart, and `composer:` is
- * reserved for the day it does — both are refused by name rather than read as a local path,
- * because a path called `npm:foo` that does not exist is a worse answer than "not supported".
+ * Three kinds, as upstream has three, with `composer:` in npm's place: `composer:vendor/name`
+ * or `composer:vendor/name@<constraint>`, upstream's `npm:name@version`. `npm:` has no PHP
+ * counterpart and is refused by name rather than read as a local path, because a path called
+ * `npm:foo` that does not exist is a worse answer than "not supported".
  *
  * Git is recognised the way upstream recognises it:
  * - with a `git:` prefix, every shorthand: `git:github.com/user/repo@v1`, `git:github:user/repo`,
@@ -35,18 +36,20 @@ final class PackageSource
     /** Prefixes that are not a local path, whatever the file system says — upstream's `isLocalPath()`. */
     private const array NOT_LOCAL = ['npm:', 'composer:', 'git:', 'github:', 'gitlab:', 'bitbucket:', 'http:', 'https:', 'ssh:', 'builtin:'];
 
-    /** @throws PackageError for a kind pig does not have */
-    public static function parse(string $source): GitSource|LocalSource
+    /** Composer's own rule for a package name, from its schema: `vendor/name`, lowercase. */
+    private const string COMPOSER_NAME = '#^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$#';
+
+    /** @throws PackageError for a kind pig does not have, or a Composer name that is not one */
+    public static function parse(string $source): GitSource|LocalSource|ComposerSource
     {
         $trimmed = trim($source);
 
-        foreach (['npm:', 'composer:'] as $registry) {
-            if (str_starts_with($trimmed, $registry)) {
-                throw new PackageError(sprintf(
-                    '%s sources are not supported; a package is a git repository (git:github.com/user/repo) or a local path.',
-                    rtrim($registry, ':'),
-                ));
-            }
+        if (str_starts_with($trimmed, 'npm:')) {
+            throw new PackageError('npm sources are not supported; a package is composer:vendor/name, a git repository (git:github.com/user/repo) or a local path.');
+        }
+
+        if (str_starts_with($trimmed, 'composer:')) {
+            return self::parseComposer(trim(substr($trimmed, strlen('composer:'))));
         }
 
         if (self::isLocalPath($trimmed)) {
@@ -54,6 +57,24 @@ final class PackageSource
         }
 
         return self::parseGit($trimmed) ?? new LocalSource($trimmed);
+    }
+
+    /**
+     * Upstream's `parseNpmSpec()`: the name up to the first `@`, the constraint after it. The
+     * name is checked against Composer's rule because it becomes a path under the install root's
+     * `vendor/`, and a typo is better refused here than by `composer require` a minute later.
+     */
+    private static function parseComposer(string $spec): ComposerSource
+    {
+        $at = strpos($spec, '@');
+        $name = $at === false ? $spec : substr($spec, 0, $at);
+        $version = $at === false ? null : trim(substr($spec, $at + 1));
+
+        if (preg_match(self::COMPOSER_NAME, $name) !== 1) {
+            throw new PackageError("Not a Composer package name: '{$name}'; expected composer:vendor/name or composer:vendor/name@<constraint>.");
+        }
+
+        return new ComposerSource($name, $version === '' ? null : $version);
     }
 
     /** Upstream's `isLocalPath()`: anything not carrying a known non-local prefix. */

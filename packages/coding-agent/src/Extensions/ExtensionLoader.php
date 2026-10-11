@@ -301,11 +301,15 @@ final class ExtensionLoader
                 return [null, new ExtensionError($path, 'load', "declares {$conflict}, which is already in memory; two different copies of one extension cannot both be loaded")];
             }
 
-            // A package that ships its own libraries ships its own `vendor/` — pig runs no composer
-            // (see `PackageManager`). Beside the file, or one level up for a file under `extensions/`.
-            foreach ([dirname($resolved), dirname($resolved, 2)] as $root) {
-                if (is_file("{$root}/vendor/autoload.php")) {
-                    require_once "{$root}/vendor/autoload.php";
+            // A git or local package that ships its own libraries ships its own `vendor/` — pig runs
+            // no composer there (see `PackageManager`). Beside the file, or one level up for a file
+            // under `extensions/`. A `composer:` package sits inside a `vendor/` instead, and its
+            // libraries are that `vendor/`, so the autoloader is the one above the last `/vendor/`.
+            $vendor = strrpos($resolved, '/vendor/');
+
+            foreach ([dirname($resolved) . '/vendor', dirname($resolved, 2) . '/vendor', $vendor === false ? null : substr($resolved, 0, $vendor) . '/vendor'] as $dir) {
+                if ($dir !== null && is_file("{$dir}/autoload.php")) {
+                    require_once "{$dir}/autoload.php";
 
                     break;
                 }

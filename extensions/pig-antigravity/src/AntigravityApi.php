@@ -398,9 +398,10 @@ final class AntigravityApi implements StreamApi
 
     /**
      * pi-antigravity's quota-wall test on a 429's text: "Individual quota reached", a "Resets in …"
-     * hint, or quota wording that is not about rate limiting.
+     * hint, or quota wording that is not about rate limiting. Public for `ImageGenerator`, whose
+     * request loop fails over on the same wall.
      */
-    private static function isQuotaWall(string $text): bool
+    public static function isQuotaWall(string $text): bool
     {
         return preg_match('/Individual quota reached/i', $text) === 1
             || preg_match('/Resets? in /i', $text) === 1
