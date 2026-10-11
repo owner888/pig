@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.9] - 2026-10-11
+
+### Fixed
+
+- **Web chat auto-scroll pin on incoming blocks and images**:
+  - Removed `scroll-behavior: smooth` from `.chat-scroll` to prevent programmatic scroll animations from falsely triggering `userScrolledUp` mid-turn.
+  - Directionalized user scroll detection so only upward user scroll halts bottom-following, automatically resuming when within 80px of the bottom.
+  - Added `ResizeObserver` tracking to follow blocks that grow after addition (e.g. async image decoding or tool execution expansion).
+
 ## [0.6.8] - 2026-10-11
 
 ### Changed

@@ -74,11 +74,27 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         this.scroller = document.createElement("div");
         this.scroller.className = "chat-scroll";
         this.scroller.hidden = true;
+        // Following the turn stops only when the user scrolls up — a scroll this page makes only ever
+        // goes down — and resumes once they are back within 80px of the bottom.
+        this.lastScrollTop = 0;
         this.scroller.addEventListener("scroll", () => {
-          const d = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight;
-          this.userScrolledUp = d > 80;
+          const top = this.scroller.scrollTop;
+          const d = this.scroller.scrollHeight - top - this.scroller.clientHeight;
+          if (d <= 80) this.userScrolledUp = false;
+          else if (top < this.lastScrollTop) this.userScrolledUp = true;
+          this.lastScrollTop = top;
           if (this === active) scrollBottomBtn.style.display = this.userScrolledUp ? "flex" : "none";
         });
+        // A block that grows after it was added (an image decoding, a card filling in) is followed too.
+        const blockResized = new ResizeObserver(() => {
+          if (!this.userScrolledUp) this.scroller.scrollTop = this.scroller.scrollHeight;
+        });
+        new MutationObserver((records) => {
+          for (const r of records) {
+            for (const n of r.addedNodes) if (n.nodeType === Node.ELEMENT_NODE) blockResized.observe(n);
+            for (const n of r.removedNodes) if (n.nodeType === Node.ELEMENT_NODE) blockResized.unobserve(n);
+          }
+        }).observe(this.scroller, { childList: true });
         chatArea.appendChild(this.scroller);
       }
 
@@ -423,18 +439,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       promptInput.style.height = Math.max(40, Math.min(promptInput.scrollHeight, 160)) + "px";
     });
 
-    // Smart scroll pinning & return to bottom
-    chatScroll.addEventListener("scroll", () => {
-      const distanceFromBottom = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
-      if (distanceFromBottom > 80) {
-        userScrolledUp = true;
-        scrollBottomBtn.style.display = "flex";
-      } else {
-        userScrolledUp = false;
-        scrollBottomBtn.style.display = "none";
-      }
-    });
-
+    // Return to bottom (whether a tab follows its turn is the tab's own scroll listener)
     scrollBottomBtn.addEventListener("click", () => {
       userScrolledUp = false;
       scrollBottomBtn.style.display = "none";

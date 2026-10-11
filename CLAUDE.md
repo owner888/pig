@@ -13143,6 +13143,19 @@ and every `agent_end` stopped half way through its handler — no error anywhere
 **Rule**: after touching `assets/js`, grep each new bare name for its `let`/`const`/`function`; the
 sidebar is now `refreshSidebar()` with no view state at all.
 
+### The web chat stopped short of the bottom when a new block came in
+
+**Symptom**: in `pig --mode web`, a new block (a tool card, a long reply, an image) often left the
+view some way above the bottom, and it stayed there for the rest of the turn.
+
+**Cause**: `.chat-scroll` had `scroll-behavior: smooth`, so `scrollTop = scrollHeight` became an
+animation, and the tab's scroll listener read its first frames — more than 80px from the bottom — as
+the user scrolling up and set `userScrolledUp`, which every later scroll then obeyed. Blocks that grow
+after they are added (an image decoding) had no scroll at all.
+
+**Rule**: no `scroll-behavior` on the chat scroller; only a scroll that moves up sets
+`userScrolledUp`, and each tab's `ResizeObserver` on its blocks follows growth.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
