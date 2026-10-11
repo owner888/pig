@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.1] - 2026-10-11
+
+### Fixed
+
+- **VLESS proxy `localhost` target IPv4 loopback resolution**: Resolved `localhost` targets to `127.0.0.1` in `VlessServer::connect()`, avoiding connection refusal on dual-stack Linux runners where `localhost` resolves to `::1` while target servers only bind IPv4.
+- **RPC dialog timeout test polling resilience (`RpcModeTest`)**: Replaced brittle fixed-tick sleep in `testADialogWithATimeoutSaysSoAndAnswersNoWhenItRunsOut` with resilient polling until timeout expiration, preventing CI runner timing flakes.
+
 ## [0.6.0] - 2026-10-10
 
 ### New Features

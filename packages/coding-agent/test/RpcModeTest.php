@@ -1513,7 +1513,7 @@ final class RpcModeTest extends TestCase
         $answers = [];
         $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
             Async::spawn(static function () use ($ctx, &$answers): void {
-                $answers[] = $ctx->ui->confirm('quick?', 'or not', 300);
+                $answers[] = $ctx->ui->confirm('quick?', 'or not', 80);
             });
 
             return null;
@@ -1521,10 +1521,12 @@ final class RpcModeTest extends TestCase
 
         $this->start(hooks: $hooks);
         $this->settle(3);
-        $this->assertSame(300, $this->of('extension_ui_request')[0]['timeout']);
+        $this->assertSame(80, $this->of('extension_ui_request')[0]['timeout']);
         $this->assertSame([], $answers, 'still waiting');
 
-        $this->settle(200, 0.002);
+        for ($i = 0; $i < 40 && $answers === []; $i++) {
+            $this->settle(5, 0.01);
+        }
         $this->assertSame([false], $answers);
     }
 

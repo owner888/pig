@@ -287,7 +287,8 @@ final class VlessServer
     {
         $errno = 0;
         $errstr = '';
-        $target = str_contains($host, ':') ? "tcp://[{$host}]:{$port}" : "tcp://{$host}:{$port}";
+        $connectHost = strcasecmp($host, 'localhost') === 0 ? '127.0.0.1' : $host;
+        $target = str_contains($connectHost, ':') ? "tcp://[{$connectHost}]:{$port}" : "tcp://{$connectHost}:{$port}";
 
         set_error_handler(static fn () => true);
 
