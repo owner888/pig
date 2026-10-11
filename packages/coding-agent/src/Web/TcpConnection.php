@@ -62,6 +62,36 @@ class TcpConnection
         return $this->protocol;
     }
 
+    /** The address the peer connected from, without its port; `unknown` when the socket cannot say. */
+    public function remoteAddress(): string
+    {
+        return self::hostOf(stream_socket_get_name($this->socket, true));
+    }
+
+    /**
+     * Whether the peer is on this machine: a loopback address (127.0.0.0/8, ::1, also IPv4-mapped),
+     * or the very address it connected to — what a server listening on one LAN address sees when
+     * this machine connects to it.
+     */
+    public function isFromThisMachine(): bool
+    {
+        $peer = strtolower($this->remoteAddress());
+        if ($peer === '::1' || str_starts_with($peer, '127.') || str_starts_with($peer, '::ffff:127.')) {
+            return true;
+        }
+
+        return $peer !== 'unknown' && $peer === strtolower(self::hostOf(stream_socket_get_name($this->socket, false)));
+    }
+
+    private static function hostOf(string|false $name): string
+    {
+        if ($name === false) {
+            return 'unknown';
+        }
+
+        return trim(preg_replace('/:\d+$/', '', $name) ?? $name, '[]');
+    }
+
     /**
      * Feed incoming raw bytes into the read buffer and parse complete packages via protocol input().
      */

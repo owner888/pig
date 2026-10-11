@@ -196,7 +196,7 @@ pig web password              # 设置或修改 Web UI 的密码
 - **单长连接多 Tab 并行**：在同一页面内自由切换多个工作区与会话，后台任务互不干扰。
 - **原生中英文双语一键切换**：支持顶部导航 `[中 / EN]` 即时无刷新切换界面语言，默认自适应浏览器首选语言。
 - **Claude 风格侧边栏**：顶部是新建会话、搜索（`⌘K`）、定时任务；下方是所有项目的会话，按今天 / 昨天 / 日期分组并标出所在目录；「查看全部」和搜索打开同一个面板，可搜标题和内容。鼠标悬停（或手机触屏点击）即可重命名（`✏️`）或删除（`🗑️`）。
-- **定时任务**：点侧边栏的「定时任务」，让一段提示词按手动、每小时、每天、工作日、每周、仅一次或自定义 cron 运行，可指定工作目录和模型。每次运行都是一个新会话（侧边栏里带时钟标记）；运行中遇到钩子提问会停下等你回答，侧边栏显示提示点。任务只在 Web 服务运行时执行——用 `pig web start -d` 常驻——机器休眠期间错过的运行会在醒来后补跑一次。保存在 `~/.pig/agent/scheduled-tasks.json`。
+- **定时任务**：点侧边栏的「定时任务」，让一段提示词按手动、每小时、每天、工作日、每周、仅一次或自定义 cron 运行，可指定工作目录和模型。每次运行都是一个新会话（侧边栏里带时钟标记）；运行中遇到钩子提问会停下等你回答，侧边栏显示提示点。任务只在 Web 服务运行时执行——用 `pig web start -d` 常驻——机器休眠期间错过的运行会在醒来后补跑一次。保存在 `~/.pig/agent/scheduled-tasks.json`。也可以直接在对话里说——「每天早上 9 点看看 owner/repo 有什么更新，告诉我本地代码要不要跟」——TUI 和网页都行：`schedule` 工具（`builtin:schedule`）先把任务给你确认，再交给正在运行的 `pig web` 保存。
 - **手机端深度适配**：专为移动端小屏幕（<768px）优化布局与触控响应。
 - **Antigravity 账号管理面板**：随时查看各 Google 账号的配额池与重置倒计时。
 
@@ -257,9 +257,10 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
 | **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在扩展延后注册的工具（MCP 的 `deferred` 暴露方式）里做 BM25 检索，并加载命中的工具。 |
 | **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
+| **`pig-schedule`** · `builtin:schedule` | `extensions/pig-schedule/` | `schedule` 工具：聊天里直接设置定时任务，每次改动先确认，由运行中的 `pig web` 保存。pig 自有。 |
 | **`pig-vless`** | `extensions/pig-vless/` | 挂在 agent 旁边的 VLESS 入站，手机通过这台机器上网。仅 TCP、单 UUID，给了证书就走 TLS。加载时把 UUID 和监听地址写进 `settings.json`，但要 `/vless start` 才监听（`stop`、`restart`、`status`）；`/vless` 打印 `vless://` 链接。 |
 
-标了 `builtin:` 的四个是**内置扩展**，与 pi 一致：每次都从 pig 自身加载、排在所有扩展之后，`pig update` 不再把它们复制到任何地方。在 `extensions` 设置里写 `-builtin:mcp`（或 `!builtin:*`）关掉，项目里的 `+`/`-` 条目优先于你的，`pig config` 在 *Built-in* 分组列出它们，`-e builtin:<name>` 在 `--no-extensions` 下也能单独加载，`--no-mcp` 不加载 `mcp`。若另一个扩展注册了同名工具或命令，`codemode`、`tool-search`、`mcp` 会让位并给出警告。`~/.pig/agent/extensions` 里残留的旧副本不会加载，pig 会提示，删掉即可。
+标了 `builtin:` 的五个是**内置扩展**，与 pi 一致（`schedule` 是 pig 自有的）：每次都从 pig 自身加载、排在所有扩展之后，`pig update` 不再把它们复制到任何地方。在 `extensions` 设置里写 `-builtin:mcp`（或 `!builtin:*`）关掉，项目里的 `+`/`-` 条目优先于你的，`pig config` 在 *Built-in* 分组列出它们，`-e builtin:<name>` 在 `--no-extensions` 下也能单独加载，`--no-mcp` 不加载 `mcp`。若另一个扩展注册了同名工具或命令，`codemode`、`tool-search`、`mcp` 会让位并给出警告。`~/.pig/agent/extensions` 里残留的旧副本不会加载，pig 会提示，删掉即可。
 
 ### 扩展能做什么
 

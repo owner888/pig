@@ -30,17 +30,18 @@ final class BuiltinExtensionsTest extends TestCase
         exec('rm -rf ' . escapeshellarg($this->root));
     }
 
-    public function testAllLoadByDefaultInUpstreamsOrder(): void
+    public function testAllLoadByDefaultInUpstreamsOrderThenPigsOwn(): void
     {
-        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'mcp'], $this->names(BuiltinExtensions::enabled([], [])));
+        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'mcp', 'schedule'], $this->names(BuiltinExtensions::enabled([], [])));
     }
 
     public function testTheUsersEntriesTurnThemOff(): void
     {
-        $this->assertSame(['llama.cpp', 'codemode', 'tool-search'], $this->names(BuiltinExtensions::enabled(['-builtin:mcp'], [])));
+        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'schedule'], $this->names(BuiltinExtensions::enabled(['-builtin:mcp'], [])));
+        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'mcp'], $this->names(BuiltinExtensions::enabled(['-builtin:schedule'], [])));
         $this->assertSame([], $this->names(BuiltinExtensions::enabled(['!builtin:*'], [])));
         $this->assertSame(['mcp'], $this->names(BuiltinExtensions::enabled(['!builtin:*', '+builtin:mcp'], [])));
-        $this->assertSame(['llama.cpp', 'codemode', 'tool-search'], $this->names(BuiltinExtensions::enabled([], [], ['mcp'])));
+        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'schedule'], $this->names(BuiltinExtensions::enabled([], [], ['mcp'])));
     }
 
     public function testAProjectEntryDecidesOverTheUsersAndTheLastOneWins(): void
@@ -50,8 +51,8 @@ final class BuiltinExtensionsTest extends TestCase
         $this->assertContains('codemode', $this->names(BuiltinExtensions::enabled([], ['-builtin:codemode', '+builtin:codemode'])));
 
         $resources = BuiltinExtensions::resources(['-builtin:mcp'], ['-builtin:codemode']);
-        $this->assertSame(['user', 'project', 'user', 'user'], array_map(static fn ($r): string => $r->metadata->scope, $resources));
-        $this->assertSame([true, false, true, false], array_map(static fn ($r): bool => $r->enabled, $resources));
+        $this->assertSame(['user', 'project', 'user', 'user', 'user'], array_map(static fn ($r): string => $r->metadata->scope, $resources));
+        $this->assertSame([true, false, true, false, true], array_map(static fn ($r): bool => $r->enabled, $resources));
     }
 
     public function testNamesPathsAndStaleCopies(): void
@@ -75,8 +76,8 @@ final class BuiltinExtensionsTest extends TestCase
         $settings = Settings::load("{$this->root}/project", "{$this->root}/home");
 
         $this->assertSame(['mine.php'], $settings->extensions());
-        $this->assertSame(['llama.cpp', 'codemode', 'tool-search'], $this->names($settings->builtinExtensions()));
-        $this->assertSame(['llama.cpp', 'tool-search'], $this->names($settings->builtinExtensions(['codemode'])));
+        $this->assertSame(['llama.cpp', 'codemode', 'tool-search', 'schedule'], $this->names($settings->builtinExtensions()));
+        $this->assertSame(['llama.cpp', 'tool-search', 'schedule'], $this->names($settings->builtinExtensions(['codemode'])));
     }
 
     public function testAStaleCopyInTheHomeIsNotLoadedAndSaysSo(): void

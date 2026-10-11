@@ -154,19 +154,35 @@ final class HttpServer
             onEvent: $this->onSessionEvent(...),
             idleTtl: $idleTtl,
         );
-        $this->schedules = new ScheduleManager($this->pool, $this->broadcastSchedules(...));
+        $this->schedules = new ScheduleManager($this->pool, $this->broadcastSchedules(...), url: $this->localUrl());
     }
 
     /**
-     * The scheduled tasks. `start()` does not start them: `WebMode` does, so a test that serves
-     * the page from the developer's own home cannot fire the developer's tasks.
+     * Where pig on this machine reaches this server: the address it listens on, or this machine's
+     * loopback when it listens on every address.
      */
+    public function localUrl(): string
+    {
+        $host = trim($this->host, '[]');
+        $host = match ($host) {
+            '0.0.0.0', '' => '127.0.0.1',
+            '::' => '::1',
+            default => $host,
+        };
+
+        return 'http://' . (str_contains($host, ':') ? "[{$host}]" : $host) . ":{$this->port}";
+    }
+
     /** The login the page is behind: what `pig web start` asks for the setup code. */
     public function login(): WebLogin
     {
         return $this->login;
     }
 
+    /**
+     * The scheduled tasks. `start()` does not start them: `WebMode` does, so a test that serves
+     * the page from the developer's own home cannot fire the developer's tasks.
+     */
     public function schedules(): ScheduleManager
     {
         return $this->schedules;
@@ -478,7 +494,7 @@ final class HttpServer
         $data = json_decode($req['body'], true);
         $data = is_array($data) ? $data : [];
         $password = is_string($data['password'] ?? null) ? $data['password'] : '';
-        $address = self::addressOf($conn);
+        $address = $conn->remoteAddress();
 
         [$reason, $token] = $path === '/api/login/setup'
             ? $this->login->setUp(is_string($data['code'] ?? null) ? $data['code'] : '', $password, $address)
@@ -493,17 +509,6 @@ final class HttpServer
         $conn->sendResponse(200, [...$json, 'Set-Cookie' => WebLogin::cookie($token)], (string) json_encode(['ok' => true]));
 
         return true;
-    }
-
-    /** The address a request came from, without its port: what login tries are counted by. */
-    private static function addressOf(Connection $conn): string
-    {
-        $name = stream_socket_get_name($conn->socket, true);
-        if ($name === false) {
-            return 'unknown';
-        }
-
-        return preg_replace('/:\d+$/', '', $name) ?? $name;
     }
 
     /**

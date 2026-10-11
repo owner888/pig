@@ -4376,6 +4376,39 @@ binds to like any other. `ScheduledTask` stores the schedule as `manual`, a five
 Regression tests: `CronExpressionTest`, `ScheduleManagerTest` (both under `test/Web/`) and the two
 scheduled-task cases in `WebModeTest`.
 
+#### Setting one up by asking: the `schedule` tool
+
+The Claude app's way, which the developer asked for: "every morning, see what changed upstream and
+whether this code needs it" in a conversation becomes a task. `Web\Schedule\ScheduleTool`
+(list, runs, create, update, delete, enable, disable, run), registered by `builtin:schedule`
+(`extensions/pig-schedule`) — a built-in rather than core so `-builtin:schedule` switches it off,
+the tool itself in the core beside the scheduler. The developer's three decisions:
+
+- **Every change is confirmed** in a `$ctx->ui->confirm()` showing what will be saved (name, when
+  with the next run, folder, model, prompt), checked by `ScheduledTask::fromArray()` first so the
+  dialog never shows a task that cannot be saved. With `hasUi` false (`-p`, `--mode json`) the tool
+  only reads.
+- **From the terminal and from the page alike.** Neither is the process that holds the tasks:
+  `ScheduleManager` keeps them in memory in the one `pig web` that owns the lock, and a write to
+  `scheduled-tasks.json` from anywhere else is undone the next time it saves. So `ScheduleClient`
+  asks that server over the page's own `/api/scheduled`. The owner writes its address
+  (`HttpServer::localUrl()`, loopback for `0.0.0.0`) into `scheduled-tasks.lock` when it takes it,
+  and `ScheduleManager::owner()` believes the address only while the lock is held. The way in is
+  `WebLogin::localToken()` (`web-local-token`, 0600) as `Authorization: Bearer`, which
+  `LoginMiddleware` accepts for `/api/scheduled…` from this machine (`TcpConnection::isFromThisMachine()`)
+  and for nothing else. One path for both, so a conversation in the page does not need an RPC
+  message of its own. No server: an error saying to run `pig web start -d`, not a file written for a
+  server that might come later. A server that holds the lock and wrote no address is one older than
+  the tool, and the error says `pig web restart`.
+- **A run reports by default**: the guidelines tell the model to write a run's prompt to stand on its
+  own and to ask before pulling, committing or editing. A question in a run already waits
+  (`needs_input`).
+
+The timezone is this machine's (`ScheduleTool::localTimezone()`: `TZ`, `/etc/localtime`'s target,
+`/etc/timezone`, PHP's), shown in the dialog; `at` is read in it. Tests:
+`WebModeTest::testTheScheduleToolAsksTheServerThatRunsTheScheduleWithTheLocalToken()`,
+`ScheduleExtensionTest`, and the owner and local-token cases in `ScheduleManagerTest` and `WebLoginTest`.
+
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
 happens. What is left is deciding what to print — and it prints **only the text blocks of the

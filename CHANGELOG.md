@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.25] - 2026-10-11
+
+### New Features
+
+- **Scheduled tasks by asking** — say "every morning at 9, check what changed upstream and tell me whether this checkout needs it" in the terminal or the Web UI, and the new `schedule` tool (`builtin:schedule`) sets it up: list, create, update, delete, switch on or off, and run now. Every change is shown to you to confirm first; without anyone to confirm (`-p`) the tool only reads. A run reports by default and asks before pulling or editing.
+
+### Added
+
+- The `pig web` that runs the schedule writes where it listens into `scheduled-tasks.lock`, and pig on the same machine reaches `/api/scheduled` with a local token (`~/.pig/agent/web-local-token`, 0600) that opens nothing else. With no `pig web` running, the tool says to start one; an older one still running is told to restart.
+
 ## [0.6.24] - 2026-10-11
 
 ### Fixed

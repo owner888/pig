@@ -11,8 +11,13 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Web\HttpServer;
+use Pig\CodingAgent\Web\Schedule\ScheduleClient;
+use Pig\CodingAgent\Web\Schedule\ScheduleManager;
+use Pig\CodingAgent\Web\Schedule\ScheduleTool;
 use Pig\CodingAgent\Web\WebLogin;
 use Pig\CodingAgent\Web\WebMode;
 
@@ -957,6 +962,108 @@ final class WebModeTest extends TestCase
             $this->assertSame([], $server->pool()->all()[0]->pendingUi);
 
             fclose($ws);
+            $server->stop();
+        });
+    }
+
+    public function testTheScheduleToolAsksTheServerThatRunsTheScheduleWithTheLocalToken(): void
+    {
+        // The `schedule` tool (`builtin:schedule`) from a conversation that is not the server: it
+        // finds the server in the lock, gets in with the local token — which opens the scheduled
+        // tasks and nothing else — and changes nothing the person has not said yes to.
+        $port = 28142;
+        $login = WebLogin::at($this->home);
+        $login->setPassword('long enough');
+        $server = $this->server($port, login: $login);
+        $folder = $this->cwd . '/watched';
+        mkdir($folder);
+        $folder = realpath($folder);
+
+        try {
+            ScheduleClient::find($this->home);
+            $this->fail('found a server before there was one');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('pig web start -d', $e->getMessage());
+        }
+
+        Async::run(function () use ($server, $port, $login, $folder): void {
+            $server->start();
+            $server->schedules()->start();
+            $url = "http://127.0.0.1:{$port}";
+            $this->assertSame($url, ScheduleManager::owner($this->home)['url'] ?? null);
+
+            $http = new HttpClient(2.0);
+            $bearer = static fn (string $token): array => ['Authorization' => "Bearer {$token}"];
+            $token = $login->localToken();
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/scheduled"))->status);
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/scheduled", $bearer(str_repeat('0', 64))))->status);
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/api/scheduled", $bearer($token)))->status);
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models", $bearer($token)))->status, 'the scheduled tasks and nothing else');
+            $this->assertStringContainsString('401', $this->wsStatus($port, $bearer($token)), 'no conversation, no terminal');
+
+            $asked = [];
+            $answer = true;
+            $ui = $this->createStub(HookUi::class);
+            $ui->method('confirm')->willReturnCallback(static function (string $title, string $message) use (&$asked, &$answer): bool {
+                $asked[] = [$title, $message];
+
+                return $answer;
+            });
+            $ctx = new HookContext(cwd: $folder, ui: $ui, hasUi: true);
+            $tool = new ScheduleTool(timezone: static fn (): string => 'Asia/Singapore');
+            $text = static fn (\Pig\Agent\AgentToolResult $r): string => $r->content[0]->text;
+
+            $created = $text($tool->execute(['action' => 'create', 'name' => 'Upstream', 'prompt' => 'git fetch and report', 'cron' => '0 9 * * *'], $ctx));
+            $this->assertStringContainsString('Created scheduled task', $created);
+            $this->assertSame('Create a scheduled task?', $asked[0][0]);
+            $this->assertStringContainsString("cron `0 9 * * *` (Asia/Singapore) — next ", $asked[0][1]);
+            $this->assertStringContainsString("Folder: {$folder}", $asked[0][1], 'the conversation\'s folder when none is given');
+            $this->assertStringContainsString("Prompt:\ngit fetch and report", $asked[0][1]);
+
+            $tasks = $server->schedules()->list();
+            $this->assertCount(1, $tasks);
+            $this->assertSame(['Upstream', 'cron', '0 9 * * *', $folder], [$tasks[0]['name'], $tasks[0]['schedule'], $tasks[0]['cron'], $tasks[0]['cwd']]);
+            $id = $tasks[0]['id'];
+            $this->assertStringContainsString("{$id} \"Upstream\": cron `0 9 * * *`", $text($tool->execute(['action' => 'list'], $ctx)));
+
+            $answer = false;
+            $this->assertStringContainsString('declined', $text($tool->execute(['action' => 'create', 'name' => 'No', 'prompt' => 'x'], $ctx)));
+            $this->assertStringContainsString('declined', $text($tool->execute(['action' => 'delete', 'id' => $id], $ctx)));
+            $this->assertCount(1, $server->schedules()->list(), 'a no is nothing saved and nothing deleted');
+
+            $answer = true;
+            $text($tool->execute(['action' => 'update', 'id' => $id, 'at' => '2099-01-02 08:30'], $ctx));
+            $updated = $server->schedules()->list()[0];
+            $this->assertSame(['Upstream', 'once', 'git fetch and report'], [$updated['name'], $updated['schedule'], $updated['prompt']], 'what is not given stays');
+            $this->assertSame((new \DateTimeImmutable('2099-01-02 08:30', new \DateTimeZone('Asia/Singapore')))->getTimestamp() * 1000, $updated['runAt']);
+
+            $text($tool->execute(['action' => 'disable', 'id' => $id], $ctx));
+            $this->assertFalse($server->schedules()->list()[0]['enabled']);
+
+            foreach ([
+                [['action' => 'create', 'name' => 'Both', 'prompt' => 'x', 'cron' => '0 9 * * *', 'at' => '2099-01-01 09:00'], 'one of cron, at or manual'],
+                [['action' => 'create', 'name' => 'Bad', 'prompt' => 'x', 'cron' => '0 9 * *'], 'five fields'],
+                [['action' => 'delete', 'id' => 'tnope'], "no scheduled task 'tnope'"],
+            ] as [$params, $why]) {
+                try {
+                    $tool->execute($params, $ctx);
+                    $this->fail('accepted: ' . json_encode($params));
+                } catch (\Pig\Agent\AgentError $e) {
+                    $this->assertStringContainsString($why, $e->getMessage());
+                }
+            }
+
+            try {
+                $tool->execute(['action' => 'delete', 'id' => $id], new HookContext(cwd: $folder));
+                $this->fail('changed with nobody to confirm');
+            } catch (\Pig\Agent\AgentError $e) {
+                $this->assertStringContainsString('nobody is here to confirm', $e->getMessage());
+            }
+            $this->assertStringContainsString('Upstream', $text($tool->execute(['action' => 'list'], new HookContext(cwd: $folder))), 'but it can still read');
+
+            $text($tool->execute(['action' => 'delete', 'id' => $id], $ctx));
+            $this->assertSame([], $server->schedules()->list());
+
             $server->stop();
         });
     }

@@ -37,7 +37,9 @@ use Throwable;
  * - **One server runs the schedule.** `pig web start -d`, `pig --mode web` and `/web` can all be up
  *   at once in one home, and two of them firing the same task is two runs. The first takes a lock on
  *   `scheduled-tasks.lock` and keeps it; the others show the tasks and refuse to change them,
- *   because their copy would be out of date the moment the owner wrote.
+ *   because their copy would be out of date the moment the owner wrote. The owner writes where it
+ *   listens into the lock file, so pig elsewhere on this machine — the `schedule` tool — can find it
+ *   (`owner()`) and ask it to make a change (`ScheduleClient`).
  * - **The timer wakes at least once a minute**, rather than sleeping until the next occurrence.
  *   The occurrence is compared against the wall clock each time, so a clock that was changed, a
  *   timezone shift or a long sleep is noticed within a minute.
@@ -91,6 +93,8 @@ final class ScheduleManager
      * @param Closure(): void $onChange called after anything the page shows has changed
      * @param (Closure(): int)|null $now epoch milliseconds; a test hands in its own clock
      * @param float $maxWait `MAX_WAIT`; a test whose clock jumps a day looks again sooner
+     * @param string|null $url where this server can be reached from this machine, written into the
+     *        lock once it is this server's (`owner()`)
      */
     public function __construct(
         private readonly SessionPool $pool,
@@ -98,6 +102,7 @@ final class ScheduleManager
         ?string $dataDir = null,
         ?Closure $now = null,
         private readonly float $maxWait = self::MAX_WAIT,
+        private readonly ?string $url = null,
     ) {
         $dir = $dataDir ?? Config::home();
         $this->file = $dir . '/scheduled-tasks.json';
@@ -466,7 +471,6 @@ final class ScheduleManager
 
             $started = ScheduledTask::dateTime(($this->now)(), $task->timezone)->format('Y-m-d H:i');
             $client->setSessionName("{$task->name} · {$started}");
-            $client->prompt($task->prompt);
 
             $file = $client->getState()['sessionFile'] ?? null;
 
@@ -474,6 +478,8 @@ final class ScheduleManager
                 $this->pool->remember($managed, $file);
                 $this->updateRun($this->active[$key] ?? ['task' => $task->id, 'run' => $runId], ['sessionFile' => $file]);
             }
+
+            $client->prompt($task->prompt);
         } catch (Throwable $e) {
             // The child is the pool's: with no turn running, its idle timer stops it.
             $this->finish($key, self::ERROR, $e->getMessage());
@@ -596,7 +602,48 @@ final class ScheduleManager
 
         $this->lock = $handle;
 
+        // What the last owner wrote goes either way: an address left behind is a server gone.
+        ftruncate($handle, 0);
+        if ($this->url !== null) {
+            fwrite($handle, (string) json_encode(['url' => $this->url, 'pid' => getmypid()], JSON_UNESCAPED_SLASHES) . "\n");
+        }
+        fflush($handle);
+
         return true;
+    }
+
+    /**
+     * The server that runs the schedule in `$dataDir` (`Config::home()`): where it listens and its
+     * pid, or null when no server does. Read from the lock file, and only believed while the lock
+     * is held — a server that has stopped leaves its address behind and lets go of the lock. A
+     * `url` of null is a server that holds the lock and wrote no address: one older than this pig.
+     *
+     * @return array{url: ?string, pid: ?int}|null
+     */
+    public static function owner(?string $dataDir = null): ?array
+    {
+        $file = ($dataDir ?? Config::home()) . '/scheduled-tasks.lock';
+        $handle = is_file($file) ? fopen($file, 'r') : false;
+        if ($handle === false) {
+            return null;
+        }
+
+        try {
+            if (flock($handle, LOCK_SH | LOCK_NB)) {
+                flock($handle, LOCK_UN);
+
+                return null;
+            }
+
+            $owner = json_decode((string) stream_get_contents($handle), true);
+
+            return [
+                'url' => is_array($owner) && is_string($owner['url'] ?? null) ? $owner['url'] : null,
+                'pid' => is_array($owner) && is_int($owner['pid'] ?? null) ? $owner['pid'] : null,
+            ];
+        } finally {
+            fclose($handle);
+        }
     }
 
     private function load(): void

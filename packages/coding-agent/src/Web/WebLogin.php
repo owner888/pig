@@ -20,6 +20,11 @@ namespace Pig\CodingAgent\Web;
  * - **A session** is a random token in an HttpOnly, SameSite=Strict cookie; only its SHA-256 is
  *   kept, in the same file, so a restart does not log anyone out and the file is no key.
  * - **Guessing** is slowed: ten tries a minute per address, for the password and the setup code.
+ * - **pig itself**, from a terminal or a conversation in the page, reaches the scheduled tasks with
+ *   a bearer token instead (`localToken()`, `web-local-token`, 0600): the `schedule` tool asks
+ *   the server that runs the schedule to change it. Readable only by this user, as everything in
+ *   the agent directory is, and good for `/api/scheduled` from this machine and nothing else
+ *   (`Middlewares\LoginMiddleware`).
  */
 final class WebLogin
 {
@@ -165,6 +170,36 @@ final class WebLogin
         }
     }
 
+    /**
+     * The token pig on this machine sends as `Authorization: Bearer …` to reach the scheduled
+     * tasks — made the first time it is asked for. Not for a browser: it never leaves this machine.
+     */
+    public function localToken(): string
+    {
+        if (!$this->enabled()) {
+            throw new \LogicException('The login is off: there is no local token.');
+        }
+
+        $token = $this->readLocalToken();
+        if ($token === null) {
+            $token = bin2hex(random_bytes(32));
+            self::writePrivate($this->localTokenFile(), $token . "\n");
+        }
+
+        return $token;
+    }
+
+    /** Whether the request carries the local token (`localToken()`) — never, when none was made. */
+    public function hasLocalToken(array $headers): bool
+    {
+        $expected = $this->enabled() ? $this->readLocalToken() : null;
+        if ($expected === null || preg_match('/^Bearer\s+([0-9a-f]{64})$/', trim($headers['authorization'] ?? ''), $m) !== 1) {
+            return false;
+        }
+
+        return hash_equals($expected, $m[1]);
+    }
+
     /** Whether the request's cookies hold a live session — always, when the login is off. */
     public function isLoggedIn(array $headers): bool
     {
@@ -259,6 +294,19 @@ final class WebLogin
     private function codeFile(): string
     {
         return "{$this->home}/web-setup-code";
+    }
+
+    private function localTokenFile(): string
+    {
+        return "{$this->home}/web-local-token";
+    }
+
+    private function readLocalToken(): ?string
+    {
+        $file = $this->localTokenFile();
+        $token = is_file($file) ? trim((string) file_get_contents($file)) : '';
+
+        return preg_match('/^[0-9a-f]{64}$/', $token) === 1 ? $token : null;
     }
 
     /** @return array{password?: string, sessions?: array<string, int>} */

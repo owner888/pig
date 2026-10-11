@@ -9,7 +9,8 @@ use Pig\CodingAgent\Cli\SelfUpdate;
 /**
  * Upstream's built-in extensions (`extensions/index.ts`): `builtin:llama.cpp`, `builtin:codemode`,
  * `builtin:tool-search` and `builtin:mcp`, which load by default from pig itself — the folders of
- * the same purpose under `extensions/` in the package — after every other extension.
+ * the same purpose under `extensions/` in the package — after every other extension. pig adds one
+ * of its own after them, `builtin:schedule`: the `schedule` tool (`Web\Schedule\ScheduleTool`).
  *
  * - **Switched in the `extensions` setting**, as upstream's: `-builtin:mcp` (or `!builtin:mcp`)
  *   in the person's settings turns one off; a `+`, `-` or `!` entry for it in the project's
@@ -25,12 +26,13 @@ final class BuiltinExtensions
 {
     public const string PREFIX = 'builtin:';
 
-    /** Upstream's names, in upstream's order, and pig's folder for each. */
+    /** Upstream's names, in upstream's order, then pig's own, and pig's folder for each. */
     public const array FOLDERS = [
         'llama.cpp' => 'pig-llama',
         'codemode' => 'pig-codemode',
         'tool-search' => 'pig-tool-search',
         'mcp' => 'pig-mcp',
+        'schedule' => 'pig-schedule',
     ];
 
     /** Upstream's `replaceable: true`. */

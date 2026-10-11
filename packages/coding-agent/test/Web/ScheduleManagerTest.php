@@ -66,7 +66,7 @@ final class ScheduleManagerTest extends TestCase
         Loop::reset();
     }
 
-    private function manager(): ScheduleManager
+    private function manager(?string $url = null): ScheduleManager
     {
         $manager = null;
         $pool = new SessionPool(
@@ -85,6 +85,7 @@ final class ScheduleManagerTest extends TestCase
             $this->dir,
             fn (): int => $this->now,
             0.02,
+            $url,
         );
 
         $this->pools[] = $pool;
@@ -448,5 +449,25 @@ final class ScheduleManagerTest extends TestCase
         $second->start();
 
         self::assertTrue($second->owns());
+    }
+
+    public function testTheOwnerSaysWhereItListensWhileItHoldsTheLock(): void
+    {
+        self::assertNull(ScheduleManager::owner($this->dir), 'no server');
+
+        $first = $this->manager('http://127.0.0.1:8088');
+        $first->start();
+        self::assertSame(['url' => 'http://127.0.0.1:8088', 'pid' => getmypid()], ScheduleManager::owner($this->dir));
+
+        $second = $this->manager('http://127.0.0.1:8090');
+        $second->start();
+        self::assertSame('http://127.0.0.1:8088', ScheduleManager::owner($this->dir)['url'] ?? null, 'the one that does not own it writes nothing');
+
+        $first->stop();
+        self::assertNull(ScheduleManager::owner($this->dir), 'the address left behind is not believed once the lock is let go');
+
+        $older = $this->manager();
+        $older->start();
+        self::assertSame(['url' => null, 'pid' => null], ScheduleManager::owner($this->dir), 'a server that wrote no address: held, but nowhere to ask');
     }
 }

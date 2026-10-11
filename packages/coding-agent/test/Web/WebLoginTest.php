@@ -137,4 +137,23 @@ final class WebLoginTest extends TestCase
         $this->assertSame('pig_session=abc; Path=/; HttpOnly; SameSite=Strict; Max-Age=' . WebLogin::SESSION_SECONDS, WebLogin::cookie('abc'));
         $this->assertStringContainsString('Max-Age=0', WebLogin::cookie(null));
     }
+
+    public function testTheLocalTokenIsMadeOnceKeptPrivateAndSentAsABearer(): void
+    {
+        $login = $this->login();
+        $this->assertFalse($login->hasLocalToken(['authorization' => 'Bearer ' . str_repeat('a', 64)]), 'none made yet: nothing matches');
+
+        $token = $login->localToken();
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $token);
+        $this->assertSame($token, $this->login()->localToken(), 'the same one for every pig on this machine');
+        $this->assertSame('0600', substr(sprintf('%o', fileperms("{$this->home}/web-local-token")), -4));
+
+        $this->assertTrue($login->hasLocalToken(['authorization' => "Bearer {$token}"]));
+        $this->assertFalse($login->hasLocalToken(['authorization' => 'Bearer ' . str_repeat('0', 64)]));
+        $this->assertFalse($login->hasLocalToken(['cookie' => WebLogin::COOKIE . "={$token}"]), 'a header, not a cookie a page could be given');
+        $this->assertFalse($login->isLoggedIn(['authorization' => "Bearer {$token}"]), 'not a browser session');
+
+        $this->expectException(\LogicException::class);
+        WebLogin::off()->localToken();
+    }
 }
