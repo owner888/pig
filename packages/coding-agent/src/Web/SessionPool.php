@@ -50,6 +50,9 @@ final class SessionPool
     /** The `extension_ui_request` methods that wait for an answer; the rest are told, not asked. */
     public const array DIALOGS = ['select', 'confirm', 'input', 'editor'];
 
+    /** The told-not-asked methods whose effect stays on screen, and the field that names what each sets. */
+    public const array LASTING = ['setWidget' => 'widgetKey', 'setStatus' => 'statusKey', 'setTitle' => null];
+
     /** @var array<string, ManagedSession> by key; a session with two keys appears twice */
     private array $byKey = [];
 
@@ -324,6 +327,9 @@ final class SessionPool
             $this->reapIfIdle($managed);
         } elseif ($type === 'extension_ui_request' && in_array($event['method'] ?? null, self::DIALOGS, true) && is_string($event['id'] ?? null)) {
             $managed->pendingUi[$event['id']] = $event;
+        } elseif ($type === 'extension_ui_request' && array_key_exists($event['method'] ?? '', self::LASTING)) {
+            $field = self::LASTING[$event['method']];
+            $managed->toldUi[$event['method'] . ':' . ($field === null ? '' : (string) ($event[$field] ?? ''))] = $event;
         } elseif ($type === 'response' && ($event['command'] ?? null) === 'get_state' && ($event['success'] ?? false) === true) {
             $file = $event['data']['sessionFile'] ?? null;
 

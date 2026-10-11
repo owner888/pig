@@ -4243,6 +4243,27 @@ interactive `/web restart`, `/web status`, and `/web stop` controls;
 - `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
 - Frontend: official `@xterm/xterm` 6.0.0 (`assets/js/vendor/xterm.mjs`, `assets/css/vendor/xterm.css`) + `@xterm/addon-fit` 0.11.0 (`assets/js/vendor/addon-fit.mjs`), copied byte for byte from the npm packages, drive the multi-tab terminal drawer in `WebTerminal.js` and the `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
+### An extension's `$ctx->ui` in the page
+
+The child's UI is `RpcUi`, upstream's RPC context, and what it sends the page draws as `TerminalUi`
+would: `setWidget` lines above or below the prompt, `setStatus` in the footer line, `setTitle` as the
+page title (all per tab, in `assets/js/hooks.js`, colour escapes taken off), `notify` as a transcript
+line at its level, a dialog's `timeout` as the heading counting down, and the `/` list from
+`get_commands` — the extensions' commands, prompt templates and `skill:` commands after the built-ins.
+Two things the page has to do that the terminal does not:
+
+- **The lasting requests are replayed to a page that binds later** (`ManagedSession::$toldUi`, the
+  latest per widget, status and title key, a clear included), beside the dialogs `pendingUi` replays,
+  so a reload shows what the terminal would still show.
+- **A `notify` that arrives before the conversation is drawn is drawn after it**, because drawing the
+  conversation clears the chat and a `session_start` handler's notice comes first.
+
+What `RpcUi` does not send — a terminal `Component` (`custom()`, headers, footers, the editor, message
+and tool renderers), the working indicator, shortcuts, theme switching — the page cannot draw either;
+an extension that wants a place in the page needs an API that does not exist yet. Regression tests:
+`WebHookUiTest` (`hooks.js` under Node against `RpcUi`'s real requests) and
+`WebModeTest::testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen`.
+
 ### Scheduled tasks: a timer per task over the session pool
 
 pig's own, after the Claude app's; upstream has none. The developer asked for it in the web UI and

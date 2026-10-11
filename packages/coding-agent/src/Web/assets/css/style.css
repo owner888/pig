@@ -1006,6 +1006,30 @@
       font-size: 13px;
     }
 
+    /* `notify(…, "warning")`: the TUI's `Warning:` line. */
+    .msg-warning {
+      background: var(--color-surface);
+      border: 1px solid var(--color-warning);
+      color: var(--color-warning);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    /* An extension's `setWidget()` lines, around the prompt as `TerminalUi` draws them. */
+    .hook-widgets[hidden] { display: none; }
+    .hook-widgets {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 0;
+    }
+    .hook-widget {
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+
     /* Images grid in message */
     .msg-images-grid {
       display: flex;

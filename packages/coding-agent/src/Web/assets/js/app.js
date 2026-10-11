@@ -13,6 +13,7 @@ import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
+import { createHookState, applyHookRequest, widgetsAt, statusLine, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
 import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledTasks.js";
@@ -71,6 +72,10 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         this.bashCards = new Map();   // rpc id -> ToolCard for a `!command`
         this.bashRunning = false;     // a `!command` is in flight (Stop sends abort_bash)
         this.emptyState = null;
+        this.hook = createHookState();  // what this child's extensions have put on screen
+        this.commands = [];             // `get_commands`: extension, prompt template and skill commands
+        this.messagesLoaded = false;    // until the first `get_messages` is drawn, which clears the chat
+        this.earlyNotices = [];         // `notify` lines that arrived before that, drawn after it
 
         this.scroller = document.createElement("div");
         this.scroller.className = "chat-scroll";
@@ -221,6 +226,14 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         if (this === active) applyActiveTabToChrome();
       }
 
+      /** The commands the `/` list offers beyond the built-ins, as the TUI's list does. */
+      async loadCommands() {
+        try {
+          this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
+          if (this === active) slashAutocomplete?.setExtraCommands(this.commands);
+        } catch (err) { if (this === active && !this.ended) pigUnreachable("the command list", err); }
+      }
+
       async refreshState() {
         try {
           const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
@@ -242,12 +255,22 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
           saveTabs(); renderTabs();
           if (this === active) applyActiveTabToChrome();
         } catch (err) { if (this === active && !this.ended) pigUnreachable("the session state", err); }
+        // Apart, so a child that cannot list its commands still has its state drawn — and after
+        // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
+        this.loadCommands();
       }
 
       async loadMessages() {
         try {
           const d = await this.rpc({ type: "get_messages" });
           this.render(() => renderMessages(d.messages || []));
+          // A `session_start` handler's `notify` arrives before the conversation does, and drawing
+          // the conversation clears the chat; the TUI keeps those lines, so they are put back.
+          if (!this.messagesLoaded) {
+            this.messagesLoaded = true;
+            this.render(() => this.earlyNotices.forEach(drawNotify));
+            this.earlyNotices = [];
+          }
         } catch (err) { if (this === active && !this.ended) pigUnreachable("the conversation", err); }
       }
 
@@ -265,6 +288,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
 
     let tabs = [];
     let active = null;        // the tab the person is looking at
+    let slashAutocomplete = null;
     let renderingTab = null;  // the tab an event is being drawn into right now (see Tab.render)
 
     // The old page-wide names, resolved against the tab being rendered into (an event) or the
@@ -712,6 +736,15 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       const block = document.createElement("div");
       block.className = "msg-block msg-error";
       block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`;
+      chatScroll.appendChild(block);
+      scrollToBottomIfNeeded();
+    }
+
+    // The TUI's `Warning:` line, which `notify(…, "warning")` draws.
+    function appendWarningMessage(text) {
+      const block = document.createElement("div");
+      block.className = "msg-block msg-warning";
+      block.innerHTML = `<strong>Warning:</strong> ${escapeHtml(text)}`;
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
     }
@@ -1258,7 +1291,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     }
 
     function closeHookDialog() {
-      if (hookDialog) { hookDialog.el.remove(); hookDialog = null; }
+      if (hookDialog) { clearInterval(hookDialog.countdown); hookDialog.el.remove(); hookDialog = null; }
     }
 
     function openHookDialog(req) {
@@ -1293,9 +1326,21 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         return;
       }
 
-      el.innerHTML = `<div class="modal"><div class="modal-header"><span>${escapeHtml(req.title || "A hook asks")}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
+      const title = req.title || "A hook asks";
+      let remaining = timeoutSeconds(req);
+      el.innerHTML = `<div class="modal"><div class="modal-header"><span class="hook-title">${escapeHtml(remaining === null ? title : countdownTitle(title, remaining))}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
       document.body.appendChild(el);
-      hookDialog = { id: req.id, el, tab: T() };
+      hookDialog = { id: req.id, el, tab: T(), countdown: null };
+      // `TerminalUi::countdown()`: the heading counts down, and at zero the dialog goes. The child
+      // has given up on it by then (`RpcUi` withdraws the question), so nothing is sent back.
+      if (remaining !== null) {
+        const heading = el.querySelector(".hook-title");
+        hookDialog.countdown = setInterval(() => {
+          remaining--;
+          if (remaining <= 0) { closeHookDialog(); return; }
+          heading.textContent = countdownTitle(title, remaining);
+        }, 1000);
+      }
       el.querySelector(".modal-close").addEventListener("click", () => answered({ cancelled: true }));
 
       if (req.method === "confirm") {
@@ -1327,23 +1372,47 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       }
     }
 
-    const hookStatuses = {};
     function onHookUiRequest(req) {
       if (req.method === "notify") {
-        const level = req.notifyType || "info";
-        if (level === "error") appendErrorMessage(req.message);
-        else { showStatusBanner(req.message); setTimeout(() => { if (document.getElementById("status-banner").innerText === req.message) hideStatusBanner(); }, 6000); }
+        const tab = T();
+        if (tab && !tab.messagesLoaded) tab.earlyNotices.push(req); else drawNotify(req);
         return;
       }
-      if (req.method === "setStatus") {
-        if (req.statusText) hookStatuses[req.statusKey] = req.statusText; else delete hookStatuses[req.statusKey];
-        const extra = Object.values(hookStatuses).join(" · ");
-        telemetryStats.dataset.hook = extra;
-        refreshState();
+      if (req.method === "set_editor_text") { if (T() === active) promptInput.value = req.text || ""; return; }
+      const tab = T();
+      const changed = applyHookRequest(tab.hook, req);
+      if (changed !== null) {
+        if (tab === active) {
+          drawHookChrome(tab);
+          if (changed === "statuses" && tab.state) applyState(tab.state);
+        }
         return;
       }
-      if (req.method === "set_editor_text") { promptInput.value = req.text || ""; return; }
       openHookDialog(req);
+    }
+
+    /** `TerminalUi::notify()`: all three levels are lines in the transcript. */
+    function drawNotify(req) {
+      const kind = notifyKind(req);
+      if (kind === "error") appendErrorMessage(req.message || "");
+      else if (kind === "warning") appendWarningMessage(req.message || "");
+      else appendNoticeMessage(req.message || "");
+    }
+
+    // The widgets above and below the prompt, the status in the footer line, the page title:
+    // what `TerminalUi` draws around its editor, from the active tab's extensions.
+    const hookWidgetsAbove = document.getElementById("hook-widgets-above");
+    const hookWidgetsBelow = document.getElementById("hook-widgets-below");
+    const pageTitle = document.title;
+    function drawHookChrome(tab) {
+      for (const [el, placement] of [[hookWidgetsAbove, "above"], [hookWidgetsBelow, "below"]]) {
+        if (!el) continue;
+        const widgets = widgetsAt(tab.hook, placement);
+        el.innerHTML = widgets.map((w) => `<div class="hook-widget" data-key="${escapeHtml(w.key)}">${escapeHtml(w.lines.join("\n"))}</div>`).join("");
+        el.hidden = widgets.length === 0;
+      }
+      telemetryStats.dataset.hook = statusLine(tab.hook);
+      document.title = tab.hook.title ?? pageTitle;
     }
 
     document.addEventListener("keydown", (e) => {
@@ -1621,6 +1690,8 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       });
       sendBtn.style.display = cur.isRunning ? "none" : "flex";
       stopBtn.style.display = cur.isRunning ? "flex" : "none";
+      drawHookChrome(cur);
+      slashAutocomplete?.setExtraCommands(cur.commands);
       const s = cur.state;
       if (!s) { telemetryStats.innerText = ""; return; }
       applyState(s);
@@ -2396,7 +2467,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
 
     initTheme();
 
-    new SlashAutocomplete({
+    slashAutocomplete = new SlashAutocomplete({
       inputElement: promptInput,
       anchorElement: document.querySelector(".input-wrapper"),
     });

@@ -899,10 +899,11 @@ final class HttpServer
                 'shared' => count($managed->clients) > 1,
             ], static fn (mixed $v): bool => $v !== null));
 
-            // A question asked before this tab was here — a scheduled run nobody was watching, or a
-            // reload — is asked again, or the turn stays parked on something nobody can see. The page
-            // takes the same id arriving twice as one question.
-            foreach ($managed->pendingUi as $request) {
+            // What the extensions put on screen before this tab was here — widgets, statuses, the
+            // title — is drawn again, and a question asked before it — a scheduled run nobody was
+            // watching, or a reload — is asked again, or the turn stays parked on something nobody
+            // can see. The page takes the same id arriving twice as one question.
+            foreach ([...$managed->toldUi, ...$managed->pendingUi] as $request) {
                 $line = ['type' => 'rpc_event', 'event' => $request];
                 $conn->send($tabId === 'default' ? $line : [...$line, 'tabId' => $tabId]);
             }

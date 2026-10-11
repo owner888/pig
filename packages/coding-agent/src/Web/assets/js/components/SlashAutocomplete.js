@@ -58,21 +58,6 @@ const COMMANDS = [
     descEn: "Open Antigravity accounts and quota manager",
   },
   {
-    name: "antigravity.refresh",
-    descZh: "刷新 Antigravity 配额状态与模型目录",
-    descEn: "Refresh Antigravity quotas and model catalog",
-  },
-  {
-    name: "antigravity.doctor",
-    descZh: "运行 Antigravity 专用诊断",
-    descEn: "Run Antigravity diagnostics",
-  },
-  {
-    name: "antigravity.image",
-    descZh: "使用 AI 模型生成图像 (/antigravity.image [提示词])",
-    descEn: "Generate image with Antigravity (/antigravity.image [prompt])",
-  },
-  {
     name: "theme",
     descZh: "切换界面配色主题 (/theme [dark|light|labra])",
     descEn: "Switch theme (/theme [dark|light|labra])",
@@ -128,6 +113,7 @@ export class SlashAutocomplete {
     this.isOpen = false;
     this.selectedIndex = 0;
     this.filteredCommands = [];
+    this.extraCommands = [];
 
     this.isComposing = false;
     this.compositionEndTime = 0;
@@ -173,13 +159,21 @@ export class SlashAutocomplete {
     }
   }
 
-  filter(query) {
-    const isZh = currentLocale === "zh-CN";
+  /**
+   * The active conversation's own commands — `get_commands`: what its extensions registered, its
+   * prompt templates and its `skill:` commands — listed after the built-ins, as the TUI's list
+   * has them. A name a built-in already has is the built-in's.
+   */
+  setExtraCommands(commands) {
+    const builtIn = new Set(COMMANDS.map((c) => c.name));
+    this.extraCommands = (commands || []).filter((c) => !builtIn.has(c.name));
+    if (this.isOpen) this.handleInput();
+  }
 
-    this.filteredCommands = COMMANDS.filter((cmd) => {
+  filter(query) {
+    this.filteredCommands = [...COMMANDS, ...this.extraCommands].filter((cmd) => {
       if (!query) return true;
-      const desc = isZh ? cmd.descZh : cmd.descEn;
-      return cmd.name.toLowerCase().includes(query) || desc.toLowerCase().includes(query);
+      return cmd.name.toLowerCase().includes(query) || this.describe(cmd).toLowerCase().includes(query);
     });
 
     if (this.filteredCommands.length === 0) {
@@ -192,13 +186,18 @@ export class SlashAutocomplete {
     this.open();
   }
 
+  describe(cmd) {
+    if (cmd.description !== undefined) return cmd.description;
+    return currentLocale === "zh-CN" ? cmd.descZh : cmd.descEn;
+  }
+
   render() {
     const isZh = currentLocale === "zh-CN";
 
     let html = '<div class="slash-popup-list">';
     this.filteredCommands.forEach((cmd, idx) => {
       const isSelected = idx === this.selectedIndex;
-      const desc = isZh ? cmd.descZh : cmd.descEn;
+      const desc = this.describe(cmd);
       html += `
         <div class="slash-popup-item ${isSelected ? 'active' : ''}" data-index="${idx}">
           <span class="slash-item-name">/${escapeHtml(cmd.name)}</span>

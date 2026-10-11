@@ -332,6 +332,36 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen(): void
+    {
+        $port = 28094;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $a = $this->wsConnect($port);
+            $this->wsSend($a, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'shown.jsonl']);
+            $this->wsCollect($a, static fn (array $m) => $m['type'] === 'session_bound');
+            $this->wsSend($a, ['type' => 'rpc_command', 'command' => ['type' => 'prompt', 'message' => 'show: it', 'id' => 'p1']]);
+            $this->wsCollect($a, static fn (array $m) => ($m['event']['type'] ?? null) === 'agent_end');
+
+            // A reload, or a second window: the widget, the statuses and the title as they stand
+            // now — the latest of each, a clear included — and not the notification, which was said once.
+            $b = $this->wsConnect($port);
+            $this->wsSend($b, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'shown.jsonl']);
+            $seen = $this->wsCollect($b, static fn (array $m) => ($m['event']['method'] ?? null) === 'setTitle');
+            $replayed = array_values(array_filter(array_map(static fn (array $m) => $m['event'] ?? null, $seen), static fn ($e) => ($e['type'] ?? null) === 'extension_ui_request'));
+
+            $this->assertSame(['t1', 't2', 't4', 't5'], array_column($replayed, 'id'));
+            $this->assertSame(['latest'], $replayed[0]['widgetLines']);
+            $this->assertArrayNotHasKey('statusText', $replayed[2], 'the cleared status is cleared on the new page too');
+
+            fclose($a);
+            fclose($b);
+            $server->stop();
+        });
+    }
+
     public function testAChildThatDiesTellsItsTabAndTheNextBindRestartsIt(): void
     {
         $port = 28094;

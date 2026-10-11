@@ -133,6 +133,9 @@
         <div id="telemetry-stats" class="status-telemetry">↑0 ↓0 $0.00 0%/1.0M</div>
       </div>
 
+      <!-- An extension's widgets, above and below the prompt (`setWidget`) -->
+      <div id="hook-widgets-above" class="hook-widgets" hidden></div>
+
       <!-- Input box & actions -->
       <div class="input-box-row">
         <div class="input-wrapper">
@@ -144,6 +147,8 @@
         <button id="send-btn" class="action-btn btn-send" data-i18n-attr="title:send_title">➔</button>
         <button id="stop-btn" class="action-btn btn-stop" data-i18n-attr="title:stop_title">■</button>
       </div>
+
+      <div id="hook-widgets-below" class="hook-widgets" hidden></div>
     </div>
   </main>
 

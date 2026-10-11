@@ -92,6 +92,21 @@ while (($raw = fgets(STDIN)) !== false) {
                 ], static fn ($v) => $v !== null));
             }
         }
+        // `show:` puts what an extension's `$ctx->ui` leaves on screen: a widget set twice, a status
+        // set and another cleared, a title — so a page that binds later can be checked for the latest.
+        if (str_starts_with($text, 'show:')) {
+            foreach ([
+                ['method' => 'setWidget', 'widgetKey' => 'w', 'widgetLines' => ['first']],
+                ['method' => 'setWidget', 'widgetKey' => 'w', 'widgetLines' => ['latest'], 'widgetPlacement' => 'belowEditor'],
+                ['method' => 'setStatus', 'statusKey' => 'kept', 'statusText' => 'on'],
+                ['method' => 'setStatus', 'statusKey' => 'gone', 'statusText' => 'soon'],
+                ['method' => 'setStatus', 'statusKey' => 'gone'],
+                ['method' => 'setTitle', 'title' => 'Shown'],
+                ['method' => 'notify', 'message' => 'said once', 'notifyType' => 'info'],
+            ] as $i => $request) {
+                $out(['type' => 'extension_ui_request', 'id' => "t{$i}", ...$request]);
+            }
+        }
         $out(['type' => 'message_start', 'message' => ['role' => 'assistant', 'content' => []]]);
         $out(['type' => 'message_update', 'usage' => ['input' => 0, 'output' => 0], 'assistantMessageEvent' => ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => $reply]]);
         // A turn takes a moment, so a test can observe `running`.

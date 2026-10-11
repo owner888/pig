@@ -5280,6 +5280,11 @@ final class InteractiveMode
                 if ($credentials !== null) {
                     $this->maybeWarnAboutAnthropicSubscriptionAuth();
                     $this->refreshAfterSignIn($provider instanceof Provider ? $provider->value : $provider->id(), "Logged in to {$provider->label()}");
+
+                    $currentModel = $this->session->model();
+                    if ($currentModel !== null && $this->auth !== null && !$this->auth->hasKeyFor($currentModel->provider)) {
+                        $this->say("Use /model to switch to a model from {$provider->label()}.");
+                    }
                 }
             } catch (Throwable $problem) {
                 $this->sayError($problem->getMessage());

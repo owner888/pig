@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.16] - 2026-10-11
+
+### Changed
+
+- **Post-login model switch guidance when active model lacks credentials**:
+  - `InteractiveMode` now prompts the user to use `/model` to switch models when logging into a provider while the currently active model has no configured API key, preventing immediate `No API key for provider` failures.
+
 ## [0.6.15] - 2026-10-11
 
 ### Added

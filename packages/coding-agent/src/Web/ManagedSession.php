@@ -40,6 +40,15 @@ final class ManagedSession
      */
     public array $pendingUi = [];
 
+    /**
+     * The latest of each told-not-asked request that stays on screen — a widget, a status, the
+     * title — keyed by what it sets, so a browser that binds later (a reload, a second window)
+     * draws what the terminal would still be showing. A cleared one is kept too: it is the latest.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    public array $toldUi = [];
+
     public function __construct(
         public readonly string $cwd,
         public readonly ?string $sessionFile,
