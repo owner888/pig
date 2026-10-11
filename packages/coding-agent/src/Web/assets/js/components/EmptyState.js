@@ -20,7 +20,7 @@ export class EmptyState {
       { id: "files", icon: "📁", text: t("empty_chip_files"), prompt: "请帮我梳理当前项目的架构全貌、核心模块与关键文件。" },
       { id: "tests", icon: "⚡", text: t("empty_chip_tests"), prompt: "请运行项目的自动化单元测试套件，并报告测试结果。" },
       { id: "git", icon: "📊", text: t("empty_chip_git"), prompt: "检查当前 Git 仓库状态、未提交修改及最近的提交记录。" },
-      { id: "doctor", icon: "🩺", text: t("empty_chip_doctor"), prompt: "/antigravity.doctor" },
+      { id: "doctor", icon: "🩺", text: t("empty_chip_doctor"), prompt: "/doctor" },
     ];
 
     this.element.innerHTML = `

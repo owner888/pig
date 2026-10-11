@@ -65,6 +65,9 @@ final class ExtensionApi extends HookApi
      */
     private static array $httpRoutes = [];
 
+    /** @var array<string, WebPanel> the web UI's extension panels, by id — see `registerWebPanel()` */
+    private static array $webPanels = [];
+
     /** @var array<string, array{key: string, handler: Closure, description: string}> */
     private array $shortcuts = [];
 
@@ -453,6 +456,47 @@ final class ExtensionApi extends HookApi
     public static function forgetHttpRoutes(): void
     {
         self::$httpRoutes = [];
+    }
+
+    /**
+     * Put a panel in `pig web`: an entry in the sidebar's Extensions group that opens a window the
+     * page draws from the blocks `$render` returns — see `WebPanel` for the blocks and the actions.
+     *
+     * pig's own, with no upstream counterpart. A panel is described rather than scripted, so it
+     * looks like the rest of the page, follows its theme, and runs nothing of the extension in the
+     * browser. The same id registered again replaces the panel.
+     *
+     * @param string|array<string, string> $title by locale (`['en' => …, 'zh-CN' => …]`) or one for all
+     * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
+     * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}): ?string)|null $action
+     * @param list<string> $commands slash commands that open it in the page, without the slash
+     */
+    public function registerWebPanel(
+        string $id,
+        string|array $title,
+        Closure $render,
+        ?Closure $action = null,
+        string $icon = '',
+        array $commands = [],
+    ): void {
+        self::$webPanels[$id] = new WebPanel($id, $title, $render, $action, $icon, array_values($commands));
+    }
+
+    /** @return list<WebPanel> in the order they were registered */
+    public static function webPanels(): array
+    {
+        return array_values(self::$webPanels);
+    }
+
+    public static function webPanel(string $id): ?WebPanel
+    {
+        return self::$webPanels[$id] ?? null;
+    }
+
+    /** For tests and `/reload`. */
+    public static function forgetWebPanels(): void
+    {
+        self::$webPanels = [];
     }
 
     // ---- the session, from an extension's side ------------------------------------------

@@ -3857,6 +3857,7 @@ final class InteractiveMode
         // still there register again a line later.
         ProviderRegistry::forget();
         ExtensionApi::forgetHttpRoutes();
+        ExtensionApi::forgetWebPanels();
         ExtensionApi::forgetFlags();
         McpServerRegistry::reset();
         VirtualModelRegistry::reset();

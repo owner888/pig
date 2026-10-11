@@ -26,8 +26,9 @@ declare(strict_types=1);
  * - **The 429 failover** is the protocol's own, as pi-antigravity has it: a quota wall on one
  *   account is answered inside the request by switching to the next stored account and sending
  *   again (`AntigravityApi`'s `$failover`, below).
- * - **`registerHttpRoute('/api/accounts')`** is the web UI's accounts panel, which used to be
- *   written into `HttpServer`.
+ * - **`registerWebPanel()`** is the web UI's accounts panel (`AccountsPanel`), which used to be
+ *   written into the page: the extension describes it, the page draws it in the sidebar's
+ *   Extensions group, and `/accounts` opens it.
  * - **The model catalog is discovered** (`Discovery`, pi-antigravity's `refreshModels`): the
  *   deployment's `fetchAvailableModels` grouped into public models, filed in pig's own
  *   `models-store.json` and asked for again after four hours — at session start and after
@@ -59,6 +60,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Logger;
 use PigAntigravity\Accounts;
+use PigAntigravity\AccountsPanel;
 use PigAntigravity\AntigravityApi;
 use PigAntigravity\AntigravityOauth;
 use PigAntigravity\Catalog;
@@ -71,7 +73,7 @@ use PigAntigravity\QuotaClient;
 
 // Class files beside the entry. Loading them twice, or beside another copy, is the loader's
 // business — `DeclaredSymbols` — not this file's.
-foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GoogleSearch'] as $class) {
+foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'AccountsPanel', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GoogleSearch'] as $class) {
     require_once __DIR__ . "/src/{$class}.php";
 }
 
@@ -356,6 +358,7 @@ return function (ExtensionApi $pi): void {
 
     // ---- the web UI's accounts panel ----------------------------------------------------
 
+    /** The accounts as the panel lists them. */
     $payload = static function () use ($accounts): array {
         $rows = [];
 
@@ -369,50 +372,49 @@ return function (ExtensionApi $pi): void {
             ];
         }
 
-        return ['ok' => true, 'accounts' => $rows, 'activeId' => $accounts->activeId(), 'path' => $accounts->path(), 'problems' => $accounts->problems()];
+        return ['accounts' => $rows, 'problems' => $accounts->problems()];
     };
 
-    $pi->registerHttpRoute('/api/accounts', static function (string $path, array $req) use ($auth, $payload, $activate, $remove, $rotate, $getAuthAndToken): ?array {
-        if ($path === '/api/accounts' && $req['method'] === 'GET') {
-            return ['status' => 200, 'body' => $payload()];
-        }
+    $pi->registerWebPanel(
+        AccountsPanel::ID,
+        AccountsPanel::TITLE,
+        static function (array $request) use ($payload, $getAuthAndToken): array {
+            $locale = $request['locale'];
 
-        if ($path === '/api/accounts/usage' && $req['method'] === 'GET') {
+            if ($request['section'] !== AccountsPanel::USAGE) {
+                $state = $payload();
+
+                return AccountsPanel::blocks($state['accounts'], $state['problems'], $locale);
+            }
+
             $authData = $getAuthAndToken();
 
             if ($authData === null) {
-                return ['status' => 404, 'body' => ['ok' => false, 'error' => 'No Antigravity account is signed in.']];
+                return [['type' => 'text', 'text' => AccountsPanel::say($locale, 'not_signed_in'), 'tone' => 'muted']];
             }
 
             [, $token, $projectId] = $authData;
 
             try {
-                return ['status' => 200, 'body' => ['ok' => true, 'usage' => (new QuotaClient())->fetchUsage($token, $projectId)]];
+                return AccountsPanel::usageBlocks((new QuotaClient())->fetchUsage($token, $projectId), $locale);
             } catch (Throwable $e) {
-                return ['status' => 502, 'body' => ['ok' => false, 'error' => $e->getMessage()]];
+                return [['type' => 'text', 'text' => $e->getMessage(), 'tone' => 'error']];
             }
-        }
+        },
+        static function (string $action, array $args, array $request) use ($activate, $remove, $rotate): ?string {
+            $id = is_string($args['id'] ?? null) ? $args['id'] : '';
+            $noSuch = AccountsPanel::say($request['locale'], 'no_such_account', ['id' => $id]);
 
-        if ($req['method'] !== 'POST') {
-            return ['status' => 405, 'body' => ['ok' => false, 'error' => 'POST only.']];
-        }
-
-        $data = json_decode($req['body'], true);
-        $id = is_array($data) ? (string) ($data['id'] ?? '') : '';
-
-        $result = match ($path) {
-            '/api/accounts/activate' => $activate($id) !== null ? ['ok' => true] : ['ok' => false, 'error' => "No account called '{$id}'."],
-            '/api/accounts/remove' => $remove($id) ? ['ok' => true] : ['ok' => false, 'error' => "No account called '{$id}'."],
-            '/api/accounts/rotate' => $rotate() !== null ? ['ok' => true] : ['ok' => false, 'error' => 'Only one Antigravity account; nothing to rotate to.'],
-            default => null,
-        };
-
-        if ($result === null) {
-            return null;
-        }
-
-        return ['status' => $result['ok'] ? 200 : 400, 'body' => [...$result, ...$payload()]];
-    });
+            return match ($action) {
+                'activate' => $activate($id) !== null ? null : $noSuch,
+                'remove' => $remove($id) ? null : $noSuch,
+                'rotate' => $rotate() !== null ? null : AccountsPanel::say($request['locale'], 'nothing_to_rotate'),
+                default => "No action '{$action}'.",
+            };
+        },
+        icon: '🔑',
+        commands: ['accounts', 'antigravity.accounts'],
+    );
 
     // ---- commands -----------------------------------------------------------------------
 

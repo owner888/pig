@@ -37,6 +37,7 @@ final class AntigravityExtensionTest extends TestCase
     {
         ProviderRegistry::forget();
         ExtensionApi::forgetHttpRoutes();
+        ExtensionApi::forgetWebPanels();
         rmdir($this->home);
     }
 
@@ -261,11 +262,16 @@ final class AntigravityExtensionTest extends TestCase
         // Resold: `claude-sonnet-4-6` bare is still Anthropic's.
         $this->assertTrue(Models::isResold('antigravity'));
         $this->assertNotSame('antigravity', Models::get('claude-sonnet-4-6')?->provider);
-        // And the web UI's panel.
-        $this->assertNotNull(ExtensionApi::httpRouteFor('/api/accounts/usage'));
+        // And the web UI's panel, which `/accounts` opens; it has no endpoints of its own now.
+        $panel = ExtensionApi::webPanel('antigravity.accounts');
+        $this->assertNotNull($panel);
+        $this->assertSame(['accounts', 'antigravity.accounts'], $panel->commands);
+        $this->assertSame('Antigravity 账号管理', $panel->titleFor('zh-CN'));
+        $this->assertNull(ExtensionApi::httpRouteFor('/api/accounts/usage'));
 
         ProviderRegistry::forget();
         ExtensionApi::forgetHttpRoutes();
+        ExtensionApi::forgetWebPanels();
 
         $this->assertNull(Models::find('antigravity', 'gemini-3.8-flash'));
         $this->assertNull(Models::findOfType(\Pig\Ai\ModelType::Image, 'antigravity', ImageGenerator::DEFAULT_MODEL));

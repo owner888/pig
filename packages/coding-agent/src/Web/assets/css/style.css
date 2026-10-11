@@ -815,19 +815,6 @@
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
     }
     .modal-section { color: var(--color-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 6px; }
-    .account-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 10px;
-      border-radius: 6px;
-      border: 1px solid transparent;
-    }
-    .account-row:hover { background: color-mix(in srgb, var(--color-text-primary) 3%, transparent); }
-    .account-row.active { border-color: color-mix(in srgb, var(--color-primary) 40%, transparent); background: color-mix(in srgb, var(--color-primary) 6%, transparent); }
-    .account-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-border); flex-shrink: 0; }
-    .account-row.active .account-dot { background: var(--color-primary); }
-    .account-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .account-meta { color: var(--color-dim); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
-    .account-meta.expired { color: var(--color-error); }
     .mini-btn {
       background: var(--color-surface);
       border: 1px solid var(--color-border);
@@ -857,19 +844,43 @@
       color: var(--color-error);
       border-color: color-mix(in srgb, var(--color-error) 60%, transparent);
     }
-    .quota-group { margin-bottom: 16px; }
-    .quota-group-name { font-size: 12px; font-weight: 600; color: var(--color-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-left: 2px; }
-    .quota-card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 12px; padding: 12px 14px; }
-    .quota-item { display: flex; flex-direction: column; }
-    .quota-item + .quota-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-divider); }
-    .quota-item-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-    .quota-item-title { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
-    .quota-pct { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
-    .quota-bar { width: 100%; height: 6px; background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); border-radius: 999px; overflow: hidden; }
-    .quota-bar > div { height: 100%; background: var(--color-primary); border-radius: 999px; transition: width 0.3s ease; }
-    .quota-bar.low > div { background: var(--color-warning); }
-    .quota-bar.empty > div { background: var(--color-error); }
-    .quota-reset { color: var(--color-dim); font-size: 11px; margin-top: 6px; line-height: 1.3; }
+    /* The extensions' panels (panels.js): blocks an extension describes, drawn in the page's theme */
+    .sidebar-panels { padding-top: 0; }
+    .sidebar-panels .sidebar-group-title { padding: 6px 10px 4px; }
+    .sidebar-panels .sidebar-nav-icon { font-size: 14px; }
+    .panel-heading { font-size: 12px; font-weight: 600; color: var(--color-dim); text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 8px; padding-left: 2px; }
+    .panel-body > .panel-heading:first-child, .panel-card-group:first-child > .panel-heading { margin-top: 0; }
+    .panel-text { font-size: 13px; color: var(--color-text-primary); margin: 4px 0; line-height: 1.4; }
+    .panel-text.tone-muted, .panel-item-meta.tone-muted { color: var(--color-dim); }
+    .panel-text.tone-error, .panel-item-meta.tone-error { color: var(--color-error); }
+    .panel-text.tone-warning, .panel-item-meta.tone-warning { color: var(--color-warning); }
+    .panel-text.tone-success, .panel-item-meta.tone-success { color: var(--color-success); }
+    .panel-list { display: flex; flex-direction: column; gap: 6px; }
+    .panel-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      border: 1px solid var(--color-divider); border-radius: 8px;
+    }
+    .panel-item:hover { background: color-mix(in srgb, var(--color-text-primary) 3%, transparent); }
+    .panel-item.active { border-color: color-mix(in srgb, var(--color-primary) 40%, transparent); background: color-mix(in srgb, var(--color-primary) 6%, transparent); }
+    .panel-item-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-border); flex-shrink: 0; }
+    .panel-item.active .panel-item-dot { background: var(--color-primary); }
+    .panel-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .panel-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .panel-item-detail { color: var(--color-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .panel-item-meta { color: var(--color-dim); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
+    .panel-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    .panel-card-group { margin-bottom: 16px; }
+    .panel-card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 12px; padding: 12px 14px; }
+    .panel-meter { display: flex; flex-direction: column; }
+    .panel-meter + .panel-meter { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-divider); }
+    .panel-meter-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .panel-meter-label { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+    .panel-meter-pct { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
+    .panel-meter-bar { width: 100%; height: 6px; background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); border-radius: 999px; overflow: hidden; }
+    .panel-meter-bar > div { height: 100%; background: var(--color-primary); border-radius: 999px; transition: width 0.3s ease; }
+    .panel-meter-bar.low > div { background: var(--color-warning); }
+    .panel-meter-bar.empty > div { background: var(--color-error); }
+    .panel-meter-detail { color: var(--color-dim); font-size: 11px; margin-top: 6px; line-height: 1.3; }
 
     /* Session tabs: the conversations opened in this browser, the live one highlighted */
     .session-tabs {
@@ -2368,14 +2379,6 @@
         width: 44px;
         height: 44px;
         font-size: 16px;
-      }
-
-      /* Accounts dialog on mobile */
-      .account-dialog {
-        width: 95vw;
-        max-height: 90vh;
-        margin: 12px auto;
-        padding: 14px;
       }
     }
 

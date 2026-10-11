@@ -7,7 +7,7 @@ import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExten
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
 import { renderMarkdown, renderDiff, renderDiffFromUnified, copyCode } from "./markdown.js";
-import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateHook } from "./accounts.js";
+import { createPanels } from "./panels.js";
 import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
@@ -244,7 +244,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       async loadCommands() {
         try {
           this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
-          if (this === active) slashAutocomplete?.setExtraCommands(this.commands);
+          if (this === active) slashAutocomplete?.setExtraCommands(extraCommands(this));
         } catch (err) { if (this === active && !this.ended) pigUnreachable("the command list", err); }
       }
 
@@ -1095,11 +1095,8 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         return;
       }
 
-      // The accounts panel is this page's answer to /antigravity.accounts
-      if (text === "/accounts" || text === "/antigravity.accounts") {
-        openAccounts();
-        return;
-      }
+      // A command an extension's panel answers in this page — `/accounts` opens Antigravity's.
+      if (panels.openForCommand(text)) return;
 
       if (text === "/bug" || text.startsWith("/bug ")) {
         appendUserMessage(text);
@@ -1439,20 +1436,21 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       if (e.key === "Escape" && hookDialog) { const id = hookDialog.id; closeHookDialog(); hookReply({ id, cancelled: true }); }
     });
 
-    // ---- accounts panel -----------------------------------------------------------------
+    // ---- the extensions' panels ----------------------------------------------------------
     //
-    // The Antigravity sign-ins `antigravity-accounts.json` keeps: which one is live, when each
-    // token runs out, and the live one's quota pools. Every button is an endpoint that goes
-    // through `Auth`, so the store and `auth.json` move together exactly as `/antigravity.accounts`
-    // moves them. Nothing here is cached: the panel re-asks every time it opens or changes.
-    const accountsBtnEl = document.getElementById("accounts-btn");
-
-    if (accountsBtnEl) {
-      accountsBtnEl.addEventListener("click", openAccounts);
+    // An entry each in the sidebar's Extensions group (`panels.js`); an action may change what a
+    // conversation can use — an account switched — so the active tab is asked again after one.
+    const panels = createPanels({ openModal, t, locale: () => currentLocale, onChanged: () => refreshState() });
+    /** The `/` list's rows beyond the built-ins: the panels' commands, then the conversation's own. */
+    function extraCommands(tab) {
+      const own = panels.commands();
+      const names = new Set(own.map((c) => c.name));
+      return [...own, ...(tab?.commands ?? []).filter((c) => !names.has(c.name))];
     }
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeAccounts();
-    });
+    async function loadPanels() {
+      await panels.load();
+      if (active) slashAutocomplete?.setExtraCommands(extraCommands(active));
+    }
 
     if (themeBtn) {
       themeBtn.addEventListener("click", openThemeModal);
@@ -1467,7 +1465,6 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     const moreMenuDropdown = document.getElementById("more-menu-dropdown");
     const moreThemeBtn = document.getElementById("more-theme-btn");
     const moreLangBtn = document.getElementById("more-lang-btn");
-    const moreAccountsBtn = document.getElementById("more-accounts-btn");
 
     function toggleMoreMenu(show) {
       if (!moreMenuDropdown) return;
@@ -1495,14 +1492,6 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         e.stopPropagation();
         toggleMoreMenu(false);
         openLangModal();
-      });
-    }
-
-    if (moreAccountsBtn) {
-      moreAccountsBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        toggleMoreMenu(false);
-        openAccounts();
       });
     }
 
@@ -1711,7 +1700,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       sendBtn.style.display = cur.isRunning ? "none" : "flex";
       stopBtn.style.display = cur.isRunning ? "flex" : "none";
       drawHookChrome(cur);
-      slashAutocomplete?.setExtraCommands(cur.commands);
+      slashAutocomplete?.setExtraCommands(extraCommands(cur));
       const s = cur.state;
       if (!s) { telemetryStats.innerText = ""; return; }
       applyState(s);
@@ -2473,10 +2462,7 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       renderTabs();
     }
 
-    setAccountsStateHook(() => {
-      refreshState();
-    });
-
+    loadPanels();
     network.init({
       getTabs: () => tabs,
       getActiveTab: () => active,
@@ -2538,6 +2524,6 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       }
     });
 
-    onLocaleChanged(() => refreshSidebar());
+    onLocaleChanged(() => { refreshSidebar(); loadPanels(); });
     boot();
 

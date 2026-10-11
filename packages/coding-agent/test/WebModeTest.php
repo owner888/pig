@@ -607,6 +607,57 @@ final class WebModeTest extends TestCase
         }
     }
 
+    public function testAnExtensionsPanelIsServedFromAFiberInThePagesLanguage(): void
+    {
+        // `ExtensionApi::registerWebPanel()` through the server: the list the sidebar draws, the
+        // panel's blocks (from a fiber — a lazy section may make a network call), and an action
+        // followed by the panel drawn again.
+        $port = 28105;
+        $server = $this->server($port);
+        $done = [];
+
+        (new ExtensionApi($this->cwd, 'probe.php', 'probe'))->registerWebPanel(
+            'probe.panel',
+            ['en' => 'Probe', 'zh-CN' => '探针'],
+            static function (array $request): array {
+                if ($request['section'] === 'slow') {
+                    \Pig\Async\Async::delay(0.02);
+                }
+
+                return [['type' => 'text', 'text' => "{$request['locale']}:" . ($request['section'] ?? 'main')]];
+            },
+            static function (string $action, array $args) use (&$done): ?string {
+                $done[] = [$action, $args];
+
+                return $action === 'go' ? null : 'no';
+            },
+            commands: ['probe'],
+        );
+
+        try {
+            Async::run(function () use ($server, $port, &$done): void {
+                $server->start();
+                $http = new HttpClient();
+                $get = fn (string $path): array => json_decode($http->send(new Request('GET', "http://127.0.0.1:{$port}{$path}"))->body->all(), true);
+
+                $this->assertSame([['id' => 'probe.panel', 'title' => '探针', 'icon' => '', 'commands' => ['probe']]], $get('/api/panels?locale=zh-CN')['panels']);
+                $this->assertSame([['type' => 'text', 'text' => 'zh-CN:main']], $get('/api/panels/probe.panel?locale=zh-CN')['blocks']);
+                $this->assertSame([['type' => 'text', 'text' => 'en:slow']], $get('/api/panels/probe.panel?locale=en&section=slow')['blocks']);
+
+                $res = $http->send(new Request('POST', "http://127.0.0.1:{$port}/api/panels/probe.panel", ['Content-Type' => 'application/json'], json_encode(['action' => 'go', 'args' => ['n' => 1], 'locale' => 'en'])));
+                $this->assertSame(200, $res->status);
+                $this->assertSame(['ok' => true, 'blocks' => [['type' => 'text', 'text' => 'en:main']]], json_decode($res->body->all(), true));
+                $this->assertSame([['go', ['n' => 1]]], $done);
+
+                $this->assertSame(404, $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/panels/nobody"))->status);
+
+                $server->stop();
+            });
+        } finally {
+            ExtensionApi::forgetWebPanels();
+        }
+    }
+
     public function testRenameAndDeleteSessionEndpoints(): void
     {
         $port = 28101;

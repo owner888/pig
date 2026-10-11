@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.18] - 2026-10-11
+
+### Added
+
+- **Extensions can put a panel in the Web UI's sidebar** (`registerWebPanel()`): the extension returns blocks — text, lists with buttons, meters, cards, sections loaded later — and the page draws them in its own theme and language under a new Extensions group; slash commands can open it. No extension code runs in the browser.
+
+### Changed
+
+- **The Antigravity accounts panel moved into the Antigravity extension**: it is in the sidebar's Extensions group (and `/accounts`) instead of a header button, and only appears when the extension is loaded. Rotate shows only when there is more than one account.
+
+### Fixed
+
+- **The Web UI's empty-conversation "Diagnose" chip runs pig's own `/doctor`** instead of `/antigravity.doctor`, which failed when the Antigravity extension was not loaded.
+
 ## [0.6.17] - 2026-10-11
 
 ### Added

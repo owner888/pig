@@ -2193,7 +2193,8 @@ surface asks for: decided by its first caller.
   because which flags exist is only known then), `getSettings()`, `setModel()`,
   `getThinkingLevel()`/`setThinkingLevel()`, `sendUserMessage()`, `setLabel()`, `getCommands()`, and
   `registerHttpRoute()` — pig's own, with no upstream counterpart because pi-web imports nothing
-  from an extension; it is how the accounts panel left `HttpServer`. `registerProvider()` also takes
+  from an extension; it is how the accounts panel's endpoints left `HttpServer` (the panel itself is
+  now a `registerWebPanel()` — see "An extension's panel in the page"). `registerProvider()` also takes
   upstream's legacy `(name, config)` form (`Extensions\ProviderConfig`, `ConfiguredApiKeyAuth`): no
   `models` keeps the provider's models at the new `baseUrl` / `headers`, `models` replaces them (chat,
   `image` and `classifier` types) until `unregisterProvider()`, `apiKey` is a `ConfigValue`, and
@@ -4271,11 +4272,32 @@ Two things the page has to do that the terminal does not:
 
 What `RpcUi` does not send — a terminal `Component` (`custom()`, headers, footers, the editor, message
 and tool renderers), the working indicator, shortcuts — the page cannot draw either;
-an extension that wants a place in the page needs an API that does not exist yet. Regression tests:
+an extension that wants a place in the page has a panel (next section). Regression tests:
 `WebHookUiTest` (`hooks.js` under Node against `RpcUi`'s real requests, a theme colour included),
 `RpcUiThemeTest`, `RpcModeTest`'s `set_theme` / `PIG_WEB_THEME` cases,
 `WebModeTest::testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen` and
 `WebModeTest::testAChildIsStartedInThePagesThemeAndAJoiningPageDoesNotRestartIt`.
+
+### An extension's panel in the page
+
+`ExtensionApi::registerWebPanel(id, title, render, action, icon, commands)` gives an extension an
+entry in the sidebar's Extensions group (hidden while there is none) and a window. The developer
+chose described panels over extension JavaScript: `render` returns blocks (`WebPanel` lists them —
+heading, text, list of items with buttons, meter, card, actions, lazy) and `panels.js` draws them in
+the page's own components and theme, so a panel cannot read other tabs, the WebSocket or the
+credentials endpoints, and the page's internals are not an API. Every string is text; the page's
+locale is in the request and the extension answers in it. A button is an action: `action(name, args,
+request)` returns null or why it failed, and the panel is drawn again either way. A `lazy` block is
+`render` asked again with its `section`, for what needs a network call (the quota). `commands` open
+the panel from the prompt (`/accounts`) and join the `/` list.
+
+`/api/panels` (`Web\WebPanels`) answers from the same fiber as `registerHttpRoute()`: the list, a
+panel or section (`GET /api/panels/<id>?locale=&section=`), an action (`POST` `{action, args,
+locale}`). Panels live in the shell process, like routes, and `/reload` forgets them
+(`forgetWebPanels()`). The Antigravity accounts panel is the first (`extensions/pig-antigravity/src/
+AccountsPanel.php`, its strings with it); the page has no accounts code, buttons or strings left.
+Regression tests: `WebPanelsTest`, `AntigravityPanelTest` (the real blocks through `panels.js`
+under Node) and `WebModeTest::testAnExtensionsPanelIsServedFromAFiberInThePagesLanguage`.
 
 ### Scheduled tasks: a timer per task over the session pool
 

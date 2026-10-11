@@ -288,7 +288,7 @@ An extension is a PHP file (or a folder with `index.php`) returning `function (E
 | **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and upstream's provider events — `before_provider_request` (replace the payload), `before_provider_headers` (edit the headers in place), `after_provider_response` (status and headers), `provider_stream_event` (each raw stream event) — plus `model_select`, `thinking_level_select`. |
 | **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |
 | **The session** | `getSettings()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
-| **The web UI** | `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests in `pig web` — how the Antigravity accounts panel is served. |
+| **The web UI** | `registerWebPanel(id, title, render, action, icon, commands)` puts a panel in `pig web`'s sidebar: `render` returns blocks (text, lists with buttons, meters, cards, lazy sections) and the page draws them in its own theme — the Antigravity accounts panel is one. `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests of your own. |
 | **A second credential store** | `Auth::useSecondStore(provider, read, renewed)` for a provider that keeps several accounts beside `auth.json`. |
 
 ---

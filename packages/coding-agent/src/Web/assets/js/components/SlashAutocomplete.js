@@ -53,11 +53,6 @@ const COMMANDS = [
     descEn: "Inspect system health, PHP runtime, binaries, and auth tokens",
   },
   {
-    name: "accounts",
-    descZh: "打开 Antigravity 账号与配额管理面板",
-    descEn: "Open Antigravity accounts and quota manager",
-  },
-  {
     name: "theme",
     descZh: "切换界面配色主题 (/theme [dark|light|labra])",
     descEn: "Switch theme (/theme [dark|light|labra])",

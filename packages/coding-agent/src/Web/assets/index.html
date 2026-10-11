@@ -11,7 +11,7 @@
 </head>
 <body>
 
-  <!-- Left Drawer: New, Search, Scheduled, Sessions -->
+  <!-- Left Drawer: New, Search, Scheduled, the extensions' panels, Sessions -->
   <aside id="sidebar" class="collapsed">
     <nav class="sidebar-nav">
       <button id="new-session-btn" class="sidebar-nav-item" data-i18n-attr="title:new_session_title">
@@ -43,6 +43,11 @@
         <span id="scheduled-tasks-dot" class="sidebar-nav-dot" hidden data-i18n-attr="title:sched_status_needs_input"></span>
       </button>
     </nav>
+    <!-- The extensions' panels (panels.js), hidden while no extension has one -->
+    <nav id="sidebar-panels" class="sidebar-nav sidebar-panels" hidden>
+      <div class="sidebar-group-title" data-i18n="sidebar_extensions">Extensions</div>
+      <div id="sidebar-panels-list"></div>
+    </nav>
     <div id="sidebar-list" class="sidebar-scroll"></div>
   </aside>
   <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
@@ -64,7 +69,6 @@
       <div class="header-actions">
         <button id="theme-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换主题 / Switch Theme">🎨 Dark</button>
         <button id="lang-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="语言与语言包设置 / Language Settings">🌐 语言</button>
-        <button id="accounts-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" data-i18n="accounts" data-i18n-attr="title:accounts">🔑 账号</button>
         <button id="nodes-btn" class="toggle-sidebar-btn header-btn desktop-only-btn ctrl-btn nodes-btn" data-i18n-attr="title:nodes_title" title="SSH 节点工作台 / SSH Nodes Workbench">
           <svg class="nodes-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -105,10 +109,6 @@
             <div class="more-dropdown-item" id="more-lang-btn">
               <span class="more-item-icon">🌐</span>
               <span class="more-item-text" data-i18n="menu_lang">Language</span>
-            </div>
-            <div class="more-dropdown-item" id="more-accounts-btn">
-              <span class="more-item-icon">🔑</span>
-              <span class="more-item-text" data-i18n="menu_account">Account</span>
             </div>
           </div>
         </div>

@@ -684,11 +684,15 @@ final class HttpServer
             return;
         }
 
-        // 10.3c What the loaded extensions answer for: an extension with a panel in this page
-        // registers its endpoints (`ExtensionApi::registerHttpRoute()`) rather than having them
-        // written in here — the Antigravity accounts panel is the first. Answered from a fiber,
-        // because a handler may make a network call and the loop has to keep serving the page.
-        if (str_starts_with($path, '/api/') && ($route = ExtensionApi::httpRouteFor($path)) !== null) {
+        // 10.3c What the loaded extensions answer for: their panels (`WebPanels`, from
+        // `ExtensionApi::registerWebPanel()`) and any endpoints of their own
+        // (`ExtensionApi::registerHttpRoute()`), rather than either being written in here. Answered
+        // from a fiber, because a handler may make a network call and the loop has to keep serving
+        // the page.
+        $route = WebPanels::handles($path)
+            ? WebPanels::answer(...)
+            : (str_starts_with($path, '/api/') ? ExtensionApi::httpRouteFor($path) : null);
+        if ($route !== null) {
             \Pig\Async\Async::spawn(function () use ($conn, $route, $path, $req): void {
                 $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
 
