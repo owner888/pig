@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.8] - 2026-10-11
+
+### Changed
+
+- **Refined Web UI divider aesthetics and theme contrast (`--color-divider`)**:
+  - Introduced `--color-divider` using low-alpha text color mixing (`color-mix(in srgb, var(--color-text-primary) 10%, transparent)`), ensuring subtle, non-intrusive pane boundaries, modal borders, and table dividers across all active theme backgrounds.
+
 ## [0.6.7] - 2026-10-11
 
 ### New Features

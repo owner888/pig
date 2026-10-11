@@ -6,6 +6,8 @@
 :root {
       --color-hover: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
       --color-hover-strong: color-mix(in srgb, var(--color-text-primary) 12%, transparent);
+      /* A divider between panes: the text colour at low alpha, so it reads on any background without standing out. */
+      --color-divider: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
       --color-primary-hover: color-mix(in srgb, var(--color-primary) 85%, var(--color-text-primary));
       --color-shadow: #000;
       --color-scrim-text: #fff;
@@ -87,7 +89,7 @@
     #sidebar {
       width: 300px;
       background: var(--color-surface);
-      border-right: 1px solid var(--color-border);
+      border-right: 1px solid var(--color-divider);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
@@ -390,7 +392,7 @@
       right: 0;
       min-width: 140px;
       background: var(--color-surface);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 10px;
       box-shadow: 0 12px 30px color-mix(in srgb, var(--color-shadow) 45%, transparent);
       padding: 5px;
@@ -482,7 +484,7 @@
       margin-left: auto;
       font-size: 10px;
       color: var(--color-dim);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 4px;
       padding: 0 5px;
     }
@@ -539,7 +541,7 @@
       z-index: 1000;
       min-width: 140px;
       background: var(--color-surface-elevated);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       padding: 4px;
       box-shadow: 0 10px 25px -5px color-mix(in srgb, var(--color-shadow) 50%, transparent), 0 8px 10px -6px color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -688,7 +690,7 @@
       max-height: 85vh;
       overflow: hidden;
       background: var(--color-surface);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 12px;
       box-shadow: 0 24px 64px color-mix(in srgb, var(--color-shadow) 65%, transparent);
       font-size: 13px;
@@ -698,7 +700,7 @@
     .modal-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 14px 18px;
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       font-weight: 600;
       font-size: 14px;
     }
@@ -708,7 +710,7 @@
     .modal-footer {
       display: flex; align-items: center; justify-content: flex-end; gap: 10px;
       padding: 12px 18px;
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
       background: var(--color-background);
     }
     .modal-btn {
@@ -804,9 +806,9 @@
     }
     .quota-group { margin-bottom: 16px; }
     .quota-group-name { font-size: 12px; font-weight: 600; color: var(--color-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-left: 2px; }
-    .quota-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 12px 14px; }
+    .quota-card { background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: 12px; padding: 12px 14px; }
     .quota-item { display: flex; flex-direction: column; }
-    .quota-item + .quota-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+    .quota-item + .quota-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-divider); }
     .quota-item-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
     .quota-item-title { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
     .quota-pct { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
@@ -823,7 +825,7 @@
       gap: 2px;
       padding: 0 8px;
       background: var(--color-surface);
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       overflow-x: auto;
       scrollbar-width: none;
       flex-shrink: 0;
@@ -925,7 +927,7 @@
 
     .msg-user {
       background: var(--color-user-message-bg);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       color: var(--color-text-primary);
     }
     .msg-user-text { white-space: normal; }
@@ -946,7 +948,7 @@
     /* The TUI's `say()` line: the session reporting something it did, in a quiet mono line. */
     .msg-notice {
       background: var(--color-surface);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       color: var(--color-text-secondary);
       font-family: var(--font-mono);
       font-size: 13px;
@@ -963,7 +965,7 @@
       max-width: 240px;
       max-height: 160px;
       border-radius: 6px;
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       cursor: pointer;
       object-fit: cover;
       transition: transform 0.15s;
@@ -1058,7 +1060,7 @@
     .tool-card {
       width: 100%;
       background: var(--color-surface);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       margin: 8px 0;
       font-family: var(--font-mono);
@@ -1170,7 +1172,7 @@
       padding: 12px 14px;
       background: var(--color-background);
       color: var(--color-text-primary);
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
       white-space: pre-wrap;
       max-height: 480px;
       overflow-y: auto;
@@ -1183,7 +1185,7 @@
     }
     .tool-details-footer {
       padding: 8px 14px;
-      border-top: 1px dashed var(--color-border);
+      border-top: 1px dashed var(--color-divider);
       color: var(--color-dim);
       font-size: 11px;
       white-space: pre-wrap;
@@ -1334,7 +1336,7 @@
       background: var(--color-surface-elevated);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       box-shadow: 0 12px 32px color-mix(in srgb, var(--color-shadow) 50%, transparent), 0 0 0 1px color-mix(in srgb, var(--color-text-primary) 5%, transparent);
       flex-direction: column;
@@ -1388,7 +1390,7 @@
       font-size: 11px;
       color: var(--color-dim);
       background: var(--color-background);
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
       text-align: center;
       user-select: none;
     }
@@ -1403,7 +1405,7 @@
       max-height: 85vh;
       z-index: 10000;
       background: var(--color-background);
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
       box-shadow: 0 -10px 40px color-mix(in srgb, var(--color-shadow) 60%, transparent);
       display: flex;
       flex-direction: column;
@@ -1426,7 +1428,7 @@
       justify-content: space-between;
       padding: 7px 14px;
       background: var(--color-surface-elevated);
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       user-select: none;
       flex-shrink: 0;
     }
@@ -1708,7 +1710,7 @@
     .compaction-box {
       width: 100%;
       background: var(--color-hover);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       padding: 10px 14px;
       margin: 8px 0;
@@ -1736,7 +1738,7 @@
     .compaction-summary-text {
       margin-top: 10px;
       padding-top: 10px;
-      border-top: 1px dashed var(--color-border);
+      border-top: 1px dashed var(--color-divider);
       color: var(--color-text-secondary);
       font-size: 13px;
       line-height: 1.6;
@@ -1771,7 +1773,7 @@
       max-width: 100%;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       background: var(--color-background);
     }
@@ -1785,8 +1787,8 @@
     .prose th,
     .prose td {
       padding: 8px 14px;
-      border-bottom: 1px solid var(--color-border);
-      border-right: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
+      border-right: 1px solid var(--color-divider);
     }
     .prose th:last-child,
     .prose td:last-child {
@@ -1832,7 +1834,7 @@
     .prose hr {
       margin: 16px 0;
       border: none;
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
     }
 
     .prose a {
@@ -1851,7 +1853,7 @@
       line-height: 1.35;
       color: var(--color-text-primary);
     }
-    .prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--color-border); padding-bottom: 6px; }
+    .prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--color-divider); padding-bottom: 6px; }
     .prose h2 { font-size: 1.3em; }
     .prose h3 { font-size: 1.15em; }
     .prose h4 { font-size: 1.05em; }
@@ -1860,7 +1862,7 @@
       position: relative;
       margin: 10px 0;
       background: var(--color-background);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 6px;
       overflow: hidden;
     }
@@ -1870,7 +1872,7 @@
       align-items: center;
       padding: 5px 12px;
       background: var(--color-surface);
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       font-family: var(--font-mono);
       font-size: 11px;
       color: var(--color-dim);
@@ -2050,7 +2052,7 @@
       max-height: 280px;
       overflow-y: auto;
       background: var(--color-surface-elevated);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 8px;
       box-shadow: 0 10px 30px color-mix(in srgb, var(--color-shadow) 40%, transparent), 0 0 0 1px color-mix(in srgb, var(--color-shadow) 20%, transparent);
       padding: 4px;
@@ -2352,7 +2354,7 @@
       max-width: 1280px;
       height: 88vh;
       background: var(--color-surface);
-      border: 1px solid var(--color-border);
+      border: 1px solid var(--color-divider);
       border-radius: 12px;
       box-shadow: 0 20px 60px color-mix(in srgb, var(--color-shadow) 60%, transparent);
       display: flex;
@@ -2361,14 +2363,14 @@
     .node-workbench-sidebar {
       width: 280px;
       flex-shrink: 0;
-      border-right: 1px solid var(--color-border);
+      border-right: 1px solid var(--color-divider);
       background: var(--color-hover);
       display: flex;
       flex-direction: column;
     }
     .node-sidebar-header {
       padding: 12px 14px;
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
     }
     .node-sidebar-title-row {
       display: flex;
@@ -2420,7 +2422,7 @@
     }
     .node-sidebar-footer {
       padding: 10px;
-      border-top: 1px solid var(--color-border);
+      border-top: 1px solid var(--color-divider);
     }
     .node-import-btn {
       width: 100%;
@@ -2527,7 +2529,7 @@
     }
     .node-content-header {
       padding: 10px 16px;
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       background: var(--color-hover);
       display: flex;
       align-items: center;
@@ -2612,7 +2614,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 16px;
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
       background: var(--color-surface);
       flex-shrink: 0;
     }
@@ -2720,7 +2722,7 @@
       align-items: center;
       gap: 8px;
       background: var(--color-surface);
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
     }
     .node-sftp-up-btn, .node-sftp-browse-btn {
       background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
@@ -2757,7 +2759,7 @@
       padding: 6px 8px;
       color: var(--color-dim);
       font-size: 11px;
-      border-bottom: 1px solid var(--color-border);
+      border-bottom: 1px solid var(--color-divider);
     }
     .node-sftp-row {
       cursor: pointer;
