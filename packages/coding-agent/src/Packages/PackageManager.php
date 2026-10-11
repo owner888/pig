@@ -763,8 +763,16 @@ final class PackageManager
             return $answer !== null && preg_match('/- Upgrading ' . preg_quote($parsed->name, '/') . ' \(/', $answer) === 1;
         }
 
-        $answer = $this->captureComposer(['outdated', $parsed->name, '--direct', '--format=json'], $root);
-        $report = $answer === null ? null : json_decode($answer, true);
+        $answer = $this->captureComposer(['outdated', $parsed->name, '--direct', '--format=json'], $root, false);
+        $json = null;
+        if ($answer !== null) {
+            $first = strpos($answer, '{');
+            $last = strrpos($answer, '}');
+            if ($first !== false && $last !== false && $last >= $first) {
+                $json = substr($answer, $first, $last - $first + 1);
+            }
+        }
+        $report = $json === null ? null : json_decode($json, true);
 
         return is_array($report)
             && isset($report['latest'], $report['versions'][0])
@@ -890,12 +898,16 @@ final class PackageManager
      * @param list<string> $arguments
      * @return string|null standard output, or null when Composer failed or is not there
      */
-    private function captureComposer(array $arguments, string $root): ?string
+    private function captureComposer(array $arguments, string $root, bool $includeStderr = true): ?string
     {
         [$exit, $stdout, $stderr] = Process::run(['composer', ...$arguments, '--no-interaction', "--working-dir={$root}"], self::NETWORK_TIMEOUT * 6);
 
         // `--dry-run` reports its plan on standard error, `outdated --format=json` on standard output.
-        return $exit === 0 ? $stdout . $stderr : null;
+        if ($exit !== 0) {
+            return null;
+        }
+
+        return $includeStderr ? $stdout . $stderr : $stdout;
     }
 
     // ---- git ------------------------------------------------------------------------------------

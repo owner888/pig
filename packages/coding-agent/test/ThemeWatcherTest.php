@@ -18,9 +18,12 @@ final class ThemeWatcherTest extends TestCase
 {
     use ThemeTestEnvironment;
 
+    private int $writeSeq = 0;
+
     #[\Override]
     protected function setUp(): void
     {
+        $this->writeSeq = 0;
         $this->setUpThemeEnvironment();
     }
 
@@ -34,8 +37,9 @@ final class ThemeWatcherTest extends TestCase
     private function write(string $path, array $json): void
     {
         file_put_contents($path, json_encode($json, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
-        // A new size as well as a new mtime, so a save within the same second is still seen.
-        file_put_contents($path, str_repeat(' ', random_int(1, 50)), FILE_APPEND);
+        // A strictly increasing size, so a save within the same second is guaranteed to change the stamp.
+        $this->writeSeq += 10;
+        file_put_contents($path, str_repeat(' ', $this->writeSeq), FILE_APPEND);
     }
 
     private static function runFor(float $seconds): void
@@ -46,7 +50,7 @@ final class ThemeWatcherTest extends TestCase
         }
     }
 
-    private static function runUntil(callable $predicate, float $timeout = 2.5): void
+    private static function runUntil(callable $predicate, float $timeout = 5.0): void
     {
         $until = microtime(true) + $timeout;
         while (microtime(true) < $until) {

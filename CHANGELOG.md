@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.10] - 2026-10-11
+
+### Fixed
+
+- **Resilient Composer outdated JSON parsing in `PackageManager`**: Excluded stderr output and trimmed non-JSON warning banners when parsing `composer outdated --format=json`, preventing parse failures under experimental PHP runtime environments (e.g. PHP 8.6 dev deprecation notices).
+- **Flake-free theme file stamp change detection (`ThemeWatcherTest`)**: Replaced non-deterministic `random_int()` size padding in test theme saves with strictly increasing sequence padding, eliminating 1/50 same-second mtime/size collision flakes on fast multi-core CI runners.
+
 ## [0.6.9] - 2026-10-11
 
 ### Fixed
