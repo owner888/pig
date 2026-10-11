@@ -668,12 +668,12 @@
     /* A hook's question: the same four dialogs TerminalUi draws, in the page */
     .hook-dialog .modal-body { display: flex; flex-direction: column; gap: 10px; }
     .hook-message { white-space: pre-wrap; color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; max-height: 40vh; overflow: auto; }
-    .hook-actions { display: flex; gap: 8px; justify-content: flex-end; }
     .hook-option { padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
     .hook-option:hover, .hook-option.focus { background: color-mix(in srgb, var(--color-primary) 8%, transparent); border-color: color-mix(in srgb, var(--color-primary) 40%, transparent); }
     .hook-input, .hook-editor { width: 100%; box-sizing: border-box; background: var(--color-background); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; font: inherit; }
     .hook-editor { min-height: 160px; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
-    .hook-hint { color: var(--color-dim); font-size: 11px; }
+    .hook-hint { color: var(--color-dim); font-size: 11px; margin-right: auto; }
+    .hook-dialog .modal-btn { min-width: 88px; }
 
     /* Command Shortcut HUD (Blink Shell / iPadOS style) */
     .hud-backdrop {

@@ -1308,7 +1308,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // `openHookDialog` records it, because the person may have switched tabs since — and for an
     // extension panel's action, the server, which hands it to the action (`panels.js`).
     function replyTo(tab) {
-      return (reply) => tab?.send({ type: "rpc_command", command: { type: "extension_ui_response", ...reply } });
+      // Not `tab.rpc()`: that puts an id of its own on the command, and the answer's id is the question's.
+      return (reply) => network.send({ type: "rpc_command", tabId: tab?.id, command: { type: "extension_ui_response", ...reply } });
     }
 
     /** Answer the dialog that is open as a cancel, and close it. */
@@ -1335,29 +1336,31 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const answered = (answer) => { closeHookDialog(); send({ id: req.id, ...answer }); };
       el.addEventListener("click", (e) => { if (e.target === el) answered({ cancelled: true }); });
 
+      // The page's other dialogs' footer (`openModal()`): the hint on the left, the answers on the
+      // right as `modal-btn`s, the one Enter gives filled in.
+      const footer = (hint, buttons = "") => `<div class="modal-footer"><span class="hook-hint">${escapeHtml(t(hint))}</span>${buttons}</div>`;
+      const pair = (no, yes) => `<button class="modal-btn" ${no[0]}>${escapeHtml(t(no[1]))}</button><button class="modal-btn primary" ${yes[0]}>${escapeHtml(t(yes[1]))}</button>`;
       let body = "";
+      let foot = "";
       if (req.method === "confirm") {
-        body = `<div class="hook-message">${escapeHtml(req.message || "")}</div>
-          <div class="hook-actions"><button class="mini-btn" data-no>${escapeHtml(t("hook_no"))}</button><button class="mini-btn" data-yes autofocus>${escapeHtml(t("hook_yes"))}</button></div>
-          <div class="hook-hint">${escapeHtml(t("hook_hint_confirm"))}</div>`;
+        body = `<div class="hook-message">${escapeHtml(req.message || "")}</div>`;
+        foot = footer("hook_hint_confirm", pair(["data-no", "hook_no"], ["data-yes autofocus", "hook_yes"]));
       } else if (req.method === "select") {
-        body = `<div>${(req.options || []).map((o, i) => `<div class="hook-option" data-i="${i}">${escapeHtml(o)}</div>`).join("")}</div>
-          <div class="hook-hint">${escapeHtml(t("hook_hint_select"))}</div>`;
+        body = `<div>${(req.options || []).map((o, i) => `<div class="hook-option" data-i="${i}">${escapeHtml(o)}</div>`).join("")}</div>`;
+        foot = footer("hook_hint_select");
       } else if (req.method === "input") {
-        body = `<input class="hook-input" placeholder="${escapeHtml(req.placeholder || "")}" autofocus>
-          <div class="hook-actions"><button class="mini-btn" data-cancel>${escapeHtml(t("cancel"))}</button><button class="mini-btn" data-ok>${escapeHtml(t("hook_ok"))}</button></div>
-          <div class="hook-hint">${escapeHtml(t("hook_hint_input"))}</div>`;
+        body = `<input class="hook-input" placeholder="${escapeHtml(req.placeholder || "")}" autofocus>`;
+        foot = footer("hook_hint_input", pair(["data-cancel", "cancel"], ["data-ok", "hook_ok"]));
       } else if (req.method === "editor") {
-        body = `<textarea class="hook-editor" autofocus>${escapeHtml(req.prefill || "")}</textarea>
-          <div class="hook-actions"><button class="mini-btn" data-cancel>${escapeHtml(t("cancel"))}</button><button class="mini-btn" data-ok>${escapeHtml(t("hook_submit"))}</button></div>
-          <div class="hook-hint">${escapeHtml(t("hook_hint_editor"))}</div>`;
+        body = `<textarea class="hook-editor" autofocus>${escapeHtml(req.prefill || "")}</textarea>`;
+        foot = footer("hook_hint_editor", pair(["data-cancel", "cancel"], ["data-ok", "hook_submit"]));
       } else {
         return;
       }
 
       const title = req.title || t("hook_asks");
       let remaining = timeoutSeconds(req);
-      el.innerHTML = `<div class="modal"><div class="modal-header"><span class="hook-title">${escapeHtml(remaining === null ? title : countdownTitle(title, remaining))}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
+      el.innerHTML = `<div class="modal"><div class="modal-header"><span class="hook-title">${escapeHtml(remaining === null ? title : countdownTitle(title, remaining))}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div>${foot}</div>`;
       document.body.appendChild(el);
       hookDialog = { id: req.id, el, countdown: null, send };
       enterModalLayer(el);

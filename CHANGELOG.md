@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.26] - 2026-10-11
+
+### Fixed
+
+- **Answering an extension's question in the Web UI did nothing**: Yes, No, OK or a typed answer closed the dialog and was never sent, so the tool that asked — the `schedule` tool's confirmation, a hook's `confirm` — stayed "Running…" for good. Broken since the Web UI moved to ES modules.
+
+### Changed
+
+- **An extension's question dialogs in the Web UI** (confirm, input, editor) answer with the same buttons as the page's other dialogs: full-size, in a footer, with the default answer filled in, instead of two small outlined buttons under the text.
+
 ## [0.6.25] - 2026-10-11
 
 ### New Features

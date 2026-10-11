@@ -13322,6 +13322,20 @@ calls a tab. And `applyI18n()` runs once at startup, before `NodeWorkbench` buil
 builds `data-i18n` markup calls `applyI18n(itsElement)` after appending it. `WebI18nTest` checks
 that every key used is in both languages — not shadowing, which only the browser shows.
 
+### Answering an extension's question in the page never reached the child
+
+**Symptom**: in `pig --mode web`, a hook's or tool's `confirm` / `input` / `editor` dialog closed on
+Yes, and the tool stayed "Running…" for good — first seen as a `schedule` create that never saved.
+
+**Cause**: `replyTo()` sent the answer with `tab?.send(…)`, and `Tab` has no `send` (it has `rpc()`)
+since the move to ES modules: the click closed the dialog, then threw `TypeError`, and nothing was
+sent. `tab.rpc()` would not do either — it puts its own id on the command, and the answer's id must be
+the question's.
+
+**Rule**: an `extension_ui_response` goes out as
+`network.send({ type: "rpc_command", tabId, command: { type: "extension_ui_response", id: <question id>, … } })`.
+After touching a dialog, answer one in a browser (the fake agent's `ask:` prompt) — no PHP test covers the page's side.
+
 ### `phpunit | tail` hung after the whole suite had passed
 
 **Symptom**: the full suite ran to the end, and the command never returned; with output to a file
