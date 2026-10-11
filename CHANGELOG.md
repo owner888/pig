@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.15] - 2026-10-11
+
+### Added
+
+- **Automatic bundled extensions initialization on fresh installs (`SelfUpdate::ensureBundledExtensions`)**:
+  - `bin/pig` and `install.sh` now automatically populate bundled core extensions (`pig-antigravity`, `pig-computer`, `pig-web-search`, `pig-android-use`, `pig-vless`) into `~/.pig/agent/extensions/` on initial run.
+  - New installations now have Antigravity, computer use, and web search ready out of the box with zero manual installation commands.
+
 ## [0.6.14] - 2026-10-11
 
 ### Fixed

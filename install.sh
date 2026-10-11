@@ -45,6 +45,11 @@ pig_installer_main() {
 
   bin_dir=$(composer_bin_dir)
 
+  # Sync bundled extensions (pig-antigravity, pig-web-search, pig-computer, etc.) to user directory
+  if [ -n "$bin_dir" ] && [ -x "$bin_dir/$PIG_CMD" ]; then
+    "$bin_dir/$PIG_CMD" update --extensions >/dev/null 2>&1 || true
+  fi
+
   if installed_pig_is_first_on_path "$bin_dir"; then
     printf '\npig %s is installed. Run it with: %s\n' "$(installed_version "$bin_dir")" "$PIG_CMD"
   else

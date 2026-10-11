@@ -187,6 +187,44 @@ final class SelfUpdate
     }
 
     /**
+     * Ensure bundled extensions (antigravity, computer, web-search, etc.) are populated
+     * in the user's home directory on initial install if missing.
+     */
+    public static function ensureBundledExtensions(?string $home = null): int
+    {
+        $coreDir = self::coreExtensionsDir();
+        $userDir = ($home ?? Config::home()) . '/extensions';
+
+        if ($coreDir === null || !is_dir($coreDir)) {
+            return 0;
+        }
+
+        if (!is_dir($userDir)) {
+            mkdir($userDir, 0755, true);
+        }
+
+        $coreItems = scandir($coreDir) ?: [];
+        $synced = 0;
+
+        foreach ($coreItems as $coreItem) {
+            if ($coreItem === '.' || $coreItem === '..' || !is_dir("{$coreDir}/{$coreItem}")
+                || in_array($coreItem, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) {
+                continue;
+            }
+
+            $targetPath = "{$userDir}/{$coreItem}";
+            if (!file_exists($targetPath)) {
+                $count = self::syncDirectory("{$coreDir}/{$coreItem}", $targetPath);
+                if ($count > 0) {
+                    $synced++;
+                }
+            }
+        }
+
+        return $synced;
+    }
+
+    /**
      * Locate the core extensions package directory.
      */
     public static function coreExtensionsDir(): ?string
@@ -251,7 +289,7 @@ final class SelfUpdate
         return $changes;
     }
 
-    private static function deleteRecursive(string $dir): void
+    public static function deleteRecursive(string $dir): void
     {
         $items = scandir($dir) ?: [];
         foreach ($items as $item) {

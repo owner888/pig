@@ -812,6 +812,12 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
     return $trusted;
 };
 
+// On first run on a fresh machine, ensure bundled extensions (pig-antigravity, pig-computer, etc.)
+// are populated into ~/.pig/agent/extensions so they are available out of the box.
+if (!isset($options['no-extensions']) && !is_dir(\Pig\CodingAgent\Config::home() . '/extensions')) {
+    \Pig\CodingAgent\Cli\SelfUpdate::ensureBundledExtensions();
+}
+
 // Upstream's `--no-extensions` turns off every extension but the ones `-e` names.
 if ((!isset($options['no-extensions']) || $cliExtensionPaths !== []) && $mode !== 'web') {
     \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($settings);

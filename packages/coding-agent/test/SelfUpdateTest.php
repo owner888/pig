@@ -104,4 +104,20 @@ final class SelfUpdateTest extends TestCase
 
         $this->assertSame(127, $code);
     }
+
+    public function testEnsureBundledExtensionsCopiesCoreExtensionsToUserDirectory(): void
+    {
+        $tempHome = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        $synced = SelfUpdate::ensureBundledExtensions($tempHome);
+
+        $this->assertGreaterThan(0, $synced);
+        $this->assertDirectoryExists($tempHome . '/extensions/pig-antigravity');
+        $this->assertFileExists($tempHome . '/extensions/pig-antigravity/index.php');
+
+        // Subsequent call does not recopy already existing extensions
+        $this->assertSame(0, SelfUpdate::ensureBundledExtensions($tempHome));
+
+        // Clean up
+        SelfUpdate::deleteRecursive($tempHome);
+    }
 }
