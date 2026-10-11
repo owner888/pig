@@ -11,6 +11,7 @@ use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
@@ -41,6 +42,9 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -48,13 +52,19 @@ use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\CustomTools\CustomToolApi;
+use Pig\CodingAgent\StartedSession;
+use Pig\CodingAgent\Session\SessionCwdIssue;
+use Pig\CodingAgent\Session\SessionCwd;
+use Pig\CodingAgent\Session\MissingSessionCwdError;
+use Pig\CodingAgent\Session\CompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
@@ -84,13 +94,13 @@ final class AgentSessionTest extends TestCase
         Loop::reset();
         $this->current = null;
         $this->tempHome = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
-        putenv("PIG_HOME={$this->tempHome}");
+        putenv("PIG_CODING_AGENT_DIR={$this->tempHome}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         if (is_dir($this->tempHome)) {
             self::removeDir($this->tempHome);
         }
@@ -310,14 +320,34 @@ final class AgentSessionTest extends TestCase
         $this->assertStringNotContainsString("\r", $execution->toText());
     }
 
-    public function testTwoBangsRunItWithoutJoiningTheConversation(): void
+    public function testTwoBangsRunItKeptInTheSessionAndOutOfTheModelsSight(): void
     {
         $session = $this->session([]);
 
-        $execution = Async::run(static fn () => $session->executeBash('echo hi', remember: false));
+        $execution = Async::run(static fn () => $session->executeBash('echo hi', excludeFromContext: true));
 
+        // Upstream's `recordBashResult()` records `!!` too, flagged; `convertToLlm()` drops it.
         $this->assertSame('hi', trim($execution->output));
-        $this->assertSame([], $session->messages());
+        $this->assertTrue($execution->excludeFromContext);
+        $this->assertSame([$execution], array_values(array_filter($session->messages(), static fn ($m) => $m instanceof BashExecution)));
+        $this->assertSame([], CodingAgent::toLlm([$execution]));
+    }
+
+    public function testABangsOutputIsAnnouncedAsItArrivesUnderTheIdItWasGiven(): void
+    {
+        $session = $this->session([]);
+        $updates = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$updates): void {
+            if ($event instanceof \Pig\CodingAgent\Session\BashExecutionUpdateEvent) {
+                $updates[] = $event;
+            }
+        });
+
+        Async::run(static fn () => $session->executeBash('echo one; echo two', id: 'b7'));
+
+        $this->assertNotSame([], $updates);
+        $this->assertSame(['b7'], array_values(array_unique(array_map(static fn ($u) => $u->id, $updates))));
+        $this->assertSame("one\ntwo\n", implode('', array_map(static fn ($u) => $u->delta, $updates)));
     }
 
     public function testAFailingCommandCarriesItsExitCode(): void
@@ -406,6 +436,41 @@ final class AgentSessionTest extends TestCase
             'Nothing to compact (session too small)',
         );
         $this->assertSame($before, $session->messages());
+    }
+
+    public function testAPromptPastTheThresholdIsCompactedFirstWhateverTheMode(): void
+    {
+        // Upstream's `_checkCompaction(lastAssistant, false)` in `prompt()`: in the session, so RPC
+        // and print mode compact before the turn as the terminal does — with upstream's events.
+        $session = $this->session(['the summary', 'and the answer']);
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $session->agent->appendMessage(new AssistantMessage(
+            [new TextContent('so far so good')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(0, 0, 0, 0, 190_000),
+            StopReason::Stop,
+            null,
+            Timestamp::nowMs() - 1_000,
+        ));
+
+        $reasons = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$reasons): void {
+            if ($event instanceof CompactionStartEvent) {
+                $reasons[] = $event->reason;
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('one more thing'));
+
+        $this->assertSame(['threshold'], $reasons);
+        $this->assertInstanceOf(CompactionSummary::class, $session->messages()[0]);
+        $this->assertSame('and the answer', $session->lastAssistantText());
     }
 
     public function testCompactingDoesNotLeaveTheSessionAskingToCompactAgain(): void
@@ -535,7 +600,11 @@ final class AgentSessionTest extends TestCase
 
     public function testCancellingTheSummariserLeavesTheConversationAlone(): void
     {
-        $session = $this->session([], null, null, static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+        // Escape is the signal being aborted while the summariser is answering, which is what
+        // upstream checks once the summary comes back ("Compaction cancelled").
+        $escape = new AbortController();
+        $session = $this->session([], null, null, static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use ($escape): AssistantMessageEventStream {
+            $escape->abort();
             $stream = new AssistantMessageEventStream();
             $cancelled = new AssistantMessage(
                 [],
@@ -561,7 +630,7 @@ final class AgentSessionTest extends TestCase
         $before = $session->messages();
 
         // Pressing escape halfway through is not a reason to lose the conversation.
-        $this->assertNull(Async::run(static fn () => $session->compact()));
+        $this->assertNull(Async::run(static fn () => $session->compact(null, $escape->signal)));
         $this->assertSame($before, $session->messages());
     }
 
@@ -889,7 +958,9 @@ final class AgentSessionTest extends TestCase
         // Upstream's footer sums the session file for this reason; its own `/session` does not,
         // which is two answers to one question in one tool.
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session(['the summary'], store: $store, settings: self::quickRetries(['keepRecentTokens' => 1]));
+        // Two answers: with almost nothing kept the cut lands on the last answer, inside its turn,
+        // so the history and the turn's beginning are summarised separately (upstream's split turn).
+        $session = $this->session(['the summary', 'the turn so far'], store: $store, settings: self::quickRetries(['keepRecentTokens' => 1]));
 
         foreach (range(1, 3) as $turn) {
             $session->agent->appendMessage(new UserMessage(str_repeat('x', 20_000)));
@@ -1436,8 +1507,104 @@ final class AgentSessionTest extends TestCase
         $session->writeTo($other);
         $this->assertSame($other->id, $session->agent->sessionId);
 
+        // Upstream's in-memory session has an id too, and the agent carries it.
         $session->writeTo(null);
-        $this->assertNull($session->agent->sessionId);
+        $this->assertNotNull($session->agent->sessionId);
+        $this->assertSame($session->sessionId(), $session->agent->sessionId);
+    }
+
+    /** A saved conversation whose header names `$cwd`, as another project's would. */
+    private static function conversationIn(string $cwd): SessionManager
+    {
+        $file = SessionManager::create($cwd);
+        $file->append(new UserMessage('from another project'));
+        $file->append(new AssistantMessage(
+            [new TextContent('and its answer')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(),
+            StopReason::Stop,
+        ));
+
+        return $file;
+    }
+
+    public function testASessionFromAnotherDirectoryIsResumedThereThroughTheRuntimeFactory(): void
+    {
+        // Upstream's `switchSession()`: `createRuntime({ cwd: sessionManager.getCwd() })` — the
+        // conversation carries on in its own project, in a runtime built for that directory.
+        $elsewhere = sys_get_temp_dir() . '/pig-elsewhere-' . bin2hex(random_bytes(4));
+        mkdir($elsewhere);
+        $file = self::conversationIn($elsewhere);
+        $session = $this->session([], store: SessionManager::create(sys_get_temp_dir()));
+        $replacement = $this->session([]);
+        $asked = null;
+
+        $relocate = function (string $cwd, SessionManager $opened) use (&$asked, $replacement): StartedSession {
+            $asked = [$cwd, $opened->path];
+            $replacement->writeTo($opened);
+            $replacement->restore($opened->messages());
+
+            return new StartedSession(
+                $replacement,
+                $this->model(),
+                ThinkingLevel::Off,
+                [],
+                [],
+                [],
+                new HookRunner([], $cwd),
+                new CustomToolSet([], new CustomToolApi($cwd)),
+                $opened,
+                [],
+                true,
+            );
+        };
+        $switch = Async::run(static fn (): SessionSwitch => $session->switchTo($file->path, relocate: $relocate));
+
+        $this->assertSame([$elsewhere, $file->path], $asked);
+        $this->assertTrue($switch->switched);
+        $this->assertSame($replacement, $switch->replacement?->session);
+        $this->assertSame(2, $switch->messages);
+
+        // The same directory switches in place, as before: nothing is rebuilt.
+        $here = self::conversationIn(sys_get_temp_dir());
+        $inPlace = $this->session([], store: SessionManager::create(sys_get_temp_dir()));
+        $same = Async::run(static fn (): SessionSwitch => $inPlace->switchTo($here->path, relocate: static fn () => throw new RuntimeException('not called')));
+        $this->assertNull($same->replacement);
+        $this->assertSame($here->path, $inPlace->store()?->path);
+
+        unlink($file->path);
+        unlink($here->path);
+    }
+
+    public function testASessionWhoseDirectoryHasGoneIsRefusedUntilACwdIsGiven(): void
+    {
+        // Upstream's `assertSessionCwdExists()` before anything is torn down, in its words; and
+        // `cwdOverride`, the answer to "continue in current cwd".
+        $gone = sys_get_temp_dir() . '/pig-gone-' . bin2hex(random_bytes(4));
+        mkdir($gone);
+        $file = self::conversationIn($gone);
+        rmdir($gone);
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session([], store: $store);
+
+        try {
+            Async::run(static fn () => $session->switchTo($file->path));
+            $this->fail('expected MissingSessionCwdError');
+        } catch (MissingSessionCwdError $error) {
+            $this->assertSame($gone, $error->issue->sessionCwd);
+            $this->assertSame(sys_get_temp_dir(), $error->issue->fallbackCwd);
+            $this->assertStringStartsWith("Stored session working directory does not exist: {$gone}\nSession file: {$file->path}", $error->getMessage());
+            $this->assertSame($store, $session->store(), 'nothing was torn down');
+        }
+
+        $switch = Async::run(static fn (): SessionSwitch => $session->switchTo($file->path, sys_get_temp_dir()));
+        $this->assertTrue($switch->switched);
+        $this->assertSame(sys_get_temp_dir(), $session->store()?->cwd);
+        $this->assertSame("cwd from session file does not exist\n{$gone}\n\ncontinue in current cwd\n/x", SessionCwd::prompt(new SessionCwdIssue($file->path, $gone, '/x')));
+
+        unlink($file->path);
     }
 
     public function testSwitchingSessionStopsARetryThatWasStillWaiting(): void
@@ -1695,16 +1862,20 @@ final class AgentSessionTest extends TestCase
         });
         self::settle();
 
-        $starts = array_values(array_filter($seen, static fn ($e) => $e instanceof AutoCompactionStartEvent));
-        $ends = array_values(array_filter($seen, static fn ($e) => $e instanceof AutoCompactionEndEvent));
+        $starts = array_values(array_filter($seen, static fn ($e) => $e instanceof CompactionStartEvent));
+        $ends = array_values(array_filter($seen, static fn ($e) => $e instanceof CompactionEndEvent));
 
         $this->assertCount(1, $starts);
-        $this->assertStringContainsString('too long', $starts[0]->error);
+        $this->assertSame('overflow', $starts[0]->reason);
 
         $this->assertCount(1, $ends);
-        $this->assertTrue($ends[0]->succeeded);
+        $this->assertSame('overflow', $ends[0]->reason);
+        $this->assertNotNull($ends[0]->result);
+        $this->assertFalse($ends[0]->aborted);
         $this->assertTrue($ends[0]->willRetry, 'the summary is the fix, so the turn goes again');
         $this->assertInstanceOf(CompactionSummary::class, $ends[0]->summary);
+        $this->assertSame($ends[0]->summary->summary, $ends[0]->result->summary);
+        $this->assertIsInt($ends[0]->result->estimatedTokensAfter);
 
         // Not retried: the request was too big, and it would be exactly as big in four
         // seconds. Nothing waited.
@@ -1715,6 +1886,68 @@ final class AgentSessionTest extends TestCase
 
         $messages = $session->messages();
         $this->assertSame('answered after summarising', self::textOf($messages[count($messages) - 1]));
+    }
+
+    public function testAnOverflowSummaryTellsTheHooksTheTurnGoesAgain(): void
+    {
+        // Upstream's `session_before_compact` and `session_compact` for overflow recovery:
+        // `reason: overflow`, `willRetry: true`.
+        $seen = [];
+        $record = static function (object $event) use (&$seen): void {
+            $seen[] = $event;
+        };
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([
+                'first answer',
+                'second answer',
+                ['error' => 'prompt is too long: 213462 tokens > 200000 maximum'],
+                'the summary',
+                'answered after summarising',
+            ]),
+            settings: self::quickRetries(['keepRecentTokens' => 1]),
+            hooks: $this->hooks(['session_before_compact' => $record, 'session_compact' => $record]),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('one');
+            $session->prompt('two');
+            $session->prompt('three');
+        });
+        self::settle();
+
+        $this->assertCount(2, $seen);
+        $this->assertInstanceOf(SessionBeforeCompactEvent::class, $seen[0]);
+        $this->assertSame('overflow', $seen[0]->reason);
+        $this->assertTrue($seen[0]->willRetry);
+        $this->assertNull($seen[0]->customInstructions);
+        $this->assertInstanceOf(SessionCompactEvent::class, $seen[1]);
+        $this->assertSame('overflow', $seen[1]->reason);
+        $this->assertTrue($seen[1]->willRetry);
+        $this->assertFalse($seen[1]->fromExtension);
+    }
+
+    public function testAFailedCompactionIsReportedInUpstreamsWords(): void
+    {
+        $failed = [];
+        $session = $this->session([], settings: self::quickRetries(['keepRecentTokens' => 1]), hooks: $this->hooks([
+            'session_before_compact' => static fn () => new SessionBeforeCompactResult(cancel: true),
+            'session_compact_failed' => static function (SessionCompactFailedEvent $event) use (&$failed): void {
+                $failed[] = $event;
+            },
+        ]));
+        $session->agent->appendMessage(new UserMessage(str_repeat('x', 400)));
+        $session->agent->appendMessage(new UserMessage(str_repeat('y', 400)));
+
+        $this->assertThrows(AgentError::class, static fn () => Async::run(static fn () => $session->compact()), 'Compaction cancelled');
+
+        // A hook's cancel is an abort, not an error.
+        $this->assertCount(1, $failed);
+        $this->assertSame('manual', $failed[0]->reason);
+        $this->assertTrue($failed[0]->aborted);
+        $this->assertNull($failed[0]->errorMessage);
+        $this->assertFalse($failed[0]->willRetry);
+        $this->assertFalse($failed[0]->fromExtension);
     }
 
     public function testEscapeReachesASummarisationNobodyAskedFor(): void
@@ -1728,11 +1961,11 @@ final class AgentSessionTest extends TestCase
 
         $starts = $ends = [];
         $session->subscribe(static function (AgentEvent $event) use (&$starts, &$ends): void {
-            if ($event instanceof AutoCompactionStartEvent) {
+            if ($event instanceof CompactionStartEvent) {
                 $starts[] = $event;
             }
 
-            if ($event instanceof AutoCompactionEndEvent) {
+            if ($event instanceof CompactionEndEvent) {
                 $ends[] = $event;
             }
         });
@@ -1752,9 +1985,11 @@ final class AgentSessionTest extends TestCase
             self::tickWithoutWaiting();
         }
 
+        // Escape is somebody deciding, not a failure: `aborted`, and no error message.
         $this->assertCount(1, $ends);
-        $this->assertFalse($ends[0]->succeeded);
-        $this->assertStringContainsString('cancelled', $ends[0]->error ?? '');
+        $this->assertNull($ends[0]->result);
+        $this->assertTrue($ends[0]->aborted);
+        $this->assertNull($ends[0]->errorMessage);
         $this->assertFalse($session->isCompacting());
     }
 
@@ -1766,7 +2001,7 @@ final class AgentSessionTest extends TestCase
 
         $ends = $retries = [];
         $session->subscribe(static function (AgentEvent $event) use (&$ends, &$retries): void {
-            if ($event instanceof AutoCompactionEndEvent) {
+            if ($event instanceof CompactionEndEvent) {
                 $ends[] = $event;
             }
 
@@ -1786,7 +2021,7 @@ final class AgentSessionTest extends TestCase
         }
 
         $this->assertCount(1, $ends);
-        $this->assertFalse($ends[0]->succeeded);
+        $this->assertNull($ends[0]->result);
 
         // `abort()` calls `abortRetry()` first, and there is no retry here — so it has to say
         // nothing rather than announce one ending. Its guard is the controller for that reason.
@@ -1891,22 +2126,28 @@ final class AgentSessionTest extends TestCase
         }
     }
 
-    public function testASummaryThatFailsEndsItRatherThanSendingTheSameThingAgain(): void
+    public function testAnOverflowWithNothingToCompactAnnouncesNoCompaction(): void
     {
+        // Upstream's `_runAutoCompaction()`: `prepareCompaction()` first, and with nothing to cut
+        // no `compaction_start`, no `compaction_end` — and no second request. What says what
+        // happened is the turn's own error, which every mode has already shown.
         $session = $this->session(
             [],
-            // The summariser's own turn fails too, which is what a provider that is still
-            // refusing everything looks like.
             streamFn: $this->flaky([
                 ['error' => 'prompt is too long: 213462 tokens > 200000 maximum'],
             ]),
             settings: self::quickRetries(),
         );
 
-        $ends = [];
-        $session->subscribe(static function (AgentEvent $event) use (&$ends): void {
-            if ($event instanceof AutoCompactionEndEvent) {
-                $ends[] = $event;
+        $compactions = [];
+        $errors = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$compactions, &$errors): void {
+            if ($event instanceof CompactionStartEvent || $event instanceof CompactionEndEvent) {
+                $compactions[] = $event;
+            }
+
+            if ($event instanceof MessageEndEvent && $event->message instanceof AssistantMessage && $event->message->stopReason === StopReason::Error) {
+                $errors[] = $event->message->errorMessage;
             }
         });
 
@@ -1915,13 +2156,58 @@ final class AgentSessionTest extends TestCase
         });
         self::settle();
 
-        $this->assertCount(1, $ends);
-        $this->assertFalse($ends[0]->succeeded);
-        $this->assertFalse($ends[0]->willRetry);
-        $this->assertNotNull($ends[0]->error);
+        $this->assertSame([], $compactions);
+        $this->assertSame(['prompt is too long: 213462 tokens > 200000 maximum'], $errors);
     }
 
-    // ---- what the conversation was being had with -------------------------------------
+    public function testAnOverflowAfterTheRetryEndsItInUpstreamsWords(): void
+    {
+        // Upstream's `_overflowRecoveryAttempted`: one compact-and-retry per overflow. The retry
+        // overflowing as well is a `compaction_end` with the error, not a second summary.
+        $turns = $this->flaky([
+            'first answer',
+            'second answer',
+            ['error' => 'prompt is too long: 213462 tokens > 200000 maximum'],
+            'the summary',
+            ['error' => 'prompt is too long: 205000 tokens > 200000 maximum'],
+        ]);
+        $session = $this->session(
+            [],
+            // A millisecond apart, so the retry's failure is newer than the summary it follows —
+            // an answer from before the latest compaction is not looked at again.
+            streamFn: static function (mixed ...$arguments) use ($turns): AssistantMessageEventStream {
+                usleep(2000);
+
+                return $turns(...$arguments);
+            },
+            settings: self::quickRetries(['keepRecentTokens' => 1]),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            if ($event instanceof CompactionStartEvent || $event instanceof CompactionEndEvent) {
+                $seen[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('one');
+            $session->prompt('two');
+            $session->prompt('three');
+        });
+        self::settle();
+
+        $this->assertCount(3, $seen, 'one start and end for the summary, one end for the refusal');
+        $this->assertInstanceOf(CompactionStartEvent::class, $seen[0]);
+        $this->assertNotNull($seen[1]->result);
+        $this->assertInstanceOf(CompactionEndEvent::class, $seen[2]);
+        $this->assertNull($seen[2]->result);
+        $this->assertFalse($seen[2]->willRetry);
+        $this->assertSame(
+            'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.',
+            $seen[2]->errorMessage,
+        );
+    }
 
     public function testSwitchingModelIsWrittenDown(): void
     {
@@ -2206,7 +2492,7 @@ final class AgentSessionTest extends TestCase
         Async::run(static fn () => $session->prompt('hi'));
         $switch = $session->startNew();
 
-        // `--no-save` means no file, and `/new` is not a reason to start keeping one.
+        // `--no-session` means no file, and `/new` is not a reason to start keeping one.
         $this->assertTrue($switch->switched);
         $this->assertNull($switch->previous);
         $this->assertNull($session->store());

@@ -19,6 +19,8 @@ final readonly class Skill
      * @param string $path   the SKILL.md itself, which is what the model is told to read
      * @param string $baseDir the folder it sits in, which its own relative paths are from
      * @param string $source which root it was found under, for `/skills` and the banner
+     * @param bool $disableModelInvocation upstream's `disable-model-invocation`: left out of the
+     *        prompt, reachable only as `/skill:name`
      */
     public function __construct(
         public string $name,
@@ -26,6 +28,7 @@ final readonly class Skill
         public string $path,
         public string $baseDir,
         public string $source,
+        public bool $disableModelInvocation = false,
     ) {
     }
 }

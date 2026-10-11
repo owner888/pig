@@ -48,8 +48,11 @@ use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Cli\SessionList;
+use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\Export\JsonlExport;
+use Pig\CodingAgent\Export\SessionShare;
 use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
@@ -82,8 +85,9 @@ use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SkillWarning;
-use Pig\CodingAgent\Prompt\Skills;
-use Pig\CodingAgent\Prompt\SlashCommands;
+use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Packages\PackageError;
+use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Tools\ToolInstaller;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -97,8 +101,8 @@ use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\ExtensionResources;
 use Pig\CodingAgent\Session\HookMessage;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionStartEvent;
 use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
@@ -106,6 +110,8 @@ use Pig\CodingAgent\Session\SummarizationRetryEvent;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\MissingSessionCwdError;
+use Pig\CodingAgent\Session\SessionCwd;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\TreeJump;
@@ -272,6 +278,18 @@ final class InteractiveMode
 
     private bool $running = false;
 
+    /**
+     * What the program exits with — 1 after `fatal()`, upstream's `handleFatalRuntimeError()`'s
+     * `process.exit(1)`; `bin/pig` reads it once the loop has ended.
+     */
+    private int $exitCode = 0;
+
+    /**
+     * Set while `bin/pig`'s runtime factory builds the session for another directory: the old one
+     * has been shut down and disposed by then, so a failure there leaves nothing to carry on with.
+     */
+    private bool $replacingRuntime = false;
+
     /** Upstream's `themeController`: applies the theme setting and keeps it in sync with the terminal. */
     private readonly InteractiveThemeController $themeController;
 
@@ -298,7 +316,7 @@ final class InteractiveMode
     private array $hookCommands = [];
 
     /** What was chosen last time, and where the choices made here are remembered. */
-    private readonly Settings $settings;
+    private Settings $settings;
 
     /** Upstream's `builtInHeader`: logo, version and key hints, with the full key list behind ctrl+o. */
     private ?ExpandableText $builtInHeader = null;
@@ -354,8 +372,8 @@ final class InteractiveMode
      * @param list<\Pig\Ai\ImageContent> $initialImages   attachments for the first of them
      */
     public function __construct(
-        private readonly AgentSession $session,
-        private readonly string $cwd,
+        private AgentSession $session,
+        private string $cwd,
         private readonly string $version,
         // A theme setting that overrides the saved one for this run (`--theme`), or null to read
         // the settings. Upstream's controller takes the same thing as `initialThemeSetting`.
@@ -378,9 +396,17 @@ final class InteractiveMode
         array $extensions = [],
         // What `ProjectTrust::resolve()` answered at startup, so the screen can say when the
         // project's `.pig/` was left out and `/trust` can show which way the saved answer goes.
-        private readonly bool $projectTrusted = true,
+        private bool $projectTrusted = true,
         // Which key means which action — `keybindings.json`'s answer, or the defaults.
         private readonly Keybindings $keybindings = new Keybindings(),
+        // Upstream's `InteractiveModeOptions.tuiMode` (`--tui-mode`): beats the setting for this
+        // run. Null reads it.
+        ?string $tuiMode = null,
+        // Upstream's `verbose` (`--verbose`): the startup header and details whatever `quietStartup` says.
+        private readonly bool $verbose = false,
+        // Upstream's runtime factory (`bin/pig`'s `$createRuntime`): a session built for another
+        // working directory, when one from another project is resumed. Null switches in place.
+        private readonly ?Closure $createRuntime = null,
     ) {
         // Upstream's constructor does the same: the TUI reads `tui.*` keys from the registry.
         TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
@@ -397,9 +423,9 @@ final class InteractiveMode
         $this->outputPad = $this->settings->outputPad();
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
-        $envMode = getenv('PIG_TUI_MODE') ?: getenv('PI_TUI_MODE');
-        if ($envMode !== false && $envMode !== '') {
-            $this->tuiMode = $envMode;
+        // Upstream's `options.tuiMode ?? settingsManager.getTuiMode()`: no environment variable.
+        if ($tuiMode !== null) {
+            $this->tuiMode = $tuiMode;
         } elseif ($terminal !== null && !$terminal instanceof ProcessTerminal) {
             $this->tuiMode = 'regular';
         } else {
@@ -513,6 +539,20 @@ final class InteractiveMode
             },
         );
 
+        $this->wireSession();
+    }
+
+    /**
+     * The session's mode and shutdown request, and its hooks and custom tools onto this screen —
+     * part of upstream's `rebindSession()`, run by the constructor and again by `rebind()`.
+     */
+    private function wireSession(): void
+    {
+        $session = $this->session;
+        $hooks = $this->hooks;
+        $customTools = $this->customTools;
+        $cwd = $this->cwd;
+
         // What a handler's `$ctx->mode()` answers, and what `$ctx->shutdown()` does here: quit,
         // on the next tick rather than from inside whichever handler asked, because stopping
         // the TUI from inside a callback it is running is the thing `stop()` cannot survive.
@@ -539,6 +579,19 @@ final class InteractiveMode
         }
     }
 
+    /** The session's events onto this screen — the other part of `rebindSession()`. */
+    private function listenToSession(): void
+    {
+        $this->session->onSessionNameChanged(function (): void {
+            // The session name is part of working and done reports.
+            $this->programStatus->report();
+            $this->tui->requestRender();
+        });
+        $this->session->onSessionSwitched(fn () => $this->programStatus->reset());
+        $this->session->subscribe($this->onEvent(...));
+        $this->session->enableCacheWarming();
+    }
+
     /** Wire everything up and draw the first frame. */
     public function start(): void
     {
@@ -551,14 +604,7 @@ final class InteractiveMode
         $this->paintBorder();
         $this->reportLoopFailures();
         $this->watchCommandKey();
-        $this->session->onSessionNameChanged(function (): void {
-            // The session name is part of working and done reports.
-            $this->programStatus->report();
-            $this->tui->requestRender();
-        });
-        $this->session->onSessionSwitched(fn () => $this->programStatus->reset());
-        $this->session->subscribe($this->onEvent(...));
-        $this->session->enableCacheWarming();
+        $this->listenToSession();
 
         $this->replay();
 
@@ -750,9 +796,9 @@ final class InteractiveMode
     private function replayBash(BashExecution $execution): void
     {
         // Upstream's resume path: the component, the whole output, then `setComplete()`.
-        $shown = $this->bashExecutionComponent($execution->command, excludeFromContext: false);
+        $shown = $this->bashExecutionComponent($execution->command, excludeFromContext: $execution->excludeFromContext);
         $shown->appendOutput($execution->output);
-        $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->spillPath);
+        $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->fullOutputPath);
 
         $this->chat->addChild($shown);
     }
@@ -1207,18 +1253,17 @@ final class InteractiveMode
     }
 
     /**
-     * Upstream's `shouldShowStartupHeader()`: hidden only by `quietStartup: true`. pig has no
-     * `--verbose`, which upstream lets override it.
+     * Upstream's `shouldShowStartupHeader()`: hidden only by `quietStartup: true`, unless `--verbose`.
      */
     private function shouldShowStartupHeader(): bool
     {
-        return $this->settings->quietStartup() !== true;
+        return $this->verbose || $this->settings->quietStartup() !== true;
     }
 
     /** Upstream's `shouldShowStartupDetails()`: the loaded resources, hidden by `quietStartup: true` or `header`. */
     private function shouldShowStartupDetails(): bool
     {
-        return $this->settings->quietStartup() === false;
+        return $this->verbose || $this->settings->quietStartup() === false;
     }
 
     /**
@@ -1284,7 +1329,7 @@ final class InteractiveMode
     /** @var array<string, string> */
     /**
      * The keys the application binds, by action where `keybindings.json` can move them and by
-     * key where it cannot (ctrl+v and shift+ctrl+d belong to the terminal layer, `/` `@` `!` to
+     * key where it cannot (shift+ctrl+d belongs to the terminal layer, `/` `@` `!` to
      * the prompt). `keys()` turns this into the table the banner and `/help` print, with the
      * key each action is *actually* on — a help screen that names ctrl+o for a key somebody
      * moved to ctrl+e is a help screen that lies.
@@ -1294,7 +1339,7 @@ final class InteractiveMode
         'app.clear' => 'clear the prompt, twice to exit',
         'app.exit' => 'exit from an empty prompt',
         'app.suspend' => 'suspend',
-        'ctrl+v' => 'paste, including an image from the clipboard',
+        'app.clipboard.pasteImage' => 'paste, including an image from the clipboard',
         'app.editor.external' => 'edit the prompt in $VISUAL or $EDITOR',
         'app.message.copy' => 'copy the selection in fullscreen, otherwise the last answer',
         'app.message.followUp' => 'while the agent works: queue for after the turn (enter steers)',
@@ -1341,18 +1386,48 @@ final class InteractiveMode
      * gets its name, and `testEveryKeyTheEditorAnswersToIsNamedSomewhere` is what notices.
      */
     private const array EDITING_KEYS = [
-        'enter' => 'send',
-        'shift+enter' => 'a new line',
-        'up' => 'the previous thing you said, from an empty prompt',
-        'tab' => 'complete a path, or take what is offered',
-        'ctrl+a' => 'start of the line, and home',
-        'ctrl+e' => 'end of the line, and end',
-        'alt+left' => 'back a word, and ctrl+left',
-        'alt+right' => 'on a word, and ctrl+right',
-        'ctrl+w' => 'delete the word behind, and alt+backspace',
-        'ctrl+u' => 'delete back to the start of the line',
-        'ctrl+k' => 'delete on to the end of the line',
+        'tui.input.submit' => 'send',
+        'tui.input.newLine' => 'a new line',
+        'tui.editor.cursorUp' => 'the previous thing you said, from an empty prompt',
+        'tui.input.tab' => 'complete a path, or take what is offered',
+        'tui.editor.cursorLineStart' => 'start of the line',
+        'tui.editor.cursorLineEnd' => 'end of the line',
+        'tui.editor.cursorWordLeft' => 'back a word',
+        'tui.editor.cursorWordRight' => 'on a word',
+        'tui.editor.deleteWordBackward' => 'delete the word behind',
+        'tui.editor.deleteWordForward' => 'delete the word ahead',
+        'tui.editor.deleteToLineStart' => 'delete back to the start of the line',
+        'tui.editor.deleteToLineEnd' => 'delete on to the end of the line',
+        'tui.editor.yank' => 'put back what was last deleted',
+        'tui.editor.yankPop' => 'straight after that, the deletion before it instead',
+        'tui.editor.undo' => 'undo',
+        'tui.editor.jumpForward' => 'jump to the next occurrence of the character typed next',
+        'tui.editor.jumpBackward' => 'jump back to the character typed next',
+        'tui.editor.historyPrevious' => 'the previous prompt, wherever the cursor is',
+        'tui.editor.historyNext' => 'the next prompt, wherever the cursor is',
     ];
+
+    /**
+     * `EDITING_KEYS` with the keys each action is on — every key, joined by `/`, because the
+     * second is often the one somebody's terminal can send. An action with no key is left out:
+     * the dedicated history keys are unbound until a `keybindings.json` gives them one.
+     *
+     * @return array<string, string> key label => what it does
+     */
+    private function editingKeys(): array
+    {
+        $rows = [];
+
+        foreach (self::EDITING_KEYS as $action => $does) {
+            $keys = $this->keybindings->keysFor($action);
+
+            if ($keys !== []) {
+                $rows[implode('/', $keys)] = $does;
+            }
+        }
+
+        return $rows;
+    }
 
     // ---- keys ---------------------------------------------------------------------------
 
@@ -1402,6 +1477,18 @@ final class InteractiveMode
             $this->useHideThinking(!$this->hideThinking);
             $this->say($this->hideThinking ? 'Thinking hidden' : 'Thinking shown');
         });
+
+        // Upstream's four session actions, unbound by default: `/new`, `/tree`, `/fork` and
+        // `/resume` on a key for whoever gives them one in `keybindings.json`.
+        // Each in a fiber of its own, as the slash commands run: starting a session emits hook
+        // events that may suspend, and this is the input callback.
+        $this->editor->on('app.session.new', fn () => Async::spawn($this->newSession(...)));
+        $this->editor->on('app.session.tree', fn () => Async::spawn(fn () => $this->showTree()));
+        $this->editor->on('app.session.fork', fn () => Async::spawn($this->showForkPoints(...)));
+        $this->editor->on('app.session.resume', fn () => Async::spawn($this->showSessions(...)));
+
+        // `tui.editor.pageUp`/`pageDown` move by 30% of the terminal, as upstream's do.
+        $this->editor->setTerminalRows(fn (): int => $this->tui->terminal->rows());
 
         foreach ($this->hooks?->shortcuts() ?? [] as $spec) {
             $this->editor->registerShortcut(
@@ -1877,6 +1964,7 @@ final class InteractiveMode
                     static fn (FileCommand $command): SlashCommand => new SlashCommand(
                         $command->name,
                         $command->description,
+                        argumentHint: $command->argumentHint,
                     ),
                     $this->fileCommands,
                 ),
@@ -2127,7 +2215,7 @@ final class InteractiveMode
                 $seen = 0;
                 $execution = $this->session->executeBash(
                     $command,
-                    $remember,
+                    !$remember,
                     function (string $output) use ($shown, &$seen): void {
                         $shown->appendOutput(substr($output, $seen));
                         $seen = strlen($output);
@@ -2137,7 +2225,7 @@ final class InteractiveMode
 
                 // Nothing said for `!!`: the block is drawn in `dim`, which is how upstream says
                 // the output stayed out of the conversation.
-                $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->spillPath);
+                $shown->setComplete($execution->exitCode, $execution->cancelled, $execution->truncated, $execution->fullOutputPath);
             } catch (Throwable $error) {
                 $shown->appendOutput($error->getMessage());
                 $shown->setComplete(1, false);
@@ -2209,14 +2297,9 @@ final class InteractiveMode
     private function sendAndWait(string $text, array $images = []): void
     {
         try {
-            // Before the turn rather than after the failure: a request that does not
-            // fit comes back as an error from the provider, and by then the person
-            // has already waited for it.
-            if ($this->session->shouldCompact()) {
-                $this->sayThemed(static fn (): string => Themes::theme()->fg('muted', 'Context is nearly full — summarising first.'));
-                $this->compact(reason: 'threshold');
-            }
-
+            // The threshold check before the turn is the session's (`AgentSession::prompt()`), as
+            // upstream's is; its `compaction_start` / `compaction_end` draw the loader and the
+            // summary here (`onAutoCompaction()`).
             $this->session->prompt($text, $images);
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
@@ -2232,15 +2315,13 @@ final class InteractiveMode
      *
      * @param string|null $instructions from `/compact focus on the parser`
      */
-    /** @param 'manual'|'threshold' $reason what started it, for a hook's `session_compact_failed` */
-    private function compact(?string $instructions = null, string $reason = 'manual'): void
+    private function compact(?string $instructions = null): void
     {
         if ($this->compaction !== null) {
             return;
         }
 
-        $this->showLoader($this->compactionLabel($reason), timer: true);
-        $this->programStatus->compactionStart();
+        $this->showLoader($this->compactionLabel('manual'), timer: true);
         $this->terminalProgress(true);
 
         $this->compaction = new AbortController();
@@ -2249,7 +2330,7 @@ final class InteractiveMode
         $failure = null;
 
         try {
-            $summary = $this->session->compact($instructions, $signal, $reason);
+            $summary = $this->session->compact($instructions, $signal);
         } catch (Throwable $error) {
             $summary = null;
             $failure = $error->getMessage();
@@ -2257,7 +2338,6 @@ final class InteractiveMode
             $this->compaction = null;
             $this->hideLoader();
             $this->terminalProgress(false);
-            $this->programStatus->compactionEnd($reason, aborted: $summary === null && $failure === null, errorMessage: $failure);
         }
 
         if ($failure !== null) {
@@ -2266,14 +2346,9 @@ final class InteractiveMode
             return;
         }
 
-        // Upstream's `compaction_end` with `aborted`: an error for the one somebody asked for, a
-        // status line for the one that started itself.
+        // Upstream's `compaction_end` with `aborted` for the one somebody asked for: an error.
         if ($summary === null) {
-            if ($reason === 'manual') {
-                $this->sayError('Compaction cancelled');
-            } else {
-                $this->say('Auto-compaction cancelled');
-            }
+            $this->sayError('Compaction cancelled');
 
             return;
         }
@@ -2294,9 +2369,12 @@ final class InteractiveMode
         ['session', 'What this session has cost'],
         ['model', 'Switch models, or say which one'],
         ['thinking', 'Set thinking level, or choose from a list'],
+        ['scoped-models', 'Enable/disable models for Ctrl+P cycling'],
         ['skills', 'What the model can reach for, and where it came from'],
         ['copy', 'Put the last answer on the clipboard'],
-        ['export', 'Export conversation as HTML, Markdown, or PR description (/export [md|pr])'],
+        ['export', 'Export session (HTML default, or specify path: .html/.jsonl; /export md|pr for Markdown or a PR description)'],
+        ['import', 'Import and resume a session from a JSONL file'],
+        ['share', 'Share session as a secret GitHub gist'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
@@ -2316,9 +2394,9 @@ final class InteractiveMode
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
-        ['bug', 'Write a bug report and open a GitHub issue for it (/bug [what went wrong])'],
+        ['bug', 'Report a bug to the pig developers (/bug [what went wrong])'],
         ['trust', 'Decide whether this project\'s .pig/ hooks, tools and extensions may load'],
-        ['exit', 'Quit'],
+        ['quit', 'Quit pig'],
     ];
 
     /**
@@ -2352,13 +2430,14 @@ final class InteractiveMode
     private function knowsCommand(string $name): bool
     {
         // Two that are known and not listed, because `COMMANDS` is also what `/help` prints and
-        // what the autocomplete offers: `quit` is an alias for one that is listed, and
+        // what the autocomplete offers: `exit` is an alias for `quit`, the name pig listed before
+        // it took upstream's, and
         // `arminsayshi` is an easter egg — upstream leaves it out of its own command list too,
         // and something you have to already know about is the whole idea.
         // `debug` is a third: it is for reporting a fault rather than for using pig, and
         // shift+ctrl+d is the route worth advertising — it works whatever holds the focus, which
         // is the whole point of a key that captures the screen.
-        if ($name === 'quit' || $name === 'hotkeys' || $name === 'arminsayshi' || $name === 'debug') {
+        if ($name === 'exit' || $name === 'hotkeys' || $name === 'arminsayshi' || $name === 'debug') {
             return true;
         }
 
@@ -2393,7 +2472,10 @@ final class InteractiveMode
             'thinking' => $this->handleThinkingCommand(trim(substr($text, strlen($name) + 1))),
             'skills' => $this->say($this->skillList()),
             'copy' => $this->copyLastAnswer(),
+            'scoped-models' => $this->showScopedModels(),
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
+            'import' => $this->importSession(trim(substr($text, strlen($name) + 1))),
+            'share' => $this->shareSession(),
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
             'fork' => $this->showForkPoints(),
@@ -2603,50 +2685,195 @@ final class InteractiveMode
         }
 
         $this->bugHintShown = true;
-        $this->say('If this looks like a pig bug, /bug writes a report and opens a GitHub issue for it.');
+        // Upstream's wording.
+        $this->say('If this looks like a pig bug, /bug sends a report to the developers.');
     }
 
     /**
-     * `/bug [hint]`: ask whether to attach the transcript, write the report, copy it, open GitHub.
+     * `/bug [hint]` — upstream's `reportBug()` (`modes/interactive/bug-report.ts`).
      *
-     * Spawned because the confirm parks the fiber it is asked on, and this runs inside the
-     * loop's own input callback.
+     * What went wrong (the hint, editable), whether to include the transcript, a summary by the
+     * current model instead when it is not, then Upload Report / Export as Zip / Cancel. Upload
+     * goes to the developer's server (`BugReport::upload()`); when it fails, the zip is offered in
+     * its place. Either way the session records that a report was made (`pig.bug-report`) and the
+     * crash log is cleared, as upstream's `recordInSession()` does.
+     *
+     * Spawned because the dialogs park the fiber they are asked on, and this runs inside the loop's
+     * own input callback. Escape on any question cancels the whole report.
      */
     private function reportBug(string $hint): void
     {
         Async::spawn(function () use ($hint): void {
-            $includeTranscript = $this->ui->confirm(
-                'Include the session transcript?',
-                'It holds your messages, the model\'s output, and every file and command result read this session.',
-            );
+            $model = $this->session->model();
+            $modelName = $model?->name ?? 'the current model';
 
-            try {
-                $report = BugReport::build($this->session, $this->auth, $hint, $includeTranscript);
-                $path = BugReport::write($report);
-            } catch (Throwable $error) {
-                $this->sayError('Could not write the bug report: ' . $error->getMessage());
+            $hint = $this->ui->editor("Report a bug\n\n" . BugReport::DISCLAIMER . "\n\nWhat went wrong? (optional)", $hint);
+
+            if ($hint === null) {
+                $this->say('Bug report cancelled');
 
                 return;
             }
 
-            $this->clipboard->write($report);
+            $transcript = $this->ui->select("Include the session transcript?\n\n" . BugReport::TRANSCRIPT_NOTE, ['Yes, include the transcript', 'No']);
 
-            $serverUrl = BugReport::upload($hint, $report);
-            $url = BugReport::issueUrl($hint, $report);
+            if ($transcript === null) {
+                $this->say('Bug report cancelled');
 
-            $this->sayThemed(static function () use ($path, $serverUrl, $url): string {
-                $msg = Themes::theme()->fg('accent', '✓ Bug report written to ') . $path . "\n"
-                    . Themes::theme()->fg('dim', 'It is on the clipboard too.');
+                return;
+            }
 
-                if ($serverUrl !== null) {
-                    $msg .= "\n" . Themes::theme()->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
+            $includeSession = $transcript !== 'No';
+            $includeSummary = false;
+
+            if (!$includeSession) {
+                $provider = $model?->provider ?? 'your provider';
+                $choice = $this->ui->select(
+                    "Attach a summary written by {$modelName} instead?\n\n"
+                    . "The transcript is sent to {$provider} with your credentials and tokens. Only the generated summary is attached; the transcript stays on your machine.",
+                    ['Yes, generate a summary', 'No'],
+                );
+
+                if ($choice === null) {
+                    $this->say('Bug report cancelled');
+
+                    return;
                 }
 
-                return $msg . "\n" . Themes::theme()->fg('dim', 'GitHub issue URL (prefilled): ') . Themes::theme()->fg('accent', $url);
-            });
+                $includeSummary = $choice !== 'No';
+            }
 
-            $this->tui->requestRender();
+            $description = trim($hint);
+            $host = (string) parse_url(BugReport::SERVER_ENDPOINT, PHP_URL_HOST);
+            $delivery = $this->ui->select(
+                "Bug report\n\nDescription: " . ($description !== '' ? $description : 'none')
+                . "\nTranscript: " . ($includeSession ? 'included' : 'not included')
+                . "\nSummary: " . ($includeSummary ? "written by {$modelName}" : 'none')
+                . "\n\nUpload sends the report to {$host}. Export writes a zip archive to the current directory instead.",
+                ['Upload Report', 'Export as Zip', 'Cancel'],
+            );
+
+            if ($delivery === null || $delivery === 'Cancel') {
+                $this->say('Bug report cancelled');
+
+                return;
+            }
+
+            if ($delivery === 'Upload Report' && !\Pig\CodingAgent\ModelRefresh::networkEnabled()) {
+                $this->sayError('Uploading bug reports requires online mode. Use Export as Zip instead.');
+
+                return;
+            }
+
+            $summary = null;
+
+            if ($includeSummary) {
+                $controller = new AbortController();
+                $this->compaction = $controller;
+                $this->showLoader("Writing summary with {$modelName}...");
+
+                try {
+                    $summary = $this->session->summarizeForBugReport($description === '' ? null : $description, $controller->signal);
+                } catch (Throwable $error) {
+                    if ($controller->signal->aborted()) {
+                        $this->say('Bug report cancelled');
+                    } else {
+                        $this->sayError('Failed to write bug report summary: ' . $error->getMessage());
+                    }
+
+                    return;
+                } finally {
+                    $this->compaction = null;
+                    $this->hideLoader();
+                }
+
+                if ($controller->signal->aborted()) {
+                    $this->say('Bug report cancelled');
+
+                    return;
+                }
+            }
+
+            try {
+                $report = BugReport::build($this->session, $this->auth, $description, $includeSession, $summary);
+                $sessionJsonl = $includeSession
+                    ? $this->session->store()?->serializeBranch(fn (?string $parent, string $timestamp): array => SessionShare::trailingEntries($this->session, $parent, $timestamp))
+                    : null;
+            } catch (Throwable $error) {
+                $this->sayError('Failed to build bug report: ' . $error->getMessage());
+
+                return;
+            }
+
+            $id = \Pig\Ai\Utils\Uuid::v7();
+
+            if ($delivery === 'Upload Report') {
+                $controller = new AbortController();
+                $this->compaction = $controller;
+                $this->showLoader('Uploading bug report...');
+
+                try {
+                    $url = BugReport::upload($description, $report, signal: $controller->signal);
+                    $failure = null;
+                } catch (Throwable $error) {
+                    $url = null;
+                    $failure = $error->getMessage();
+                } finally {
+                    $this->compaction = null;
+                    $this->hideLoader();
+                }
+
+                if ($controller->signal->aborted()) {
+                    $this->say('Bug report cancelled');
+
+                    return;
+                }
+
+                if ($url !== null) {
+                    $this->recordBugReport($id, $description, $includeSession, $summary !== null, 'upload', null);
+                    $this->say("Bug report uploaded: {$url}");
+
+                    return;
+                }
+
+                $fallback = $this->ui->select("Upload failed\n\n{$failure}\n\nExport the report as a zip archive instead?", ['Export as Zip', 'Cancel']);
+
+                if ($fallback !== 'Export as Zip') {
+                    $this->say('Bug report cancelled');
+
+                    return;
+                }
+            }
+
+            $archive = rtrim($this->cwd, '/') . '/' . BugReport::archiveFileName($id);
+
+            try {
+                BugReport::writeArchive($archive, BugReport::archiveFiles($report, $sessionJsonl, $summary));
+            } catch (Throwable $error) {
+                $this->sayError('Failed to write bug report: ' . $error->getMessage());
+
+                return;
+            }
+
+            $this->recordBugReport($id, $description, $includeSession, $summary !== null, 'zip', $archive);
+            $this->say("Bug report exported to: {$archive}\nReport ID: {$id}");
         });
+    }
+
+    /** Upstream's `recordInSession()`: a `pig.bug-report` entry, and the crash log handed over. */
+    private function recordBugReport(string $id, string $hint, bool $sessionIncluded, bool $summaryIncluded, string $delivery, ?string $path): void
+    {
+        $this->session->store()?->appendCustomEntry(BugReport::CUSTOM_ENTRY_TYPE, [
+            'id' => $id,
+            'createdAt' => gmdate('Y-m-d\TH:i:s\Z'),
+            'hint' => $hint === '' ? null : $hint,
+            'sessionIncluded' => $sessionIncluded,
+            'summaryIncluded' => $summaryIncluded,
+            'delivery' => $delivery,
+            ...($path === null ? [] : ['path' => $path]),
+        ]);
+
+        \Pig\CodingAgent\CrashLog::clear();
     }
 
     /**
@@ -2707,19 +2934,232 @@ final class InteractiveMode
             return;
         }
 
-        // 3. Default: export as single-file HTML
+        // 3. Upstream's `handleExportCommand()`: a path ending in `.jsonl` is the branch as a
+        // session file (`exportToJsonl()`), anything else — or nothing — single-file HTML.
+        $target = self::pathArgument($path);
+
         try {
-            $written = HtmlExport::write(
-                $store,
-                $path === '' ? HtmlExport::defaultPath($store, $this->cwd) : $path,
-            );
+            $written = $target !== null && str_ends_with($target, '.jsonl')
+                ? JsonlExport::write($store, $target, $this->cwd)
+                : HtmlExport::write($store, $target ?? HtmlExport::defaultPath($store, $this->cwd));
         } catch (Throwable $error) {
-            $this->sayError($error->getMessage());
+            $this->sayError('Failed to export session: ' . $error->getMessage());
 
             return;
         }
 
-        $this->say('Exported to ' . $written);
+        $this->say('Session exported to: ' . $written);
+    }
+
+    /**
+     * Upstream's `getPathCommandArgument()`: the first word after the command, or the text inside
+     * a leading pair of quotes so a path can hold a space. Null when there is none, or when the
+     * quote is never closed.
+     */
+    private static function pathArgument(string $args): ?string
+    {
+        $args = ltrim($args);
+
+        if ($args === '') {
+            return null;
+        }
+
+        if ($args[0] === '"' || $args[0] === "'") {
+            $closing = strpos($args, $args[0], 1);
+
+            return $closing === false ? null : substr($args, 1, $closing - 1);
+        }
+
+        return preg_split('/\s/', $args, 2)[0];
+    }
+
+    /**
+     * `/import <path.jsonl>` — upstream's `handleImportCommand()` and `importFromJsonl()`.
+     *
+     * Asked first, because the conversation on screen is replaced. The file is copied into this
+     * project's session directory — under its own name, or `name-1.jsonl`, `name-2.jsonl`… when
+     * that is taken, and not copied at all when it already lives there — and the copy is resumed,
+     * so the original is never written to. The hooks hear it as a `resume`, as upstream's do.
+     *
+     * The copy carries on in the working directory its header names, as upstream's
+     * `importFromJsonl()` does (`resume()`, `AgentSession::switchTo()`), and when that directory
+     * has gone the same "continue in current cwd" question is asked, a no being `Import cancelled`.
+     */
+    private function importSession(string $args): void
+    {
+        $input = self::pathArgument($args);
+
+        if ($input === null || $input === '') {
+            $this->sayError('Usage: /import <path.jsonl>');
+
+            return;
+        }
+
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        Async::spawn(function () use ($input): void {
+            if (!$this->ui->confirm('Import session', "Replace current session with {$input}?")) {
+                $this->say('Import cancelled');
+
+                return;
+            }
+
+            $source = JsonlExport::resolve($input, $this->cwd);
+
+            if (!is_file($source)) {
+                $this->sayError("Failed to import session: File not found: {$source}");
+
+                return;
+            }
+
+            $directory = SessionManager::directory($this->cwd);
+            $destination = $directory . '/' . basename($source);
+            $alreadyStored = (realpath($destination) ?: $destination) === (realpath($source) ?: $source);
+
+            if (!$alreadyStored) {
+                $name = pathinfo($destination, PATHINFO_FILENAME);
+                $extension = pathinfo($destination, PATHINFO_EXTENSION);
+                $suffix = 1;
+
+                while (file_exists($destination)) {
+                    $destination = "{$directory}/{$name}-" . $suffix++ . ($extension === '' ? '' : ".{$extension}");
+                }
+
+                if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
+                    $this->sayError("Failed to import session: could not create {$directory}");
+
+                    return;
+                }
+
+                if (!copy($source, $destination)) {
+                    $this->sayError("Failed to import session: could not copy it to {$destination}");
+
+                    return;
+                }
+            }
+
+            $info = SessionManager::info($destination);
+
+            if ($info === null) {
+                $this->sayError("Failed to import session: {$source} is not a session file");
+
+                return;
+            }
+
+            if ($this->resume($info, 'Import cancelled')) {
+                $this->say("Session imported from: {$input}");
+            }
+        });
+    }
+
+    /**
+     * `/share`: the session as a secret GitHub gist, and a link to view it — upstream's
+     * `shareSession()` on its gist road (see `SessionShare` for the Radius one pig has not got).
+     *
+     * `gh` has to be installed and signed in; the HTML export goes into a temporary directory,
+     * `gh gist create --public=false` uploads it, and the answer is the viewer URL
+     * (`PIG_SHARE_VIEWER_URL`, `#<gist id>`) and the gist's own. Escape stops the upload, under the
+     * same spinner `/compact` uses.
+     */
+    private function shareSession(): void
+    {
+        $store = $this->session->store();
+
+        if ($store === null) {
+            $this->sayError('This session is not being saved, so there is nothing to share.');
+
+            return;
+        }
+
+        $gh = SessionList::onPath('gh');
+
+        if ($gh === null) {
+            $this->sayError('GitHub CLI (gh) is not installed. Install it from https://cli.github.com/');
+
+            return;
+        }
+
+        Async::spawn(function () use ($store, $gh): void {
+            [$authCode] = Process::runAsync([$gh, 'auth', 'status'], 30.0);
+
+            if ($authCode !== 0) {
+                $this->sayError("GitHub CLI is not logged in. Run 'gh auth login' first.");
+
+                return;
+            }
+
+            $directory = sys_get_temp_dir() . '/pig-share-' . bin2hex(random_bytes(6));
+
+            if (!mkdir($directory, 0o700)) {
+                $this->sayError("Failed to export session: could not create {$directory}");
+
+                return;
+            }
+
+            $html = "{$directory}/session.html";
+
+            try {
+                try {
+                    HtmlExport::write($store, $html);
+                } catch (Throwable $error) {
+                    $this->sayError('Failed to export session: ' . $error->getMessage());
+
+                    return;
+                }
+
+                $controller = new AbortController();
+                $this->compaction = $controller;
+                $this->showLoader('Creating gist...');
+
+                try {
+                    [$code, $stdout, $stderr] = Process::runAsync(
+                        [$gh, 'gist', 'create', '--public=false', $html],
+                        300.0,
+                        signal: $controller->signal,
+                    );
+                } finally {
+                    $this->compaction = null;
+                    $this->hideLoader();
+                }
+
+                if ($controller->signal->aborted()) {
+                    $this->say('Share cancelled');
+
+                    return;
+                }
+
+                if ($code !== 0) {
+                    $this->sayError('Failed to create gist: ' . (trim($stderr) !== '' ? trim($stderr) : 'Unknown error'));
+
+                    return;
+                }
+
+                $gistUrl = trim($stdout);
+                $parts = explode('/', $gistUrl);
+                $gistId = end($parts);
+
+                if ($gistId === false || $gistId === '') {
+                    $this->sayError('Failed to parse gist ID from gh output');
+
+                    return;
+                }
+
+                $viewer = SessionShare::viewerUrl($gistId);
+                $this->say("Share URL: {$viewer}\nGist: {$gistUrl}");
+            } finally {
+                // Upstream's `rmSync(tempDir, { force: true })`: the file may never have been written.
+                if (is_file($html)) {
+                    unlink($html);
+                }
+
+                rmdir($directory);
+                $this->tui->requestRender();
+            }
+        });
     }
 
     private function exportPrDescription(string $customPath): void
@@ -2857,16 +3297,16 @@ final class InteractiveMode
     /**
      * The skills loaded, and which root each came from.
      *
-     * The source is shown because the same name can live in four places and the one that
-     * won is not obvious — a `~/.claude` skill shadowed by a project one looks like the
-     * project one simply not working.
+     * The source is shown because the same name can live in several places and the one that
+     * won is not obvious — a user skill shadowed by a project one looks like the user one
+     * simply not working.
      */
     private function skillList(): Closure
     {
         if ($this->skills === []) {
             return static fn (): string => 'No skills found. A skill is a folder with a SKILL.md in '
-                . '~/.pig/agent/skills, .pig/skills, ~/.claude/skills, .claude/skills, ~/.codex/skills, '
-                . '~/.pi/agent/skills or .pi/skills.';
+                . '~/.pig/agent/skills, .pig/skills, ~/.agents/skills or .agents/skills, or one the '
+                . '`skills` setting names.';
         }
 
         // `/reload` replaces the list rather than changing these, so holding the array is the snapshot.
@@ -2901,9 +3341,10 @@ final class InteractiveMode
             $shortcuts[$s['name']] = $s['description'] !== '' ? $s['description'] : 'extension shortcut';
         }
 
+        $editing = $this->editingKeys();
         $labels = [
             ...array_keys($keys),
-            ...array_keys(self::EDITING_KEYS),
+            ...array_keys($editing),
             ...array_keys($shortcuts),
             ...array_map(static fn (array $row): string => '/' . $row[0], self::COMMANDS),
         ];
@@ -2913,7 +3354,7 @@ final class InteractiveMode
         // `--list-models`' columns, and measured with `Width` for the same reason.
         $column = max(array_map(Width::visible(...), $labels)) + 2;
 
-        $tables = [$keys, self::EDITING_KEYS];
+        $tables = [$keys, $editing];
         if ($shortcuts !== []) {
             $tables[] = $shortcuts;
         }
@@ -3024,6 +3465,19 @@ final class InteractiveMode
 
         $lines = [$summary, $warming];
 
+        // Upstream's per-model cost lines under the total: what each physical model the session
+        // reached cost — a virtual model's requests under the models it routed them to. "A single
+        // entry repeats the total, unless it names a model other than the selected one."
+        $breakdown = \Pig\CodingAgent\UsageCostBreakdown::of($this->session->store()?->everyMessage() ?? $this->session->messages());
+        $selected = $this->session->model();
+        $selectedKey = $selected === null ? null : "{$selected->provider}/{$selected->id}";
+
+        if ($stats->cost > 0 && (count($breakdown) > 1 || ($breakdown[0]['key'] ?? null) !== $selectedKey)) {
+            foreach ($breakdown as $entry) {
+                $lines[] = sprintf('  %s: $%.3f (%s tokens)', $entry['key'], $entry['cost'], FooterComponent::tokens($entry['tokens']));
+            }
+        }
+
         // Upstream's "Cache Re-billed" line, under the cost: what was in the previous request's
         // prompt and billed again rather than read from the cache.
         $waste = CacheStats::waste($this->session->store()?->everyMessage() ?? $this->session->messages());
@@ -3060,21 +3514,25 @@ final class InteractiveMode
             return;
         }
 
-        // The same component `--resume` draws before the screen exists, search box and all.
-        // A plain `SelectList` was here first and it is the wrong list for this one thing: a
-        // project with thirty conversations gives eight rows of openings and the arrow keys,
-        // and what anybody remembers three days later is a phrase from the middle.
-        $picker = new SessionList($sessions, 8);
+        // The same component `--resume` draws before the screen exists, search box and all —
+        // upstream's `showSessionSelector()`: Tab for every project's sessions, sorting, the named
+        // filter, paths, delete, and rename (which the `--resume` one does not offer).
+        $picker = new SessionList($sessions, 8, static fn (): array => SessionManager::listAll(PHP_INT_MAX)[0]);
 
-        $picker->setSelectHandler(function (string $path) use ($sessions): void {
-            foreach ($sessions as $info) {
-                if ($info->path === $path) {
-                    $this->closePicker();
-                    $this->resume($info);
+        $picker->setSelectHandler(function (string $path): void {
+            $info = SessionManager::info($path);
 
-                    return;
-                }
+            if ($info === null) {
+                $this->closePicker();
+                $this->sayError("Could not read the session at {$path}");
+
+                return;
             }
+
+            $this->closePicker();
+            // In a fiber of its own: a session from another project may ask about its directory
+            // or its trust, and a dialog cannot be waited for from inside the key handler.
+            Async::spawn(fn () => $this->resume($info));
         });
 
         // Escape and ctrl+c both close it. They mean different things where the list is the
@@ -3083,14 +3541,27 @@ final class InteractiveMode
         // still behind the overlay either way.
         $picker->setCancelHandler($this->closePicker(...));
         $picker->setQuitHandler($this->closePicker(...));
+        // Upstream's `app.session.delete`: confirmed in the list, refused for the session being
+        // talked in, and the file goes to the trash when there is one.
+        $picker->setDeleteHandler(SessionList::deleteSessionFile(...), $this->session->store()?->path);
+        // Upstream's `renameSession`: `SessionManager.open(path).appendSessionInfo(name)`. The
+        // session being talked in is named through the session instead, so the footer and the
+        // next `/name` see it too and the file is not written by two managers at once.
+        $picker->setRenameHandler(function (string $path, string $name): void {
+            $current = $this->session->store()?->path;
+
+            if ($current !== null && (realpath($current) ?: $current) === (realpath($path) ?: $path)) {
+                $this->session->setSessionName($name);
+                $this->footer->invalidate();
+
+                return;
+            }
+
+            SessionManager::open($path)->setSessionName($name);
+        });
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new ThemedText(
-            static fn (): string => Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
-            1,
-            0,
-        ));
         $this->overlay->addChild($picker);
         $this->overlay->addChild(new Spacer(1));
 
@@ -3157,7 +3628,8 @@ final class InteractiveMode
             'low' => 'Light reasoning (~2k tokens)',
             'medium' => 'Moderate reasoning (~8k tokens)',
             'high' => 'Deep reasoning (~16k tokens)',
-            'xhigh' => 'Maximum reasoning (~32k tokens)',
+            'xhigh' => 'Extra-high reasoning (~32k tokens)',
+            'max' => 'Maximum reasoning',
         ];
 
         foreach ($levels as $level) {
@@ -3279,6 +3751,13 @@ final class InteractiveMode
             }
 
             $this->tui->requestRender();
+        }, function (string $value): void {
+            // Upstream's `selectThinkingLevel(level, true)`.
+            $this->overlay->clear();
+            $this->tui->setFocus($this->editor);
+            $this->useThinkingLevel($value, persistAsDefault: true);
+            $this->say("Default thinking level: {$value}");
+            $this->tui->requestRender();
         });
 
         $this->overlay->clear();
@@ -3311,7 +3790,7 @@ final class InteractiveMode
     }
 
     /**
-     * Hot-reload keybindings, extensions, skills, commands, tools, and context files.
+     * Hot-reload keybindings, extensions, skills, commands, tools, themes, and context files.
      *
      * Ported from upstream's `/reload` command in `interactive-mode.ts`.
      */
@@ -3333,28 +3812,26 @@ final class InteractiveMode
         [$contextFiles, $contextWarnings] = ContextFiles::loadWithWarnings($this->cwd);
         $this->contextFiles = $contextFiles;
 
-        // 2. Reload skills
-        [$skills, $skillWarnings] = Skills::load(
-            $this->cwd,
-            extraDirs: array_filter($this->settings->skillList('customDirectories')),
-            ignored: $this->settings->skillList('ignoredSkills'),
-            only: $this->settings->skillList('includeSkills'),
-            roots: [
-                'codex-user' => $this->settings->skillRoot('enableCodexUser'),
-                'claude-user' => $this->settings->skillRoot('enableClaudeUser'),
-                'claude-project' => $this->settings->skillRoot('enableClaudeProject'),
-                'pi-user' => $this->settings->skillRoot('enablePiUser'),
-                // The same gate `CodingAgent::session()` applies: `/reload` must not be the door
-                // an untrusted project's `.pig/` comes in by.
-                'pi-project' => $this->projectTrusted && $this->settings->skillRoot('enablePiProject'),
-                'project' => $this->projectTrusted,
-            ],
-        );
-        $this->skills = $skills;
+        // 2–3. Reload skills, prompt templates and theme files — `CodingAgent::resources()`, the same
+        // loader and the same trust gate `CodingAgent::session()` uses: `/reload` must not be the
+        // door an untrusted project's `.pig/` comes in by. Packages are resolved again without
+        // installing anything, as a reload is not the moment to clone.
+        try {
+            $packages = (new PackageManager($this->cwd, $this->settings))->resolve(static fn (): string => 'skip');
+        } catch (PackageError $error) {
+            $this->sayWarning("packages: {$error->getMessage()}");
+            $packages = null;
+        }
 
-        // 3. Reload file commands
-        $this->fileCommands = SlashCommands::load($this->cwd, projectTrusted: $this->projectTrusted);
+        $resources = CodingAgent::resources($this->cwd, $this->settings, $this->projectTrusted, $packages);
+        $skillWarnings = $resources['skillWarnings'];
+        $this->skills = $resources['skills'];
+        $this->fileCommands = $resources['fileCommands'];
         $this->session->setFileCommands($this->fileCommands);
+
+        foreach ($resources['promptWarnings'] as $problem) {
+            $this->sayWarning($problem);
+        }
 
         // Upstream's `reload()`: what the extensions being replaced put on the prompt goes with them —
         // the wrappers around the completions and the editor itself — and they add it again on
@@ -3460,6 +3937,17 @@ final class InteractiveMode
         $hooks->emit(new SessionStartEvent('reload'));
         $this->takeExtensionResources($this->session->discoverResources('reload'));
 
+        // Upstream's `this.keybindings.reload()`: the same manager reads `keybindings.json` again,
+        // so the editor and the TUI's global registry — which both hold it — answer to the new keys
+        // at once. What the file has that cannot be read is said, as it is at startup.
+        foreach ($this->keybindings->reload() as $problem) {
+            $this->sayWarning($problem);
+        }
+
+        // Upstream's `themeController.applyFromSettings()` after a reload: the theme is loaded again
+        // from its file, so an edited custom theme shows without a restart.
+        $this->themeController->applyFromSettings();
+
         // 8. Rebind autocomplete on editor, and redraw the header and what was loaded — upstream's
         // `showLoadedResources()` after a reload, which draws the problems as its warning blocks.
         $this->bindEditor();
@@ -3480,12 +3968,12 @@ final class InteractiveMode
             $this->sayWarning($w);
         }
 
-        $this->sayThemed(static fn (): string => Themes::theme()->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('accent', 'Reloaded keybindings, extensions, skills, commands, tools, themes, and context files.'));
         $this->tui->requestRender();
     }
     private static function modelSearchText(Model $model): string
     {
-        return "{$model->provider} {$model->provider}/{$model->id} {$model->provider} {$model->id} {$model->name}";
+        return ScopedModelsSelector::searchText($model);
     }
 
     private function showModels(string $pattern = ''): void
@@ -3494,6 +3982,15 @@ final class InteractiveMode
             $this->sayWarning('Still working. Press esc first.');
 
             return;
+        }
+
+        // Upstream's `modelRuntime.refresh()` on opening `/model`: `models.json` read again, so an
+        // endpoint added to it is there without a restart.
+        $custom = \Pig\CodingAgent\CustomModels::discover();
+        $custom->install($this->auth);
+
+        foreach ($custom->problems as $problem) {
+            $this->sayWarning("models.json: {$problem}");
         }
 
         if ($pattern !== '') {
@@ -3508,14 +4005,81 @@ final class InteractiveMode
         // people not to read it, and one that offers models ctrl+p cannot reach is the same thing
         // one step milder.
         $models = $this->modelsWithAKey();
-        $current = $this->session->model();
-        $items = [];
 
         if ($models === []) {
             $this->sayError('No model has a key here. /login, or set a provider key in the environment.');
 
             return;
         }
+
+        // Upstream's model selector refreshes every catalog while it is open
+        // (`ModelSelectorComponent.refreshModels()`), saying so on a line under the list: the
+        // cached models first, the refreshed ones when the refresh comes back.
+        $status = ['message' => 'Refreshing model catalogs…', 'kind' => 'muted'];
+        $picker = $this->modelPicker($models);
+        // The list sits in a slot of its own, so the refreshed one can take its place.
+        $slot = new Container();
+        $slot->addChild($picker);
+        $statusLine = new ThemedText(static function () use (&$status): string {
+            return Themes::theme()->fg($status['kind'], '  ' . $status['message']);
+        }, 1, 0);
+
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new ThemedText(fn (): string => Themes::theme()->fg('muted', 'Pick a model — enter to switch, ' . $this->keybindings->label('app.models.save') . ' to set as default, esc to cancel'), 1, 0));
+        $this->overlay->addChild($slot);
+
+        if ($this->auth !== null) {
+            $this->overlay->addChild($statusLine);
+        }
+
+        $this->overlay->addChild(new Spacer(1));
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+
+        $this->refreshModelCatalogs(
+            fn (): bool => in_array($slot, $this->overlay->children(), true),
+            function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use (&$status, &$picker, $slot, $statusLine): void {
+                if ($error !== null || $result === null) {
+                    $status = ['message' => $timedOut ? 'Model refresh timed out; showing cached models.' : 'Could not refresh model catalogs: ' . $error?->getMessage(), 'kind' => 'error'];
+                } elseif ($result->aborted && $timedOut) {
+                    $status = ['message' => 'Model refresh timed out; showing cached models.', 'kind' => 'error'];
+                } elseif (count($result->errors) === 1) {
+                    $status = ['message' => 'Could not refresh ' . array_key_first($result->errors) . '; showing cached models.', 'kind' => 'error'];
+                } elseif (count($result->errors) > 1) {
+                    $status = ['message' => 'Could not refresh ' . count($result->errors) . ' model catalogs (' . implode(', ', array_keys($result->errors)) . '); showing cached models.', 'kind' => 'error'];
+                } else {
+                    $status = ['message' => 'Model catalogs refreshed.', 'kind' => 'success'];
+                }
+
+                // Upstream's `loadModelsFromSnapshot()`: the list again, over what the refresh left,
+                // with what was typed and the model under the cursor kept.
+                $models = $this->modelsWithAKey();
+
+                if ($models !== []) {
+                    $picker = $this->modelPicker($models, $picker);
+                    $slot->clear();
+                    $slot->addChild($picker);
+                    $this->tui->setFocus($picker);
+                }
+
+                $statusLine->invalidate();
+                $this->tui->requestRender();
+            },
+        );
+    }
+
+    /**
+     * The `/model` list over `$models`; with `$previous`, the filter typed into it and the model
+     * under its cursor carried over.
+     *
+     * @param list<Model> $models
+     */
+    private function modelPicker(array $models, ?SelectList $previous = null): SelectList
+    {
+        $current = $this->session->model();
+        $items = [];
 
         foreach ($models as $index => $model) {
             $items[] = new SelectItem(
@@ -3544,17 +4108,225 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->overlay->clear();
-        $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
-        $this->overlay->addChild($picker);
-        $this->overlay->addChild(new Spacer(1));
+        if ($previous !== null) {
+            $selected = $previous->selectedItem();
+            $picker->setFilter($previous->filter());
 
-        $this->tui->setFocus($picker);
-        $this->tui->requestRender();
+            if ($selected !== null) {
+                // The same item by what it names, not by where it was: the list may have grown.
+                $label = $selected->label;
+
+                foreach ($items as $position => $item) {
+                    if ($item->label === $label) {
+                        $picker->setSelectedIndex($position);
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $picker;
     }
 
-    /** `/model sonnet:high` — resolve it and switch, or say why not. */
+    /**
+     * Upstream's `refreshModelCatalogs()` as its selectors run it: every catalog refreshed in a
+     * fiber of its own, with the 15-second budget (`ModelRefresh::TIMEOUT_MS`), and `$done` told
+     * the result, whether the budget ran out, or what was thrown — unless `$stillOpen` says the
+     * selector it was for has closed by then, in which case the refresh is called off and nobody
+     * is told (upstream's `dispose()` aborting it). Offline (`PIG_OFFLINE`) it reads the stored
+     * catalogs only.
+     *
+     * @param Closure(): bool $stillOpen
+     * @param Closure(?ModelRefreshResult, bool, ?Throwable): void $done
+     */
+    private function refreshModelCatalogs(Closure $stillOpen, Closure $done): void
+    {
+        $auth = $this->auth;
+
+        // No credentials, no catalogs to ask for: only a test builds the mode without them.
+        if ($auth === null) {
+            return;
+        }
+
+        Async::spawn(static function () use ($auth, $stillOpen, $done): void {
+            $controller = new AbortController();
+            $timedOut = false;
+            $timer = Loop::get()->delay(ModelRefresh::TIMEOUT_MS / 1000, static function () use ($controller, &$timedOut): void {
+                $timedOut = true;
+                $controller->abort('The operation was aborted due to timeout');
+            });
+            // Looked at while the refresh runs, so a selector closed part-way calls it off.
+            $watch = null;
+            $check = static function () use (&$check, &$watch, $controller, $stillOpen): void {
+                if (!$stillOpen()) {
+                    $controller->abort('Cancelled');
+
+                    return;
+                }
+
+                $watch = Loop::get()->delay(0.25, $check);
+            };
+            $watch = Loop::get()->delay(0.25, $check);
+            $result = null;
+            $error = null;
+
+            try {
+                $result = ModelRefresh::refresh($auth, signal: $controller->signal, allowNetwork: ModelRefresh::networkEnabled());
+            } catch (Throwable $thrown) {
+                $error = $thrown;
+            } finally {
+                Loop::get()->cancel($timer);
+
+                if ($watch !== null) {
+                    Loop::get()->cancel($watch);
+                }
+            }
+
+            if ($stillOpen()) {
+                $done($result, $timedOut, $error);
+            }
+        });
+    }
+
+    /**
+     * `/scoped-models`: which models Ctrl+P cycles through — upstream's `showModelsSelector()`.
+     *
+     * Over every model there is a key for, not the scope (which is what is being edited). What is
+     * enabled to begin with is the session's scope when it has one — `--models`, or an earlier
+     * visit here — and otherwise the `enabledModels` setting resolved against those models, with
+     * any pattern that matched nothing kept as an id so saving does not drop it.
+     *
+     * Every change narrows the session at once (`AgentSession::setModelScope()`); an empty scope,
+     * or one that enables every model, is no scope. `app.models.save` writes `enabledModels`, and
+     * clears it when everything is enabled — upstream's `onPersist`.
+     *
+     * While the selector is open every provider's catalog is refreshed, as upstream's
+     * `refreshModelCatalogs()` does: "Refreshing model catalogs…" above the footer, then the
+     * refreshed models (re-resolving `enabledModels` against them unless something was already
+     * changed) and the outcome in upstream's words. `models.json` is read again on opening, as
+     * `/model` does.
+     */
+    private function showScopedModels(): void
+    {
+        $custom = \Pig\CodingAgent\CustomModels::discover();
+        $custom->install($this->auth);
+
+        foreach ($custom->problems as $problem) {
+            $this->sayWarning("models.json: {$problem}");
+        }
+
+        $available = $this->auth?->availableModels() ?? Models::all();
+
+        if ($available === []) {
+            $this->sayError('No model has a key here. /login, or set a provider key in the environment.');
+
+            return;
+        }
+
+        $availableIds = array_map(ScopedModelsSelector::id(...), $available);
+        $sessionScope = $this->session->modelScope();
+        $patterns = $this->settings->enabledModels() ?? [];
+
+        // Upstream's `configuredEnabledIds()`: the setting resolved against the models there are,
+        // with a pattern that matched nothing kept as an id so saving does not drop it.
+        $configured = static function (array $available) use ($patterns): ?array {
+            if ($patterns === []) {
+                return null;
+            }
+
+            $enabled = array_map(static fn (ModelChoice $choice): string => ScopedModelsSelector::id($choice->model), ModelResolver::scope($patterns, $available)[0]);
+
+            foreach ($patterns as $pattern) {
+                if (ModelResolver::scope([$pattern], $available)[0] === [] && !in_array($pattern, $enabled, true)) {
+                    $enabled[] = $pattern;
+                }
+            }
+
+            return $enabled;
+        };
+
+        $enabled = $sessionScope !== []
+            ? array_map(static fn (ModelChoice $choice): string => ScopedModelsSelector::id($choice->model), $sessionScope)
+            : $configured($available);
+        $selectionChanged = false;
+
+        $apply = function (?array $ids) use (&$available, &$availableIds): void {
+            $anyAvailable = $ids !== null && array_intersect($ids, $availableIds) !== [];
+            $allEnabled = $ids !== null && array_diff($availableIds, $ids) === [];
+
+            $this->session->setModelScope($ids !== null && $anyAvailable && !$allEnabled
+                ? ModelResolver::scope($ids, $available)[0]
+                : []);
+            $this->footer->invalidate();
+            $this->tui->requestRender();
+        };
+
+        $selector = new ScopedModelsSelector(
+            $available,
+            $enabled,
+            function (?array $ids) use ($apply, &$enabled, &$selectionChanged): void {
+                $selectionChanged = true;
+                $enabled = $ids;
+                $apply($ids);
+            },
+            function (?array $ids) use (&$availableIds): void {
+                $allEnabled = $ids !== null && count($ids) === count($availableIds) && array_diff($ids, $availableIds) === [];
+                $this->settings->setEnabledModels($ids === null || $allEnabled ? null : $ids);
+                $this->say('Model selection saved to settings');
+            },
+            $this->closePicker(...),
+            refreshStatus: $this->auth === null ? null : 'Refreshing model catalogs…',
+        );
+
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild($selector);
+        $this->overlay->addChild(new Spacer(1));
+
+        $this->tui->setFocus($selector);
+        $this->tui->requestRender();
+
+        $this->refreshModelCatalogs(
+            fn (): bool => in_array($selector, $this->overlay->children(), true),
+            function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use ($selector, $configured, $apply, $sessionScope, &$available, &$availableIds, &$enabled, &$selectionChanged): void {
+                $available = $this->auth?->availableModels() ?? Models::all();
+                $availableIds = array_map(ScopedModelsSelector::id(...), $available);
+
+                if (!$selectionChanged && $sessionScope === []) {
+                    $enabled = $configured($available);
+                    $selector->updateModels($available, replaceEnabled: true, enabledIds: $enabled);
+                } else {
+                    $selector->updateModels($available);
+                }
+
+                if ($enabled !== null) {
+                    $apply($enabled);
+                }
+
+                if ($error !== null || $result === null) {
+                    $selector->setRefreshStatus($timedOut ? 'Model refresh timed out; showing cached models.' : 'Could not refresh model catalogs: ' . $error?->getMessage(), 'warning');
+                } elseif ($result->aborted && $timedOut) {
+                    $selector->setRefreshStatus('Model refresh timed out; showing cached models.', 'warning');
+                } elseif ($result->errors !== []) {
+                    $selector->setRefreshStatus('Could not refresh ' . implode(', ', array_keys($result->errors)) . '; showing cached models.', 'warning');
+                } else {
+                    $selector->setRefreshStatus('Model catalogs refreshed.', 'success');
+                }
+
+                $this->tui->requestRender();
+            },
+        );
+    }
+
+    /**
+     * `/model sonnet:high` — resolve it and switch, or say why not.
+     *
+     * Upstream's `findExactModelMatch()`: the cached models first; only when nothing there matches
+     * and no scope narrows the list are the catalogs refreshed — "Refreshing model catalogs…",
+     * a warning when that fails ("…; searching cached models."), and the pattern resolved again
+     * over what the refresh left.
+     */
     private function pickModel(string $pattern): void
     {
         // Over the models there is a key for, as upstream's model selector resolves: `/model
@@ -3562,6 +4334,30 @@ final class InteractiveMode
         // one and fail on the next turn. And over the scope when `--models` set one.
         $choice = ModelResolver::parse($pattern, $this->modelsWithAKey());
 
+        if ($choice !== null || $this->session->modelScope() !== [] || $this->auth === null) {
+            $this->chooseModel($pattern, $choice);
+
+            return;
+        }
+
+        $this->say('Refreshing model catalogs…');
+        $this->refreshModelCatalogs(static fn (): bool => true, function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use ($pattern): void {
+            if ($error !== null || $result === null) {
+                $this->sayWarning($timedOut ? 'Model refresh timed out; searching cached models.' : 'Could not refresh model catalogs: ' . $error?->getMessage());
+            } elseif ($result->aborted && $timedOut) {
+                $this->sayWarning('Model refresh timed out; searching cached models.');
+            } elseif ($result->errors !== []) {
+                $this->sayWarning('Could not refresh ' . implode(', ', array_keys($result->errors)) . '; searching cached models.');
+            }
+
+            $this->chooseModel($pattern, ModelResolver::parse($pattern, $this->modelsWithAKey()));
+            $this->tui->requestRender();
+        });
+    }
+
+    /** What `pickModel()` found, switched to — or why not. */
+    private function chooseModel(string $pattern, ?ModelChoice $choice): void
+    {
         if ($choice === null) {
             $this->sayError("No model matches \"{$pattern}\". Try /model on its own for the list.");
 
@@ -3658,6 +4454,22 @@ final class InteractiveMode
             Async::spawn(fn () => $this->goBackTo($id));
         });
         $picker->setCancelHandler($this->closePicker(...));
+        // Upstream's `selector.onCopy`: `app.message.copy` copies the selected entry, not the last answer.
+        $picker->setCopyHandler(function (?string $text): void {
+            if ($text === null) {
+                $this->sayError('Selected entry has no text to copy');
+
+                return;
+            }
+
+            if (!$this->clipboard->write($text)) {
+                $this->sayError('Could not copy. On Linux this needs wl-copy, xclip or xsel.');
+
+                return;
+            }
+
+            $this->say('Copied selected message to clipboard');
+        });
         $picker->setLabelHandler(function (string $id, ?string $current): void {
             // Named from inside the tree, which is where anybody realises a point is worth a name.
             // The overlay closes first: the name is asked for with the editor, and two things
@@ -3681,7 +4493,12 @@ final class InteractiveMode
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new ThemedText(
-            static fn (): string => Themes::theme()->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
+            fn (): string => Themes::theme()->fg('muted', sprintf(
+                'Go back to — enter to pick, %s to filter, %s to name, %s to fold, type to search, esc to cancel',
+                $this->keybindings->label('app.tree.filter.cycleForward'),
+                $this->keybindings->label('app.tree.editLabel'),
+                $this->keybindings->label('app.tree.foldOrUp'),
+            )),
             1,
             0,
         ));
@@ -4074,6 +4891,14 @@ final class InteractiveMode
             $jump = $wants ? $this->summarisedJump($entryId) : $this->session->goTo($entryId);
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        // Upstream's `if (result.cancelled) showStatus("Navigation cancelled")`, for a
+        // `session_before_tree` hook that said no — after the aborted summary, which is cancelled too.
+        if ($jump->cancelled && !$jump->aborted) {
+            $this->say('Navigation cancelled');
 
             return;
         }
@@ -4745,28 +5570,62 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
-    /** Replace this conversation with a saved one, and redraw it. */
-    private function resume(SessionInfo $info): void
+    /**
+     * Replace this conversation with a saved one, and redraw it.
+     *
+     * @param string $cancelled what is said when the missing-directory question is answered no —
+     *        upstream's `Resume cancelled`, or `/import`'s `Import cancelled`
+     * @return bool whether it switched; false when it failed or a hook stopped it, both already said
+     */
+    private function resume(SessionInfo $info, string $cancelled = 'Resume cancelled'): bool
     {
         $was = $this->session->model()?->id;
+        $inCurrentCwd = false;
 
         // Asking the hooks, opening the file and restoring the model are `switchTo()`'s, so
-        // that a host switching session over RPC gets the same three and not two of them.
+        // that a host switching session over RPC gets the same three and not two of them. A
+        // session from another project carries on in its own directory, in a runtime built for
+        // it (`relocate`); one whose directory has gone is asked about first — upstream's
+        // `handleResumeSession()` and `promptForMissingSessionCwd()`.
         try {
-            $switch = $this->session->switchTo($info->path);
+            try {
+                $switch = $this->session->switchTo($info->path, relocate: $this->relocator());
+            } catch (MissingSessionCwdError $missing) {
+                if (!$this->ui->confirm('Session cwd not found', SessionCwd::prompt($missing->issue))) {
+                    $this->say($cancelled);
+
+                    return false;
+                }
+
+                $switch = $this->session->switchTo($info->path, $missing->issue->fallbackCwd, $this->relocator());
+                $inCurrentCwd = true;
+            }
         } catch (Throwable $error) {
+            // The old session is gone once the factory has been called: upstream's
+            // `handleFatalRuntimeError("Failed to resume session", …)`.
+            if ($this->replacingRuntime) {
+                $this->replacingRuntime = false;
+                $this->fatal('Failed to resume session', $error);
+
+                return false;
+            }
+
             $this->sayError($error->getMessage());
 
-            return;
+            return false;
         }
 
         if (!$switch->switched) {
             $this->say('A hook stopped that.');
 
-            return;
+            return false;
         }
 
         $previous = $switch->previous;
+
+        if ($switch->replacement !== null) {
+            $this->rebind($switch->replacement, $previous);
+        }
 
         $this->chat->clear();
         $this->pending->clear();
@@ -4775,7 +5634,7 @@ final class InteractiveMode
 
         // Said after the transcript, so it is the last thing on screen rather than the
         // first thing buried above a conversation.
-        $this->say('Resumed ' . $switch->messages . ' messages from ' . $info->when());
+        $this->say('Resumed ' . $switch->messages . ' messages from ' . $info->when() . ($inCurrentCwd ? ' in current cwd' : ''));
 
         $now = $this->session->model()?->id;
 
@@ -4785,7 +5644,125 @@ final class InteractiveMode
             $this->sayThemed(static fn (): string => Themes::theme()->fg('muted', "This conversation was on {$now} — switched back to it."));
         }
 
-        $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
+        if ($switch->replacement === null) {
+            $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
+        } else {
+            $this->startRebound($switch->replacement, $previous);
+        }
+
+        return true;
+    }
+
+    /**
+     * `switchTo()`'s `$relocate` for this screen: `bin/pig`'s runtime factory, asking about the new
+     * directory's trust here rather than on a terminal of its own — upstream's
+     * `createProjectTrustContext(cwd)` for the interactive runtime. Null when there is no factory.
+     *
+     * @return (Closure(string, SessionManager): \Pig\CodingAgent\StartedSession)|null
+     */
+    private function relocator(): ?Closure
+    {
+        $createRuntime = $this->createRuntime;
+
+        if ($createRuntime === null) {
+            return null;
+        }
+
+        return function (string $cwd, SessionManager $opened) use ($createRuntime): \Pig\CodingAgent\StartedSession {
+            $askTrust = function (array $choices) use ($cwd): ?\Pig\CodingAgent\TrustChoice {
+                $labels = array_map(static fn (\Pig\CodingAgent\TrustChoice $choice): string => $choice->label, $choices);
+                $answer = $this->ui->select(ProjectTrust::prompt($cwd), $labels);
+
+                foreach ($choices as $choice) {
+                    if ($choice->label === $answer) {
+                        return $choice;
+                    }
+                }
+
+                return null;
+            };
+
+            $this->replacingRuntime = true;
+            $started = $createRuntime($cwd, $opened, $askTrust);
+            $this->replacingRuntime = false;
+
+            return $started;
+        };
+    }
+
+    /**
+     * Upstream's `handleFatalRuntimeError()`: the error on screen, and the program ends with exit
+     * code 1 — for a runtime that could not be built after the old one was already let go of. The
+     * old session's hooks heard `session_shutdown` from `switchTo()` already, so `stop()` does not
+     * tell them again.
+     */
+    private function fatal(string $prefix, Throwable $error): void
+    {
+        $this->sayError("{$prefix}: {$error->getMessage()}");
+        $this->tui->requestRender();
+        $this->exitCode = 1;
+        $this->hooks = null;
+        Loop::get()->defer(fn () => $this->stop());
+    }
+
+    /** What the program exits with once the loop has ended: 0, or 1 after a fatal error. */
+    public function exitCode(): int
+    {
+        return $this->exitCode;
+    }
+
+    /**
+     * Carry on with the session a runtime factory built for another working directory — upstream's
+     * `rebindSession()` after `runtimeHost.switchSession()`. The old session is shut down and
+     * disposed already; what this screen kept of it (its directory, settings, trust, hooks, tools,
+     * context files, skills, prompt templates and what the old extensions put on the prompt) is
+     * replaced, the new one wired to the screen, and its hooks told `session_start` (`resume`, with
+     * the file left) as upstream's `bindExtensions()` tells them — in `startRebound()`, after the
+     * caller has drawn the conversation.
+     */
+    private function rebind(\Pig\CodingAgent\StartedSession $started, ?string $previous): void
+    {
+        $this->sayToolProblems($this->customTools?->notify('shutdown') ?? []);
+
+        $this->session = $started->session;
+        $this->cwd = $started->session->cwd();
+        $this->settings = $started->session->settings() ?? $this->settings;
+        $this->projectTrusted = $started->session->isProjectTrusted();
+        $this->hooks = $started->hooks;
+        $this->customTools = $started->customTools;
+        $this->extensions = $started->extensions;
+        $this->contextFiles = $started->contextFiles;
+        $this->skills = $started->skills;
+        $this->fileCommands = $started->fileCommands;
+        $this->footer->rebind($this->session, $this->cwd, $this->settings);
+
+        // As `/reload` does: what the extensions being replaced put on the prompt goes with them.
+        $this->autocompleteWrappers = [];
+        $this->setCustomEditorComponent(null);
+
+        $this->wireSession();
+        $this->listenToSession();
+        $this->bindEditor();
+    }
+
+    /**
+     * The second half of `rebind()`, once the conversation is on screen: what the new runtime had
+     * to say, and its hooks' `session_start`.
+     */
+    private function startRebound(\Pig\CodingAgent\StartedSession $started, ?string $previous): void
+    {
+        foreach ($started->warnings as $warning) {
+            $this->sayWarning($warning);
+        }
+
+        if (!$this->projectTrusted && ProjectTrust::hasResources($this->cwd)) {
+            $this->sayWarning(ProjectTrust::warning());
+        }
+
+        $this->hooks->emit(new SessionStartEvent('resume', $previous));
+        $this->takeExtensionResources($this->session->discoverResources('startup'));
+        $this->sayToolProblems($this->customTools->notify('switch', $previous));
+        $this->paintBorder();
     }
 
     /**
@@ -5173,7 +6150,7 @@ final class InteractiveMode
                 $this->settings->allModelThinkingLevels(),
                 ($model = $this->session->model()) !== null ? "{$model->provider}/{$model->id}" : null,
                 ($id = $this->settings->defaultModel()) !== null ? ($this->settings->defaultProvider() ?? '') . "/{$id}" : null,
-                $this->settings->defaultThinkingLevel() ?? ThinkingLevel::Off,
+                $this->settings->defaultThinkingLevel() ?? CodingAgent::DEFAULT_THINKING_LEVEL,
                 self::THINKING_DESCRIPTIONS,
                 function (Model $model, ?ThinkingLevel $level): void {
                     $level === null
@@ -5330,7 +6307,7 @@ final class InteractiveMode
      * @param list<ThinkingLevel>     $levels
      * @param Closure(?string): void  $done   the chosen level, or null for escape
      */
-    private function thinkingSubmenu(array $levels, string $current, Closure $done): Component
+    private function thinkingSubmenu(array $levels, string $current, Closure $done, ?Closure $saveDefault = null): Component
     {
         $descriptions = [
             'off' => 'No reasoning',
@@ -5338,7 +6315,8 @@ final class InteractiveMode
             'low' => 'Light reasoning (~2k tokens)',
             'medium' => 'Moderate reasoning (~8k tokens)',
             'high' => 'Deep reasoning (~16k tokens)',
-            'xhigh' => 'Maximum reasoning (~32k tokens)',
+            'xhigh' => 'Extra-high reasoning (~32k tokens)',
+            'max' => 'Maximum reasoning',
         ];
 
         $items = [];
@@ -5361,10 +6339,19 @@ final class InteractiveMode
             $done(null);
         });
 
+        // Upstream's thinking selector: `app.thinking.save` (ctrl+s) sets the level as the default.
+        if ($saveDefault !== null) {
+            $list->setSaveDefaultHandler(static function (SelectItem $item) use ($saveDefault): void {
+                $saveDefault($item->value);
+            }, 'app.thinking.save');
+        }
+
         return new SettingsSubmenu(
             $list,
             Themes::theme()->fg('accent', 'Thinking'),
-            Themes::theme()->fg('muted', '  Enter to select · Esc to go back'),
+            Themes::theme()->fg('muted', $saveDefault === null
+                ? '  Enter to select · Esc to go back'
+                : '  Enter to select · ' . $this->keybindings->display('app.thinking.save') . ' to set as default · Esc to go back'),
         );
     }
 
@@ -5375,7 +6362,8 @@ final class InteractiveMode
         'low' => 'Light reasoning (~2k tokens)',
         'medium' => 'Moderate reasoning (~8k tokens)',
         'high' => 'Deep reasoning (~16k tokens)',
-        'xhigh' => 'Maximum reasoning (~32k tokens)',
+        'xhigh' => 'Extra-high reasoning (~32k tokens)',
+        'max' => 'Maximum reasoning',
     ];
 
     /**
@@ -5602,8 +6590,10 @@ final class InteractiveMode
             $event instanceof CacheWarmedEvent => $this->addCacheWarmingUsage($event->entry),
             $event instanceof RetryStartEvent => $this->onRetryStart($event),
             $event instanceof RetryEndEvent => $this->onRetryEnd($event),
-            $event instanceof AutoCompactionStartEvent => $this->onOverflow(),
-            $event instanceof AutoCompactionEndEvent => $this->onOverflowHandled($event),
+            // Every compaction is announced; `/compact` draws its own loader in `compact()`, so only
+            // the session's automatic ones — the threshold and overflow — are drawn from here.
+            $event instanceof CompactionStartEvent && $event->reason !== 'manual' => $this->onAutoCompaction($event->reason),
+            $event instanceof CompactionEndEvent && $event->reason !== 'manual' => $this->onAutoCompactionHandled($event),
             $event instanceof SummarizationRetryEvent => $this->onSummarizationRetry($event),
 
             default => null,
@@ -6076,7 +7066,8 @@ final class InteractiveMode
         }
     }
 
-    private function onOverflow(): void
+    /** @param 'threshold'|'overflow' $reason */
+    private function onAutoCompaction(string $reason): void
     {
         $this->terminalProgress(true);
         // Enter does nothing for the length of it, which is upstream's one use of this flag and
@@ -6087,7 +7078,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader($this->compactionLabel('overflow'), timer: true);
+        $this->showLoader($this->compactionLabel($reason), timer: true);
     }
 
     /**
@@ -6112,7 +7103,7 @@ final class InteractiveMode
         return 'Summarizing branch... (' . $this->keybindings->keyText('app.interrupt') . ' to cancel)';
     }
 
-    private function onOverflowHandled(AutoCompactionEndEvent $event): void
+    private function onAutoCompactionHandled(CompactionEndEvent $event): void
     {
         $this->terminalProgress(false);
         $this->editor->disableSubmit(false);
@@ -6125,7 +7116,13 @@ final class InteractiveMode
             return;
         }
 
-        $this->sayError($event->error ?? 'Could not summarise, so the turn could not be sent again.');
+        if ($event->aborted) {
+            $this->say('Auto-compaction cancelled');
+
+            return;
+        }
+
+        $this->sayError($event->errorMessage ?? 'Could not summarise, so the turn could not be sent again.');
     }
 
     /**

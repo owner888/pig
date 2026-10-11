@@ -25,7 +25,24 @@ final readonly class SessionInfo
          * Not for showing. It is the whole transcript on one line with the formatting gone.
          */
         public string $text,
+        /**
+         * The name `/name` (or the picker's rename) gave it, or null — upstream's `SessionInfo.name`.
+         * `$opening` already shows it in place of the first line; this is for telling a named
+         * session from an unnamed one, which the picker's `app.session.toggleNamedFilter` and its
+         * colouring need.
+         */
+        public ?string $name = null,
+        /** The file this one was forked from — the header's `parentSession`; upstream's `parentSessionPath`. */
+        public ?string $parentSessionPath = null,
+        /** When the file was last written to, in milliseconds — upstream's `modified`, which the threaded sort orders by. */
+        public int $modified = 0,
     ) {
+    }
+
+    /** The same session under another name, for a list that has just renamed it. */
+    public function withName(string $name): self
+    {
+        return new self($this->path, $this->id, $this->cwd, $this->timestamp, $this->messages, $name, $this->text, $name, $this->parentSessionPath, $this->modified);
     }
 
     /** How long ago it was, in the words someone would use out loud. */

@@ -16,8 +16,11 @@ use Pig\Agent\AgentTool;
  */
 final class ToolSet
 {
-    /** Everything there is, in the order a prompt lists them. */
-    public const array ALL = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
+    /**
+     * Everything there is, in the order a prompt lists them — upstream's `allToolNames`, `powershell`
+     * among them though no default names it and it runs only on native Windows.
+     */
+    public const array ALL = ['read', 'bash', 'powershell', 'edit', 'write', 'grep', 'find', 'ls'];
 
     /** The default: enough to do work. */
     public const array CODING = ['read', 'bash', 'edit', 'write'];
@@ -29,6 +32,7 @@ final class ToolSet
     private const array DESCRIPTIONS = [
         'read' => 'Read a file, or look at an image',
         'bash' => 'Run a bash command',
+        'powershell' => 'Run a PowerShell command',
         'edit' => 'Change part of a file by replacing exact text',
         'write' => 'Create a file, or replace one outright',
         'grep' => 'Search file contents for a pattern (respects .gitignore)',
@@ -41,10 +45,11 @@ final class ToolSet
      *
      * $options is upstream's `createAllToolDefinitions()` options, by tool: `read` takes
      * `autoResizeImages` and `resizeOptions` (a closure asked per read, since the model can change),
-     * `bash` takes `commandPrefix`.
+     * `bash` takes `commandPrefix`, and both shells take `sessionEnvironment` — the closure that
+     * answers the session their `PIG_*` variables describe, asked as each command starts.
      *
      * @param list<string> $names
-     * @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string}} $options
+     * @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string, sessionEnvironment?: \Closure(): ?SessionEnvironment}, powershell?: array{sessionEnvironment?: \Closure(): ?SessionEnvironment}} $options
      * @return list<AgentTool>
      */
     public static function create(string $cwd, array $names = self::CODING, array $options = []): array
@@ -52,12 +57,17 @@ final class ToolSet
         return array_map(static fn (string $name): AgentTool => self::one($cwd, $name, $options), array_values($names));
     }
 
-    /** @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string}} $options */
+    /** @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string, sessionEnvironment?: \Closure(): ?SessionEnvironment}, powershell?: array{sessionEnvironment?: \Closure(): ?SessionEnvironment}} $options */
     public static function one(string $cwd, string $name, array $options = []): AgentTool
     {
         return match ($name) {
             'read' => new ReadTool($cwd, $options['read']['autoResizeImages'] ?? true, $options['read']['resizeOptions'] ?? null),
-            'bash' => new BashTool($cwd, $options['bash']['commandPrefix'] ?? null),
+            'bash' => new BashTool(
+                $cwd,
+                $options['bash']['commandPrefix'] ?? null,
+                sessionEnvironment: $options['bash']['sessionEnvironment'] ?? null,
+            ),
+            'powershell' => new PowerShellTool($cwd, sessionEnvironment: $options['powershell']['sessionEnvironment'] ?? null),
             'edit' => new EditTool($cwd),
             'write' => new WriteTool($cwd),
             'grep' => new GrepTool($cwd),

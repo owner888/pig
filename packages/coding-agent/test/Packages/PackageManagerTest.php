@@ -31,12 +31,12 @@ final class PackageManagerTest extends TestCase
         $this->cwd = "{$this->root}/project";
         mkdir($this->home, 0o700, true);
         mkdir("{$this->cwd}/.pig", 0o700, true);
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('GIT_CONFIG_COUNT');
         putenv('GIT_CONFIG_KEY_0');
         putenv('GIT_CONFIG_VALUE_0');

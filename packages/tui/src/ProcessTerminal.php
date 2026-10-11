@@ -54,6 +54,20 @@ final class ProcessTerminal implements Terminal
     /** Latest program status, kept across stop() so start() can report it again. */
     private ?ProgramStatus $programStatus = null;
 
+    /** Upstream's `DEFAULT_ESCAPE_TIMEOUT_MS` and `DEFAULT_SSH_ESCAPE_TIMEOUT_MS`. */
+    private const int DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+
+    private const int DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+
+    /** The timer of a lone ESC held back to see whether the rest of an Alt+key follows it. */
+    private ?string $escapeTimer = null;
+
+    /**
+     * Upstream's `writeLogPath`: where `PIG_TUI_WRITE_LOG` says every byte written goes, resolved
+     * once — a directory becomes a `tui-<timestamp>-<pid>.log` file inside it.
+     */
+    private string $writeLogPath = '';
+
     /** Upstream's `progressInterval`: the OSC 9;4;3 keepalive, re-sent every second while active. */
     private ?string $progressTimer = null;
 
@@ -78,6 +92,49 @@ final class ProcessTerminal implements Terminal
     {
         $this->input = $input ?? STDIN;
         $this->output = $output ?? STDOUT;
+        $this->writeLogPath = self::resolveWriteLogPath();
+    }
+
+    /**
+     * Upstream's `resolveEscapeTimeoutMs()` in `terminal.ts`: how long a lone ESC waits for the rest
+     * of an escape sequence before it is the Escape key. Legacy Alt+key input is ESC plus another
+     * byte, and over SSH the two can arrive in separate reads — so a positive `PIG_TUI_ESC_TIMEOUT`
+     * (milliseconds) first, then 100ms when `SSH_CONNECTION` or `SSH_TTY` is set, else 10ms.
+     *
+     * @param array<string, string>|null $env the environment to read; null for the process's
+     */
+    public static function resolveEscapeTimeoutMs(?array $env = null): float
+    {
+        $read = static fn (string $name): string => $env === null ? (string) getenv($name) : ($env[$name] ?? '');
+
+        $configured = $read('PIG_TUI_ESC_TIMEOUT');
+
+        // `Number(…)`: a numeric string, finite and above zero; anything else is not a setting.
+        if (is_numeric(trim($configured)) && is_finite((float) $configured) && (float) $configured > 0) {
+            return (float) $configured;
+        }
+
+        if ($read('SSH_CONNECTION') !== '' || $read('SSH_TTY') !== '') {
+            return self::DEFAULT_SSH_ESCAPE_TIMEOUT_MS;
+        }
+
+        return self::DEFAULT_ESCAPE_TIMEOUT_MS;
+    }
+
+    /**
+     * The `writeLogPath` initialiser upstream's `ProcessTerminal` has: `PIG_TUI_WRITE_LOG` unset is no
+     * log; an existing directory gets a file per run named for the local time and the process; any
+     * other value is the file, appended to.
+     */
+    private static function resolveWriteLogPath(): string
+    {
+        $configured = (string) getenv('PIG_TUI_WRITE_LOG');
+
+        if ($configured === '' || !is_dir($configured)) {
+            return $configured;
+        }
+
+        return rtrim($configured, '/') . '/tui-' . date('Y-m-d_H-i-s') . '-' . getmypid() . '.log';
     }
 
     #[\Override]
@@ -99,12 +156,10 @@ final class ProcessTerminal implements Terminal
         $this->write("\x1b[>1u");
 
         // The OSC 7501 program status query, with DA1 as its sentinel: a terminal that supports
-        // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` (or
-        // `PI_PROGRAM_STATUS=1`) or `0` skips the query. Upstream sends it inside its kitty
+        // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` or `0`
+        // (upstream's `PI_PROGRAM_STATUS`) skips the query. Upstream sends it inside its kitty
         // keyboard query, which pig does not make; the sentinel is the part that matters.
-        $override = Env::isSet('PIG_PROGRAM_STATUS')
-            ? getenv('PIG_PROGRAM_STATUS')
-            : (Env::isSet('PI_PROGRAM_STATUS') ? getenv('PI_PROGRAM_STATUS') : false);
+        $override = getenv('PIG_PROGRAM_STATUS');
         $this->programStatusSupported = $override === '1';
         $this->programStatusQueryPending = $override !== '1' && $override !== '0';
 
@@ -128,12 +183,42 @@ final class ProcessTerminal implements Terminal
 
             $data = $this->takeProgramStatusReplies($data);
 
-            if ($data === '') {
+            $data = $this->holdLoneEscape($data, $onInput);
+
+            if ($data === null || $data === '') {
                 return;
             }
 
             $onInput(self::normalizeNativeInput($data));
         });
+    }
+
+    /**
+     * Upstream's `StdinBuffer` escape window, the one part of it this terminal needs: a read that is
+     * a lone ESC is held for `resolveEscapeTimeoutMs()`, so an Alt+key whose two bytes arrive in two
+     * reads — SSH does that — is still one key. A read that follows inside the window takes the ESC
+     * back in front of it; none, and the ESC goes on its own as the Escape key. Null while held.
+     *
+     * @param Closure(string): void $onInput
+     */
+    private function holdLoneEscape(string $data, Closure $onInput): ?string
+    {
+        if ($this->escapeTimer !== null) {
+            Loop::get()->cancel($this->escapeTimer);
+            $this->escapeTimer = null;
+            $data = "\x1b" . $data;
+        }
+
+        if ($data !== "\x1b") {
+            return $data;
+        }
+
+        $this->escapeTimer = Loop::get()->delay(self::resolveEscapeTimeoutMs() / 1000, function () use ($onInput): void {
+            $this->escapeTimer = null;
+            $onInput("\x1b");
+        });
+
+        return null;
     }
 
     /**
@@ -258,6 +343,11 @@ final class ProcessTerminal implements Terminal
             $this->inputWatcher = null;
         }
 
+        if ($this->escapeTimer !== null) {
+            Loop::get()->cancel($this->escapeTimer);
+            $this->escapeTimer = null;
+        }
+
         if (function_exists('pcntl_signal')) {
             pcntl_signal(SIGWINCH, SIG_DFL);
         }
@@ -285,13 +375,13 @@ final class ProcessTerminal implements Terminal
     #[\Override]
     public function write(string $data): void
     {
-        // `PIG_TUI_TRACE=<file>`: every byte that goes to the terminal, appended, for reading a
-        // frame back through a VT emulator when what is on screen and what the renderer meant
-        // disagree. Upstream's `PI_TUI_DEBUG=1` is the same idea with a fixed directory.
-        $trace = getenv('PIG_TUI_TRACE');
-
-        if (is_string($trace) && $trace !== '') {
-            file_put_contents($trace, $data, FILE_APPEND);
+        // `PIG_TUI_WRITE_LOG` — upstream's `PI_TUI_WRITE_LOG`: every byte that goes to the terminal,
+        // appended, for reading a frame back through a VT emulator when what is on screen and what
+        // the renderer meant disagree. Upstream ignores a failed append; here it is the warning
+        // `file_put_contents()` gives, since a log that silently is not being written is the one
+        // thing a person debugging with it cannot afford.
+        if ($this->writeLogPath !== '') {
+            file_put_contents($this->writeLogPath, $data, FILE_APPEND);
         }
 
         $length = strlen($data);

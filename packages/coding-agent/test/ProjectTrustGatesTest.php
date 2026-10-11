@@ -13,7 +13,7 @@ use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Settings;
 
 /**
- * One rule, five loaders: an untrusted project's `.pig/` is not read, and the person's own
+ * One rule, every loader: an untrusted project's `.pig/` is not read, and the person's own
  * `~/.pig/agent/` always is. One case per loader, because a gate on four of five is the shape
  * CLAUDE.md's traps keep finding, and a single assertion over all five cannot say which is open.
  */
@@ -31,11 +31,17 @@ final class ProjectTrustGatesTest extends TestCase
         $this->cwd = $this->root . '/project';
         mkdir($this->home, 0o700, true);
         mkdir($this->cwd . '/.pig', 0o755, true);
+        // `~/.agents/skills` is the person's and always read, so the real one is out of the way.
+        $this->realHome = getenv('HOME');
+        putenv('HOME=' . $this->root . '/user');
     }
+
+    private string|false $realHome = false;
 
     #[\Override]
     protected function tearDown(): void
     {
+        putenv($this->realHome === false ? 'HOME' : 'HOME=' . $this->realHome);
         exec('rm -rf ' . escapeshellarg($this->root));
     }
 
@@ -140,14 +146,23 @@ final class ProjectTrustGatesTest extends TestCase
         $this->assertSame(['mine'], array_map(static fn ($ext) => $ext->name, $untrusted));
     }
 
-    public function testProjectCommandsAreLeftOut(): void
+    public function testProjectPromptTemplatesAreLeftOut(): void
     {
-        $this->put('home/commands/mine.md', "mine\n");
-        $this->put('project/.pig/commands/theirs.md', "theirs\n");
+        $this->put('home/prompts/mine.md', "mine\n");
+        $this->put('project/.pig/prompts/theirs.md', "theirs\n");
 
-        $names = static fn (array $commands): array => array_map(static fn ($c) => $c->name, $commands);
-        $this->assertSame(['mine', 'theirs'], $names(SlashCommands::load($this->cwd, $this->home)));
-        $this->assertSame(['mine'], $names(SlashCommands::load($this->cwd, $this->home, projectTrusted: false)));
+        $names = fn (bool $trusted): array => array_map(
+            static fn ($c) => $c->name,
+            SlashCommands::fromResources($this->resolve($trusted)->prompts)[0],
+        );
+        $this->assertSame(['theirs', 'mine'], $names(true));
+        $this->assertSame(['mine'], $names(false));
+    }
+
+    /** What a session resolves, with the project trusted or not. */
+    private function resolve(bool $trusted): \Pig\CodingAgent\Packages\ResolvedPaths
+    {
+        return (new \Pig\CodingAgent\Packages\PackageManager($this->cwd, Settings::load($this->cwd, $this->home, $trusted), $this->home))->resolveLocalResources();
     }
 
     public function testTheProjectsSettingsFileIsNotEvenRead(): void
@@ -164,19 +179,29 @@ final class ProjectTrustGatesTest extends TestCase
         $this->assertSame('dark', $untrusted->theme());
     }
 
-    public function testProjectSkillsGoThroughTheRootSwitchAndNothingElseDoes(): void
+    public function testProjectSkillsAndAgentsSkillsAreLeftOut(): void
     {
         $skill = "---\nname: NAME\ndescription: d\n---\n\nDo it.\n";
         $this->put('home/skills/mine/SKILL.md', str_replace('NAME', 'mine', $skill));
         $this->put('project/.pig/skills/theirs/SKILL.md', str_replace('NAME', 'theirs', $skill));
+        $this->put('project/.agents/skills/theirs-too/SKILL.md', str_replace('NAME', 'theirs-too', $skill));
 
-        $names = static fn (array $skills): array => array_map(static fn ($s) => $s->name, $skills);
+        $names = fn (bool $trusted): array => array_map(static fn ($s) => $s->name, Skills::fromResources($this->resolve($trusted)->skills)[0]);
 
-        [$all] = Skills::load($this->cwd, home: $this->home);
-        [$gated] = Skills::load($this->cwd, home: $this->home, roots: ['project' => false]);
+        $this->assertEqualsCanonicalizing(['mine', 'theirs', 'theirs-too'], $names(true));
+        $this->assertSame(['mine'], $names(false));
+    }
 
-        $this->assertContains('theirs', $names($all));
-        $this->assertNotContains('theirs', $names($gated));
-        $this->assertContains('mine', $names($gated));
+    public function testProjectSystemPromptFilesAreLeftOut(): void
+    {
+        $this->put('home/SYSTEM.md', 'mine');
+        $this->put('project/.pig/SYSTEM.md', 'theirs');
+        $this->put('project/.pig/APPEND_SYSTEM.md', 'theirs too');
+
+        $trusted = \Pig\CodingAgent\Prompt\SystemPromptFiles::load($this->cwd, $this->home, true);
+        $untrusted = \Pig\CodingAgent\Prompt\SystemPromptFiles::load($this->cwd, $this->home, false);
+
+        $this->assertSame(['theirs', 'theirs too'], [$trusted->custom(), $trusted->appended()]);
+        $this->assertSame(['mine', null], [$untrusted->custom(), $untrusted->appended()]);
     }
 }

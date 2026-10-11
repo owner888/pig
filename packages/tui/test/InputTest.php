@@ -16,7 +16,56 @@ final class InputTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        \Pig\Tui\Keybindings::reset();
         $this->input = new Input();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        \Pig\Tui\Keybindings::reset();
+    }
+
+    public function testUndoTakesBackAWordAtATime(): void
+    {
+        foreach (str_split('one two') as $char) {
+            $this->input->handleInput($char);
+        }
+
+        $this->input->handleInput("\x1f"); // ctrl+- (ctrl+_ without the protocol): tui.editor.undo
+        $this->assertSame('one', $this->input->value());
+        $this->input->handleInput("\x1f");
+        $this->assertSame('', $this->input->value());
+    }
+
+    public function testKilledTextYanksBackAndYankPopCyclesIt(): void
+    {
+        $this->given('alpha beta');
+        $this->type("\x17"); // ctrl+w: beta
+        $this->type("\x15"); // ctrl+u: alpha, accumulated into the same kill
+        $this->assertSame('', $this->input->value());
+        $this->type("\x19"); // ctrl+y
+        $this->assertSame('alpha beta', $this->input->value());
+
+        $this->given('one two');
+        $this->type(["\x01", "\x1bd"]); // home, then alt+d: deleteWordForward
+        $this->assertSame(' two', $this->input->value());
+        $this->type(["\x05", "\x19", "\x1by"]); // end, yank `one`, then yank-pop to the older kill
+        $this->assertSame(' twoalpha beta', $this->input->value());
+    }
+
+    public function testTheKeysAreTheRegistrys(): void
+    {
+        \Pig\Tui\Keybindings::setKeybindings(new \Pig\Tui\KeybindingsManager(\Pig\Tui\Keybindings::definitions(), ['tui.input.submit' => ['ctrl+o']]));
+        $submitted = null;
+        $this->input->setSubmitHandler(static function (string $value) use (&$submitted): void {
+            $submitted = $value;
+        });
+
+        $this->type(['h', 'i', "\r"]);
+        $this->assertNull($submitted, 'enter is no longer submit');
+        $this->type("\x0f");
+        $this->assertSame('hi', $submitted);
     }
 
     /** @param list<string> $keys */

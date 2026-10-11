@@ -45,14 +45,14 @@ final class WebModeTest extends TestCase
         $this->forgetProviderKeys();
         // The shell loads the extensions on `start()`, from `~/.pig/agent/extensions` among other
         // places — and the machine this runs on has real ones there. An empty home instead.
-        $this->previousHome = getenv('PIG_HOME');
-        putenv('PIG_HOME=' . $this->home);
+        $this->previousHome = getenv('PIG_CODING_AGENT_DIR');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv($this->previousHome === false ? 'PIG_HOME' : 'PIG_HOME=' . $this->previousHome);
+        putenv($this->previousHome === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $this->previousHome);
         $this->restoreProviderKeys();
         if (is_dir($this->cwd)) {
             $this->rmrf($this->cwd);

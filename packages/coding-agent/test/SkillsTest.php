@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
+use Pig\CodingAgent\Packages\PackageManager;
+use Pig\CodingAgent\Settings;
 
 /** Finding the skills on a machine, and what to say about the ones that are wrong. */
 final class SkillsTest extends TestCase
@@ -73,312 +74,232 @@ final class SkillsTest extends TestCase
     }
 
     /**
-     * @param array<string, bool> $roots
+     * Every skill the conventional directories and the settings give, through the same two steps a
+     * session takes: `PackageManager::resolveLocalResources()`, then `Skills::fromResources()`.
+     *
+     * @param array<string, mixed> $user    the person's settings
+     * @param array<string, mixed> $project the project's settings
      * @return array{0: list<Skill>, 1: list<\Pig\CodingAgent\Prompt\SkillWarning>}
      */
-    private function load(
-        array $extraDirs = [],
-        array $ignored = [],
-        array $only = [],
-        array $roots = [],
-    ): array {
-        return Skills::load(
-            $this->cwd,
-            $this->home . '/.pig',
-            $extraDirs,
-            $ignored,
-            $only,
-            piHome: $this->home . '/.pi/agent',
-            roots: $roots,
-        );
+    private function load(array $user = [], array $project = [], bool $trusted = true): array
+    {
+        $agentDir = $this->home . '/.pig/agent';
+
+        foreach ([$agentDir => $user, $this->cwd . '/.pig' => $project] as $dir => $values) {
+            if ($values !== []) {
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0o755, true);
+                }
+
+                file_put_contents($dir . '/settings.json', json_encode($values));
+            }
+        }
+
+        $settings = Settings::load($this->cwd, $agentDir, $trusted);
+
+        return Skills::fromResources((new PackageManager($this->cwd, $settings, $agentDir))->resolveLocalResources()->skills);
+    }
+
+    /** @param list<Skill> $skills @return list<string> */
+    private static function names(array $skills): array
+    {
+        return array_map(static fn (Skill $s): string => $s->name, $skills);
     }
 
     // ---- where they are found ----------------------------------------------------------
 
-    public function testAllSevenStandardRootsAreRead(): void
+    public function testUpstreamsFourDirectoriesAreReadAndNoOtherToolsAre(): void
     {
-        $this->skill('home/.codex/skills/from-codex', "name: from-codex\ndescription: one");
-        $this->skill('home/.claude/skills/from-claude', "name: from-claude\ndescription: two");
-        $this->skill('project/.claude/skills/claude-project', "name: claude-project\ndescription: three");
-        $this->skill('home/.pi/agent/skills/from-pi', "name: from-pi\ndescription: four");
-        $this->skill('project/.pi/skills/pi-project', "name: pi-project\ndescription: five");
-        $this->skill('home/.pig/skills/from-pig', "name: from-pig\ndescription: six");
-        $this->skill('project/.pig/skills/pig-project', "name: pig-project\ndescription: seven");
-
-        [$skills] = $this->load();
-        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
-
-        // Another agent's skills are read as pig's own: someone who wrote a skill once
-        // should not have to write it again per agent. pi's two are in that list because pig
-        // already opens pi's sessions, its auth.json and its models.json — keeping all of that
-        // across the move and dropping the skills is the half-migration that is worse than none.
-        sort($names);
-        $this->assertSame([
-            'claude-project',
-            'from-claude',
-            'from-codex',
-            'from-pi',
-            'from-pig',
-            'pi-project',
-            'pig-project',
-        ], $names);
-    }
-
-    /**
-     * Each of the five roots another tool owns can be turned off on its own.
-     *
-     * Upstream's `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser` and
-     * `enablePiProject`. One case per root rather than one case turning all five off: the whole
-     * point is that turning one off leaves the other six alone, and a test that switches
-     * everything off at once cannot tell a working switch from a `continue` in the wrong place.
-     */
-    #[DataProvider('everyRootThatCanBeTurnedOff')]
-    public function testARootAnotherToolOwnsCanBeTurnedOffOnItsOwn(string $source, string $skipped): void
-    {
-        $this->skill('home/.codex/skills/from-codex', "name: from-codex\ndescription: one");
-        $this->skill('home/.claude/skills/from-claude', "name: from-claude\ndescription: two");
-        $this->skill('project/.claude/skills/claude-project', "name: claude-project\ndescription: three");
-        $this->skill('home/.pi/agent/skills/from-pi', "name: from-pi\ndescription: four");
-        $this->skill('project/.pi/skills/pi-project', "name: pi-project\ndescription: five");
-        $this->skill('home/.pig/skills/from-pig', "name: from-pig\ndescription: six");
-        $this->skill('project/.pig/skills/pig-project', "name: pig-project\ndescription: seven");
-
-        [$skills] = $this->load(roots: [$source => false]);
-        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
-
-        $this->assertNotContains($skipped, $names);
-        $this->assertCount(6, $names);
-
-        // pig's own two are never affected by one of these.
-        $this->assertContains('from-pig', $names);
-        $this->assertContains('pig-project', $names);
-    }
-
-    /** @return iterable<string, array{0: string, 1: string}> */
-    public static function everyRootThatCanBeTurnedOff(): iterable
-    {
-        yield 'enableCodexUser' => ['codex-user', 'from-codex'];
-        yield 'enableClaudeUser' => ['claude-user', 'from-claude'];
-        yield 'enableClaudeProject' => ['claude-project', 'claude-project'];
-        yield 'enablePiUser' => ['pi-user', 'from-pi'];
-        yield 'enablePiProject' => ['pi-project', 'pi-project'];
-    }
-
-    /** A root that is off is not scanned, so a broken skill in it is not complained about. */
-    public function testARootThatIsOffIsNotReadAtAll(): void
-    {
-        // No description, which is the one problem that both warns and skips the skill.
-        $this->skill('home/.claude/skills/broken', 'name: broken');
-
-        [$skills, $warnings] = $this->load(roots: ['claude-user' => false]);
-
-        $this->assertSame([], $skills);
-        $this->assertSame([], $warnings);
-    }
-
-    /**
-     * Any root can be switched off here, including pig's own — the loader is mechanism.
-     *
-     * Which of them a *settings file* can reach is `CodingAgent::session()`'s business, and it
-     * passes upstream's five and nothing else; `CodingAgentSessionTest` is where that half is
-     * pinned. A name this table does not use is ignored rather than refused, because the caller
-     * decides what it means and a throw here would be the loader policing its own caller.
-     */
-    public function testAnyRootCanBeSwitchedOffHereAndAnUnknownNameIsIgnored(): void
-    {
-        $this->skill('home/.pig/skills/from-pig', "name: from-pig\ndescription: six");
-        $this->skill('project/.pig/skills/pig-project', "name: pig-project\ndescription: seven");
-
-        [$skills] = $this->load(roots: ['user' => false, 'nonsense' => false]);
-        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
-
-        $this->assertSame(['pig-project'], $names);
-    }
-
-    public function testPisOwnSkillsAreOneLevelDeeperThanTheFolderNameSuggests(): void
-    {
-        // `getAgentDir()` upstream is `join(homedir(), ".pi", "agent")`, so `~/.pi/skills` is not
-        // where pi keeps them and a root pointed there would find nothing.
-        $this->skill('home/.pi/skills/wrong-place', "name: wrong-place\ndescription: not read");
-        $this->skill('home/.pi/agent/skills/right-place', "name: right-place\ndescription: read");
-
-        [$skills] = $this->load();
-
-        $this->assertSame(['right-place'], array_map(static fn (Skill $s): string => $s->name, $skills));
-    }
-
-    public function testPisSkillsAreSearchedToAnyDepthLikePigsOwn(): void
-    {
-        // pi lays them out the way pig does, not the way Claude does.
-        $this->skill('home/.pi/agent/skills/group/nested', "name: nested\ndescription: deep");
-
-        [$skills] = $this->load();
-
-        $this->assertSame(['nested'], array_map(static fn (Skill $s): string => $s->name, $skills));
-        $this->assertSame('pi-user', $skills[0]->source);
-    }
-
-    public function testPigsOwnRootTakesANameFromPisAndSaysWhichFileItOverrode(): void
-    {
-        // The migration case: the same skill exists in both because it was copied across. The one
-        // being maintained for pig is the one that runs, and the startup says so.
-        $overridden = $this->skill('home/.pi/agent/skills/review', "name: review\ndescription: pi's");
-        $this->skill('home/.pig/skills/review', "name: review\ndescription: pig's");
+        $this->skill('home/.pig/agent/skills/from-pig', "name: from-pig\ndescription: one");
+        $this->skill('project/.pig/skills/from-project', "name: from-project\ndescription: two");
+        $this->skill('home/.agents/skills/from-agents', "name: from-agents\ndescription: three");
+        $this->skill('project/.agents/skills/from-project-agents', "name: from-project-agents\ndescription: four");
+        // Not upstream's any more, so not pig's: another tool's folder is that tool's.
+        $this->skill('home/.claude/skills/from-claude', "name: from-claude\ndescription: no");
+        $this->skill('home/.codex/skills/from-codex', "name: from-codex\ndescription: no");
+        $this->skill('home/.pi/agent/skills/from-pi', "name: from-pi\ndescription: no");
+        $this->skill('project/.pi/skills/from-pi-project', "name: from-pi-project\ndescription: no");
 
         [$skills, $warnings] = $this->load();
 
-        $this->assertSame(['review'], array_map(static fn (Skill $s): string => $s->name, $skills));
-        $this->assertSame('user', $skills[0]->source);
-        $this->assertSame("pig's", $skills[0]->description);
-        $this->assertCount(1, $warnings);
-        $this->assertStringContainsString('name taken', $warnings[0]->message);
-        $this->assertStringContainsString($overridden, $warnings[0]->message, 'and which one lost');
+        $this->assertSame([], $warnings);
+        $this->assertEqualsCanonicalizing(['from-pig', 'from-project', 'from-agents', 'from-project-agents'], self::names($skills));
     }
 
-    public function testAProjectWithBothPiAndPigFoldersReadsBoth(): void
+    public function testAnUntrustedProjectGivesNoSkills(): void
     {
-        $this->skill('project/.pi/skills/from-pi-project', "name: from-pi-project\ndescription: one");
-        $this->skill('project/.pig/skills/from-pig-project', "name: from-pig-project\ndescription: two");
+        $this->skill('home/.pig/agent/skills/mine', "name: mine\ndescription: one");
+        $this->skill('project/.pig/skills/theirs', "name: theirs\ndescription: two");
+        $this->skill('project/.agents/skills/theirs-too', "name: theirs-too\ndescription: three");
 
-        [$skills] = $this->load();
-        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
-        sort($names);
+        [$skills] = $this->load(trusted: false);
 
-        $this->assertSame(['from-pi-project', 'from-pig-project'], $names);
+        $this->assertSame(['mine'], self::names($skills));
     }
 
-    public function testEachSkillKnowsWhichRootItCameFrom(): void
+    public function testAncestorAgentsSkillsAreReadUpToTheRepositoryRoot(): void
     {
-        $this->skill('home/.pig/skills/mine', "name: mine\ndescription: one");
-
-        [$skills] = $this->load();
-
-        $this->assertSame('user', $skills[0]->source);
-        $this->assertSame($this->root . '/home/.pig/skills/mine', $skills[0]->baseDir);
-    }
-
-    public function testPigRootsAreSearchedToAnyDepth(): void
-    {
-        $this->skill('home/.pig/skills/group/nested', "name: nested\ndescription: deep");
+        mkdir($this->root . '/repo/.git', 0o755, true);
+        mkdir($this->root . '/repo/packages/app', 0o755, true);
+        $this->cwd = $this->root . '/repo/packages/app';
+        $this->skill('repo/.agents/skills/at-root', "name: at-root\ndescription: one");
+        $this->skill('repo/packages/.agents/skills/in-between', "name: in-between\ndescription: two");
+        // Above the repository: not this project's.
+        $this->skill('.agents/skills/above', "name: above\ndescription: no");
 
         [$skills] = $this->load();
 
-        $this->assertSame(['nested'], array_map(static fn (Skill $s): string => $s->name, $skills));
+        $this->assertEqualsCanonicalizing(['at-root', 'in-between'], self::names($skills));
     }
 
-    public function testTheClaudeRootIsSearchedOneLevelOnly(): void
+    public function testAMarkdownFileDirectlyInThePigSkillsDirectoryIsASkillButNotInAgentsSkills(): void
     {
-        $this->skill('home/.claude/skills/top', "name: top\ndescription: shallow");
-        $this->skill('home/.claude/skills/top/examples/deeper', "name: deeper\ndescription: too deep");
+        mkdir($this->home . '/.pig/agent/skills', 0o755, true);
+        file_put_contents($this->home . '/.pig/agent/skills/loose.md', "---\nname: loose\ndescription: a file on its own\n---\n");
+        mkdir($this->home . '/.agents/skills/nested', 0o755, true);
+        file_put_contents($this->home . '/.agents/skills/root.md', "---\nname: root\ndescription: no\n---\n");
+        // Upstream's `agents` mode: below the root, a `.md` in a directory with no `SKILL.md` is one.
+        file_put_contents($this->home . '/.agents/skills/nested/below.md', "---\nname: below\ndescription: yes\n---\n");
 
         [$skills] = $this->load();
 
-        // One folder per skill there, so descending further finds a skill's own examples
-        // rather than more skills.
-        $this->assertSame(['top'], array_map(static fn (Skill $s): string => $s->name, $skills));
+        $this->assertEqualsCanonicalizing(['loose', 'below'], self::names($skills));
     }
 
-    public function testAnExtraDirectoryIsSearchedToo(): void
+    public function testAMarkdownFileWithNoDescriptionIsSkippedWithoutAWord(): void
     {
-        $this->skill('elsewhere/extra', "name: extra\ndescription: from --skills-dir");
+        mkdir($this->home . '/.pig/agent/skills', 0o755, true);
+        file_put_contents($this->home . '/.pig/agent/skills/README.md', "# Notes\n");
 
-        [$skills] = $this->load([$this->root . '/elsewhere']);
+        $this->assertSame([[], []], $this->load());
+    }
 
-        $this->assertSame(['extra'], array_map(static fn (Skill $s): string => $s->name, $skills));
-        $this->assertSame('custom', $skills[0]->source);
+    public function testASkillMdClaimsItsDirectoryAndTheWalkStopsThere(): void
+    {
+        $this->skill('home/.pig/agent/skills/outer', "name: outer\ndescription: one");
+        $this->skill('home/.pig/agent/skills/outer/examples/inner', "name: inner\ndescription: an example inside a skill");
+
+        [$skills] = $this->load();
+
+        $this->assertSame(['outer'], self::names($skills));
+    }
+
+    public function testTheSkillsSettingAddsPathsResolvedFromEachScopesBase(): void
+    {
+        $this->skill('home/.pig/agent/elsewhere/by-user', "name: by-user\ndescription: one");
+        $this->skill('project/.pig/more/by-project', "name: by-project\ndescription: two");
+        $this->skill('absolute/by-path', "name: by-path\ndescription: three");
+
+        [$skills] = $this->load(['skills' => ['elsewhere', $this->root . '/absolute']], ['skills' => ['more']]);
+
+        $this->assertEqualsCanonicalizing(['by-user', 'by-project', 'by-path'], self::names($skills));
+        $sources = array_combine(self::names($skills), array_map(static fn (Skill $s): string => $s->source, $skills));
+        $this->assertSame('user', $sources['by-user']);
+        $this->assertSame('project', $sources['by-project']);
+    }
+
+    public function testAnExclamationPatternInTheSettingTurnsAnAutoDiscoveredSkillOff(): void
+    {
+        $this->skill('home/.pig/agent/skills/keep-me', "name: keep-me\ndescription: one");
+        $this->skill('home/.pig/agent/skills/drop-me', "name: drop-me\ndescription: two");
+
+        [$skills] = $this->load(['skills' => ['!drop-*']]);
+
+        $this->assertSame(['keep-me'], self::names($skills));
+    }
+
+    public function testAMinusPathTakesOneOutAndAPlusPathPutsOneBack(): void
+    {
+        $this->skill('home/.pig/agent/skills/a', "name: a\ndescription: one");
+        $this->skill('home/.pig/agent/skills/b', "name: b\ndescription: two");
+
+        [$skills] = $this->load(['skills' => ['!*', '+skills/a']]);
+        $this->assertSame(['a'], self::names($skills));
+
+        [$skills] = $this->load(['skills' => ['-skills/b']]);
+        $this->assertSame(['a'], self::names($skills));
+    }
+
+    public function testTheOldObjectFormIsReportedAndNotRead(): void
+    {
+        $this->skill('typed/mine', "name: mine\ndescription: from a custom directory");
+        mkdir($this->home . '/.pig/agent', 0o755, true);
+        file_put_contents($this->home . '/.pig/agent/settings.json', json_encode(['skills' => ['enabled' => true, 'customDirectories' => [$this->root . '/typed']]]));
+
+        $settings = Settings::load($this->cwd, $this->home . '/.pig/agent');
+
+        $this->assertSame([], $settings->resourceEntries('skills', 'user'));
+        $this->assertStringContainsString('the old object form is not read', implode("\n", $settings->problems()));
     }
 
     public function testNoSkillsAnywhereIsAnEmptyListAndNotAnError(): void
     {
-        [$skills, $warnings] = $this->load();
-
-        $this->assertSame([], $skills);
-        $this->assertSame([], $warnings);
+        $this->assertSame([[], []], $this->load());
     }
 
     public function testDotDirectoriesAndDependencyFoldersAreNotSearched(): void
     {
-        $this->skill('home/.pig/skills/.git/hidden', "name: hidden\ndescription: no");
-        $this->skill('home/.pig/skills/node_modules/dep', "name: dep\ndescription: no");
-        $this->skill('home/.pig/skills/real', "name: real\ndescription: yes");
+        $this->skill('home/.pig/agent/skills/.git/hidden', "name: hidden\ndescription: no");
+        $this->skill('home/.pig/agent/skills/node_modules/dep', "name: dep\ndescription: no");
+        $this->skill('home/.pig/agent/skills/vendor/dep', "name: dep\ndescription: no");
+        $this->skill('home/.pig/agent/skills/real', "name: real\ndescription: yes");
 
         [$skills] = $this->load();
 
-        $this->assertSame(['real'], array_map(static fn (Skill $s): string => $s->name, $skills));
+        $this->assertSame(['real'], self::names($skills));
     }
 
     // ---- collisions ---------------------------------------------------------------------
 
-    public function testTheLastRootWinsAndTheOverrideIsSaidOutLoud(): void
+    public function testTheFirstDiscoveredWinsAndTheCollisionIsSaid(): void
     {
-        $codex = $this->skill('home/.codex/skills/both', "name: both\ndescription: from codex");
-        $this->skill('home/.pig/skills/both', "name: both\ndescription: from pig");
+        $this->skill('home/.pig/agent/skills/both', "name: both\ndescription: from the user");
+        $project = $this->skill('project/.pig/skills/both', "name: both\ndescription: from the project");
 
         [$skills, $warnings] = $this->load();
 
-        // pig's own beats another tool's copy. Upstream keeps the first and skips the rest, which
-        // in its own order means `~/.codex/skills` outranks everything — nobody editing a skill in
-        // `~/.pig/agent/skills` expects a copy in another tool's folder to be the one that runs.
+        // Upstream's precedence: the project's directory ranks before the person's.
         $this->assertCount(1, $skills);
-        $this->assertSame('from pig', $skills[0]->description);
-        $this->assertSame('user', $skills[0]->source);
-
-        // Said rather than done quietly: which of two files with one name is in effect is the whole
-        // question, and the answer names the loser.
-        $this->assertCount(1, $warnings);
-        $this->assertStringContainsString('name taken', $warnings[0]->message);
-        $this->assertStringContainsString($codex, $warnings[0]->message);
-    }
-
-    public function testThePrecedenceIsPigThenPiThenClaudeThenCodex(): void
-    {
-        // All four at once, which is the only way to show the whole chain rather than one link.
-        foreach ([
-            'home/.codex/skills/chain' => 'codex',
-            'home/.claude/skills/chain' => 'claude',
-            'home/.pi/agent/skills/chain' => 'pi',
-            'home/.pig/skills/chain' => 'pig',
-        ] as $where => $which) {
-            $this->skill($where, "name: chain\ndescription: from {$which}");
-        }
-
-        [$skills, $warnings] = $this->load();
-
-        $this->assertCount(1, $skills);
-        $this->assertSame('from pig', $skills[0]->description);
-        $this->assertCount(3, $warnings, 'one line per override, so the chain is readable');
-    }
-
-    public function testAProjectFolderBeatsTheHomeOneOfTheSameTool(): void
-    {
-        $this->skill('home/.pig/skills/mine', "name: mine\ndescription: from home");
-        $this->skill('project/.pig/skills/mine', "name: mine\ndescription: from the project");
-
-        [$skills] = $this->load();
-
-        // The same rule `Settings` has: a project setting still wins.
         $this->assertSame('from the project', $skills[0]->description);
         $this->assertSame('project', $skills[0]->source);
+
+        $this->assertCount(1, $warnings);
+        $this->assertStringContainsString('name "both" collision', $warnings[0]->message);
+        $this->assertStringContainsString($project, $warnings[0]->message);
+        $this->assertStringContainsString('home/.pig/agent/skills/both/SKILL.md', $warnings[0]->path);
     }
 
-    public function testSkillsDirBeatsEverythingBecauseItWasTyped(): void
+    public function testASettingsEntryRanksBeforeTheDirectoryOfItsScope(): void
     {
-        $this->skill('home/.pig/skills/mine', "name: mine\ndescription: from home");
+        $this->skill('home/.pig/agent/skills/mine', "name: mine\ndescription: from the directory");
+        $this->skill('home/.pig/agent/listed/mine', "name: mine\ndescription: from the setting");
+
+        [$skills] = $this->load(['skills' => ['listed']]);
+
+        $this->assertSame('from the setting', $skills[0]->description);
+    }
+
+    public function testACommandLinePathComesAfterEverythingElse(): void
+    {
+        $this->skill('home/.pig/agent/skills/mine', "name: mine\ndescription: from home");
         $this->skill('typed/mine', "name: mine\ndescription: from the flag");
+        $this->skill('typed/other', "name: other\ndescription: only on the flag");
 
-        [$skills] = $this->load([$this->root . '/typed']);
+        [$skills, $warnings] = Skills::fromPaths([$this->root . '/typed'], $this->cwd, $this->home . '/.pig/agent');
 
-        $this->assertSame('from the flag', $skills[0]->description);
-        $this->assertSame('custom', $skills[0]->source);
+        $this->assertSame(['mine', 'other'], self::names($skills));
+        $this->assertSame('path', $skills[0]->source);
+        $this->assertSame([], $warnings);
+        $this->assertSame('skill path does not exist', Skills::fromPaths([$this->root . '/nowhere'], $this->cwd)[1][0]->message);
     }
 
     public function testOneFileReachedThroughTwoRootsIsOneSkill(): void
     {
         $this->skill('shared/linked', "name: linked\ndescription: one copy");
-        mkdir($this->home . '/.pig/skills', 0o755, true);
-        symlink($this->root . '/shared/linked', $this->home . '/.pig/skills/linked');
+        mkdir($this->home . '/.pig/agent/skills', 0o755, true);
+        symlink($this->root . '/shared/linked', $this->home . '/.pig/agent/skills/linked');
 
-        [$skills, $warnings] = $this->load([$this->root . '/shared']);
+        [$skills, $warnings] = $this->load(['skills' => [$this->root . '/shared']]);
 
         // Symlinking one folder of skills into another root is a normal way to keep a
         // single copy, and it is not a collision to complain about.
@@ -386,42 +307,11 @@ final class SkillsTest extends TestCase
         $this->assertSame([], $warnings);
     }
 
-    // ---- filtering ------------------------------------------------------------------------
-
-    public function testAnIgnoredNameIsLeftOut(): void
-    {
-        $this->skill('home/.pig/skills/keep-me', "name: keep-me\ndescription: one");
-        $this->skill('home/.pig/skills/drop-me', "name: drop-me\ndescription: two");
-
-        [$skills] = $this->load([], ['drop-*']);
-
-        $this->assertSame(['keep-me'], array_map(static fn (Skill $s): string => $s->name, $skills));
-    }
-
-    public function testWithAnAllowListNothingElseIsLoaded(): void
-    {
-        $this->skill('home/.pig/skills/wanted', "name: wanted\ndescription: one");
-        $this->skill('home/.pig/skills/other', "name: other\ndescription: two");
-
-        [$skills] = $this->load([], [], ['want*']);
-
-        $this->assertSame(['wanted'], array_map(static fn (Skill $s): string => $s->name, $skills));
-    }
-
-    public function testIgnoringBeatsAllowing(): void
-    {
-        $this->skill('home/.pig/skills/thing', "name: thing\ndescription: one");
-
-        [$skills] = $this->load([], ['thing'], ['thing']);
-
-        $this->assertSame([], $skills);
-    }
-
     // ---- what makes a skill valid -----------------------------------------------------------
 
     public function testASkillWithNoDescriptionIsNotLoadedAtAll(): void
     {
-        $this->skill('home/.pig/skills/nameless', 'name: nameless');
+        $this->skill('home/.pig/agent/skills/nameless', 'name: nameless');
 
         [$skills, $warnings] = $this->load();
 
@@ -433,7 +323,7 @@ final class SkillsTest extends TestCase
 
     public function testWithNoNameTheFolderIsTheName(): void
     {
-        $this->skill('home/.pig/skills/from-the-folder', 'description: named by its folder');
+        $this->skill('home/.pig/agent/skills/from-the-folder', 'description: named by its folder');
 
         [$skills, $warnings] = $this->load();
 
@@ -441,36 +331,36 @@ final class SkillsTest extends TestCase
         $this->assertSame([], $warnings);
     }
 
+    public function testANameThatDiffersFromItsFolderIsNotComplainedAbout(): void
+    {
+        $this->skill('home/.pig/agent/skills/folder', "name: other-name\ndescription: fine");
+
+        [$skills, $warnings] = $this->load();
+
+        $this->assertSame('other-name', $skills[0]->name);
+        $this->assertSame([], $warnings);
+    }
+
     public function testASkillWithSomethingWrongIsStillLoadedAndStillComplainedAbout(): void
     {
-        $this->skill('home/.pig/skills/Mismatched', "name: not_the_folder\ndescription: still useful");
+        $this->skill('home/.pig/agent/skills/Mismatched', "name: not_the_folder\ndescription: still useful");
 
         [$skills, $warnings] = $this->load();
 
         // A name two characters off is worth saying and not worth refusing over.
         $this->assertCount(1, $skills);
         $this->assertSame('not_the_folder', $skills[0]->name);
-
-        $messages = implode("\n", array_map(static fn ($w): string => $w->message, $warnings));
-        $this->assertStringContainsString('does not match the folder', $messages);
-        $this->assertStringContainsString('lowercase letters, digits and hyphens', $messages);
+        $this->assertSame(
+            ['name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)'],
+            array_map(static fn ($w): string => $w->message, $warnings),
+        );
     }
 
-    public function testAnUnknownFrontmatterFieldIsSaid(): void
-    {
-        $this->skill('home/.pig/skills/typo', "name: typo\ndescripton: misspelled\ndescription: fine");
-
-        [$skills, $warnings] = $this->load();
-
-        $this->assertCount(1, $skills);
-        $this->assertStringContainsString('unknown frontmatter field "descripton"', $warnings[0]->message);
-    }
-
-    public function testTheSpecsFieldsAreAllAccepted(): void
+    public function testFieldsOutsideTheSpecAreNotComplainedAbout(): void
     {
         $this->skill(
-            'home/.pig/skills/complete',
-            "name: complete\ndescription: everything\nlicense: MIT\ncompatibility: pig\nallowed-tools: read",
+            'home/.pig/agent/skills/complete',
+            "name: complete\ndescription: everything\nlicense: MIT\ncompatibility: pig\nallowed-tools: read\ndescripton: a typo",
         );
 
         [$skills, $warnings] = $this->load();
@@ -479,9 +369,27 @@ final class SkillsTest extends TestCase
         $this->assertSame([], $warnings);
     }
 
+    public function testDisableModelInvocationKeepsTheSkillButOutOfThePrompt(): void
+    {
+        $this->skill('home/.pig/agent/skills/manual', "name: manual\ndescription: by hand only\ndisable-model-invocation: true");
+        $this->skill('home/.pig/agent/skills/quoted', "name: quoted\ndescription: a string is not true\ndisable-model-invocation: \"true\"");
+        $this->skill('home/.pig/agent/skills/auto', "name: auto\ndescription: offered");
+
+        [$skills, $warnings] = $this->load();
+        $byName = array_combine(self::names($skills), $skills);
+
+        $this->assertSame([], $warnings);
+        $this->assertTrue($byName['manual']->disableModelInvocation);
+        $this->assertFalse($byName['quoted']->disableModelInvocation);
+        $prompt = Skills::forPrompt($skills);
+        $this->assertStringNotContainsString('<name>manual</name>', $prompt);
+        $this->assertStringContainsString('<name>auto</name>', $prompt);
+        $this->assertSame('', Skills::forPrompt([$byName['manual']]));
+    }
+
     public function testQuotedValuesLoseTheirQuotes(): void
     {
-        $this->skill('home/.pig/skills/quoted', "name: \"quoted\"\ndescription: 'in single quotes'");
+        $this->skill('home/.pig/agent/skills/quoted', "name: \"quoted\"\ndescription: 'in single quotes'");
 
         [$skills] = $this->load();
 
@@ -491,7 +399,7 @@ final class SkillsTest extends TestCase
 
     public function testAFileWithNoFrontmatterAtAllIsSkipped(): void
     {
-        $path = $this->root . '/home/.pig/skills/plain/SKILL.md';
+        $path = $this->root . '/home/.pig/agent/skills/plain/SKILL.md';
         mkdir(dirname($path), 0o755, true);
         file_put_contents($path, "# Just a document\n\nNo frontmatter here.\n");
 
@@ -503,7 +411,7 @@ final class SkillsTest extends TestCase
 
     public function testWindowsLineEndingsAreRead(): void
     {
-        $path = $this->root . '/home/.pig/skills/crlf/SKILL.md';
+        $path = $this->root . '/home/.pig/agent/skills/crlf/SKILL.md';
         mkdir(dirname($path), 0o755, true);
         file_put_contents($path, "---\r\nname: crlf\r\ndescription: written on Windows\r\n---\r\n\r\nBody.\r\n");
 
@@ -521,7 +429,7 @@ final class SkillsTest extends TestCase
 
     public function testThePromptCarriesTheNameDescriptionAndPath(): void
     {
-        $this->skill('home/.pig/skills/tidy', "name: tidy\ndescription: tidy up a file");
+        $this->skill('home/.pig/agent/skills/tidy', "name: tidy\ndescription: tidy up a file");
 
         [$skills] = $this->load();
         $prompt = Skills::forPrompt($skills);
@@ -541,7 +449,7 @@ final class SkillsTest extends TestCase
         // ceiling is a character count in the spec and a code-unit count upstream, which for
         // anything either project reads is the same number; `strlen()` is neither.
         $long = str_repeat('描述', 400);
-        $this->skill('home/.pig/skills/cjk', "name: cjk\ndescription: {$long}");
+        $this->skill('home/.pig/agent/skills/cjk', "name: cjk\ndescription: {$long}");
 
         [$skills, $warnings] = $this->load();
 
@@ -552,20 +460,20 @@ final class SkillsTest extends TestCase
     public function testANameInTheWrongAlphabetIsCountedInCharactersToo(): void
     {
         $name = str_repeat('名', 40);
-        $this->skill("home/.pig/skills/{$name}", "name: {$name}\ndescription: something");
+        $this->skill("home/.pig/agent/skills/{$name}", "name: {$name}\ndescription: something");
 
         [, $warnings] = $this->load();
         $said = implode(' | ', array_map(static fn ($one): string => $one->message, $warnings));
 
         // It is still the wrong alphabet, and that is worth one complaint. The length is not
         // one: forty characters is forty, where `strlen()` makes it a hundred and twenty.
-        $this->assertStringContainsString('lowercase letters', $said);
-        $this->assertStringNotContainsString('longer than 64', $said);
+        $this->assertStringContainsString('invalid characters', $said);
+        $this->assertStringNotContainsString('exceeds 64', $said);
     }
 
     public function testASkillWhoseDescriptionIsNotUtf8StillHasOneInThePrompt(): void
     {
-        $this->skill('home/.pig/skills/logs', "name: logs\ndescription: reads a " . chr(0x80) . " log");
+        $this->skill('home/.pig/agent/skills/logs', "name: logs\ndescription: reads a " . chr(0x80) . " log");
 
         [$skills] = $this->load();
         $prompt = Skills::forPrompt($skills);
@@ -580,7 +488,7 @@ final class SkillsTest extends TestCase
 
     public function testAngleBracketsInADescriptionCannotBreakTheBlock(): void
     {
-        $this->skill('home/.pig/skills/xml', "name: xml\ndescription: use <read> & <write> carefully");
+        $this->skill('home/.pig/agent/skills/xml', "name: xml\ndescription: use <read> & <write> carefully");
 
         [$skills] = $this->load();
         $prompt = Skills::forPrompt($skills);

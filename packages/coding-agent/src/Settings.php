@@ -80,7 +80,11 @@ final class Settings
             : [[], null];
 
         $settings = new self($path, $global, $project, $projectPath, $projectTrusted);
-        $settings->problems = array_values(array_filter([$globalProblem, $projectProblem]));
+        $settings->problems = [
+            ...array_values(array_filter([$globalProblem, $projectProblem])),
+            ...self::resourceListProblems($path, $global),
+            ...self::resourceListProblems($projectPath, $project),
+        ];
 
         return $settings;
     }
@@ -106,7 +110,7 @@ final class Settings
     }
 
     /**
-     * Settings that are never written anywhere, for tests and for `--no-save`.
+     * Settings that are never written anywhere, for tests.
      *
      * @param array<string, mixed> $values
      */
@@ -281,7 +285,31 @@ final class Settings
     {
         $path = $this->get('shellPath');
 
-        return is_string($path) && $path !== '' ? $path : null;
+        // Upstream's `getShellPath()`: `normalizePath(shellPath)`, so `~/bin/bash` and `~` name the
+        // home directory and a `file://` URL its path.
+        return is_string($path) && $path !== '' ? self::normalizePath($path) : null;
+    }
+
+    /**
+     * Upstream's `normalizePath()` with its default options: a leading `~` or `~/` becomes the home
+     * directory, and a `file://` URL becomes its path. Nothing else changes — no trimming, no
+     * resolving against a directory.
+     *
+     * Public for `Config::packageDir()`, which upstream passes through the same function.
+     */
+    public static function normalizePath(string $path): string
+    {
+        $home = \Pig\Tui\Env::home();
+
+        if ($home !== null && ($path === '~' || str_starts_with($path, '~/'))) {
+            return $path === '~' ? $home : rtrim($home, '/') . substr($path, 1);
+        }
+
+        if (str_starts_with($path, 'file://')) {
+            return rawurldecode((string) parse_url($path, PHP_URL_PATH));
+        }
+
+        return $path;
     }
 
     /**
@@ -841,7 +869,7 @@ final class Settings
         $this->set('terminal.showImages', $show);
     }
 
-    /** Upstream's `getClearOnShrink()`: the setting, then `PIG_CLEAR_ON_SHRINK`/`PI_CLEAR_ON_SHRINK=1`, then off. */
+    /** Upstream's `getClearOnShrink()`: the setting, then `PIG_CLEAR_ON_SHRINK=1` (upstream's `PI_CLEAR_ON_SHRINK`), then off. */
     public function clearOnShrink(): bool
     {
         $value = $this->get('terminal.clearOnShrink');
@@ -849,10 +877,10 @@ final class Settings
             return $value;
         }
 
-        return (getenv('PIG_CLEAR_ON_SHRINK') ?: getenv('PI_CLEAR_ON_SHRINK')) === '1';
+        return getenv('PIG_CLEAR_ON_SHRINK') === '1';
     }
 
-    /** Upstream's `getShowHardwareCursor()`: the setting, then `PIG_HARDWARE_CURSOR`/`PI_HARDWARE_CURSOR=1`, then off. */
+    /** Upstream's `getShowHardwareCursor()`: the setting, then `PIG_HARDWARE_CURSOR=1` (upstream's `PI_HARDWARE_CURSOR`), then off. */
     public function showHardwareCursor(): bool
     {
         $value = $this->get('showHardwareCursor');
@@ -860,7 +888,7 @@ final class Settings
             return $value;
         }
 
-        return (getenv('PIG_HARDWARE_CURSOR') ?: getenv('PI_HARDWARE_CURSOR')) === '1';
+        return getenv('PIG_HARDWARE_CURSOR') === '1';
     }
 
     public function compactionEnabled(): bool
@@ -876,32 +904,61 @@ final class Settings
     /**
      * `compaction.reserveTokens`, under the model's own `compaction.modelOverrides["provider/id"]`
      * entry when there is one — upstream's `getCompactionReserveTokens(model)`: the override, then
-     * the ordinary setting, then the default. A value that is not a positive whole number is not
-     * one, as it never was here.
+     * the ordinary setting, then the default. Every value must be a non-negative safe integer (0 is
+     * one); anything else is refused when it is read, with upstream's sentence.
+     *
+     * @throws \RuntimeException `Invalid compaction.<field> setting: <value>. Expected a non-negative safe integer.`
      */
     public function compactionReserveTokens(int $fallback, ?Model $model = null): int
     {
         return $this->compactionTokens('reserveTokens', $fallback, $model);
     }
 
+    /** @throws \RuntimeException as `compactionReserveTokens()` */
     public function compactionKeepRecentTokens(int $fallback, ?Model $model = null): int
     {
         return $this->compactionTokens('keepRecentTokens', $fallback, $model);
     }
 
+    /** Upstream's `getCompactionTokenSetting()`. */
     private function compactionTokens(string $field, int $fallback, ?Model $model): int
     {
-        $overrides = $this->get('compaction.modelOverrides');
-        $entry = $model !== null && is_array($overrides) ? ($overrides["{$model->provider}/{$model->id}"] ?? null) : null;
-        $override = is_array($entry) ? ($entry[$field] ?? null) : null;
+        $compaction = $this->get('compaction');
+        $compaction = is_array($compaction) ? $compaction : [];
+        $ordinary = $compaction[$field] ?? null;
 
-        if (is_int($override) && $override > 0) {
-            return $override;
+        if ($ordinary !== null && self::safeNonNegativeInt($ordinary) === null) {
+            throw new \RuntimeException("Invalid compaction.{$field} setting: " . \Pig\Ai\Utils\JsJson::toString($ordinary) . '. Expected a non-negative safe integer.');
         }
 
-        $value = $this->get("compaction.{$field}");
+        $modelKey = $model !== null ? "{$model->provider}/{$model->id}" : null;
+        $overrides = $compaction['modelOverrides'] ?? null;
+        $entry = $modelKey !== null && is_array($overrides) ? ($overrides[$modelKey] ?? null) : null;
 
-        return is_int($value) && $value > 0 ? $value : $fallback;
+        if ($entry !== null && !(is_array($entry) && ($entry === [] || !array_is_list($entry)))) {
+            throw new \RuntimeException("Invalid compaction.modelOverrides[\"{$modelKey}\"] setting: " . \Pig\Ai\Utils\JsJson::toString($entry) . '. Expected an object.');
+        }
+
+        $override = is_array($entry) ? ($entry[$field] ?? null) : null;
+
+        if ($override !== null && self::safeNonNegativeInt($override) === null) {
+            throw new \RuntimeException("Invalid compaction.modelOverrides[\"{$modelKey}\"].{$field} setting: " . \Pig\Ai\Utils\JsJson::toString($override) . '. Expected a non-negative safe integer.');
+        }
+
+        return self::safeNonNegativeInt($override) ?? self::safeNonNegativeInt($ordinary) ?? $fallback;
+    }
+
+    /**
+     * JavaScript's `Number.isSafeInteger(value) && value >= 0`, for a value JSON decoded: an integer,
+     * or a float with no fraction (`5000.0`), no larger than 2^53 - 1.
+     */
+    private static function safeNonNegativeInt(mixed $value): ?int
+    {
+        if (is_float($value) && is_finite($value) && floor($value) === $value) {
+            $value = abs($value) <= 9_007_199_254_740_991 ? (int) $value : null;
+        }
+
+        return is_int($value) && $value >= 0 && $value <= 9_007_199_254_740_991 ? $value : null;
     }
 
     /** Upstream's `getBranchSummarySettings().reserveTokens`: what `/tree`'s summary leaves of the window, 16,384 by default. */
@@ -1324,33 +1381,60 @@ final class Settings
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
     }
 
-    public function skillsEnabled(): bool
-    {
-        return $this->get('skills.enabled') !== false;
-    }
-
     /**
-     * @param string $key one of upstream's skill list settings
+     * One scope's `skills`, `prompts` or `themes` entries as written — upstream's `getSkillPaths()`,
+     * `getPromptTemplatePaths()` and `getThemePaths()`, per scope as `PackageManager` reads them:
+     * paths (a user entry resolves from the agent directory, a project one from `.pig/`), plus the
+     * `!pattern` / `+path` / `-path` overrides `extensions` takes. Empty for a project nobody
+     * trusted, whose file is never read, and for an entry that is not an array of strings — which
+     * `load()` has already named in `problems()`.
+     *
+     * Upstream's `skills` was once an object (`enableSkillCommands`, `customDirectories`, and pig's
+     * own `enabled`, `ignoredSkills`, `includeSkills` and five `enable*` root switches) and its
+     * settings manager still migrates that shape. pig does not: the object is reported and ignored,
+     * and `enableSkillCommands` is the top-level key.
+     *
+     * @param 'skills'|'prompts'|'themes' $type
+     * @param 'user'|'project' $scope
      * @return list<string>
      */
-    public function skillList(string $key): array
+    public function resourceEntries(string $type, string $scope): array
     {
-        $value = $this->get("skills.{$key}");
+        $value = ($scope === 'project' ? $this->project : $this->global)[$type] ?? null;
 
-        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+        return self::isStringList($value) ? $value : [];
     }
 
+    /** The settings keys `resourceEntries()` reads. */
+    public const array RESOURCE_LISTS = ['skills', 'prompts', 'themes'];
+
     /**
-     * Whether one of the standard skill roots is read, by upstream's own key name.
+     * What is wrong with one file's resource lists, for `problems()`.
      *
-     * `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
-     * `enablePiProject` — the five directories pig reads because another tool owns them. On
-     * unless the file says `false`, which is `skillsEnabled()`'s rule and stops a key somebody
-     * typed as `"no"` from quietly turning a root off.
+     * @param array<string, mixed> $values
+     * @return list<string>
      */
-    public function skillRoot(string $key): bool
+    private static function resourceListProblems(string $path, array $values): array
     {
-        return $this->get("skills.{$key}") !== false;
+        $problems = [];
+
+        foreach (self::RESOURCE_LISTS as $key) {
+            if (!array_key_exists($key, $values) || self::isStringList($values[$key])) {
+                continue;
+            }
+
+            $problems[] = $key === 'skills' && is_array($values[$key]) && !array_is_list($values[$key])
+                ? "{$path}: \"skills\" is an array of skill paths; the old object form is not read (use the top-level \"enableSkillCommands\"), so it was ignored"
+                : "{$path}: \"{$key}\" must be an array of paths, so it was ignored";
+        }
+
+        return $problems;
+    }
+
+    /** @phpstan-assert-if-true list<string> $value */
+    private static function isStringList(mixed $value): bool
+    {
+        return is_array($value) && array_is_list($value) && array_filter($value, static fn (mixed $entry): bool => !is_string($entry)) === [];
     }
 
     // ---- everything else -----------------------------------------------------------------

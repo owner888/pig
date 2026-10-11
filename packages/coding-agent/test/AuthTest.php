@@ -37,7 +37,7 @@ final class AuthTest extends TestCase
 
     /** Where this class writes, and what would otherwise answer for it. */
     private const array CLEARED = [
-        'PIG_HOME', 'PI_HOME', 'PI_CODING_AGENT_DIR',
+        'PIG_CODING_AGENT_DIR', 'PI_HOME', 'PI_CODING_AGENT_DIR',
         // Antigravity's pair as well: with both exported in the shell running the suite, the
         // case asserting that a flow with no client credentials never opens a browser would
         // open one and fail for a reason that has nothing to do with the code.
@@ -404,9 +404,48 @@ final class AuthTest extends TestCase
     {
         putenv('KEY_FOR_A_DECLARED_PROVIDER=a-key');
         $auth = $this->auth();
-        $auth->setCustomProviderKeys(['my-box' => 'KEY_FOR_A_DECLARED_PROVIDER']);
+        $auth->setCustomProviderKeys(['my-box' => '$KEY_FOR_A_DECLARED_PROVIDER']);
 
         $this->assertTrue($auth->hasKeyFor('my-box'));
+        $this->assertSame('a-key', $auth->apiKey('my-box'));
+
+        putenv('KEY_FOR_A_DECLARED_PROVIDER');
+        $this->assertFalse($auth->hasKeyFor('my-box'), 'a reference with nothing behind it is no key');
+    }
+
+    /** Upstream's `FileAuthStorage.read()`: a stored key is `resolveConfigValue(key, credential.env)`. */
+    public function testAStoredKeyIsAConfigValueResolvedWithTheEntrysOwnEnv(): void
+    {
+        $auth = $this->given((string) json_encode([
+            'my-box' => ['type' => 'api_key', 'key' => 'Bearer-$TOKEN_FROM_THE_ENTRY', 'env' => ['TOKEN_FROM_THE_ENTRY' => 'abc']],
+            'cmd-box' => ['type' => 'api_key', 'key' => '!echo from-a-command'],
+            'gone-box' => ['type' => 'api_key', 'key' => '$KEY_FOR_A_DECLARED_PROVIDER'],
+            'plain-box' => ['type' => 'api_key', 'key' => 'KEY_FOR_A_DECLARED_PROVIDER'],
+        ]));
+
+        $this->assertSame('Bearer-abc', $auth->apiKey('my-box'));
+        $this->assertSame('Bearer-abc', $auth->apiKeyCredential('my-box')?->key);
+        $this->assertSame('from-a-command', $auth->apiKey('cmd-box'));
+        $this->assertNull($auth->apiKey('gone-box'));
+        $this->assertFalse($auth->hasKeyFor('gone-box'), 'a stored key that does not resolve is no credential');
+        $this->assertSame('KEY_FOR_A_DECLARED_PROVIDER', $auth->apiKey('plain-box'), 'a bare name is a literal');
+    }
+
+    /** Upstream's Anthropic `resolve()`: `ANTHROPIC_AUTH_TOKEN` is a bearer header, not a key. */
+    public function testAnAnthropicAuthTokenIsABearerHeaderAndNoKey(): void
+    {
+        putenv('ANTHROPIC_API_KEY=the-key');
+        putenv('ANTHROPIC_AUTH_TOKEN=the-bearer');
+        $auth = $this->auth();
+
+        $this->assertTrue($auth->hasKeyFor('anthropic'));
+        $this->assertSame(\Pig\Ai\Stream::AMBIENT_AUTH_MARKER, $auth->apiKey('anthropic'), 'signed in with no key: Stream puts the header on');
+        $this->assertSame(['Authorization' => 'Bearer the-bearer'], $auth->providerAuth('anthropic')?->auth->headers);
+
+        $auth->setApiKey('anthropic', 'stored');
+        $this->assertSame('stored', $auth->apiKey('anthropic'), 'a stored key still wins');
+        putenv('ANTHROPIC_AUTH_TOKEN');
+        putenv('ANTHROPIC_API_KEY');
     }
 
     public function testAKeyGivenOnTheCommandLineMakesItsProviderAvailable(): void
@@ -741,7 +780,7 @@ final class AuthTest extends TestCase
         mkdir($this->home . '/pi', 0o700, true);
         file_put_contents($this->home . '/pi/auth.json', '{}');
         putenv('PI_HOME=' . $this->home . '/pi');
-        putenv('PIG_HOME=' . $this->home . '/pig');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home . '/pig');
 
         // One file, because Anthropic rotates refresh tokens: two copies of the same token
         // is two tools taking it in turns to log each other out.
@@ -751,7 +790,7 @@ final class AuthTest extends TestCase
     public function testPigsOwnFileWhenPiHasNone(): void
     {
         putenv('PI_HOME=' . $this->home . '/pi');
-        putenv('PIG_HOME=' . $this->home . '/pig');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home . '/pig');
 
         $this->assertSame($this->home . '/pig/auth.json', Auth::discover()->path());
     }

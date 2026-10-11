@@ -327,8 +327,7 @@ final class Theme
     /** @return Closure(string): string */
     public function getThinkingBorderColor(ThinkingLevel $level): Closure
     {
-        // Map thinking levels to dedicated theme colors. Matched on the value, as upstream's string
-        // union: pig's `ThinkingLevel` has no `max` case yet, and its arm waits for it.
+        // Map thinking levels to dedicated theme colors. Matched on the value, as upstream's string union.
         return match ($level->value) {
             'off' => fn (string $str): string => $this->fg('thinkingOff', $str),
             'minimal' => fn (string $str): string => $this->fg('thinkingMinimal', $str),

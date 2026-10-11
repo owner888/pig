@@ -55,8 +55,11 @@ require_once __DIR__ . '/CodemodeDescription.php';
  * them — or, for a `codemode`-exposed MCP tool that is deliberately not on the model, through
  * `Pig\Codemode\Registry`, where the MCP extension puts them.
  *
- * Registered **inactive**: nothing happens until a server with `codemode` exposure connects
- * (the MCP extension activates it then) or `codemode.enabled: true` is in the settings.
+ * Registered **inactive** (`defaultActive: false`), as upstream's `createCodemodeExtension()`
+ * registers it: naming it in `--tools` or the `defaultTools` setting, or `setActiveTools()`,
+ * activates it, and so does a server with `codemode` exposure connecting — upstream's MCP
+ * `ensureDiscoveryActive()`, here watching `Pig\Codemode\Registry`, where the MCP extension puts
+ * those tools. Like upstream's, that only ever activates; nothing here takes it off again.
  * `store()`/`load()` persist across scripts as a `codemode-store` entry in the session file,
  * upstream's name, so a conversation moved to pi keeps its store.
  */
@@ -68,7 +71,6 @@ return static function (ExtensionApi $pi): void {
     $errorPreviewChars = 500;
     // Every type the sandbox's `image()` detects, or a saved image has no extension to be given.
     $imageExtensions = ['image/png' => '.png', 'image/jpeg' => '.jpg', 'image/gif' => '.gif', 'image/webp' => '.webp'];
-    $active = false;
     $settings = null;
     // `models.classify()` and `models.generateImages()` calls one script may have in flight; a
     // `parallel()` over more queues the rest — upstream's `MAX_CONCURRENT_MODEL_CALLS`.
@@ -114,7 +116,7 @@ return static function (ExtensionApi $pi): void {
 
         if ($ctx !== null) {
             foreach ($agentTools($ctx) as $name => $one) {
-                $all[$name] = ['name' => $name, 'description' => $one['definition']->description, 'inputSchema' => $one['definition']->parameters];
+                $all[$name] = ['name' => $name, 'description' => $one['definition']->description, 'inputSchema' => $one['definition']->parameters, ...($one['definition']->outputSchema !== null ? ['outputSchema' => $one['definition']->outputSchema] : [])];
             }
         }
 
@@ -163,7 +165,7 @@ return static function (ExtensionApi $pi): void {
         if ($mode === 'only') {
             foreach ($callableTools as $tool) {
                 $definition = $tool->definition();
-                $listed[$definition->name] = ['name' => $definition->name, 'description' => $definition->description, 'inputSchema' => $definition->parameters];
+                $listed[$definition->name] = ['name' => $definition->name, 'description' => $definition->description, 'inputSchema' => $definition->parameters, ...($definition->outputSchema !== null ? ['outputSchema' => $definition->outputSchema] : [])];
             }
         }
 
@@ -180,10 +182,32 @@ return static function (ExtensionApi $pi): void {
      * A declared tool's description followed by how a script calls it — upstream's
      * `describeScriptCall()`, the `on` mode's half: the model is told, on the tool it already
      * knows, that a script can call it too. The arguments are the tool's own parameters, so they
-     * are not repeated; pig's tools have no output schema, so a call resolves to a string.
+     * are not repeated; what a call resolves to is upstream's `describeOutput()` of the tool's
+     * output schema — "a string" without one, the field list for an object (`bash`'s
+     * `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`), else the type.
      */
+    $describeOutput = static function (?array $schema): string {
+        if ($schema === null) {
+            return 'a string';
+        }
+
+        if (($schema['type'] ?? null) === 'object' && is_array($schema['properties'] ?? null)) {
+            $required = is_array($schema['required'] ?? null) ? $schema['required'] : [];
+            $fields = array_map(
+                static fn (string|int $field): string => in_array((string) $field, $required, true) ? (string) $field : "{$field}?",
+                array_keys($schema['properties']),
+            );
+
+            return '`{ ' . implode(', ', $fields) . ' }`';
+        }
+
+        $type = Declarations::schemaToType($schema);
+
+        return $type === 'string' ? 'a string' : '`' . preg_replace('/\s+/', ' ', $type) . '`';
+    };
     $describeScriptCall = static fn (AgentTool $tool): string => trim($tool->definition()->description)
-        . "\n\nCodemode: `\$tools->" . Identifier::of($tool->definition()->name) . '([...])` resolves to a string.';
+        . "\n\nCodemode: `\$tools->" . Identifier::of($tool->definition()->name) . '([...])` resolves to '
+        . $describeOutput($tool->definition()->outputSchema) . '.';
 
     /**
      * Whether `$query` names the namespace: its name, its identifier (`mcp__dev-radius` is
@@ -249,7 +273,15 @@ return static function (ExtensionApi $pi): void {
         // `models.generateImages()` hands back the same block shape for the same reason; without
         // this the script got the sentence "Saved image to …" and had to `read` the file again to
         // show what it had just made.
+        //
+        // An agent tool with an output schema (`bash`) resolves to its `structuredContent`, also for
+        // an error result that carries one — upstream's `toScriptValue()`: a command that exited
+        // non-zero is still `{output, exit_code, …}` to the script.
         $scriptValue = static function (string $name, AgentToolResult $result, bool $isError) use ($textOf): mixed {
+            if ($result->structuredContent !== null) {
+                return $result->structuredContent;
+            }
+
             if (isset($result->details['structuredContent'])) {
                 return $result->details['structuredContent'];
             }
@@ -337,7 +369,9 @@ return static function (ExtensionApi $pi): void {
                         $result = $one['tool']->execute($calls[$index]['id'], $args, $callSignal, null);
                     } catch (\Throwable $error) {
                         $isError = true;
-                        $result = new AgentToolResult([new TextContent($error->getMessage())]);
+                        $result = $error instanceof AgentError
+                            ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage, $error->structuredContent)
+                            : new AgentToolResult([new TextContent($error->getMessage())]);
                     }
                 }
 
@@ -1129,66 +1163,62 @@ return static function (ExtensionApi $pi): void {
         return ['descriptions' => $descriptions, 'hiddenDeclarations' => $hidden];
     };
 
-    $tool = null;
-    $register = static function () use ($pi, $describe, $mode, $execute, $renderCall, $renderResult, $prepareLoadout, &$tool): void {
-        $tool = new CustomTool(
-            name: CodemodeDescription::TOOL_NAME,
-            label: 'codemode',
-            // Replaced through `prepareLoadout` with the declarations of the callable tools.
-            description: $describe($mode(), []),
-            parameters: [
-                'type' => 'object',
-                'properties' => ['code' => ['type' => 'string', 'description' => 'Raw PHP source. Top-level return works. May start with a `// @options: {"max_output_tokens": 1000}` line.']],
-                'required' => ['code'],
-            ],
-            execute: $execute,
-            renderCall: $renderCall,
-            renderResult: $renderResult,
-            promptSnippet: CodemodeDescription::PROMPT_SNIPPET,
-            promptGuidelines: [CodemodeDescription::PROMPT_GUIDELINE],
-            // A capable model writes the script as raw text instead of a JSON-escaped string.
-            constrainedSampling: ['type' => 'grammar', 'variants' => ['openai_lark' => Source::GRAMMAR]],
-            prepareLoadout: $prepareLoadout,
-        );
-        $pi->registerTool($tool);
-    };
-
-    /** Put the tool on the model, or take it off; the description follows the registry. */
-    $sync = static function () use ($pi, &$active, &$callable, $register): void {
-        if ($active) {
-            $register();
-        } else {
-            $callable = null;
-            $pi->removeTools(static fn (CustomTool $t): bool => $t->name === CodemodeDescription::TOOL_NAME);
-        }
-    };
+    $tool = new CustomTool(
+        name: CodemodeDescription::TOOL_NAME,
+        label: 'codemode',
+        // Replaced through `prepareLoadout` with the declarations of the callable tools.
+        description: $describe($mode(), []),
+        parameters: [
+            'type' => 'object',
+            'properties' => ['code' => ['type' => 'string', 'description' => 'Raw PHP source. Top-level return works. May start with a `// @options: {"max_output_tokens": 1000}` line.']],
+            'required' => ['code'],
+        ],
+        execute: $execute,
+        renderCall: $renderCall,
+        renderResult: $renderResult,
+        promptSnippet: CodemodeDescription::PROMPT_SNIPPET,
+        promptGuidelines: [CodemodeDescription::PROMPT_GUIDELINE],
+        // A capable model writes the script as raw text instead of a JSON-escaped string.
+        constrainedSampling: ['type' => 'grammar', 'variants' => ['openai_lark' => Source::GRAMMAR]],
+        prepareLoadout: $prepareLoadout,
+        defaultActive: false,
+    );
+    $pi->registerTool($tool);
 
     $inSession = false;
-    $wantedBySetting = false;
 
-    // On while a setting says so or while something codemode-only is registered — upstream's
-    // `ensureDiscoveryActive()`, the half of it that is about codemode: a `codemode`-exposed
-    // MCP server connecting is what puts a tool in the registry, and that is the activation.
-    $decide = static function () use (&$active, &$inSession, &$wantedBySetting, $sync): void {
-        $next = $inSession && ($wantedBySetting || !Registry::isEmpty());
+    // A `codemode`-exposed MCP server put tools in the registry, or took them out. Registering
+    // the tool again has the loadout applied again, so the description (`prepareLoadout`) follows
+    // the registry; and tools that only a script can reach activate codemode — upstream's
+    // `ensureDiscoveryActive()`, the half of it that is about codemode. When `--tools` or an
+    // `--exclude-tools` left codemode out, it is not registered and `setActiveTools()` ignores it.
+    $ensureActive = static function () use ($pi, $tool, &$inSession): void {
+        if (!$inSession) {
+            return;
+        }
 
-        if ($next !== $active || $next) {
-            $active = $next;
-            $sync();
+        $pi->registerTool($tool);
+
+        if (Registry::isEmpty()) {
+            return;
+        }
+
+        $active = $pi->getActiveTools();
+
+        if (!in_array(CodemodeDescription::TOOL_NAME, $active, true)) {
+            $pi->setActiveTools([...$active, CodemodeDescription::TOOL_NAME]);
         }
     };
 
-    Registry::onChange($decide);
+    Registry::onChange($ensureActive);
 
-    $pi->on('session_start', static function ($event, HookContext $ctx) use (&$inSession, &$settings, &$wantedBySetting, $decide): void {
+    $pi->on('session_start', static function ($event, HookContext $ctx) use (&$inSession, &$settings, $ensureActive): void {
         $settings = $ctx->session?->settings();
-        $wantedBySetting = $settings?->get('codemode.enabled') === true;
-        $inSession = true;
-        $decide();
+        $inSession = $ctx->session !== null;
+        $ensureActive();
     });
 
-    $pi->on('session_shutdown', static function () use (&$inSession, $decide): void {
+    $pi->on('session_shutdown', static function () use (&$inSession): void {
         $inSession = false;
-        $decide();
     });
 };

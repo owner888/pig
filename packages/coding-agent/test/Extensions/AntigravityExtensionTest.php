@@ -223,7 +223,7 @@ final class AntigravityExtensionTest extends TestCase
     {
         // pi-antigravity's `/antigravity.refresh`: no key, no request, and its words. Both homes,
         // or `Auth` reads the real `~/.pi/agent/auth.json` and the refresh goes out for real.
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
         putenv("PI_HOME={$this->home}");
 
         try {
@@ -236,7 +236,7 @@ final class AntigravityExtensionTest extends TestCase
 
             $this->assertSame(['[warning] No Antigravity credentials. Run /login antigravity first.'], $ui->notices);
         } finally {
-            putenv('PIG_HOME');
+            putenv('PIG_CODING_AGENT_DIR');
             putenv('PI_HOME');
         }
     }

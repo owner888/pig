@@ -576,7 +576,7 @@ final class AgentLoop
                 // something that ends the run. An `AgentError` may carry what the UI should
                 // still be shown of the failure.
                 $result = $error instanceof AgentError
-                    ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage)
+                    ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage, $error->structuredContent)
                     : new AgentToolResult([new TextContent($error->getMessage())]);
                 $isError = true;
             }

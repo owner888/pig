@@ -35,6 +35,9 @@ use Throwable;
  * `tool_call` guard that cannot reach a person blocks the call rather than waving it through.
  * A hook that wants to behave differently when nobody is watching checks `$ctx->hasUi`.
  *
+ * In `json`, the first line is the session's header and every line after it is an event in
+ * `RpcEvents`' shape — upstream's `toJsonEvent()`, the same records `--mode rpc` streams.
+ *
  * Ported from upstream's `modes/print-mode.ts`. It calls `process.exit(1)` on a failed turn;
  * this returns the code and lets `bin/pig` end the program, which is the one place that knows
  * how.
@@ -100,6 +103,14 @@ final class PrintMode
 
     private function start(): void
     {
+        // Upstream's first line in `json`: the session header, so a reader knows which session
+        // (id, cwd, parent) the events after it belong to. Before the hooks start, as upstream
+        // writes it before binding the extensions. A session that is not being saved has the header
+        // its in-memory session keeps, as upstream's `SessionManager.inMemory()` does.
+        if ($this->mode === 'json') {
+            $this->line($this->session->sessionHeader());
+        }
+
         // No shutdown handler: this mode ends when the prompt does, which is what a quit asks for.
         $this->session->setMode($this->mode === 'json' ? 'json' : 'print');
 
@@ -110,7 +121,8 @@ final class PrintMode
         // it would otherwise arrive as a line that is not JSON, in the middle of lines that
         // are, and whatever is reading them would stop there.
         $this->hooks?->onError(function (HookError $error): void {
-            $this->complain("hook {$error->hookPath} ({$error->event}): {$error->error}");
+            // Upstream's sentence: `Extension error (<path>): <error>`.
+            $this->complain("Extension error ({$error->hookPath}): {$error->error}");
         });
 
         $this->customTools?->withUi(new NoUi());
@@ -182,12 +194,16 @@ final class PrintMode
     {
         $encoded = RpcEvents::encode($event);
 
-        if ($encoded === null) {
-            return;
+        if ($encoded !== null) {
+            $this->line($encoded);
         }
+    }
 
+    /** @param array<string, mixed> $record one JSON line, as `RpcMode::send()` writes it */
+    private function line(array $record): void
+    {
         $line = json_encode(
-            $encoded,
+            $record,
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE,
         );
 

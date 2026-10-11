@@ -77,6 +77,7 @@ use Pig\CodingAgent\Hooks\Events\ToolExecutionUpdateEvent as HookToolExecutionUp
 use Pig\CodingAgent\Hooks\Events\ToolExecutionEndEvent as HookToolExecutionEnd;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
+use Pig\CodingAgent\Hooks\Events\TreePreparation;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
 use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
 use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
@@ -251,6 +252,18 @@ final class AgentSession
     private array $modelScope;
 
     /**
+     * Upstream's `_overflowRecoveryAttempted`: one compact-and-retry per overflow. Set when the
+     * retry is made, cleared by the next message somebody says and by an answer that did not fail.
+     */
+    private bool $overflowRecoveryAttempted = false;
+
+    /** The id of this session while nothing writes it down — upstream's in-memory `SessionManager`'s. */
+    private string $memoryId;
+
+    /** When that in-memory session began, for its header. */
+    private int $memoryCreatedAt;
+
+    /**
      * @param list<FileCommand> $fileCommands
      * @param list<ModelChoice> $modelScope
      */
@@ -265,13 +278,23 @@ final class AgentSession
         public readonly ?Auth $auth = null,
         private ?ToolLoadout $loadout = null,
         private bool $projectTrusted = true,
+        // Upstream's `SessionManager.inMemory(cwd, { id })`: the id of a session that is not written
+        // down (`--no-session --session-id`). Ignored while there is a store, whose id is the file's.
+        ?string $sessionId = null,
     ) {
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
-        // Upstream's agent carries the session manager's id as its `sessionId`; pig's session
-        // identity is the file's, so a session that is not written down has none.
-        $this->agent->sessionId = $store?->id;
+
+        if ($sessionId !== null) {
+            SessionManager::assertValidSessionId($sessionId);
+        }
+
+        $this->memoryId = $sessionId ?? SessionManager::createSessionId();
+        $this->memoryCreatedAt = Timestamp::nowMs();
+        // Upstream's agent carries the session manager's id as its `sessionId` — the in-memory
+        // manager's too.
+        $this->agent->sessionId = $this->sessionId();
 
         // Upstream's `createAgentSession()` builds the agent with the extension provider hooks as
         // its `onPayload` / `onResponse` / `onProviderStreamEvent`, `maxRetryDelayMs` from the
@@ -311,7 +334,12 @@ final class AgentSession
                 'autoResizeImages' => $this->settings?->imageAutoResize() ?? true,
                 'resizeOptions' => fn (): ?array => $this->limitsModel()?->inputLimits['images']['resize'] ?? null,
             ],
-            'bash' => ['commandPrefix' => $this->settings?->shellCommandPrefix()],
+            'bash' => [
+                'commandPrefix' => $this->settings?->shellCommandPrefix(),
+                'sessionEnvironment' => $this->sessionEnvironment(...),
+            ],
+            // Upstream's `createAllToolDefinitions()` gives `powershell` no `commandPrefix`.
+            'powershell' => ['sessionEnvironment' => $this->sessionEnvironment(...)],
         ]);
         $this->loadout?->useResultImages(fn (array $content): array => ImageProcess::normalizeToolResult(
             $content,
@@ -436,6 +464,12 @@ final class AgentSession
         $hooks?->setSession($this);
     }
 
+    /** @return list<FileCommand> the prompt templates `/name` expands — upstream's `promptTemplates` */
+    public function fileCommands(): array
+    {
+        return $this->fileCommands;
+    }
+
     /** @param list<FileCommand> $fileCommands */
     public function setFileCommands(array $fileCommands): void
     {
@@ -542,8 +576,29 @@ final class AgentSession
         $this->cacheWarmer?->cancel();
         $this->closeSessionResources();
         $this->store = $store;
-        $this->agent->sessionId = $store?->id;
+        $this->agent->sessionId = $this->sessionId();
         $this->hooks?->setStore($store);
+    }
+
+    /**
+     * Upstream's `sessionManager.getSessionId()`: the file's id, or — for a session that is not being
+     * written down — the id its in-memory manager was made with. Never null, as upstream's is not:
+     * `get_state.sessionId`, `PIG_SESSION_ID` and the JSON header all name it.
+     */
+    public function sessionId(): string
+    {
+        return $this->store?->id ?? $this->memoryId;
+    }
+
+    /**
+     * Upstream's `sessionManager.getHeader()`: the file's header, or the one an in-memory session
+     * keeps (`SessionManager::inMemoryHeader()`).
+     *
+     * @return array<string, mixed>
+     */
+    public function sessionHeader(): array
+    {
+        return $this->store?->header() ?? SessionManager::inMemoryHeader($this->memoryId, $this->memoryCreatedAt, $this->cwd);
     }
 
     /**
@@ -665,7 +720,10 @@ final class AgentSession
             $this->abortCompaction();
             $this->abortBash();
             $this->agent->abort();
-            $this->clearQueue();
+            // Emptied without `clearQueue()`'s `queue_update`: nobody is left to redraw a queue for.
+            $this->steering = [];
+            $this->followUps = [];
+            $this->agent->clearAllQueues();
         } catch (Throwable) {
             // Dispose must succeed even if an abort hook throws.
         }
@@ -713,6 +771,8 @@ final class AgentSession
 
                 if ($entry !== null) {
                     $this->announce(new CacheWarmedEvent($entry));
+                    // Upstream's `onWarmed`: `entry_appended` for the usage entry.
+                    $this->announceAppendedEntry();
                 }
 
                 return $entry;
@@ -789,7 +849,15 @@ final class AgentSession
         // A queued message leaves the queue *before* the event goes out, so a listener
         // redrawing the "3 messages waiting" line sees three, not four.
         if ($event instanceof MessageStartEvent && $event->message instanceof UserMessage) {
+            $this->overflowRecoveryAttempted = false;
             $this->dequeue(self::textOf($event->message));
+        }
+
+        if ($event instanceof MessageEndEvent
+            && $event->message instanceof AssistantMessage
+            && $event->message->stopReason !== StopReason::Error
+            && $event->message->stopReason !== StopReason::Length) {
+            $this->overflowRecoveryAttempted = false;
         }
 
         // Written when the message is finished, not when it starts: a streamed answer is
@@ -1097,7 +1165,7 @@ final class AgentSession
         $since = $messages;
 
         if ($usage !== null) {
-            $tokens = Compaction::contextTokens($usage);
+            $tokens = Compaction::calculateContextTokens($usage);
 
             for ($i = count($messages) - 1; $i >= 0; $i--) {
                 if ($messages[$i] instanceof AssistantMessage && $messages[$i]->usage === $usage) {
@@ -1256,7 +1324,7 @@ final class AgentSession
             );
         } catch (Throwable $error) {
             $result = $error instanceof AgentError
-                ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage)
+                ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage, $error->structuredContent)
                 : new AgentToolResult([new TextContent($error->getMessage())]);
             $isError = true;
         }
@@ -1482,6 +1550,40 @@ final class AgentSession
     }
 
     /**
+     * Upstream's `summarizeForBugReport()`: the current model describes what went wrong, for a
+     * `/bug` that leaves the transcript out. Through the session's stream function and retry
+     * policy, as a compaction goes; a virtual model is routed to the model it stands for first.
+     *
+     * @throws AgentError when there is no model, or the summary could not be written
+     */
+    public function summarizeForBugReport(?string $hint, AbortSignal $signal): string
+    {
+        $model = $this->directModel($this->model() ?? throw new AgentError('No model selected'), $signal)->model;
+
+        return \Pig\CodingAgent\BugReport::generateSummary(
+            $this->messages(),
+            $hint,
+            $model,
+            $this->keyFor($model),
+            $signal,
+            $this->agent->streamFunction,
+            $this->retrySettings(),
+            $this->store?->id,
+        );
+    }
+
+    /**
+     * Upstream's `setScopedModels()`: what `/scoped-models` narrows Ctrl+P to for the rest of the
+     * session. Empty is the whole list again. Not saved — that is `enabledModels`, on `app.models.save`.
+     *
+     * @param list<ModelChoice> $scope
+     */
+    public function setModelScope(array $scope): void
+    {
+        $this->modelScope = $scope;
+    }
+
+    /**
      * The models this session offers: the scope when there is one, the whole list otherwise.
      *
      * One home for "which models are on offer", which is what the cycling, the `/model` picker,
@@ -1595,7 +1697,8 @@ final class AgentSession
             ?? $this->settings?->defaultThinkingLevel()
             ?? $this->thinkingLevel();
 
-        $this->setThinkingLevel($this->clampThinking($level));
+        // `setThinkingLevel()` clamps to what the new model can do, as upstream's does.
+        $this->setThinkingLevel($level);
     }
 
     /**
@@ -1720,12 +1823,46 @@ final class AgentSession
      * exist; a caller that ever needs to send a line beginning with a slash verbatim is what
      * decides its shape.
      *
+     * `$streamingBehavior` and `$preflightResult` are upstream's `PromptOptions` of the same names.
+     * While a prompt is in progress, `steer` or `followUp` queues this one the way `steer()` and
+     * `followUp()` do, and without either it is refused. `$preflightResult` is told what became of
+     * the prompt the moment that is known — `handled` (a hook's command, or an `input` handler took
+     * it), `queued`, or `started` just before the run begins — which is what RPC's `prompt` answers
+     * with: a host is told the prompt was accepted without waiting for the turn, and a failure
+     * after that is the turn's to report, in its events.
+     *
      * @param list<ImageContent> $images
-     * @throws AgentError if the agent is already working, or there is no model
+     * @param 'steer'|'followUp'|null $streamingBehavior
+     * @param (Closure('handled'|'queued'|'started'): void)|null $preflightResult
+     * @throws AgentError if the agent is already working and no `$streamingBehavior` was given, or
+     *                    there is no model
      */
-    public function prompt(string $text, array $images = [], string $source = 'interactive'): void
-    {
+    public function prompt(
+        string $text,
+        array $images = [],
+        string $source = 'interactive',
+        ?string $streamingBehavior = null,
+        ?Closure $preflightResult = null,
+    ): void {
         if ($this->runHookCommand($text)) {
+            if ($preflightResult !== null) {
+                $preflightResult('handled');
+            }
+
+            return;
+        }
+
+        if ($streamingBehavior !== null && $this->isStreaming()) {
+            if ($streamingBehavior !== 'steer' && $streamingBehavior !== 'followUp') {
+                throw new AgentError("No such streamingBehavior: '{$streamingBehavior}'. There is steer and followUp.");
+            }
+
+            $disposition = $this->queueUserInput($text, $images, $streamingBehavior, $source);
+
+            if ($preflightResult !== null) {
+                $preflightResult($disposition);
+            }
+
             return;
         }
 
@@ -1739,7 +1876,7 @@ final class AgentSession
         }
 
         if ($this->isStreaming()) {
-            throw new AgentError('Agent is already working. Use steer() or followUp().');
+            throw new AgentError("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
         }
 
         if ($this->model() === null) {
@@ -1751,11 +1888,32 @@ final class AgentSession
         $input = $this->runInputHandlers($text, $images, $source, null);
 
         if ($input === null) {
+            if ($preflightResult !== null) {
+                $preflightResult('handled');
+            }
+
             return;
         }
 
         [$text, $images] = $input;
         $text = $this->expandFileCommand($text);
+
+        // Upstream's `_checkCompaction(lastAssistant, false)` before the prompt is sent: a context
+        // already past the threshold (or an aborted turn that filled it) is compacted first, in
+        // every mode. The prompt is sent below, so nothing is continued from here.
+        $lastAssistant = null;
+
+        foreach (array_reverse($this->messages()) as $message) {
+            if ($message instanceof AssistantMessage) {
+                $lastAssistant = $message;
+
+                break;
+            }
+        }
+
+        if ($lastAssistant !== null) {
+            $this->checkCompaction($lastAssistant, skipAbortedCheck: false);
+        }
 
         // A hook may put a note in front of the prompt. It goes in as its own user
         // message rather than being pasted onto the front of theirs, so the transcript
@@ -1787,6 +1945,10 @@ final class AgentSession
         $messages = $note?->text === null || trim($note->text) === ''
             ? [new UserMessage([new TextContent($text), ...$images])]
             : [new UserMessage($note->text), new UserMessage([new TextContent($text), ...$images])];
+
+        if ($preflightResult !== null) {
+            $preflightResult('started');
+        }
 
         // Returns when the prompt has settled — after its retries, its summary and whatever was
         // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
@@ -2074,11 +2236,12 @@ final class AgentSession
      * Write a hook's note into the session file, outside the conversation.
      *
      * Nothing happens when the session is not being saved: the whole point of one of these
-     * is that it is still there next time, and there is no next time for `--no-save`.
+     * is that it is still there next time, and there is no next time for `--no-session`.
      */
     public function appendHookEntry(string $customType, mixed $data = null): void
     {
         $this->store?->appendCustomEntry($customType, $data);
+        $this->announceAppendedEntry();
     }
 
     /**
@@ -2092,18 +2255,72 @@ final class AgentSession
      * stored prompt in front of somebody who typed `/review foo.php` is not putting their text
      * back. Upstream queues the raw line at both ends, so the model there is handed the literal
      * `/review foo.php` whenever the command was typed during a turn.
+     *
+     * Upstream's `steer(text, images, {source})`: the pictures go with the words, and a hook's
+     * command is refused rather than queued.
+     *
+     * @param list<ImageContent> $images
+     * @return 'handled'|'queued' upstream's `QueuedInputDisposition`
+     * @throws AgentError for a hook's command
      */
-    public function steer(string $text, string $source = 'interactive'): void
+    public function steer(string $text, array $images = [], string $source = 'interactive'): string
     {
-        $input = $this->runInputHandlers($text, [], $source, 'steer');
+        return $this->queueUserInput($text, $images, 'steer', $source);
+    }
 
-        if ($input === null) {
-            return;
+    /**
+     * Upstream's `_queueUserInput()`, the one body of `steer()` and `followUp()`: a hook's command
+     * is refused (it is code, not a message, and has nothing to wait behind — `prompt()` runs it),
+     * the `input` handlers see what was typed, and what is left is queued.
+     *
+     * @param list<ImageContent> $images
+     * @param 'steer'|'followUp' $behavior
+     * @return 'handled'|'queued' upstream's `QueuedInputDisposition`: `handled` when an `input`
+     *         handler consumed it, `queued` otherwise — including after a handler transformed it
+     * @throws AgentError for a hook's command
+     */
+    private function queueUserInput(string $text, array $images, string $behavior, string $source): string
+    {
+        if (str_starts_with($text, '/')) {
+            $this->throwIfHookCommand($text);
         }
 
-        $text = $input[0];
-        $this->steering[] = $text;
-        $this->agent->steer(new UserMessage($this->expandFileCommand($text)));
+        $input = $this->runInputHandlers($text, $images, $source, $this->isStreaming() ? $behavior : null);
+
+        if ($input === null) {
+            return 'handled';
+        }
+
+        [$text, $images] = $input;
+        $message = new UserMessage([new TextContent($this->expandFileCommand($text)), ...$images]);
+
+        if ($behavior === 'steer') {
+            $this->steering[] = $text;
+            $this->announceQueue();
+            $this->agent->steer($message);
+        } else {
+            $this->followUps[] = $text;
+            $this->announceQueue();
+            $this->agent->followUp($message);
+        }
+
+        return 'queued';
+    }
+
+    /** Upstream's `_throwIfExtensionCommand()`, with its words. */
+    private function throwIfHookCommand(string $text): void
+    {
+        $name = strtok(substr($text, 1), " \t") ?: '';
+
+        if ($this->hooks?->command($name) !== null) {
+            throw new AgentError("Extension command \"/{$name}\" cannot be queued. Use prompt() or execute the command when not streaming.");
+        }
+    }
+
+    /** Upstream's `_emitQueueUpdate()`: both queues, whole. */
+    private function announceQueue(): void
+    {
+        $this->announce(new QueueUpdateEvent($this->steering, $this->followUps));
     }
 
     /**
@@ -2136,18 +2353,16 @@ final class AgentSession
         $this->settings?->setFollowUpMode($mode);
     }
 
-    /** Queue something for after the agent has finished the request it is on. `steer()` on the expansion. */
-    public function followUp(string $text, string $source = 'interactive'): void
+    /**
+     * Queue something for after the agent has finished the request it is on — upstream's
+     * `followUp()`, which is `steer()`'s body with the other queue.
+     *
+     * @param list<ImageContent> $images
+     * @return 'handled'|'queued'
+     */
+    public function followUp(string $text, array $images = [], string $source = 'interactive'): string
     {
-        $input = $this->runInputHandlers($text, [], $source, 'followUp');
-
-        if ($input === null) {
-            return;
-        }
-
-        $text = $input[0];
-        $this->followUps[] = $text;
-        $this->agent->followUp(new UserMessage($this->expandFileCommand($text)));
+        return $this->queueUserInput($text, $images, 'followUp', $source);
     }
 
     /** @return list<string> everything waiting, steering first */
@@ -2184,6 +2399,7 @@ final class AgentSession
         $this->steering = [];
         $this->followUps = [];
         $this->agent->clearAllQueues();
+        $this->announceQueue();
 
         return $queued;
     }
@@ -2216,6 +2432,7 @@ final class AgentSession
 
         if ($at !== false) {
             array_splice($this->steering, (int) $at, 1);
+            $this->announceQueue();
 
             return;
         }
@@ -2224,6 +2441,7 @@ final class AgentSession
 
         if ($at !== false) {
             array_splice($this->followUps, (int) $at, 1);
+            $this->announceQueue();
         }
     }
 
@@ -2236,12 +2454,20 @@ final class AgentSession
     }
 
     /**
-     * Run a command the person typed, and give them the result.
+     * Run a command the person typed, and give them the result — upstream's `executeBash()`.
      *
-     * @param bool $remember whether it joins the conversation — `!` does, `!!` does not
-     * @param Closure(string): void|null $onOutput called as output arrives
+     * Recorded either way, as upstream's `recordBashResult()` records it: `$excludeFromContext` is
+     * `!!`, which keeps the command in the session and out of what the model is sent
+     * (`CodingAgent::toLlm()`). It used to be `$remember`, the other way up, and a `!!` was not
+     * written anywhere — so the transcript and the session file lost a command the person ran.
+     *
+     * Each piece of output is announced as a `BashExecutionUpdateEvent` carrying `$id`, upstream's
+     * `bash_execution_update`; `$onOutput` is the tail so far, for a screen that redraws a card.
+     *
+     * @param Closure(string): void|null $onOutput called with the output so far as it arrives
+     * @param string|null $id what the update events name this command by — RPC's command id
      */
-    public function executeBash(string $command, bool $remember = true, ?Closure $onOutput = null): BashExecution
+    public function executeBash(string $command, bool $excludeFromContext = false, ?Closure $onOutput = null, ?string $id = null): BashExecution
     {
         if ($this->bash !== null) {
             throw new AgentError('A command is already running. Press esc to stop it first.');
@@ -2250,14 +2476,23 @@ final class AgentSession
         // A hook may run it somewhere else — a container, a remote box — and hand back what
         // came of it. A hook that throws stops it here: falling back to running the command on
         // this machine is exactly what such a hook exists to prevent. Upstream's rule.
-        $handled = $this->hooks?->emitUserBash(new UserBashEvent($command, !$remember, $this->cwd));
+        $handled = $this->hooks?->emitUserBash(new UserBashEvent($command, $excludeFromContext, $this->cwd));
 
         if ($handled !== null) {
-            if ($remember) {
-                $this->append($handled->result);
-            }
+            $result = $handled->result;
+            $execution = $result->excludeFromContext === $excludeFromContext ? $result : new BashExecution(
+                $result->command,
+                $result->output,
+                $result->exitCode,
+                $result->cancelled,
+                $result->truncated,
+                $result->fullOutputPath,
+                $result->timestamp,
+                $excludeFromContext,
+            );
+            $this->append($execution);
 
-            return $handled->result;
+            return $execution;
         }
 
         $this->bash = new AbortController();
@@ -2273,7 +2508,12 @@ final class AgentSession
             // Upstream's `executeBash()`: `shellCommandPrefix` in front of the command, joined by a
             // newline — the command itself is what is recorded.
             $prefix = $this->settings?->shellCommandPrefix();
-            $run = new Run($this->cwd, $prefix !== null ? "{$prefix}\n{$command}" : $command, $onUpdate);
+            $run = new Run(
+                $this->cwd,
+                $prefix !== null ? "{$prefix}\n{$command}" : $command,
+                $onUpdate,
+                onChunk: fn (string $delta) => $this->announce(new BashExecutionUpdateEvent($id, $delta)),
+            );
             $run->start();
             $exit = $run->wait($this->bash->signal, null);
             $truncation = Truncate::tail($run->output());
@@ -2285,14 +2525,13 @@ final class AgentSession
                 $run->aborted,
                 $truncation->truncated,
                 $run->spillPath,
+                excludeFromContext: $excludeFromContext,
             );
         } finally {
             $this->bash = null;
         }
 
-        if ($remember) {
-            $this->append($execution);
-        }
+        $this->append($execution);
 
         return $execution;
     }
@@ -2359,9 +2598,12 @@ final class AgentSession
      * Not the UI's share of the work: clearing the screen, saying "New session", and telling
      * the custom tools stay with the caller, which is where the screen and the tools are.
      *
+     * `$parentSession` is upstream's `NewSessionOptions.parentSession`: the file this one is
+     * descended from, written on the new header for a host tracking lineage (RPC's `new_session`).
+     *
      * @throws \Throwable when a new session file cannot be created
      */
-    public function startNew(): SessionSwitch
+    public function startNew(?string $parentSession = null): SessionSwitch
     {
         $previous = $this->store?->path;
 
@@ -2376,9 +2618,9 @@ final class AgentSession
         // A new file, not just an empty screen. Keeping the old one would append this
         // conversation onto the last one as if they were the same, and the new session would
         // never exist as a session — which is what this used to do. Only when this session
-        // was being written at all: `--no-save` means no file, and `/new` should not start
+        // was being written at all: `--no-session` means no file, and `/new` should not start
         // saving.
-        $fresh = $previous === null ? null : SessionManager::create($this->cwd);
+        $fresh = $previous === null ? null : SessionManager::create($this->cwd, parentSession: $parentSession);
 
         // Unconditionally, as upstream does, because `isStreaming()` is the narrower question:
         // a retry that is sleeping is not streaming, and `abort()`'s own docblock says why it
@@ -2395,6 +2637,12 @@ final class AgentSession
 
         if ($fresh !== null) {
             $this->writeTo($fresh);
+        } else {
+            // Upstream's `SessionManager.inMemory(this.cwd)` for `/new` without a file: a new
+            // conversation is a new session, with an id of its own.
+            $this->memoryId = SessionManager::createSessionId();
+            $this->memoryCreatedAt = Timestamp::nowMs();
+            $this->agent->sessionId = $this->memoryId;
         }
 
         // Upstream's `_refreshFinalizedContext()` reads the new, empty file: nothing, not even the
@@ -2421,9 +2669,24 @@ final class AgentSession
      * while streaming; a host has no such guard, and that asymmetry is exactly why this is
      * one method now.
      *
+     * **The session carries on in its own working directory**, as upstream's `switchSession()`
+     * does: a conversation from another project (the picker's "All" scope, `/import`, RPC's
+     * `switch_session`) is resumed *there*. A directory that has gone is `MissingSessionCwdError`,
+     * thrown before anything is torn down, so the caller can ask and try again with `$cwdOverride`
+     * (upstream's `cwdOverride`). Everything bound to a directory — the tools, the context files,
+     * `SYSTEM.md`, the project's settings, its trust, its hooks and extensions — belongs to that
+     * directory, so upstream builds the whole runtime again for it; here that is `$relocate`, the
+     * caller's runtime factory (`bin/pig` builds it around `CodingAgent::session()`): this session
+     * is shut down and disposed, the factory opens the file in a new one for the new directory,
+     * and `SessionSwitch::$replacement` hands it back for the caller to carry on with. Without a
+     * factory (a library caller, a test) the session switches in place and keeps its directory.
+     *
+     * @param (Closure(string, SessionManager): \Pig\CodingAgent\StartedSession)|null $relocate
+     *        the cwd to build for and the opened session file
+     * @throws MissingSessionCwdError when the session's working directory no longer exists
      * @throws \Throwable when there is no such session file
      */
-    public function switchTo(string $path): SessionSwitch
+    public function switchTo(string $path, ?string $cwdOverride = null, ?Closure $relocate = null): SessionSwitch
     {
         $previous = $this->store?->path;
 
@@ -2433,12 +2696,24 @@ final class AgentSession
             return new SessionSwitch(switched: false, previous: $previous);
         }
 
-        $opened = SessionManager::open($path);
+        $opened = SessionManager::open($path, $cwdOverride);
+        SessionCwd::assertExists($opened, $this->cwd);
 
         // Unconditional, for `startNew()`'s reason: a sleeping retry is not streaming either.
         $this->abort()->await();
         $this->clearQueue();
         $this->hooks?->emit(new SessionShutdownEvent('resume', $opened->path));
+
+        // Another directory: upstream's `teardownCurrent()` then `createRuntime({cwd: …})`. The
+        // replacement resumes the file itself and hears `session_start` from the caller, once it
+        // has been given a screen.
+        if ($relocate !== null && $opened->cwd !== '' && $opened->cwd !== $this->cwd) {
+            $this->dispose();
+            $replacement = $relocate($opened->cwd, $opened);
+            $said = array_filter($replacement->session->messages(), static fn (mixed $message): bool => !$message instanceof SystemMessage);
+
+            return new SessionSwitch(switched: true, previous: $previous, messages: count($said), replacement: $replacement);
+        }
 
         // The file that was opened is the one written to from here on. Without this the
         // conversation on screen is the resumed one while everything said next is appended
@@ -2479,7 +2754,7 @@ final class AgentSession
      * file.
      *
      * Not for a session that is not being written down: upstream forks one in memory, and pig
-     * has no second in-memory conversation to put it in — `--no-save` means there is nothing to
+     * has no second in-memory conversation to put it in — `--no-session` means there is nothing to
      * fork from, as there is nowhere to go back to.
      *
      * @param 'before'|'at' $position
@@ -2582,6 +2857,8 @@ final class AgentSession
      * the only way to re-ask was to type it again. Any other point — an answer, a summary, a
      * command's output — is where the leaf lands, as before.
      *
+     * A `session_before_tree` hook that cancels is `TreeJump::$cancelled`, not an exception.
+     *
      * @throws AgentError when there is no session on disk, no such point, or a summary was asked
      *                    for with no model to write it
      */
@@ -2590,6 +2867,8 @@ final class AgentSession
         bool $summarise = false,
         ?string $instructions = null,
         ?AbortSignal $signal = null,
+        ?bool $replaceInstructions = null,
+        ?string $label = null,
     ): TreeJump {
         if ($this->store === null) {
             throw new AgentError('This session is not being saved, so there is nowhere to go back to.');
@@ -2616,39 +2895,129 @@ final class AgentSession
             throw new AgentError('No model to write the summary with.');
         }
 
-        // Read before the move, obviously, and read even when nothing asked for a summary:
-        // a hook is told what is being left behind whether or not anyone is writing it down.
-        $leaving = $this->store->abandoning($entryId);
-        $answer = $this->hooks?->emitBeforeTree(
-            new SessionBeforeTreeEvent($entryId, $oldLeaf, $leaving, $summarise),
-        );
+        // Upstream's `collectEntriesForBranchSummary()`: from the old leaf back to the deepest
+        // entry the two positions share. Read before the move, and read even when nothing asked
+        // for a summary: a hook is told what is being left behind whether or not anyone is
+        // writing it down.
+        $collected = BranchSummarization::collectEntriesForBranchSummary($this->store, $oldLeaf, $entryId);
 
-        if ($answer !== null && $answer->cancel) {
-            throw new AgentError('A hook stopped the jump.');
+        // One controller, with the caller's signal forwarded into it, so the hook and the
+        // summariser have one `aborted()` to ask — as `compactNow()` does.
+        $controller = new AbortController();
+
+        if ($signal?->aborted() === true) {
+            $controller->abort('Cancelled');
         }
 
-        $summary = $this->branchSummary($answer?->summary, $summarise, $leaving, $oldLeaf, $instructions, $signal);
+        $listener = $signal?->onAbort(static fn () => $controller->abort('Cancelled'));
 
-        // Cancelled part-way through summarising: nothing has moved, and the caller is
-        // meant to put the person back where they were rather than jump without the
-        // summary they asked for.
-        if ($summary === false) {
-            return new TreeJump(moved: false, aborted: true);
+        try {
+            $answer = $this->hooks?->emitBeforeTree(new SessionBeforeTreeEvent(
+                new TreePreparation(
+                    $entryId,
+                    $oldLeaf,
+                    $collected->commonAncestorId,
+                    $collected->entries,
+                    $summarise,
+                    $instructions,
+                    $replaceInstructions,
+                    $label,
+                ),
+                $controller->signal,
+            ));
+
+            // Upstream's `if (result?.cancel) return { cancelled: true }`: a hook saying no is an
+            // answer, and nothing has moved.
+            if ($answer !== null && $answer->cancel) {
+                return new TreeJump(moved: false, cancelled: true);
+            }
+
+            // A hook's prose is used only when a summary was asked for — upstream's condition. The
+            // hook is told whether anyone wants one, so one that answers with prose anyway has
+            // misread the event, and writing it into the conversation would be a branch summary
+            // nobody asked for. Its overrides of the summariser's instructions and the label apply
+            // either way.
+            $fromExtension = $summarise && $answer?->summary !== null;
+            $instructions = $answer?->customInstructions ?? $instructions;
+            $replaceInstructions = $answer?->replaceInstructions ?? $replaceInstructions;
+            $label = $answer?->label ?? $label;
+
+            $summary = null;
+
+            if ($fromExtension) {
+                $given = $answer->summary;
+                $details = is_array($given['details'] ?? null) ? $given['details'] : [];
+                $summary = new BranchSummary(
+                    (string) ($given['summary'] ?? ''),
+                    self::fileList($details['readFiles'] ?? []),
+                    self::fileList($details['modifiedFiles'] ?? []),
+                    $oldLeaf,
+                    fromHook: true,
+                    usage: ($given['usage'] ?? null) instanceof Usage ? $given['usage'] : null,
+                );
+            } elseif ($summarise && $collected->entries !== []) {
+                $summary = $this->generateBranchSummary($collected->entries, $oldLeaf, $instructions, $replaceInstructions, $controller->signal);
+
+                // Cancelled part-way through summarising: nothing has moved, and the caller is
+                // meant to put the person back where they were rather than jump without the
+                // summary they asked for.
+                if ($summary === null) {
+                    return new TreeJump(moved: false, aborted: true, cancelled: true);
+                }
+            }
+        } finally {
+            if ($listener !== null) {
+                $signal?->removeListener($listener);
+            }
         }
 
         $this->store->goTo($target);
-        $this->restore($this->store->messages());
 
-        // After the move, so it lands on the branch being joined — which is the whole
-        // point: it is context for carrying on here, not a note on the branch it describes.
-        if ($summary !== null) {
-            $this->agent->appendMessage($summary);
+        // After the move, so it lands on the branch being joined — which is the whole point: it
+        // is context for carrying on here, not a note on the branch it describes. Upstream's
+        // `branchWithSummary()`; an empty summary is not written, as upstream's `if (summaryText)`.
+        if ($summary !== null && $summary->summary !== '') {
             $this->store->append($summary);
+        } else {
+            $summary = null;
         }
 
-        $this->hooks?->emit(new SessionTreeEvent($this->store->leaf(), $oldLeaf, $summary));
+        // The label goes on the summary when there is one, and on the point gone to otherwise —
+        // upstream's two `appendLabelChange()` calls.
+        if ($label !== null && $label !== '') {
+            $labelled = $summary !== null ? $this->store->leaf() : $entryId;
+
+            if ($labelled !== null) {
+                $this->store->appendLabel($labelled, $label);
+            }
+        }
+
+        $this->restore($this->store->messages());
+
+        $this->hooks?->emit(new SessionTreeEvent(
+            $this->store->leaf(),
+            $oldLeaf,
+            $summary,
+            $summary !== null ? $fromExtension : null,
+        ));
 
         return new TreeJump(moved: true, summary: $summary, editorText: $editorText);
+    }
+
+    /**
+     * A file list a hook handed over, as the strings it should be.
+     *
+     * @return list<string>
+     */
+    private static function fileList(mixed $paths): array
+    {
+        if (!is_array($paths)) {
+            throw new AgentError('A hook\'s summary details must give readFiles and modifiedFiles as lists of paths.');
+        }
+
+        return array_values(array_map(static fn (mixed $path): string => is_string($path)
+            ? $path
+            : throw new AgentError('A hook\'s summary details must give readFiles and modifiedFiles as lists of paths.'), $paths));
     }
 
     /**
@@ -2690,64 +3059,52 @@ final class AgentSession
     }
 
     /**
-     * The summary to write down, if any.
+     * The model's summary of the branch being left — upstream's `generateBranchSummary()` call in
+     * `navigateTree()`, routed first because a summary sizes its input and output from the model
+     * it gets, with `branchSummary.reserveTokens` (upstream's own setting for this, not
+     * compaction's) and the session's stream function, retry policy and retry announcements.
      *
-     * @param list<mixed> $leaving
-     * @return BranchSummary|null|false false when summarising was called off
+     * @param list<SessionEntry> $entries
+     * @return BranchSummary|null null when summarising was called off
+     * @throws AgentError when the model failed
      */
-    private function branchSummary(
-        ?string $fromHook,
-        bool $summarise,
-        array $leaving,
+    private function generateBranchSummary(
+        array $entries,
         ?string $oldLeaf,
         ?string $instructions,
-        ?AbortSignal $signal,
-    ): BranchSummary|null|false {
-        // A hook that wrote one has done the work, and the model is not asked. Its file
-        // lists are pig's own reading of the branch rather than the hook's claim about it:
-        // the prose is the hook's, the facts are not its to get wrong.
-        //
-        // Only when a summary was asked for, which is upstream's condition and was missing here:
-        // the hook is *told* whether anyone wants one (`SessionBeforeTreeEvent`'s last argument),
-        // so one that answers with prose anyway has misread the event, and writing that prose into
-        // the conversation is a branch summary nobody asked for.
-        if ($fromHook !== null && $summarise) {
-            [$read, $modified] = Compaction::files($leaving);
+        ?bool $replaceInstructions,
+        AbortSignal $signal,
+    ): ?BranchSummary {
+        $model = $this->directModel($this->model() ?? throw new AgentError('No model to write the summary with.'), $signal)->model;
 
-            return new BranchSummary($fromHook, $read, $modified, $oldLeaf, fromHook: true);
-        }
-
-        $model = $this->model();
-
-        if (!$summarise || $leaving === [] || $model === null) {
-            return null;
-        }
-
-        // Routed first: a summary sizes its input and output from the model it gets.
-        $model = $this->directModel($model, $signal)->model;
-
-        [$messages, $read, $modified] = BranchSummarization::prepare(
-            $leaving,
-            // `branchSummary.reserveTokens`, upstream's own setting for this — not compaction's.
-            BranchSummarization::budget(
-                $model->contextWindow,
-                $this->settings?->branchSummaryReserveTokens(BranchSummarization::RESERVE_TOKENS) ?? BranchSummarization::RESERVE_TOKENS,
-            ),
-        );
-
-        if ($messages === []) {
-            return null;
-        }
-
-        $answer = $this->summarise(
+        $result = BranchSummarization::generateBranchSummary(
+            $entries,
             $model,
-            BranchSummarization::request($messages, $instructions),
-            $signal,
-            BranchSummarization::MAX_TOKENS,
-            source: 'branchSummary',
+            $this->keyFor($model),
+            signal: $signal,
+            customInstructions: $instructions,
+            replaceInstructions: $replaceInstructions,
+            reserveTokens: $this->settings?->branchSummaryReserveTokens(BranchSummarization::RESERVE_TOKENS) ?? BranchSummarization::RESERVE_TOKENS,
+            streamFn: $this->agent->streamFunction,
+            retry: $this->retrySettings(),
+            callbacks: $this->summarizationRetryCallbacks('branchSummary'),
         );
 
-        return $answer === null ? false : new BranchSummary($answer[0], $read, $modified, $oldLeaf, usage: $answer[1]);
+        if ($result->aborted) {
+            return null;
+        }
+
+        if ($result->error !== null) {
+            throw new AgentError($result->error);
+        }
+
+        return new BranchSummary(
+            (string) $result->summary,
+            $result->readFiles ?? [],
+            $result->modifiedFiles ?? [],
+            $oldLeaf,
+            usage: $result->usage,
+        );
     }
 
     // ---- making room -------------------------------------------------------------------
@@ -2757,24 +3114,53 @@ final class AgentSession
     {
         $usage = Compaction::lastUsage($this->messages());
 
-        return $usage === null ? 0 : Compaction::contextTokens($usage);
+        return $usage === null ? 0 : Compaction::calculateContextTokens($usage);
     }
 
-    /** Whether the next turn would be pushing against the model's window. */
+    /**
+     * Whether the next turn would be pushing against the model's window — case 3 of
+     * `checkCompaction()` asked of the latest answer, which is the check the session itself makes
+     * before a prompt.
+     */
     public function shouldCompact(): bool
     {
         $model = $this->limitsModel();
+        $last = null;
 
-        if ($model === null || !($this->settings?->compactionEnabled() ?? true)) {
+        foreach (array_reverse($this->messages()) as $message) {
+            if ($message instanceof AssistantMessage) {
+                $last = $message;
+
+                break;
+            }
+        }
+
+        if ($model === null || $last === null) {
             return false;
         }
 
-        return Compaction::shouldCompact($this->contextTokens(), $model->contextWindow, $this->reserveTokens());
+        $compactedAt = $this->latestCompactionTimestamp();
+
+        if ($compactedAt !== null && $last->timestamp <= $compactedAt) {
+            return false;
+        }
+
+        return $this->thresholdExceeded($last, ($this->modelForMessage($last) ?? $model)->contextWindow, $compactedAt);
     }
 
-    private function reserveTokens(): int
+    /**
+     * Upstream's `settingsManager.getCompactionSettings(model)`: `compaction.enabled`, and the two
+     * token budgets with the current model's `modelOverrides` applied.
+     */
+    private function compactionSettings(): CompactionSettings
     {
-        return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS, $this->model()) ?? Compaction::RESERVE_TOKENS;
+        $model = $this->model();
+
+        return new CompactionSettings(
+            $this->settings?->compactionEnabled() ?? true,
+            $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS, $model) ?? Compaction::RESERVE_TOKENS,
+            $this->settings?->compactionKeepRecentTokens(Compaction::KEEP_RECENT_TOKENS, $model) ?? Compaction::KEEP_RECENT_TOKENS,
+        );
     }
 
     // ---- one prompt, from its first run to `agent_settled` -------------------------------
@@ -2908,9 +3294,9 @@ final class AgentSession
             return !$this->runAbortRequested;
         }
 
-        // Upstream's `_checkCompaction()` for the overflow case.
-        if (Overflow::happened($last, $this->modelForMessage($last)?->contextWindow)) {
-            return $this->compactForOverflow($last) && !$this->runAbortRequested;
+        // Upstream's `_checkCompaction(message, true)`: overflow, then the threshold.
+        if ($this->checkCompaction($last, skipAbortedCheck: true)) {
+            return !$this->runAbortRequested;
         }
 
         // The loop drains both queues before `agent_end`; anything queued after that needs a
@@ -3143,38 +3529,160 @@ final class AgentSession
     }
 
     /**
-     * Summarise, then say to send the same turn again.
+     * Upstream's `_checkCompaction()`: whether this assistant message calls for an automatic
+     * compaction, and if so run it (`runAutoCompaction()`). The three automatic cases, in
+     * upstream's order:
      *
-     * The turn failed because the conversation outgrew the window, so the summary is the fix
-     * and the retry is the point of doing it. A summary that fails or is cancelled ends it —
-     * sending the same oversized request again would fail the same way.
+     * 1. **Overflow with retry** — a context-overflow error (or a length stop): the failed turn is
+     *    taken off the conversation (`dropLastAssistantMessage()`, upstream's
+     *    `_omitRecoveryAttempt()`), the session compacted, and the turn sent again.
+     * 2. **Overflow without retry** — a response that completed but used more than the window:
+     *    compacted, and the response kept, since a completed answer cannot be continued.
+     * 3. **The threshold** — the context the message reports (or, for a failed or usage-less one,
+     *    the estimate from the last good reading) is past `contextWindow - reserveTokens`:
+     *    compacted, nothing retried.
      *
-     * @return bool true when there is a summary to carry on from
+     * Called after every run (`handlePostAgentRun()`, `$skipAbortedCheck` true) and before every
+     * prompt (`prompt()`, false: an aborted turn still filled the context), which is where upstream
+     * calls it — in the session, so the terminal, RPC and print mode all compact the same way.
+     * Nothing happens when `compaction.enabled` is off, when the message came from another model
+     * than the current one (its window is not this one's), or when it predates the latest
+     * compaction (its usage measured a context that no longer exists).
+     *
+     * @return bool true when the run should `continue()`: an overflow retry, or messages queued
+     *              while the summary was written
      */
-    private function compactForOverflow(AssistantMessage $failed): bool
+    private function checkCompaction(AssistantMessage $message, bool $skipAbortedCheck): bool
     {
-        $error = $failed->errorMessage ?? 'The conversation outgrew the context window.';
+        $settings = $this->compactionSettings();
 
-        $this->announce(new AutoCompactionStartEvent($error));
-        $this->dropLastAssistantMessage();
+        if (!$settings->enabled) {
+            return false;
+        }
+
+        if ($skipAbortedCheck && $message->stopReason === StopReason::Aborted) {
+            return false;
+        }
+
+        $messageModel = $this->modelForMessage($message);
+        $contextWindow = ($messageModel ?? $this->limitsModel())?->contextWindow ?? 0;
+        $compactedAt = $this->latestCompactionTimestamp();
+
+        if ($compactedAt !== null && $message->timestamp <= $compactedAt) {
+            return false;
+        }
+
+        // Cases 1 and 2. Only for the model that produced the message: an overflow on a smaller
+        // model is not a reason to compact for the larger one somebody has since switched to.
+        if ($messageModel !== null && Overflow::happened($message, $messageModel->contextWindow)) {
+            if ($message->stopReason === StopReason::Stop) {
+                return $this->runAutoCompaction('overflow', willRetry: false);
+            }
+
+            // Upstream's guard: the retry after a summary overflowed again, so a second summary
+            // would only go round once more. Said as a `compaction_end` with nothing started.
+            if ($this->overflowRecoveryAttempted) {
+                $errorMessage = 'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.';
+                $this->announce(new CompactionEndEvent('overflow', null, false, false, $errorMessage));
+                $this->hooks?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $errorMessage, willRetry: false, fromExtension: false));
+
+                return false;
+            }
+
+            $this->overflowRecoveryAttempted = true;
+            $this->dropLastAssistantMessage();
+
+            return $this->runAutoCompaction('overflow', willRetry: true);
+        }
+
+        // Case 3, which `shouldCompact()` answers for the latest message on its own.
+        if ($this->thresholdExceeded($message, $contextWindow, $compactedAt)) {
+            return $this->runAutoCompaction('threshold', willRetry: false);
+        }
+
+        return false;
+    }
+
+    /**
+     * Upstream's case 3 of `_checkCompaction()`: the provider's count for this message, or — when
+     * it failed or reported nothing — `estimateContextTokens()` over the conversation, unless the
+     * reading that estimate starts from predates the latest compaction.
+     */
+    private function thresholdExceeded(AssistantMessage $message, int $contextWindow, ?int $compactedAt): bool
+    {
+        $direct = Compaction::calculateContextTokens($message->usage);
+
+        if ($message->stopReason === StopReason::Error || $direct === 0) {
+            $messages = $this->messages();
+            $estimate = Compaction::estimateContextTokens($messages);
+
+            if ($estimate->lastUsageIndex !== null && $compactedAt !== null) {
+                $usageMessage = $messages[$estimate->lastUsageIndex];
+
+                if ($usageMessage instanceof AssistantMessage && $usageMessage->timestamp <= $compactedAt) {
+                    return false;
+                }
+            }
+
+            $tokens = $estimate->tokens;
+        } else {
+            $tokens = $direct;
+        }
+
+        return Compaction::shouldCompact($tokens, $contextWindow, $this->compactionSettings());
+    }
+
+    /** When the newest compaction summary in the conversation was written, or null for none. */
+    private function latestCompactionTimestamp(): ?int
+    {
+        $latest = null;
+
+        foreach ($this->messages() as $message) {
+            if ($message instanceof CompactionSummary && ($latest === null || $message->timestamp > $latest)) {
+                $latest = $message->timestamp;
+            }
+        }
+
+        return $latest;
+    }
+
+    /**
+     * Upstream's `_runAutoCompaction()`: threshold or overflow compaction. `prepareCompaction()`
+     * first, and **when there is nothing to cut, nothing is announced at all** — no
+     * `compaction_start`, no `compaction_end`, no `session_compact_failed` — which is upstream's
+     * behaviour. What the person sees then is what upstream shows: the turn's own error (an
+     * overflow's "prompt is too long") already on screen and in the events, with nothing
+     * claiming to have tried. Otherwise `compactNow()` announces the start and the end, and a
+     * failure there in upstream's words (`Context overflow recovery failed: …` /
+     * `Auto-compaction failed: …`) — so the `false` here is only "do not continue".
+     *
+     * @param 'overflow'|'threshold' $reason
+     * @return bool true to `continue()`: the retry after an overflow, or queued messages
+     */
+    private function runAutoCompaction(string $reason, bool $willRetry): bool
+    {
+        if ($this->model() === null) {
+            return false;
+        }
+
+        $session = $this->store ?? SessionManager::previewOf($this->cwd, $this->messages());
+        $preparation = Compaction::prepareCompaction($session->branchEntries(), $this->compactionSettings());
+
+        if ($preparation === null) {
+            return false;
+        }
 
         try {
-            $summary = $this->compactNow(null, null, 'overflow');
-        } catch (Throwable $problem) {
-            $this->announce(new AutoCompactionEndEvent(false, false, null, $problem->getMessage()));
-
+            $summary = $this->compactNow(null, null, $reason, $willRetry, $preparation);
+        } catch (Throwable) {
             return false;
         }
 
         if ($summary === null) {
-            $this->announce(new AutoCompactionEndEvent(false, false, null, 'Summarising was cancelled.'));
-
             return false;
         }
 
-        $this->announce(new AutoCompactionEndEvent(true, true, $summary));
-
-        return true;
+        return $willRetry || $this->agent->hasQueuedMessages();
     }
 
     /**
@@ -3205,7 +3713,25 @@ final class AgentSession
 
         if ($entryId !== null) {
             $this->store?->appendContextEdit($entryId, null);
+            $this->announceAppendedEntry();
         }
+    }
+
+    /**
+     * Upstream's `entry_appended` for the entry just written — the store's leaf, which `append()`
+     * has just moved onto it. For the entries no `message_end` carries: a hook's custom entry, a
+     * context edit, the cache warmer's usage. Nothing for a session that is not being saved.
+     */
+    private function announceAppendedEntry(): void
+    {
+        $id = $this->store?->leaf();
+        $entry = $id === null ? null : $this->store?->entry($id);
+
+        if ($id === null || $entry === null) {
+            return;
+        }
+
+        $this->announce(new EntryAppendedEvent(new SessionEntry($id, $entry['parent'], $entry['message'])));
     }
 
     /**
@@ -3495,34 +4021,40 @@ final class AgentSession
     }
 
     /**
-     * Summarise the older half of the conversation and carry on from the summary.
+     * Summarise the older part of the conversation and carry on from the summary.
      *
-     * The summary is a message like any other, so it is appended to the file and the
+     * The summary is an entry like any other, so it is appended to the file and the
      * messages it replaced are not removed from it — a session log is a record of what
      * happened, and what happened is that these messages were said and then summarised.
      * Replaying it puts the conversation back the way compaction left it.
      *
+     * Upstream's `compact()`: the manual one — `/compact`, RPC's `compact`, a hook's
+     * `$ctx->compact()`. The automatic ones (`threshold`, `overflow`) are the session's own, from
+     * `checkCompaction()`, and are not started from outside.
+     *
      * @param string|null $instructions what to pay particular attention to, from `/compact foo`
-     * @return CompactionSummary|null null when it was called off part-way
+     * @return CompactionSummary|null the entry written, or null when it was called off part-way
      * @throws AgentError if the agent is working, there is no model, there is nothing to
-     *                    compact, or the model fails
+     *                    compact, a hook cancelled it, or the model fails
      */
-    public function compact(?string $instructions = null, ?AbortSignal $signal = null, string $reason = 'manual'): ?CompactionSummary
+    public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionSummary
     {
         if ($this->isStreaming()) {
             throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
         }
 
-        return $this->compactNow($instructions, $signal, $reason);
+        return $this->compactNow($instructions, $signal, 'manual', willRetry: false);
     }
 
     /**
-     * `compact()` without the "is a prompt in progress" check, for the one caller that is the
-     * prompt in progress: the overflow summary between a failed run and the one that retries it.
+     * `compact()` without the "is a prompt in progress" check, for the callers that are the prompt
+     * in progress: the automatic summaries (`runAutoCompaction()`), which hand in the preparation
+     * they already made.
+     *
+     * @param 'manual'|'threshold'|'overflow' $reason
      */
-    private function compactNow(?string $instructions, ?AbortSignal $signal, string $reason): ?CompactionSummary
+    private function compactNow(?string $instructions, ?AbortSignal $signal, string $reason, bool $willRetry, ?CompactionPreparation $preparation = null): ?CompactionSummary
     {
-
         // One controller for both doors, so `isCompacting()` and `abortCompaction()` answer for a
         // summarisation whoever started it. A signal the caller brought is *forwarded* into it
         // rather than carried alongside: what goes downstream then has one `aborted()` to ask, and
@@ -3536,21 +4068,20 @@ final class AgentSession
         $listener = $signal?->onAbort(fn () => $this->compacting?->abort('Cancelled'));
 
         $this->hookCancelledCompaction = false;
+        $this->compactionFromExtension = false;
+        $compacting = $this->compacting;
+        $done = null;
+        $failure = null;
+
+        // Upstream's `compaction_start`: the manual one before anything is looked at (so "Nothing
+        // to compact" arrives as its `compaction_end`), the automatic ones only once
+        // `runAutoCompaction()` has found something to cut.
+        $this->announce(new CompactionStartEvent($reason));
 
         try {
-            $summary = $this->summariseAndSwapIn($instructions, $this->compacting->signal, $reason);
+            $done = $this->summariseAndSwapIn($instructions, $compacting->signal, $reason, $willRetry, $preparation);
         } catch (Throwable $problem) {
-            // Upstream's `session_compact_failed`, beside `session_compact` so a hook reacting to
-            // one is not left guessing about the other. A hook's own cancel is an abort, as
-            // escape is: nothing went wrong, somebody decided.
-            $this->hooks?->emit(new SessionCompactFailedEvent(
-                $reason,
-                aborted: $this->hookCancelledCompaction,
-                errorMessage: $this->hookCancelledCompaction ? null : $problem->getMessage(),
-                willRetry: $reason === 'overflow',
-            ));
-
-            throw $problem;
+            $failure = $problem;
         } finally {
             $this->compacting = null;
 
@@ -3563,15 +4094,53 @@ final class AgentSession
             $this->resolveIdleWaitIfIdle();
         }
 
-        if ($summary === null) {
-            $this->hooks?->emit(new SessionCompactFailedEvent($reason, aborted: true, willRetry: $reason === 'overflow'));
+        if ($failure !== null) {
+            // Upstream's `compaction_end` and `session_compact_failed`. A hook's own cancel is an
+            // abort, as escape is: nothing went wrong, somebody decided. `willRetry` is false, as
+            // upstream's always is here — the turn a failed recovery was for is not sent again.
+            $aborted = $compacting->signal->aborted() || $this->hookCancelledCompaction;
+            $errorMessage = $aborted ? null : self::compactionFailure($reason, $failure->getMessage());
+
+            $this->announce(new CompactionEndEvent($reason, null, $aborted, false, $errorMessage));
+            $this->hooks?->emit(new SessionCompactFailedEvent(
+                $reason,
+                aborted: $aborted,
+                errorMessage: $errorMessage,
+                willRetry: false,
+                fromExtension: $this->compactionFromExtension,
+            ));
+
+            throw $failure;
         }
+
+        if ($done === null) {
+            $this->announce(new CompactionEndEvent($reason, null, true, false));
+            $this->hooks?->emit(new SessionCompactFailedEvent($reason, aborted: true, willRetry: false, fromExtension: $this->compactionFromExtension));
+
+            return null;
+        }
+
+        [$summary, $result] = $done;
+        $this->announce(new CompactionEndEvent($reason, $result, false, $willRetry, null, $summary));
 
         return $summary;
     }
 
+    /** Upstream's wording for a failed compaction, by what started it. */
+    private static function compactionFailure(string $reason, string $message): string
+    {
+        return match ($reason) {
+            'overflow' => "Context overflow recovery failed: {$message}",
+            'threshold' => "Auto-compaction failed: {$message}",
+            default => "Compaction failed: {$message}",
+        };
+    }
+
     /** Set when the last compaction was stopped by a `session_before_compact` handler, which is an abort and not an error. */
     private bool $hookCancelledCompaction = false;
+
+    /** Set when the last compaction's content came from a `session_before_compact` handler. */
+    private bool $compactionFromExtension = false;
 
     /** Whether a summariser is running right now, from either door. */
     public function isCompacting(): bool
@@ -3590,56 +4159,87 @@ final class AgentSession
         $this->compacting?->abort('Cancelled');
     }
 
-    /** The body of `compact()`, with the signal already settled. */
-    private function summariseAndSwapIn(?string $instructions, AbortSignal $signal, string $reason = 'manual'): ?CompactionSummary
+    /**
+     * The body of `compact()`, with the signal already settled — upstream's compaction body,
+     * shared by its three doors.
+     *
+     * `Compaction::prepareCompaction()` over the branch, `session_before_compact`, then the hook's
+     * `CompactionResult` or `Compaction::compact()`'s, written as a `CompactionSummary` and the
+     * agent's messages rebuilt from the projection — upstream's `appendCompaction()` and
+     * `_refreshFinalizedContext()`. A session that is not being saved compacts a copy of itself
+     * held in memory (`SessionManager::previewOf()`), so the cut, the ids and the rebuilt context
+     * are worked out the one way either way.
+     *
+     * @return array{0: CompactionSummary, 1: CompactionResult}|null the entry as the conversation
+     *         now holds it, and upstream's `CompactionResult` for `compaction_end` and RPC's
+     *         `compact` — `estimatedTokensAfter` measured over the rebuilt conversation, as
+     *         upstream's `estimateMessagesTokens()` measures it; null when it was called off
+     */
+    private function summariseAndSwapIn(?string $instructions, AbortSignal $signal, string $reason, bool $willRetry, ?CompactionPreparation $preparation = null): ?array
     {
-        $model = $this->model();
+        $model = $this->model() ?? throw new AgentError('No model selected.');
+        $session = $this->store ?? SessionManager::previewOf($this->cwd, $this->messages());
+        $pathEntries = $session->branchEntries();
+        $preparation ??= Compaction::prepareCompaction($pathEntries, $this->compactionSettings());
 
-        if ($model === null) {
-            throw new AgentError('No model selected.');
+        if ($preparation === null) {
+            $last = $pathEntries[count($pathEntries) - 1] ?? null;
+
+            // Upstream's wording, because it is the wording someone will search for. The
+            // conversation being smaller than the recent window compaction always keeps is
+            // the usual reason, and the footer does not show it — that percentage is the
+            // provider's count of a whole request, tool schemas and system prompt included.
+            throw new AgentError($last?->message instanceof CompactionSummary ? 'Already compacted' : 'Nothing to compact (session too small)');
         }
 
-        // Routed first: a summary sizes its input and output from the model it gets.
-        $direct = $this->directModel($model, $signal);
-        $model = $direct->model;
+        $answer = $this->hooks?->emitBeforeCompact(new SessionBeforeCompactEvent(
+            $preparation,
+            $pathEntries,
+            $instructions,
+            $reason,
+            $willRetry,
+            $signal,
+        ));
 
-        $messages = $this->messages();
+        if ($answer !== null && $answer->cancel) {
+            $this->hookCancelledCompaction = true;
 
-        if (($messages[count($messages) - 1] ?? null) instanceof CompactionSummary) {
-            throw new AgentError('Already compacted');
+            throw new AgentError('Compaction cancelled');
         }
 
-        $cut = Compaction::cutPoint(
-            $messages,
-            $this->settings?->compactionKeepRecentTokens(Compaction::KEEP_RECENT_TOKENS, $this->model())
-                ?? Compaction::KEEP_RECENT_TOKENS,
-        );
-
-        // Upstream's wording, because it is the wording someone will search for. The
-        // conversation being smaller than the recent window compaction always keeps is
-        // the usual reason, and the footer does not show it — that percentage is the
-        // provider's count of a whole request, tool schemas and system prompt included.
-        if ($cut <= 0) {
-            throw new AgentError('Nothing to compact (session too small)');
+        if ($signal->aborted()) {
+            return null;
         }
 
-        // Upstream's `getMessagesFromProjectedEntryForCompaction()`: "System messages are prompt
-        // state, not conversation; the compaction entry carries their replay." So the summariser
-        // never reads the prompt, the kept part loses its system messages, and the state they all
-        // replay to goes on the compaction (`systemMessage`), in front of the summary.
-        $notSystem = static fn (mixed $message): bool => !$message instanceof SystemMessage;
-        $older = array_values(array_filter(array_slice($messages, 0, $cut), $notSystem));
-        $kept = array_values(array_filter(array_slice($messages, $cut), $notSystem));
+        $result = $answer?->compaction;
+        $this->compactionFromExtension = $result !== null;
 
-        // Upstream's `prepareCompaction()` answers undefined when there is nothing to summarise —
-        // which, with the prompt leading the transcript, is a cut that leaves only system messages
-        // behind it.
-        if ($older === []) {
-            throw new AgentError('Nothing to compact (session too small)');
+        if ($result === null) {
+            // Routed only when pig summarises itself, as upstream's `_runDefaultCompaction()`:
+            // routing may call models or fail, and a hook's summary needs neither.
+            $direct = $this->directModel($model, $signal);
+
+            $result = Compaction::compact(
+                $preparation,
+                $direct->model,
+                $this->keyFor($direct->model),
+                customInstructions: $instructions,
+                signal: $signal,
+                thinkingLevel: $direct->thinkingLevel,
+                streamFn: $this->agent->streamFunction,
+                retry: $this->retrySettings(),
+                callbacks: $this->summarizationRetryCallbacks('compaction', $reason),
+            );
         }
+
+        if ($signal->aborted()) {
+            return null;
+        }
+
+        // pi's `appendCompaction()`: the prompt and tool state the projection replays to, stamped
+        // with the compaction's own time, goes on the entry in front of the summary.
         $compactedAt = Timestamp::nowMs();
-        $systemState = Transcript::getCurrentSystemMessage($messages);
-        // pi's `appendCompaction()`: `{...systemMessage, timestamp: <the entry's>}`.
+        $systemState = Transcript::getCurrentSystemMessage($session->messages());
         $systemMessage = $systemState === null ? null : new SystemMessage(
             $systemState->content,
             $systemState->sections,
@@ -3647,141 +4247,67 @@ final class AgentSession
             $systemState->toolsRemoved,
             $compactedAt,
         );
-        [$read, $modified] = Compaction::files($older);
-        $request = Compaction::request($older, Compaction::previousSummary($older), $instructions);
 
-        $answer = $this->hooks?->emitBeforeCompact(
-            new SessionBeforeCompactEvent($older, $request, $instructions, $signal),
-        );
+        $session->append(new CompactionSummary(
+            $result->summary,
+            self::fileList($result->details['readFiles'] ?? []),
+            self::fileList($result->details['modifiedFiles'] ?? []),
+            $result->tokensBefore,
+            $result->firstKeptEntryId,
+            0,
+            $compactedAt,
+            // Marked as the hook's, which is pi's own field on this entry (`fromHook`, kept for
+            // session-file compatibility). It keeps the next compaction from carrying these file
+            // lists forward as though pig had found them.
+            fromHook: $this->compactionFromExtension,
+            systemMessage: $systemMessage,
+            usage: $result->usage,
+        ));
 
-        if ($answer !== null && $answer->cancel) {
-            $this->hookCancelledCompaction = true;
+        $messages = $session->messages();
+        $this->agent->replaceMessages($messages);
 
-            throw new AgentError('A hook stopped the compaction.');
+        // The entry as the projection reads it back, with how many messages it replaced filled in.
+        $summary = null;
+
+        foreach ($messages as $message) {
+            if ($message instanceof CompactionSummary) {
+                $summary = $message;
+            }
         }
 
-        // Where the kept part starts, as an entry id, which is what the file records and
-        // what replaying it uses. Asked of the store rather than worked out from `$cut`:
-        // the cut is an index into the resolved conversation and the file is a tree of
-        // entries, and those stop being the same numbering the moment one compaction has
-        // already happened.
-        $firstKept = $this->store?->entryAt($cut);
-
-        // A hook that supplied its own summary has done the work, so the model is not
-        // asked. Where the kept part starts is still the session's, not the hook's: it is
-        // what the file needs to replay correctly, and it is not the hook's to get wrong.
-        if ($answer?->compaction !== null) {
-            $summary = new CompactionSummary(
-                $answer->compaction->summary,
-                $answer->compaction->readFiles,
-                $answer->compaction->modifiedFiles,
-                $answer->compaction->tokensBefore,
-                $firstKept,
-                count($older),
-                $compactedAt,
-                // Marked as the hook's, which is pi's own field on this entry. It keeps the next
-                // compaction from carrying these file lists forward as though pig had found them,
-                // and it is what tells pi — reading the same file — who wrote this summary.
-                fromHook: true,
-                systemMessage: $systemMessage,
-            );
-
-            $this->agent->replaceMessages([...($systemMessage !== null ? [$systemMessage] : []), $summary, ...$kept]);
-            $this->store?->append($summary);
-            $this->hooks?->emit(new SessionCompactEvent($summary, fromHook: true));
-
-            return $summary;
+        if ($summary === null) {
+            throw new AgentError('The compaction was written but is not in the conversation it was written to.');
         }
 
-        $answer = $this->summarise(
-            $model,
-            $request,
-            $signal,
-            (int) floor(0.8 * $this->reserveTokens()),
-            source: 'compaction',
-            reason: $reason,
-            thinkingLevel: $direct->thinkingLevel,
-        );
+        $this->hooks?->emit(new SessionCompactEvent($summary, $this->compactionFromExtension, $reason, $willRetry));
 
-        if ($answer === null) {
-            return null;
+        $estimatedTokensAfter = 0;
+
+        foreach ($messages as $message) {
+            $estimatedTokensAfter += Compaction::estimateTokens($message);
         }
 
-        [$text, $usage] = $answer;
-
-        // The cut as two different facts: which entry the kept part starts at, which is what the
-        // file stores, and how many messages that came to, which is only ever a line on a screen.
-        // Reading the file back derives the second from the first.
-        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, count($older), $compactedAt, systemMessage: $systemMessage, usage: $usage);
-
-        $this->agent->replaceMessages([...($systemMessage !== null ? [$systemMessage] : []), $summary, ...$kept]);
-        $this->store?->append($summary);
-        $this->hooks?->emit(new SessionCompactEvent($summary));
-
-        return $summary;
+        return [$summary, new CompactionResult(
+            $result->summary,
+            $result->firstKeptEntryId,
+            $result->tokensBefore,
+            $estimatedTokensAfter,
+            $result->usage,
+            $result->details,
+        )];
     }
 
     /**
-     * One request, outside the agent loop, with no tools and nothing to steer — upstream's
-     * `completeSummarization()`, the one choke point for compaction and branch summaries.
+     * Upstream's `_summarizationRetryCallbacks()`: each retry of a summary request announced as a
+     * `SummarizationRetryEvent`.
      *
-     * Through the agent's own stream function, as upstream passes `this.agent.streamFunction`, so
-     * the request carries the session's request options (`buildRequestOptions()`: the timeout, the
-     * provider retries, the header hooks). "Avoid cache writes for one-off summaries":
-     * `cacheRetention: none`, and a routing id of its own each time. And wrapped in
-     * `Retry::retryAssistantCall()` with the session's retry settings, "so transient stream drops
-     * honor the configured retry policy instead of failing the whole compaction on the first
-     * attempt"; each retry is announced (`SummarizationRetryEvent`).
-     *
-     * The reasoning is upstream's `createSummarizationOptions()`: a compaction asks at the
-     * session's thinking level when the model reasons and the level is not `off`, and a branch
-     * summary (`generateBranchSummary()`) passes no reasoning at all. The output budget is capped
-     * by the model's own `maxTokens` when it declares one: `Math.min(budget, model.maxTokens > 0
-     * ? model.maxTokens : Infinity)`.
-     *
-     * @param int         $maxTokens  the budget before the model's cap
-     * @param string      $source     `compaction` or `branchSummary`, for the retry events
-     * @param string|null $reason     a compaction's `manual`, `threshold` or `overflow`
-     * @param ThinkingLevel|null $thinkingLevel the level to ask at; null asks for no reasoning
-     * @return array{0: string, 1: Usage}|null the summary and what it cost — upstream records the
-     *         usage on the entry — or null when it was cancelled
+     * @param 'compaction'|'branchSummary' $source
+     * @return array<string, Closure>
      */
-    private function summarise(Model $model, string $request, ?AbortSignal $signal, int $maxTokens, string $source = 'compaction', ?string $reason = null, ?ThinkingLevel $thinkingLevel = null): ?array
+    private function summarizationRetryCallbacks(string $source, ?string $reason = null): array
     {
-        $stream = new SimpleStreamOptions(
-            maxTokens: $model->maxTokens > 0 ? min($maxTokens, $model->maxTokens) : $maxTokens,
-            signal: $signal,
-            apiKey: $this->keyFor($model),
-            reasoning: $model->reasoning && $thinkingLevel !== null ? $thinkingLevel->toReasoning() : null,
-            cacheRetention: 'none',
-            // Upstream's `uuidv7()` in `completeSummarization()`: a fresh routing id for a one-off request.
-            sessionId: Uuid::v7(),
-        );
-
-        // Normalized here, as upstream's `completeSimple()` does on its way in: the stream function
-        // is the agent's, and it is handed transcripts (`TranscriptContext`).
-        $context = Transcript::normalizeContext(new Context([new UserMessage($request)], Compaction::SYSTEM_PROMPT));
-        $streamFunction = $this->agent->streamFunction;
-
-        $produce = static function () use ($model, $context, $stream, $streamFunction): mixed {
-            $response = $streamFunction !== null
-                ? $streamFunction($model, $context, $stream)
-                : Stream::simple($model, $context, $stream);
-
-            foreach ($response as $ignored) {
-                // Nothing streams anywhere: a summary is only useful whole.
-            }
-
-            $message = $response->result()->await();
-
-            if (!$message instanceof AssistantMessage) {
-                throw new AgentError('The summariser answered with something that was not a message.');
-            }
-
-            return $message;
-        };
-
-        $message = Retry::retryAssistantCall($produce, $this->retrySettings(), $signal, [
+        return [
             'onRetryScheduled' => fn (int $attempt, int $maxAttempts, float $delayMs, string $error) => $this->announce(new SummarizationRetryEvent(
                 SummarizationRetryEvent::SCHEDULED,
                 $source,
@@ -3793,33 +4319,16 @@ final class AgentSession
             )),
             'onRetryAttemptStart' => fn () => $this->announce(new SummarizationRetryEvent(SummarizationRetryEvent::ATTEMPT_START, $source, $reason)),
             'onRetryFinished' => fn () => $this->announce(new SummarizationRetryEvent(SummarizationRetryEvent::FINISHED, $source, $reason)),
-        ]);
+        ];
+    }
 
-        if (!$message instanceof AssistantMessage) {
-            throw new AgentError('The summariser answered with something that was not a message.');
-        }
-
-        if ($message->stopReason === StopReason::Aborted) {
-            return null;
-        }
-
-        if ($message->stopReason === StopReason::Error) {
-            throw new AgentError('Could not summarise the conversation: ' . ($message->errorMessage ?? 'unknown error'));
-        }
-
-        $text = '';
-
-        foreach ($message->content as $block) {
-            if ($block instanceof TextContent) {
-                $text .= $block->text;
-            }
-        }
-
-        if (trim($text) === '') {
-            throw new AgentError('The summariser said nothing, so there is nothing to carry forward.');
-        }
-
-        return [trim($text), $message->usage];
+    /**
+     * The session as the `bash` and `powershell` tools describe it to a command in `PIG_*`
+     * variables — upstream's `resolveSpawnContext()` reading `ctx` — asked as each command starts.
+     */
+    private function sessionEnvironment(): \Pig\CodingAgent\Tools\SessionEnvironment
+    {
+        return \Pig\CodingAgent\Tools\SessionEnvironment::of($this);
     }
 
     // ---- thinking ----------------------------------------------------------------
@@ -3829,22 +4338,33 @@ final class AgentSession
         return $this->agent->state->thinkingLevel;
     }
 
+    /**
+     * Upstream's `setThinkingLevel()`: **clamped to the model's capabilities**, not refused — a level
+     * the model does not have becomes the nearest one it does (`clampThinking()`, up first, then
+     * down). The clamped level is what the session records and announces, and only when it
+     * changes; `$persistAsDefault` writes the level that was *asked for*, as upstream's
+     * `settingsManager.setDefaultThinkingLevel(level)` does, so a default chosen on a model without
+     * `xhigh` is still `xhigh` for the next model that has it.
+     */
     public function setThinkingLevel(ThinkingLevel $level, bool $persistAsDefault = false): void
     {
+        $effective = $this->clampThinking($level);
         $previous = $this->thinkingLevel();
-        $changed = $previous !== $level;
+        $changed = $previous !== $effective;
 
-        $this->agent->setThinkingLevel($level);
-
-        if ($changed) {
-            $this->store?->appendThinkingLevelChange($level->value);
-            $this->hooks?->emit(new ThinkingLevelSelectEvent($level, $previous));
-        }
+        $this->agent->setThinkingLevel($effective);
 
         // Remembered for the next run when enabled.
         // Web UI passes persistAsDefault: false so it does not overwrite settings.json.
         if ($persistAsDefault) {
             $this->settings?->setDefaultThinkingLevel($level);
+        }
+
+        if ($changed) {
+            $this->store?->appendThinkingLevelChange($effective->value);
+            // Upstream's `thinking_level_changed`, beside the entry, before the hooks hear of it.
+            $this->announce(new ThinkingLevelChangedEvent($effective));
+            $this->hooks?->emit(new ThinkingLevelSelectEvent($effective, $previous));
         }
     }
 

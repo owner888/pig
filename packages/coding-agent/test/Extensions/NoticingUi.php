@@ -25,19 +25,19 @@ final class NoticingUi implements HookUi
     public ?\Pig\Async\Deferred $inputReleased = null;
 
     #[\Override]
-    public function select(string $title, array $options): ?string
+    public function select(string $title, array $options, ?int $timeout = null): ?string
     {
         return null;
     }
 
     #[\Override]
-    public function confirm(string $title, string $message): bool
+    public function confirm(string $title, string $message, ?int $timeout = null): bool
     {
         return false;
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null, ?int $timeout = null): ?string
     {
         if ($this->inputAnswer !== null) {
             return $this->inputAnswer;

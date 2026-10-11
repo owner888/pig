@@ -22,7 +22,7 @@ use Pig\Tui\Style;
  *   and `WebMode`, which was tested as the foreground, needs no second test for the background.
  *   The two `fork()`s are the classic recipe: the first so the child can `setsid()` (a group
  *   leader cannot), the second so the grandchild can never reacquire a controlling terminal.
- * - **One pid file, under `Config::home()`**, so `PIG_HOME` moves it with everything else and two
+ * - **One pid file, under `Config::home()`**, so `PIG_CODING_AGENT_DIR` moves it with everything else and two
  *   developers on one machine do not fight over `/tmp/pig-web.pid`. One daemon per home; a
  *   second `start` says so rather than binding the next port up, because two daemons on
  *   adjacent ports is the thing nobody can tell apart from the browser.
@@ -440,7 +440,7 @@ final class WebDaemon
           pig web restart [--port N] [--host H]       stop, then start -d
 
         Defaults: --host 127.0.0.1 --port 8088. The daemon writes its pid and log under
-        \$PIG_HOME (~/.pig/agent): web.pid and web.log.
+        \$PIG_CODING_AGENT_DIR (~/.pig/agent): web.pid and web.log.
 
         TXT);
     }

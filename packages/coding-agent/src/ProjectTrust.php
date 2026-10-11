@@ -28,9 +28,10 @@ use RuntimeException;
  * because there is nothing to gate and a dialog about nothing is the dialog people learn to
  * click through.
  *
- * What an untrusted project loses is exactly its `.pig/` directory and `<cwd>/extensions`:
- * settings, hooks, tools, extensions, skills and commands. The person's own `~/.pig/agent/` is
- * always theirs. `AGENTS.md` / `CLAUDE.md` are **not** gated, as upstream does not gate them:
+ * What an untrusted project loses is exactly its `.pig/` directory, its `.agents/skills` and
+ * `<cwd>/extensions`: settings, MCP servers, hooks, tools, extensions, skills, prompt templates,
+ * themes and `SYSTEM.md` / `APPEND_SYSTEM.md`. The person's own `~/.pig/agent/` and
+ * `~/.agents/skills` are always theirs. `AGENTS.md` / `CLAUDE.md` are **not** gated, as upstream does not gate them:
  * they are text the model reads, not code pig runs.
  *
  * No lock on the file, where upstream takes one through `proper-lockfile`. Two pigs saving a
@@ -42,10 +43,13 @@ final class ProjectTrust
     public const string FILE = 'trust.json';
 
     /**
-     * What under `<cwd>/.pig/` turns a directory into a project with something to trust. `git`
-     * is where `pig install -l` clones a project package, which is code the loader would run.
+     * What under `<cwd>/.pig/` turns a directory into a project with something to trust —
+     * upstream's `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`, plus pig's two code loaders upstream
+     * does not have, `hooks` and `tools`: both are PHP `require`d into this process. A project
+     * package cloned under `.pig/git` is reached only through `.pig/settings.json`, which is on the
+     * list.
      */
-    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'commands', 'git'];
+    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'prompts', 'themes', 'SYSTEM.md', 'APPEND_SYSTEM.md'];
 
     /**
      * Whether this directory has anything a trust decision would apply to.
@@ -78,6 +82,23 @@ final class ProjectTrust
 
         foreach ([...(glob($cwd . '/extensions/*.php') ?: []), ...(glob($cwd . '/extensions/*/index.php') ?: [])] as $path) {
             $found[] = substr($path, strlen($cwd) + 1);
+        }
+
+        // Upstream's `hasTrustRequiringProjectResources()`: a `.agents/skills` in the working
+        // directory or any ancestor, the person's own `~/.agents/skills` excepted even when the
+        // working directory is the home directory. Canonical paths on both sides, as upstream's.
+        $userAgentsSkills = self::canonical(Config::userHome()) . '/.agents/skills';
+
+        for ($dir = self::canonical($cwd); ; $dir = dirname($dir)) {
+            $agentsSkills = rtrim($dir, '/') . '/.agents/skills';
+
+            if ($agentsSkills !== $userAgentsSkills && file_exists($agentsSkills)) {
+                $found[] = $dir === self::canonical($cwd) ? '.agents/skills' : $agentsSkills;
+            }
+
+            if (dirname($dir) === $dir) {
+                break;
+            }
         }
 
         return $found;

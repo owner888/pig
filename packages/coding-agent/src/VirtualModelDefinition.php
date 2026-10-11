@@ -25,9 +25,12 @@ final readonly class VirtualModelDefinition
      * @param int $contextWindow shown before the first response; afterwards the limits of the
      *        physical model that answered apply. 0 is unknown
      * @param list<'text'|'image'> $input accepted for selection
-     * @param Closure(ModelRouteRequest): ModelRoute $route picks the physical model, which must
-     *        have credentials, and the thinking level for one request. May throw, which fails the
-     *        request
+     * @param Closure(ModelRouteRequest, Hooks\HookContext): ModelRoute $route picks the physical model,
+     *        which must have credentials, and the thinking level for one request. May throw, which
+     *        fails the request. Registered through `ExtensionApi::registerVirtualModel()` it is also
+     *        handed upstream's `ctx` — the extension's context, made per request, with
+     *        `$ctx->modelRegistry->find()` to look the physical model up in; registered on
+     *        `VirtualModelRegistry` directly it gets the request alone
      */
     public function __construct(
         public string $provider,

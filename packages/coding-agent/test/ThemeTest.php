@@ -137,7 +137,7 @@ final class ThemeTest extends TestCase
         $this->assertSame(['success' => true], Themes::setTheme('two'));
     }
 
-    public function testAProjectThemeIsFoundOnceTheProjectIsSet(): void
+    public function testAProjectThemeIsFoundOnceTheProjectIsTrusted(): void
     {
         $project = $this->themeTestRoot . '/project';
         mkdir($project . '/.pig/themes', 0o777, true);
@@ -148,7 +148,13 @@ final class ThemeTest extends TestCase
 
         $this->assertNotContains('nord', Themes::getAvailableThemes());
 
-        Themes::setCustomThemesCwd($project);
+        // What a session does once trust is known: the resolved theme files are handed over.
+        $resolve = static fn (bool $trusted): array => (new \Pig\CodingAgent\Packages\PackageManager($project, \Pig\CodingAgent\Settings::inMemory()))
+            ->resolveLocalResources($trusted)->enabled('themes');
+        Themes::setResolvedThemeFiles($resolve(false));
+        $this->assertNotContains('nord', Themes::getAvailableThemes());
+
+        Themes::setResolvedThemeFiles($resolve(true));
         $this->assertContains('nord', Themes::getAvailableThemes());
         $this->assertSame(['success' => true], Themes::setTheme('nord'));
         $this->assertSame("\e[38;2;136;192;208mx\e[39m", Themes::theme()->fg('accent', 'x'));

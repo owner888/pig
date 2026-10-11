@@ -81,7 +81,7 @@ final class PrintModeTest extends TestCase
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-print-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->cwd . '-home');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->cwd . '-home');
         $this->failure = null;
         $this->failures = [];
         $this->thinking = false;
@@ -90,7 +90,7 @@ final class PrintModeTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         fclose($this->out);
         fclose($this->err);
         self::remove($this->cwd);
@@ -392,6 +392,32 @@ final class PrintModeTest extends TestCase
         $this->assertStringNotContainsString("\nhello\n", $this->printed());
     }
 
+    public function testJsonOpensWithTheSessionHeader(): void
+    {
+        $this->answers = ['hello'];
+        $this->execute(['hi'], mode: 'json', store: true);
+
+        // Upstream's `print-mode.ts`: the header first, so the events after it have a session.
+        $events = $this->events();
+        $this->assertSame('session', $events[0]['type']);
+        $this->assertIsString($events[0]['id']);
+        $this->assertSame($this->cwd, $events[0]['cwd']);
+        // And the end is upstream's too.
+        $this->assertSame('agent_settled', end($events)['type']);
+    }
+
+    public function testJsonWithNoSessionStillOpensWithTheInMemorySessionsHeader(): void
+    {
+        $this->answers = ['hello'];
+        $this->execute(['hi'], mode: 'json');
+
+        // Upstream's `SessionManager.inMemory()` has a header too: an id and the cwd, no file.
+        $events = $this->events();
+        $this->assertSame('session', $events[0]['type']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $events[0]['id']);
+        $this->assertSame('agent_start', $events[1]['type']);
+    }
+
     public function testTheJsonIsTheSameShapeRpcModeSends(): void
     {
         $this->answers = ['hello'];
@@ -499,6 +525,8 @@ final class PrintModeTest extends TestCase
         $code = $this->execute(['ask'], hooks: $hooks);
 
         $this->assertSame(0, $code);
+        // Upstream's sentence: `Extension error (<path>): <error>`.
+        $this->assertStringContainsString('Extension error (test.php): ', $this->complained());
         $this->assertStringContainsString('bad hook', $this->complained());
         $this->assertSame("still answered\n", $this->printed());
     }

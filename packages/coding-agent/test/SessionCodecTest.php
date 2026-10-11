@@ -153,7 +153,25 @@ final class SessionCodecTest extends TestCase
         $this->assertFalse($decoded->cancelled);
         $this->assertFalse($decoded->truncated);
         $this->assertNull($decoded->exitCode);
-        $this->assertNull($decoded->spillPath);
+        $this->assertNull($decoded->fullOutputPath);
+        $this->assertFalse($decoded->excludeFromContext);
+    }
+
+    public function testABashLinePiWroteKeepsItsFullOutputPathAndItsExclusion(): void
+    {
+        // pi's `BashExecutionMessage`: `fullOutputPath` and `excludeFromContext`, both optional.
+        $line = ['role' => 'bashExecution', 'command' => 'seq 9', 'output' => '9', 'exitCode' => 0, 'cancelled' => false, 'truncated' => true, 'fullOutputPath' => '/tmp/pi-bash-1.log', 'timestamp' => 5, 'excludeFromContext' => true];
+        $decoded = SessionCodec::decode($line);
+
+        $this->assertInstanceOf(BashExecution::class, $decoded);
+        $this->assertSame('/tmp/pi-bash-1.log', $decoded->fullOutputPath);
+        $this->assertTrue($decoded->excludeFromContext);
+        $this->assertSame($line, SessionCodec::encode($decoded), 'and written back as pi wrote it');
+
+        // Neither field is written when it says nothing, as `JSON.stringify` drops an undefined one.
+        $plain = SessionCodec::encode(new BashExecution('ls', 'a', 0, timestamp: 6));
+        $this->assertArrayNotHasKey('fullOutputPath', $plain);
+        $this->assertArrayNotHasKey('excludeFromContext', $plain);
     }
 
     public function testEveryOneOfThemCarriesTheMomentItNames(): void

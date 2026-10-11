@@ -36,14 +36,14 @@ final class PiFormatTest extends TestCase
     protected function setUp(): void
     {
         $this->home = sys_get_temp_dir() . '/pig-piformat-' . bin2hex(random_bytes(4));
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
         putenv('PI_HOME=' . $this->home . '-pi');
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
         self::remove($this->home);
         self::remove($this->home . '-pi');

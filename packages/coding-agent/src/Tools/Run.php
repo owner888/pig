@@ -64,24 +64,53 @@ final class Run
     /** What the command reported, once `wait()` has waited for it. */
     private int $exit = 0;
 
-    /** @param Closure(AgentToolResult): void|null $onUpdate */
+    /**
+     * @param Closure(AgentToolResult): void|null $onUpdate
+     * @param ShellConfig|null $shell what to run the command with; null is `Shell::config()`, the
+     *        resolved bash
+     * @param array<string, string>|null $env the command's whole environment; null inherits this
+     *        process's
+     * @param string $spillPrefix the spill file's name prefix — upstream's `tempFilePrefix`,
+     *        `pig-bash` or `pig-powershell`
+     * @param (Closure(string): void)|null $onChunk each piece of output as it arrives, cleaned —
+     *        upstream's `onChunk`, which `AgentSession::executeBash()` turns into
+     *        `bash_execution_update` deltas; `$onUpdate` is the tail so far, for a screen
+     */
     public function __construct(
         private readonly string $cwd,
         private readonly string $command,
         private readonly ?Closure $onUpdate,
+        private readonly ?ShellConfig $shell = null,
+        private readonly ?array $env = null,
+        private readonly string $spillPrefix = 'pig-bash',
+        private readonly ?Closure $onChunk = null,
     ) {
     }
 
     public function start(): void
     {
-        $descriptors = [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $shell = $this->shell ?? Shell::config();
+        $fromStdin = $shell->commandTransport === 'stdin';
 
         // stdin is /dev/null rather than inherited: a command that decides to prompt
-        // would otherwise sit there waiting for a person who is not watching it.
-        $process = proc_open([Shell::bash(), '-c', $this->command], $descriptors, $pipes, $this->cwd);
+        // would otherwise sit there waiting for a person who is not watching it. The one
+        // exception is a shell that reads its command from there (the legacy WSL bash).
+        $descriptors = [
+            0 => $fromStdin ? ['pipe', 'r'] : ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($shell->argv($this->command), $descriptors, $pipes, $this->cwd, $this->env);
 
         if (!is_resource($process)) {
-            throw new AgentError('Could not start a shell');
+            throw new AgentError("Could not start a shell ({$shell->shell})");
+        }
+
+        if ($fromStdin) {
+            fwrite($pipes[0], $this->command);
+            fclose($pipes[0]);
+            unset($pipes[0]);
         }
 
         $this->process = $process;
@@ -175,6 +204,76 @@ final class Run
         return $this->buffer;
     }
 
+    /**
+     * Upstream's `OutputAccumulator.readFullOutput(maxBytes)`, for the structured result a codemode
+     * script gets: the whole output when it is at most $maxBytes, otherwise its first and last
+     * halves around `[... N bytes omitted ...]`, cut at character boundaries. Read from the spill
+     * file when there is one, since the buffer holds only the tail; called after `wait()`, which
+     * has closed it.
+     *
+     * @return array{content: string, truncated: bool}
+     */
+    public function fullOutput(int $maxBytes): array
+    {
+        if ($this->spillPath === null || !is_file($this->spillPath)) {
+            return ['content' => $this->buffer, 'truncated' => false];
+        }
+
+        $size = (int) filesize($this->spillPath);
+
+        if ($size <= $maxBytes) {
+            $whole = file_get_contents($this->spillPath);
+
+            if ($whole === false) {
+                throw new AgentError("Could not read the command's output back from {$this->spillPath}");
+            }
+
+            return ['content' => $whole, 'truncated' => false];
+        }
+
+        $headBytes = intdiv($maxBytes, 2);
+        $tailBytes = $maxBytes - $headBytes;
+        $head = file_get_contents($this->spillPath, false, null, 0, $headBytes);
+        $tail = file_get_contents($this->spillPath, false, null, $size - $tailBytes, $tailBytes);
+
+        if ($head === false || $tail === false) {
+            throw new AgentError("Could not read the command's output back from {$this->spillPath}");
+        }
+
+        // A head cut inside a character loses the incomplete sequence, and the tail skips the
+        // continuation bytes it starts with — upstream's streaming decode and its loop.
+        $head = self::withoutPartialEnd($head);
+        $tail = ltrim($tail, "\x80..\xBF");
+        $omitted = $size - $headBytes - $tailBytes;
+
+        return ['content' => "{$head}\n\n[... {$omitted} bytes omitted ...]\n\n{$tail}", 'truncated' => true];
+    }
+
+    /** $bytes without a UTF-8 sequence its end cuts short. */
+    private static function withoutPartialEnd(string $bytes): string
+    {
+        $length = strlen($bytes);
+
+        for ($back = 1; $back <= min(4, $length); $back++) {
+            $byte = ord($bytes[$length - $back]);
+
+            if (($byte & 0xC0) === 0x80) {
+                continue;
+            }
+
+            $needs = match (true) {
+                $byte >= 0xF0 => 4,
+                $byte >= 0xE0 => 3,
+                $byte >= 0xC0 => 2,
+                default => 1,
+            };
+
+            return $needs > $back ? substr($bytes, 0, $length - $back) : $bytes;
+        }
+
+        return $bytes;
+    }
+
     /** Read what is there, spill it, keep the tail, and tell the UI. */
     private function read(int $fd): void
     {
@@ -210,6 +309,10 @@ final class Run
             return;
         }
 
+        if ($this->onChunk !== null) {
+            ($this->onChunk)($chunk);
+        }
+
         $this->totalBytes += strlen($chunk);
         $this->totalLines += substr_count($chunk, "\n");
         $this->spillIfLarge($chunk);
@@ -241,7 +344,7 @@ final class Run
     private function spillIfLarge(string $chunk): void
     {
         if ($this->spill === null && ($this->totalBytes > self::SPILL_AFTER || $this->totalLines > Truncate::MAX_LINES)) {
-            $path = sys_get_temp_dir() . '/pig-bash-' . bin2hex(random_bytes(8)) . '.log';
+            $path = sys_get_temp_dir() . '/' . $this->spillPrefix . '-' . bin2hex(random_bytes(8)) . '.log';
             $handle = fopen($path, 'wb');
 
             if ($handle === false) {

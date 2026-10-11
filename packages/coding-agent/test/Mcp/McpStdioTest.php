@@ -63,7 +63,7 @@ final class McpStdioTest extends TestCase
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-mcp-stdio-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->cwd . '-home');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->cwd . '-home');
         $this->answers = [];
 
         $this->agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
@@ -84,7 +84,7 @@ final class McpStdioTest extends TestCase
         $this->session->dispose();
         fclose($this->hostIn);
         fclose($this->out);
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         self::remove($this->cwd);
         self::remove($this->cwd . '-home');
     }

@@ -1717,16 +1717,16 @@ final class AnthropicTest extends TestCase
 
     public function testPiCacheRetentionLongIsTheDefaultWhenNothingIsSaid(): void
     {
-        // `resolveCacheRetention()`: "Defaults to "short" and uses PI_CACHE_RETENTION for backward
+        // `resolveCacheRetention()`: "Defaults to "short" and uses PIG_CACHE_RETENTION for backward
         // compatibility."
-        $saved = getenv('PI_CACHE_RETENTION');
-        putenv('PI_CACHE_RETENTION=long');
+        $saved = getenv('PIG_CACHE_RETENTION');
+        putenv('PIG_CACHE_RETENTION=long');
 
         try {
             [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], 'be brief'), $this->options());
             $this->assertSame(['type' => 'ephemeral', 'ttl' => '1h'], $body['system'][0]['cache_control']);
         } finally {
-            $saved === false ? putenv('PI_CACHE_RETENTION') : putenv("PI_CACHE_RETENTION={$saved}");
+            $saved === false ? putenv('PIG_CACHE_RETENTION') : putenv("PIG_CACHE_RETENTION={$saved}");
         }
     }
 

@@ -147,14 +147,10 @@ final class ProxyTest extends TestCase
 
     // ---- the environment -----------------------------------------------------------------------
 
-    public function testHttpsProxyWinsOverAllProxy(): void
+    public function testAllProxyIsNotRead(): void
     {
-        $proxy = Proxy::fromEnvironment([
-            'all_proxy' => 'socks5://127.0.0.1:1',
-            'https_proxy' => 'http://127.0.0.1:2',
-        ]);
-
-        $this->assertSame(2, $proxy?->port);
+        // curl's variable, not undici's: upstream's `EnvHttpProxyAgent` reads the four below.
+        $this->assertNull(Proxy::fromEnvironment(['ALL_PROXY' => 'socks5://127.0.0.1:1080', 'all_proxy' => 'socks5://127.0.0.1:1080']));
     }
 
     public function testLowercaseWinsOverUppercase(): void
@@ -164,21 +160,23 @@ final class ProxyTest extends TestCase
             'https_proxy' => 'http://127.0.0.1:2',
         ]);
 
-        $this->assertSame(2, $proxy?->port, "curl's precedence");
+        $this->assertSame(2, $proxy?->port, "undici's precedence");
     }
 
-    public function testAllProxyIsUsedWhenThereIsNoHttpsProxy(): void
+    public function testHttpProxyCarriesHttpsTooWhenThereIsNoHttpsProxy(): void
     {
-        $this->assertSame('socks5', Proxy::fromEnvironment(['ALL_PROXY' => 'socks5://127.0.0.1:1080'])?->scheme);
+        // undici: "falling back to the HTTP agent when no HTTPS proxy is configured".
+        $this->assertSame(7890, Proxy::fromEnvironment(['HTTP_PROXY' => 'http://127.0.0.1:7890'])?->port);
+        $this->assertSame(7890, Proxy::fromEnvironment(['http_proxy' => 'http://127.0.0.1:7890', 'https_proxy' => ''])?->port, 'an empty https_proxy has none of its own');
     }
 
-    public function testAnEmptyVariableMeansNoProxyAndStopsTheSearch(): void
+    public function testAnEmptyHttpProxyMeansNoneAndStopsTheSearch(): void
     {
-        // `https_proxy= pig ...` is how a script turns one off for one command, so an empty value
-        // cannot fall through to `all_proxy` — that would make the override do nothing.
+        // `http_proxy= pig ...` is how a script turns one off for one command, so an empty value
+        // does not fall through to the uppercase one.
         $this->assertNull(Proxy::fromEnvironment([
-            'https_proxy' => '',
-            'all_proxy' => 'socks5://127.0.0.1:1080',
+            'http_proxy' => '',
+            'HTTP_PROXY' => 'http://127.0.0.1:7890',
         ]));
     }
 
@@ -188,11 +186,32 @@ final class ProxyTest extends TestCase
         $this->assertNull(Proxy::fromEnvironment(['PATH' => '/usr/bin', 'HTTPS_PROXY' => false]));
     }
 
-    public function testHttpProxyIsNotRead(): void
+    public function testAPlainHttpTargetGoesThroughHttpProxyAndAnHttpsTargetThroughHttpsProxy(): void
     {
-        // Deliberate: it governs `http://` targets, every provider is `https://`, and the only
-        // plain-HTTP endpoints pig has are local ones that go direct anyway.
-        $this->assertNull(Proxy::fromEnvironment(['http_proxy' => 'http://127.0.0.1:7890']));
+        [$tunnel, $url] = $this->tunnelling('http', "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+
+        // The https one points at nothing: were it used for the http:// target, this would fail.
+        $proxy = Proxy::fromEnvironment([
+            'https_proxy' => 'http://127.0.0.1:9',
+            'http_proxy' => 'http://' . $tunnel->host . ':' . $tunnel->port,
+        ]);
+
+        $this->assertSame(9, $proxy?->port, 'the proxy itself is the HTTPS one');
+        $body = Async::run(static fn (): string => (new HttpClient(5.0, $proxy))->send(new Request('GET', $url))->body->all());
+        $this->assertSame('ok', $body);
+    }
+
+    public function testAPlainHttpTargetGoesDirectWhenOnlyAnHttpsProxyIsSet(): void
+    {
+        $target = $this->target->start(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]);
+        $port = (int) parse_url($target, PHP_URL_PORT);
+        $proxy = Proxy::fromEnvironment(['https_proxy' => 'http://127.0.0.1:9']);
+
+        // `open()` itself, because the loopback rule would send a request to 127.0.0.1 direct before
+        // the proxy is asked: the question here is what the proxy does with a plain-HTTP target.
+        $socket = Async::run(static fn () => $proxy?->open('127.0.0.1', $port, false, 5.0));
+        $this->assertNotNull($socket, 'connected directly, not through 127.0.0.1:9');
+        $socket->close();
     }
 
     public function testNoProxyBecomesTheBypassList(): void
@@ -203,6 +222,7 @@ final class ProxyTest extends TestCase
         ]);
 
         $this->assertSame(['example.com', '.internal', 'api.test'], $proxy?->bypass);
+        $this->assertTrue(Proxy::fromEnvironment(['HTTPS_PROXY' => 'http://127.0.0.1:1', 'NO_PROXY' => '*.corp other'])?->bypasses('git.corp'), "undici's `*.` and whitespace");
     }
 
     // ---- who goes direct -----------------------------------------------------------------------

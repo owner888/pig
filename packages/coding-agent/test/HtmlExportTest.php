@@ -36,14 +36,14 @@ final class HtmlExportTest extends TestCase
     {
         $this->setUpGlobalTheme();
         $this->tempHome = sys_get_temp_dir() . '/pig-export-home-' . bin2hex(random_bytes(4));
-        putenv("PIG_HOME={$this->tempHome}");
+        putenv("PIG_CODING_AGENT_DIR={$this->tempHome}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         if (is_dir($this->tempHome)) {
             self::remove($this->tempHome);
         }

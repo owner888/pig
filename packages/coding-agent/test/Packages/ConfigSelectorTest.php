@@ -35,13 +35,13 @@ final class ConfigSelectorTest extends TestCase
         mkdir("{$this->cwd}/tools/extensions", 0o700, true);
         file_put_contents("{$this->cwd}/tools/extensions/alpha.php", '<?php');
         file_put_contents("{$this->cwd}/tools/extensions/beta.php", '<?php');
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         exec('rm -rf ' . escapeshellarg($this->root));
     }
 

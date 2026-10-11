@@ -11,7 +11,7 @@ use Pig\Tui\TerminalColors;
 
 /**
  * Isolation for the theme module's tests: `Themes` keeps upstream's module state in statics, and reads
- * custom themes from pig's and pi's homes, so each test gets empty temporary homes and a reset module.
+ * custom themes from pig's agent directory, so each test gets an empty temporary one and a reset module.
  */
 trait ThemeTestEnvironment
 {
@@ -26,7 +26,7 @@ trait ThemeTestEnvironment
         $this->themeTestRoot = sys_get_temp_dir() . '/pig-theme-test-' . bin2hex(random_bytes(6));
         mkdir($this->themeTestRoot . '/pig/themes', 0o777, true);
         mkdir($this->themeTestRoot . '/agent/themes', 0o777, true);
-        $this->setThemeTestEnv('PIG_HOME', $this->themeTestRoot . '/pig');
+        $this->setThemeTestEnv('PIG_CODING_AGENT_DIR', $this->themeTestRoot . '/pig');
         $this->setThemeTestEnv('PI_CODING_AGENT_DIR', $this->themeTestRoot . '/agent');
         $this->setThemeTestEnv('COLORFGBG', null);
         self::resetThemeModule();
@@ -52,10 +52,10 @@ trait ThemeTestEnvironment
         putenv($value === null ? $name : "{$name}={$value}");
     }
 
-    /** `$this->themeTestRoot/agent/themes`, upstream's `getCustomThemesDir()` under `PI_CODING_AGENT_DIR`. */
+    /** `$this->themeTestRoot/pig/themes`, upstream's `getCustomThemesDir()` under `PIG_CODING_AGENT_DIR`. */
     private function customThemesDir(): string
     {
-        return $this->themeTestRoot . '/agent/themes';
+        return $this->themeTestRoot . '/pig/themes';
     }
 
     /** @return array<string, mixed> one of the builtin theme files, decoded */
@@ -74,7 +74,7 @@ trait ThemeTestEnvironment
         Themes::setTerminalColorScheme(null);
         Themes::setRegisteredThemes([]);
         Themes::setThemeJsonValidator(null);
-        Themes::setCustomThemesCwd(null);
+        Themes::setResolvedThemeFiles([]);
         Themes::setCliThemePaths([]);
         Themes::useThemeDiscovery(true);
         Themes::onThemeChange(null);

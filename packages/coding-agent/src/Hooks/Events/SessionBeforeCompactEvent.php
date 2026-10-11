@@ -6,22 +6,35 @@ namespace Pig\CodingAgent\Hooks\Events;
 
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Hooks\HookEvent;
+use Pig\CodingAgent\Session\CompactionPreparation;
+use Pig\CodingAgent\Session\SessionEntry;
 
 /**
- * The context is about to be summarised.
+ * The context is about to be summarised — upstream's `SessionBeforeCompactEvent`.
  *
- * `$messages` is what would be replaced and `$request` is the prompt the summariser
- * would be sent, so a handler can veto the compaction or do it itself — returning its
- * own `CompactionSummary` in a `SessionBeforeCompactResult` and saving the round trip.
+ * Fired for `/compact` (and a hook's `$ctx->compact()`), for the threshold and for overflow
+ * recovery. `$preparation` is what would be summarised and kept (`Compaction::prepareCompaction()`)
+ * and `$branchEntries` the whole branch, for a handler that keeps state of its own in it.
+ *
+ * A handler answers with a `SessionBeforeCompactResult`: `cancel` to stop the compaction, or
+ * `compaction` — a `CompactionResult`, typically naming `$preparation->firstKeptEntryId` and
+ * `$preparation->tokensBefore` — to write its own summary instead of asking the model. Pass
+ * `$signal` to any model call made here; it is aborted when the compaction is.
  */
 final readonly class SessionBeforeCompactEvent implements HookEvent
 {
-    /** @param list<mixed> $messages the part of the conversation being replaced */
+    /**
+     * @param list<SessionEntry>               $branchEntries every entry on the current branch, root first
+     * @param 'manual'|'threshold'|'overflow' $reason        what started it
+     * @param bool                             $willRetry     the turn that overflowed is sent again afterwards
+     */
     public function __construct(
-        public array $messages,
-        public string $request,
-        public ?string $customInstructions = null,
-        public ?AbortSignal $signal = null,
+        public CompactionPreparation $preparation,
+        public array $branchEntries,
+        public ?string $customInstructions,
+        public string $reason,
+        public bool $willRetry,
+        public AbortSignal $signal,
     ) {
     }
 

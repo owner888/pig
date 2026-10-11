@@ -801,20 +801,31 @@ final class CustomModelsTest extends TestCase
 
     // ---- the key ---------------------------------------------------------------------------
 
-    public function testTheApiKeyIsAVariableNameBeforeItIsAKey(): void
+    public function testADollarReferenceInTheKeyIsReadFromTheEnvironment(): void
+    {
+        putenv('MY_BOX_KEY=sk-from-the-environment');
+
+        $auth = Auth::inMemory();
+        $this->load(self::provider(['apiKey' => '$MY_BOX_KEY']))->install($auth);
+        $this->assertSame('sk-from-the-environment', $auth->apiKey('my-box'));
+
+        // `${NAME}` is the same reference, and text around it stays.
+        $this->load(self::provider(['apiKey' => 'pre-${MY_BOX_KEY}']))->install($auth);
+        $this->assertSame('pre-sk-from-the-environment', $auth->apiKey('my-box'));
+    }
+
+    /** Upstream's `resolveConfigValue()`: a bare name is a literal, not a variable. */
+    public function testABareNameIsTheKeyItselfAsUpstreamReadsIt(): void
     {
         putenv('MY_BOX_KEY=sk-from-the-environment');
 
         $auth = Auth::inMemory();
         $this->load(self::provider(['apiKey' => 'MY_BOX_KEY']))->install($auth);
 
-        // The reason the order is this way round: this is the one config file in pig whose
-        // natural contents are a credential, and a file in a repository is a credential in a
-        // repository.
-        $this->assertSame('sk-from-the-environment', $auth->apiKey('my-box'));
+        $this->assertSame('MY_BOX_KEY', $auth->apiKey('my-box'));
     }
 
-    public function testAKeyNoVariableAnswersToIsUsedAsItself(): void
+    public function testAKeyIsUsedAsItself(): void
     {
         $auth = Auth::inMemory();
         $this->load(self::provider(['apiKey' => 'sk-written-in-the-file']))->install($auth);
@@ -822,70 +833,69 @@ final class CustomModelsTest extends TestCase
         $this->assertSame('sk-written-in-the-file', $auth->apiKey('my-box'));
     }
 
-    /**
-     * A name with no variable behind it is no key, not a key that happens to be that name.
-     *
-     * Upstream's `resolveApiKeyConfig` falls back to the value whenever the environment has
-     * nothing, so a `models.json` that names `DEEPSEEK_API_KEY` on a machine where it is not set
-     * hands the *name* on as a credential: `hasKeyFor()` says yes, the models are listed and
-     * switchable, and the request leaves as `Authorization: Bearer DEEPSEEK_API_KEY`. That is the
-     * 401-explaining-nothing this class's docblock gives as the reason for resolving at all,
-     * reached through the fallback. Found while pointing `test/live.php` at a declared endpoint.
-     */
-    public function testAVariableNameWithNothingBehindItIsNotAKey(): void
+    /** "Commands in `models.json` run at request time and are not cached by pig." */
+    public function testACommandKeyRunsForEveryRequest(): void
+    {
+        $counter = $this->directory . '/count';
+        $auth = Auth::inMemory();
+        $this->load(self::provider(['apiKey' => "!echo x >> {$counter}; echo sk-from-a-command"]))->install($auth);
+
+        $this->assertTrue($auth->hasKeyFor('my-box'), 'a command counts as configured without being run');
+        $this->assertFileDoesNotExist($counter);
+        $this->assertSame('sk-from-a-command', $auth->apiKey('my-box'));
+        $this->assertSame('sk-from-a-command', $auth->apiKey('my-box'));
+        $this->assertSame("x\nx\n", file_get_contents($counter));
+    }
+
+    public function testAReferenceWithNothingBehindItIsNotAKeyAndSaysWhich(): void
     {
         putenv('MY_BOX_KEY');
 
         $auth = Auth::inMemory();
-        $custom = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY']));
+        $custom = $this->load(self::provider(['apiKey' => '$MY_BOX_KEY']));
         $custom->install($auth);
 
-        $this->assertNull($auth->apiKey('my-box'));
         $this->assertFalse($auth->hasKeyFor('my-box'), 'and so the models are not offered');
-
-        // Said where every other thing wrong with this file is said: a 401 from an endpoint
-        // explains nothing about a file, and this names the variable to fill in.
         $this->assertCount(1, $custom->problems);
-        $this->assertStringContainsString('"apiKey" names MY_BOX_KEY, which is not set', $custom->problems[0]);
+        $this->assertStringContainsString('"apiKey" references $MY_BOX_KEY, which is not set', $custom->problems[0]);
+
+        $this->assertNull($auth->apiKey('my-box'), 'not configured, as upstream\'s check() answers');
     }
 
-    /** And a value that is not shaped like a variable name is still taken literally. */
-    public function testAKeyThatCouldNotBeAVariableNameIsNeverMistakenForOne(): void
+    /** A command that answers nothing is upstream's `resolveConfigValueOrThrow()` error, at request time. */
+    public function testACommandKeyThatAnswersNothingIsAnErrorNamingTheCommand(): void
     {
         $auth = Auth::inMemory();
-        $custom = $this->load(self::provider(['apiKey' => 'sk-lowercase-and-dashes']));
-        $custom->install($auth);
+        $this->load(self::provider(['apiKey' => '!true']))->install($auth);
 
-        $this->assertSame('sk-lowercase-and-dashes', $auth->apiKey('my-box'));
-        $this->assertSame([], $custom->problems);
+        $this->assertTrue($auth->hasKeyFor('my-box'));
+
+        try {
+            $auth->apiKey('my-box');
+            $this->fail('a command with no output is an error');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Failed to resolve API key for provider "my-box" from shell command: true', $error->getMessage());
+        }
     }
 
-    /**
-     * An empty key is no key, and it keeps the complaint it already had.
-     *
-     * Two ways to have no key and they should not both be described as an unset variable: this one
-     * was already named at the point the file is read, so the new check has to leave it alone.
-     */
-    public function testAnEmptyApiKeyIsNoKeyAndKeepsItsOwnComplaint(): void
+    public function testAnEmptyApiKeyIsASchemaErrorThatRefusesTheProvider(): void
     {
         $auth = Auth::inMemory();
         $custom = $this->load(self::provider(['apiKey' => '']));
         $custom->install($auth);
 
+        $this->assertSame([], $custom->models);
         $this->assertNull($auth->apiKey('my-box'));
         $this->assertCount(1, $custom->problems);
-        $this->assertStringContainsString('no "apiKey"', $custom->problems[0]);
-        $this->assertStringNotContainsString('which is not set', $custom->problems[0]);
+        $this->assertStringContainsString('"apiKey" must be a non-empty string', $custom->problems[0]);
     }
 
     public function testAuthHeaderPutsTheResolvedKeyInTheHeaders(): void
     {
         putenv('MY_BOX_KEY=sk-resolved');
 
-        $model = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY', 'authHeader' => true]))->models[0];
+        $model = $this->load(self::provider(['apiKey' => '$MY_BOX_KEY', 'authHeader' => true]))->models[0];
 
-        // Resolved, not the variable's name: a proxy given `Bearer MY_BOX_KEY` answers 401
-        // and says nothing about why.
         $this->assertSame('Bearer sk-resolved', $model->headers['Authorization']);
     }
 
@@ -894,7 +904,7 @@ final class CustomModelsTest extends TestCase
     {
         putenv('MY_BOX_KEY');
 
-        $model = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY', 'authHeader' => true]))->models[0];
+        $model = $this->load(self::provider(['apiKey' => '$MY_BOX_KEY', 'authHeader' => true]))->models[0];
 
         $this->assertArrayNotHasKey('Authorization', $model->headers);
     }
@@ -902,6 +912,27 @@ final class CustomModelsTest extends TestCase
     public function testWithoutAuthHeaderNothingIsAddedToTheHeaders(): void
     {
         $this->assertArrayNotHasKey('Authorization', $this->load(self::provider())->models[0]->headers);
+    }
+
+    public function testHeaderValuesAreConfigValuesToo(): void
+    {
+        putenv('MY_BOX_KEY=tenant-from-env');
+
+        $model = $this->load(self::provider([
+            'headers' => ['X-Tenant' => '${MY_BOX_KEY}', 'X-Price' => '$$5', 'X-Cmd' => '!echo from-cmd'],
+        ]))->models[0];
+
+        $this->assertSame(['X-Tenant' => 'tenant-from-env', 'X-Price' => '$5', 'X-Cmd' => 'from-cmd'], $model->headers);
+    }
+
+    public function testAHeaderThatCannotBeResolvedRefusesWhatItBelongsTo(): void
+    {
+        putenv('MY_BOX_KEY');
+
+        $custom = $this->load(self::provider(['headers' => ['X-Tenant' => '$MY_BOX_KEY']]));
+
+        $this->assertSame([], $custom->models);
+        $this->assertStringContainsString('Failed to resolve provider "my-box" header "X-Tenant" from environment variable: MY_BOX_KEY', $custom->problems[0]);
     }
 
     public function testAProviderWhoseModelsAllFailedStillHandsOverItsKey(): void
@@ -915,22 +946,120 @@ final class CustomModelsTest extends TestCase
         $this->assertSame('sk-a-literal-key', $auth->apiKey('my-box'));
     }
 
-    // ---- a built-in always wins ---------------------------------------------------------
+    // ---- what a definition leaves out ----------------------------------------------------------
 
-    public function testAFileCannotRedefineAModelThatShips(): void
+    public function testADefinitionNeedsOnlyAnIdAsUpstreamsModelFromJsonHasIt(): void
     {
-        $before = Models::find('anthropic', 'claude-sonnet-4-5');
+        $model = $this->load(self::provider(['models' => [['id' => 'qwen2.5-coder:7b']]]))->models[0];
+
+        $this->assertSame('qwen2.5-coder:7b', $model->name);
+        $this->assertSame(128_000, $model->contextWindow);
+        $this->assertSame(16_384, $model->maxTokens);
+        $this->assertFalse($model->reasoning);
+        $this->assertSame(['text'], $model->input);
+    }
+
+    public function testAModelsOwnBaseUrlWinsOverTheProviders(): void
+    {
+        $custom = $this->load(self::provider(['models' => [self::model(['baseUrl' => 'http://elsewhere/v1/'])]]));
+
+        $this->assertSame('http://elsewhere/v1', $custom->models[0]->baseUrl);
+    }
+
+    // ---- an existing provider -----------------------------------------------------------------
+
+    /** Upstream's `applyModelsJson()`: a `models` entry replaces the model with the same id. */
+    public function testAFileReplacesAShippedModelWithTheSameIdAndKeepsTheRest(): void
+    {
+        $shipped = Models::all();
+        $other = null;
+
+        foreach ($shipped as $model) {
+            if ($model->provider === 'anthropic' && $model->id !== 'claude-sonnet-4-5') {
+                $other = $model;
+                break;
+            }
+        }
+
+        $this->assertNotNull($other);
 
         $this->load([
-            'baseUrl' => 'http://evil/v1',
-            'apiKey' => 'x',
-            'api' => 'openai-completions',
-            'models' => [self::model(['id' => 'claude-sonnet-4-5', 'name' => 'Not This One'])],
+            'models' => [self::model(['id' => 'claude-sonnet-4-5', 'name' => 'Mine'])],
         ], name: 'anthropic')->install();
 
-        // A config file quietly replacing a shipped model is a bug report nobody could read.
-        $this->assertSame($before?->name, Models::find('anthropic', 'claude-sonnet-4-5')?->name);
-        $this->assertSame($before?->baseUrl, Models::find('anthropic', 'claude-sonnet-4-5')?->baseUrl);
+        $replaced = Models::find('anthropic', 'claude-sonnet-4-5');
+        $this->assertSame('Mine', $replaced?->name);
+        // `api` and `baseUrl` from the provider's models, as `findModelDefaults()` takes them.
+        $this->assertSame(Api::AnthropicMessages, $replaced?->api);
+        $this->assertSame('https://api.anthropic.com', $replaced?->baseUrl);
+        $this->assertSame($other->name, Models::find('anthropic', $other->id)?->name, 'the rest stay');
+    }
+
+    public function testAProviderBaseUrlAndHeadersAreLaidOverEveryModelItHas(): void
+    {
+        $count = count(Models::baseModelsOf('anthropic'));
+
+        $this->load(['baseUrl' => 'http://proxy/v1', 'headers' => ['X-Proxy' => 'yes']], name: 'anthropic')->install();
+
+        $models = array_values(array_filter(Models::all(), static fn ($m): bool => $m->provider === 'anthropic'));
+        $this->assertCount($count, $models, 'the list is kept');
+
+        foreach ($models as $model) {
+            $this->assertSame('http://proxy/v1', $model->baseUrl);
+            $this->assertSame('yes', $model->headers['X-Proxy']);
+        }
+
+        // Reading the file again replaces what the last read installed.
+        CustomModels::load($this->write('{"providers": {}}'))->install();
+        $this->assertNotSame('http://proxy/v1', Models::find('anthropic', $models[0]->id)?->baseUrl);
+    }
+
+    public function testModelOverridesChangeFieldsOfAnExistingModelById(): void
+    {
+        $before = Models::find('anthropic', 'claude-sonnet-4-5');
+        $this->assertNotNull($before);
+
+        $custom = $this->load(['modelOverrides' => [
+            'claude-sonnet-4-5' => [
+                'name' => 'Sonnet, mine',
+                'contextWindow' => 1_000_000,
+                'cost' => ['input' => 1.5],
+                'thinkingLevelMap' => ['minimal' => null],
+                'promptCache' => ['long' => 7200],
+                'headers' => ['X-Override' => 'on'],
+            ],
+            'no-such-model' => ['name' => 'ignored'],
+        ]], name: 'anthropic');
+        $custom->install();
+
+        $this->assertSame([], $custom->problems, 'an unknown id is ignored, not a problem');
+        $after = Models::find('anthropic', 'claude-sonnet-4-5');
+        $this->assertSame('Sonnet, mine', $after?->name);
+        $this->assertSame(1_000_000, $after?->contextWindow);
+        $this->assertSame(1.5, $after?->pricing->input);
+        $this->assertSame($before->pricing->output, $after?->pricing->output, 'the rates it does not name are kept');
+        $this->assertFalse($after?->hasThinkingLevel('minimal'));
+        $this->assertSame(['short' => 300, 'long' => 7200], $after?->promptCache);
+        $this->assertSame('on', $after?->headers['X-Override']);
+        $this->assertSame($before->maxTokens, $after?->maxTokens);
+        $this->assertNull(Models::find('anthropic', 'no-such-model'));
+    }
+
+    public function testModelOverridesApplyToModelsTheFileDeclaresToo(): void
+    {
+        $this->load(self::provider(['modelOverrides' => ['qwen3-coder' => ['maxTokens' => 999]]]))->install();
+
+        $this->assertSame(999, Models::find('my-box', 'qwen3-coder')?->maxTokens);
+    }
+
+    public function testAnOverrideTheSchemaRefusesIsNamedAndDropped(): void
+    {
+        $custom = $this->load(['modelOverrides' => ['claude-sonnet-4-5' => ['contextWindow' => 0, 'cost' => ['input' => 'cheap']]]], name: 'anthropic');
+        $custom->install();
+
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringContainsString('modelOverrides "claude-sonnet-4-5": invalid models.json schema: providers.anthropic.modelOverrides.claude-sonnet-4-5.cost.input: must be number; providers.anthropic.modelOverrides.claude-sonnet-4-5.contextWindow: must be > 0', $custom->problems[0]);
+        $this->assertNotSame(0, Models::find('anthropic', 'claude-sonnet-4-5')?->contextWindow);
     }
 
     // ---- a bad file names what is wrong ---------------------------------------------------
@@ -967,13 +1096,13 @@ final class CustomModelsTest extends TestCase
     public static function badProviders(): array
     {
         return [
-            [['apiKey' => 'K', 'api' => 'openai-completions', 'models' => [self::model()]], 'no "baseUrl"'],
-            [['baseUrl' => 'http://b', 'api' => 'openai-completions', 'models' => [self::model()]], 'no "apiKey"'],
-            [['baseUrl' => 'http://b', 'apiKey' => 'K', 'api' => 'openai-completions'], 'no "models"'],
-            [self::provider(['api' => null, 'models' => [self::model()]]), '"api" must be one of'],
+            [['apiKey' => 'K', 'api' => 'openai-completions', 'models' => [self::model()]], '"baseUrl" is required when defining custom models'],
+            [[], 'must specify "baseUrl", "headers", "compat", "modelOverrides", or "models"'],
+            [self::provider(['api' => null, 'models' => [self::model()]]), '"api" must be a non-empty string'],
             [self::provider(['api' => 'telepathy']), '"api" must be one of'],
+            [['baseUrl' => 'http://b', 'models' => [self::model()]], 'no "api" specified'],
             [self::provider(['models' => [self::model(['id' => ''])]]), 'no "id"'],
-            [self::provider(['models' => [self::model(['name' => ''])]]), 'no "name"'],
+            [self::provider(['models' => [self::model(['name' => ''])]]), '"name" must be a non-empty string'],
             [self::provider(['models' => [self::model(['contextWindow' => 0])]]), '"contextWindow" must be'],
             [self::provider(['models' => [self::model(['contextWindow' => 'lots'])]]), '"contextWindow" must be'],
             [self::provider(['models' => [self::model(['maxTokens' => -1])]]), '"maxTokens" must be'],

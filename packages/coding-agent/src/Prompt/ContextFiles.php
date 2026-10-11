@@ -7,20 +7,27 @@ namespace Pig\CodingAgent\Prompt;
 use Pig\CodingAgent\Config;
 
 /**
- * The `AGENTS.md` files that apply where the agent is working.
+ * The `AGENTS.md` files that apply where the agent is working — upstream's
+ * `loadProjectContextFiles()` in `core/resource-loader.ts`.
  *
- * Collected by walking from the working directory up to the root, so a file in a
- * monorepo's root applies to every package under it and a package can add to it. The
- * order is outermost first, because that is the order they read in: the general rules,
- * then the ones that narrow them.
+ * The agent directory's own file first, then one per directory walking from the working
+ * directory up to the root, so a file in a monorepo's root applies to every package under it and
+ * a package can add to it. The order is outermost first, because that is the order they read in:
+ * the general rules, then the ones that narrow them.
  *
- * `CLAUDE.md` is accepted under the same rules, since plenty of projects already have
- * one and nobody wants to keep two copies of the same instructions.
+ * Each directory contributes at most one file, the first of upstream's five names it has:
+ * `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`. An override replaces
+ * the others in its own directory only. Not gated by project trust: they are text the model reads,
+ * not code pig runs.
+ *
+ * One more rule from upstream: inside a linked git worktree nested in its main checkout
+ * (`git worktree add .worktrees/feat`), the main checkout's file of the same name is the
+ * worktree's own file twice over, so it is left out (`findShadowedContextFile()`).
  */
 final class ContextFiles
 {
-    /** In order of preference. A directory with both gets only the first. */
-    private const array NAMES = ['AGENTS.md', 'CLAUDE.md'];
+    /** Upstream's candidates, in order of preference. A directory with several gets only the first. */
+    private const array NAMES = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD'];
 
     /**
      * The global file, then every one from the root down to $cwd.
@@ -70,12 +77,14 @@ final class ContextFiles
 
         $ancestors = [];
         $directory = rtrim($cwd, '/');
+        $shadowed = self::shadowedContextFile($directory === '' ? '/' : $directory);
 
         while (true) {
             [$found, $complaints] = self::inDirectory($directory === '' ? '/' : $directory);
             $warnings = [...$warnings, ...$complaints];
+            $isShadowed = $found !== null && $shadowed !== null && (realpath($found->path) ?: $found->path) === $shadowed;
 
-            if ($found !== null && !isset($seen[$found->path])) {
+            if ($found !== null && !$isShadowed && !isset($seen[$found->path])) {
                 // Unshifted, so the walk up comes back out as a walk down.
                 array_unshift($ancestors, $found);
                 $seen[$found->path] = true;
@@ -94,7 +103,86 @@ final class ContextFiles
     }
 
     /**
-     * The first of the two names that is there and readable, and what the other cost.
+     * Upstream's `findShadowedContextFile()`: the main checkout's context file that a nested linked
+     * worktree's own copy shadows — both occupy the same logical repository scope, so loading both
+     * applies that context twice. Null when nothing is shadowed: an ordinary repository, a sibling
+     * worktree (`git worktree add ../feat`, whose main checkout is not an ancestor), a bare layout,
+     * a submodule.
+     *
+     * Canonical (realpath), because `git worktree add` writes the `.git` file's `gitdir:` target in
+     * realpath form while the working directory may be reached through a symlink.
+     */
+    private static function shadowedContextFile(string $cwd): ?string
+    {
+        $git = self::gitPaths($cwd);
+
+        if ($git === null) {
+            return null;
+        }
+
+        $commonGitDir = realpath($git['commonGitDir']) ?: $git['commonGitDir'];
+        $worktreeRoot = realpath($git['repoDir']) ?: $git['repoDir'];
+        $mainRepoRoot = dirname($commonGitDir);
+
+        if (!str_starts_with($worktreeRoot, rtrim($mainRepoRoot, '/') . '/')) {
+            return null;
+        }
+
+        // The common git dir's parent is the main worktree only when that directory is itself
+        // checked out from the same repository: in a bare layout it merely holds `.bare`, and a
+        // submodule's gitdir (no `commondir`) sits under `.git/modules`.
+        if ((realpath($mainRepoRoot . '/.git') ?: $mainRepoRoot . '/.git') !== $commonGitDir) {
+            return null;
+        }
+
+        [$own] = self::inDirectory($worktreeRoot);
+
+        return $own === null ? null : $mainRepoRoot . '/' . basename($own->path);
+    }
+
+    /**
+     * Upstream's `findGitPaths()`: the nearest `.git` upward from $cwd — a directory, or a file
+     * whose `gitdir:` names the worktree's git dir, whose `commondir` names the shared one.
+     *
+     * @return array{repoDir: string, commonGitDir: string}|null
+     */
+    private static function gitPaths(string $cwd): ?array
+    {
+        for ($dir = $cwd; ; $dir = dirname($dir)) {
+            $gitPath = rtrim($dir, '/') . '/.git';
+
+            if (is_file($gitPath)) {
+                $content = is_readable($gitPath) ? trim((string) file_get_contents($gitPath)) : '';
+
+                if (!str_starts_with($content, 'gitdir: ')) {
+                    return null;
+                }
+
+                $gitDir = \Pig\CodingAgent\Tools\Paths::resolve(trim(substr($content, 8)), $dir);
+
+                if (!file_exists($gitDir . '/HEAD')) {
+                    return null;
+                }
+
+                $commonDir = is_file($gitDir . '/commondir')
+                    ? \Pig\CodingAgent\Tools\Paths::resolve(trim((string) file_get_contents($gitDir . '/commondir')), $gitDir)
+                    : $gitDir;
+
+                return ['repoDir' => $dir, 'commonGitDir' => $commonDir];
+            }
+
+            if (is_dir($gitPath)) {
+                return file_exists($gitPath . '/HEAD') ? ['repoDir' => $dir, 'commonGitDir' => $gitPath] : null;
+            }
+
+            if (dirname($dir) === $dir) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * The first of upstream's names that is there and readable, and what the others cost.
      *
      * A name that is there and cannot be read falls through to the next candidate, as
      * upstream's does — an unreadable `AGENTS.md` should not hide a perfectly good

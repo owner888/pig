@@ -29,7 +29,7 @@ trait WithoutProviderKeys
     private static function providerKeyNames(): array
     {
         return [
-            'ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN',
+            'ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN',
             'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN',
             'OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY', 'CEREBRAS_API_KEY',
             'XAI_API_KEY', 'TYPESAFE_API_KEY', 'RADIUS_API_KEY', 'OPENROUTER_API_KEY', 'ZAI_API_KEY', 'MISTRAL_API_KEY',

@@ -43,6 +43,7 @@ final readonly class DescribedTool implements AgentTool
             $definition->parameters,
             $definition->constrainedSampling,
             $definition->typeBox,
+            $definition->outputSchema,
         );
     }
 

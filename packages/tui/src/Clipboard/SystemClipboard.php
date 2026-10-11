@@ -14,7 +14,7 @@ use Pig\Tui\Process;
  * either `pngpaste` if it happens to be installed or AppleScript, which is always there.
  * Linux has `wl-paste` under Wayland and `xclip` under X11, and WSL has neither for
  * images because a Windows screenshot never reaches the Linux clipboard — that one needs
- * PowerShell.
+ * PowerShell. Termux has Termux:API's `termux-clipboard-get` and `termux-clipboard-set`, for text only.
  *
  * Every one of them is optional. A machine with none of them has no clipboard as far as
  * this is concerned, which is a capability, not a failure: `null` comes back and the
@@ -44,6 +44,15 @@ final class SystemClipboard implements Clipboard
     #[\Override]
     public function text(): ?string
     {
+        // Upstream's `readClipboardText()`: under Termux, `termux-clipboard-get` from Termux:API and
+        // nothing else — Node reports Termux as `android`, so none of the Linux readers are tried
+        // after it, and PHP calls it Linux, which is why it is asked here before the platform is.
+        if (Env::isSet('TERMUX_VERSION')) {
+            $text = Process::capture(['termux-clipboard-get']);
+
+            return $text === null || $text === '' ? null : $text;
+        }
+
         $text = match ($this->platform()) {
             'darwin' => Process::capture(['pbpaste']),
             'windows' => self::powerShell('Get-Clipboard -Raw'),
@@ -72,6 +81,12 @@ final class SystemClipboard implements Clipboard
 
     private function linuxWrite(string $text): bool
     {
+        // Upstream's `copyToClipboard()` tries `termux-clipboard-set` first when `TERMUX_VERSION` is
+        // set, then whatever display tools there are.
+        if (Env::isSet('TERMUX_VERSION') && Process::feed(['termux-clipboard-set'], $text, self::WRITE_TIMEOUT)) {
+            return true;
+        }
+
         $commands = Env::isSet('WAYLAND_DISPLAY')
             ? [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']]
             : [['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input'], ['wl-copy']];

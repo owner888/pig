@@ -290,14 +290,23 @@ final class SettingsTest extends TestCase
         $this->assertFalse($settings->compactionEnabled());
     }
 
-    public function testAProjectListReplacesRatherThanAppends(): void
+    public function testTheResourceListsAreReadPerScopeAndAWrongShapeIsSaid(): void
     {
-        $this->writeGlobal(['skills' => ['ignoredSkills' => ['mine-*']]]);
-        $this->writeProject(['skills' => ['ignoredSkills' => ['theirs-*']]]);
+        $this->writeGlobal(['skills' => ['mine'], 'prompts' => ['!draft-*'], 'themes' => 'not-a-list']);
+        $this->writeProject(['skills' => ['theirs'], 'prompts' => [1]]);
 
-        // A list is an answer, not a contribution: merging two would give a project no
-        // way to *stop* ignoring something.
-        $this->assertSame(['theirs-*'], $this->load()->skillList('ignoredSkills'));
+        $settings = $this->load();
+
+        // Read per scope, as upstream's package manager reads them: each resolves from its own base.
+        $this->assertSame(['mine'], $settings->resourceEntries('skills', 'user'));
+        $this->assertSame(['theirs'], $settings->resourceEntries('skills', 'project'));
+        $this->assertSame(['!draft-*'], $settings->resourceEntries('prompts', 'user'));
+        $this->assertSame([], $settings->resourceEntries('prompts', 'project'));
+        $this->assertSame([], $settings->resourceEntries('themes', 'user'));
+
+        $problems = implode("\n", $settings->problems());
+        $this->assertStringContainsString('"themes" must be an array of paths', $problems);
+        $this->assertStringContainsString('"prompts" must be an array of paths', $problems);
     }
 
     // ---- writing -------------------------------------------------------------------------
@@ -366,39 +375,46 @@ final class SettingsTest extends TestCase
     // ---- the numbers, and what is not one --------------------------------------------------
 
     /**
-     * The two accessors that take a fallback read `is_int($value) && $value > 0`, and the cases
-     * below are the ways a hand-written file misses that. (The retry numbers are upstream's
-     * `getRetrySettings()` now, which takes any number as it is — see the retry tests above.) A **quoted number** is the
-     * one to expect — the same mistake `models.json`'s `cost` block has its own entry for — and
-     * without the type check it comes back as a string out of a method declared `int`, which under
-     * `strict_types` is a TypeError from somewhere that has nothing to do with the file.
-     *
-     * Zero is the other: somebody turning a limit off by setting it to nothing gets a reserve of
-     * no tokens, which is compaction that never fires, or a kept-recent of nothing, which is a
-     * compaction that summarises the message you just sent.
+     * The two compaction accessors take upstream's non-negative safe integers — zero included — and
+     * refuse anything else when it is read. A **quoted number** is the one to expect in a
+     * hand-written file, the same mistake `models.json`'s `cost` block has its own entry for.
+     * (The retry numbers are upstream's `getRetrySettings()`, which takes any number as it is — see
+     * the retry tests above.)
      *
      * @return iterable<string, array{0: string, 1: mixed, 2: bool}>
      */
     public static function numbersAndNonNumbers(): iterable
     {
         yield 'a whole count is the answer' => ['compaction.reserveTokens', 9_000, true];
-        yield 'zero is not a limit' => ['compaction.reserveTokens', 0, false];
-        yield 'nor is a negative one' => ['compaction.keepRecentTokens', -1, false];
+        yield 'zero is one, as upstream counts' => ['compaction.reserveTokens', 0, true];
+        yield 'a whole float is one' => ['compaction.keepRecentTokens', 5000.0, true];
+        yield 'a negative one is refused' => ['compaction.keepRecentTokens', -1, false];
+        yield 'a quoted one is refused' => ['compaction.reserveTokens', '9000', false];
+        yield 'a fraction is refused' => ['compaction.reserveTokens', 1.5, false];
     }
 
+    /**
+     * Upstream's `getCompactionTokenSetting()`: a non-negative safe integer, 0 included, and
+     * anything else is an error when it is read rather than a quiet fall back to the default.
+     */
     #[DataProvider('numbersAndNonNumbers')]
-    public function testANumberThatIsNotOneFallsBackRatherThanBeingUsed(string $key, mixed $value, bool $taken): void
+    public function testACompactionNumberIsTakenOrRefused(string $key, mixed $value, bool $taken): void
     {
         [$head, $leaf] = explode('.', $key);
         $this->writeGlobal([$head => [$leaf => $value]]);
 
         $settings = $this->load();
-        $answer = match ($key) {
+        $read = static fn (): int => match ($key) {
             'compaction.reserveTokens' => $settings->compactionReserveTokens(1_111),
             'compaction.keepRecentTokens' => $settings->compactionKeepRecentTokens(1_111),
         };
 
-        $this->assertSame($taken ? $value : 1_111, $answer);
+        if (!$taken) {
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessage("Invalid {$key} setting: ");
+        }
+
+        $this->assertSame((int) $value, $read());
     }
 
     /**
@@ -758,15 +774,35 @@ final class SettingsTest extends TestCase
     {
         $settings = Settings::inMemory(['compaction' => [
             'reserveTokens' => 9000,
-            'modelOverrides' => ['openai/gpt-5.2' => ['reserveTokens' => 40000, 'keepRecentTokens' => 'many']],
+            'modelOverrides' => ['openai/gpt-5.2' => ['reserveTokens' => 40000, 'keepRecentTokens' => 'many'], 'openai/gpt-5' => 'big'],
         ]]);
         $model = new \Pig\Ai\Model('gpt-5.2', 'GPT-5.2', \Pig\Ai\Api::OpenAiResponses, 'openai', 'http://127.0.0.1:1', 400_000, 128_000);
         $other = new \Pig\Ai\Model('gpt-5', 'GPT-5', \Pig\Ai\Api::OpenAiResponses, 'openai', 'http://127.0.0.1:1', 400_000, 128_000);
 
         $this->assertSame(40000, $settings->compactionReserveTokens(16_384, $model));
-        $this->assertSame(9000, $settings->compactionReserveTokens(16_384, $other));
         $this->assertSame(9000, $settings->compactionReserveTokens(16_384));
-        $this->assertSame(20_000, $settings->compactionKeepRecentTokens(20_000, $model), 'an override that is not a number is not one');
+
+        $error = null;
+
+        try {
+            $settings->compactionKeepRecentTokens(20_000, $model);
+        } catch (\RuntimeException $caught) {
+            $error = $caught->getMessage();
+        }
+
+        $this->assertSame('Invalid compaction.modelOverrides["openai/gpt-5.2"].keepRecentTokens setting: many. Expected a non-negative safe integer.', $error);
+        $this->expectExceptionMessage('Invalid compaction.modelOverrides["openai/gpt-5"] setting: big. Expected an object.');
+        $settings->compactionReserveTokens(16_384, $other);
+    }
+
+    public function testShellPathTakesALeadingTilde(): void
+    {
+        $home = (string) \Pig\Tui\Env::home();
+
+        $this->assertSame($home . '/bin/bash', Settings::inMemory(['shellPath' => '~/bin/bash'])->shellPath());
+        $this->assertSame($home, Settings::inMemory(['shellPath' => '~'])->shellPath());
+        $this->assertSame('/opt/bash', Settings::inMemory(['shellPath' => '/opt/bash'])->shellPath());
+        $this->assertSame('/opt/my bash', Settings::inMemory(['shellPath' => 'file:///opt/my%20bash'])->shellPath());
     }
 
     public function testTheRestOfBatchTwoHasUpstreamsDefaults(): void

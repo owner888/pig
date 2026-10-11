@@ -24,14 +24,14 @@ final class ModelRefreshTest extends TestCase
     {
         $this->home = sys_get_temp_dir() . '/pig-model-refresh-' . bin2hex(random_bytes(4));
         mkdir($this->home, 0o700, true);
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         ProviderRegistry::forget();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         exec('rm -rf ' . escapeshellarg($this->home));
     }
 

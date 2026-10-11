@@ -61,7 +61,7 @@ final class KeybindingsTest extends TestCase
         $alt = PHP_OS_FAMILY === 'Darwin' ? 'Option' : 'Alt';
 
         $this->assertSame("{$alt}+Up", $keys->display('app.message.dequeue'));
-        $this->assertSame("Command+Enter", $keys->display('app.message.followUp'));
+        $this->assertSame('Command+Enter', $keys->display('app.message.followUp'));
         $this->assertSame('Ctrl+O', $keys->display('app.tools.expand'));
         $this->assertSame('(unbound)', (new Keybindings(['app.tools.expand' => []]))->display('app.tools.expand'));
     }
@@ -79,7 +79,7 @@ final class KeybindingsTest extends TestCase
         // Kitty's spelling, because ctrl+m as a control character is `\r` — Enter — which is why
         // nobody binds it on a terminal without the protocol and why this test does not try to.
         $this->assertSame('app.model.select', $keys->actionFor(Keys::kitty(ord('m'), 4)));
-        $this->assertNull($keys->actionFor("\x0c"), 'ctrl+l is free again — that is the point of moving it');
+        $this->assertFalse($keys->matches("\x0c", 'app.model.select'), 'ctrl+l is free again — that is the point of moving it');
         $this->assertSame('app.tools.expand', $keys->actionFor("\x05"));
         $this->assertSame('app.tools.expand', $keys->actionFor(Keys::kitty(ord('o'), 5)), 'the second key too, whatever its spelling');
         $this->assertSame(['ctrl+e', 'shift+ctrl+o'], $keys->keysFor('app.tools.expand'), 'spelled one way here');
@@ -143,16 +143,116 @@ final class KeybindingsTest extends TestCase
         $this->assertFalse($tui->matches("\x1b[5~", 'tui.altScreen.pageUp'), 'a binding replaces the default');
         $this->assertSame([], $tui->getKeys('tui.altScreen.search'), 'an empty list unbinds');
         $this->assertSame(['ctrl+end'], $keys->keysFor('tui.altScreen.bottom'), 'the rest keep upstream\'s defaults');
-        $this->assertNull($keys->actionFor("\x15"), 'the app half does not claim a tui key');
+        $this->assertSame($keys, $tui, "upstream's manager is one object: the TUI's registry is this manager");
     }
 
-    public function testTheEditingKeysAreNotBindableYet(): void
+    public function testEveryUpstreamIdIsBindableAndAnUnknownOneIsNamed(): void
     {
-        file_put_contents($this->home . '/keybindings.json', json_encode(['tui.editor.cursorUp' => 'ctrl+k']));
+        file_put_contents($this->home . '/keybindings.json', json_encode([
+            '$schema' => 'https://example.invalid/keybindings.json',
+            'tui.editor.cursorUp' => 'ctrl+k',
+            'tui.select.cancel' => ['escape'],
+            'app.session.tree' => 'ctrl+shift+t',
+            'app.clipboard.pasteImage' => 'alt+v',
+            'app.nonsense' => 'ctrl+q',
+        ]));
 
         $keys = Keybindings::load($this->home);
 
-        $this->assertCount(1, $keys->problems());
-        $this->assertStringContainsString("'tui.editor.cursorUp'", $keys->problems()[0]);
+        $this->assertCount(1, $keys->problems(), implode("\n", $keys->problems()));
+        $this->assertStringContainsString("'app.nonsense'", $keys->problems()[0]);
+        $this->assertSame(['ctrl+k'], $keys->keysFor('tui.editor.cursorUp'));
+        $this->assertSame(['escape'], $keys->keysFor('tui.select.cancel'));
+        $this->assertSame(['shift+ctrl+t'], $keys->keysFor('app.session.tree'));
+        $this->assertTrue($keys->matches("\x1bv", 'app.clipboard.pasteImage'));
+    }
+
+    public function testTheIdSetIsUpstreams(): void
+    {
+        $ids = array_keys(Keybindings::keybindingDefinitions('linux', []));
+
+        foreach ([
+            'tui.editor.undo', 'tui.editor.yank', 'tui.editor.jumpForward', 'tui.input.submit', 'tui.select.pageDown',
+            'tui.altScreen.search', 'app.clipboard.pasteImage', 'app.session.new', 'app.session.tree',
+            'app.session.fork', 'app.session.resume', 'app.session.togglePath', 'app.session.deleteNoninvasive',
+            'app.models.save', 'app.models.reorderDown', 'app.thinking.save', 'app.tree.foldOrUp',
+            'app.tree.filter.cycleBackward', 'app.tree.toggleLabelTimestamp',
+        ] as $id) {
+            $this->assertContains($id, $ids);
+        }
+
+        $this->assertCount(count(\Pig\Tui\Keybindings::TUI_KEYBINDINGS) + count(Keybindings::APP_KEYBINDINGS), $ids);
+    }
+
+    public function testDefaultsFollowThePlatformAsUpstreamsDo(): void
+    {
+        $linux = new Keybindings(platform: 'linux', env: []);
+        $this->assertSame(['ctrl+z'], $linux->keysFor('app.suspend'));
+        $this->assertSame(['shift+ctrl+p'], $linux->keysFor('app.model.cycleBackward'));
+        $this->assertSame(['command+enter', 'alt+enter'], $linux->keysFor('app.message.followUp'));
+        $this->assertSame(['alt+up'], $linux->keysFor('app.message.dequeue'));
+        $this->assertSame(['ctrl+v'], $linux->keysFor('app.clipboard.pasteImage'));
+        $this->assertSame(['ctrl+-'], $linux->keysFor('tui.editor.undo'));
+        $this->assertSame(['ctrl+shift+f'], $linux->keysFor('tui.altScreen.search'));
+        $this->assertSame(['ctrl+shift+up', 'ctrl+up'], $linux->keysFor('tui.altScreen.previousPrompt'));
+        $this->assertSame(['ctrl+left', 'alt+left'], $linux->keysFor('app.tree.foldOrUp'));
+
+        $windows = new Keybindings(platform: 'win32', env: []);
+        $this->assertSame([], $windows->keysFor('app.suspend'), 'no job control on native Windows');
+        $this->assertSame(['alt+p'], $windows->keysFor('app.model.cycleBackward'));
+        $this->assertSame(['ctrl+q'], $windows->keysFor('app.message.followUp'));
+        $this->assertSame(['alt+q'], $windows->keysFor('app.message.dequeue'));
+        $this->assertSame(['alt+v'], $windows->keysFor('app.clipboard.pasteImage'));
+        $this->assertSame(['ctrl+z'], $windows->keysFor('tui.editor.undo'));
+        $this->assertSame(['ctrl+f'], $windows->keysFor('tui.altScreen.search'));
+        $this->assertSame(['ctrl+up'], $windows->keysFor('tui.altScreen.previousPrompt'));
+        $this->assertSame(['ctrl+down'], $windows->keysFor('tui.altScreen.nextPrompt'));
+
+        $wsl = new Keybindings(platform: 'linux', env: ['WSL_DISTRO_NAME' => 'Ubuntu']);
+        $this->assertTrue(Keybindings::useWindowsKeybindings('linux', ['WSL_INTEROP' => '/run/WSL/1_interop']));
+        $this->assertSame(['ctrl+z'], $wsl->keysFor('app.suspend'), 'WSL keeps ctrl+z and fg');
+        $this->assertSame(['alt+z'], $wsl->keysFor('tui.editor.undo'));
+        $this->assertSame(['ctrl+q'], $wsl->keysFor('app.message.followUp'));
+        $this->assertSame(['ctrl+f'], $wsl->keysFor('tui.altScreen.search'));
+
+        $mac = new Keybindings(platform: 'darwin', env: []);
+        $this->assertSame(['alt+left', 'ctrl+left'], $mac->keysFor('app.tree.foldOrUp'));
+        $this->assertSame(['alt+right', 'ctrl+right'], $mac->keysFor('app.tree.unfoldOrDown'));
+        $this->assertFalse(Keybindings::useWindowsKeybindings('darwin', ['WSL_DISTRO_NAME' => 'x']));
+    }
+
+    public function testTheOldFlatNamesAreReadAsTheNewOnes(): void
+    {
+        file_put_contents($this->home . '/keybindings.json', json_encode([
+            'selectModel' => 'ctrl+m',
+            'undo' => 'ctrl+z',
+            'expandTools' => 'ctrl+e',
+            'app.tools.expand' => 'ctrl+y',
+        ]));
+
+        $keys = Keybindings::load($this->home);
+
+        $this->assertSame([], $keys->problems());
+        $this->assertSame(['ctrl+m'], $keys->keysFor('app.model.select'));
+        $this->assertSame(['ctrl+z'], $keys->keysFor('tui.editor.undo'));
+        $this->assertSame(['ctrl+y'], $keys->keysFor('app.tools.expand'), 'the namespaced spelling wins');
+        $this->assertTrue(Keybindings::migrateKeybindingsConfig(['undo' => 'ctrl+z'])['migrated']);
+    }
+
+    public function testReloadReadsTheFileAgainIntoTheSameManager(): void
+    {
+        $keys = Keybindings::load($this->home);
+        $this->assertSame(['ctrl+l'], $keys->keysFor('app.model.select'));
+
+        file_put_contents($this->home . '/keybindings.json', json_encode(['app.model.select' => 'ctrl+m', 'app.bogus' => 'x']));
+        $problems = $keys->reload();
+
+        $this->assertSame(['ctrl+m'], $keys->keysFor('app.model.select'));
+        $this->assertCount(1, $problems);
+        $this->assertSame($problems, $keys->problems());
+
+        unlink($this->home . '/keybindings.json');
+        $this->assertSame([], $keys->reload());
+        $this->assertSame(['ctrl+l'], $keys->keysFor('app.model.select'), 'a removed file is the defaults again');
     }
 }

@@ -59,7 +59,7 @@ final class McpCli
           --oauth-auth-server-metadata-url <url>
                                   Authorization server metadata document, for a server
                                   that advertises the wrong one or none
-          --exposure <mode>       direct, deferred, or hidden (codemode is read as deferred)
+          --exposure <mode>       codemode (default), deferred, direct, or hidden
 
         Other options:
           --json                  Print the list as JSON

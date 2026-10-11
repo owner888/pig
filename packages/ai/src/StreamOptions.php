@@ -21,7 +21,7 @@ readonly class StreamOptions
     /**
      * @param string|null $cacheRetention upstream's `cacheRetention`: `none`, `short` or `long`.
      *        Null is upstream's undefined, which a provider resolves as `long` when
-     *        `PI_CACHE_RETENTION=long` is set and `short` otherwise (`resolveCacheRetention()`)
+     *        `PIG_CACHE_RETENTION=long` is set and `short` otherwise (`resolveCacheRetention()`)
      * @param string|null $sessionId upstream's `sessionId`: what a provider that routes or caches by
      *        session keys on — Anthropic's session-affinity header, the Responses API's
      *        `prompt_cache_key`. Null sends none
@@ -75,7 +75,7 @@ readonly class StreamOptions
     /**
      * Upstream's `resolveCacheRetention(cacheRetention, env)`, which the Anthropic and Responses
      * providers each carry a copy of: the option when given, else `long` for
-     * `PI_CACHE_RETENTION=long` "for backward compatibility", else `short`.
+     * `PIG_CACHE_RETENTION=long` "for backward compatibility", else `short`.
      */
     public function resolvedCacheRetention(): string
     {
@@ -83,7 +83,7 @@ readonly class StreamOptions
             return $this->cacheRetention;
         }
 
-        return self::providerEnvValue('PI_CACHE_RETENTION', $this->env) === 'long' ? 'long' : 'short';
+        return self::providerEnvValue('PIG_CACHE_RETENTION', $this->env) === 'long' ? 'long' : 'short';
     }
 
     /**

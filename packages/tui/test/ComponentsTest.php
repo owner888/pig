@@ -529,9 +529,13 @@ final class ComponentsTest extends TestCase
         $loader = new CancellableLoader($tui, Style::cyan(...), Style::dim(...));
 
         $loader->handleInput('x');
-        $loader->handleInput(Keys::kitty(ord('c'), 4));
+        $loader->handleInput(Keys::kitty(ord('o'), 4));
 
         $this->assertFalse($loader->aborted());
+
+        // Upstream's loader answers `tui.select.cancel`, which is Ctrl+C as well as Escape.
+        $loader->handleInput(Keys::kitty(ord('c'), 4));
+        $this->assertTrue($loader->aborted());
 
         $loader->dispose();
     }

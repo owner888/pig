@@ -34,7 +34,7 @@ final class AntigravityDiscoveryTest extends TestCase
         Loop::reset();
         $this->home = sys_get_temp_dir() . '/pig-antigravity-discovery-' . bin2hex(random_bytes(6));
         mkdir($this->home, 0o700, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
         putenv('PI_HOME=' . $this->home . '/pi');
     }
 
@@ -45,7 +45,7 @@ final class AntigravityDiscoveryTest extends TestCase
         Models::forgetRegistered();
         Routing::forgetTables();
         Discovery::forgetCurrent();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
         putenv('ANTIGRAVITY_CATALOG_REFRESH_INTERVAL_MS');
         putenv('ANTIGRAVITY_BASE_URL');

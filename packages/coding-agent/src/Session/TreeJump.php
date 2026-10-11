@@ -15,8 +15,9 @@ namespace Pig\CodingAgent\Session;
  * and must not be reported as a cancellation.
  *
  * Upstream returns `{cancelled, aborted, editorText}` from `navigateTree` for the same
- * reasons. A hook refusing the jump is the fifth outcome and stays an exception here, as
- * it was.
+ * reasons. A `session_before_tree` hook refusing the jump is the fifth: `cancelled` without
+ * `aborted`, upstream's `{ cancelled: true }` — an answer, not an error. A summary called off
+ * part-way is `cancelled` and `aborted` both, as upstream's is.
  *
  * `editorText` is what was said at the point being gone back to, for a point that is
  * something *somebody said*: that message leaves the conversation and its words go back
@@ -29,6 +30,7 @@ final readonly class TreeJump
         public ?BranchSummary $summary = null,
         public bool $aborted = false,
         public ?string $editorText = null,
+        public bool $cancelled = false,
     ) {
     }
 }

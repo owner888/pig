@@ -34,19 +34,24 @@ interface HookUi
     /**
      * Offer a list and wait for a choice.
      *
+     * `$timeout` is upstream's `ExtensionUIDialogOptions.timeout`, in milliseconds: the dialog
+     * closes by itself when it runs out, answering as escape would — null here, false for
+     * `confirm()`, null for `input()` — and the terminal counts it down in the title.
+     *
      * @param list<string> $options
-     * @return string|null null when it was cancelled, or when there is no UI
+     * @param int|null $timeout milliseconds to wait for an answer; null or 0 waits for ever
+     * @return string|null null when it was cancelled, timed out, or when there is no UI
      */
-    public function select(string $title, array $options): ?string;
+    public function select(string $title, array $options, ?int $timeout = null): ?string;
 
     /**
      * Ask a yes-or-no question.
      *
      * False when cancelled, and false when there is no UI — which for a `tool_call` guard
      * means a tool nobody could approve is a tool that does not run. That is upstream's
-     * choice and the safe direction.
+     * choice and the safe direction. False when `$timeout` (milliseconds) runs out, likewise.
      */
-    public function confirm(string $title, string $message): bool;
+    public function confirm(string $title, string $message, ?int $timeout = null): bool;
 
     /**
      * Ask for a line of text. Null when cancelled, or when there is no UI.
@@ -55,7 +60,7 @@ interface HookUi
      * prompt raced against something else that may answer first (the MCP sign-in's pasted redirect
      * URL against the browser callback).
      */
-    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string;
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null, ?int $timeout = null): ?string;
 
     /**
      * Ask for something longer, in a real editor.

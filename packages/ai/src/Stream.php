@@ -120,9 +120,10 @@ final class Stream
         $context = self::normalize($context);
 
         // Upstream's `withEnvApiKey()`: an explicit key, else the environment's (`options.env` first).
-        $apiKey = self::withoutAmbientMarker($options?->apiKey !== null && trim($options->apiKey) !== ''
-            ? $options->apiKey
-            : self::envApiKey($model->provider, $options?->env));
+        // The ambient marker is not a key the caller gave: it says "signed in", and the environment
+        // says how.
+        $explicit = $options?->apiKey !== null && trim($options->apiKey) !== '' && $options->apiKey !== self::AMBIENT_AUTH_MARKER;
+        $apiKey = self::withoutAmbientMarker($explicit ? $options->apiKey : self::envApiKey($model->provider, $options?->env));
 
         // What the provider's own auth adds to the request before its API sees it — upstream's
         // `Models.applyAuth()` over the provider's `resolve()`, which only Cloudflare's two use for
@@ -130,6 +131,16 @@ final class Stream
         // (`cloudflareStreams()`), and for the gateway its `cf-aig-authorization` header.
         $requestAuth = [];
         $headers = $options?->headers;
+
+        // And Anthropic's for `ANTHROPIC_AUTH_TOKEN`, with no key given: `{headers: {Authorization:
+        // "Bearer …"}}` and no key, ahead of the two key variables — a header the caller set wins.
+        $tokenHeaders = $explicit ? null : self::envAuthHeaders($model->provider, $options?->env);
+
+        if ($tokenHeaders !== null) {
+            $apiKey = null;
+            $headers = Utils\Headers::has($headers, 'authorization') ? $headers : [...$tokenHeaders, ...($headers ?? [])];
+            $requestAuth = ['headers' => $headers];
+        }
 
         if (Cloudflare::isCloudflare($model->provider)) {
             $resolved = Cloudflare::resolveCloudflareEnv($model->provider, $apiKey, $options?->env)
@@ -229,6 +240,28 @@ final class Stream
     private static function withoutAmbientMarker(?string $apiKey): ?string
     {
         return $apiKey === self::AMBIENT_AUTH_MARKER ? null : $apiKey;
+    }
+
+    /**
+     * The request headers a provider's environment authenticates with instead of a key, or null —
+     * upstream's Anthropic `resolve()`: `ANTHROPIC_AUTH_TOKEN` is `{auth: {headers: {Authorization:
+     * "Bearer <token>"}}}` with no key, and it is asked before `ANTHROPIC_OAUTH_TOKEN` and
+     * `ANTHROPIC_API_KEY`. `envApiKey()` skips it, as upstream's `getEnvApiKey()` does ("requests must
+     * pass it as Authorization: Bearer"). A bearer token over the API-key client, not an OAuth one:
+     * no Claude Code identity is put on the request.
+     *
+     * @param array<string, string>|null $env
+     * @return array<string, string>|null
+     */
+    public static function envAuthHeaders(string $provider, ?array $env = null): ?array
+    {
+        if ($provider !== 'anthropic') {
+            return null;
+        }
+
+        $token = StreamOptions::providerEnvValue('ANTHROPIC_AUTH_TOKEN', $env);
+
+        return $token === null ? null : ['Authorization' => "Bearer {$token}"];
     }
 
     /**
@@ -371,9 +404,11 @@ final class Stream
         // used to be `min(model.maxTokens, 32_000)` here and `intdiv(model.maxTokens, 3)` in
         // `Anthropic`, neither of which upstream has any more.
         $maxTokens = self::clampMaxTokensToContext($model, $context, $options?->maxTokens ?? $model->maxTokens);
-        $apiKey = self::withoutAmbientMarker($options?->apiKey !== null && trim($options->apiKey) !== ''
+        $explicit = $options?->apiKey !== null && trim($options->apiKey) !== '' && $options->apiKey !== self::AMBIENT_AUTH_MARKER;
+        // No key for an `ANTHROPIC_AUTH_TOKEN`: `start()` sends it as the `Authorization` header.
+        $apiKey = self::withoutAmbientMarker($explicit
             ? $options->apiKey
-            : self::envApiKey($model->provider, $options?->env));
+            : (self::envAuthHeaders($model->provider, $options?->env) !== null ? null : self::envApiKey($model->provider, $options?->env)));
         // Upstream's `buildBaseOptions()`: every request-level field the caller gave travels on
         // whatever the API's options are — headers, callbacks, timeouts, retries, env.
         $base = [...($options ?? new SimpleStreamOptions())->baseArgs(), 'maxTokens' => $maxTokens, 'apiKey' => $apiKey];
@@ -513,9 +548,7 @@ final class Stream
 
     /**
      * Upstream's `clampThinkingLevel(model, reasoning)` for both OpenAI APIs, with `off` meaning no
-     * reasoning. pig has no `max` effort, so a clamp that would land there — a model whose map
-     * offers `max` and not `xhigh`, asked for `xhigh` — is refused out loud rather than sent as
-     * something else; the agent's own clamp (`ThinkingLevel::clampedFor()`) never asks that.
+     * reasoning. Every level the clamp can land on is a `ReasoningEffort`, `max` included.
      */
     private static function clampedReasoning(Model $model, ?ReasoningEffort $reasoning): ?ReasoningEffort
     {
@@ -529,8 +562,7 @@ final class Stream
             return null;
         }
 
-        return ReasoningEffort::tryFrom($clamped)
-            ?? throw new ProviderError("{$model->provider}/{$model->id} has no '{$reasoning->value}' thinking level, and its nearest, '{$clamped}', is not one pig can send");
+        return ReasoningEffort::from($clamped);
     }
 
     /** @param array<string, mixed> $requestAuth see `base()` */

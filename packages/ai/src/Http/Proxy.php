@@ -59,6 +59,9 @@ final class Proxy
     /**
      * @param 'http'|'socks5' $scheme
      * @param list<string>    $bypass hosts to reach directly, from `no_proxy`
+     * @param self|false|null $plainHttp what a plain `http://` target goes through when it is not
+     *        this proxy: another one, `false` for a direct connection, null for this one — see
+     *        `fromEnvironment()`
      */
     private function __construct(
         public readonly string $scheme,
@@ -67,6 +70,7 @@ final class Proxy
         public readonly ?string $user,
         public readonly ?string $password,
         public readonly array $bypass,
+        private readonly self|false|null $plainHttp = null,
     ) {
     }
 
@@ -126,48 +130,69 @@ final class Proxy
     }
 
     /**
-     * The proxy the environment asks for, or null for none.
+     * The proxy the environment asks for, or null for none — what upstream's
+     * `undici.EnvHttpProxyAgent` reads:
      *
-     * Read in order: `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY` — lowercase first,
-     * which is curl's precedence. A variable that is present and empty means *no proxy*, which is
-     * how a script turns one off for one command, so it ends the search rather than being skipped.
+     * - an `https://` target goes through `https_proxy`, else `HTTPS_PROXY`, else the plain-HTTP one;
+     * - an `http://` target goes through `http_proxy`, else `HTTP_PROXY`, else directly;
+     * - `no_proxy`, else `NO_PROXY`, lists the hosts reached directly.
      *
-     * `http_proxy` is deliberately not read. It governs `http://` targets, and every provider pig
-     * talks to is `https://`; a plain-HTTP endpoint in `models.json` is a local or self-hosted
-     * server, which is what `no_proxy` and the loopback rule below are for. Reading it would put
-     * a tunnel in front of `http://localhost:8080/v1` and nothing else.
+     * Lowercase first, and the first variable that is *set* decides, as `??` does: an empty
+     * `https_proxy=` is "no HTTPS proxy of its own" (so the plain-HTTP one is used for HTTPS too, as
+     * undici does), an empty `http_proxy=` is "none". `ALL_PROXY` is curl's and not undici's, so it
+     * is not read.
+     *
+     * The result answers for both kinds of target: it *is* the HTTPS one, and carries the plain-HTTP
+     * decision for `open()` when the two differ.
      *
      * @param array<string, string|false> $environment `getenv()`, or a fixture
      */
     public static function fromEnvironment(array $environment): ?self
     {
         $bypass = [];
+        $noProxy = self::firstSet($environment, ['no_proxy', 'NO_PROXY']);
 
-        foreach (['no_proxy', 'NO_PROXY'] as $name) {
-            $value = $environment[$name] ?? false;
-
-            if (is_string($value) && trim($value) !== '') {
-                $bypass = array_values(array_filter(array_map(
-                    static fn (string $entry): string => strtolower(trim($entry)),
-                    explode(',', $value),
-                ), static fn (string $entry): bool => $entry !== ''));
-
-                break;
-            }
+        if ($noProxy !== null && trim($noProxy) !== '') {
+            $bypass = array_values(array_filter(array_map(
+                static fn (string $entry): string => strtolower(trim($entry)),
+                preg_split('/[\s,]+/', $noProxy) ?: [],
+            ), static fn (string $entry): bool => $entry !== ''));
         }
 
-        foreach (['https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY'] as $name) {
+        $httpUrl = self::firstSet($environment, ['http_proxy', 'HTTP_PROXY']);
+        $httpsUrl = self::firstSet($environment, ['https_proxy', 'HTTPS_PROXY']);
+        $httpUrl = $httpUrl !== null && trim($httpUrl) !== '' ? $httpUrl : null;
+        $httpsUrl = $httpsUrl !== null && trim($httpsUrl) !== '' ? $httpsUrl : $httpUrl;
+
+        if ($httpsUrl === null) {
+            return null;
+        }
+
+        $https = self::parse($httpsUrl, $bypass);
+
+        if ($httpUrl === $httpsUrl) {
+            return $https;
+        }
+
+        $plainHttp = $httpUrl === null ? false : self::parse($httpUrl, $bypass);
+
+        return new self($https->scheme, $https->host, $https->port, $https->user, $https->password, $bypass, $plainHttp);
+    }
+
+    /**
+     * The first of $names that is set, empty or not.
+     *
+     * @param array<string, string|false> $environment
+     * @param list<string> $names
+     */
+    private static function firstSet(array $environment, array $names): ?string
+    {
+        foreach ($names as $name) {
             $value = $environment[$name] ?? false;
 
-            if (!is_string($value)) {
-                continue;
+            if (is_string($value)) {
+                return $value;
             }
-
-            if (trim($value) === '') {
-                return null;
-            }
-
-            return self::parse($value, $bypass);
         }
 
         return null;
@@ -180,7 +205,9 @@ final class Proxy
      */
     public function bypassing(array $bypass): self
     {
-        return new self($this->scheme, $this->host, $this->port, $this->user, $this->password, $bypass);
+        $plainHttp = $this->plainHttp instanceof self ? $this->plainHttp->bypassing($bypass) : $this->plainHttp;
+
+        return new self($this->scheme, $this->host, $this->port, $this->user, $this->password, $bypass, $plainHttp);
     }
 
     /**
@@ -205,7 +232,7 @@ final class Proxy
                 return true;
             }
 
-            $name = ltrim(strtolower(explode(':', $entry)[0]), '.');
+            $name = ltrim(strtolower(explode(':', $entry)[0]), '*.');
 
             if ($name === '' || $name === $lower || str_ends_with($lower, '.' . $name)) {
                 return true;
@@ -238,6 +265,15 @@ final class Proxy
         float $timeout = 30.0,
         ?AbortSignal $signal = null,
     ): Socket {
+        // A plain-HTTP target the environment routes differently (`fromEnvironment()`).
+        if (!$tls && $this->plainHttp instanceof self) {
+            return $this->plainHttp->open($host, $port, $tls, $timeout, $signal);
+        }
+
+        if (!$tls && $this->plainHttp === false) {
+            return Socket::connect($host, $port, false, $timeout, $signal);
+        }
+
         try {
             $socket = Socket::connect($this->host, $this->port, false, $timeout, $signal);
         } catch (SocketError $error) {

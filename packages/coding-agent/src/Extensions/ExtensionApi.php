@@ -14,6 +14,8 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\McpServers;
+use Pig\CodingAgent\ModelRouteRequest;
+use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\RegisteredMcpServer;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\VirtualModelDefinition;
@@ -190,16 +192,30 @@ final class ExtensionApi extends HookApi
     // ---- providers ---------------------------------------------------------------------
 
     /**
-     * Bring a provider: models, a protocol, a sign-in. Upstream's `registerProvider()`.
+     * Bring a provider: models, a protocol, a sign-in. Upstream's `registerProvider()`, in both its
+     * forms: a complete `Provider`, or a provider name and upstream's legacy `ProviderConfig` as an
+     * array — `registerProvider('media-tools', ['apiKey' => '$MEDIA_TOOLS_API_KEY', 'models' => […]])`
+     * — which `ProviderConfig::toProvider()` turns into one. Only a `baseUrl` or `headers` for an
+     * existing provider keeps its models; a `models` list replaces them until it is unregistered.
      *
      * Everything a built-in provider is spread across four core classes arrives as one object
      * and goes into `ProviderRegistry`, which those four classes ask when their own tables come
      * up empty — so from the moment this returns, `--model`, `/model`, `/login` and `Stream`
      * all know the provider as if it had shipped with pig. Taken back by `unregisterProvider()`
      * and on `/reload`, which loads the extensions again.
+     *
+     * @param array<string, mixed>|null $config the legacy form's `ProviderConfig`, with a name
+     * @throws \InvalidArgumentException for a config that is wrong, naming the key
      */
-    public function registerProvider(Provider $provider): void
+    public function registerProvider(Provider|string $provider, ?array $config = null): void
     {
+        if (is_string($provider)) {
+            $provider = ProviderConfig::toProvider(
+                $provider,
+                $config ?? throw new \InvalidArgumentException('Provider config is required when registering by name'),
+            );
+        }
+
         ProviderRegistry::register($provider);
         $this->providers[] = $provider->id;
 
@@ -241,7 +257,20 @@ final class ExtensionApi extends HookApi
      */
     public function registerVirtualModel(VirtualModelDefinition $definition): void
     {
-        VirtualModelRegistry::current()->register($definition);
+        // Upstream's `ExtensionVirtualModel.route(request, ctx)`: "Routing runs after the runner binds,
+        // so the context is created per request" — `ctx.modelRegistry` to find the physical model,
+        // `ctx->store->branch()` for upstream's `ctx.sessionManager.getBranch()`.
+        $route = $definition->route;
+        VirtualModelRegistry::current()->register(new VirtualModelDefinition(
+            $definition->provider,
+            $definition->id,
+            $definition->name,
+            fn (ModelRouteRequest $request): mixed => $route($request, $this->contextNow() ?? new HookContext($this->cwd())),
+            $definition->thinkingLevels,
+            $definition->contextWindow,
+            $definition->maxTokens,
+            $definition->input,
+        ));
     }
 
     public function unregisterVirtualModel(string $provider, string $id): void
@@ -496,7 +525,7 @@ final class ExtensionApi extends HookApi
             return;
         }
 
-        $deliverAs === 'steer' ? $session->steer($text, 'extension') : $session->followUp($text, 'extension');
+        $deliverAs === 'steer' ? $session->steer($text, source: 'extension') : $session->followUp($text, source: 'extension');
     }
 
     /** Name a point in the conversation, or clear the name with null. Upstream's `setLabel()`. */

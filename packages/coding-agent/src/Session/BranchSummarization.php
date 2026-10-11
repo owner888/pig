@@ -4,20 +4,28 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Closure;
+use Pig\Ai\Model;
+use Pig\Ai\SimpleStreamOptions;
+use Pig\Ai\StopReason;
+use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\Utils\Text;
+use Pig\Async\AbortSignal;
+use Pig\CodingAgent\CodingAgent;
 
 /**
  * Turning an abandoned branch into a page of notes.
  *
- * Pure logic, the way `Compaction` is: what to send, in what order, under what budget.
- * `AgentSession::goTo()` makes the model call.
+ * Ported from upstream's `core/compaction/branch-summarization.ts`, with its names:
+ * `collectEntriesForBranchSummary()` finds what a move leaves behind, `prepareBranchEntries()`
+ * fits it to a budget, and `generateBranchSummary()` asks the model. `AgentSession::goTo()` runs
+ * the three, and an extension can run them itself.
  *
- * Almost everything is shared with compaction and is reached for rather than repeated —
- * `Compaction::estimateTokens()`, `serialize()`, `files()` and `SYSTEM_PROMPT` are all the
- * same questions about a different span of messages. What is different is the prompt (this
- * one asks for a handover, not a recap) and the direction of the walk.
- *
- * Ported from upstream's `core/compaction/branch-summarization.ts`.
+ * What is shared with compaction is reached for rather than repeated —
+ * `Compaction::estimateTokens()`, `serializeConversation()`, the file operations,
+ * `completeSummarization()` and `SUMMARIZATION_SYSTEM_PROMPT`. What is different is the prompt
+ * (this one asks for a handover, not a recap) and the direction of the walk.
  */
 final class BranchSummarization
 {
@@ -27,8 +35,14 @@ final class BranchSummarization
     /** How much of the answer to allow, before the model's own cap. Upstream's `Math.min(4096, model.maxTokens)`. */
     public const int MAX_TOKENS = 4_096;
 
+    /** The window assumed for a model that states none — upstream's `model.contextWindow || 128000`. */
+    private const int DEFAULT_CONTEXT_WINDOW = 128_000;
+
+    /** Upstream's `BRANCH_SUMMARY_PREAMBLE`, put in front of the model's summary. */
+    public const string PREAMBLE = "The user explored a different conversation branch before returning here.\nSummary of that exploration:\n\n";
+
     /**
-     * Upstream's prompt, format and all.
+     * Upstream's `BRANCH_SUMMARY_PROMPT`, format and all.
      *
      * A handover rather than a recap: what was being attempted, what got done, what is
      * blocked, what to do next. Someone coming back to a branch a day later wants the same
@@ -66,93 +80,210 @@ final class BranchSummarization
         TEXT;
 
     /**
-     * As much of the branch as fits, newest first, plus what it did to which files.
+     * What moving from `$oldLeafId` to `$targetId` leaves behind — upstream's
+     * `collectEntriesForBranchSummary()`.
      *
-     * **Two passes, and the first one is the point.** File operations are collected from
-     * *every* message, including the ones the budget leaves out, because "which files did
-     * this branch touch" has to be complete — a summary that forgets a file it edited sends
-     * whoever reads it to a file on disk that no longer matches. The prose can be partial;
-     * the file lists cannot.
-     *
-     * **Upstream's are not**, and this is the divergence worth knowing rather than a
-     * preference. `prepareBranchEntries()` calls `extractFileOpsFromMessage()` *inside* the
-     * newest-first loop, which `break`s at the budget — so its first pass collects only a
-     * nested branch summary's carried-forward lists, and every ordinary message older than the
-     * cut contributes nothing. Its own comment claims the opposite ("collect file ops from ALL
-     * entries"). So on upstream a long branch reports the files touched at its recent end and
-     * silently forgets the rest, which is the failure the paragraph above describes.
-     *
-     * The second pass walks newest to oldest so a branch too long to fit keeps its recent
-     * end, which is the part that says where the work got to.
-     *
-     * @param list<mixed> $messages in the order they were said
-     * @param int         $budget   0 for no limit
-     * @return array{0: list<mixed>, 1: list<string>, 2: list<string>} what to send, read, modified
+     * The deepest entry on both paths is the common ancestor; everything on the old path below it
+     * is what is being left, oldest first. Compactions are not a boundary: a summary on the old
+     * branch is part of what it was, and its prose becomes context like any other message. A null
+     * old leaf leaves nothing; a null target is the empty path, which shares nothing.
      */
-    public static function prepare(array $messages, int $budget = 0): array
+    public static function collectEntriesForBranchSummary(SessionManager $session, ?string $oldLeafId, ?string $targetId): CollectEntriesResult
     {
-        [$read, $modified] = Compaction::files($messages);
-
-        // A tool result's context is in the assistant message that asked for it, and results
-        // are the bulk of a long branch. Dropped **before** the budget is looked at, which is
-        // where upstream drops them and where the reason applies: it is a rule about what a
-        // handover is made of, not a way of saving room, so a model that declares no context
-        // window — budget 0, meaning no limit — must not get the whole branch *plus* the
-        // things that were never meant to be in it. Measured on one 28KB `read`: 28,808
-        // characters of request against 792 for the same branch with a budget.
-        $said = array_values(array_filter(
-            $messages,
-            static fn (mixed $message): bool => !$message instanceof ToolResultMessage,
-        ));
-
-        if ($budget <= 0) {
-            return [$said, $read, $modified];
+        if ($oldLeafId === null) {
+            return new CollectEntriesResult([], null);
         }
 
-        $kept = [];
-        $tokens = 0;
+        $oldPath = $session->pathEntries($oldLeafId);
+        $onOldPath = [];
 
-        foreach (array_reverse($said) as $message) {
-            $cost = Compaction::estimateTokens($message);
+        foreach ($oldPath as $entry) {
+            $onOldPath[$entry->id] = true;
+        }
 
-            if ($tokens + $cost > $budget) {
-                // An earlier summary is worth squeezing in past the budget: it stands for
-                // everything before it, so dropping it loses the most per token.
-                if (self::isSummary($message) && $tokens < (int) ($budget * 0.9)) {
-                    array_unshift($kept, $message);
+        $commonAncestorId = null;
+        $targetPath = $session->pathEntries($targetId);
+
+        for ($index = count($targetPath) - 1; $index >= 0; $index--) {
+            if (isset($onOldPath[$targetPath[$index]->id])) {
+                $commonAncestorId = $targetPath[$index]->id;
+
+                break;
+            }
+        }
+
+        $entries = [];
+
+        for ($index = count($oldPath) - 1; $index >= 0 && $oldPath[$index]->id !== $commonAncestorId; $index--) {
+            $entries[] = $oldPath[$index];
+        }
+
+        return new CollectEntriesResult(array_reverse($entries), $commonAncestorId);
+    }
+
+    /**
+     * Upstream's `getMessageFromEntry()`: the message an entry contributes to a handover, or null.
+     * A tool result contributes nothing — its context is in the assistant message that asked for
+     * it, and results are the bulk of a long branch — and neither does anything that is not part
+     * of the conversation.
+     */
+    private static function messageFromEntry(SessionEntry $entry): mixed
+    {
+        $message = $entry->message;
+
+        if ($message instanceof ToolResultMessage || !SessionManager::isSaid($message)) {
+            return null;
+        }
+
+        return $message;
+    }
+
+    /**
+     * As much of the branch as fits, newest first — upstream's `prepareBranchEntries()`.
+     *
+     * Walks from the newest entry back, adding messages until the next one would pass the budget
+     * (0 for none). A summary that does not fit is squeezed in anyway while less than 90% of the
+     * budget is used: it stands for everything before it, so dropping it loses the most per token.
+     *
+     * The file operations are upstream's two passes: the carried-forward lists of every nested
+     * branch summary pig wrote (a hook's are its own), then the tool calls of the messages that
+     * made it into the budget. So a branch too long to fit reports the files its kept, recent end
+     * touched — upstream's behaviour, which its docs describe as "the messages being summarized".
+     *
+     * @param list<SessionEntry> $entries oldest first
+     */
+    public static function prepareBranchEntries(array $entries, int $tokenBudget = 0): BranchPreparation
+    {
+        $messages = [];
+        $fileOps = Compaction::createFileOps();
+        $totalTokens = 0;
+
+        foreach ($entries as $entry) {
+            if ($entry->message instanceof BranchSummary && !$entry->message->fromHook) {
+                foreach ($entry->message->readFiles as $path) {
+                    $fileOps->addRead($path);
+                }
+
+                foreach ($entry->message->modifiedFiles as $path) {
+                    $fileOps->addEdited($path);
+                }
+            }
+        }
+
+        for ($index = count($entries) - 1; $index >= 0; $index--) {
+            $entry = $entries[$index];
+            $message = self::messageFromEntry($entry);
+
+            if ($message === null) {
+                continue;
+            }
+
+            Compaction::extractFileOpsFromMessage($message, $fileOps);
+
+            $tokens = Compaction::estimateTokens($message);
+
+            if ($tokenBudget > 0 && $totalTokens + $tokens > $tokenBudget) {
+                if (($entry->message instanceof CompactionSummary || $entry->message instanceof BranchSummary)
+                    && $totalTokens < $tokenBudget * 0.9
+                ) {
+                    array_unshift($messages, $message);
+                    $totalTokens += $tokens;
                 }
 
                 break;
             }
 
-            array_unshift($kept, $message);
-            $tokens += $cost;
+            array_unshift($messages, $message);
+            $totalTokens += $tokens;
         }
 
-        return [$kept, $read, $modified];
+        return new BranchPreparation($messages, $fileOps, $totalTokens);
     }
 
     /**
-     * What the model is asked, with the branch flattened into it.
+     * Summarise abandoned branch entries — upstream's `generateBranchSummary()`.
      *
-     * @param list<mixed> $messages
+     * The budget is the model's window (128k when it states none) less `$reserveTokens`.
+     * `$customInstructions` are added as "Additional focus", or replace the prompt outright with
+     * `$replaceInstructions`. No reasoning is asked for, and the output is capped at 4096 tokens or
+     * the model's own cap. The summary comes back with `PREAMBLE` in front; an abort and an error
+     * come back as such rather than thrown.
+     *
+     * @param list<SessionEntry> $entries oldest first
+     * @param array<string, string>|null $headers
+     * @param array<string, string>|null $env
+     * @param array{enabled: bool, maxRetries: int, baseDelayMs: float, maxAgentDelayMs?: float|null}|null $retry
+     * @param array<string, Closure> $callbacks `Retry::retryAssistantCall()`'s
      */
-    public static function request(array $messages, ?string $instructions = null): string
-    {
-        $conversation = Compaction::serialize($messages);
-        $asked = $instructions === null || trim($instructions) === '' ? self::PROMPT : $instructions;
+    public static function generateBranchSummary(
+        array $entries,
+        Model $model,
+        ?string $apiKey = null,
+        ?array $headers = null,
+        ?array $env = null,
+        ?AbortSignal $signal = null,
+        ?string $customInstructions = null,
+        ?bool $replaceInstructions = null,
+        int $reserveTokens = self::RESERVE_TOKENS,
+        ?Closure $streamFn = null,
+        ?array $retry = null,
+        array $callbacks = [],
+    ): BranchSummaryResult {
+        $contextWindow = $model->contextWindow > 0 ? $model->contextWindow : self::DEFAULT_CONTEXT_WINDOW;
+        $preparation = self::prepareBranchEntries($entries, $contextWindow - $reserveTokens);
 
-        return "<conversation>\n{$conversation}\n</conversation>\n\n{$asked}";
-    }
+        if ($preparation->messages === []) {
+            return new BranchSummaryResult(summary: 'No content to summarize');
+        }
 
-    /** The budget for a model, or 0 when it does not say how big its window is. */
-    public static function budget(int $contextWindow, int $reserve = self::RESERVE_TOKENS): int
-    {
-        return $contextWindow <= 0 ? 0 : max(0, $contextWindow - $reserve);
-    }
+        $conversationText = Compaction::serializeConversation(CodingAgent::toLlm($preparation->messages));
 
-    private static function isSummary(mixed $message): bool
-    {
-        return $message instanceof CompactionSummary || $message instanceof BranchSummary;
+        if ($replaceInstructions === true && $customInstructions !== null && $customInstructions !== '') {
+            $instructions = $customInstructions;
+        } elseif ($customInstructions !== null && $customInstructions !== '') {
+            $instructions = self::PROMPT . "\n\nAdditional focus: {$customInstructions}";
+        } else {
+            $instructions = self::PROMPT;
+        }
+
+        $response = Compaction::completeSummarization(
+            $model,
+            Compaction::buildSummarizationContext("<conversation>\n{$conversationText}\n</conversation>\n\n{$instructions}"),
+            new SimpleStreamOptions(
+                maxTokens: $model->maxTokens > 0 ? min(self::MAX_TOKENS, $model->maxTokens) : self::MAX_TOKENS,
+                signal: $signal,
+                apiKey: $apiKey,
+                headers: $headers,
+                env: $env,
+            ),
+            $streamFn,
+            $retry,
+            $callbacks,
+        );
+
+        if ($response->stopReason === StopReason::Aborted) {
+            return new BranchSummaryResult(aborted: true);
+        }
+
+        $failure = Compaction::getSummarizationFailure($response, 'Branch summarization');
+
+        if ($failure !== null) {
+            return new BranchSummaryResult(error: $failure);
+        }
+
+        foreach ($response->content as $block) {
+            if ($block instanceof ToolCall) {
+                return new BranchSummaryResult(error: 'Branch summarization attempted to call a tool');
+            }
+        }
+
+        $lists = Compaction::computeFileLists($preparation->fileOps);
+
+        return new BranchSummaryResult(
+            summary: self::PREAMBLE . Text::contentText($response->content),
+            usage: $response->usage,
+            readFiles: $lists['readFiles'],
+            modifiedFiles: $lists['modifiedFiles'],
+        );
     }
 }

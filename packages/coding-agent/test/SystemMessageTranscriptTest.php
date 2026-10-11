@@ -75,14 +75,14 @@ final class SystemMessageTranscriptTest extends TestCase
         $this->tempHome = sys_get_temp_dir() . '/pig-transcript-home-' . bin2hex(random_bytes(4));
         $this->cwd = sys_get_temp_dir() . '/pig-transcript-cwd-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o777, true);
-        putenv("PIG_HOME={$this->tempHome}");
+        putenv("PIG_CODING_AGENT_DIR={$this->tempHome}");
         $this->requests = [];
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         self::removeDir($this->tempHome);
         self::removeDir($this->cwd);
     }
@@ -141,7 +141,10 @@ final class SystemMessageTranscriptTest extends TestCase
         Async::run(static fn () => $session->prompt('first'));
 
         foreach (range(1, 4) as $ignored) {
-            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            // Into the file as well: a compaction cuts the session's branch, as upstream's does.
+            $said = new UserMessage(str_repeat('x', 40_000));
+            $session->agent->appendMessage($said);
+            $store->append($said);
         }
 
         $summary = Async::run(static fn () => $session->compact());
@@ -167,7 +170,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
     public function testASummaryRetriesATransientFailureWithTheSessionsRetrySettings(): void
     {
-        [$session] = $this->session(['one', ['error' => 'terminated'], 'the summary'], ['retry' => ['enabled' => true, 'maxRetries' => 2, 'baseDelayMs' => 1]]);
+        [$session, $store] = $this->session(['one', ['error' => 'terminated'], 'the summary'], ['retry' => ['enabled' => true, 'maxRetries' => 2, 'baseDelayMs' => 1]]);
         $events = [];
         $session->subscribe(static function (AgentEvent $event) use (&$events): void {
             if ($event instanceof SummarizationRetryEvent) {
@@ -178,7 +181,10 @@ final class SystemMessageTranscriptTest extends TestCase
         Async::run(static fn () => $session->prompt('first'));
 
         foreach (range(1, 4) as $ignored) {
-            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            // Into the file as well: a compaction cuts the session's branch, as upstream's does.
+            $said = new UserMessage(str_repeat('x', 40_000));
+            $session->agent->appendMessage($said);
+            $store->append($said);
         }
 
         $summary = Async::run(static fn () => $session->compact());
@@ -197,13 +203,16 @@ final class SystemMessageTranscriptTest extends TestCase
         // `min(floor(0.8 * reserveTokens), model.maxTokens)`.
         foreach ([[true, ThinkingLevel::Medium, ReasoningEffort::Medium], [true, ThinkingLevel::Off, null], [false, ThinkingLevel::Medium, null]] as [$reasons, $level, $expected]) {
             $this->options = [];
-            [$session] = $this->session(['one', 'the summary'], reasoning: $reasons, maxTokens: 64_000);
+            [$session, $store] = $this->session(['one', 'the summary'], reasoning: $reasons, maxTokens: 64_000);
             $session->agent->state->thinkingLevel = $level;
 
             Async::run(static fn () => $session->prompt('first'));
 
             foreach (range(1, 4) as $ignored) {
-                $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+                // Into the file as well: a compaction cuts the session's branch, as upstream's does.
+                $said = new UserMessage(str_repeat('x', 40_000));
+                $session->agent->appendMessage($said);
+                $store->append($said);
             }
 
             Async::run(static fn () => $session->compact());
@@ -214,11 +223,14 @@ final class SystemMessageTranscriptTest extends TestCase
 
         // A model whose own cap is lower wins.
         $this->options = [];
-        [$session] = $this->session(['one', 'the summary'], maxTokens: 1_000);
+        [$session, $store] = $this->session(['one', 'the summary'], maxTokens: 1_000);
         Async::run(static fn () => $session->prompt('first'));
 
         foreach (range(1, 4) as $ignored) {
-            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            // Into the file as well: a compaction cuts the session's branch, as upstream's does.
+            $said = new UserMessage(str_repeat('x', 40_000));
+            $session->agent->appendMessage($said);
+            $store->append($said);
         }
 
         Async::run(static fn () => $session->compact());

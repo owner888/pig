@@ -27,33 +27,47 @@ use Pig\Ai\TextStartEvent;
 use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\ThinkingEndEvent;
 use Pig\Ai\ThinkingStartEvent;
+use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\Utils\MessageJson;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\AgentSettledEvent;
+use Pig\CodingAgent\Session\BashExecutionUpdateEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionResult;
+use Pig\CodingAgent\Session\CompactionStartEvent;
+use Pig\CodingAgent\Session\EntryAppendedEvent;
 use Pig\CodingAgent\Session\ModelFallbackEvent;
+use Pig\CodingAgent\Session\QueueUpdateEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionCodec;
+use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Session\SummarizationRetryEvent;
+use Pig\CodingAgent\Session\ThinkingLevelChangedEvent;
+use RuntimeException;
+use stdClass;
 
 /**
- * What the agent is doing, as JSON a host can render.
+ * What the agent is doing, as JSON a host can render — upstream's `JsonAgentSessionEvent`, the shape
+ * `--mode json` and `--mode rpc` both write (`modes/json-event.ts`).
  *
- * Upstream calls `JSON.stringify(event)` and is done: its events are plain objects, so the
- * wire shape is whatever the class happens to hold. PHP has classes, so the mapping is
- * written out — which is more work and a better deal, because it is the only place the
- * protocol's event shape is stated and it cannot drift from a field rename in silence.
+ * Upstream calls `JSON.stringify(toJsonEvent(event))` and is done: its events are plain objects, so the
+ * wire shape is whatever the object holds. PHP has classes, so the mapping is written out — more work,
+ * and the one place the protocol's event shape is stated, which cannot drift from a field rename in
+ * silence. **Every name here is upstream's**, so a client written against pi reads pig unchanged; the
+ * few that are pig's alone (`model_fallback`, `agent_end.error`) are additions a pi client ignores.
  *
- * Messages go through `SessionCodec`, the same encoder the session file uses. One shape for
- * a message, whether it is being written to disk or handed to an editor, and one place to
- * fix when a message type gains a field.
+ * Messages go through `SessionCodec`, the same encoder the session file uses: one shape for a message,
+ * whether it is being written to disk or handed to an editor.
  *
- * `type` is the class's short name in `snake_case`, so `MessageStartEvent` is
- * `message_start`. Upstream's are already that, being string literals.
+ * **`message_update` carries the delta and not the message.** Upstream's `toJsonEvent()` strips the
+ * cumulative `partial` from every streaming event — `message_start` gives the message, the deltas build
+ * it, `message_end` is the final word — and keeps only what is constant in size: the usage so far, and a
+ * `toolcall_start`'s id and name. pig used to send the whole message so far on every update, which is
+ * quadratic in the length of an answer.
  */
 final class RpcEvents
 {
@@ -68,13 +82,16 @@ final class RpcEvents
             $event instanceof AgentStartEvent => ['type' => 'agent_start'],
             $event instanceof TurnStartEvent => ['type' => 'turn_start'],
 
-            // Upstream's session `agent_end`: the messages and `willRetry`.
+            // Upstream's session `agent_end`: the messages and `willRetry`. `error` is pig's, so a
+            // host need not walk the messages to learn why a turn produced no answer.
             $event instanceof AgentEndEvent => array_filter([
                 'type' => 'agent_end',
                 'messages' => self::messages($event->messages),
                 'willRetry' => $event->willRetry,
                 'error' => self::lastError($event->messages),
             ], static fn (mixed $v): bool => $v !== null),
+
+            $event instanceof AgentSettledEvent => ['type' => 'agent_settled', 'aborted' => $event->aborted],
 
             $event instanceof TurnEndEvent => [
                 'type' => 'turn_end',
@@ -87,14 +104,7 @@ final class RpcEvents
                 'message' => SessionCodec::encode($event->message),
             ],
 
-            // The delta is what makes streaming renderable, and the partial message beside
-            // it is what makes a host that missed one able to catch up: every update carries
-            // the whole message so far, so a dropped frame costs nothing.
-            $event instanceof MessageUpdateEvent => [
-                'type' => 'message_update',
-                'message' => SessionCodec::encode($event->message),
-                'delta' => self::delta($event->assistantMessageEvent),
-            ],
+            $event instanceof MessageUpdateEvent => self::messageUpdate($event),
 
             $event instanceof MessageEndEvent => [
                 'type' => 'message_end',
@@ -105,7 +115,7 @@ final class RpcEvents
                 'type' => 'tool_execution_start',
                 'toolCallId' => $event->toolCallId,
                 'toolName' => $event->toolName,
-                'arguments' => $event->arguments,
+                'args' => self::object($event->arguments),
                 ...self::parent($event->parentToolCallId),
             ],
 
@@ -113,8 +123,8 @@ final class RpcEvents
                 'type' => 'tool_execution_update',
                 'toolCallId' => $event->toolCallId,
                 'toolName' => $event->toolName,
-                'arguments' => $event->arguments,
-                'partial' => self::result($event->partialResult),
+                'args' => self::object($event->arguments),
+                'partialResult' => self::result($event->partialResult),
                 ...self::parent($event->parentToolCallId),
             ],
 
@@ -127,21 +137,37 @@ final class RpcEvents
                 ...self::parent($event->parentToolCallId),
             ],
 
-            // Not the agent loop's — the session's, from between one run and the next. See
-            // `AgentEvent`'s docblock about why they share a stream.
+            $event instanceof QueueUpdateEvent => [
+                'type' => 'queue_update',
+                'steering' => $event->steering,
+                'followUp' => $event->followUp,
+            ],
+
+            $event instanceof EntryAppendedEvent => [
+                'type' => 'entry_appended',
+                'entry' => SessionEntries::encode($event->entry->message, $event->entry->id, $event->entry->parentId),
+            ],
+
+            $event instanceof ThinkingLevelChangedEvent => [
+                'type' => 'thinking_level_changed',
+                'level' => $event->level->value,
+            ],
+
+            // Upstream's `auto_retry_start` / `auto_retry_end`: the session's own, from between one
+            // run and the next. See `AgentEvent`'s docblock about why they share a stream.
             $event instanceof RetryStartEvent => [
-                'type' => 'retry_start',
+                'type' => 'auto_retry_start',
                 'attempt' => $event->attempt,
                 'maxAttempts' => $event->maxAttempts,
                 'delayMs' => (int) round($event->delaySeconds * 1000),
-                'error' => $event->error,
+                'errorMessage' => $event->error,
             ],
 
             $event instanceof RetryEndEvent => [
-                'type' => 'retry_end',
-                'succeeded' => $event->succeeded,
-                'attempts' => $event->attempts,
-                'error' => $event->error,
+                'type' => 'auto_retry_end',
+                'success' => $event->succeeded,
+                'attempt' => $event->attempts,
+                ...($event->error === null ? [] : ['finalError' => $event->error]),
             ],
 
             // pig's own, no upstream counterpart: the session moved to a `fallbackModels` entry.
@@ -169,22 +195,32 @@ final class RpcEvents
                 default => ['type' => 'summarization_retry_finished'],
             },
 
-            $event instanceof AutoCompactionStartEvent => [
-                'type' => 'auto_compaction_start',
-                'error' => $event->error,
+            $event instanceof CompactionStartEvent => [
+                'type' => 'compaction_start',
+                'reason' => $event->reason,
             ],
 
-            $event instanceof AutoCompactionEndEvent => [
-                'type' => 'auto_compaction_end',
-                'succeeded' => $event->succeeded,
+            // `result` is upstream's `CompactionResult | undefined`, which `JSON.stringify` leaves
+            // out when the compaction did not finish; `errorMessage?` likewise when there is none.
+            $event instanceof CompactionEndEvent => [
+                'type' => 'compaction_end',
+                'reason' => $event->reason,
+                ...($event->result === null ? [] : ['result' => self::compactionResult($event->result)]),
+                'aborted' => $event->aborted,
                 'willRetry' => $event->willRetry,
-                'summary' => $event->summary === null ? null : SessionCodec::encode($event->summary),
-                'error' => $event->error,
+                ...($event->errorMessage === null ? [] : ['errorMessage' => $event->errorMessage]),
             ],
 
+            $event instanceof BashExecutionUpdateEvent => [
+                'type' => 'bash_execution_update',
+                ...($event->id === null ? [] : ['id' => $event->id]),
+                'delta' => $event->delta,
+            ],
+
+            // `name: string | undefined` upstream: a cleared name is the key left out.
             $event instanceof SessionInfoChangedEvent => [
                 'type' => 'session_info_changed',
-                'name' => $event->name,
+                ...($event->name === '' ? [] : ['name' => $event->name]),
             ],
 
             default => null,
@@ -192,53 +228,90 @@ final class RpcEvents
     }
 
     /**
-     * One streaming event from the provider.
+     * Upstream's `CompactionResult`, as `compact` answers it and `compaction_end` carries it.
      *
-     * The delta events share a shape — an index into the content, and something new for it —
-     * so they share an encoder. `contentIndex` says which block is growing, which is what a
-     * host needs to put the text in the right place rather than at the end.
+     * The optional fields are left out when they are not known, as `JSON.stringify` drops an
+     * undefined one. `details` is upstream's "extension-specific data", which for pig's own summary
+     * is the file lists.
+     *
+     * @return array<string, mixed>
+     */
+    public static function compactionResult(CompactionResult $result): array
+    {
+        return [
+            'summary' => $result->summary,
+            'firstKeptEntryId' => $result->firstKeptEntryId,
+            'tokensBefore' => $result->tokensBefore,
+            ...($result->estimatedTokensAfter === null ? [] : ['estimatedTokensAfter' => $result->estimatedTokensAfter]),
+            ...($result->usage === null ? [] : ['usage' => MessageJson::encodeUsage($result->usage)]),
+            ...($result->details === null ? [] : ['details' => self::object($result->details)]),
+        ];
+    }
+
+    /**
+     * Upstream's `toJsonEvent()` for a `message_update`: the usage so far and the streaming event
+     * without its `partial`.
+     *
+     * @return array<string, mixed>
+     */
+    private static function messageUpdate(MessageUpdateEvent $event): array
+    {
+        if (!$event->message instanceof AssistantMessage) {
+            throw new RuntimeException('message_update message is not an assistant message');
+        }
+
+        return [
+            'type' => 'message_update',
+            'usage' => MessageJson::encodeUsage($event->message->usage),
+            'assistantMessageEvent' => self::delta($event->assistantMessageEvent),
+        ];
+    }
+
+    /**
+     * One streaming event from the provider, as upstream's `toJsonAssistantMessageEvent()` writes it:
+     * the event's own fields, `partial` taken out, and a `toolcall_start` given the call's `id` and
+     * `toolName` from that partial — the one thing a host could not otherwise know until the end.
      *
      * @return array<string, mixed>
      */
     public static function delta(AssistantMessageEvent $event): array
     {
-        $encoded = ['type' => self::name($event)];
+        return match (true) {
+            $event instanceof StartEvent => ['type' => 'start'],
 
-        if (property_exists($event, 'contentIndex')) {
-            $encoded['contentIndex'] = $event->contentIndex;
+            $event instanceof TextStartEvent => ['type' => 'text_start', 'contentIndex' => $event->contentIndex],
+            $event instanceof TextDeltaEvent => ['type' => 'text_delta', 'contentIndex' => $event->contentIndex, 'delta' => $event->delta],
+            $event instanceof TextEndEvent => ['type' => 'text_end', 'contentIndex' => $event->contentIndex, 'content' => $event->content],
+
+            $event instanceof ThinkingStartEvent => ['type' => 'thinking_start', 'contentIndex' => $event->contentIndex],
+            $event instanceof ThinkingDeltaEvent => ['type' => 'thinking_delta', 'contentIndex' => $event->contentIndex, 'delta' => $event->delta],
+            $event instanceof ThinkingEndEvent => ['type' => 'thinking_end', 'contentIndex' => $event->contentIndex, 'content' => $event->content],
+
+            $event instanceof ToolCallStartEvent => self::toolCallStart($event),
+            $event instanceof ToolCallDeltaEvent => ['type' => 'toolcall_delta', 'contentIndex' => $event->contentIndex, 'delta' => $event->delta],
+            $event instanceof ToolCallEndEvent => [
+                'type' => 'toolcall_end',
+                'contentIndex' => $event->contentIndex,
+                'toolCall' => MessageJson::encodeContent([$event->toolCall])[0],
+            ],
+
+            $event instanceof DoneEvent => ['type' => 'done', 'reason' => $event->reason->value, 'message' => SessionCodec::encode($event->message)],
+            $event instanceof ErrorEvent => ['type' => 'error', 'reason' => $event->reason->value, 'error' => SessionCodec::encode($event->error)],
+
+            default => throw new RuntimeException('No wire shape for ' . $event::class),
+        };
+    }
+
+    /** @return array<string, mixed> */
+    private static function toolCallStart(ToolCallStartEvent $event): array
+    {
+        $call = $event->partial->content[$event->contentIndex] ?? null;
+
+        if (!$call instanceof ToolCall) {
+            throw new RuntimeException("toolcall_start content at index {$event->contentIndex} is not a tool call");
         }
 
-        return match (true) {
-            $event instanceof TextDeltaEvent,
-            $event instanceof ThinkingDeltaEvent,
-            $event instanceof ToolCallDeltaEvent => [...$encoded, 'delta' => $event->delta],
-
-            $event instanceof TextEndEvent => [...$encoded, 'content' => $event->content],
-
-            $event instanceof ToolCallEndEvent => [
-                ...$encoded,
-                'toolCall' => [
-                    'id' => $event->toolCall->id,
-                    'name' => $event->toolCall->name,
-                    'arguments' => $event->toolCall->arguments,
-                ],
-            ],
-
-            $event instanceof DoneEvent => [
-                ...$encoded,
-                'stopReason' => $event->reason->value,
-            ],
-
-            $event instanceof ErrorEvent => [
-                ...$encoded,
-                'stopReason' => $event->reason->value,
-                'error' => $event->error->errorMessage,
-            ],
-
-            // The ones that carry nothing of their own: text_start, thinking_start,
-            // thinking_end, tool_call_start, start. The index is the whole message.
-            default => $encoded,
-        };
+        return ['type' => 'toolcall_start', 'contentIndex' => $event->contentIndex, 'id' => $call->id, 'toolName' => $call->name];
     }
 
     /**
@@ -257,6 +330,17 @@ final class RpcEvents
             'details' => SessionCodec::plain($result->details),
             ...($result->usage === null ? [] : ['usage' => MessageJson::encodeUsage($result->usage)]),
         ];
+    }
+
+    /**
+     * An object on the wire even when it is empty: PHP's `[]` would be a JSON list, and upstream's
+     * `args` and `details` are objects.
+     *
+     * @param array<array-key, mixed> $value
+     */
+    private static function object(array $value): array|stdClass
+    {
+        return $value === [] ? new stdClass() : $value;
     }
 
     /**
@@ -311,14 +395,5 @@ final class RpcEvents
         }
 
         return null;
-    }
-
-    /** `TextDeltaEvent` becomes `text_delta`; the `Event` suffix carries no information. */
-    private static function name(object $event): string
-    {
-        $short = substr($event::class, (int) strrpos($event::class, '\\') + 1);
-        $short = preg_replace('/Event$/', '', $short) ?? $short;
-
-        return strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $short));
     }
 }

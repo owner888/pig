@@ -17,11 +17,14 @@ final readonly class SlashCommand
     /**
      * @param Closure(string): list<AutocompleteItem>|null $argumentCompletions
      *        given what has been typed after the command, the completions for it
+     * @param string|null $argumentHint upstream's `argumentHint` (`<file>`, `[focus]`), shown before
+     *        the description in the list
      */
     public function __construct(
         public string $name,
         public ?string $description = null,
         public ?Closure $argumentCompletions = null,
+        public ?string $argumentHint = null,
     ) {
     }
 }

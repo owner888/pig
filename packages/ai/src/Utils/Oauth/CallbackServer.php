@@ -66,7 +66,7 @@ final class CallbackServer
      *        `400 State mismatch.` and the wait goes on. Null checks nothing here, and leaves the
      *        state to the caller, which is how the Google and Anthropic flows use it.
      * @param string $host the address to listen on — upstream's `host`, which OpenAI's Codex flow
-     *        takes from `PI_OAUTH_CALLBACK_HOST`. The redirect still names `localhost`.
+     *        takes from `PIG_OAUTH_CALLBACK_HOST`. The redirect still names `localhost`.
      */
     public function __construct(
         private readonly int $port = self::PORT,

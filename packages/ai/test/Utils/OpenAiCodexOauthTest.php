@@ -38,7 +38,7 @@ final class OpenAiCodexOauthTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
-        putenv('PI_OAUTH_CALLBACK_HOST');
+        putenv('PIG_OAUTH_CALLBACK_HOST');
     }
 
     /** @return iterable<string, array{string}> */

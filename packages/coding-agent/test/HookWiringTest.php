@@ -33,7 +33,9 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
+use Pig\CodingAgent\Session\CompactionResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BranchSummary;
@@ -67,13 +69,13 @@ final class HookWiringTest extends TestCase
         // Session files land under the agent's home, and a test must not write into the
         // real one.
         $this->home = sys_get_temp_dir() . '/pig-hook-home-' . bin2hex(random_bytes(4));
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
 
         foreach (glob($this->home . '/sessions/*/*.jsonl') ?: [] as $file) {
             unlink($file);
@@ -300,15 +302,20 @@ final class HookWiringTest extends TestCase
         $this->assertThrows(
             AgentError::class,
             static fn () => Async::run(static fn () => $session->compact()),
-            'A hook stopped the compaction',
+            'Compaction cancelled',
         );
     }
 
     public function testAHookCanWriteTheSummaryItself(): void
     {
         $session = $this->session([], [
-            'session_before_compact' => static fn () => new SessionBeforeCompactResult(
-                compaction: new CompactionSummary('a hook wrote this', ['a.php'], ['b.php'], 1234),
+            'session_before_compact' => static fn (SessionBeforeCompactEvent $event) => new SessionBeforeCompactResult(
+                compaction: new CompactionResult(
+                    'a hook wrote this',
+                    $event->preparation->firstKeptEntryId,
+                    1234,
+                    details: ['readFiles' => ['a.php'], 'modifiedFiles' => ['b.php']],
+                ),
             ),
             'session_compact' => $this->record('session_compact'),
         ]);
@@ -318,15 +325,39 @@ final class HookWiringTest extends TestCase
 
         $this->assertSame('a hook wrote this', $summary?->summary);
         $this->assertSame(['a.php'], $summary->readFiles);
-        // `replaced` is the session's, not the hook's: it is what replaying the file needs.
+        $this->assertSame(1234, $summary->tokensBefore, "the hook's figure, as upstream writes it");
+        $this->assertTrue($summary->fromHook);
         $this->assertGreaterThan(0, $summary->replaced);
         $this->assertSame('session_compact', $this->seen[0][0]);
-        $this->assertTrue($this->seen[0][1]->fromHook);
+        $this->assertTrue($this->seen[0][1]->fromExtension);
+        $this->assertSame($summary, $this->seen[0][1]->compactionEntry);
+        $this->assertSame('manual', $this->seen[0][1]->reason);
+        $this->assertFalse($this->seen[0][1]->willRetry);
+    }
+
+    public function testAHooksFirstKeptEntryIsWhereTheKeptPartStarts(): void
+    {
+        // Upstream writes the extension's `firstKeptEntryId` as given, so a hook can keep more (or
+        // less) than pig's cut would have.
+        $kept = null;
+        $session = $this->session([], [
+            'session_before_compact' => static function (SessionBeforeCompactEvent $event) use (&$kept): SessionBeforeCompactResult {
+                $kept = $event->branchEntries[count($event->branchEntries) - 2]->id;
+
+                return new SessionBeforeCompactResult(compaction: new CompactionResult('kept the last two', $kept, 0));
+            },
+        ]);
+        $session->restore($this->longConversation());
+
+        $summary = Async::run(static fn () => $session->compact());
+
+        $this->assertSame($kept, $summary?->firstKeptEntryId);
+        $this->assertCount(3, $session->messages(), 'the summary and the two messages the hook kept');
     }
 
     public function testACompactionByTheModelIsReportedAsNotFromAHook(): void
     {
-        $session = $this->session(['it was about the tests'], [
+        $session = $this->session(['it was about the tests', 'and the turn it was in'], [
             'session_compact' => $this->record('session_compact'),
             'session_before_compact' => static fn () => null,
         ]);
@@ -334,23 +365,30 @@ final class HookWiringTest extends TestCase
 
         Async::run(static fn () => $session->compact());
 
-        $this->assertFalse($this->seen[0][1]->fromHook);
+        $this->assertFalse($this->seen[0][1]->fromExtension);
     }
 
     public function testTheBeforeCompactEventCarriesWhatWouldBeReplaced(): void
     {
-        $session = $this->session(['summary'], [
+        $session = $this->session(['summary', 'turn'], [
             'session_before_compact' => $this->record('session_before_compact'),
         ]);
         $session->restore($this->longConversation());
 
-        Async::run(static fn () => $session->compact('focus on the tests'));
+        $summary = Async::run(static fn () => $session->compact('focus on the tests'));
 
         $event = $this->seen[0][1];
 
-        $this->assertNotSame([], $event->messages);
+        $this->assertInstanceOf(SessionBeforeCompactEvent::class, $event);
+        $this->assertNotSame([], $event->preparation->messagesToSummarize);
+        $this->assertSame($summary?->firstKeptEntryId, $event->preparation->firstKeptEntryId);
+        $this->assertGreaterThan(0, $event->preparation->tokensBefore);
+        $this->assertSame(20_000, $event->preparation->settings->keepRecentTokens);
+        $this->assertCount(16, $event->branchEntries);
         $this->assertSame('focus on the tests', $event->customInstructions);
-        $this->assertStringContainsString('focus on the tests', $event->request);
+        $this->assertSame('manual', $event->reason);
+        $this->assertFalse($event->willRetry);
+        $this->assertFalse($event->signal->aborted());
     }
 
     // ---- the tree ----------------------------------------------------------------------
@@ -363,11 +401,12 @@ final class HookWiringTest extends TestCase
 
         $before = $store->leaf();
 
-        $this->assertThrows(
-            AgentError::class,
-            static fn () => $session->goTo($target),
-            'A hook stopped the jump',
-        );
+        // Upstream's `{ cancelled: true }`: an answer, not an error, and nothing moved.
+        $jump = $session->goTo($target);
+
+        $this->assertTrue($jump->cancelled);
+        $this->assertFalse($jump->moved);
+        $this->assertFalse($jump->aborted);
         $this->assertSame($before, $store->leaf());
 
         unlink($store->path);
@@ -387,13 +426,17 @@ final class HookWiringTest extends TestCase
         [$afterName, $afterEvent] = $this->seen[1];
 
         $this->assertSame('session_before_tree', $beforeName);
-        $this->assertSame($target, $beforeEvent->targetId);
-        $this->assertSame($before, $beforeEvent->oldLeafId);
-        $this->assertCount(2, $beforeEvent->entries);
+        $this->assertSame($target, $beforeEvent->preparation->targetId);
+        $this->assertSame($before, $beforeEvent->preparation->oldLeafId);
+        $this->assertSame($target, $beforeEvent->preparation->commonAncestorId, 'jumping back along the branch: the target is the ancestor');
+        $this->assertCount(2, $beforeEvent->preparation->entriesToSummarize);
+        $this->assertFalse($beforeEvent->preparation->userWantsSummary);
 
         $this->assertSame('session_tree', $afterName);
         $this->assertSame($target, $afterEvent->newLeafId);
         $this->assertSame($before, $afterEvent->oldLeafId);
+        $this->assertNull($afterEvent->summaryEntry);
+        $this->assertNull($afterEvent->fromExtension, 'no summary, so nobody wrote one');
 
         unlink($store->path);
     }
@@ -483,7 +526,10 @@ final class HookWiringTest extends TestCase
     public function testAHookCanWriteTheHandoverItself(): void
     {
         [$session, $store, $target] = $this->savedConversation([
-            'session_before_tree' => static fn () => new SessionBeforeTreeResult(summary: 'a hook wrote this'),
+            'session_before_tree' => static fn () => new SessionBeforeTreeResult(summary: [
+                'summary' => 'a hook wrote this',
+                'details' => ['readFiles' => ['hook.php'], 'modifiedFiles' => []],
+            ]),
             'session_tree' => $this->record('session_tree'),
         ]);
 
@@ -491,8 +537,47 @@ final class HookWiringTest extends TestCase
 
         $this->assertSame('a hook wrote this', $jump->summary?->summary);
         $this->assertTrue($jump->summary->fromHook);
-        $this->assertSame('a hook wrote this', $this->seen[0][1]->summary?->summary);
+        $this->assertSame(['hook.php'], $jump->summary->readFiles, "the hook's details, as upstream stores them");
+        $this->assertSame('a hook wrote this', $this->seen[0][1]->summaryEntry?->summary);
+        $this->assertTrue($this->seen[0][1]->fromExtension);
 
+        unlink($store->path);
+    }
+
+    public function testAHooksLabelGoesOnTheSummaryOrOnThePointGoneTo(): void
+    {
+        // Upstream's `label` override and its two `appendLabelChange()` calls: on the summary entry
+        // when one is written, on the target otherwise.
+        [$session, $store, $target] = $this->savedConversation([
+            'session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'from the hook'),
+        ], ['what happened']);
+
+        Async::run(static fn () => $session->goTo($target, summarise: true, label: 'from the caller'));
+
+        // The label is an entry of its own, after the summary it names.
+        $summaryId = (string) $store->entry((string) $store->leaf())['parent'];
+        $this->assertInstanceOf(BranchSummary::class, $store->entry($summaryId)['message'] ?? null);
+        $this->assertSame('from the hook', $store->labelOf($summaryId));
+        unlink($store->path);
+
+        [$session, $store, $target] = $this->savedConversation([]);
+
+        Async::run(static fn () => $session->goTo($target, label: 'here'));
+
+        $this->assertSame('here', $store->labelOf($target));
+        unlink($store->path);
+    }
+
+    public function testAHooksProseIsNotWrittenWhenNoSummaryWasAskedFor(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([
+            'session_before_tree' => static fn () => new SessionBeforeTreeResult(summary: ['summary' => 'unasked']),
+        ]);
+
+        $jump = Async::run(static fn () => $session->goTo($target));
+
+        $this->assertTrue($jump->moved);
+        $this->assertNull($jump->summary);
         unlink($store->path);
     }
 
@@ -504,7 +589,7 @@ final class HookWiringTest extends TestCase
 
         Async::run(static fn () => $session->goTo($target));
 
-        $this->assertFalse($this->seen[0][1]->summarise);
+        $this->assertFalse($this->seen[0][1]->preparation->userWantsSummary);
 
         unlink($store->path);
     }

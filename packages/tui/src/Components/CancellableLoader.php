@@ -8,7 +8,7 @@ use Closure;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Keys;
+use Pig\Tui\Keybindings;
 use Pig\Tui\TUI;
 
 /**
@@ -60,7 +60,7 @@ final class CancellableLoader extends Loader implements InputHandler
     #[\Override]
     public function handleInput(string $data): void
     {
-        if (!Keys::isEscape($data) || $this->aborted()) {
+        if (!Keybindings::getKeybindings()->matches($data, 'tui.select.cancel') || $this->aborted()) {
             return;
         }
 

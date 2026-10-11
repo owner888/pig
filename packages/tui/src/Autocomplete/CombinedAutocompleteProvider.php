@@ -194,10 +194,15 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
                     // a label to show, and they need not be the same string. Nothing passes one
                     // of those as a command today — `InteractiveMode` builds `SlashCommand`s —
                     // so this arm is upstream's shape rather than a behaviour anybody sees.
+                    // Upstream's `hint — description`, either alone when the other is missing.
+                    $hint = $command instanceof SlashCommand && $command->argumentHint !== null && $command->argumentHint !== '' ? $command->argumentHint : null;
+                    $description = $command->description ?? '';
+                    $full = $hint === null ? $description : ($description === '' ? $hint : "{$hint} — {$description}");
+
                     $items[] = new AutocompleteItem(
                         $name,
                         $command instanceof SlashCommand ? $command->name : $command->label,
-                        $command->description,
+                        $full === '' ? null : $full,
                     );
                 }
             }

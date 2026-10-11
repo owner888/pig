@@ -36,7 +36,7 @@ final class StreamTest extends TestCase
         $this->server = new CannedServer();
 
         foreach ([
-            'ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'OPENAI_API_KEY',
+            'ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY',
             'GOOGLE_CLOUD_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION',
             'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_BEARER_TOKEN_BEDROCK',
             'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_WEB_IDENTITY_TOKEN_FILE', 'HOME',
@@ -174,6 +174,17 @@ final class StreamTest extends TestCase
         $body = $this->sendCompletions('gpt-5.2', ReasoningEffort::Xhigh, ['xhigh' => 'xhigh']);
 
         $this->assertSame('xhigh', $body['reasoning_effort'] ?? null);
+    }
+
+    /** Upstream's `max`: sent as the map's word where the model has it. */
+    public function testMaxIsSentWhereTheMapNamesIt(): void
+    {
+        $this->assertSame('max', $this->sendCompletions('glm-5.3', ReasoningEffort::Max, ['max' => 'max'])['reasoning_effort'] ?? null);
+    }
+
+    public function testMaxIsClampedDownOnAModelWithoutIt(): void
+    {
+        $this->assertSame('xhigh', $this->sendCompletions('gpt-5.2', ReasoningEffort::Max, ['xhigh' => 'xhigh'])['reasoning_effort'] ?? null);
     }
 
     public function testAnOrdinaryCompletionsModelStillClampsXhigh(): void
@@ -356,6 +367,49 @@ final class StreamTest extends TestCase
         $this->sendAndCaptureBody(null);
 
         $this->assertStringContainsString('x-api-key: from-env', $this->server->receivedHead());
+        $this->restoreEnv();
+    }
+
+    /**
+     * Upstream's Anthropic `resolve()`: `ANTHROPIC_AUTH_TOKEN` is an `Authorization: Bearer` header and
+     * no key, ahead of both key variables — and not a Claude Code OAuth request.
+     */
+    public function testAnAuthTokenIsSentAsABearerHeaderAheadOfTheKeyVariables(): void
+    {
+        putenv('ANTHROPIC_API_KEY=from-env');
+        putenv('ANTHROPIC_AUTH_TOKEN=gateway-token');
+
+        $this->assertSame(['Authorization' => 'Bearer gateway-token'], Stream::envAuthHeaders('anthropic'));
+        $this->assertNull(Stream::envAuthHeaders('openai'));
+        $this->assertSame('from-env', Stream::envApiKey('anthropic'), 'envApiKey() skips it, as getEnvApiKey() does');
+
+        $this->sendAndCaptureBody(null);
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringContainsString('authorization: bearer gateway-token', $head);
+        $this->assertStringNotContainsString('x-api-key', $head);
+        $this->assertStringNotContainsString('x-app: cli', $head);
+        $this->restoreEnv();
+    }
+
+    /** What `CodingAgent\\Auth` answers for it — signed in, no key — puts the same header on. */
+    public function testTheAmbientMarkerAsTheKeyLeavesTheAuthTokenToTheEnvironment(): void
+    {
+        putenv('ANTHROPIC_AUTH_TOKEN=gateway-token');
+        $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: Stream::AMBIENT_AUTH_MARKER));
+
+        $this->assertStringContainsString('authorization: bearer gateway-token', strtolower($this->server->receivedHead()));
+        $this->restoreEnv();
+    }
+
+    public function testAnExplicitKeyStillWinsOverTheAuthToken(): void
+    {
+        putenv('ANTHROPIC_AUTH_TOKEN=gateway-token');
+        $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'explicit'));
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringContainsString('x-api-key: explicit', $head);
+        $this->assertStringNotContainsString('gateway-token', $head);
         $this->restoreEnv();
     }
 

@@ -47,25 +47,31 @@ final class ThemePickerTest extends TestCase
         $this->assertSame('dark', $labra->appearance());
     }
 
-    public function testFindsThemesInPigsHomeAndTheProjectAndLoadsThemByContentName(): void
+    public function testFindsThemesInPigsHomeTheProjectAndTheThemesSettingAndLoadsThemByContentName(): void
     {
         $project = $this->themeTestRoot . '/project';
         mkdir("{$project}/.pig/themes", 0o777, true);
         mkdir("{$project}/.pi/themes", 0o777, true);
+        mkdir($this->themeTestRoot . '/listed', 0o777, true);
         $write = static function (string $path, string $name): void {
             file_put_contents($path, json_encode([...self::builtinThemeJson('dark'), 'name' => $name], JSON_THROW_ON_ERROR));
         };
         $write($this->themeTestRoot . '/pig/themes/home.json', 'from-pig-home');
         $write("{$project}/.pig/themes/a.json", 'from-pig-project');
         $write("{$project}/.pi/themes/b.json", 'from-pi-project');
+        $write($this->themeTestRoot . '/listed/c.json', 'from-the-setting');
 
         $this->assertNotContains('from-pig-project', Themes::getAvailableThemes());
-        Themes::setCustomThemesCwd($project);
+        $settings = \Pig\CodingAgent\Settings::inMemory(['themes' => [$this->themeTestRoot . '/listed']]);
+        Themes::setResolvedThemeFiles((new \Pig\CodingAgent\Packages\PackageManager($project, $settings))->resolveLocalResources()->enabled('themes'));
         $names = Themes::getAvailableThemes();
-        foreach (['from-pig-home', 'from-pig-project', 'from-pi-project'] as $name) {
+        foreach (['from-pig-home', 'from-pig-project', 'from-the-setting'] as $name) {
             $this->assertContains($name, $names);
             $this->assertSame($name, Themes::getThemeByName($name)?->name);
         }
+
+        // Another tool's directory is that tool's.
+        $this->assertNotContains('from-pi-project', $names);
     }
 
     public function testReportsInvalidCustomThemesInsteadOfDroppingThemSilently(): void

@@ -36,10 +36,13 @@ final readonly class Changelog
     ) {
     }
 
-    /** Where pig's own lives: beside the README, at the root of the repository. */
+    /**
+     * Where pig's own lives: beside the README, at the root of the package — upstream's
+     * `getChangelogPath()`, `join(getPackageDir(), "CHANGELOG.md")`, so `PIG_PACKAGE_DIR` moves it.
+     */
     public static function path(): string
     {
-        return dirname(__DIR__, 3) . '/CHANGELOG.md';
+        return Config::packageDir() . '/CHANGELOG.md';
     }
 
     /**

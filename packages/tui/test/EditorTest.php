@@ -10,6 +10,8 @@ use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\SlashCommand;
 use Pig\Tui\Components\Editor;
+use Pig\Tui\Keybindings;
+use Pig\Tui\KeybindingsManager;
 use Pig\Tui\Width;
 
 final class EditorTest extends TestCase
@@ -19,7 +21,14 @@ final class EditorTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        Keybindings::reset();
         $this->editor = new Editor();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        Keybindings::reset();
     }
 
     private function type(string ...$keys): void
@@ -75,7 +84,60 @@ final class EditorTest extends TestCase
         $this->assertSame('', $this->editor->text());
     }
 
-    public function testCommandEnterSubmitsAndClearsTheEditor(): void
+    public function testUndoIsAWordAtATimeAndCoversDeletions(): void
+    {
+        $this->typeText('one two');
+        $this->type("\x17"); // ctrl+w
+        $this->assertSame('one ', $this->editor->text());
+
+        $this->type("\x1f"); // ctrl+-: undo the kill
+        $this->assertSame('one two', $this->editor->text());
+        // Upstream's fish-style steps: a space starts one, so ` two` goes in one.
+        $this->type("\x1f");
+        $this->assertSame('one', $this->editor->text());
+        $this->type("\x1f");
+        $this->assertSame('', $this->editor->text());
+    }
+
+    public function testKillRingYankAndYankPop(): void
+    {
+        $this->typeText('alpha beta');
+        $this->type("\x17", "\x17"); // two kills accumulate: "alpha beta"
+        $this->typeText('x');
+        $this->type("\x15"); // ctrl+u: a separate kill, "x"
+        $this->assertSame('', $this->editor->text());
+
+        $this->type("\x19"); // ctrl+y: the newest
+        $this->assertSame('x', $this->editor->text());
+        $this->type("\x1by"); // alt+y: swapped for the one before
+        $this->assertSame('alpha beta', $this->editor->text());
+    }
+
+    public function testDeleteWordForwardAndTheJumps(): void
+    {
+        $this->typeText('foo bar baz');
+        $this->type("\x01"); // ctrl+a
+        $this->type("\x1bd"); // alt+d
+        $this->assertSame(' bar baz', $this->editor->text());
+
+        $this->type("\x1d", 'z'); // ctrl+]: jump forward to `z`
+        $this->assertSame(['line' => 0, 'col' => 7], $this->editor->cursor());
+        $this->type("\x1b\x1d", 'b'); // ctrl+alt+]: jump back to `b`
+        $this->assertSame(['line' => 0, 'col' => 5], $this->editor->cursor());
+    }
+
+    public function testTheDedicatedHistoryKeysWorkWhenBound(): void
+    {
+        Keybindings::setKeybindings(new KeybindingsManager(Keybindings::definitions(), ['tui.editor.historyPrevious' => ['ctrl+p']]));
+        $this->editor->addToHistory('earlier');
+        $this->typeText('draft');
+
+        // Mid-text, where Up would only move the cursor: the history key browses anyway.
+        $this->type("\x10");
+        $this->assertSame('earlier', $this->editor->text());
+    }
+
+    public function testCommandEnterSubmitsOnlyWhenItIsBoundToSubmit(): void
     {
         $submitted = null;
         $this->editor->setSubmitHandler(static function (string $text) use (&$submitted): void {
@@ -83,7 +145,12 @@ final class EditorTest extends TestCase
         });
 
         $this->typeText('  command enter message  ');
-        // Kitty protocol Command+Enter is \x1b[13;9u (modifier 8 + 1 = 9)
+        // Kitty protocol Command+Enter is \x1b[13;9u (modifier 8 + 1 = 9). Upstream's
+        // `tui.input.submit` is `enter` alone, so by default it does nothing.
+        $this->type("\x1b[13;9u");
+        $this->assertNull($submitted);
+
+        Keybindings::setKeybindings(new KeybindingsManager(Keybindings::definitions(), ['tui.input.submit' => ['enter', 'command+enter']]));
         $this->type("\x1b[13;9u");
 
         $this->assertSame('command enter message', $submitted);

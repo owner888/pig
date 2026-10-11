@@ -278,7 +278,9 @@ final class SessionPool
         if ($type === 'agent_start') {
             $managed->running = true;
             $this->clearIdleTimer($managed);
-        } elseif ($type === 'agent_end') {
+        } elseif ($type === 'agent_settled') {
+            // `agent_settled`, not `agent_end`: a retry, an overflow summary or a queued message can
+            // follow one run's end, and a child reaped in that gap is a turn cut off.
             $managed->running = false;
             $this->reapIfIdle($managed);
         } elseif ($type === 'response' && ($event['command'] ?? null) === 'get_state' && ($event['success'] ?? false) === true) {

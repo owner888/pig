@@ -6,6 +6,7 @@ namespace Pig\Ai\Extension;
 
 use Closure;
 use Pig\Ai\ClassifierModel;
+use Pig\Ai\ImageModel;
 use Pig\Ai\Model;
 
 /**
@@ -44,6 +45,11 @@ final readonly class Provider
      *        for a provider whose catalog is fetched: restore `$context->stored`, fetch a newer one
      *        with the credential, and publish both through `$context->publish` — run by
      *        `CodingAgent\ModelRefresh` at registration, at startup and after a sign-in
+     * @param list<ImageModel> $images the image half of upstream's `getAllModels()`, each with
+     *        `provider` set to `$id`
+     * @param bool $replacesModels upstream's legacy `registerProvider(name, config)`: these lists
+     *        **replace** every row the provider has, built-in ones included, until it is unregistered
+     *        (`Models::replaceProvider()`), rather than being added where nothing is already
      */
     public function __construct(
         public string $id,
@@ -56,6 +62,8 @@ final readonly class Provider
         public ?ApiKeyAuth $apiKeyAuth = null,
         public array $classifiers = [],
         public ?Closure $refreshModels = null,
+        public array $images = [],
+        public bool $replacesModels = false,
     ) {
         if ($id === '' || $name === '') {
             throw new \InvalidArgumentException('A provider needs an id and a name.');
@@ -67,7 +75,7 @@ final readonly class Provider
             }
         }
 
-        foreach ($classifiers as $model) {
+        foreach ([...$classifiers, ...$images] as $model) {
             if ($model->provider !== $id) {
                 throw new \InvalidArgumentException("Model '{$model->id}' says provider '{$model->provider}', not '{$id}'.");
             }

@@ -66,6 +66,24 @@ final class ProjectTrustTest extends TestCase
         $this->assertTrue(ProjectTrust::hasResources($this->project));
     }
 
+    public function testAnAgentsSkillsDirectoryHereOrAboveIsOneToTrustButTheHomeOneIsNot(): void
+    {
+        $realHome = getenv('HOME');
+        putenv('HOME=' . $this->project);
+
+        try {
+            mkdir($this->project . '/.agents/skills', 0o755, true);
+            $this->assertFalse(ProjectTrust::hasResources($this->project), "the person's own ~/.agents/skills, even as the working directory");
+
+            mkdir($this->project . '/sub', 0o755, true);
+            putenv('HOME=' . $this->project . '/elsewhere');
+            $this->assertTrue(ProjectTrust::hasResources($this->project . '/sub'), 'an ancestor counts');
+            $this->assertContains('.agents/skills', ProjectTrust::resources($this->project));
+        } finally {
+            putenv($realHome === false ? 'HOME' : 'HOME=' . $realHome);
+        }
+    }
+
     public function testAnExtensionsFolderWithNoPhpInItIsNotAResource(): void
     {
         mkdir($this->project . '/extensions', 0o755, true);

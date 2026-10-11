@@ -17,14 +17,14 @@ use Pig\Ai\Usage;
 use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\CodingAgent\Interactive\ProgramStatusReporter;
 use Pig\CodingAgent\Session\AgentSettledEvent;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionStartEvent;
 use Pig\Tui\ProgramStatus;
 use Pig\Tui\Test\FakeTerminal;
 
 /**
- * Upstream's `program-status-reporter.test.ts` (#10607), with the mode's own compactions told
- * through `compactionStart()`/`compactionEnd()` where upstream sends `compaction_*` events.
+ * Upstream's `program-status-reporter.test.ts` (#10607), every compaction told through the
+ * `CompactionStartEvent`/`CompactionEndEvent` the session announces, as upstream's `compaction_*`.
  */
 final class ProgramStatusReporterTest extends TestCase
 {
@@ -127,15 +127,14 @@ final class ProgramStatusReporterTest extends TestCase
         $this->send(
             new AgentStartEvent(),
             self::assistantEnd(StopReason::Length),
-            new AutoCompactionStartEvent('too long'),
-            new AutoCompactionEndEvent(false, false, null, "Compaction failed\nstack"),
+            new CompactionStartEvent('overflow'),
+            new CompactionEndEvent('overflow', null, false, false, "Compaction failed\nstack"),
             self::settled(),
         );
         $this->assertSame(['state' => 'error', 'message' => 'Compaction failed'], $this->last());
 
         $this->send(new AgentStartEvent());
-        $this->reporter->compactionStart();
-        $this->reporter->compactionEnd('threshold', false, 'Compaction failed');
+        $this->send(new CompactionStartEvent('threshold'), new CompactionEndEvent('threshold', null, false, false, 'Compaction failed'));
         $this->send(self::assistantEnd(StopReason::Stop), self::settled());
         $this->assertSame(['state' => 'done'], $this->last());
     }
@@ -144,20 +143,17 @@ final class ProgramStatusReporterTest extends TestCase
     {
         $this->arrange('Session');
         $this->send(new AgentStartEvent());
-        $this->reporter->compactionStart();
+        $this->send(new CompactionStartEvent('threshold'));
         $this->assertSame(['state' => 'working', 'message' => 'Compacting context'], $this->last());
-        $this->reporter->compactionEnd('threshold', false, null);
+        $this->send(new CompactionEndEvent('threshold', null, false, false));
         $this->assertSame(['state' => 'working', 'message' => 'Session'], $this->last());
         $this->send(self::assistantEnd(StopReason::Stop), self::settled());
 
-        $this->reporter->compactionStart();
-        $this->reporter->compactionEnd('manual', false, null);
+        $this->send(new CompactionStartEvent('manual'), new CompactionEndEvent('manual', null, false, false));
         $this->assertSame(['state' => 'done', 'message' => 'Session'], $this->last());
-        $this->reporter->compactionStart();
-        $this->reporter->compactionEnd('manual', false, 'No model');
+        $this->send(new CompactionStartEvent('manual'), new CompactionEndEvent('manual', null, false, false, 'No model'));
         $this->assertSame(['state' => 'error', 'message' => 'No model'], $this->last());
-        $this->reporter->compactionStart();
-        $this->reporter->compactionEnd('manual', true, null);
+        $this->send(new CompactionStartEvent('manual'), new CompactionEndEvent('manual', null, true, false));
         $this->assertSame(['state' => 'idle'], $this->last());
     }
 
@@ -166,8 +162,8 @@ final class ProgramStatusReporterTest extends TestCase
         $this->arrange();
         $this->send(
             new AgentStartEvent(),
-            new AutoCompactionStartEvent('too long'),
-            new AutoCompactionEndEvent(false, false, null, 'Summarising was cancelled.'),
+            new CompactionStartEvent('overflow'),
+            new CompactionEndEvent('overflow', null, true, false),
             self::settled(aborted: true),
         );
         $this->assertSame(['state' => 'idle'], $this->last());

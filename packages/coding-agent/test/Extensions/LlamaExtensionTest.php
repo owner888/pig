@@ -58,12 +58,12 @@ final class LlamaExtensionTest extends TestCase
         $this->dir = sys_get_temp_dir() . '/pig-llama-' . bin2hex(random_bytes(4));
         mkdir($this->dir, 0o700, true);
 
-        foreach (['PIG_HOME', 'LLAMA_BASE_URL', 'LLAMA_API_KEY', 'HF_TOKEN', 'HF_TOKEN_PATH', 'HF_HOME', 'XDG_CACHE_HOME', 'PIG_OFFLINE'] as $name) {
+        foreach (['PIG_CODING_AGENT_DIR', 'LLAMA_BASE_URL', 'LLAMA_API_KEY', 'HF_TOKEN', 'HF_TOKEN_PATH', 'HF_HOME', 'XDG_CACHE_HOME', 'PIG_OFFLINE'] as $name) {
             $this->savedEnv[$name] = getenv($name);
             putenv($name);
         }
 
-        putenv("PIG_HOME={$this->dir}");
+        putenv("PIG_CODING_AGENT_DIR={$this->dir}");
 
     }
 

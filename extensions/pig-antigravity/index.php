@@ -29,8 +29,8 @@ declare(strict_types=1);
  * - **The model catalog is discovered** (`Discovery`, pi-antigravity's `refreshModels`): the
  *   deployment's `fetchAvailableModels` grouped into public models, filed in pig's own
  *   `models-store.json` and asked for again after four hours — at session start and after
- *   `/login antigravity`, since pig has no model registry refresh to hang it on, and on
- *   `/antigravity.refresh`, which forces it.
+ *   `/login antigravity` — the extension runs this itself rather than through
+ *   `Provider::$refreshModels` and `ModelRefresh` — and on `/antigravity.refresh`, which forces it.
  *
  * The client id and secret are not in this repository (`ANTIGRAVITY_CLIENT_ID` /
  * `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` / `antigravity.clientSecret` in the
@@ -151,7 +151,7 @@ return function (ExtensionApi $pi): void {
     /**
      * pi-antigravity's `refreshModels`, as pi's model registry calls it: the stored catalog, the
      * network unless pig is offline, the account's key, and the store to file the answer in. Not
-     * with `--no-save`, which reads and writes none of the person's files.
+     * with `--no-session`, which reads and writes none of the person's files.
      *
      * @return list<array<string, mixed>> the models now current
      */
@@ -198,7 +198,7 @@ return function (ExtensionApi $pi): void {
 
     // And then the catalog on disk — pig's own store, which `Discovery` keeps, or pi's — which is a
     // newer reading of the same endpoint the fallback was printed from, so it replaces the
-    // fallback (`hydrateAntigravityCatalog()`). Not with `--no-save`.
+    // fallback (`hydrateAntigravityCatalog()`). Not with `--no-session`.
     if ($auth->path() !== null) {
         $catalog = Catalog::discover();
         Discovery::hydrate($catalog);

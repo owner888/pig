@@ -32,8 +32,16 @@ final class ProviderRegistry
         }
 
         self::$providers[$provider->id] = $provider;
+
+        if ($provider->replacesModels) {
+            Models::replaceProvider($provider->id, $provider->models, $provider->classifiers, $provider->images);
+
+            return;
+        }
+
         Models::register($provider->models);
         Models::registerClassifiers($provider->classifiers);
+        Models::registerImages($provider->images);
     }
 
     public static function unregister(string $id): void

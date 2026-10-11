@@ -49,7 +49,7 @@ use Throwable;
  * | `rpc_command {command}` — forwarded whole, id and all, to the bound child | `error {message}` |
  * | `ping` | `pong` |
  *
- * `hook_ui_request` and `hook_ui_response` are not special here any more: the child's `RpcMode`
+ * `extension_ui_request` and `extension_ui_response` are not special here any more: the child's `RpcMode`
  * sends the request as an event and reads the response as a command, and both go through the
  * relay like anything else. What used to be `HttpServer::$ui` and `wireHooks()` is now
  * `RpcMode::start()`'s, in the child — which is where it was for `--mode rpc` all along.

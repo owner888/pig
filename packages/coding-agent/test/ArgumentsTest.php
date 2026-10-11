@@ -91,11 +91,11 @@ final class ArgumentsTest extends TestCase
 
     public function testAFlagBeforeAnOptionWithAValueStillWorks(): void
     {
-        $parsed = $this->parse('--read-only', '--model', 'sonnet', '--no-save');
+        $parsed = $this->parse('--read-only', '--model', 'sonnet', '--no-session');
 
         $this->assertTrue($parsed->has('read-only'));
         $this->assertSame('sonnet', $parsed->value('model'));
-        $this->assertTrue($parsed->has('no-save'));
+        $this->assertTrue($parsed->has('no-session'));
         $this->assertSame([], $parsed->messages);
     }
 
@@ -114,7 +114,8 @@ final class ArgumentsTest extends TestCase
     public function testAllOfUpstreamsShortOptionsAreThere(): void
     {
         foreach (Arguments::SHORT as $short => $long) {
-            $this->assertTrue($this->parse('-' . $short)->has($long), "-{$short} should mean --{$long}");
+            // With a word after it, since `-n` with nothing is upstream's `--name requires a value`.
+            $this->assertTrue($this->parse('-' . $short, 'x')->has($long), "-{$short} should mean --{$long}");
         }
 
         $this->assertSame(['a', 'na', 'c', 'e', 'h', 'n', 'nbt', 'nc', 'ne', 'np', 'ns', 'nt', 'p', 'r', 't', 'v', 'xt'], array_keys(Arguments::SHORT));
@@ -123,18 +124,21 @@ final class ArgumentsTest extends TestCase
     public function testAShortOptionTakesAValueWhenItsLongFormDoes(): void
     {
         // The bug this guards: every short option used to be treated as a valueless flag, so
-        // `-r some/path.jsonl` set `resume` to `''` — the picker — and read the path as a
-        // message. A short option is an abbreviation and nothing else.
-        $this->assertSame('some/path.jsonl', $this->parse('-r', 'some/path.jsonl')->value('resume'));
-        $this->assertSame([], $this->parse('-r', 'some/path.jsonl')->messages);
+        // `-t read,grep` set `tools` to `''` and read the list as a message. A short option is
+        // an abbreviation and nothing else.
+        $this->assertSame('read,grep', $this->parse('-t', 'read,grep')->value('tools'));
+        $this->assertSame([], $this->parse('-t', 'read,grep')->messages);
     }
 
-    public function testAShortOptionWithNothingAfterItIsEmptyNotAbsent(): void
+    public function testResumeTakesNoValueAsUpstreamsDoesNot(): void
     {
-        // Empty is what `bin/pig` reads as "show me the list", which is the whole point of
-        // a bare `-r`. Absent would mean a new session.
-        $this->assertSame('', $this->parse('-r')->value('resume'));
-        $this->assertTrue($this->parse('-r')->has('resume'));
+        // Upstream's `-r` opens the list; a word after it is a message, not a session path —
+        // `--session` is what takes one.
+        $parsed = $this->parse('-r', 'carry on');
+
+        $this->assertSame('', $parsed->value('resume'));
+        $this->assertSame(['carry on'], $parsed->messages);
+        $this->assertNotContains('resume', Arguments::TAKES_A_VALUE);
     }
 
     public function testAShortFlagStillDoesNotEatWhatFollows(): void
@@ -157,11 +161,92 @@ final class ArgumentsTest extends TestCase
         }
     }
 
-    public function testSomethingThatIsNotAKnownShortOptionIsAMessage(): void
+    public function testAnUnknownShortOptionIsAnError(): void
     {
-        // Not silently dropped: `-3` is more likely part of what someone meant to say than
-        // an option, and a message is the reading that loses nothing.
-        $this->assertSame(['-3'], $this->parse('-3')->messages);
+        // Upstream's `Unknown option: -x`. Read as a message, a typo became the prompt; `--` is
+        // the way to say something that starts with a dash.
+        $parsed = $this->parse('-x', 'hello');
+
+        $this->assertSame(['Unknown option: -x'], $parsed->errors());
+        $this->assertSame(['hello'], $parsed->messages);
+        $this->assertSame(['-3'], $this->parse('--', '-3')->messages);
+    }
+
+    public function testAnUnknownLongOptionIsKeptForTheExtensionsWithTheValueAfterIt(): void
+    {
+        // Upstream's `unknownFlags`: the next word is its value unless it is an option or a file,
+        // and `--name=value` says so outright. Whether an extension registered it is decided later.
+        $parsed = $this->parse('--plan', 'big', '--dry', '--', 'go', '--depth=3');
+
+        $this->assertSame(['plan' => 'big', 'dry' => true], $parsed->unknownFlags);
+        $this->assertSame('big', $parsed->value('plan'));
+        $this->assertSame('', $parsed->value('dry'));
+        $this->assertSame(['go', '--depth=3'], $parsed->messages);
+        $this->assertSame([], $parsed->errors());
+
+        $this->assertSame(['depth' => '3'], $this->parse('--depth=3')->unknownFlags);
+        $this->assertSame(['plan' => true], $this->parse('--plan', '@file')->unknownFlags);
+        $this->assertSame(['file'], $this->parse('--plan', '@file')->files);
+    }
+
+    public function testNoSaveIsNotAnOptionAnyMore(): void
+    {
+        // Renamed to upstream's `--no-session`, with nothing reading the old spelling.
+        $this->assertSame(['no-save' => true], $this->parse('--no-save')->unknownFlags);
+        $this->assertContains('no-session', Arguments::FLAGS);
+    }
+
+    public function testUpstreamsNewOptionsTakeTheirValues(): void
+    {
+        $parsed = $this->parse(
+            '--provider', 'openai', '--system-prompt', 'Be brief.', '--append-system-prompt', 'a.md',
+            '--append-system-prompt', 'More.', '--session-id', 'my-id', '--fork', 'abc', '--tui-mode', 'regular',
+            '--verbose', '--offline', '--no-session', 'go',
+        );
+
+        $this->assertSame('openai', $parsed->value('provider'));
+        $this->assertSame('Be brief.', $parsed->value('system-prompt'));
+        $this->assertSame(['a.md', 'More.'], $parsed->values('append-system-prompt'));
+        $this->assertSame('my-id', $parsed->value('session-id'));
+        $this->assertSame('abc', $parsed->value('fork'));
+        $this->assertSame('regular', $parsed->value('tui-mode'));
+        $this->assertTrue($parsed->has('verbose'));
+        $this->assertTrue($parsed->has('offline'));
+        $this->assertTrue($parsed->has('no-session'));
+        $this->assertSame(['go'], $parsed->messages);
+        $this->assertSame([], $parsed->diagnostics);
+    }
+
+    public function testTheValidatedOptionsSayWhatIsWrongAsUpstreamsDo(): void
+    {
+        $this->assertSame(['Invalid TUI mode "wide". Valid values: regular, fullscreen'], $this->parse('--tui-mode', 'wide')->errors());
+        $this->assertSame(['--tui-mode requires regular or fullscreen'], $this->parse('--tui-mode')->errors());
+        $this->assertSame(['Invalid mode "interactive". Valid values: text, json, rpc, web, mcp'], $this->parse('--mode', 'interactive')->errors());
+        $this->assertSame(['--mode requires text, json, rpc, web, or mcp'], $this->parse('--mode', '-p')->errors());
+        $this->assertSame(['--use-theme requires a theme name'], $this->parse('--use-theme')->errors());
+        $this->assertSame(['--name requires a value'], $this->parse('--name')->errors());
+
+        // A thinking level that is not one is a warning, and no level.
+        $thinking = $this->parse('--thinking', 'loud');
+        $this->assertSame([], $thinking->errors());
+        $this->assertSame('warning', $thinking->diagnostics[0]['type']);
+        $this->assertFalse($thinking->has('thinking'));
+    }
+
+    public function testListModelsTakesASearchOnlyWhenOneFollows(): void
+    {
+        $this->assertSame('', $this->parse('--list-models', '--offline')->value('list-models'));
+        $this->assertTrue($this->parse('--list-models', '--offline')->has('offline'));
+        $this->assertSame('', $this->parse('--list-models')->value('list-models'));
+    }
+
+    public function testPrintTakesTheMessageAfterIt(): void
+    {
+        // Upstream's `-p "prompt"`, and `---` is text rather than an option.
+        $this->assertSame(['hi'], $this->parse('-p', 'hi')->messages);
+        $this->assertSame(['--- a rule'], $this->parse('-p', '--- a rule')->messages);
+        $this->assertTrue($this->parse('-p', '--offline')->has('offline'));
+        $this->assertSame(['f.txt'], $this->parse('-p', '@f.txt')->files);
     }
 
     // ---- messages and files -------------------------------------------------------------
@@ -196,55 +281,42 @@ final class ArgumentsTest extends TestCase
 
     public function testADoubleDashEndsTheOptionsSoAMessageCanStartWithADash(): void
     {
-        $parsed = $this->parse('--read-only', '--', '--model', '-p', '@notafile');
+        $parsed = $this->parse('--read-only', '--', '--model', '-p', '@afile');
 
         $this->assertTrue($parsed->has('read-only'));
         $this->assertFalse($parsed->has('model'));
         $this->assertFalse($parsed->has('print'));
-        $this->assertSame(['--model', '-p', '@notafile'], $parsed->messages);
-        $this->assertSame([], $parsed->files, 'past `--` an @ is text too');
+        $this->assertSame(['--model', '-p'], $parsed->messages);
+        $this->assertSame(['afile'], $parsed->files, 'past `--` an @ is still a file, as upstream reads it');
     }
 
     // ---- which way in -------------------------------------------------------------------
 
-    public function testNothingSaidIsTheTerminal(): void
+    public function testBothStreamsTerminalsAndNothingSaidIsTheTerminal(): void
     {
-        $parsed = $this->parse('--read-only', 'have a look');
-
-        $this->assertNull($parsed->mode());
-        $this->assertTrue($parsed->isInteractive());
+        $this->assertSame('interactive', $this->parse('--read-only', 'have a look')->appMode(true, true));
     }
 
-    public function testPrintIsTheShortWayOfSayingModeText(): void
+    public function testModeTextOnATerminalStillOpensTheTerminal(): void
     {
-        $parsed = $this->parse('-p', 'ask');
-
-        $this->assertSame('text', $parsed->mode());
-        $this->assertFalse($parsed->isInteractive());
+        // Upstream's `resolveAppMode()`: `--mode text` is the default output, not print mode.
+        $this->assertSame('interactive', $this->parse('--mode', 'text', 'hi')->appMode(true, true));
+        $this->assertSame('print', $this->parse('--mode', 'text', '-p', 'hi')->appMode(true, true));
     }
 
-    public function testModeGivenAtAllLeavesTheTerminalBehind(): void
+    public function testPrintOrAStreamThatIsNotATerminalIsPrintMode(): void
     {
-        foreach (Arguments::MODES as $mode) {
-            $parsed = $this->parse('--mode', $mode);
+        $this->assertSame('print', $this->parse('-p', 'ask')->appMode(true, true));
+        $this->assertSame('print', $this->parse('ask')->appMode(false, true), 'stdin piped');
+        $this->assertSame('print', $this->parse('ask')->appMode(true, false), 'stdout redirected');
+    }
 
-            $this->assertSame($mode, $parsed->mode());
-            $this->assertFalse($parsed->isInteractive(), "--mode {$mode} is not interactive");
-            $this->assertTrue($parsed->isKnownMode());
+    public function testTheProtocolModesAreWhatTheySayWhateverTheStreams(): void
+    {
+        foreach (['json', 'rpc', 'web', 'mcp'] as $mode) {
+            $this->assertSame($mode, $this->parse('--mode', $mode)->appMode(false, false));
+            $this->assertSame($mode, $this->parse('-p', '--mode', $mode)->appMode(true, true));
         }
-    }
-
-    public function testAnExplicitModeWinsOverTheShortFlag(): void
-    {
-        $this->assertSame('json', $this->parse('-p', '--mode', 'json')->mode());
-    }
-
-    public function testAModeThatIsNotAModeIsReportedRatherThanAssumed(): void
-    {
-        $parsed = $this->parse('--mode', 'interactive');
-
-        $this->assertFalse($parsed->isKnownMode());
-        $this->assertSame('interactive', $parsed->mode(), 'as it was written, so the error can quote it');
     }
 
     // ---- the key ------------------------------------------------------------------------
@@ -269,39 +341,9 @@ final class ArgumentsTest extends TestCase
         $this->assertSame('', $parsed->value('api-key'));
     }
 
-    // ---- does it need a message ---------------------------------------------------------
-
-    public function testRpcModeNeedsNoMessageBecauseItsMessagesArriveAsCommands(): void
+    public function testMcpPortTakesAValue(): void
     {
-        // The bug this exists for: `bin/pig --mode rpc` was refused for having no message while
-        // `bin/pig --mode rpc "hello"` was refused for having one, so rpc mode — one of the three
-        // ways in, with its own class and its own twenty-two commands — could not be started at all.
-        $this->assertFalse($this->parse('--mode', 'rpc')->needsAMessage());
-    }
-
-    public function testWebModeNeedsNoMessageBecauseItServesBrowserClients(): void
-    {
-        $this->assertFalse($this->parse('--mode', 'web')->needsAMessage());
-    }
-
-    public function testMcpModeNeedsNoMessageBecauseItsMessagesArriveAsToolCalls(): void
-    {
-        $this->assertFalse($this->parse('--mode', 'mcp')->needsAMessage());
-        $this->assertTrue($this->parse('--mode', 'mcp')->isKnownMode());
-        $this->assertSame('8089', $this->parse('--mode', 'mcp', '--mcp-port', '8089')->options['mcp-port'], 'takes a value');
-    }
-
-    public function testEveryOtherModeStillNeedsOne(): void
-    {
-        $this->assertTrue($this->parse('--mode', 'text')->needsAMessage());
-        $this->assertTrue($this->parse('--mode', 'json')->needsAMessage());
-        $this->assertTrue($this->parse('-p')->needsAMessage(), 'the short way of saying --mode text');
-    }
-
-    public function testTheTerminalNeedsNoMessageEither(): void
-    {
-        // Somebody will type one.
-        $this->assertFalse($this->parse()->needsAMessage());
+        $this->assertSame('8089', $this->parse('--mode', 'mcp', '--mcp-port', '8089')->options['mcp-port']);
     }
 
     // ---- the proxy ----------------------------------------------------------------------

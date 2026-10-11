@@ -115,7 +115,7 @@ final class Routing
      * **Mechanism, not policy — nothing here validates.** The reader checks that every routing
      * target has an enum and installs both tables or neither; putting that here would mean two
      * places deciding it, and this one has nowhere to report a file that is wrong. Same split as
-     * `Skills::load()`, which takes the roots and knows no settings keys.
+     * `Skills::fromPaths()`, which takes paths and knows no settings keys.
      *
      * The enums *merge*, with the file's winning: a store written by an older extension carries
      * routing and no enums at all, and a runtime id the file does not name is one the generated

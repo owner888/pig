@@ -243,6 +243,30 @@ final class VirtualModelsTest extends TestCase
         $this->assertSame('fast', $this->requests[2]['model'], 'direct requests take the router\'s answer too');
     }
 
+    /**
+     * Upstream's `ExtensionVirtualModel.route(request, ctx)`: registered through an extension, the
+     * router is handed the extension's context, made per request, and finds its model through
+     * `ctx.modelRegistry` — the doc's own example.
+     */
+    public function testTheRouterIsHandedAnExtensionContextToFindItsModelIn(): void
+    {
+        $contexts = [];
+        $this->register(route: static function (ModelRouteRequest $request, \Pig\CodingAgent\Hooks\HookContext $ctx) use (&$contexts): ModelRoute {
+            $contexts[] = $ctx;
+
+            return new ModelRoute($ctx->modelRegistry->find('lab', 'smart') ?? throw new RuntimeException('not found'), $request->thinkingLevel);
+        });
+        $session = $this->session(['done']);
+        $session->setModel(Models::find('auto', 'auto'), ThinkingLevel::High);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+
+        $this->assertCount(1, $contexts);
+        $this->assertSame([['model' => 'smart', 'reasoning' => 'high']], $this->requests);
+        $this->assertSame('fast', $contexts[0]->modelRegistry->find('lab', 'fast')?->id);
+    }
+
     // ---- helpers --------------------------------------------------------------------------
 
     /** A router that sends a user's turn to the smart model and everything else to the fast one. */

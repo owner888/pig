@@ -29,6 +29,12 @@ use Pig\CodingAgent\Prompt\SystemPrompt;
  *
  * Narrowing is by name, and a name nothing registered is ignored rather than refused —
  * upstream's rule, and the right one for a list an extension builds from what it hopes is there.
+ *
+ * A custom tool registered with `defaultActive: false` (upstream's `ToolDefinition.defaultActive`)
+ * is registered but not active: it is left out of "every registered tool" unless the run named it
+ * — `--tools` or `defaultTools`, which `$named` answers for — or `setActive()` lists it. That is
+ * upstream's `_isActivatedOnRegistration()` beside the `allowedTools(toolName)` and
+ * `initialActiveToolNames` halves of `_refreshToolRegistry()`.
  */
 final class ToolLoadout
 {
@@ -65,6 +71,15 @@ final class ToolLoadout
     private ?Closure $resultImages = null;
 
     /**
+     * Whether the run named a tool — `--tools` (by name or pattern, upstream's `allowedTools`) or
+     * the resolved `defaultTools` list (upstream's `initialActiveToolNames`). A named tool is
+     * active even when it is registered with `defaultActive: false`. Null: nothing was named.
+     *
+     * @var (Closure(string): bool)|null
+     */
+    private ?Closure $named = null;
+
+    /**
      * @param list<string>            $builtIn      built-in tool names, as `ToolSet` knows them
      * @param list<ContextFile>|null  $contextFiles
      * @param list<Skill>             $skills
@@ -80,6 +95,17 @@ final class ToolLoadout
         private readonly ?string $systemPrompt = null,
         private readonly ?string $appendSystemPrompt = null,
     ) {
+    }
+
+    /**
+     * What `--tools` or `defaultTools` named — see `$named`. A loadout already applied is applied again.
+     *
+     * @param (Closure(string): bool)|null $named
+     */
+    public function useNamed(?Closure $named): void
+    {
+        $this->named = $named;
+        $this->reapply();
     }
 
     /**
@@ -168,13 +194,12 @@ final class ToolLoadout
      */
     public function apply(): void
     {
-        $builtIn = $this->active === null
-            ? $this->builtIn
-            : array_values(array_filter($this->builtIn, fn (string $name): bool => in_array($name, $this->active, true)));
+        $active = $this->activeNames();
+        $builtIn = array_values(array_filter($this->builtIn, static fn (string $name): bool => in_array($name, $active, true)));
 
         $custom = array_values(array_filter(
             $this->customTools->agentTools(),
-            fn (AgentTool $tool): bool => $this->active === null || in_array($tool->definition()->name, $this->active, true),
+            static fn (AgentTool $tool): bool => in_array($tool->definition()->name, $active, true),
         ));
 
         $tools = HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->hooks);
@@ -183,16 +208,16 @@ final class ToolLoadout
             $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);
         }
 
-        $this->agent->setTools($this->prepared($tools));
+        $this->agent->setTools($this->prepared($tools, $active));
 
         // Upstream's `_setActiveTools()`: a pending tool that is active now is pending no longer.
-        foreach ($this->activeNames() as $name) {
+        foreach ($active as $name) {
             unset($this->pending[$name]);
         }
 
         $this->registered = $this->names();
 
-        [$snippets, $guidelines] = $this->customTools->promptContributions($this->active);
+        [$snippets, $guidelines] = $this->customTools->promptContributions($active);
         $this->sections = SystemPrompt::sections(
             $this->cwd,
             $builtIn,
@@ -213,15 +238,16 @@ final class ToolLoadout
      * answer wins where two name one tool, which is upstream's `Object.assign` order.
      *
      * @param list<AgentTool> $tools
+     * @param list<string>    $active the active tools' names
      * @return list<AgentTool>
      */
-    private function prepared(array $tools): array
+    private function prepared(array $tools, array $active): array
     {
         $descriptions = [];
         $hidden = [];
 
         foreach ($this->customTools->loaded() as $one) {
-            if ($one->tool->prepareLoadout === null || ($this->active !== null && !in_array($one->tool->name, $this->active, true))) {
+            if ($one->tool->prepareLoadout === null || !in_array($one->tool->name, $active, true)) {
                 continue;
             }
 
@@ -260,12 +286,15 @@ final class ToolLoadout
     /**
      * The registry changed after startup — an extension registered or removed a tool, an MCP
      * server connected. Upstream's `_refreshToolRegistry()` without a new loadout: the tools that
-     * were active stay active, a tool that was not registered before is activated
-     * (`_isActivatedOnRegistration()` — pig has no exposure or `defaultActive` on a registered
-     * tool, so that is every new one), and so is a pending tool that is registered now.
+     * were active stay active, a tool that was not registered before is activated when it is
+     * activated on registration (`_isActivatedOnRegistration()`: not `defaultActive: false`) or
+     * the run named it (upstream's `allowedTools(toolName)`), and so is a pending tool that is
+     * registered now. pig has no exposure on a registered tool, so `defaultActive` is the only
+     * thing that keeps a new one off.
      *
-     * With every tool active there is nothing to add to. The set is kept by name rather than
-     * narrowed to what is registered, so a tool that goes away and comes back is still active.
+     * With no narrowed set, `activeNames()` already works that out from what is registered. The
+     * set is kept by name rather than narrowed to what is registered, so a tool that goes away and
+     * comes back is still active.
      */
     public function refresh(): void
     {
@@ -273,7 +302,7 @@ final class ToolLoadout
             $names = $this->names();
             $this->active = array_values(array_unique([
                 ...$this->active,
-                ...array_diff($names, $this->registered ?? []),
+                ...array_filter(array_diff($names, $this->registered ?? []), $this->isActivatedByDefault(...)),
                 ...array_intersect($names, array_keys($this->pending)),
             ]));
         }
@@ -332,12 +361,32 @@ final class ToolLoadout
         return [...$this->builtIn, ...$this->customTools->names()];
     }
 
-    /** @return list<string> what the model is offered now */
+    /**
+     * What the model is offered now. With no narrowed set, every registered tool that is active
+     * by default (`isActivatedByDefault()`).
+     *
+     * @return list<string>
+     */
     public function activeNames(): array
     {
         return $this->active === null
-            ? $this->names()
+            ? array_values(array_filter($this->names(), $this->isActivatedByDefault(...)))
             : array_values(array_filter($this->names(), fn (string $name): bool => in_array($name, $this->active, true)));
+    }
+
+    /**
+     * Whether a registered tool is active without anybody calling `setActive()`: every built-in
+     * here (`$builtIn` is already what the run selected), a custom tool unless it was registered
+     * with `defaultActive: false`, and such a tool too when `--tools` or `defaultTools` named it.
+     * Upstream's `_isActivatedOnRegistration()` or `allowedTools(toolName)` / `initialActiveToolNames`.
+     */
+    private function isActivatedByDefault(string $name): bool
+    {
+        if ($this->customTools->find($name)?->defaultActive !== false) {
+            return true;
+        }
+
+        return $this->named !== null && ($this->named)($name);
     }
 
     /**

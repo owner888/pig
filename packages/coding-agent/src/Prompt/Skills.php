@@ -6,35 +6,28 @@ namespace Pig\CodingAgent\Prompt;
 
 use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Packages\PathMetadata;
+use Pig\CodingAgent\Packages\ResolvedResource;
 use Pig\CodingAgent\Tools\Paths;
 
 /**
- * Finding the skills on this machine, and listing them for the model.
+ * Loading skills, and listing them for the model — upstream's `core/skills.ts`.
  *
  * A skill is a folder with a `SKILL.md` in it, whose frontmatter says what it is for.
  * Only the name and description go into the prompt; the instructions are a file the
  * model reads when a task matches. That is what makes many skills affordable — a
  * hundred of them cost a hundred lines, not a hundred documents.
  *
- * The roots are upstream's, and they are other tools' as well as pig's: `~/.claude/skills`
- * and `~/.codex/skills` are read exactly as `~/.pig/agent/skills` is, because a person who has
- * written a skill once should not have to write it again per agent.
+ * **Where skills are looked for is not this class's business**, as it is not upstream's: the
+ * package manager resolves the directories and the settings to files (`PackageManager::
+ * resolveLocalResources()` — `<agent-dir>/skills`, `.pig/skills`, `~/.agents/skills`, the
+ * ancestors' `.agents/skills`, the `skills` setting — and `resolve()` for the packages), and this
+ * loads the files and directories it is handed, in the order handed: **the first skill of a name
+ * wins** and every later one is a collision warning, which is upstream's `loadSkills()`.
  *
- * Two things differ from upstream and both are stated where they happen: a later root **overrides**
- * an earlier one of the same name rather than being skipped, so pig beats pi beats Claude beats
- * codex; and pi's own two roots are read at all.
- *
- * **pi's own two are read as well, which upstream has no reason to do** — it *is* pi, so its
- * `~/.pi/agent/skills` is the root pig renamed to `~/.pig/agent/skills`. Reading pi's as well follows from
- * what pig already does everywhere else: it opens pi's sessions, its `auth.json` and its
- * `models.json`. Keeping somebody's conversations and credentials across the move while silently
- * dropping their skills is the half-migration that is worse than none — and the reason stated above
- * for reading Claude's and Codex's directories applies most of all to the tool pig is a port of.
- *
- * Ported from upstream's `core/skills.ts`. Not ported: the settings file that turns
- * individual roots off (`SkillsSettings`, which needs a settings manager that is not
- * here) — the roots are arguments instead, so `--skills-dir` and a settings file are
- * both a caller away.
+ * Not ported: the `.gitignore` / `.ignore` / `.fdignore` rules upstream applies while walking a
+ * directory (see `Packages\ResourceDiscovery` for why), and its YAML parser — the frontmatter is
+ * read a line at a time, so a malformed block is not refused as upstream refuses it.
  */
 final class Skills
 {
@@ -52,202 +45,149 @@ final class Skills
 
     private const int MAX_DESCRIPTION = 1024;
 
-    /** Everything else in the frontmatter is a typo until the spec says otherwise. */
-    private const array ALLOWED_FIELDS = ['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools'];
-
-    /**
-     * Two layouts, because two tools chose differently.
-     *
-     * `recursive` looks for a `SKILL.md` at any depth, which is how pig and codex lay
-     * them out. `claude` looks exactly one level down, because `~/.claude/skills` holds
-     * a folder per skill and descending further finds a skill's own examples.
-     */
-    private const string RECURSIVE = 'recursive';
-
-    private const string ONE_LEVEL = 'claude';
-
-    /** Directories that are never a skill, whatever is in them. */
+    /** Directories that are never walked: upstream's `node_modules`, and Composer's `vendor`. */
     private const array SKIPPED = ['node_modules', 'vendor'];
 
     /**
-     * Every skill this machine offers, by name.
+     * Upstream's `loadSkills()` with `includeDefaults: false`: skill files and directories, in
+     * precedence order. A path that is not there, or a file that is not markdown, is a warning; a
+     * name already loaded is a collision warning and the later skill is skipped; the same file
+     * reached twice (a symlink) is one skill, silently.
      *
-     * @param list<string>        $extraDirs scanned after the standard roots, recursively
-     * @param list<string>        $ignored   fnmatch patterns; a skill whose name matches is left out
-     * @param list<string>        $only      fnmatch patterns; when given, nothing else is loaded
-     * @param string|null         $piHome    pi's agent directory, `~/.pi/agent` unless told otherwise
-     * @param array<string, bool> $roots     by source name; a root set to false is not read at all,
-     *        and one that is not mentioned is. Which of them a settings file can reach is the
-     *        caller's business — see the note on the table below.
+     * The source label is upstream's `getSource()` for a path given here: `user` under
+     * `<agent-dir>/skills`, `project` under `<cwd>/.pig/skills`, otherwise $source.
+     *
+     * @param list<string> $paths absolute, or relative to $cwd
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
-    public static function load(
-        string $cwd,
-        ?string $home = null,
-        array $extraDirs = [],
-        array $ignored = [],
-        array $only = [],
-        ?string $piHome = null,
-        array $roots = [],
-    ): array {
+    public static function fromPaths(array $paths, string $cwd, ?string $home = null, string $source = 'path'): array
+    {
         $home ??= Config::home();
-        $piHome ??= Config::piHome();
-        $user = self::userHome();
-        $cwd = rtrim($cwd, '/');
+        $entries = [];
 
-        // Order is precedence, lowest first: **a later root overrides an earlier one of the same
-        // name**, so pig beats pi beats Claude beats codex, and a project beats a home directory.
-        // `--skills-dir` comes last of all, because it was typed.
-        //
-        // This is a deliberate divergence. Upstream keeps the *first* one and skips the rest, in
-        // this same order — which makes `~/.codex/skills` outrank everything, including pi's own.
-        // Nobody who edits a skill in `~/.pig/agent/skills` expects a copy in another tool's folder to be
-        // the one that runs, and the more specific of two answers is the right one. The override is
-        // named in a warning either way, so nothing about it is silent.
-        //
-        // `$piHome` is `~/.pi/agent`, not `~/.pi`: upstream's `getAgentDir()` is
-        // `join(homedir(), ".pi", "agent")`, so its skills are one level deeper than the folder
-        // name suggests. The project one is `<cwd>/.pi/skills`, pi's own `CONFIG_DIR_NAME`.
-        // `$roots` can switch any of these off by its source name, and which ones a *settings file*
-        // can reach is `CodingAgent::session()`'s business rather than this method's — mechanism
-        // here, policy there, the same split as `$ignored` being a list of patterns rather than a
-        // settings key. What it passes today is upstream's five, one per directory another tool
-        // owns: `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
-        // `enablePiProject`.
-        //
-        // **pig's own two have no settings key**, which is the one place this differs from
-        // upstream, and it is a naming problem rather than a decision about features: upstream's
-        // own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
-        // directory, and no upstream key is left over for `~/.pig/agent/skills`. Inventing one would put
-        // a key in a settings file that only pig understands. The all-or-nothing switch already
-        // exists twice — `skills.enabled` and `--no-skills` — with `ignoredSkills` for narrower.
-        $table = [
-            [$user . '/.codex/skills', 'codex-user', self::RECURSIVE],
-            [$user . '/.claude/skills', 'claude-user', self::ONE_LEVEL],
-            [$cwd . '/.claude/skills', 'claude-project', self::ONE_LEVEL],
-            [$piHome . '/skills', 'pi-user', self::RECURSIVE],
-            [$cwd . '/.pi/skills', 'pi-project', self::RECURSIVE],
-            [$home . '/skills', 'user', self::RECURSIVE],
-            [$cwd . '/.pig/skills', 'project', self::RECURSIVE],
-        ];
-
-        foreach ($extraDirs as $directory) {
-            $table[] = [Paths::expand($directory), 'custom', self::RECURSIVE];
+        foreach ($paths as $path) {
+            $resolved = Paths::resolve(trim($path), $cwd);
+            $entries[] = [$resolved, self::sourceFor($resolved, $cwd, $home, $source)];
         }
 
-        return self::collect($table, $ignored, $only, $roots);
+        return self::load($entries);
+    }
+
+    /**
+     * The skills a resolution names (`PackageManager`), the enabled ones in its order, labelled by
+     * where they came from: `package` for a package's, else the scope (`project`, `user`, `path`).
+     *
+     * @param list<ResolvedResource> $resources
+     * @return array{0: list<Skill>, 1: list<SkillWarning>}
+     */
+    public static function fromResources(array $resources): array
+    {
+        $entries = [];
+
+        foreach ($resources as $resource) {
+            if ($resource->enabled) {
+                $entries[] = [$resource->path, self::label($resource->metadata)];
+            }
+        }
+
+        return self::load($entries);
     }
 
     /**
      * Skills from the directories an extension adds (`resources_discover`), under the source
-     * `extension`, after every other root — so an extension's skill overrides a same-named one of
-     * the person's, which is the precedence `load()` gives to whatever came last. The settings'
-     * `ignoredSkills` and `includeSkills` are not applied: an extension's skills are its own, as
-     * upstream loads them from their paths alone.
+     * `extension` — upstream's `extendResources()`, whose paths load as any other skill path does.
      *
      * @param list<string> $directories
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
     public static function fromDirectories(array $directories): array
     {
-        $table = [];
-
-        foreach ($directories as $directory) {
-            $table[] = [Paths::expand($directory), 'extension', self::RECURSIVE];
-        }
-
-        return self::collect($table, [], [], []);
+        return self::load(array_map(static fn (string $directory): array => [Paths::expand($directory), 'extension'], $directories));
     }
 
-    /**
-     * Skills from the files a package resolved to (`PackageManager::resolve()`), under the source
-     * `package`, after every other root — the precedence upstream gives a package's resource. Each
-     * is a `SKILL.md` or a bare `.md`; the settings' `ignoredSkills` and `includeSkills` are not
-     * applied, as `fromDirectories()` does not apply them to an extension's.
-     *
-     * @param list<string> $files
-     * @return array{0: list<Skill>, 1: list<SkillWarning>}
-     */
-    public static function fromFiles(array $files): array
+    /** The label `/skills` shows for a resolved resource. */
+    private static function label(PathMetadata $metadata): string
     {
-        $skills = [];
-        $warnings = [];
+        if ($metadata->origin === 'package') {
+            return 'package';
+        }
 
-        foreach ($files as $file) {
-            [$skill, $complaints] = self::read($file, 'package');
-            $warnings = [...$warnings, ...$complaints];
+        return match ($metadata->scope) {
+            'project' => 'project',
+            'user' => 'user',
+            default => 'path',
+        };
+    }
 
-            if ($skill !== null) {
-                if (isset($skills[$skill->name])) {
-                    $warnings[] = new SkillWarning($skill->path, "name taken: \"{$skill->name}\" overrides the one from {$skills[$skill->name]->path}");
-                }
-
-                $skills[$skill->name] = $skill;
+    private static function sourceFor(string $path, string $cwd, string $home, string $fallback): string
+    {
+        foreach (['user' => $home . '/skills', 'project' => rtrim($cwd, '/') . '/.pig/skills'] as $label => $root) {
+            if ($path === $root || str_starts_with($path, $root . '/')) {
+                return $label;
             }
         }
 
-        return [array_values($skills), $warnings];
+        return $fallback;
     }
 
     /**
-     * @param list<array{0: string, 1: string, 2: self::RECURSIVE|self::ONE_LEVEL}> $table
-     * @param list<string>        $ignored
-     * @param list<string>        $only
-     * @param array<string, bool> $roots
+     * The body of `loadSkills()`: each entry a file or a directory, first name wins.
+     *
+     * @param list<array{0: string, 1: string}> $entries path, source label
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
-    private static function collect(array $table, array $ignored, array $only, array $roots): array
+    private static function load(array $entries): array
     {
         $skills = [];
+        $realPaths = [];
         $warnings = [];
-        $seenFiles = [];
+        $collisions = [];
 
-        foreach ($table as [$directory, $source, $format]) {
-            // Not scanned rather than scanned-and-filtered: a root that is off should cost nothing
-            // to have, and a malformed skill in it is not worth a warning about a folder nobody
-            // asked to read.
-            if (($roots[$source] ?? true) === false) {
+        foreach ($entries as [$path, $source]) {
+            if (!file_exists($path)) {
+                $warnings[] = new SkillWarning($path, 'skill path does not exist');
+
                 continue;
             }
 
-            [$found, $complaints] = self::scan($directory, $source, $format);
+            if (is_dir($path)) {
+                [$found, $complaints] = self::fromDir($path, $source, true);
+            } elseif (is_file($path) && str_ends_with($path, '.md')) {
+                [$skill, $complaints] = self::read($path, $source);
+                $found = $skill === null ? [] : [$skill];
+            } else {
+                $warnings[] = new SkillWarning($path, 'skill path is not a markdown file');
+
+                continue;
+            }
+
             $warnings = [...$warnings, ...$complaints];
 
             foreach ($found as $skill) {
-                if (self::matchesAny($skill->name, $ignored)) {
-                    continue;
-                }
+                // Two paths reaching the same file through a symlink is one skill, not a collision:
+                // `~/.agents/skills` symlinked into `~/.pig/agent/skills` is a normal way to keep
+                // one copy.
+                $real = realpath($skill->path) ?: $skill->path;
 
-                if ($only !== [] && !self::matchesAny($skill->name, $only)) {
-                    continue;
-                }
-
-                // Two roots reaching the same file through a symlink is one skill, not a
-                // collision: `~/.claude/skills` symlinked into `~/.pig/agent/skills` is a
-                // normal way to keep one copy.
-                $real = realpath($skill->path);
-                $real = $real === false ? $skill->path : $real;
-
-                if (isset($seenFiles[$real])) {
+                if (isset($realPaths[$real])) {
                     continue;
                 }
 
                 if (isset($skills[$skill->name])) {
-                    // Said rather than done quietly: whoever has the same name in two folders is
-                    // about to run one of them, and which one is the whole question. Upstream's
-                    // wording is "skipping this one", which is the opposite way round.
-                    $warnings[] = new SkillWarning(
+                    $collisions[] = new SkillWarning(
                         $skill->path,
-                        "name taken: \"{$skill->name}\" overrides the one from {$skills[$skill->name]->path}",
+                        "name \"{$skill->name}\" collision: {$skills[$skill->name]->path} is loaded and this one is skipped",
                     );
+
+                    continue;
                 }
 
                 $skills[$skill->name] = $skill;
-                $seenFiles[$real] = true;
+                $realPaths[$real] = true;
             }
         }
 
-        return [array_values($skills), $warnings];
+        return [array_values($skills), [...$warnings, ...$collisions]];
     }
 
     /**
@@ -260,6 +200,10 @@ final class Skills
      */
     public static function forPrompt(array $skills): string
     {
+        // Upstream's `formatSkillsForPrompt()`: a skill with `disable-model-invocation` is reached
+        // only by `/skill:name`, so the model is not told about it.
+        $skills = array_values(array_filter($skills, static fn (Skill $skill): bool => !$skill->disableModelInvocation));
+
         if ($skills === []) {
             return '';
         }
@@ -289,15 +233,25 @@ final class Skills
     // ---- looking ----------------------------------------------------------------------
 
     /**
+     * Upstream's `loadSkillsFromDirInternal()`: a directory with a `SKILL.md` is one skill and the
+     * walk stops there; otherwise its subdirectories are walked, and — at the root only — each `.md`
+     * beside them is a skill of its own when it has a description. Dot entries, `node_modules` and
+     * `vendor` are skipped, and so is anything a symlink cannot be followed to.
+     *
+     * `scandir()` sorts where upstream's `readdirSync()` does not promise to, which is the order a
+     * name collision is decided by — the same reason `CustomToolLoader::discover()` sorts.
+     *
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
-    private static function scan(string $directory, string $source, string $format): array
+    private static function fromDir(string $dir, string $source, bool $includeRootFiles): array
     {
-        if (!is_dir($directory)) {
-            return [[], []];
+        if (is_file($dir . '/SKILL.md')) {
+            [$skill, $warnings] = self::read($dir . '/SKILL.md', $source);
+
+            return [$skill === null ? [] : [$skill], $warnings];
         }
 
-        $entries = scandir($directory);
+        $entries = is_readable($dir) ? scandir($dir) : false;
 
         if ($entries === false) {
             return [[], []];
@@ -307,42 +261,29 @@ final class Skills
         $warnings = [];
 
         foreach ($entries as $entry) {
-            // A dotfile is configuration, and `.git` in a skills folder is a repository
-            // of them rather than one of them.
             if (str_starts_with($entry, '.') || in_array($entry, self::SKIPPED, true)) {
                 continue;
             }
 
-            $path = $directory . '/' . $entry;
-
-            if ($format === self::ONE_LEVEL) {
-                if (is_dir($path) && is_file($path . '/SKILL.md')) {
-                    [$skill, $complaints] = self::read($path . '/SKILL.md', $source);
-                    $warnings = [...$warnings, ...$complaints];
-
-                    if ($skill !== null) {
-                        $skills[] = $skill;
-                    }
-                }
-
-                continue;
-            }
+            $path = $dir . '/' . $entry;
 
             if (is_dir($path)) {
-                [$found, $complaints] = self::scan($path, $source, $format);
+                [$found, $complaints] = self::fromDir($path, $source, false);
                 $skills = [...$skills, ...$found];
                 $warnings = [...$warnings, ...$complaints];
 
                 continue;
             }
 
-            if ($entry === 'SKILL.md') {
-                [$skill, $complaints] = self::read($path, $source);
-                $warnings = [...$warnings, ...$complaints];
+            if (!$includeRootFiles || !is_file($path) || !str_ends_with($entry, '.md')) {
+                continue;
+            }
 
-                if ($skill !== null) {
-                    $skills[] = $skill;
-                }
+            [$skill, $complaints] = self::read($path, $source);
+            $warnings = [...$warnings, ...$complaints];
+
+            if ($skill !== null) {
+                $skills[] = $skill;
             }
         }
 
@@ -350,74 +291,72 @@ final class Skills
     }
 
     /**
-     * One SKILL.md, checked against the spec.
+     * Upstream's `loadSkillFromFile()`. A `SKILL.md` is a declared skill: everything wrong with it is
+     * said, and it is loaded despite all of it but a missing description — the only thing the model
+     * sees, so a skill without one cannot be chosen. Any other `.md` is a skill only if it has a
+     * description, and is skipped without a word when it has none: a stray README is not a broken
+     * skill. The name is the frontmatter's, else the folder's; it is not compared with the folder,
+     * as upstream does not compare it.
      *
-     * Loaded despite most complaints: a name two characters too long is worth saying and
-     * not worth refusing over. A missing description is the exception — it is the only
-     * thing the model sees, so a skill without one cannot be chosen and would sit in the
-     * prompt as a name nobody can use.
+     * `disable-model-invocation: true` keeps the skill out of the prompt (`forPrompt()`); it is still
+     * a skill, and `/skill:name` still reaches it.
      *
      * @return array{0: Skill|null, 1: list<SkillWarning>}
      */
     private static function read(string $path, string $source): array
     {
-        $content = file_exists($path) && is_readable($path) ? file_get_contents($path) : false;
+        $content = is_readable($path) ? file_get_contents($path) : false;
 
         if ($content === false) {
             return [null, [new SkillWarning($path, 'could not be read')]];
         }
 
-        [$fields, $keys] = self::frontmatter($content);
-        $baseDir = dirname($path);
-        $folder = basename($baseDir);
-        $warnings = [];
-
-        foreach ($keys as $key) {
-            if (!in_array($key, self::ALLOWED_FIELDS, true)) {
-                $warnings[] = new SkillWarning($path, "unknown frontmatter field \"{$key}\"");
-            }
-        }
-
+        $declared = basename($path) === 'SKILL.md';
+        $fields = self::frontmatter($content);
         $description = trim($fields['description'] ?? '');
 
+        if (!$declared && $description === '') {
+            return [null, []];
+        }
+
+        $baseDir = dirname($path);
+        $messages = [];
+
         if ($description === '') {
-            return [null, [...$warnings, new SkillWarning($path, 'description is required')]];
+            $messages[] = 'description is required';
+        } elseif (($length = mb_strlen($description, 'UTF-8')) > self::MAX_DESCRIPTION) {
+            $messages[] = 'description exceeds ' . self::MAX_DESCRIPTION . " characters ({$length})";
         }
 
-        $length = mb_strlen($description, 'UTF-8');
+        $name = ($fields['name'] ?? '') !== '' ? $fields['name'] : basename($baseDir);
+        $messages = [...$messages, ...self::nameProblems($name)];
+        $warnings = array_map(static fn (string $message): SkillWarning => new SkillWarning($path, $message), $messages);
 
-        if ($length > self::MAX_DESCRIPTION) {
-            $warnings[] = new SkillWarning(
-                $path,
-                'description is longer than ' . self::MAX_DESCRIPTION . " characters ({$length})",
-            );
+        if ($description === '') {
+            return [null, $warnings];
         }
 
-        $name = $fields['name'] ?? $folder;
-        $warnings = [...$warnings, ...self::nameProblems($name, $folder, $path)];
+        $disabled = in_array($fields['disable-model-invocation'] ?? null, ['true', 'True', 'TRUE'], true);
 
-        return [new Skill($name, $description, $path, $baseDir, $source), $warnings];
+        return [new Skill($name, $description, $path, $baseDir, $source, $disabled), $warnings];
     }
 
-    /** @return list<SkillWarning> */
-    private static function nameProblems(string $name, string $folder, string $path): array
+    /**
+     * Upstream's `validateName()`, its sentences.
+     *
+     * @return list<string>
+     */
+    private static function nameProblems(string $name): array
     {
         $problems = [];
-
-        if ($name !== $folder) {
-            // The folder is how a skill is referred to everywhere else, so a name that
-            // disagrees with it is two names for one thing.
-            $problems[] = "name \"{$name}\" does not match the folder \"{$folder}\"";
-        }
-
         $length = mb_strlen($name, 'UTF-8');
 
         if ($length > self::MAX_NAME) {
-            $problems[] = 'name is longer than ' . self::MAX_NAME . " characters ({$length})";
+            $problems[] = 'name exceeds ' . self::MAX_NAME . " characters ({$length})";
         }
 
         if (preg_match('/^[a-z0-9-]+$/', $name) !== 1) {
-            $problems[] = 'name must be lowercase letters, digits and hyphens only';
+            $problems[] = 'name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)';
         }
 
         if (str_starts_with($name, '-') || str_ends_with($name, '-')) {
@@ -425,22 +364,12 @@ final class Skills
         }
 
         if (str_contains($name, '--')) {
-            $problems[] = 'name must not contain two hyphens in a row';
+            $problems[] = 'name must not contain consecutive hyphens';
         }
 
-        return array_map(static fn (string $message): SkillWarning => new SkillWarning($path, $message), $problems);
+        return $problems;
     }
 
-    /**
-     * The `---` block at the top, as a flat map.
-     *
-     * A line at a time rather than a YAML parser: the spec's fields are all scalars, and
-     * pig has no YAML parser to reach for. What this cannot read stays unread — a nested
-     * `metadata:` block contributes its key and nothing else, which is what the key is
-     * validated for anyway.
-     *
-     * @return array{0: array<string, string>, 1: list<string>} values, then every key seen
-     */
     /** Upstream's `stripFrontmatter()`: the body, without a byte-order mark, with `\n` line ends. */
     public static function stripFrontmatter(string $content): string
     {
@@ -455,36 +384,42 @@ final class Skills
         return $end === false ? $content : trim(substr($content, $end + 4));
     }
 
+    /**
+     * The `---` block at the top: the three keys this reads, as written.
+     *
+     * A line at a time rather than a YAML parser: the fields read here are scalars, and pig has no
+     * YAML parser to reach for. `name` and `description` lose their quotes; `disable-model-invocation`
+     * keeps them, because only an unquoted `true` is the boolean upstream's `=== true` asks for —
+     * `"true"` in YAML is a string.
+     *
+     * @return array<string, string>
+     */
     private static function frontmatter(string $content): array
     {
-        $content = str_replace(["\r\n", "\r"], "\n", $content);
+        $content = str_replace(["\r\n", "\r"], "\n", str_starts_with($content, "\u{FEFF}") ? substr($content, 3) : $content);
 
         if (!str_starts_with($content, '---')) {
-            return [[], []];
+            return [];
         }
 
         $end = strpos($content, "\n---", 3);
 
         if ($end === false) {
-            return [[], []];
+            return [];
         }
 
         $fields = [];
-        $keys = [];
 
         foreach (explode("\n", substr($content, 4, $end - 4)) as $line) {
-            if (preg_match('/^(\w[\w-]*):\s*(.*)$/', $line, $match) !== 1) {
+            if (preg_match('/^(name|description|disable-model-invocation):\s*(.*)$/', $line, $match) !== 1) {
                 continue;
             }
 
-            $keys[] = $match[1];
-
-            if ($match[1] === 'name' || $match[1] === 'description') {
-                $fields[$match[1]] = self::unquote(trim($match[2]));
-            }
+            $value = trim(preg_replace('/\s+#.*$/', '', $match[2]) ?? $match[2]);
+            $fields[$match[1]] = $match[1] === 'disable-model-invocation' ? $value : self::unquote(trim($match[2]));
         }
 
-        return [$fields, $keys];
+        return $fields;
     }
 
     private static function unquote(string $value): string
@@ -496,24 +431,6 @@ final class Skills
         }
 
         return $value;
-    }
-
-    /** @param list<string> $patterns */
-    private static function matchesAny(string $name, array $patterns): bool
-    {
-        foreach ($patterns as $pattern) {
-            if (fnmatch($pattern, $name)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /** The person's home, which is not `Config::home()` — that is `~/.pig`. */
-    private static function userHome(): string
-    {
-        return Config::userHome();
     }
 
     /**

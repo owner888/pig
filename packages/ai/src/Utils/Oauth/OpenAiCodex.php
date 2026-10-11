@@ -104,10 +104,10 @@ final class OpenAiCodex
     }
 
 
-    /** Upstream's `getCallbackHost()`: `PI_OAUTH_CALLBACK_HOST`, else `127.0.0.1`. */
+    /** Upstream's `getCallbackHost()`: `PIG_OAUTH_CALLBACK_HOST` (upstream's `PI_OAUTH_CALLBACK_HOST`), else `127.0.0.1`. */
     private static function getCallbackHost(): string
     {
-        return StreamOptions::providerEnvValue('PI_OAUTH_CALLBACK_HOST', null) ?? '127.0.0.1';
+        return StreamOptions::providerEnvValue('PIG_OAUTH_CALLBACK_HOST', null) ?? '127.0.0.1';
     }
 
     /** Upstream's `createState()`: sixteen random bytes as hex. */

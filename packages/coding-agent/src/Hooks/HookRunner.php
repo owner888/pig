@@ -1041,58 +1041,63 @@ final class HookRunner
     /** Ask whether to fork this conversation. The first refusal stops the rest. */
     public function emitBeforeFork(SessionBeforeForkEvent $event): ?SessionBeforeForkResult
     {
-        return $this->ask($event, SessionBeforeForkResult::class, static fn (object $r): bool => $r->cancel);
+        return $this->askBefore($event, SessionBeforeForkResult::class);
     }
 
     /** Ask whether to leave this conversation. The first refusal stops the rest. */
     public function emitBeforeSwitch(SessionBeforeSwitchEvent $event): ?SessionBeforeSwitchResult
     {
-        return $this->ask($event, SessionBeforeSwitchResult::class, static fn (object $r): bool => $r->cancel);
+        return $this->askBefore($event, SessionBeforeSwitchResult::class);
     }
 
     /**
-     * Ask whether to jump, and whether a hook would rather write the handover itself.
-     *
-     * Stops at the first handler that either refuses or supplies a summary — both mean the
-     * model is not going to be asked, exactly as with `emitBeforeCompact()`. Checking only
-     * `cancel` here was a bug: a hook that wrote a summary was walked straight past and the
-     * model was asked anyway.
+     * Ask whether to jump, and whether a hook would rather write the handover itself or change
+     * what the default summariser is given. The first refusal stops the rest; otherwise the last
+     * handler's answer is the one that counts, as upstream's.
      */
     public function emitBeforeTree(SessionBeforeTreeEvent $event): ?SessionBeforeTreeResult
     {
-        return $this->ask(
-            $event,
-            SessionBeforeTreeResult::class,
-            static fn (object $r): bool => $r->cancel || $r->summary !== null,
-        );
+        return $this->askBefore($event, SessionBeforeTreeResult::class);
     }
 
     /**
-     * Ask whether to compact, and whether a hook would rather do it itself.
-     *
-     * Stops at the first handler that either refuses or supplies a summary, since both
-     * mean the model is not going to be asked.
+     * Ask whether to compact, and whether a hook would rather do it itself. The first refusal
+     * stops the rest; otherwise the last handler's answer is the one that counts.
      */
     public function emitBeforeCompact(SessionBeforeCompactEvent $event): ?SessionBeforeCompactResult
     {
-        return $this->ask(
-            $event,
-            SessionBeforeCompactResult::class,
-            static fn (object $r): bool => $r->cancel || $r->compaction !== null,
-        );
+        return $this->askBefore($event, SessionBeforeCompactResult::class);
     }
 
     /**
-     * The shape the three cancellable events share.
+     * The shape the four cancellable `session_before_*` events share — upstream's
+     * `ExtensionRunner.emit()` for them: every handler runs in turn until one cancels, which
+     * ends the question with its answer; otherwise the last handler that answered at all is the
+     * answer. A handler that returns null has nothing to say and does not replace an earlier one.
      *
      * @template T of object
-     * @param class-string<T>     $expected
-     * @param Closure(T): bool    $decisive whether this answer ends the question
+     * @param class-string<T> $expected
      * @return T|null
      */
-    private function ask(HookEvent $event, string $expected, Closure $decisive): ?object
+    private function askBefore(HookEvent $event, string $expected): ?object
+    {
+        return $this->ask($event, $expected, static fn (object $result): bool => $result->cancel, keepLast: true);
+    }
+
+    /**
+     * Ask every handler in turn until one gives a decisive answer.
+     *
+     * @template T of object
+     * @param class-string<T>  $expected
+     * @param Closure(T): bool $decisive whether this answer ends the question
+     * @param bool             $keepLast with no decisive answer, return the last one given
+     *                                   rather than null
+     * @return T|null
+     */
+    private function ask(HookEvent $event, string $expected, Closure $decisive, bool $keepLast = false): ?object
     {
         $context = $this->context();
+        $answer = null;
 
         foreach ($this->hooks as $hook) {
             foreach ($hook->api->handlers($event->type()) as $handler) {
@@ -1117,10 +1122,12 @@ final class HookRunner
                 if ($decisive($result)) {
                     return $result;
                 }
+
+                $answer = $result;
             }
         }
 
-        return null;
+        return $keepLast ? $answer : null;
     }
 
     private function fail(LoadedHook $hook, string $event, Throwable $error): void

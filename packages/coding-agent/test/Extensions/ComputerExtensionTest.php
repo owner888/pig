@@ -20,13 +20,13 @@ final class ComputerExtensionTest extends TestCase
         parent::setUp();
         $this->tempHome = sys_get_temp_dir() . '/pig-test-computer-' . uniqid();
         mkdir($this->tempHome, 0755, true);
-        putenv("PIG_HOME={$this->tempHome}");
+        putenv("PIG_CODING_AGENT_DIR={$this->tempHome}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         if (is_dir($this->tempHome)) {
             $files = glob("{$this->tempHome}/*") ?: [];
             foreach ($files as $f) {

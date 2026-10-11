@@ -147,18 +147,10 @@ final class TerminalImage
         return $value === '1' ? true : ($value === '0' ? false : null);
     }
 
-    /**
-     * An override variable, `PIG_` first and then upstream's `PI_` name.
-     *
-     * Not `getenv('PIG_…') ?: getenv('PI_…')`: `'0'` is falsy in PHP, so `PIG_HYPERLINKS=0` would
-     * fall through to the `PI_` variable instead of turning hyperlinks off.
-     */
+    /** An override variable: `PIG_<name>`, pig's spelling of upstream's `PI_<name>`; null when unset. */
     private static function overrideVariable(string $name): ?string
     {
-        if (Env::isSet("PIG_{$name}")) {
-            return (string) getenv("PIG_{$name}");
-        }
-        $value = getenv("PI_{$name}");
+        $value = getenv("PIG_{$name}");
 
         return $value === false ? null : $value;
     }

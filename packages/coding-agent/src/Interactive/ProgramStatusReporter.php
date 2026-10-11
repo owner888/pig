@@ -11,8 +11,8 @@ use Pig\Agent\MessageEndEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
 use Pig\CodingAgent\Session\AgentSettledEvent;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionStartEvent;
 use Pig\Tui\ProgramStatus;
 use Pig\Tui\Terminal;
 
@@ -22,10 +22,10 @@ use Pig\Tui\Terminal;
  * settles. Messages are limited to the session name, dialog titles, and the first line of errors; prompts
  * and assistant output are never reported.
  *
- * Upstream's `program-status-reporter.ts`. One difference in where the news comes from: upstream hears
- * every compaction as a `compaction_start`/`compaction_end` session event, while here only the overflow
- * one is an event — `/compact` and the threshold check run in the mode, which tells this class itself
- * through `compactionStart()` and `compactionEnd()`. Both roads end in the same state machine.
+ * Upstream's `program-status-reporter.ts`, hearing every compaction as upstream does: a
+ * `CompactionStartEvent` and a `CompactionEndEvent` from the session, whichever of `/compact`, the
+ * threshold check or an overflow started it. The mode used to tell this class about the first two by
+ * hand, because only the overflow one was an event; now all three are.
  */
 final class ProgramStatusReporter
 {
@@ -80,55 +80,33 @@ final class ProgramStatusReporter
                     ? new ProgramStatus('error', message: self::firstLine($event->message->errorMessage))
                     : new ProgramStatus('done');
                 break;
-            case $event instanceof AutoCompactionStartEvent:
+            case $event instanceof CompactionStartEvent:
                 $this->compacting = true;
                 break;
-            case $event instanceof AutoCompactionEndEvent:
-                // The session's overflow compaction, always inside a run. A cancelled one is told as
-                // an error here and becomes `idle` at the `agent_settled` that follows it.
-                $this->compactionEnd('overflow', false, $event->succeeded ? null : $event->error);
+            case $event instanceof CompactionEndEvent:
+                $this->compacting = false;
 
-                return;
+                if ($this->runActive) {
+                    // A failed recovery compaction ends the run unless a later response succeeds.
+                    if ($event->aborted) {
+                        $this->runResult = new ProgramStatus('idle');
+                    } elseif ($event->errorMessage !== null) {
+                        $this->runResult = new ProgramStatus('error', message: self::firstLine($event->errorMessage));
+                    }
+                } elseif ($event->aborted) {
+                    $this->restingStatus = new ProgramStatus('idle');
+                } elseif ($event->reason === 'manual') {
+                    $this->restingStatus = $event->errorMessage !== null
+                        ? new ProgramStatus('error', message: self::firstLine($event->errorMessage))
+                        : new ProgramStatus('done');
+                }
+                break;
             case $event instanceof AgentSettledEvent:
                 $this->runActive = false;
                 $this->restingStatus = $event->aborted ? new ProgramStatus('idle') : $this->runResult;
                 break;
             default:
                 return;
-        }
-
-        $this->report();
-    }
-
-    /** Upstream's `compaction_start`, for the compactions the mode runs itself. */
-    public function compactionStart(): void
-    {
-        $this->compacting = true;
-        $this->report();
-    }
-
-    /**
-     * Upstream's `compaction_end`.
-     *
-     * @param 'manual'|'threshold'|'overflow' $reason
-     */
-    public function compactionEnd(string $reason, bool $aborted, ?string $errorMessage): void
-    {
-        $this->compacting = false;
-
-        if ($this->runActive) {
-            // A failed recovery compaction ends the run unless a later response succeeds.
-            if ($aborted) {
-                $this->runResult = new ProgramStatus('idle');
-            } elseif ($errorMessage !== null) {
-                $this->runResult = new ProgramStatus('error', message: self::firstLine($errorMessage));
-            }
-        } elseif ($aborted) {
-            $this->restingStatus = new ProgramStatus('idle');
-        } elseif ($reason === 'manual') {
-            $this->restingStatus = $errorMessage !== null
-                ? new ProgramStatus('error', message: self::firstLine($errorMessage))
-                : new ProgramStatus('done');
         }
 
         $this->report();

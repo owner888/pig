@@ -79,7 +79,7 @@ the developer asked for it, it is ported and listed here:
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
 | A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
 | A 4-cell half-block startup mascot logo icon (custom pink piglet) | `Pig\CodingAgent\Interactive\PigLogo`, `InteractiveMode::banner()` | `pi-logo.ts` at 0.99.1 |
-| `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
+| `!!command` runs without joining the conversation | `AgentSession::executeBash(excludeFromContext: true)`: recorded in the session, left out of every model request (`CodingAgent::toLlm()`) | `!!` at 0.87; the anchor has `!` only |
 | Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
 | Fullscreen ChatViewport with fixed bottom dock & scroll-to-end indicator | `Pig\CodingAgent\Interactive\ChatViewport`, `Pig\Tui\Components\ScrollView` | `chat-viewport.ts` + `tui-alt-screen.ts` at 0.85+ |
 | Skill invocation collapsible message component | `Pig\CodingAgent\Interactive\SkillInvocationMessageComponent`, `Pig\CodingAgent\Prompt\SkillBlock` | `skill-invocation-message.ts` |
@@ -103,7 +103,8 @@ here now.
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
 through a command here — including macOS, which uses `pngpaste` when it is installed and
-AppleScript, which always is, when it is not.
+AppleScript, which always is, when it is not. Under Termux it is Termux:API's
+`termux-clipboard-get` / `termux-clipboard-set` and nothing else, text only, as upstream's.
 
 ## Decisions on record
 
@@ -200,10 +201,11 @@ required — see [Five upstream dependencies that are not needed here](#five-ups
 
 **`shellPath` in the settings names the shell**, which is upstream's key and was a key pig stored
 and nothing read — the `terminal.showImages` shape again. It earns its keep on macOS: `/bin/bash`
-there is **3.2**, with no `mapfile` and no `${var^^}`, and `Shell::bash()` prefers `/bin/bash`, so
-installing a homebrew bash 5 did nothing. A path that is not executable is **refused by name**
-rather than falling back to `/bin/bash`, because the fallback is the bug the setting was written to
-work around. `Shell::useShellPath()` is static for `Models::register()`'s reason: `bash`, a typed
+there is **3.2**, with no `mapfile` and no `${var^^}`, and `Shell::resolve()` prefers `/bin/bash`, so
+installing a homebrew bash 5 does nothing without it. `~` and a `file://` URL are expanded
+(`Settings::shellPath()`, upstream's `normalizePath()`), and a path that is not there is **refused by
+name** (`Custom shell path not found: …`) rather than falling back to `/bin/bash`, because the
+fallback is the bug the setting was written to work around. `Shell::useShellPath()` is static for `Models::register()`'s reason: `bash`, a typed
 `!command` and a hook's `exec()` all reach one shell, and a shell only some of them could see is a
 shell that works until you use another door.
 
@@ -229,7 +231,7 @@ more than the saved dependency, and two implementations that can disagree about 
 exist is a bug the model would have to debug.
 
 `ensureTool()` is ported too, so the same thing happens as in pi: `ExternalTool` looks in
-`~/.pig/agent/tools/`, then the PATH (knowing that Debian calls `fd` `fdfind`), and only then has
+`~/.pig/agent/bin/`, then the PATH (knowing that Debian calls `fd` `fdfind`), and only then has
 `ToolInstaller` fetch the release from GitHub. Two differences, both of which upstream has at
 HEAD or would be better for: `PIG_OFFLINE=1` turns fetching off, and the download says what it
 is pulling and from where **before** it starts, because an executable arriving from the
@@ -247,6 +249,64 @@ The download goes through `pig/ai`'s own HTTP client, which grew `HttpClient::fo
 a release URL is answered with a 302 to GitHub's object store, and a streaming API never
 redirects, so `send()` keeps its single-request behaviour and only downloads pay for the loop.
 
+### The shell tools: one engine, a structured result, and the session in the environment
+
+`Tools\ShellTool` is upstream's `createShellToolDefinition()` and the engine under both `bash`
+(`BashTool`) and `powershell` (`PowerShellTool`); only the shell, the label and a command wrapper
+differ. `BashTool`'s options are upstream's: `commandPrefix`, `shellPath`,
+`exposeSessionEnvironment`, `sessionEnvironment` and `spawnHook` (a closure over a `SpawnContext`
+{command, cwd, env} that may rewrite what is spawned). A timeout of zero or less, or above
+2147483.647 seconds, is an error, and so is a working directory that is not there.
+
+- **Two results, as upstream returns them.** The model reads text cut to 2000 lines / 50KB; a
+  programmatic caller gets `structuredContent` matching `ShellTool::OUTPUT_SCHEMA` — `{output,
+  truncated, full_output_path?, exit_code, wall_time_seconds}`, `output` up to 1 MiB (head and tail
+  512 KiB around an omitted marker, from `Run::fullOutput()`). `AgentToolResult::$structuredContent`
+  and `AgentError::$structuredContent` are agent-core's; `Ai\Tool::$outputSchema` is never sent to a
+  provider; neither is written to the session (`details` is). `HookedTool` keeps `structuredContent`
+  unless a hook replaced the content. A non-zero exit is an error to the model and still carries it.
+- **The session is in the command's environment.** `Tools\SessionEnvironment` sets `PIG_SESSION_ID`,
+  `PIG_SESSION_FILE`, `PIG_PROVIDER`, `PIG_MODEL` and `PIG_REASONING_LEVEL` (upstream's `PI_*`) on each
+  command, re-read per command so a model switched between two commands reaches the second, and
+  strips inherited copies. Not for `!` / `!!`, and a tool an extension builds gets none unless it is
+  given `sessionEnvironment`. `bin/pig` also sets `PIG_CODING_AGENT=true` and `AI_AGENT=pig` at start,
+  so every child knows — RPC included.
+- **`powershell`** is in `ToolSet::ALL`, not the defaults (`--tools`, `defaultTools: ["+powershell"]`);
+  `Shell::powerShellConfig()` prefers `pwsh.exe`, then `powershell.exe`; on anything but native Windows
+  a call fails with upstream's "only available on Windows". **Untested on native Windows.**
+- **Which bash** is `Shell::resolve()`, upstream's `getShellConfig()`: `shellPath` first, refused by
+  name when missing (`Custom shell path not found: …`); on Windows Git Bash under `ProgramFiles` /
+  `ProgramFiles(x86)`, then `bash.exe` on `PATH`; elsewhere `/bin/bash`, then `bash` on `PATH`, then
+  `sh`. pig's old fixed Homebrew and `/usr/local` candidates are gone — `shellPath` is the way to a
+  newer bash.
+
+Rule: a new shell-shaped tool is a `ShellTool` configuration, not a copy of `BashTool`.
+
+### Environment variables are `PIG_*`, and only `PIG_*`
+
+Every variable upstream reads as `PI_X` is `PIG_X` here, with **no `PI_` fallback**: two names for one
+switch is how a setting ends up on in one shell and off in the next. No compatibility spelling is
+kept, as none was for `~/.pig` → `~/.pig/agent`.
+
+- **Renamed**: `PIG_HOME` → `PIG_CODING_AGENT_DIR` (upstream's `PI_CODING_AGENT_DIR`, `~` expanded as
+  `getAgentDir()` does), `PI_CACHE_RETENTION` → `PIG_CACHE_RETENTION`, `PIG_TUI_TRACE` →
+  `PIG_TUI_WRITE_LOG`. `PIG_CLEAR_ON_SHRINK`, `PIG_HARDWARE_CURSOR`, `PIG_OFFLINE` (`1`/`true`/`yes`),
+  `PIG_PROGRAM_STATUS`, `PIG_HYPERLINKS`, `PIG_IMAGE_PROTOCOL`, `PIG_TRUE_COLOR` and
+  `PIG_OAUTH_CALLBACK_HOST` no longer fall back to their `PI_` names.
+- **Not read at all**, because upstream reads none of them: `PIG_MODEL`, `PIG_PROVIDER`,
+  `PIG_THINKING`, `PIG_TUI_MODE` and `PI_MODEL`, `PI_PROVIDER`, `PI_REASONING_LEVEL`, `PI_TUI_MODE`
+  (`CodingAgent::session()` lost its `environment:` parameter). `ALL_PROXY` is not read either.
+- **New, upstream's**: `PIG_PACKAGE_DIR` (`Config::packageDir()`, where `CHANGELOG.md` is),
+  `PIG_TUI_ESC_TIMEOUT` (ms a lone ESC waits; 100 over SSH, else 10), `PIG_SKIP_VERSION_CHECK`,
+  `PIG_SHARE_VIEWER_URL`. `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
+- **Set, not read**: `PIG_CODING_AGENT=true` and `AI_AGENT=pig` for every child, and the
+  `PIG_SESSION_*` / `PIG_PROVIDER` / `PIG_MODEL` / `PIG_REASONING_LEVEL` a shell command is given
+  (see the shell tools above). The last three share names with the dropped config variables; they
+  describe the session to a command and are never read back.
+
+The one `PI_` pair still read is pi's own directory (`PI_CODING_AGENT_DIR`, then `PI_HOME`), because
+that is about finding pi's files, not about configuring pig.
+
 ### Reaching the provider through a proxy
 
 `Ai\Http\Proxy` has **no upstream counterpart, and is not optional** where pig runs. Node's
@@ -257,8 +317,13 @@ not talk to a provider at all, so "direct" is not a worse route, it is no route.
 
 Two protocols, because a local Clash or v2ray offers both and people use whichever port they
 remember: **HTTP CONNECT** (RFC 9110 §9.3.6) and **SOCKS5** (RFC 1928, with RFC 1929 for a
-password). `--proxy <url>`, then `https_proxy`/`all_proxy`, then `httpProxy` in the person's settings (upstream's key, never the project's) — the
-order stated at the top of `bin/pig`, and `--no-proxy` ignores all three.
+password). `--proxy <url>` first; otherwise the environment as upstream's undici `EnvHttpProxyAgent`
+reads it — an `https://` target through `https_proxy`, else `HTTPS_PROXY`, else the plain-HTTP one;
+an `http://` target through `http_proxy`, else `HTTP_PROXY`, else directly — with `httpProxy` in the
+person's settings (upstream's key, never the project's) filling an unset `HTTP_PROXY` / `HTTPS_PROXY`
+(`applyHttpProxySettings()`). `ALL_PROXY` is curl's, not undici's, and is not read. `no_proxy` matches
+`*.example.com` and `.example.com` alike; a non-empty `proxy.bypass` replaces it and an empty one
+leaves it alone. `--no-proxy` ignores all of it.
 
 **The order inside `Proxy::open()` is the security property, not an implementation detail.** The
 TCP connection goes to the proxy with TLS *off*; TLS starts only after the proxy has said the far
@@ -297,9 +362,9 @@ Eight decisions worth the words:
   `http://` or `socks5://` on another port, so naming it *is* the fix. SOCKS4 is refused too: it
   cannot carry a hostname, which is the one thing that matters here.
 
-`http_proxy` is not read, and an `http://` target is tunnelled with CONNECT rather than sent in
-absolute form. Both follow from the same fact: every provider pig talks to is `https://`, and a
-plain-HTTP endpoint in `models.json` is a local or self-hosted server that goes direct anyway.
+An `http://` target is tunnelled with CONNECT rather than sent in absolute form: every provider pig
+talks to is `https://`, and a plain-HTTP endpoint is usually a local server the loopback rule or
+`no_proxy` sends direct anyway.
 
 The tests forward for real, through `test/TunnelServer.php` — a loopback proxy that speaks both
 protocols — because a handshake can be byte-perfect and still leave one byte unread on the socket.
@@ -705,7 +770,7 @@ file until something answers. The header carries `parentSession`, which `open()`
 
 `AgentSession::fork($entryId, $position)` is `startNew()`/`switchTo()`'s recipe with the hook asked
 first: refused with `switched: false` when a hook says no, thrown for a session not being saved
-(`--no-save` has nothing to fork; upstream forks one in memory, pig has no second in-memory
+(`--no-session` has nothing to fork; upstream forks one in memory, pig has no second in-memory
 conversation to put it in), for one with no file yet (upstream's sentence), and for `before` on a
 point nobody said. Custom tools hear it as `fork`.
 
@@ -734,7 +799,7 @@ message like `BashExecution`, turned into a user message by `CodingAgent::toLlm(
 Three things about it are worth knowing before changing any of it:
 
 - **The cut never lands on a tool result.** A result separated from the call that produced
-  it is a request every provider rejects outright, so `cutPoint()` collects the legal
+  it is a request every provider rejects outright, so `findCutPoint()` collects the legal
   positions first and only then looks for the one nearest the budget. `CompactionTest`
   checks this at every budget from 1 to 6000 rather than at one number, because the
   arithmetic that picks the cut is exactly the kind of thing that is right for the number
@@ -746,7 +811,7 @@ Three things about it are worth knowing before changing any of it:
   whole conversation that had just been compacted away — and the messages themselves stay
   in the file, because a session log is a record of what was said.
 - **The file lists are separate from the prose.** A summary that says "read some files"
-  sends the model to read them again. `Compaction::files()` also carries an earlier
+  sends the model to read them again. `prepareCompaction()` also carries an earlier
   summary's lists forward, or a file read before the last compaction disappears from the
   record entirely.
 - **A usage reading older than the last compaction is discarded.** See the trap below.
@@ -803,15 +868,14 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, twenty-two slash commands plus whatever the hooks add, the keys, and
+an agent you can talk to, thirty-four slash commands plus whatever the hooks add, the keys, and
 the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
 
 **Audited against its 2439 lines by surface** — 68 upstream methods mapped name by name against
 pig's 88, then every unmatched one chased down, which is the method `agent-session.ts` was read
 with and the only one that works on a file this size. It found three things to fix, each its own
 trap below (the editing keys named nowhere, `/debug` three-quarters ported, a message lost to an
-auto-compaction), one command left out on its merits (`/share`, in the table above), and four
-places where pig's arrangement differs on purpose. Those four, so nobody re-derives them:
+auto-compaction), and four places where pig's arrangement differs on purpose. Those four, so nobody re-derives them:
 
 - **A status line is appended, not replaced.** Upstream's `showStatus()` overwrites the previous
   one when it is still the last thing in the chat, so toggling ctrl+t twice leaves one line there
@@ -1146,14 +1210,16 @@ map as upstream's generator (`applyThinkingLevelMetadata()`) does — for Claude
 full map on the 5.5 overrides and Copilot's `minimal: "low"` overrides; for OpenAI and Copilot GPT
 `off: null` on a Responses `gpt-5…`, `off: "none"` on upstream's none-reasoning list, `xhigh` from
 gpt-5.2 on, `max` on gpt-5.6/gpt-6, the whole GPT-6 maps, Copilot's `minimal: "low"` on `gpt-5…` —
-so `xhigh` is offered exactly where upstream offers it (pig has no `max` level; those entries are
-carried and unread). The `max_tokens` default is upstream's: `options.maxTokens ?? model.maxTokens`
+so `xhigh` and `max` are offered exactly where upstream offers them (`ThinkingLevel::Max`,
+`Model::supportedThinkingLevels()`; a token-budget provider spends `high`'s budget on `max`). The
+session opens on `medium` when nothing says otherwise (`CodingAgent::DEFAULT_THINKING_LEVEL`,
+upstream's), clamped to the model. The `max_tokens` default is upstream's: `options.maxTokens ?? model.maxTokens`
 in the provider, and `Stream::simple()` always says — the model's ceiling cut to the room the
 conversation leaves (`clampMaxTokensToContext()`, `Utils\Estimate`), and on a budget-thinking turn
 raised by the budget (minimal 1,024, low 2,048, medium 8,192, high 16,384) up to the model's own, the
 budget cut to leave 1,024 for the answer. Caching is upstream's `getCacheControl()`: breakpoints on the
 system prompt, the **last tool** (unless `supportsCacheControlOnTools: false`) and the last user
-block, `ttl: "1h"` for `cacheRetention: long` (or `PI_CACHE_RETENTION=long`), none at all for `none`;
+block, `ttl: "1h"` for `cacheRetention: long` (or `PIG_CACHE_RETENTION=long`, upstream's `PI_CACHE_RETENTION`; the `PI_` name is not read), none at all for `none`;
 the session id goes out as `x-session-affinity` (`x-session-id` for OpenRouter's format) where the
 compat asks for it. `toolChoice` and `metadata.user_id` go out as upstream sends them. A model with
 `allowedFallbackModels` (Fable 5 → Opus 4.8/5, as upstream's generator writes it) sends `fallbacks`
@@ -1393,8 +1459,26 @@ Three decisions in it:
   before the UI starts, the same as it does for a malformed skill.
 
 Order for anything with more than one source: what was typed, then the environment, then what
-was chosen last time, then the built-in default. `--no-save` gets `Settings::inMemory()`, so a
-session that is not written down does not write anything else down either.
+was chosen last time, then the built-in default. `--no-session` is about the conversation only,
+as upstream's: settings, `models.json` and `auth.json` are read (and written) exactly as in a saved
+run.
+
+### `/scoped-models`, `/export x.jsonl`, `/import`, `/share`
+
+Four upstream commands that arrived together; each is upstream's flow on pig's pieces.
+
+- **`/scoped-models`** (`Interactive\ScopedModelsSelector`) picks the `--models` scope in the session,
+  on the `app.models.*` keybinding ids; `app.models.save` writes it to `enabledModels`.
+- **`/export <path>.jsonl`** (`Export\JsonlExport`, upstream's `exportSessionToJsonl()`) writes
+  `SessionManager::serializeBranch()` — a fresh header and the root-to-leaf entries, so the file is one
+  conversation. Quoted paths work. `/export md` and `/export pr` are pig's own and stay.
+- **`/import <path>`** asks, copies the file into this project's session directory (`-1`, `-2` on a
+  name clash) and resumes it — in its own directory, see "A session carries on in its own directory".
+- **`/share`** (`Export\SessionShare`) is upstream's second road only: `gh auth status`, the HTML export
+  to a temp file, `gh gist create --public=false`, and a link on `PIG_SHARE_VIEWER_URL` (default
+  `https://pigagent.dev/session/`, the site's viewer page: it fetches the gist from GitHub's API in
+  the browser and draws the HTML export in a sandboxed frame). Upstream's first road, uploading to Radius, is not here — pig
+  has no Radius sign-in. A secret gist is unlisted, not private; the link is the access.
 
 ### A quota wall moves the turn to a `fallbackModels` entry
 
@@ -1519,7 +1603,9 @@ The second batch is the model, tool and summary ones:
 | `defaultTools` | the four | names replace the four, `+name`/`-name` modify them, a project list of modifiers alone is appended to the global one (`mergeDefaultTools()`), and `--tools` of modifiers alone applies to it. Mixing the two kinds is refused with upstream's sentence |
 | `enableSkillCommands` | `true` | `/skill:name args` sends the skill as upstream's `<skill name location>` block (`AgentSession::expandSkillCommand()`), offered in the autocomplete |
 | `warnings.anthropicExtraUsage` | `true` | upstream's one-time warning on a Claude subscription sign-in, `/settings` → *Warnings* |
-| `compaction.modelOverrides` | none | `provider/id` → `reserveTokens`/`keepRecentTokens`, before the ordinary values |
+| `compaction.modelOverrides` | none | `provider/id` → `reserveTokens`/`keepRecentTokens`, before the ordinary values. Every compaction number must be a non-negative safe integer (0 allowed); anything else throws upstream's `Invalid compaction.<field> setting: … Expected a non-negative safe integer.` when it is read |
+| `skills` / `prompts` / `themes` | none | lists of paths with `!pattern` / `+path` / `-path`, per scope — see "Skills, prompts and themes are resource lists" |
+| `defaultThinkingLevel` | `medium` | upstream's default, clamped to the model |
 | `branchSummary.reserveTokens` / `skipPrompt` | 16384 / `false` | the branch summary's own budget (it used compaction's before), and `/tree` without the question |
 
 **`defaultTools` reaches the built-ins and a `-name`, not every custom tool.** Upstream's active set
@@ -1682,189 +1768,123 @@ that were pinning the absence of the file rather than the behaviour. See
 [A changelog and a version, and two tests that were pinning the absence of the file](#a-changelog-and-a-version-and-two-tests-that-were-pinning-the-absence-of-the-file).
 The empty answer is still a real one and still has a case, against a path that is not there.
 
-`Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
-### Where compaction cuts, and the half-turn upstream drops
+### Where compaction cuts, and the split turn
 
-`Compaction::cutPoint()` returns one index: everything before it is summarised, everything from it is
-kept. Upstream's `findCutPoint()` returns three things — the index, whether the cut lands mid-turn,
-and where that turn started — and `prepareCompaction()` then ends the summarised history at the
-**turn's start** rather than at the cut, while the kept range still begins at the cut.
+`Session\Compaction` is upstream's `core/compaction/compaction.ts` and `utils.ts` under upstream's
+names — `calculateContextTokens()`, `shouldCompact()`, `getLastAssistantUsage()`,
+`estimateContextTokens()`, `findCutPoint()`, `findTurnStartIndex()`, `prepareCompaction()`,
+`serializeConversation()`, `createFileOps()` / `extractFileOpsFromMessage()` /
+`computeFileLists()`, `generateSummary()`, `compact()` — and its value classes
+(`CompactionPreparation`, `CompactionResult`, `CutPointResult`, `FileOperations`,
+`CompactionSettings`) are upstream's shapes. The point of the names is that an extension can do
+what upstream's can: take the `CompactionPreparation` a `session_before_compact` handler is given,
+call `serializeConversation()` or `compact()` itself, and answer with a `CompactionResult`.
 
-Reading their code, that leaves the messages between the two in neither: not summarised, because the
-history stopped short of them, and not replayed, because `buildSessionContext()` emits the summary and
-then everything from `firstKeptEntryId`. `turnPrefixMessages` collects exactly those messages, and
-**nothing in upstream's own compaction reads it** — it is put on the preparation object for a
-`session_before_compact` hook, and its own comment says they are messages that "will be turned into
-turn prefix summary", which is a sentence about something not done yet.
+**A cut inside a turn is two summaries, merged.** `findCutPoint()` returns the index, whether the
+cut is mid-turn and where that turn started; `compact()` summarises the history before the turn
+(or keeps the previous summary when there is none) and the turn's own beginning
+(`turnPrefixMessages`) separately, at half the reserve, and joins them under
+`**Turn Context (split turn):**`. pig used to summarise straight up to the cut instead — a reading
+of an older upstream that left `turnPrefixMessages` unread; upstream reads it now, and so does pig.
 
-pig summarises up to the cut, so the split turn's first half is inside the summary and nothing falls
-between. That is a divergence in pig's favour and it is stated as a reading rather than a measurement:
-it was found by comparing the two, not by running upstream.
+What else was checked rather than assumed: `calculateContextTokens()` prefers the provider's own
+total; `shouldCompact()` takes `CompactionSettings` (its `enabled` included) and has a
+`contextWindow > 0` guard, so a model declaring no window is never compacted for; `estimateTokens()`
+divides by four; the cut never lands on a tool result; `serializeConversation()` takes LLM messages,
+so a hook message, a `!` command and an earlier summary reach the summariser as `[User]: …`, and cuts
+each tool result at `TOOL_RESULT_MAX_CHARS` (2,000); the summariser gets `0.8 * reserveTokens` and the
+session's thinking level. `tokensBefore` is the projected estimate (`estimateProjectedContextTokens()`),
+which is what "Compacted from N tokens" shows. A hook's `firstKeptEntryId` and `tokensBefore` are used
+as given.
 
-The rest of the file matched, and was checked rather than assumed: `contextTokens()` prefers the
-provider's own total; `shouldCompact()` is the same comparison plus a `contextWindow > 0` guard, which
-upstream lacks and which stops a model declaring no window from asking to compact for ever; the
-enabled flag lives in `AgentSession::shouldCompact()` rather than inside the arithmetic;
-`estimateTokens()` divides by four; the cut never lands on a tool result; `files()` carries an earlier
-summary's lists forward and takes read minus modified, sorted; `request()` wraps the conversation in
-`<conversation>` tags with `<previous-summary>` when there is one, and appends `Additional focus:` for
-custom instructions; the summariser gets `0.8 * reserveTokens` and high reasoning.
+One divergence left: **the summary text is the prose alone and the lists stay in `details`**, where
+upstream's `compact()` also appends `<read-files>` / `<modified-files>` to the text. The model sees
+the same thing either way, because `CompactionSummary::toText()` adds the tags on replay; a
+`CompactionResult`'s other `details` keys are not stored. The prompts themselves are upstream's
+verbatim, the update prompt's format block included.
 
-One cosmetic difference, written down so nobody later builds on the assumption that it is not there:
-**the two summarisation prompts are re-wrapped.** The words are upstream's exactly, but pig's heredoc
-breaks the long lines, so where upstream has a space mid-sentence pig has a newline.
+`Session\BranchSummarization` is upstream's `branch-summarization.ts`:
+`collectEntriesForBranchSummary()` walks from the old leaf back to the common ancestor,
+`prepareBranchEntries()` fits that to the budget (the window, 128k when the model states none, less
+the reserve), `generateBranchSummary()` asks for a handover — goal, progress, blocked, next steps —
+with `PREAMBLE` in front, `Additional focus:` for custom instructions or `replaceInstructions` for a
+whole prompt, and "No content to summarize" for an empty branch. `/tree` asks whether to write one,
+and it is appended to the branch being *joined*: context for carrying on here, not a note on the
+branch it describes.
 
-`Session\BranchSummary` is the message it produces. `/tree` goes back to an earlier point and
-carries on from there; the branch that was left is still in the file, but the model no longer
-sees it — and the model is usually what did the work on it. So `/tree` asks whether to write it
-down, and the answer is appended to the branch being *joined*, which is the whole point: it is
-context for carrying on here, not a note on the branch it describes.
+- **It replaces nothing.** A `CompactionSummary` stands in for the messages before it; a branch
+  summary describes messages that were never on this branch, so nothing is spliced.
+- **File lists come from what fits the budget**, plus the lists of earlier branch summaries pig wrote
+  — upstream's rule ("the messages being summarized"). pig used to collect them from the whole branch;
+  that divergence is gone.
+- **Cancelling means not moving.** Escape while summarising returns `TreeJump(moved: false,
+  aborted: true, cancelled: true)` and the tree list comes back up; a hook's `cancel` returns
+  `cancelled: true` and the TUI says "Navigation cancelled". The leaf stays where it was either way.
+- **A hook may write it instead** (`SessionBeforeTreeResult(summary: …)`), used only when a summary
+  was asked for; its `customInstructions`, `replaceInstructions` and `label` apply either way. A
+  hook-written summary is `fromHook` in the file, and its lists are the hook's own `details`.
+- **Its lists carry forward into a later compaction** unless a hook wrote it.
 
-Almost all of it is compaction's machinery reached for rather than repeated —
-`Compaction::estimateTokens()`, `serialize()`, `files()` and `SYSTEM_PROMPT` are the same
-questions about a different span. What differs is the prompt (a handover: goal, progress,
-blocked, next steps — not a recap) and five things worth keeping straight:
+`session_before_compact` and `session_before_tree` stop at the first handler that cancels, else take
+the last answer (`HookRunner`). The events carry upstream's fields: `SessionBeforeCompactEvent
+{preparation, branchEntries, customInstructions, reason, willRetry, signal}`, `SessionCompactEvent
+{compactionEntry, fromExtension, reason, willRetry}`, `SessionBeforeTreeEvent {preparation, signal}`,
+`SessionTreeEvent {newLeafId, oldLeafId, summaryEntry, fromExtension}`. A hook that cancels a
+compaction makes it throw `Compaction cancelled`.
 
-- **It replaces nothing.** A `CompactionSummary` stands in for the messages before it and
-  carries a `replaced` count that `SessionManager::resolve()` splices on. A branch summary
-  describes messages that were never on this branch, so it has no count and nothing is spliced.
-- **File lists are collected from the whole branch, prose from as much as fits.** Two passes,
-  and the first is the point: the budget may drop the older half of a long branch, but "which
-  files did this touch" has to be complete or whoever reads it goes to a file on disk that no
-  longer matches. The walk for prose is newest-first for the same reason compaction keeps the
-  recent end.
-- **Cancelling means not moving.** Escape during the summary returns `TreeJump(moved: false,
-  aborted: true)` and the leaf stays where it was, so the tree list comes back up. Jumping
-  anyway would give someone the move they asked for and silently drop the summary they also
-  asked for.
-- **A hook may write it instead**, through `SessionBeforeTreeResult(summary: …)` — and then
-  the file lists are still pig's own reading of the branch. The prose is the hook's; which
-  files were touched is not its to get wrong.
-- **Its lists carry forward into a later compaction**, exactly as a compaction summary's do,
-  *unless* a hook wrote it. Missing that would lose the other branch's files the first time
-  the context filled up.
+### Prompt templates
 
-`Prompt\SlashCommands` is upstream's `core/slash-commands.ts`: a markdown file in
-`~/.pig/agent/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
-`/review src/Foo.php` sends `review.md` with `$1` filled in.
+`Prompt\SlashCommands` is upstream's `core/prompt-templates.ts`: a markdown file in
+`<agent-dir>/prompts/` or `.pig/prompts/` becomes `/name`, and its body is the prompt.
+`/review src/Foo.php` sends `review.md` with `$1` filled in. **`commands/` is not read**, with no
+fallback — upstream's directory name, and the developer asked for no compatibility layer.
 
-Not the same thing as a skill, though both are markdown with frontmatter and the two are
-easy to confuse. A skill is **offered** to the model, which reads it when a task matches; a
-command is **sent** by the person, now, as the message. One is a capability, the other is a
-macro. They are loaded separately for that reason.
+Not the same thing as a skill, though both are markdown with frontmatter. A skill is **offered** to
+the model, which reads it when a task matches; a template is **sent** by the person, now, as the
+message.
 
-Two things worth keeping straight: a built-in command is tried **first**, so a `help.md`
-someone forgot they wrote cannot shadow `/help`; and `$@` is substituted **before** the
-numbered placeholders, or an argument that happens to contain `$1` would have an argument
-substituted into it.
+- **Where is the package manager's**, as below for skills. A conventional `prompts/` directory loads
+  its direct children only; a directory named in the `prompts` setting is walked. The first template
+  of a name wins and a later one is a collision warning.
+- **Substitution is upstream's set, in one pass**: `$1`…`$N`, `$@`, `$ARGUMENTS`, `${N:-default}`,
+  `${@:-default}` (and `${ARGUMENTS:-default}`), `${@:N}`, `${@:N:L}`. One regex over the template, so
+  an argument that happens to contain `$1` is never substituted into.
+- `argument-hint` in the frontmatter is shown in the completion list; only a YAML string is read.
+- A built-in command is tried **first**, so a `help.md` somebody forgot cannot shadow `/help`.
+- `arguments()` walks bytes where upstream walks code units — the same answer, because the quotes,
+  space and tab it looks for are all below 0x80.
 
-**Audited against its 216 upstream lines difference by difference, and it found no bug** — which
-is worth the words only with the list attached, since four of the nine differences had no reason
-written beside them and now do. Five already did: the byte walk in `arguments()` (the same answer
-as upstream's code-unit walk, because the four characters it looks for are all below 0x80),
-`str_replace` for `$@` rather than `String.replace` (whose replacement treats `$&` and `$1` as
-special, so an argument spelled `$&` would insert the match), dotted names skipped (upstream
-recurses into a `.git` in a commands folder), `expand()` answering **null** rather than the text it
-was given, and `is_readable()` where upstream wraps the read in a `try`.
-
-The four that did not, all now on the code:
-
-- **The frontmatter key pattern is `Skills`', not this file's upstream** — `skills.ts` matches
-  `\w[\w-]*` and `slash-commands.ts` only `\w+`, so **upstream has two answers to one question**,
-  and a hyphen in a key is ordinary (`allowed-tools`). Nothing reads such a key yet, so the two
-  behave alike today; taking the wider one in both places is what keeps that from being luck.
-- **CRLF is normalised once at the top**, where upstream survives it by accident and then leans on
-  `.trim()` per value.
-- **`scandir()` sorts and `readdirSync` does not**, and the first of two same-named commands wins —
-  so without it, which file answers `/review` could differ between two machines.
-- **`firstLine()` trimmed in one of its two branches.** Invisible, because the body is trimmed one
-  method away, so the first line with anything on it cannot start with a space. Trimmed once now:
-  *a rule that holds because of a `trim()` somewhere else is a rule that breaks when that
-  somewhere else changes* — the same thing `SessionManager::opening()`'s test exists to say.
+### Skills, prompts and themes are resource lists
 
 `Prompt\Skills` is upstream's `core/skills.ts`. A skill is a folder with a `SKILL.md` whose
 frontmatter says what it is for; only the name and description reach the prompt, and the
-instructions are a file the model reads when a task matches. That is what makes many skills
-affordable — a hundred of them cost a hundred lines, not a hundred documents.
+instructions are a file the model reads when a task matches — a hundred skills cost a hundred lines.
 
-Seven roots, in this order: `~/.codex/skills`, `~/.claude/skills`, `.claude/skills`,
-`~/.pi/agent/skills`, `.pi/skills`, `~/.pig/agent/skills`, `.pig/skills`, plus whatever `--skills-dir`
-adds. Someone who wrote a skill once should not have to write it again per agent. The `~/.claude`
-roots are scanned **one level deep** and the others recursively, because a folder per skill is the
-layout there and descending further finds a skill's own examples rather than more skills.
+**Where any of the three is looked for is `PackageManager::resolveLocalResources()`'s**, as it is
+upstream's `resolve()`: the `skills` / `prompts` / `themes` settings (project first), then the
+conventional directories — `<agent-dir>/skills|prompts|themes`, `.pig/skills|prompts|themes` once the
+project is trusted, `~/.agents/skills`, and for a trusted project `.agents/skills` in the working
+directory and each ancestor up to the repository root. `CodingAgent::resources()` puts it together for
+both `session()` and `/reload`: an `-e` package's resources, then those, then the configured packages',
+then `--skill` / `--prompt-template` / `--skills-dir`. **The first skill of a name wins**; a later one
+is `name "x" collision: … is loaded and this one is skipped`, and one file reached through two paths
+(a symlink) is one skill with no warning.
 
-Five of the seven are upstream's. **pi's two are pig's own addition**, and upstream has no reason to
-have them — it *is* pi, so `~/.pi/agent/skills` is the root pig renamed to `~/.pig/agent/skills`. Reading
-pi's as well follows from what pig already does everywhere else: it opens pi's sessions, its
-`auth.json` and its `models.json`. Keeping somebody's conversations and credentials across the move
-and silently dropping their skills is the half-migration that is worse than none. Note the depth:
-`getAgentDir()` upstream is `join(homedir(), ".pi", "agent")`, so a root pointed at `~/.pi/skills`
-would find nothing — there is a test whose only job is to say so.
+- **Each setting is a string list with pi's syntax**: a path, `!glob` to exclude, `+path` / `-path`
+  for one exact file (`Settings::resourceEntries()`). The old `skills` *object* (`enabled`,
+  `ignoredSkills`, the five `enable*` root switches) is reported by `Settings::problems()` and
+  ignored; `enableSkillCommands` is a top-level key.
+- **Other tools' folders are not read**: `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`,
+  `~/.pi/agent/skills`, `.pi/skills` and pi's theme directories are gone. Upstream reads none of them;
+  somebody who wants one names it in `skills`.
+- `disable-model-invocation: true` keeps a skill out of the prompt; `/skill:name` still reaches it.
+- **A `SKILL.md` without a description is skipped with a warning** — it is the only thing the model
+  sees. Any other `.md` without one is skipped silently: a stray README is not a broken skill. The name
+  is not compared with the folder's, as upstream does not compare it.
 
-**Each of the five another tool owns can be turned off on its own**, under upstream's own key names:
-`skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
-`enablePiProject`. The developer's call, and the case for it is the one `ignoredSkills` cannot serve —
-a large `~/.claude/skills` that does not belong in front of the model, without naming every skill in
-it. Three things about the shape:
-
-- **`Skills::load()` takes mechanism, `CodingAgent::session()` holds policy.** The loader's `$roots`
-  switches off *any* root by its source name and knows no settings keys at all, the same way it takes
-  `$ignored` as patterns rather than reading `ignoredSkills` itself. The join between upstream's five
-  key names and the five roots they govern is written once, where the settings are read.
-- **A root that is off is not scanned**, rather than scanned and filtered: it should cost nothing to
-  have, and a malformed skill in a folder nobody asked to read is not worth a warning.
-- **pig's own two roots have no key, and that is a naming problem rather than a missing feature.**
-  Upstream's own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
-  directory and no upstream key is left over for `~/.pig/agent/skills`. Inventing `enablePigUser` would put
-  a key in a settings file that only pig understands — the `models.json` `compat` trade, which this
-  file already argues the other way. `skills.enabled` and `--no-skills` are the switch for those two,
-  `ignoredSkills` for anything narrower.
-
-Regression tests, one per end so the wire is covered rather than the two sides:
-`SkillsTest::testARootAnotherToolOwnsCanBeTurnedOffOnItsOwn` (one case per root, because turning all
-five off at once cannot tell a working switch from a `continue` in the wrong place),
-`testARootThatIsOffIsNotReadAtAll`, `testAnyRootCanBeSwitchedOffHereAndAnUnknownNameIsIgnored`, and
-in `CodingAgentSessionTest` the two that go through a real settings file —
-`testAClaudeRootTurnedOffInTheSettingsIsNotRead` and
-`testThereIsNoSettingThatTurnsOffPigsOwnSkills`. Dropping the `roots:` argument in
-`CodingAgent::session()` leaves every `SkillsTest` case green and turns the end-to-end one red, which
-is the split working as intended.
-
-**Order is precedence, lowest first: a later root overrides an earlier one of the same name.** So
-`pig > pi > claude > codex`, a project folder beats the home one of the same tool, and `--skills-dir`
-beats all of them because it was typed. `SkillsTest` proves the whole chain at once rather than one
-link — four folders, one name, and the pig one is what loads.
-
-**This is the second divergence, and upstream is the other way round.** It keeps the *first* one and
-warns `"skipping this one"`, in this same order — which makes `~/.codex/skills` outrank everything,
-including pi's own skills. Nobody who edits a skill in `~/.pig/agent/skills` expects a copy in another
-tool's folder to be the one that runs, and between two answers to the same name the more specific one
-is right. The override is named in a warning either way, so which of the two files is in effect is
-never a guess: `name taken: "review" overrides the one from ~/.pi/agent/skills/review/SKILL.md`.
-
-One file reached through two roots — `~/.claude/skills` symlinked into `~/.pig/agent/skills` — is still one
-skill and no warning, because the `realpath` check comes first. That is the normal way to keep one
-copy, and it is not an override.
-
-Three things it does that are easy to get wrong:
-
-- **The first root wins, and the loser is named.** Shadowed silently, the second copy looks
-  like a skill that simply does not work.
-- **One file reached through two roots is one skill, not a collision.** Symlinking a folder of
-  skills into another root is a normal way to keep a single copy, so the check is on
-  `realpath()`, not on the name.
-- **A skill with something wrong is still loaded, and still complained about.** A name two
-  characters too long is worth saying and not worth refusing over. The one exception is a
-  missing description: it is the only thing the model sees, so a skill without one could never
-  be chosen and would sit in the prompt as a name nobody can use.
-
-Warnings go to stderr before the UI starts, not into the transcript: a malformed skill is its
-author's problem, and the author is whoever just ran `bin/pig`.
-
-The frontmatter is read a line at a time rather than with a YAML parser. The spec's fields are
-all scalars and pig has no YAML parser to reach for; what this cannot read stays unread, which
-for a nested `metadata:` block means its key and nothing else — and the key is all that is
-validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
+Warnings go to stderr before the UI starts. The frontmatter is read a line at a time (no YAML
+parser), so malformed frontmatter is not refused as upstream refuses it, and the `.gitignore` rules
+upstream applies while walking a skills directory are not ported — both are known gaps.
 
 **All five of upstream's protocols are here.** The fifth took a correction on the way: this
 used to say it "was never a protocol" — that `google-gemini-cli` was Gemini behind a sign-in. It
@@ -2153,7 +2173,12 @@ surface asks for: decided by its first caller.
   because which flags exist is only known then), `getSettings()`, `setModel()`,
   `getThinkingLevel()`/`setThinkingLevel()`, `sendUserMessage()`, `setLabel()`, `getCommands()`, and
   `registerHttpRoute()` — pig's own, with no upstream counterpart because pi-web imports nothing
-  from an extension; it is how the accounts panel left `HttpServer`.
+  from an extension; it is how the accounts panel left `HttpServer`. `registerProvider()` also takes
+  upstream's legacy `(name, config)` form (`Extensions\ProviderConfig`, `ConfiguredApiKeyAuth`): no
+  `models` keeps the provider's models at the new `baseUrl` / `headers`, `models` replaces them (chat,
+  `image` and `classifier` types) until `unregisterProvider()`, `apiKey` is a `ConfigValue`, and
+  `streamSimple` speaks for the models of its `api`. Refused by name: custom `images` / `classifiers`
+  implementation maps, and an `oauth` that is not an `OauthFlow`.
 
 Three things about the move that are not obvious from the diff:
 
@@ -2274,8 +2299,9 @@ Six things about it:
   `testARenewalNobodyElseIsDoingGoesAheadUnderTheLock`.
 - **The order is upstream's**: what was typed, then a stored API key, then a stored OAuth token,
   then the environment. The last step is `Stream::envApiKey()` rather than a second table of
-  variable names — it is upstream's `getEnvApiKey()` and it already knows that
-  `ANTHROPIC_OAUTH_TOKEN` beats `ANTHROPIC_API_KEY`.
+  variable names — it is upstream's `getEnvApiKey()` and it already knows the Anthropic order:
+  `ANTHROPIC_AUTH_TOKEN` (sent as `Authorization: Bearer`), then `ANTHROPIC_OAUTH_TOKEN`, then
+  `ANTHROPIC_API_KEY`.
 - **A renewal that fails is reported, not cleaned up.** Upstream deletes the stored credential
   and carries on to the environment, so one blocked network call throws away a login that was
   perfectly good — and the person finds out by being asked to sign in again for no reason.
@@ -2306,7 +2332,7 @@ Signing in **spawns**, because the paste box parks the fiber it is asked on and 
 running inside the loop's own input callback — suspending there suspends the loop that has to
 deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
 
-**`--no-save` does not apply to credentials.** It means "do not write this conversation down";
+**`--no-session` does not apply to credentials.** It means "do not write this conversation down";
 a stored sign-in is still the way in, and a token renewed during the run has to be kept or the
 next run begins by renewing one that was already replaced.
 
@@ -2322,9 +2348,9 @@ only, never written to `auth.json`. Three things about it, the first two being d
 upstream:
 
 - **It is applied after the model is resolved**, because the provider it belongs to is that
-  model's. Upstream refuses the flag unless a model was named explicitly; pig always resolves
-  one (`--model`, then `PIG_MODEL`, then the settings, then `claude-sonnet-4-5`), so there is
-  nothing to refuse.
+  model's — and, as upstream, it is refused unless a model was named (`--model`, `--provider` with
+  `--model`, or `--models`): `--api-key requires a model to be specified via …`. A key aimed at
+  whatever the settings happen to default to is a key sent to the wrong provider.
 - **An empty value is refused by name.** `api-key` had to go in `Arguments::TAKES_A_VALUE` — a
   key is exactly the kind of thing that does not start with a dash — and an option at the end
   of the line with nothing after it gets `''`. Storing that would put an empty string at the
@@ -2344,42 +2370,51 @@ and the change is that it gains upstream's precedence.
 
 ### Somebody else's endpoint, declared in a file
 
-`CustomModels` is upstream's `core/model-registry.ts` — the half of it that reads `models.json`.
+`CustomModels` is upstream's `core/model-config.ts` and the `models.json` half of
+`provider-composer.ts` (`applyModelsJson()`, `applyModelOverride()`, `modelFromJson()`).
 The other half was already here under other names (`Ai\Models`, `Auth`, `ModelResolver`), which
 is exactly how this one stayed invisible long enough to be the fourth thing the left-out table
 got wrong.
 
 `~/.pig/agent/models.json`, or pi's `~/.pi/agent/models.json` when pig has none — a fallback rather
 than a merge, because one file is what upstream has and somebody who already told pi about
-their box should not have to say it twice. Neither is ever written to. `--no-save` reads
-neither: that flag means the run touches nothing of the person's.
+their box should not have to say it twice. Neither is ever written to. `--no-session` reads it
+too, as upstream's model runtime does, and `/model` reads it again whenever it opens.
 
 Every key is upstream's, so a file written for pi works here unchanged:
 
 ```json
 { "providers": { "my-box": {
-  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
+  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "$MY_BOX_KEY",
   "api": "openai-completions", "authHeader": true, "headers": { "X-Tenant": "acme" },
   "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
-               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
+               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] },
+  "openai": { "modelOverrides": { "gpt-5.5": { "contextWindow": 1050000 } } } } }
 ```
 
-Five things decided here:
+Things decided here:
 
-- **`apiKey` names an environment variable before it is a key.** Upstream's
-  `resolveApiKeyConfig`, and it earns its keep: this is the one config file in pig whose
-  natural contents are a credential, and a file in a repository is a credential in a
-  repository. `authHeader: true` resolves it before putting it in `Authorization: Bearer …`,
-  because a proxy handed the literal string `MY_BOX_KEY` answers 401 and explains nothing.
-- **A built-in always wins a collision.** The table and `find()` are both keyed `provider/id`,
-  so `Models::register()` fills gaps rather than overwriting — a config file able to quietly
-  redefine a shipped model is a bug report nobody could read. A provider with a name of its own
-  collides with nothing, which is the normal case.
-- **`Models::register()` is static, because `Models` is.** Upstream threads a `ModelRegistry`
+- **`apiKey` and every header value is a `ConfigValue`** (upstream's `resolve-config-value.ts`):
+  `$NAME` / `${NAME}` for an environment variable (the entry's `env` first, then the process's),
+  `!command` for a command's stdout, `$$` / `$!` for a literal `$` / `!`, and **anything else
+  literally** — a bare `MY_BOX_KEY` is a key that is those ten letters. A referenced variable that is
+  not set is no value, not the text with a hole in it. The key is resolved per request (a command runs
+  every time, upstream's `resolveConfigValueOrThrow()`); headers when the file is read, because pig's
+  headers are part of the model. `auth.json` keys go through the cached `resolve()`. `apiKey` is
+  optional.
+- **A provider entry may name a provider that exists** — built in or an extension's. Its `baseUrl`,
+  `headers` and `compat` are laid over every model it has; `models` adds a model **or replaces the one
+  with the same id** (a shipped one included, as upstream's does); `modelOverrides` changes fields by
+  id without replacing the list, and an unknown id is ignored. That is `Models::useOverlay()`, a layer
+  over everything else and replaced on each load, so it applies after extension providers and an
+  extension registered later is covered too. A `models` entry defaults `name` to its id,
+  `contextWindow` to 128000 and `maxTokens` to 16384, and takes the provider's `api` / `baseUrl` from
+  its existing models when it says neither.
+- **`Models` is static.** Upstream threads a `ModelRegistry`
   instance through everything; here `--model`, `/model`, restoring a session and `RpcMode` all
   ask `Models` by id, and a model only some of them could see is a model that works until you
   save the conversation. The price is `forgetRegistered()`, which every test that registers has
-  to call.
+  to call. What an extension sees is upstream's facade over it, `ModelRegistry` (`$ctx->modelRegistry`).
 - **Nothing throws and nothing is all-or-nothing.** A bad line loses only itself: the good
   models in the same file still load, the built-ins are untouched, pig still starts, and every
   problem names the file, the provider and the model. That is `Settings`' rule — a file that is
@@ -2609,21 +2644,16 @@ naming because the check was not a grep:
 - **`grep` on a single file still names the file**, because pig passes `--json` as upstream does and
   the filename is in the event. Plain `rg` output would have dropped it for a single path, which is
   what that test exists to catch.
-- **Every one of `skills.test.ts`'s validation claims is pinned**: the folder-name mismatch, 64
-  characters (in characters), the character class, a leading or trailing hyphen, two hyphens in a row,
-  an unknown frontmatter field, the folder name used when the frontmatter has no `name`, and XML
-  escaping. Its filter rules too — `ignoredSkills` is checked before `includeSkills`, so it wins, and
-  an empty `includeSkills` filters nothing. All four settings keys are upstream's key paths.
+- **Every one of `skills.test.ts`'s validation claims is pinned**: 64 characters (in characters),
+  the character class, a leading or trailing hyphen, two hyphens in a row, the folder name used when
+  the frontmatter has no `name`, and XML escaping. (The folder-name-mismatch and unknown-field
+  warnings went when upstream dropped them.)
 - **A `session_compact` event fires after the summary is saved**, which is upstream's *"should include
   entries in compact event after compaction is saved"*.
 
-**One absence was a decision rather than a find, and the decision has since been taken**: upstream's
-five per-root skill switches — `skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`,
-`enablePiUser`, `enablePiProject`, which two of its tests exercise (*"should load from
-customDirectories only when built-ins disabled"*, *"should return empty when all sources disabled and
-no custom dirs"*). pig had `--no-skills`, all seven roots or none, and `ignoredSkills` by name. Five
-switches is new public surface, so it was the developer's to call and the answer was yes; the shape it
-took, and why pig's own two roots still have no key, is in the skills section above.
+The five per-root skill switches upstream once had (`skills.enableCodexUser` and four more) are gone
+here with the roots they governed — upstream reads none of those folders now, and `skills` is a list
+of paths; see "Skills, prompts and themes are resource lists".
 
 ### `tui`'s tests, where the specification was the find
 
@@ -2726,10 +2756,10 @@ in what they typed. So the message now names the cause and the route, and **the 
 end to end rather than asserted** — a `models.json` declaring the model under the `google` provider:
 
 ```
-$ PIG_HOME=… php test/live.php google/gemini-3.8-flash
+$ PIG_CODING_AGENT_DIR=… php test/live.php google/gemini-3.8-flash
 google / gemini-3.8-flash   (reasoning: yes, images: yes)
   NO  text   google returned 403: Host not in allowlist: generativelanguage.googleapis.com
-$ PIG_HOME=… bin/pig --list-models gemini-3
+$ PIG_CODING_AGENT_DIR=… bin/pig --list-models gemini-3
 google  gemini-3-flash-preview  1.0M  65.5K  yes  yes
 google  gemini-3-pro-preview    1M    64K    yes  yes
 google  gemini-3.8-flash        1.0M  65.5K  yes  yes
@@ -2909,8 +2939,9 @@ here and threw `No model configured`, which is safer in one way and unhelpful in
 matters, since upstream's own tests and examples assume an agent that works out of the box.
 
 Two constants rather than a parsed string, so there is one place to change it. **`bin/pig` never
-reaches this**: `CodingAgent::session()` resolves its own model — `--model`, then `PIG_MODEL`, then
-the settings, then `claude-sonnet-4-5` — and calls `setModel()` before anything is sent, so nobody's
+reaches this**: `CodingAgent::session()` resolves its own model — `--model` (with `--provider`), then
+the settings, then `claude-sonnet-4-5`; no environment variable names a model, as upstream reads
+none — and calls `setModel()` before anything is sent, so nobody's
 coding session quietly goes to Google.
 
 `$model` stays nullable and `Agent::prompt()` keeps its `No model configured`, because
@@ -2925,13 +2956,13 @@ lost, not one never chosen.
 no counterpart and needs none: about 35 are re-exports, which an autoloader does, and about 155 are
 `discoverHooks()`, `discoverSkills()`, `loadSettings()` and four more like them — thin wrappers so
 an SDK user need not import from `./internal/…`. pig's loaders were public from the start, so
-`ContextFiles::load()`, `Skills::load()`, `SlashCommands::load()`, `HookLoader::load()`,
+`ContextFiles::load()`, `CodingAgent::resources()` (skills and prompt templates), `HookLoader::load()`,
 `CustomToolLoader::load()`, `Auth::discover()`, `CustomModels::discover()`, `Settings::load()` and
 `SystemPrompt::build()` are already the things to call.
 
 **The remaining ~235 lines were the ones that mattered, and until this they were `bin/pig`'s
 middle.** `create()` above builds the `Agent`; nothing built everything around it. So the resolution
-order — which of `--model`, `PIG_MODEL`, the settings and the built-in default wins, when a thinking
+order — which of `--model`, the settings and the built-in default wins, when a thinking
 level is clamped, which file `--continue` picks, what a broken hook does — existed only as top-level
 script statements, and *a script that ends in `exit()` cannot be called twice*. That is the same
 sentence that made `Cli\Arguments`, `Cli\ModelList` and `Cli\SignIn` classes; this is the fourth
@@ -2945,7 +2976,7 @@ Three rules make it testable, and they are worth keeping when it grows:
 - **Anything fatal throws `CodingAgentError`** with a sentence worth showing as it is. `bin/pig`
   catches it, prints it red and exits 1 — the same refusal reads the same to a terminal, a
   JSON-lines host and a test.
-- **What needs a screen stays with the caller.** `--resume` with no value draws a list, so
+- **What needs a screen stays with the caller.** `--resume` draws a list, so
   `bin/pig` resolves that to a path first; `session()` takes a path or nothing. The theme is the
   caller's too, and so are `Auth` and the custom models — because `--list-models` prints the registry and
   exits, and it has to see a model somebody just declared without a session file being created on
@@ -3016,7 +3047,7 @@ arrangement is the thing to know before reading any of them:**
 - **`resources_discover` is `AgentSession::discoverResources($reason)`**, called by each mode
   straight after it emits `session_start`, and by `/reload` after its `session_start('reload')`.
   Skills from the answered directories go through `Skills::fromDirectories()` (source
-  `extension`, no `ignoredSkills`/`includeSkills` filter) onto `ToolLoadout::addSkills()`, so the
+  `extension`) onto `ToolLoadout::addSkills()`, so the
   prompt names them; prompt templates through `SlashCommands::fromDirectories()` (source
   `(extension)`) into the session's file commands; theme directories into
   `Themes::setExtensionThemeDirs()`. A relative path is resolved against the extension's file. The
@@ -3037,7 +3068,7 @@ arrangement is the thing to know before reading any of them:**
   after `handlePostAgentRun()` found no retry, no overflow and nothing queued, `runBeforeSettleBoundary()`
   runs `HookRunner::emitBoundary()` — each handler handed the drafts and `continue` the ones before
   it settled on, and a `BoundaryContextPreview` built from `SessionManager::preview()` (a clone that
-  appends and writes nowhere; `previewOf()` for `--no-save`) with those drafts applied. An entry
+  appends and writes nowhere; `previewOf()` for `--no-session`) with those drafts applied. An entry
   that cannot be applied throws there, is reported as `Invalid boundary entries`, and the whole list
   appends nothing. Committed drafts go to the store and the agent's state is replaced with what the
   store projects; a `continue` the context cannot carry (ends on the assistant's turn, nothing
@@ -3057,7 +3088,9 @@ arrangement is the thing to know before reading any of them:**
   replaces context, model and reasoning for the rest of the run) — `AgentSession` installs one that
   routes `agent->state->model` when it is virtual, so each request routes again and the selection
   never leaves the state. `VirtualModelRegistry::resolve()` is upstream's `resolveModel()`: physical
-  target with credentials, level clamped with `ThinkingLevel::clampedFor()`. Reasons: `retry` when
+  target with credentials, level clamped with `ThinkingLevel::clampedFor()`. A router is called as
+  `(request, ctx)` with a per-request `HookContext` — upstream's `ctx.sessionManager.getBranch()` is
+  `$ctx->store->branch()`, `ctx.modelRegistry` is `$ctx->modelRegistry`. Reasons: `retry` when
   `$failedResponse` was set by a successful `prepareRetry()`, `user` when a `UserMessage` follows the
   last assistant message, else `continuation`; summaries (`summariseAndSwapIn()`, `branchSummary()`)
   route with `direct` through `directModel()`. Router state is the last `pi.virtual-model-state`
@@ -3188,6 +3221,43 @@ in-process and can already call `exit()` or reach anything by reflection, so wit
 idempotent and always closes, a factory that returns something that is not a `Component` is
 refused *and* releases the one-at-a-time latch, and a component that never calls `done()` and
 ignores escape parks the turn — which nothing here can prevent, because it holds the keys.
+
+### `SYSTEM.md`, `APPEND_SYSTEM.md` and the two flags
+
+`Prompt\SystemPromptFiles` is the part of upstream's `DefaultResourceLoader.reload()` that settles
+`getSystemPrompt()` / `getAppendSystemPrompt()`. `SYSTEM.md` replaces pig's default prompt (role, tool
+list, rules — the context files, skills and directory still follow); `APPEND_SYSTEM.md` is added after
+whichever prompt that leaves. Each is looked for in the **trusted** project's `.pig/` first, then the
+agent directory; the first found wins and the two are never combined. A missing or empty file leaves
+the default. `--system-prompt` and `--append-system-prompt` (repeatable) are
+`CodingAgent::session(systemPrompt:, appendSystemPrompt:)` and are used **instead of** the discovered
+file; a value that is an existing path is read as a file, anything else is the text. Not done:
+`/reload` does not re-read them.
+
+Context files are upstream's too (`Prompt\ContextFiles`): the agent directory's, then one per
+directory from the root down to the working directory, each the first of `AGENTS.override.md`,
+`AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`; inside a linked git worktree nested in its main
+checkout, the main checkout's copy is left out (`findShadowedContextFile()`).
+
+### A session carries on in its own directory
+
+Resuming another project's conversation — `--session`, the picker's all-projects scope, `/import`,
+RPC's `switch_session` — carries on **in the directory its header names**, as upstream's
+`switchSession()` does. Everything bound to a directory (tools, context files, `SYSTEM.md`, the
+project's settings, trust, hooks, extensions) belongs to that directory, so:
+
+- **`bin/pig` chooses the session before trust, settings and extensions** and builds the runtime for
+  the session's cwd. Inside a running session, `AgentSession::switchTo($path, $cwdOverride, $relocate)`
+  disposes this session and calls the caller's runtime factory (`$createRuntime`, built around
+  `CodingAgent::session()`); `SessionSwitch::$replacement` is the new one, and `InteractiveMode`
+  `rebind()`s to it, as `RpcMode` does for `switch_session`. A switch within the same directory stays
+  in place, and so does a library caller with no factory.
+- **A directory that has gone is not quietly replaced** (`Session\SessionCwd`, upstream's
+  `session-cwd.ts`): `MissingSessionCwdError` is thrown before anything is torn down; a terminal asks
+  "continue in current cwd" (`Cli\StartupSelector` at startup) and retries with `$cwdOverride`
+  (`SessionManager::open($path, $cwdOverride)`); anything else exits 1 with upstream's
+  `Stored session working directory does not exist: …`. Cancelling says `Resume cancelled` /
+  `Import cancelled`.
 
 ### A hook with something to say
 
@@ -3563,8 +3633,14 @@ guard against `$tools->bash()` inside `parallel_settled()` and reads the refusal
 `codemode`-exposed MCP tool is the exception by design: it is **not on the agent at all** (the model
 must not see it), so the MCP extension puts it in `Pig\Codemode\Registry` and the codemode tool
 calls it from there. The registry is static for `Models::register()`'s reason — two extensions in
-either load order have to see one list — and registering into it is what activates codemode, which
-is upstream's `ensureDiscoveryActive()` with the active-set machinery pig does not have.
+either load order have to see one list — and registering into it is what activates codemode
+(upstream's `ensureDiscoveryActive()`: it only ever activates, never deactivates).
+
+**codemode is registered inactive, as upstream's (`defaultActive: false`).** `CustomTool::$defaultActive`
+is upstream's `ToolDefinition.defaultActive`; `ToolLoadout::isActivatedByDefault()` keeps such a tool
+off unless the run named it (`useNamed()`): an entry of `--tools` matching it by name or pattern, or
+the resolved `defaultTools` list with its `+name` modifiers. So `--tools read,codemode`, `--tools
++codemode` and `"defaultTools": ["+codemode"]` turn it on; there is no `codemode.enabled`.
 
 **A tool with something to say in the system prompt can say it now.** Upstream's `promptSnippet`
 and `promptGuidelines` were not ported — the paragraph on custom tools above says "the system
@@ -3600,12 +3676,15 @@ script (a second parameter of the eval'd function, `__CodemodeModels` bridging t
 `Models::findOfType()`/`classify()`/`generateImages()`, upstream's context checks word for word
 (pig's `ClassifierContext` has no images, so `images` is refused by name), a four-slot limiter on
 `Deferred`s, one call row per model call with its cost, and the combined usage on the result's
-`details` because `AgentToolResult` has no `usage` field — the one piece upstream puts on the
-session's bill that pig does not. **`codemode.mode: on|only`** is `CustomTool::$prepareLoadout`
+`usage` (see (1) below). **`codemode.mode: on|only`** is `CustomTool::$prepareLoadout`
 (upstream's `ToolDefinition.prepareLoadout`), asked by `ToolLoadout::apply()` after the hook wrap
 with the whole active list: it answers descriptions (`DescribedTool` is the tool with its
 description replaced, a decorator for `HookedTool`'s reason) and names to hide from the agent.
-`on` appends `Codemode: $tools->x([...]) resolves to a string.` to every declared tool; `only`
+`on` appends `Codemode: $tools->x([...]) resolves to …` to every declared tool — upstream's
+`describeOutput()` of the tool's `outputSchema`: "a string" without one, the field list for an object
+(`bash`'s `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`). A call to a tool
+with an output schema resolves to its `structuredContent`, an error result included (upstream's
+`toScriptValue()`); `only`
 hides them all and lists them in codemode's description instead — and the extension **keeps the
 list it was handed** (`$callable`), which is the only way a hidden tool is still reachable from a
 script. **`describe_namespace()`** and `search_tools()`'s namespace filter go through
@@ -3629,7 +3708,9 @@ sandbox). (1) **A tool's usage is billed.** `AgentToolResult` and `AgentError` c
 $usage` (upstream's `AgentToolResult.usage`), `AgentLoop::toolResult()` puts it on the
 `ToolResultMessage` (a new last constructor parameter, written and read by `MessageJson` as
 `usage`, kept by `SessionManager`'s content rewrite), and `AgentSession::stats()` sums tool
-results beside assistant messages — upstream books it under "Tools/summaries". Codemode returns
+results beside assistant messages — upstream books it under "Tools/summaries", and `/session` shows
+one cost line per physical model plus that line (`UsageCostBreakdown`, upstream's
+`getUsageCostBreakdown()`). Codemode returns
 its `$models->*` usage, and what a nested tool reported, as that; `details.usage` stays for the
 RPC port. The `AgentError` field is why a *failed* script still bills what it spent before
 failing. (2) **Classifiers take images.** `ClassifierContext::$images` (a list of `ImageContent`)
@@ -3669,7 +3750,7 @@ The eleven were ten `AntigravityCatalogTest` cases and
 them green in the container and red on the one machine that has run the extension for real.
 `AntigravityCatalogTest` set `PI_HOME` alone, and `Catalog::read()` looks at **pig's own**
 `~/.pig/agent/models-store.json` first, so the Mac's real sixteen-model catalog answered where the
-fixture's one model was expected; the refresh case set `PIG_HOME` alone, so `Auth` read the real
+fixture's one model was expected; the refresh case set `PIG_CODING_AGENT_DIR` alone, so `Auth` read the real
 `~/.pi/agent/auth.json`, found a key, and the "no credentials" command refreshed for real — the
 `WARNING … no endpoint available` line in the run's output is that request. *The same shape as
 the `fd` tests that passed only where pig had never fetched one*: a test that isolates one of two
@@ -3843,23 +3924,26 @@ not run that repository's hooks because there was no terminal to refuse on.
 
 Four things pig's arrangement decided:
 
-- **It is asked before `Settings::load()`**, because `.pig/settings.json` is one of the six things
-  being asked about (`shellPath` names what every command runs in). So `bin/pig` resolves it first
+- **It is asked before `Settings::load()`**, because `.pig/settings.json` is one of the things
+  being asked about (`ProjectTrust::RESOURCES`: `settings.json`, `mcp.json`, `hooks`, `tools`,
+  `extensions`, `skills`, `prompts`, `themes`, `SYSTEM.md`, `APPEND_SYSTEM.md`, plus a top-level
+  `extensions/` and `.agents/skills` here or in any ancestor — upstream's list, with pig's `hooks` and
+  `tools` kept and its old `commands` gone; `shellPath` names what every command runs in). So `bin/pig` resolves it first
   and the prompt's palette comes from the person's own settings alone — `Settings::load($cwd,
   projectTrusted: false)` — since the project's are exactly what is not yet allowed in.
 - **The prompt is `Cli\TrustPrompt`, a `SessionPicker`-shaped screen** started and stopped inside
   the call, because the question gates what `CodingAgent::session()` may `require` and so cannot be
   asked from inside the session it gates. Upstream asks through its extension UI context during a
   two-pass bootstrap; pig has no screen at that point and this is the one.
-- **One flag, five loaders**: `projectTrusted` on `Settings`, `HookLoader`, `CustomToolLoader`,
-  `ExtensionLoader` (both of its project roots) and `SlashCommands`, plus `Skills`' `project` root
-  through the switch it already had. Each one *does not open* the directory, rather than reading
-  and discarding — a broken `.pig/settings.json` in an untrusted project is not even a complaint.
-  `ProjectTrustGatesTest` has one case per loader, because a gate on four of five is the first
-  shape from the index, and a single assertion over all five cannot say which one is open.
+- **One flag, every loader**: `projectTrusted` on `Settings`, `HookLoader`, `CustomToolLoader`,
+  `ExtensionLoader` (both of its project roots), `PackageManager::resolveLocalResources()` (skills,
+  prompts, themes, the ancestors' `.agents/skills`) and `SystemPromptFiles`. Each one *does not open*
+  the directory, rather than reading and discarding — a broken `.pig/settings.json` in an untrusted
+  project is not even a complaint. `ProjectTrustGatesTest` has one case per loader, because a gate on
+  four of five is the first shape from the index.
 - **Not gated**: `AGENTS.md`/`CLAUDE.md` (text the model reads, not code pig runs — upstream does
-  not gate them either), `.claude/skills` (another tool's folder, and gating it would prompt in
-  every repository that has one), and `--list-models`/`--export`, which print and exit without
+  not gate them either), the person's own `~/.agents/skills` even when the working directory is the
+  home directory, and `--list-models`/`--export`, which print and exit without
   loading anything of the project's and so are not asked.
 
 `/trust` saves a decision for *next* time and says to restart: what was `require`d cannot be
@@ -3879,7 +3963,13 @@ hook prints the warning on stderr, the answer on stdout, and loads no hook.
 A turn can fail for a reason that undoes itself — the provider is busy — or for a reason the
 *next* request can fix: the conversation outgrew the window. `AgentSession` handles both,
 after the run ends, from `handlePostAgentRun()` in `runAgentPrompt()`'s post-run loop —
-`prepareRetry()` for the first, `compactForOverflow()` for the second.
+`prepareRetry()` for the first, `checkCompaction()` → `runAutoCompaction('overflow')` for the second.
+`checkCompaction()` is upstream's `_checkCompaction()` and also covers the threshold: it runs after
+every run and before every prompt, in every mode, so the terminal no longer
+decides on its own when to compact. An overflow is compacted and retried **once**
+(`overflowRecoveryAttempted`); a second overflow ends as `compaction_end` with upstream's
+`Context overflow recovery failed after one compact-and-retry attempt…` and `session_compact_failed`.
+Nothing is announced when `prepareCompaction()` finds nothing to cut.
 
 Which one it is, is decided by what the provider said, and the two are mutually exclusive on
 purpose: upstream's `_isRetryableError()` answers false for an overflow however retryable the rest
@@ -3905,8 +3995,9 @@ and Xiaomi MiMo cuts the prompt to fit and stops `length` with nothing written. 
 throttling message is never an overflow, whatever tokens it mentions (`NON_OVERFLOW_PATTERNS`). **A pattern with no example beside it is a guess**, and a guess here
 compacts a conversation that was fine.
 
-The four events are `RetryStartEvent`, `RetryEndEvent`, `AutoCompactionStartEvent` and
-`AutoCompactionEndEvent`, and they implement `Pig\Agent\AgentEvent` so they reach the
+The four events are `RetryStartEvent`, `RetryEndEvent`, `CompactionStartEvent` and
+`CompactionEndEvent` (each with a `reason`: `manual`, `threshold` or `overflow` — one pair for every
+compaction, where the old `AutoCompaction*` pair was overflow-only), and they implement `Pig\Agent\AgentEvent` so they reach the
 listeners that are already there — `AgentEvent`'s docblock says why an event from above the
 loop is on the loop's stream. Each mode draws them as it likes: the terminal turns a retry into
 a loader that names the error and counts down, `--mode json` and RPC encode them through
@@ -3967,14 +4058,15 @@ be turned off the obvious way.
 
 ### Three ways in
 
-`bin/pig` picks one, by upstream's rule: **`--mode` given at all means no terminal, and `-p`
-is the short way of saying `--mode text`.** So the terminal is what you get when neither was
-said, and nothing has to ask for it.
+`bin/pig` picks one by upstream's rule (`Arguments::appMode()`): **`--mode json|rpc|web|mcp` is that
+mode; `-p`, or a standard input or output that is not a terminal, is print mode; anything else is
+the TUI** — `--mode text` on a terminal included. So the terminal is what you get when nothing
+else was said, and `git diff | pig "review"` prints.
 
 | | What comes out | Ported from |
 |---|---|---|
 | terminal (the default) | a TUI | `modes/interactive/` |
-| `-p` / `--mode text` | the last answer, on stdout | `modes/print-mode.ts` |
+| `-p`, or no terminal | the last answer, on stdout | `modes/print-mode.ts` |
 | `--mode json` | every event as a JSON line | the same file, its `"json"` branch |
 | `--mode rpc` | JSON lines out, commands in | `modes/rpc/` |
 | `--mode web` / `/web` | a browser chat UI | `Web\WebMode` (Workerman-inspired HTTP/SSE) |
@@ -4094,14 +4186,14 @@ seam: the pieces for pi-web's shape already exist and the pieces for same-proces
 
 | pi-web needs | pig has |
 |---|---|
-| a `--mode rpc` child | `RpcMode`, 27 commands, pi's wire format |
+| a `--mode rpc` child | `RpcMode`, upstream's commands and wire format |
 | a client that spawns it and matches responses by id | **`Rpc\RpcClient`** — it is `rpc-client.ts`, and `RpcClientTest` already starts `bin/pig` |
 | HTTP + WebSocket | `HttpServer`, `TcpConnection`, `Protocols\Websocket` |
 | a pool keyed `cwd::sessionFile` with idle reaping | **the one new piece** |
 
 So the web mode becomes the shell: `HttpServer` holds `array<string, RpcClient>` rather than an
 `AgentSession`, each WebSocket connection is bound to one key (pi-web's `socketBindings`), events are
-forwarded from a child's stdout to its connections, and `hook_ui_request` is routed per session.
+forwarded from a child's stdout to its connections, and `extension_ui_request` is routed per session.
 Three consequences that are the point rather than side effects: the TUI and every web session are
 separate processes, which is the "TUI handles one session" the developer named; two tabs can run
 two turns at once; and because pig's rpc protocol *is* pi's, this shell drives `pi --mode rpc` and
@@ -4174,11 +4266,11 @@ Three things about it:
 
 - **It runs before the mode exists**, on a `TuiMainScreen` it starts and stops inside the call, so what
   comes back is an ordinary return value and the session is opened by the same code that
-  opens a `--resume <path>`.
-- **Escape means "start a new one", not "stop".** Someone who opened the list and changed
-  their mind still wanted pig; refusing to start would only make them type the command again.
-- **Only with a terminal.** In `--mode text|json|rpc` there is nobody to ask, so a bare
-  `--resume` stays the error it was — a clearer one now, naming what is missing.
+  opens a `--session <path>`.
+- **Escape is upstream's "No session selected" and an ordinary exit 0.** pig used to start a new
+  session on Escape; upstream's answer is the one a script around pig can predict.
+- **Only with a terminal.** Without one there is nobody to ask, so `--resume` is an error naming the
+  way that works: `--resume needs a terminal to choose on. Use --session <path|id>.`
 
 **Ctrl+C is the third answer, and it went missing because there were only two.** `ask()` handed
 back a `?string`, so the two keys that leave the list with nothing chosen had one value between
@@ -4191,20 +4283,27 @@ a third callback that calls `process.exit(0)`, which a class here cannot do and 
 instead. `SessionList::setQuitHandler()` is that third callback, and a search box with a
 half-typed query in it does not hold on to anybody: ctrl+c is the list's whichever way.
 
-Upstream's selector has a third key, delete. Not ported: a session file is a record of
-something that happened, and a list you move through with the arrow keys is the wrong place
-for an irreversible key.
+Upstream's selector has a delete key too, and it is ported (`app.session.delete`, ctrl+d):
+it asks first, refuses the session being talked in, and moves the file to the trash when a `trash`
+command is there, `unlink()` otherwise — so a slip of the key can usually be undone.
 
 ### Finding the one you want
 
 Thirty conversations under one project, each named by whatever its first line happened to be,
-and the arrow keys as the only way through them. So `Cli\SessionList` has a search box over
-the list, which is upstream's `SessionList` and the half of `session-selector.ts` that pig
-borrowed `SelectList` for instead.
+and the arrow keys as the only way through them. So `Cli\SessionList` is upstream's
+`session-selector.ts` — header, list and search box in one component, drawing its own rows (a fork
+tree needs a prefix per row).
 
-**The keys divide in two and nothing switches between them**: up, down, Enter, Escape and
-Ctrl+C belong to the list, and *everything else is typing*. A search box you have to tab into
-is a search box nobody finds, and there is no focus to lose this way.
+**Typing is always the search**, and the list's own keys are keybinding ids, so there is no focus to
+lose: up/down/page keys and Enter move and open, Escape is "not this session" and Ctrl+C "not pig";
+`tui.input.tab` switches between this folder's sessions and every project's; `app.session.toggleSort`
+(ctrl+s) cycles threaded → recent → fuzzy; `app.session.toggleNamedFilter` (ctrl+n) keeps named
+sessions only; `app.session.togglePath` shows paths; `app.session.rename` (ctrl+r, only from
+`/resume`, which has a rename handler) and `app.session.delete` (ctrl+d — confirmed, the current
+session refused, trash before unlink). The query language is `Cli\SessionSearch`, upstream's
+`session-selector-search.ts`: fuzzy words, a `"quoted phrase"`, or `re:<pattern>` (one that does not
+compile matches nothing). At startup Escape is upstream's `No session selected`, exit 0, and the
+list opens even when this project has no sessions, because Tab can still reach the others.
 
 **`/resume` from inside a session shows this same list**, and for a while it did not. It built its
 own rows into a plain `SelectList` — so the searchable list existed, was already ported, and was
@@ -4214,7 +4313,8 @@ session than at startup, not better: the overlay is eight rows tall. Escape and 
 the overlay there — the distinction `bin/pig` needs has nothing to answer inside a running
 session, where the conversation is still behind the overlay either way.
 
-What it matches is `SessionInfo::$text` — upstream's `allMessagesText`, every text block of
+What it matches is the id, the name, the working directory and `SessionInfo::$text` — upstream's
+`allMessagesText`, every text block of
 every user and assistant message run together, collected by `SessionManager::describe()` while
 it is already walking the file for the count. Three things are left out of it and each matters:
 **thinking**, because it is the model talking to itself and a hit on it finds a conversation by
@@ -4287,11 +4387,8 @@ provider column already answers. Widths are measured from the values, so `google
 does not push every row after it out of line, and the last column is trimmed so no row ends in
 spaces.
 
-`--list-models` became a value-taking option to get there, which is the thing `Arguments`' docblock
-warns about — an option that eats the next word. It is safe here for a reason worth writing
-down rather than assuming: `--list-models` prints and exits, so there is no prompt left for it to
-eat. `--resume` is the same shape and was the precedent: a value opens that one, nothing opens
-the list.
+`--list-models` is on neither of `Arguments`' lists: it takes a search only when one follows,
+upstream's rule, and it prints and exits, so there is no prompt left for it to eat.
 
 `FakeTerminal::queue()` was added for its test. A component that starts its own loop and
 blocks until it is answered has no "after the call" to type into, so the keys go in first and
@@ -4299,109 +4396,92 @@ arrive through `Loop::defer()` once the screen is open — which is also what a 
 does with whatever was in its buffer when the program took it over, and it keeps the loop
 from deciding it has nothing to do and returning before anybody has typed.
 
-The five short options are upstream's: `-c`, `-h`, `-p`, `-r`, `-v`. **A short option is an
-abbreviation and nothing else** — it resolves to its long name and then goes through the same
-handling, which is what keeps `-r path` and `--resume path` from coming to mean different
-things. The first version gave every short option an empty value, which would have read that
-path as a message; see the trap below.
+The short options are upstream's, every one (`Arguments::SHORT`, the two- and three-letter ones
+included). **A short option is an abbreviation and nothing else** — it resolves to its long name and
+then goes through the same handling, which is what keeps `-t list` and `--tools list` from coming to
+mean different things; see the trap below.
 
-One place pig's flags are not upstream's: **upstream's `--resume` takes no value at all** and
-always shows the picker. pig's takes an optional path, because `--resume <file>` existed here
-before the picker did and a flag that used to work should keep working. The cost is that
-`--resume "fix the bug"` reads the prompt as a path — which fails loudly, naming what it tried
-to open, rather than quietly.
+`--resume` takes no value, as upstream's: it always shows the picker, and `-r` with no terminal is an
+error. A particular conversation is `--session <id|path>` — an id prefix or a path, this project's or
+another's (another project's is offered as a fork into this one, `[y/N]`, on standard error when
+nothing can answer) — `--session-id <id>` opens that exact id or creates a session with it, and
+`--fork <id|path>` copies one into a new file here (`SessionManager::locate()`, `forkFrom()`).
 
 `Cli\Arguments` is upstream's `cli/args.ts`, and it lives in the package rather than in
 `bin/pig` for one reason: a script that calls `exit()` cannot be called twice by a test, and
 the parser now has something worth testing. See the trap below about the flag that ate the
-prompt. `--` ends the options, and everything after it is a message exactly as written — not
-an option for starting with a dash, not a file for starting with an `@`. It is the only way to
-say either, and half an escape hatch is not one.
+prompt. `--` ends the options, and everything after it is positional — a message even when it starts
+with a dash, and still a file when it starts with an `@`, as upstream's. Piped standard input is
+part of the first message (`Cli\InitialMessage`: standard input, then the `@file` text, then the
+message).
 
 ### RPC mode — the second way in
 
-`Rpc\RpcMode` is `bin/pig --rpc`: JSON lines on standard input, JSON lines on standard
-output, no terminal at all. Three kinds of line come out — a `response` to a command, an
-`event` as the agent works, and a `hook_ui_request` when a hook wants to ask something — and
-`id`, when a command carries one, is echoed on its response so a host can match them up.
+`Rpc\RpcMode` is `bin/pig --mode rpc`: JSON lines on standard input, JSON lines on standard
+output, no terminal at all. Three kinds of line come out — a `response` to a command, an event as
+the agent works, and an `extension_ui_request` when a hook wants to ask something — and `id`, when
+a command carries one, is echoed on its response.
+
+**The wire is upstream's**, every command, field, response and event name (`rpc-types.ts`,
+`rpc-mode.ts`, `json-event.ts`), so a client written against `pi --mode rpc` drives pig unchanged.
+pig used to have its own dialect (`hook_ui_request`, `get_branch`, `go_to`, `export`,
+`auto_compaction_*`, full-message updates) that no upstream client could talk to; it was replaced
+outright, with no compatibility layer. pig's additions are additive and
+named: extra `get_state` fields a web tab draws, `navigate_tree`, and four commands the web shell
+needs from its child (`doctor`, `diff`, `bug`, `export_markdown`).
+
+- **Commands** are upstream's set: `prompt` (with `streamingBehavior`; answered **once**, with
+  `{disposition}`, when it is known what became of the prompt), `steer` / `follow_up` (images,
+  `disposition`; a hook command is refused there), `abort`, `clear_queue`, `new_session`
+  (`parentSession`), `get_state`, `set_model`, `cycle_model`, `get_available_models`,
+  `set_thinking_level` (clamped to the model, as `AgentSession::setThinkingLevel()` clamps),
+  `cycle_thinking_level`, `get_available_thinking_levels`, `set_steering_mode`,
+  `set_follow_up_mode`, `compact` (returns the `CompactionResult` with `estimatedTokensAfter`),
+  `set_auto_compaction`, `set_auto_retry`, `abort_retry`, `bash` (`excludeFromContext`), `abort_bash`,
+  `get_session_stats`, `export_html`, `switch_session`, `fork`, `clone`, `get_fork_messages`,
+  `get_entries` (since a cursor), `get_tree`, `get_last_assistant_text`, `set_session_name`,
+  `get_messages`, `get_commands`. `navigate_tree {targetId, summarize, customInstructions,
+  replaceInstructions, label}` answers `{cancelled, aborted?, editorText?, summaryEntry?}` — pig's, under
+  the name and shape upstream's SDK method has.
+- **Events**: `message_update` carries `{usage, assistantMessageEvent}` with deltas only
+  (`text_delta`, `toolcall_start/delta/end` …), never the whole message so far; tool events carry
+  `args` / `partialResult`; `agent_settled`, `queue_update`, `entry_appended` and
+  `thinking_level_changed` are emitted; `auto_retry_start/end`; `compaction_start/end` for manual,
+  threshold and overflow alike; `bash_execution_update` streams a `bash` command's output.
+  `--mode json` writes the session header first.
+- **Extension UI**: `extension_ui_request` / `extension_ui_response`, a UUID `id` on every request,
+  `setStatus` / `setWidget` / `setTitle` and `notify` (`notifyType`) told rather than asked, widget
+  placement `aboveEditor` / `belowEditor`, `pasteToEditor` as `set_editor_text`. The TUI-only calls
+  (`setWorkingMessage()` and the rest) send nothing, as upstream's do. A dialog `timeout` is honoured
+  by every `HookUi` (the terminal counts it down).
+- **Errors**: every failure is a `success: false` response rather than a disconnection; a line that
+  is not JSON is `Failed to parse command: …`; a trailing CR is stripped. A broken extension is
+  `extension_error {extensionPath, event, error}`; a custom tool that failed to start is pig's
+  `tool_error`.
 
 **Standard input goes on the same loop as the model's socket**, through `Loop::onReadable()`.
-That is the whole reason this mode could not have been written before the hook dialogs were:
-`RpcUi` is `HookUi` over the wire, and a hook calling `confirm()` parks its fiber on a
-`Deferred` exactly as it does in the terminal — the line that resumes it is a
-`hook_ui_response` instead of a keystroke. `readline()` on standard input would have blocked
-the loop that has to deliver it.
+`RpcUi` is `HookUi` over the wire: a hook calling `confirm()` parks its fiber on a `Deferred` exactly
+as it does in the terminal, and the line that resumes it is an `extension_ui_response` instead of a
+keystroke. `readline()` would have blocked the loop that has to deliver it. A host may answer several
+questions in any order, so there is no "one thing in the overlay at a time"; `custom()` returns null
+because there is nothing to draw a `Pig\Tui\Component` on.
 
-Three things differ from `TerminalUi`, all because the other end is a program:
+Messages go out through `SessionCodec`, so a host reading `get_messages` and a `--continue` reading
+the file see the same shape. `RpcEvents` is the one place the wire shape of an agent event is
+written down: upstream calls `JSON.stringify(event)`, which also means a field rename there changes
+the protocol silently — so a rename upstream is a rename here (`RpcModeTest` pins the shapes).
 
-- **Every question has an id**, because a host may answer three of them in any order.
-- **There is no "one thing in the overlay at a time".** The terminal refuses a second question
-  because it would steal the keyboard from the first, and refuses one arriving while a picker
-  is open for the same reason; a host has no keyboard to steal and no screen to lose.
-- **`custom()` returns null and `getEditorText()` returns `''`.** The first builds a
-  `Pig\Tui\Component` and there is nothing to draw it on; the second reads an editor that
-  belongs to the host. Upstream leaves both out of its RPC context for the same reasons.
+`rpc-client.ts` **is** ported, as `Rpc\RpcClient`, with upstream's method names (`getState()`,
+`getAvailableModels()`, `exportHtml()`, `getTree()`, `getEntries()`, `getCommands()`, `clone()`, …);
+`waitForIdle()`, `collectEvents()` and `promptAndWait()` wait for `agent_settled`, and the web
+`SessionPool` takes a tab as idle there too. `rpc-types.ts` is not ported as types: its unions
+describe JSON that arrived from outside the process, which a static type cannot check, and the host
+at the other end is deliberately not PHP. The runtime checks in `RpcMode` are the contract, and a
+class per command would need the same checks to construct itself. Typing `RpcClient`'s
+`array<string, mixed>` returns would help a PHP host, and is not done because no defect has been
+traced to their absence.
 
-Messages go out through `SessionCodec`, the encoder the session file already uses, so a host
-reading `get_messages` and a `--continue` reading the file see the same shape. `RpcEvents`
-is the one place the wire shape of an agent event is written down: upstream calls
-`JSON.stringify(event)` and is done, because its events are plain objects, which also means a
-field rename there changes the protocol silently.
-
-`rpc-client.ts` **is** ported, as `Rpc\RpcClient`. `rpc-types.ts` is not, and the reason is worth
-more than one line because "PHP has no named union type" is the weakest of the reasons and the one
-that comes to mind first.
-
-Its 203 lines are `RpcCommand` (24 object shapes discriminated on `type`), `RpcSessionState` (one
-interface of ten fields), `RpcResponse` (24 more shapes plus an error arm), the two hook-UI unions,
-and `RpcCommandType = RpcCommand["type"]`. In PHP that is about sixty readonly classes, a
-`@phpstan-type` alias for each union — the trick `Context` already uses for the Message union — and
-one string-backed enum.
-
-**The hard reason is that all of it describes JSON that arrived from outside the process.** A static
-type cannot check a byte that came over a pipe, and the host at the other end is deliberately not
-PHP — that is what the mode is for. So the runtime checks stay either way: `RpcMode::text()` throws
-`'message' is required and must be a string.` today, and a class per command would need that same
-check to construct itself before `dispatch()` could switch on a class instead of a string. Same
-checks, sixty more classes. Upstream gets value from the union because **its host is TypeScript too**,
-so the union is a contract both ends share at compile time; pig's host shares nothing but the bytes.
-
-Two things would be real, and neither is a port of this file:
-
-- **`RpcCommandType` as a string enum** would be *better* than the TypeScript it came from, because a
-  PHP enum exists at runtime: `tryFrom()` replaces a `match` arm that throws. What it buys is one
-  list of command names instead of two — `RpcMode`'s `match` and `RpcClient`'s methods. What it does
-  **not** buy is catching the mistake that actually happened: `RpcClient` sent `path` where the wire
-  wants `sessionPath`, and that is a *field* name, which no command enum touches.
-- **Typing `RpcClient`'s eleven `array<string, mixed>` returns** — `state()`, `bash()`,
-  `sessionStats()`, `compact()` — would help a PHP host, at a real boundary, with types that can
-  actually be guaranteed because the client is the one decoding.
-
-Neither is done, and the reason is the standard the rest of this document is held to: **no defect has
-been traced to either.** Every other item ported late in this port was justified by a reproduced
-failure. The only caller of those eleven methods today is `RpcClientTest`; designing types for a PHP
-host that does not exist yet is the work this project keeps declining to do. When there is one, its
-needs decide the shapes.
-
-**Six of upstream's commands are absent**, and the reasons divide in three:
-
-| Upstream command | Why not |
-|---|---|
-| `queue_message` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace it, rather than guessing which one a `queue_message` meant. **`set_queue_mode` used to be on this row and did not belong**: the split is about queuing a message and says nothing about the mode — see the trap below |
-| `cycle_model` | `get_available_models` and `set_model` are what it is made of |
-| `export_html` | it is `export` here, and it honours `outputPath` |
-
-Twenty-eight commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
-`get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
-`set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
-`set_auto_retry`, `abort_retry`, `set_steering_mode`, `set_follow_up_mode`, `bash`, `abort_bash`, `get_branch`, `go_to`,
-`new_session`, `switch_session`, `fork`, `clone`, `get_fork_messages` and `export`.
-
-Every failure is a `success: false` response rather than a disconnection: a host asking for
-something impossible should be told, not dropped. Warnings that the interactive mode would
-draw on screen — a broken hook, a custom tool that failed to start — go out as `hook_error`
-and `tool_error` lines, and everything `bin/pig` prints before a mode starts already went to
-standard error, which is what keeps standard output the protocol's alone.
+Not done yet: `get_commands`' `sourceInfo` keeps less provenance than upstream's `SourceInfo`.
 
 `SessionCodec::encodeContent()` and `plain()` went from private to public for `RpcEvents`.
 Widening it was the cheaper of two bad options: a second content encoder living in `Rpc\` is
@@ -4414,9 +4494,8 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | eleven of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
 | `coding-agent/modes/interactive/components/user-message-selector.ts` | the **twelfth** selector, here as `InteractiveMode::showForkPoints()` — `/fork`'s list of every message somebody typed, a `SelectList` rather than a component of its own, as `/login` and `/model` are. Upstream also opens it on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here |
-| `/share`, in `interactive-mode.ts` | **Deliberate, and the one command left out on its merits rather than for want of a subsystem.** It runs `gh gist create --public=false` on the exported HTML and prints a URL on upstream's own viewer domain. Two reasons: a "secret" gist is unlisted and not private, so a conversation — which holds whatever the model read — goes to GitHub behind a link anyone with it can open; and the URL hands it to a third party's JavaScript viewer, which is the dependency `HtmlExport` was written to avoid. `/export` already writes the file, and `gh gist create` on it is one command with the person looking at what they are uploading. If it is ever wanted, the piece pig lacks is nothing: `BorderedLoader` is ported and already cancellable |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
-| `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
+| `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
 **This table has now been wrong four times.** Twice in the same way: the first time it said "the
@@ -4557,8 +4636,9 @@ at both ends of `prompt()`, the `isStreaming()` guards in front of `abort()`, an
 `_tryExecuteHookCommand`, which is the entry on a slash command that only worked in front of a
 screen.
 
-`get_state` gained `isCompacting`, `steeringMode` and `followUpMode`; `sessionId` stays out, since pig has no session
-identity apart from the file and `sessionFile` already is that.
+`get_state` is upstream's `RpcSessionState`: `isCompacting`, `steeringMode`, `followUpMode`,
+`sessionId` (a `--no-session` run has one too, `AgentSession::sessionId()`), `pendingMessageCount`,
+and `model` / `sessionName` / `sessionFile` left out when unset rather than sent as null.
 
 **Two things this scoreboard is not.** It is not a measure of quality — `theme.ts` was read this way
 and found nothing, and `bash-executor.ts` was not on anybody's list at all until a sweep turned it
@@ -4829,13 +4909,21 @@ those loaders; every one of upstream's short forms is in `Arguments::SHORT`.
 **`--theme <path>` is upstream's too**: a theme file or directory for this run
 (`Themes::setCliThemePaths()`), and the theme to start on is `--use-theme <name>` — pig's old
 `--theme`, again with no reader for the old spelling. `--no-themes` (`Themes::useThemeDiscovery()`)
-looks in none of the four directories or the packages; the built-ins, an extension's and `--theme`'s
+looks in none of the theme directories, the `themes` setting or the packages; the built-ins, an extension's and `--theme`'s
 stay. `--skill` and `--prompt-template` load files or directories (`CodingAgent::session(skillPaths:,
 promptTemplatePaths:)`), after everything else and **under `--no-skills` / `--no-prompt-templates`
 too** — naming one is asking for it — and a path that is neither is `<Kind> path does not exist`.
 These four and `-e` repeat (`Arguments::REPEATABLE`, `values()`), and `-e` loads under `-ne`
 (`ExtensionLoader::load(discover: false)`), as upstream's "explicit -e paths still work". A relative
 path is the shell's, not `--cwd`'s; `builtin:<name>` is one of the [built-ins](#built-in-extensions).
+
+The rest of upstream's flags arrived in one batch: `--provider` (requires `--model`),
+`--system-prompt`, `--append-system-prompt` (repeatable), `--session-id`, `--fork`, `--tui-mode
+regular|fullscreen`, `--verbose`, `--offline` (`PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1`),
+`--no-session` (which replaced pig's `--no-save`, with no reader for the old spelling) and
+`--update-check`. `pig auth check|print-api-key|print-bearer-token` (`Cli\AuthCommand`; `--json`,
+`--credentials`, `--no-refresh`, `--min-expiry`) reads the credentials and `models.json` and nothing
+else. There is no `pig doctor` subcommand — `/doctor` is the slash command.
 
 ### Built-in extensions
 
@@ -4867,7 +4955,9 @@ chose ignoring over loading it; `pig update` copies the other bundled extensions
 `refreshModels()`), which `CodingAgent\ModelRefresh` runs as upstream's `Models.refresh()` does:
 the stored catalog without network when the provider is registered, every provider in the
 background once the TUI or RPC mode is up (not under `PIG_OFFLINE`), and the one signed into after
-`/login`, with upstream's warning when that times out or fails. The store is
+`/login`, with upstream's warning when that times out or fails; `/model` and `/scoped-models` refresh
+too (15 seconds, `ModelRefresh::TIMEOUT_MS`, with upstream's status line), and `/model <pattern>`
+refreshes when nothing cached matches. The store is
 `~/.pig/agent/models-store.json` and its rows are the provider's own — pig has no codec for every
 model a provider could file. `pig-ai` stays OAuth-only, as upstream's `ai/cli.ts` is.
 
@@ -5919,8 +6009,9 @@ about every key it named and wrong about which key the bytes were.
 Blank rows under the footer from the moment a turn started: rows a shrinking frame leaves behind were
 erased with `\r\n\x1b[2K`, and **a newline on the terminal's last row scrolls**. Upstream's
 `TuiMainScreen` has a separate "all changes are in deleted lines" path that moves with `\x1b[1B` and
-clears without scrolling; pig now runs that literally. `PIG_TUI_TRACE=<file>` on
-`ProcessTerminal::write()` records every byte for replaying a real session through a VT emulator —
+clears without scrolling; pig now runs that literally. `PIG_TUI_WRITE_LOG=<file>` (upstream's
+`PI_TUI_WRITE_LOG`; a directory gets a `tui-<timestamp>-<pid>.log` per run) makes
+`ProcessTerminal::write()` append every byte, for replaying a real session through a VT emulator —
 a hand-rolled emulator that does not scroll on a newline at the last row will agree with the bug.
 
 Regression tests: `TuiTest::testErasingVanishedLinesMovesDownRatherThanScrolling`,
@@ -8938,7 +9029,7 @@ documentation's own example carries nothing but `output_tokens`. So the final ev
 counts `message_start` had already given with zeros.
 
 What that costs: the input cost of every Anthropic turn disappears from `/stats` and the footer,
-and `Compaction::contextTokens()` — which believes `totalTokens` — sees a conversation the size of
+and `Compaction::calculateContextTokens()` — which believes `totalTokens` — sees a conversation the size of
 its last answer. **Auto-compaction never fires on Anthropic**; the turn recovers only when the API
 rejects the request as too long, which is late, and by accident.
 
@@ -9065,7 +9156,7 @@ and OpenAI's completions the sum is the same figure either way, so it looked har
 
 **For Google it is not.** Gemini's `promptTokenCount` *includes* the cached tokens, so
 prompt + output + cacheRead counts them twice, and `totalTokenCount` — the figure Google sends,
-which does not — was thrown away. `Compaction::contextTokens()` prefers `totalTokens`, so a
+which does not — was thrown away. `Compaction::calculateContextTokens()` prefers `totalTokens`, so a
 conversation with most of its prompt cached reported a context far fuller than it was and compacted
 early: a summarisation paid for, and a shorter window than the model actually had. Upstream computes
 the total in exactly the two providers whose API gives none and reads it in the two that do; that is
@@ -9189,53 +9280,30 @@ Three smaller parity gaps came out of the same read:
   wants a summary — it is the last argument of `SessionBeforeTreeEvent` — so prose returned anyway
   has misread the event, and upstream ignores it.
 
-### A `models.json` key that was only a variable's name travelled as the key
+### A `models.json` key written as a bare variable name is the key itself
 
-The same question as the entry below — *is there a key for this model?* — at the one end that
-answer had been fixed for everywhere else. `hasKeyFor()` was taught to filter `--list-models`,
-`/model`, `get_available_models` and a resumed session; for a **declared** provider it was always
-true, because `CustomModels::resolve()` could not tell a literal key from a name whose variable is
-not set. Measured with a `models.json` naming `DEEPSEEK_API_KEY` on a machine without it:
+**Symptom**: a `models.json` (or `auth.json`) that says `"apiKey": "DEEPSEEK_API_KEY"` sends
+`Authorization: Bearer DEEPSEEK_API_KEY` and gets a 401 that explains nothing.
 
-```
-custom keys declared:  {"deepseek":"DEEPSEEK_API_KEY"}
-hasKeyFor('deepseek'): true
-apiKey('deepseek'):    'DEEPSEEK_API_KEY'
-in availableModels:    YES
-```
+**Cause**: upstream's `resolve-config-value.ts` reads a value as a variable only when it says so —
+`$NAME` or `${NAME}` — and as a command when it starts with `!`; anything else is literal. pig used to
+treat an all-capitals value as a variable name (upstream's old `resolveApiKeyConfig`), plus a
+shape heuristic of its own to tell an unset name from a key. That is gone with no fallback: a file
+written for pi has to mean the same thing here, and a heuristic about what keys look like is a guess.
 
-So the models are listed, chosen and resumed onto, and the request leaves as
-`Authorization: Bearer DEEPSEEK_API_KEY` — **which is the failure `CustomModels`' own docblock gives
-as the reason for resolving in the first place**: *"a proxy handed the literal string `MY_BOX_KEY`
-answers 401 and explains nothing."* The fallback produced the thing the feature exists to prevent,
-and `hasKeyFor()`'s comment had reasoned about it and stopped one case short — *"a wrong one here
-only if the file left it empty"*.
+**Rule**: a reference is `$NAME` / `${NAME}`; a bare word is a literal. A reference whose variable is
+not set is **no key** — `hasKeyFor()` answers false, the models are not offered, and `problems()` says
+`"apiKey" references $MY_BOX_KEY, which is not set`. `authHeader: true` with no key adds no header
+instead of `Bearer ` with nothing after it.
 
-Upstream's `resolveApiKeyConfig` has the same fallback and cannot distinguish the two either, so
-this is a deliberate divergence, and what makes it safe is **shape**: `^[A-Z][A-Z0-9_]*$` is what an
-environment variable is called and what no provider's key looks like — `sk-ant-…`, `sk-…`, `AIza…`,
-`gsk_…`, `xai-…` all carry lowercase or a dash. An all-capitals value with no variable behind it is
-a name nobody filled in, so `resolve()` answers **null**, `hasKeyFor()` answers false and the models
-are not offered, and `load()` adds a line where every other complaint about that file goes:
-
-```
-models.json: …/models.json, provider "deepseek": "apiKey" names DEEPSEEK_API_KEY, which is not set
+```json
+{ "providers": { "deepseek": { "apiKey": "$DEEPSEEK_API_KEY" } } }
 ```
 
-Anything not shaped like a name is still taken literally, as upstream takes it, and an `apiKey` that
-is simply absent keeps the complaint it already had rather than being described as an unset variable.
-`authHeader: true` with no key adds no header instead of sending `Bearer ` with nothing after it.
-
-**Found by pointing `test/live.php` at a declared endpoint** — the `models.json` path is the one part
-of the registry with no live coverage at all, and the harness offering custom providers is what
-reached it. The developer's keys included one for a provider pig ships no entry for, which is the
-only reason anybody looked.
-
-Regression tests: `CustomModelsTest::testAVariableNameWithNothingBehindItIsNotAKey`,
-`testAKeyThatCouldNotBeAVariableNameIsNeverMistakenForOne`,
-`testAnEmptyApiKeyIsNoKeyAndKeepsItsOwnComplaint`, `testAuthHeaderWithNoKeyBehindItAddsNoHeader`.
-Putting upstream's fallback back turns the first and last red. The shared fixture's `apiKey` became
-a literal in the same change: thirty tests were sharing a value that is now a complaint of its own.
+Regression tests: `CustomModelsTest::testABareNameIsTheKeyItselfAsUpstreamReadsIt`,
+`testADollarReferenceInTheKeyIsReadFromTheEnvironment`,
+`testAReferenceWithNothingBehindItIsNotAKeyAndSaysWhich`, `testACommandKeyRunsForEveryRequest`,
+`testAuthHeaderWithNoKeyBehindItAddsNoHeader`.
 
 ### A model with no API key could be switched to, listed, and resumed onto
 
@@ -9596,9 +9664,11 @@ twenty-two commands, its own test file and a section in this document — had ne
 from the command line.** `RpcModeTest` did not notice because it constructs an `RpcMode` in process
 and hands it two streams; nothing started the binary.
 
-The fix is `Arguments::needsAMessage()`, which is false for the terminal *and* for rpc, tested
-directly. The condition could have stayed inline in `bin/pig` as `$mode !== 'rpc' && !$interactive`,
-and then the next person to touch it would have had nothing to run either.
+The fix lives in `Arguments::appMode($stdinIsTty, $stdoutIsTty)`, upstream's mode decision, tested
+directly: `--mode rpc|json|web|mcp` is that mode whatever else was typed; `-p` or a stream that is not
+a terminal is print mode; anything else opens the TUI (`--mode text` on a terminal included). Print
+mode with nothing to say exits 0 silently, as upstream's does, and RPC refuses an `@file` on its own
+command line. Inline in `bin/pig`, the next person to touch it would have had nothing to run.
 
 The general rule: **a mode that nothing starts the way a person starts it is a mode that can be
 broken by a line somewhere else entirely.** `RpcClientTest` is now the one test in the suite that
@@ -9700,7 +9770,7 @@ the old store's leaf and the file replays as something nobody saw.
 `writeTo(?SessionManager)` is the fix, and it is a missing piece of the port rather than an
 addition — upstream's `AgentSession` owns its `sessionManager` and replaces it in
 `switchSession()` and `newSession()`. `/resume` writes to the file it opened; `/new` creates
-one; `--no-save` stays null and `/new` does not quietly start saving. Which of the three
+one; `--no-session` stays null and `/new` does not quietly start saving. Which of the three
 happens is `AgentSession::switchTo()`/`startNew()`'s to decide now, not each mode's — the audit
 find below ("RPC's session switch and new-session skipped the three checks") says why.
 
@@ -9735,7 +9805,7 @@ process.** `PrintMode::run()` loops `prompt()`, then prints the last assistant m
 seconds later, which would have worked, never happened. A script's whole answer, lost to a pause.
 
 The fix is upstream's shape: `prompt()` runs the turn through `runAgentPrompt()`, whose post-run loop
-does the retry (`prepareRetry()`), the overflow summary (`compactForOverflow()`) and the queued
+does the retry (`prepareRetry()`), the overflow summary (`checkCompaction()`) and the queued
 messages in the caller's fiber, and only returns after `emitAgentSettled()`. So `prompt()` returns
 when the prompt has settled, and there is no handle to create early or release late.
 
@@ -9748,7 +9818,7 @@ They spawn now, through one documented helper, `startTurnAndParkOnTheRetry()`, w
 
 **And the overflow half is the same bug by the other door**: a turn that outgrew the window comes
 back as an error too, and `-p` printed `prompt is too long` and exited before the summary that fixes
-it had run. The same loop covers it — `compactForOverflow()` runs before `prompt()` returns.
+it had run. The same loop covers it — `checkCompaction()` runs before `prompt()` returns.
 `isRetrying()` is true only while `prepareRetry()` holds its controller, or it would answer true
 every time the session summarised.
 
@@ -9774,11 +9844,7 @@ about the *mode*. So the mode had `AgentSession::setQueueMode()`, a row in `/set
 `get_state` — everything except the way a host changes it. *A reason that covers one thing does not
 cover the thing filed next to it.*
 
-Left out of `rpc-mode.ts` with reasons rather than by oversight:
-
-| Upstream | Why not |
-|---|---|
-| `new_session`'s `parentSession` | the header field `fork()` writes and `SessionManager::open()` reads back as `$parentSession`; a `new_session` command naming one by hand has no reader that wants it, so the field is not taken from the command |
+`new_session` takes `parentSession`, written on the new file's header as `fork()` writes it.
 
 ### `/model son` offered file names, and the one method that knew better had no caller
 
@@ -9873,7 +9939,7 @@ three things" about a transcript showing one answers a question nobody asked —
 `messages()`. The money is what a provider charged, and every assistant message in the file came
 back from one, including on a branch later walked away from. Neither compacting nor changing your
 mind is a refund, so the total comes from `SessionManager::everyMessage()` — every entry, file order,
-no branch to walk. With no file at all (`--no-save`) there is nothing else to count and the two
+no branch to walk. With no file at all (`--no-session`) there is nothing else to count and the two
 questions share an answer again.
 
 Regression test: `AgentSessionTest::testACompactionDoesNotRefundWhatTheSessionSpent`, which asserts
@@ -9887,7 +9953,7 @@ the money survives *and* that the counts do not — the second half is what stop
 fixed here.
 
 **`--export <file> [out]`.** Upstream exports a session to HTML from the command line and exits.
-pig had every piece — `HtmlExport`, `/export` inside a session, `export` over RPC — and no way in
+pig had every piece — `HtmlExport`, `/export` inside a session, `export_html` over RPC — and no way in
 from the shell, so somebody with a `.jsonl` and no wish to reopen the conversation was stuck.
 `HtmlExport::fromFile()` is upstream's `exportFromFile()`, and it is in the export module rather
 than in the entry point for the reason four classes in `Cli\` exist: *a script that ends in
@@ -9900,9 +9966,9 @@ taken no value and the path would have been sent to the model as a message.
 `Exported to: ` and then the error underneath it. The write happens first and the sentence after.
 
 **`--no-skills`.** `--no-hooks` and `--no-tool-files` (then called `--no-tools`) have been there from the start; skills had
-`skillsEnabled()` in the settings and no flag — three loaders, two with a switch on the command
-line and one without, which reads as "this one cannot be turned off for one run". `withSkills` on
-`session()`, and the settings still decide when nothing was typed.
+no flag — three loaders, two with a switch on the command line and one without, which reads as
+"this one cannot be turned off for one run". `withSkills` on `session()`; `--skill` paths still load
+under it, as upstream's `noSkills` keeps them.
 
 **The third was a name collision, and the developer's call was to follow upstream, so the two flags
 swapped.** pig's `--models` *listed* the registry; upstream's `--models` takes patterns and **scopes
@@ -9920,7 +9986,7 @@ third is the one worth remembering:
   one when the suffix really is a level — an id can hold a colon (OpenRouter's `:exacto`), so
   `claude-*:nonsense` is a pattern matching nothing rather than `claude-*` with a bad level on it.
 - **The first entry of the scope is what the session opens on**, one step below `--model` in the
-  order and above the environment. A resumed conversation still beats it, and needs no condition of
+  order. A resumed conversation still beats it, and needs no condition of
   its own: `restoreSettings()` already puts the file's model back unless `--model` was typed.
 - **The cycling moved from `ModelResolver` to `AgentSession`, and the reason is the thinking
   level.** `next()`'s docblock used to argue the opposite — *"everything else it needs is already
@@ -9953,10 +10019,7 @@ Left out of `main.ts` with reasons, so the flag list is not compared twice:
 
 | Upstream | Why not |
 |---|---|
-| `checkForNewVersion()` | fetches `registry.npmjs.org` at every start to see whether a newer release exists. pig is not published, and the habit is one pig refuses elsewhere in as many words — *"reaching for the network to draw a completion list is not something a keystroke should do"* |
-| `--system-prompt`, `--append-system-prompt`, and `.pi/SYSTEM.md` discovery | the system prompt is the developer's own file here, so this is theirs to decide rather than the audit's |
 | `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tool-files`, which upstream lacks and pig has |
-| `--provider` | pig resolves a provider and an id together (`ModelResolver`), so there is nothing for a second flag to disambiguate |
 
 ### A message typed while the conversation was being summarised was lost with a red line
 
@@ -9977,7 +10040,8 @@ out *during* the summarisation and the compaction's own `continue()` was the thi
 arrangements, two losses; the flag is the answer that loses nothing, because the keystroke never
 becomes a submit and the line stays where it was typed.
 
-Wired on `AutoCompactionStartEvent` and off on `AutoCompactionEndEvent`, which is upstream's pair.
+Wired on `CompactionStartEvent` and off on `CompactionEndEvent` when their `reason` is not `manual`,
+which is upstream's pair.
 Not on the manual `/compact`, and upstream does not either: that one was started by somebody who is
 at the keyboard and just typed it, where the auto one arrives in the middle of their sentence.
 
@@ -10037,8 +10101,9 @@ worked, and the only way to find them was to already know them.
 
 `EDITING_KEYS` is that table, **beside `KEYS` rather than as a second command**, because pig already
 prints the keys in two places — `/help` and the banner under ctrl+o — and upstream's own two lists
-disagree with each other. It is kept by hand, as upstream's is, and the test is what notices: when
-`Editor::editingKey()` grows an arm, `testEveryKeyTheEditorAnswersToIsNamedSomewhere` is where it
+disagree with each other. It is keyed by action id (`tui.editor.cursorLineStart` → "start of the
+line") and the keys are read from the registry, so a rebinding is what `/help` shows; the list of
+actions is kept by hand, and the test is what notices: when `Editor::editingKey()` grows an arm, `testEveryKeyTheEditorAnswersToIsNamedSomewhere` is where it
 gets its name.
 
 Two things fell out of adding it, both about the column:
@@ -10273,7 +10338,7 @@ and `->property`, never to invoking a variable, so a nullable callback needs an 
 `catch (Throwable $problem)` blocks written into it were therefore catching
 `Pig\CodingAgent\Session\Throwable`, a class that does not exist — so nothing was ever
 caught, the exception escaped the `Async::spawn` that was running the work, landed in a
-`Deferred` nobody awaits, and **vanished**. What it looked like: `AutoCompactionStartEvent`
+`Deferred` nobody awaits, and **vanished**. What it looked like: the compaction's start event
 went out, and then the session sat there. No error, nothing on the shell, nothing in the
 transcript.
 
@@ -10386,9 +10451,14 @@ options was ever passed. The moment positional messages meant something,
 `bin/pig --read-only "fix the bug"` set `read-only` to `fix the bug` and had no prompt left,
 with nothing said about it.
 
-`Cli\Arguments::TAKES_A_VALUE` is the list, and everything not on it is a flag. Upstream's
-`args.ts` spells each option out for the same reason. **A CLI cannot afford a guess about what
-the next word means**, and the failure mode of guessing is silent.
+`Cli\Arguments::TAKES_A_VALUE` and `FLAGS` are the lists, as upstream's `args.ts` spells each
+option out for the same reason. **A CLI cannot afford a guess about what the next word means**, and
+the failure mode of guessing is silent. What is on neither list follows upstream's `parseArgs()`: an
+unknown short option is an error (`Unknown option: -x`, exit 1); an unknown long option is kept as
+`unknownFlags` and refused once the extensions have loaded unless one of them registered it
+(`--name=value`, or `--name value` when the next word starts with neither `-` nor `@`). Two options
+are deliberately neither: `-r` takes no value (upstream's), and `--list-models` takes a search only
+when one follows. `-p` takes the next word as its message unless it is a file or an option.
 
 ### A hex id used as an array key becomes an integer
 
@@ -10406,9 +10476,8 @@ pig's twelve-character ids hit it about one run in three hundred.
 
 `SHORT` maps `-p` to `print`, and the first version of the branch that handled it did
 `$options[$short] = ''` and moved on — right for `-p`, and wrong for every short option whose
-long form takes a value. Adding `-r` would therefore have made `-r some/path.jsonl` set
-`resume` to the empty string, which `bin/pig` reads as "show me the picker", and left the path
-in the message list to be sent to the model as a prompt.
+long form takes a value. `-t read,bash` would have set `tools` to the empty string and left
+`read,bash` in the message list to be sent to the model as a prompt.
 
 The same mistake as the flag that ate the prompt, one level down: **two spellings of one
 option must not each carry their own idea of whether it takes a value.** So the short branch
@@ -10604,7 +10673,7 @@ green in the container and red on a Mac that had actually used pig:
   `ExternalTool::locate()` looks in **pig's own `~/.pig/agent/tools` first**, deliberately, so a downloaded
   copy beats one the PATH shadows — which means on any machine where pig has ever fetched `fd`, the
   tool was found and nothing threw. A test about something being absent that only passes where it was
-  never present. `PIG_HOME` now points at an empty directory as well, which is what
+  never present. `PIG_CODING_AGENT_DIR` now points at an empty directory as well, which is what
   `ToolInstallerTest` had been doing in its `setUp` all along: *the answer was already in the
   repository, in the sibling that got it right.*
 - **`InteractiveModeTest`'s export test asserted a path against the wrapped screen.** In the
@@ -11393,7 +11462,7 @@ across the two tools had a step in it that was pure accident. Everything else fo
 sessions, `settings.json`, `auth.json`, hooks, skills and commands are all built off that one
 method, and exactly two tests had the old path written out.
 
-**No migration and no fallback.** `PIG_HOME` still wins, and an old `~/.pig` is not searched. The
+**No migration and no fallback.** `PIG_CODING_AGENT_DIR` still wins, and an old `~/.pig` is not searched. The
 developer asked for the move rather than for compatibility, and a fallback that reads the old
 directory forever is how somebody ends up with two half-populated homes and no way to tell which
 one a given file came from. `mv ~/.pig/* ~/.pig/agent/` is the whole upgrade.
@@ -11434,8 +11503,8 @@ resolved bare gives the same model either way, which is every case anybody had.
 
 Two boundaries the fix needs, both tested:
 
-- **Only the remembered model gets the remembered provider.** `--model gemini-3.8-flash` and
-  `PIG_MODEL` are left exactly as typed. Applying a stored provider to what somebody just typed
+- **Only the remembered model gets the remembered provider.** `--model gemini-3.8-flash` is left
+  exactly as typed. Applying a stored provider to what somebody just typed
   would be the worse bug of the two.
 - **A stored provider that has gone falls back rather than failing.** `google-antigravity` is
   precisely that case after the rename above, so any settings file written before it names a
@@ -11547,9 +11616,17 @@ and two readers:
   looking at the red line is exactly who `/bug` is for. Once per message, like the line.
 - **`start()`** says the newest unnotified crash once, if it is under a week old — upstream's
   wording — and marks them all told.
-- **`BugReport::build()`** attaches them under `## Recent crashes`, and **`write()` clears the
-  file**, as upstream clears it once a report is out: attached to a report that was sent, they
-  are not attached to the next one too.
+- **`BugReport::build()`** attaches them under `## Recent crashes`, and **the file is cleared once
+  a report is out** — an upload or an exported zip (`recordBugReport()`, which also appends the
+  `pig.bug-report` entry), or RPC's `bug` command (`write()`) — as upstream clears it: attached to a report that was
+  sent, they are not attached to the next one too.
+
+`/bug` itself is upstream's flow: what went wrong, whether to include the transcript (a summary by
+the current model instead when not), then **Upload Report** (to `BugReport::SERVER_ENDPOINT`, refused
+under `PIG_OFFLINE`), **Export as Zip** (`pig-bug-report-<id>.zip` in the working directory, also
+offered when an upload fails) or Cancel. The old clipboard copy, GitHub issue link and
+`bug-reports/` file are gone from the interactive command; RPC's `bug` still uses `write()` and
+`issueUrl()`.
 
 **Everything in it is best effort, and that took two goes.** A crash log that throws is a second
 crash with the first one lost, so `record()` swallows everything — the one place in `coding-agent`
@@ -11699,7 +11776,7 @@ Two bugs in Antigravity quota discovery (`QuotaClient`):
 1. `postJson` serialized empty request bodies as `json_encode([])`, which produces `"[]"`. Google Cloud Code RPC endpoints require the root element to be an object message and returned 400 `Invalid JSON payload received. Root element must be a message.` Fixed by encoding empty arrays as `"{}"`.
 2. Sending `X-Goog-User-Project: <projectId>` to personal quota endpoints (`v1internal:loadCodeAssist` and `v1internal:retrieveUserQuotaSummary`) caused Google Cloud IAM to demand `serviceusage.services.use` project permissions, returning 403 `Caller does not have required permission to use project`. Those endpoints belong to the user's personal Google subscription rather than a project quota, so that header is omitted.
 
-In addition, `CodingAgent::session()` now honors `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` from the environment when `PIG_*` variables are not set, and clamps the startup thinking level using `ThinkingLevel::clampedFor($chosen, $level)` so models with `thinkingLevelMap` (such as Antigravity models requiring reasoning) do not default to `off`.
+`CodingAgent::session()` also clamps the startup thinking level (`ThinkingLevel::clampedFor($chosen, $level)`), so models with `thinkingLevelMap` (such as Antigravity models requiring reasoning) do not open on `off`. No environment variable chooses the model, provider or thinking level: `PIG_MODEL`, `PIG_PROVIDER`, `PIG_THINKING`, `PIG_TUI_MODE` and their `PI_*` spellings are not read, as upstream reads none of them.
 
 ### `/quit` while working left the agent, bash, retries and compactions running in the background
 
@@ -11867,9 +11944,9 @@ Every so often a question asked in the Web UI produced no reply: the spinner sto
 
 **Cause**: Web had two forks. The back end's `SessionCodec` encoded only the three app messages compaction / branch / bash and skipped `HookMessage`, so hook messages became `null` on the RPC/Web event chain; the front end's history replay had its own hand-written tool cards and summary/hook HTML, read `result.diff` instead of the real `result.details.diff`, and dropped the tool result's `details`. That is the TUI, the session file, the RPC wire and the Web each answering the same question on their own.
 
-**Rule**: Web replay consumes the full shape of `SessionCodec::encode()`; `ToolCard` is the one place that decides how a result is drawn, with no second `formatToolResultBody()` in `app.js`; compaction, branch summaries and hook messages all use the same theme-token block rather than a hard-coded purple or old wording. `auto_compaction_end.summary` and the `message_end` that follows may be the same summary, so the front end deduplicates by `role:timestamp`.
+**Rule**: Web replay consumes the full shape of `SessionCodec::encode()`; `ToolCard` is the one place that decides how a result is drawn, with no second `formatToolResultBody()` in `app.js`; compaction, branch summaries and hook messages all use the same theme-token block rather than a hard-coded purple or old wording. `compaction_end.result.summary` and the `message_end` that follows may be the same summary, so the front end deduplicates by `role:timestamp`.
 
-**Countermeasure**: `SessionCodec` encodes `HookMessage` as `role: "custom"`; Web replay wraps a tool result as `{content, details}` for `ToolCard`, `edit` prefers `details.diff`, `write` shows what was written, `bashExecution` takes the bash card; compaction / branch / hook use `.compaction-box` + theme tokens, hook messages preview five lines and expand on click; `auto_compaction_end` appends the summary and deduplicates against `message_end`. The regression test generates the JSON from real PHP messages and runs the Web renderer under Node, so the test cannot invent a wire of its own.
+**Countermeasure**: `SessionCodec` encodes `HookMessage` as `role: "custom"`; Web replay wraps a tool result as `{content, details}` for `ToolCard`, `edit` prefers `details.diff`, `write` shows what was written, `bashExecution` takes the bash card; compaction / branch / hook use `.compaction-box` + theme tokens, hook messages preview five lines and expand on click; `compaction_end` (any reason) appends `result.summary` and deduplicates against `message_end`; a bash result's full-output path is `details.fullOutputPath`. The regression test generates the JSON from real PHP messages and runs the Web renderer under Node, so the test cannot invent a wire of its own.
 
 ### `Auth::fresh()` renewing an OAuth token outside a coroutine crashed in `Future::await()`
 
@@ -12030,15 +12107,17 @@ The developer asked for 100% alignment with upstream — when something breaks, 
 
 **macOS case trap**: `Tui.php` → `TUI.php` differs only in case. APFS is case-insensitive by default and git's default is `core.ignorecase=true`, so `git add -A` does not record the rename and PSR-4 on Linux cannot find `TUI.php`. It has to be `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`.
 
-### The `tui.altScreen.*` keys go through the TUI's global registry, not coding-agent's `Keybindings`
+### Keybindings: one registry, upstream's ids, the app's manager installed in the TUI's slot
 
-**Structure**: upstream's `keybindings.ts` is `Pig\Tui\Keybindings` (`TUI_KEYBINDINGS`, `getKeybindings()`, `setKeybindings()`) plus `KeybindingsManager`. `TuiAltScreen` asks only the registry. coding-agent's `Keybindings::load()` splits the `tui.altScreen.*` entries out of `keybindings.json`, and `InteractiveMode`'s constructor calls `TuiKeybindings::setKeybindings($keybindings->tuiKeybindings())` — the same place as the `setKeybindings()` in upstream's constructor.
+**Structure**: upstream's `keybindings.ts` is `Pig\Tui\Keybindings` (`TUI_KEYBINDINGS`, `getKeybindings()`, `setKeybindings()`, `reset()`) plus `Pig\Tui\KeybindingsManager`. coding-agent's `Keybindings` **extends** that manager, as upstream's `core/keybindings.ts` does: the TUI's definitions with upstream's platform overrides (Windows/WSL `alt+p`, `ctrl+q`, `alt+q`, `alt+v`, `ctrl+f`, prompt jumps, `ctrl+z`/`alt+z` undo; no `app.suspend` on native Windows; `alt+left` first for the tree on macOS) plus `APP_KEYBINDINGS`, every upstream id and description, and `NAME_MIGRATIONS` (upstream's `KEYBINDING_NAME_MIGRATIONS`). `InteractiveMode`'s constructor calls `TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings())`, which is the manager itself, so `Editor`, `Input`, `SelectList`, `TreeList`, the session list and `TuiAltScreen` all read `tui.*` ids from one place, and `reload()` (also run by `/reload`, with the themes) changes every one at once.
 
-**Trap rule**: no component reads `tui.editor.*`, `tui.input.*` or `tui.select.*` from the registry yet, so writing them in `keybindings.json` reports "pig has no action for" — do not loosen that into silent acceptance. The registry is process-wide static: a test that installs custom keys calls `Keybindings::reset()` in `setUp()`/`tearDown()`. `actionFor()` recognizes `app.*` only, or `searchNext`'s `enter` would be eaten by the editor as an action.
+**Rule**: every upstream id is bindable; an id nobody defines, or a value that is not a key, is a line in `problems()` (printed at startup, a warning on `/reload`) — stricter than upstream, which drops both silently. Never give a component its own key table. The registry is process-wide static: a test that installs keys calls `\Pig\Tui\Keybindings::setKeybindings(...)` in `setUp()` and `reset()` in `tearDown()`. `actionFor()` answers `app.*` only, or `searchNext`'s `enter` would be eaten as an editor action; `CustomEditor` asks about the actions it has handlers for, because several `app.*` ids share a key on purpose (`ctrl+s` saves in three selectors — `app.models.save`, `app.thinking.save`, `app.session.toggleSort`).
 
 ```php
-TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
+\Pig\Tui\Keybindings::setKeybindings(new \Pig\CodingAgent\Keybindings(platform: 'linux', env: []));
 ```
+
+What the registry made possible, all upstream's: `Editor` undo (`UndoStack`), a kill ring with yank / yank-pop (`KillRing`), delete word forward, jump to a character forward and back, page up/down and history keys; `Input` undo, kill ring and delete word forward; Ctrl+D with text deletes forward, Ctrl+C cancels a loader or closes a selector; the tree's fold/unfold (`⊟`/`⊞`), filter and copy keys, `shift+l` to edit a label (plain `l` types into the search) and `shift+t` for label timestamps; the session list's path toggle, delete (confirmed, the current session refused, trash before unlink) and page keys. `/help` lists the editing keys by action id (`EDITING_KEYS` is keyed by id), so a rebinding shows up there. pig keeps one extra default: `command+enter` on `app.message.followUp` (Apple Terminal sends `\e\r` for Shift+Enter, so ⌘+Return is the follow-up key there is).
 
 ### The image module renamed after upstream's `terminal-image.ts` (no aliases)
 
@@ -12388,7 +12467,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **Root cause**: upstream's generator writes a full `thinkingLevelMap` for every Claude (`max`, `xhigh`, the whole 5.5 table, Copilot's `minimal: "low"`), and `getSupportedThinkingLevels()` offers xhigh only when the map has it; pig had copied only `off: null`.
 
 **Trap rules**:
-- `Models::thinkingLevelMap()` is written in upstream's merge order (5.5 overrides → the managed-effort `off` → `applyThinkingLevelMetadata()` → Copilot overrides), and every built-in table goes through it. pig has no `max` level; a `max` entry is data only.
+- `Models::thinkingLevelMap()` is written in upstream's merge order (5.5 overrides → the managed-effort `off` → `applyThinkingLevelMetadata()` → Copilot overrides), and every built-in table goes through it. A `max` entry is offered as `ThinkingLevel::Max`.
 - Test: `ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`.
 
 ### The request shape for managed-effort models (Opus 5 / Fable 5.1, …) was wrong
@@ -12446,7 +12525,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 ### Anthropic's cache breakpoints skipped the tools, and `cacheRetention` did nothing
 
-**Symptom**: tool definitions were outside the cached prefix; `cacheRetention: long` / `PI_CACHE_RETENTION=long` gave no one-hour cache, and `none` still marked `cache_control`; endpoints that need session affinity headers (OpenRouter, …) did not get them.
+**Symptom**: tool definitions were outside the cached prefix; `cacheRetention: long` / `PIG_CACHE_RETENTION=long` gave no one-hour cache, and `none` still marked `cache_control`; endpoints that need session affinity headers (OpenRouter, …) did not get them.
 
 **Root cause**: upstream's `getCacheControl()` builds `{type: "ephemeral", ttl?: "1h"}` by retention and marks the system prompt, the last tool and the last user block; `createClient()` sends `x-session-affinity` / `x-session-id` when caching is on and the compat asks for it. pig hard-coded the five-minute marker, had none on tools, and had no session id.
 
@@ -12918,7 +12997,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **Trap rules**:
 - Grouping lives only in `Grouping`; network, TTL and storage only in `Discovery`; the shape is the extension's own (as stored), converted to pig's `Model`/`Routing` only through `Catalog::fromCatalog()`/`tables()`, and a routing target missing its enum refuses the whole catalog (`Discovery::apply()` throws).
 - pig writes its own `~/.pig/agent/models-store.json` (pi's shape, keeping other providers' entries); the read order is pig's, then pi's, then pi's old `antigravity-model-catalog.json`.
-- When to refresh: pi's model registry does it on opening `/model`, after login and on `pi update --models`; pig has no such layer, so the extension refreshes unforced in the background at session_start and after `/login antigravity`, and `/antigravity.refresh` forces. The offline switch is `PIG_OFFLINE`.
+- When to refresh: pi's model registry does it on opening `/model`, after login and on `pi update --models`; pig has that layer now (`ModelRefresh`, for providers with `Provider::$refreshModels`), but this extension does not register one, so it refreshes unforced in the background at session_start and after `/login antigravity`, and `/antigravity.refresh` forces. The offline switch is `PIG_OFFLINE`.
 - An unforced refresh failure goes to pig's log (`Logger::warning`), not thrown.
 - Tests: `AntigravityDiscoveryTest` (11), `AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst`, `AntigravityCatalogTest`.
 

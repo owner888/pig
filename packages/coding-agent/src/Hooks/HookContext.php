@@ -16,6 +16,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Agent\ThinkingLevel;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
+use Pig\CodingAgent\ModelRegistry;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\ContextUsage;
 use Pig\CodingAgent\Session\AgentSession;
@@ -39,6 +40,13 @@ final readonly class HookContext
 {
     public readonly HookUi $ui;
     public readonly HookState $state;
+
+    /**
+     * Upstream's `ctx.modelRegistry`: the catalogue and the run's credentials — `find()`,
+     * `findOfType()`, `classify()`, `streamSimple()`, `refresh()`, `getProviderAuth()` and the rest of
+     * upstream's facade, with request-time authentication from the session's `Auth`.
+     */
+    public readonly ModelRegistry $modelRegistry;
 
     /**
      * @param Closure(): bool|null $isIdle            whether the agent is between runs
@@ -66,6 +74,7 @@ final readonly class HookContext
     ) {
         $this->ui = $ui ?? new NoUi();
         $this->state = $state ?? new HookState();
+        $this->modelRegistry = new ModelRegistry($session?->auth);
     }
 
     public function set(string $key, mixed $value): void

@@ -97,7 +97,7 @@ final class Auth
         return new self(is_file($theirs) ? $theirs : Config::home() . '/' . self::FILE, $settings);
     }
 
-    /** Credentials that are never written anywhere, for tests and for `--no-save`. */
+    /** Credentials that are never written anywhere, for tests. */
     public static function inMemory(?Settings $settings = null): self
     {
         return new self(null, $settings);
@@ -192,18 +192,24 @@ final class Auth
             return $apiKeyAuth->check($this->apiKeyCredential($provider)) !== null;
         }
 
-        if (isset($this->data[$provider])) {
+        // A stored `api_key` counts when its key resolves — upstream's `check()` asks `credential.key`
+        // after `credentials.read()` has put it through `resolveConfigValue()`, so a `$NAME` whose
+        // variable is unset or a `!command` that prints nothing is no credential.
+        if ($this->kind($provider) === 'api_key') {
+            if ($this->storedKey($provider) !== null) {
+                return true;
+            }
+        } elseif (isset($this->data[$provider])) {
             return true;
         }
 
         if (isset($this->customKeys[$provider])) {
-            // Null covers both ways a declared key can be no key: an empty value, and a name
-            // whose variable is not set — see `CustomModels::resolve()`, which used to hand the
-            // name back and so answered yes for a provider nothing could authenticate to.
-            return CustomModels::resolve($this->customKeys[$provider]) !== null;
+            // Upstream's `configuredRequestAuthStatus()`: a command is configured without running it,
+            // a value with `$NAME` references when every one of them is set, a literal always.
+            return ConfigValue::isConfigured($this->customKeys[$provider]);
         }
 
-        return Stream::envApiKey($provider) !== null;
+        return Stream::envApiKey($provider) !== null || Stream::envAuthHeaders($provider) !== null;
     }
 
     /**
@@ -331,7 +337,34 @@ final class Auth
             }
         }
 
-        return new ApiKeyCredential(self::text($entry, 'key'), $env);
+        // Upstream's `credentials.read()`: the key through `resolveConfigValue(key, credential.env)`.
+        return new ApiKeyCredential($this->storedKey($provider), $env);
+    }
+
+    /**
+     * A stored `api_key` entry's key, resolved — upstream's `FileAuthStorage.read()`, which hands back
+     * `{...credential, key: resolveConfigValue(credential.key, credential.env)}`: `$NAME` and `${NAME}`
+     * from the entry's own `env` and then the process's, `!command` from its output (cached for the
+     * life of the process), anything else as written. Null when it does not resolve.
+     */
+    private function storedKey(string $provider): ?string
+    {
+        $entry = $this->data[$provider] ?? null;
+        $key = is_array($entry) ? self::text($entry, 'key') : null;
+
+        if ($key === null) {
+            return null;
+        }
+
+        $env = [];
+
+        foreach (is_array($entry['env'] ?? null) ? $entry['env'] : [] as $name => $value) {
+            if (is_string($value)) {
+                $env[(string) $name] = $value;
+            }
+        }
+
+        return ConfigValue::resolve($key, $env);
     }
 
     /** Keep an `api_key` credential, `env` and all, in upstream's shape: the key only when there is one. */
@@ -359,6 +392,11 @@ final class Auth
         }
 
         $key = $this->apiKey($provider);
+
+        if ($key === Stream::AMBIENT_AUTH_MARKER && ($headers = Stream::envAuthHeaders($provider)) !== null) {
+            // Upstream's Anthropic `resolve()` for `ANTHROPIC_AUTH_TOKEN`: no key, an `Authorization` header.
+            return new AuthResult(new ModelAuth(null, $headers), source: 'ANTHROPIC_AUTH_TOKEN');
+        }
 
         return $key === null ? null : new AuthResult(new ModelAuth($key));
     }
@@ -444,9 +482,9 @@ final class Auth
         }
 
         if ($this->kind($provider) === 'api_key') {
-            $key = $this->data[$provider]['key'] ?? null;
+            $key = $this->storedKey($provider);
 
-            if (is_string($key) && $key !== '') {
+            if ($key !== null) {
                 return $key;
             }
         }
@@ -464,28 +502,44 @@ final class Auth
         // A provider nothing here has heard of — declared in `models.json` — after the
         // stored answers and before the environment's table, because `Stream::envApiKey()`
         // knows nothing about it and would answer null for every one of them.
+        //
+        // Upstream's `composeApiKeyAuth()` resolves it with `resolveConfigValueOrThrow()` — uncached, so a
+        // `!command` runs for every request, and a value that does not resolve is an error naming why
+        // rather than a request without a key.
+        //
+        // A value whose variables are not set is a provider that is not configured — upstream's
+        // `check()` answers undefined for it before `resolve()` is ever asked — and was named when the
+        // file was read; a command that answers nothing is the error.
         if (isset($this->customKeys[$provider])) {
-            return CustomModels::resolve($this->customKeys[$provider]);
+            return ConfigValue::isConfigured($this->customKeys[$provider])
+                ? ConfigValue::resolveOrThrow($this->customKeys[$provider], "API key for provider \"{$provider}\"")
+                : null;
+        }
+
+        // `ANTHROPIC_AUTH_TOKEN` is not a key: upstream's Anthropic `resolve()` answers it as an
+        // `Authorization: Bearer` header, ahead of `ANTHROPIC_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`. So
+        // the answer is `Stream::AMBIENT_AUTH_MARKER` — signed in, no key to send — which `Stream`
+        // never sends, putting the header on instead (`Stream::envAuthHeaders()`).
+        if (Stream::envAuthHeaders($provider) !== null) {
+            return Stream::AMBIENT_AUTH_MARKER;
         }
 
         return Stream::envApiKey($provider);
     }
 
     /**
-     * What a `models.json` provider said its key is, by provider name.
+     * What `models.json` said each provider's key is, by provider name — **replacing** what it said
+     * before, because the file is read again whenever `/model` opens and a provider taken out of it
+     * must lose its key with it.
      *
-     * Upstream's `setFallbackResolver`, narrowed to the one thing it was used for. A closure
-     * would be upstream's shape; a map is what the only caller has, and the indirection bought
-     * nothing but a second place to look when a key does not resolve.
-     *
-     * The value is a variable name before it is a key — `CustomModels::resolve()` is what
-     * decides, and it looks at the environment first so the file can stay free of secrets.
+     * Upstream's `models.json` `apiKey`, which its `composeApiKeyAuth()` resolves per request. The
+     * value is a `ConfigValue`: `$NAME` / `${NAME}`, `!command`, or a literal key.
      *
      * @param array<string, string> $keys
      */
     public function setCustomProviderKeys(array $keys): void
     {
-        $this->customKeys = [...$this->customKeys, ...$keys];
+        $this->customKeys = $keys;
     }
 
     /**
@@ -653,20 +707,26 @@ final class Auth
      * where `apiKey()` joins them. Reading `credentials()->access` for that is what it did, and
      * an hour after signing in every one of its commands answered 401 — the stored half had
      * expired and only `apiKey()` knew to renew. One door to a fresh token, not two.
+     *
+     * @param int $minValidityMs renew a token with less than this left as well as an expired one —
+     *        upstream's `minOAuthValidityMs`, which `pig auth print-bearer-token --min-expiry` asks for
      */
-    public function freshCredentials(Provider|string $provider): ?Credentials
+    public function freshCredentials(Provider|string $provider, int $minValidityMs = 0): ?Credentials
     {
         $id = $provider instanceof Provider ? $provider->value : $provider;
         $flow = ProviderRegistry::oauthFor($id) ?? Provider::tryFrom($id);
         $credentials = $flow === null ? null : $this->credentials($id);
 
-        return $credentials === null || $flow === null ? null : $this->fresh($flow, $credentials);
+        return $credentials === null || $flow === null ? null : $this->fresh($flow, $credentials, $minValidityMs);
     }
 
     /** The token, renewed first if it is due. A renewal is written down, or it happens every turn. */
-    private function fresh(Provider|OauthFlow $provider, Credentials $credentials): Credentials
+    private function fresh(Provider|OauthFlow $provider, Credentials $credentials, int $minValidityMs = 0): Credentials
     {
-        if (!$credentials->hasExpired()) {
+        // "Expired" as of $minValidityMs from now, so a token about to run out counts as run out.
+        $by = \Pig\Ai\Timestamp::nowMs() + $minValidityMs;
+
+        if (!$credentials->hasExpired($by)) {
             return $credentials;
         }
 
@@ -686,12 +746,12 @@ final class Auth
         // this token while we waited, and the refresh token we hold is then the one the provider
         // just rotated away. The file is read again and its token used when it is still good —
         // upstream's `refreshStoredOAuthCredential()`. No file means nothing to share.
-        $renew = function () use ($provider, $credentials, $id): Credentials {
+        $renew = function () use ($provider, $credentials, $id, $by): Credentials {
             if ($this->path !== null) {
                 $this->reload();
                 $stored = $this->credentials($id);
 
-                if ($stored !== null && !$stored->hasExpired()) {
+                if ($stored !== null && !$stored->hasExpired($by)) {
                     return $stored;
                 }
 

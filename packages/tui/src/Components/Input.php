@@ -10,7 +10,9 @@ use Pig\Tui\Chars;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Keys;
+use Pig\Tui\Keybindings;
+use Pig\Tui\KillRing;
+use Pig\Tui\UndoStack;
 use Pig\Tui\MouseHandler;
 use Pig\Tui\TuiMouseDispatchResult;
 use Pig\Tui\TuiMouseEvent;
@@ -86,6 +88,15 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
     /** The first value column the last render showed — upstream's `renderedStartColumn`, for mouse presses. */
     private int $renderedStartColumn = 0;
 
+    /** Upstream's `killRing`, for `tui.editor.yank` and `yankPop`. */
+    private KillRing $killRing;
+
+    /** @var UndoStack<array{value: string, cursor: int}> upstream's `undoStack`, for `tui.editor.undo` */
+    private UndoStack $undoStack;
+
+    /** Upstream's `lastAction`: `kill`, `yank`, `type-word` or nothing. */
+    private ?string $lastAction = null;
+
     /**
      * Upstream's `InputOptions`.
      *
@@ -97,6 +108,8 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
         $this->prompt = $prompt;
         $this->placeholder = $placeholder;
         $this->placeholderStyle = $placeholderStyle ?? static fn (string $text): string => $text;
+        $this->killRing = new KillRing();
+        $this->undoStack = new UndoStack();
     }
 
     public function value(): string
@@ -189,17 +202,26 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
             return;
         }
 
-        if (Keys::isEnter($data) || $data === "\n") {
-            if ($this->onSubmit !== null) {
-                ($this->onSubmit)($this->value);
-            }
+        $kb = Keybindings::getKeybindings();
+
+        // Upstream's order: cancel, undo, submit. Escape and Ctrl+C answer only when somebody
+        // listens — see `setCancelHandler()`.
+        if ($this->onCancel !== null && $kb->matches($data, 'tui.select.cancel')) {
+            ($this->onCancel)();
 
             return;
         }
 
-        // Next to Enter, because it is the other answer: one with a value, one without.
-        if ($this->onCancel !== null && (Keys::isEscape($data) || Keys::isCtrlC($data))) {
-            ($this->onCancel)();
+        if ($kb->matches($data, 'tui.editor.undo')) {
+            $this->undo();
+
+            return;
+        }
+
+        if ($kb->matches($data, 'tui.input.submit') || $data === "\n") {
+            if ($this->onSubmit !== null) {
+                ($this->onSubmit)($this->value);
+            }
 
             return;
         }
@@ -209,35 +231,54 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
         }
 
         if (Chars::isPrintable($data)) {
+            // Upstream's undo coalescing: a run of word characters is one step, each space one.
+            if (Chars::isWhitespace(mb_substr($data, 0, 1)) || $this->lastAction !== 'type-word') {
+                $this->pushUndo();
+            }
+
+            $this->lastAction = 'type-word';
             $this->insert($data);
         }
     }
 
-    /** Editing keys. Returns whether one was recognised. */
+    /** Editing keys, upstream's ids. Returns whether one was recognised. */
     private function edit(string $data): bool
     {
+        $kb = Keybindings::getKeybindings();
+
         return match (true) {
-            Keys::isBackspace($data) => $this->deleteBefore(),
-            Keys::isDelete($data) => $this->deleteAfter(),
-            Keys::isCtrlW($data), Keys::isAltBackspace($data) => $this->deleteWordBefore(),
-            Keys::isCtrlU($data) => $this->deleteToStart(),
-            Keys::isCtrlK($data) => $this->deleteToEnd(),
+            $kb->matches($data, 'tui.editor.deleteCharBackward') => $this->deleteBefore(),
+            $kb->matches($data, 'tui.editor.deleteCharForward') => $this->deleteAfter(),
+            $kb->matches($data, 'tui.editor.deleteWordBackward') => $this->deleteWordBefore(),
+            $kb->matches($data, 'tui.editor.deleteWordForward') => $this->deleteWordAfter(),
+            $kb->matches($data, 'tui.editor.deleteToLineStart') => $this->deleteToStart(),
+            $kb->matches($data, 'tui.editor.deleteToLineEnd') => $this->deleteToEnd(),
+            $kb->matches($data, 'tui.editor.yank') => $this->yank(),
+            $kb->matches($data, 'tui.editor.yankPop') => $this->yankPop(),
             default => false,
         };
     }
 
-    /** Cursor keys. Returns whether one was recognised. */
+    /** Cursor keys, upstream's ids. Returns whether one was recognised. */
     private function move(string $data): bool
     {
-        return match (true) {
-            Keys::isArrowLeft($data) => $this->step(-1),
-            Keys::isArrowRight($data) => $this->step(1),
-            Keys::isCtrlA($data), Keys::isHome($data) => $this->moveTo(0),
-            Keys::isCtrlE($data), Keys::isEnd($data) => $this->moveTo(strlen($this->value)),
-            Keys::isCtrlLeft($data), Keys::isAltLeft($data) => $this->moveTo(Chars::wordStart($this->value, $this->cursor)),
-            Keys::isCtrlRight($data), Keys::isAltRight($data) => $this->moveTo(Chars::wordEnd($this->value, $this->cursor)),
+        $kb = Keybindings::getKeybindings();
+
+        $moved = match (true) {
+            $kb->matches($data, 'tui.editor.cursorLeft') => $this->step(-1),
+            $kb->matches($data, 'tui.editor.cursorRight') => $this->step(1),
+            $kb->matches($data, 'tui.editor.cursorLineStart') => $this->moveTo(0),
+            $kb->matches($data, 'tui.editor.cursorLineEnd') => $this->moveTo(strlen($this->value)),
+            $kb->matches($data, 'tui.editor.cursorWordLeft') => $this->moveTo(Chars::wordStart($this->value, $this->cursor)),
+            $kb->matches($data, 'tui.editor.cursorWordRight') => $this->moveTo(Chars::wordEnd($this->value, $this->cursor)),
             default => false,
         };
+
+        if ($moved) {
+            $this->lastAction = null;
+        }
+
+        return $moved;
     }
 
     /**
@@ -287,6 +328,8 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
         // `Chars::isPrintable()` keeps out of every other door. Arriving in a *later* chunk it
         // costs upstream more than that: its start check runs in front of its in-paste branch, so
         // the marker resets the buffer and throws away everything collected before it.
+        $this->lastAction = null;
+        $this->pushUndo();
         $this->insert(str_replace([self::PASTE_START, "\r\n", "\r", "\n"], '', $pasted));
 
         if ($rest !== '') {
@@ -321,11 +364,14 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
 
     private function deleteBefore(): bool
     {
+        $this->lastAction = null;
         $length = $this->lengthBefore();
 
         if ($length === 0) {
             return true;
         }
+
+        $this->pushUndo();
 
         $this->value = substr($this->value, 0, $this->cursor - $length) . substr($this->value, $this->cursor);
         $this->cursor -= $length;
@@ -335,9 +381,11 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
 
     private function deleteAfter(): bool
     {
+        $this->lastAction = null;
         $length = $this->lengthAfter();
 
         if ($length > 0) {
+            $this->pushUndo();
             $this->value = substr($this->value, 0, $this->cursor) . substr($this->value, $this->cursor + $length);
         }
 
@@ -346,16 +394,39 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
 
     private function deleteWordBefore(): bool
     {
-        $from = Chars::wordStart($this->value, $this->cursor);
+        if ($this->cursor === 0) {
+            return true;
+        }
 
+        $from = Chars::wordStart($this->value, $this->cursor);
+        $this->kill(substr($this->value, $from, $this->cursor - $from), prepend: true);
         $this->value = substr($this->value, 0, $from) . substr($this->value, $this->cursor);
         $this->cursor = $from;
 
         return true;
     }
 
+    /** Upstream's `deleteWordForward()` (`tui.editor.deleteWordForward`). */
+    private function deleteWordAfter(): bool
+    {
+        if ($this->cursor >= strlen($this->value)) {
+            return true;
+        }
+
+        $to = Chars::wordEnd($this->value, $this->cursor);
+        $this->kill(substr($this->value, $this->cursor, $to - $this->cursor), prepend: false);
+        $this->value = substr($this->value, 0, $this->cursor) . substr($this->value, $to);
+
+        return true;
+    }
+
     private function deleteToStart(): bool
     {
+        if ($this->cursor === 0) {
+            return true;
+        }
+
+        $this->kill(substr($this->value, 0, $this->cursor), prepend: true);
         $this->value = substr($this->value, $this->cursor);
         $this->cursor = 0;
 
@@ -364,9 +435,76 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
 
     private function deleteToEnd(): bool
     {
+        if ($this->cursor >= strlen($this->value)) {
+            return true;
+        }
+
+        $this->kill(substr($this->value, $this->cursor), prepend: false);
         $this->value = substr($this->value, 0, $this->cursor);
 
         return true;
+    }
+
+    /** Snapshot for undo, then the deleted text into the kill ring — accumulating after another kill. */
+    private function kill(string $text, bool $prepend): void
+    {
+        $this->pushUndo();
+        $this->killRing->push($text, $prepend, accumulate: $this->lastAction === 'kill');
+        $this->lastAction = 'kill';
+    }
+
+    /** Upstream's `yank()` (`tui.editor.yank`). */
+    private function yank(): bool
+    {
+        $text = $this->killRing->peek();
+
+        if ($text === null) {
+            return true;
+        }
+
+        $this->pushUndo();
+        $this->insert($text);
+        $this->lastAction = 'yank';
+
+        return true;
+    }
+
+    /** Upstream's `yankPop()` (`tui.editor.yankPop`): only straight after a yank. */
+    private function yankPop(): bool
+    {
+        if ($this->lastAction !== 'yank' || $this->killRing->length() <= 1) {
+            return true;
+        }
+
+        $this->pushUndo();
+        $previous = (string) $this->killRing->peek();
+        $from = max(0, $this->cursor - strlen($previous));
+        $this->value = substr($this->value, 0, $from) . substr($this->value, $this->cursor);
+        $this->cursor = $from;
+        $this->killRing->rotate();
+        $this->insert((string) $this->killRing->peek());
+        $this->lastAction = 'yank';
+
+        return true;
+    }
+
+    private function pushUndo(): void
+    {
+        $this->undoStack->push(['value' => $this->value, 'cursor' => $this->cursor]);
+    }
+
+    /** Upstream's `undo()` (`tui.editor.undo`). */
+    private function undo(): void
+    {
+        $snapshot = $this->undoStack->pop();
+
+        if ($snapshot === null) {
+            return;
+        }
+
+        $this->value = $snapshot['value'];
+        $this->cursor = $snapshot['cursor'];
+        $this->lastAction = null;
     }
 
     /** Bytes in the grapheme just before the cursor. */
@@ -387,7 +525,7 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
 
     /**
      * A primary press on the line puts the cursor under the pointer — upstream's `handleMouse()`.
-     * Upstream also resets its kill-ring/undo coalescing here; pig's input has neither.
+     * Upstream also resets its kill-ring/undo coalescing here, and so does this.
      */
     #[\Override]
     public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
@@ -409,6 +547,7 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
             $currentColumn = $nextColumn;
             $offset += strlen($grapheme);
         }
+        $this->lastAction = null;
 
         return new TuiMouseEventResult(handled: true, focus: true);
     }

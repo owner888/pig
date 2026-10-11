@@ -10,6 +10,7 @@ use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
+use Pig\Ai\Utils\JsJson;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
@@ -21,49 +22,51 @@ use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
+use JsonException;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\CompactionEndEvent;
 use Pig\CodingAgent\Session\SessionCodec;
+use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Settings;
+use stdClass;
 use Throwable;
 
 /**
  * The second way in: JSON lines on standard input, JSON lines on standard output.
  *
  * For an editor, or anything else that wants the agent without a terminal. One command per
- * line in, and three kinds of line out: a `response` to a command, an `event` as the agent
- * works, and a `hook_ui_request` when a hook wants to ask something.
+ * line in, and three kinds of line out: a `response` to a command, a session event as the agent
+ * works (`RpcEvents`), and an `extension_ui_request` when a hook wants to ask something.
  *
  * ```
  *   {"id":"1","type":"prompt","message":"what does bin/pig do?"}
- *   {"id":"1","type":"response","command":"prompt","success":true}
+ *   {"id":"1","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
  *   {"type":"message_start","message":{...}}
- *   {"type":"message_update","message":{...},"delta":{"type":"text_delta","contentIndex":0,"delta":"It "}}
+ *   {"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"It "}}
  *   ...
+ *   {"type":"agent_settled","aborted":false}
  * ```
  *
+ * **The wire is upstream's** (`modes/rpc/rpc-types.ts`, `rpc-mode.ts`, `json-event.ts`): every command,
+ * field, response and event name, so a client written against `pi --mode rpc` drives `pig --mode rpc`
+ * unchanged. pig's own additions are additive and named as such — the extra `get_state` fields a web
+ * tab draws, `navigate_tree`, and the four commands the web shell needs from its child (`doctor`,
+ * `diff`, `bug`, `export_markdown`).
+ *
  * `id` is the host's, echoed back on the response so replies can be matched to commands.
- * It is optional, and a command without one gets a response without one.
+ * It is optional, and a command without one gets a response without one. **One response per
+ * command, never two**: `prompt` answers once, when it is known what became of the prompt, and a
+ * failure after that is the turn's to report, in its events.
  *
  * **Standard input goes on the same event loop as the model's socket**, through
  * `Loop::onReadable()`. That is what makes a hook's `confirm()` work over the wire: the
  * handler's fiber parks on a `Deferred`, the loop keeps reading, and the reply line resumes
  * it. `readline` would have blocked the loop it needs.
  *
- * Ported from upstream's `modes/rpc/rpc-mode.ts`. Its `rpc-types.ts` has no counterpart:
- * that file is TypeScript types for the wire shape, and the wire shape here is this class's
- * docblock plus `RpcEvents`. Its `rpc-client.ts` is `Rpc\RpcClient` — which exists for the reason
- * this docblock used to give for not having it. "A host writes JSON lines in whatever language it
- * is in" is true, and it left the protocol with no test *as a protocol*: `RpcModeTest` hands this
- * class two streams, so nothing checked the binary starting, a line crossing a pipe, or a field
- * name. The first thing `RpcClient` found was that `bin/pig --mode rpc` could not start at all.
+ * `rpc-types.ts` has no PHP counterpart, as types: the shapes are this class's methods and
+ * `RpcEvents`, which is where a field is named. `rpc-client.ts` is `Rpc\RpcClient`.
  *
- * **Two of upstream's commands are not here under their names:**
- *
- * - `queue_message`: the anchor commit split the agent's one queue into `steer()` and
- *   `followUp()`, so there is no single queue to add to. `steer` and `follow_up` are the two
- *   commands that replace it, which is honest rather than guessing which one a `queue_message`
- *   meant.
- * - `export_html`'s `outputPath` is honoured, but the command is `export` here.
+ * **Not here from upstream:** `queue_message` is long gone upstream too, and nothing else is missing.
  */
 final class RpcMode
 {
@@ -83,22 +86,32 @@ final class RpcMode
     /** @var resource */
     private $out;
 
+    /** @var resource */
+    private $err;
+
     /**
      * @param resource|null $in  standard input unless a test hands in a pipe
      * @param resource|null $out standard output, likewise
+     * @param resource|null $err standard error, for what is neither a response nor an event
+     * @param (Closure(string, \Pig\CodingAgent\Session\SessionManager, ?Closure): \Pig\CodingAgent\StartedSession)|null $createRuntime
+     *        upstream's runtime factory: a session for another working directory, for
+     *        `switch_session` to a conversation from another project (`AgentSession::switchTo()`)
      */
     public function __construct(
-        private readonly AgentSession $session,
-        private readonly string $cwd,
-        private readonly ?HookRunner $hooks = null,
-        private readonly ?CustomToolSet $customTools = null,
-        private readonly ?Settings $settings = null,
+        private AgentSession $session,
+        private string $cwd,
+        private ?HookRunner $hooks = null,
+        private ?CustomToolSet $customTools = null,
+        private ?Settings $settings = null,
         private readonly ?Auth $auth = null,
         $in = null,
         $out = null,
+        $err = null,
+        private readonly ?Closure $createRuntime = null,
     ) {
         $this->in = $in ?? STDIN;
         $this->out = $out ?? STDOUT;
+        $this->err = $err ?? STDERR;
         $this->ui = new RpcUi($this->send(...));
     }
 
@@ -123,6 +136,28 @@ final class RpcMode
     {
         stream_set_blocking($this->in, false);
 
+        $this->bindSession();
+
+        // Upstream's `main()`: RPC refreshes every fetched catalog in the background, unless
+        // `PIG_OFFLINE` says no network.
+        if ($this->auth !== null && ModelRefresh::networkEnabled()) {
+            ModelRefresh::inBackground($this->auth);
+        }
+
+        $this->watcher = Loop::get()->onReadable($this->in, $this->onReadable(...));
+
+        $this->hooks?->emit(new SessionStartEvent());
+        $this->session->discoverResources('startup');
+        $this->report($this->customTools?->notify('start') ?? []);
+    }
+
+    /**
+     * Upstream's `rebindSession()`: the session's events onto the wire, its mode and shutdown
+     * request, and its hooks and custom tools onto this protocol's UI — at startup, and again for
+     * the session a `switch_session` to another directory built (`rebind()`).
+     */
+    private function bindSession(): void
+    {
         $this->session->subscribe($this->onAgentEvent(...));
         $this->session->enableCacheWarming();
 
@@ -134,16 +169,11 @@ final class RpcMode
         // Each mode wires its own UI; this one's is the protocol.
         $this->hooks?->wire($this->session, $this->ui);
 
-        // Upstream's `main()`: RPC refreshes every fetched catalog in the background, unless
-        // `PIG_OFFLINE` says no network.
-        if ($this->auth !== null && ModelRefresh::networkEnabled()) {
-            ModelRefresh::inBackground($this->auth);
-        }
-
+        // Upstream's `extension_error`, with its three fields.
         $this->hooks?->onError(function (HookError $error): void {
             $this->send([
-                'type' => 'hook_error',
-                'hookPath' => $error->hookPath,
+                'type' => 'extension_error',
+                'extensionPath' => $error->hookPath,
                 'event' => $error->event,
                 'error' => $error->error,
             ]);
@@ -153,12 +183,31 @@ final class RpcMode
         $this->customTools?->withContext(
             fn () => $this->hooks?->context() ?? new HookContext($this->cwd, ui: $this->ui, hasUi: true),
         );
+    }
 
-        $this->watcher = Loop::get()->onReadable($this->in, $this->onReadable(...));
+    /**
+     * Carry on with the session `switchTo()`'s runtime factory built for another directory —
+     * upstream's `runtimeHost.switchSession()` then `rebindSession()`, whose `session_start` is
+     * `resume` with the file left. The old session is already shut down and disposed.
+     */
+    private function rebind(\Pig\CodingAgent\StartedSession $started, ?string $previous): void
+    {
+        $this->report($this->customTools?->notify('shutdown') ?? []);
 
-        $this->hooks?->emit(new SessionStartEvent());
+        $this->session = $started->session;
+        $this->cwd = $started->session->cwd();
+        $this->hooks = $started->hooks;
+        $this->customTools = $started->customTools;
+        $this->settings = $started->session->settings();
+        $this->bindSession();
+
+        foreach ($started->warnings as $warning) {
+            fwrite($this->err, $warning . "\n");
+        }
+
+        $this->hooks->emit(new SessionStartEvent('resume', $previous));
         $this->session->discoverResources('startup');
-        $this->report($this->customTools?->notify('start') ?? []);
+        $this->report($this->customTools->notify('switch', $previous));
     }
 
     public function stop(): void
@@ -180,7 +229,9 @@ final class RpcMode
      *
      * Buffered because a read is bytes, not lines: a long prompt can arrive in pieces and a
      * fast host can send three commands in one. End of input ends the loop, which is how a
-     * host says it is finished — it closes the pipe.
+     * host says it is finished — it closes the pipe. Split on LF only, with a CR before it
+     * stripped, as upstream's `attachJsonlLineReader()`: U+2028 inside a JSON string is not a
+     * line break.
      */
     private function onReadable(): void
     {
@@ -197,6 +248,10 @@ final class RpcMode
         while (($break = strpos($this->buffer, "\n")) !== false) {
             $line = substr($this->buffer, 0, $break);
             $this->buffer = substr($this->buffer, $break + 1);
+
+            if (str_ends_with($line, "\r")) {
+                $line = substr($line, 0, -1);
+            }
 
             if (trim($line) !== '') {
                 try {
@@ -217,92 +272,97 @@ final class RpcMode
      * One line: a command, or a reply to a question a hook asked.
      *
      * Each command runs in a fiber of its own, because several of them suspend — `prompt`
-     * runs a whole turn, `compact` and a summarising `go_to` call the model, and anything
+     * runs a whole turn, `compact` and a summarising `navigate_tree` call the model, and anything
      * that reaches a hook may park on a dialog. Running them here would suspend the loop
      * that read the line.
      */
     private function line(string $line): void
     {
-        $command = json_decode($line, true);
-
-        if (!is_array($command)) {
-            $this->send(['type' => 'response', 'command' => 'parse', 'success' => false, 'error' => 'not a JSON object']);
+        try {
+            $command = JsJson::parse($line);
+        } catch (JsonException $error) {
+            // Upstream's words, and V8's for the part after the colon.
+            $this->send(['type' => 'response', 'command' => 'parse', 'success' => false, 'error' => "Failed to parse command: {$error->getMessage()}"]);
 
             return;
         }
 
-        if (($command['type'] ?? null) === 'hook_ui_response') {
+        if (!is_array($command) || array_is_list($command) && $command !== []) {
+            // JSON, but not an object: upstream reads `type` off it, finds nothing, and answers
+            // the unknown command it is.
+            $this->send(['type' => 'response', 'success' => false, 'error' => 'Unknown command: undefined']);
+
+            return;
+        }
+
+        if (($command['type'] ?? null) === 'extension_ui_response') {
             $this->ui->answer($command);
 
             return;
         }
 
-        Async::spawn(function () use ($command): void {
-            $id = isset($command['id']) ? (string) $command['id'] : null;
-            $type = (string) ($command['type'] ?? '');
+        $id = isset($command['id']) ? (string) $command['id'] : null;
+        $type = (string) ($command['type'] ?? '');
 
+        // `prompt` answers from inside the turn, once — see `prompt()`.
+        if ($type === 'prompt') {
+            Async::spawn(fn () => $this->prompt($command, $id));
+
+            return;
+        }
+
+        Async::spawn(function () use ($command, $id, $type): void {
             try {
                 $data = $this->dispatch($type, $command);
             } catch (Throwable $error) {
                 // Every failure is a response rather than a crash: a host asking for
                 // something impossible should be told, not disconnected.
-                $this->send(array_filter([
-                    'id' => $id,
-                    'type' => 'response',
-                    'command' => $type,
-                    'success' => false,
-                    'error' => $error->getMessage(),
-                ], static fn (mixed $v): bool => $v !== null));
+                $this->refuse($id, $type, $error->getMessage());
 
                 return;
             }
 
-            $response = array_filter([
-                'id' => $id,
-                'type' => 'response',
-                'command' => $type,
-                'success' => true,
-            ], static fn (mixed $v): bool => $v !== null);
-
-            $this->send($data === null ? $response : [...$response, 'data' => $data]);
+            $this->respond($id, $type, $data);
         });
     }
 
     /**
      * Do what the command says, and answer with its data or nothing.
      *
+     * `NO_DATA` is a success without `data`, as upstream's `success(id, command)` sends it; `null`
+     * is `data: null`, which upstream sends for `cycle_model` with nothing to cycle to.
+     *
      * @param array<string, mixed> $command
-     * @return array<string, mixed>|null
+     * @return array<string, mixed>|stdClass|string|null
      * @throws \RuntimeException for anything a host got wrong
      */
-    private function dispatch(string $type, array $command): ?array
+    private function dispatch(string $type, array $command): array|stdClass|string|null
     {
         return match ($type) {
-            'prompt' => $this->prompt($command),
-            'steer' => $this->queue($command, steer: true),
-            'follow_up' => $this->queue($command, steer: false),
+            'steer' => ['disposition' => $this->session->steer(self::text($command, 'message'), self::images($command), 'rpc')],
+            'follow_up' => ['disposition' => $this->session->followUp(self::text($command, 'message'), self::images($command), 'rpc')],
             'abort' => $this->abort(),
+            'clear_queue' => $this->clearQueue(),
+            'new_session' => $this->newSession($command),
 
             'get_state' => $this->state(),
-            'get_messages' => ['messages' => $this->encoded($this->session->messages())],
-            'get_last_assistant_text' => ['text' => $this->session->lastAssistantText()],
-            'get_session_stats' => $this->stats(),
 
             // "Available" is upstream's word for "there is a key for it", not "pig knows of it":
             // a host drawing a model menu from this list would otherwise offer twenty models and
             // have nineteen of them fail. Without an `Auth` — which only a test builds this
             // without — every model there is, as before.
+            'set_model' => $this->setModel($command),
+            'cycle_model' => $this->cycleModel($command),
             'get_available_models' => [
                 'models' => array_map(self::model(...), $this->auth?->availableModels() ?? Models::all()),
             ],
-            'set_model' => $this->setModel($command),
-            'cycle_model' => $this->cycleModel($command),
+
+            'set_thinking_level' => $this->setThinking($command),
+            'cycle_thinking_level' => ($level = $this->session->cycleThinkingLevel()) === null ? null : ['level' => $level->value],
+            'get_available_thinking_levels' => ['levels' => $this->thinkingLevels()],
 
             'set_steering_mode' => $this->setQueueMode($command, $this->session->setSteeringMode(...)),
             'set_follow_up_mode' => $this->setQueueMode($command, $this->session->setFollowUpMode(...)),
-
-            'set_thinking_level' => $this->setThinking($command),
-            'cycle_thinking_level' => ['level' => $this->session->cycleThinkingLevel()?->value],
 
             'compact' => $this->compact($command),
             'set_auto_compaction' => $this->setAutoCompaction($command),
@@ -313,14 +373,24 @@ final class RpcMode
             'bash' => $this->bash($command),
             'abort_bash' => $this->abortBash(),
 
-            'get_branch' => $this->branch(),
-            'go_to' => $this->goTo($command),
-            'new_session' => $this->newSession(),
+            'get_session_stats' => $this->stats(),
+            'export_html' => $this->exportHtml($command),
             'switch_session' => $this->switchSession($command),
             'fork' => $this->fork($command),
             'clone' => $this->cloneSession(),
             'get_fork_messages' => ['messages' => $this->session->userMessagesForForking()],
-            'export' => $this->export($command),
+            'get_entries' => $this->entries($command),
+            'get_tree' => $this->tree(),
+            'get_last_assistant_text' => ['text' => $this->session->lastAssistantText()],
+            'set_session_name' => $this->setSessionName($command),
+
+            'get_messages' => ['messages' => $this->encoded($this->session->messages())],
+
+            'get_commands' => ['commands' => $this->commands()],
+
+            // pig's: upstream's `navigateTree()` as a command, which its RPC mode only offers to
+            // extensions (`commandContextActions.navigateTree`).
+            'navigate_tree' => $this->navigateTree($command),
 
             // Four the web shell used to answer over HTTP from its one session and cannot now,
             // because it has none: they are the child's. Each is the terminal's slash command
@@ -334,92 +404,151 @@ final class RpcMode
         };
     }
 
+    /** A success with no `data` key at all — upstream's `success(id, command)`. */
+    private const string NO_DATA = "\0no-data";
+
+    /** @param array<string, mixed>|stdClass|string|null $data */
+    private function respond(?string $id, string $command, array|stdClass|string|null $data): void
+    {
+        $response = [
+            ...($id === null ? [] : ['id' => $id]),
+            'type' => 'response',
+            'command' => $command,
+            'success' => true,
+        ];
+
+        $this->send($data === self::NO_DATA ? $response : [...$response, 'data' => $data]);
+    }
+
+    private function refuse(?string $id, string $command, string $error): void
+    {
+        $this->send([
+            ...($id === null ? [] : ['id' => $id]),
+            'type' => 'response',
+            'command' => $command,
+            'success' => false,
+            'error' => $error,
+        ]);
+    }
+
     // ---- prompting -----------------------------------------------------------------------
 
-    /** @param array<string, mixed> $command */
-    private function prompt(array $command): ?array
+    /**
+     * Upstream's `prompt` case: the turn starts at once, and the one response goes out from
+     * `preflightResult` — `{disposition}` once the prompt is accepted, queued or handled.
+     *
+     * A failure before that is this command's `success: false`. A failure after it is not a
+     * second response for the same id — pig used to send a success and then a failure when the
+     * agent was busy, telling a host both that the prompt was accepted and that it was not.
+     * After acceptance the turn reports its own trouble, in `message_end` and `agent_end`; what
+     * escapes even that goes to standard error, which is where a host looks for a dying agent.
+     *
+     * @param array<string, mixed> $command
+     */
+    private function prompt(array $command, ?string $id): void
     {
-        // Read before the spawn, not inside it. A missing `message` is the host's mistake and
-        // belongs on this command's response — thrown inside the fiber it would arrive as a
-        // second, id-less failure *after* the success this method had already returned, so a
-        // host would be told both that the prompt was accepted and that it was not.
-        $message = self::text($command, 'message');
-        $id = isset($command['id']) ? (string) $command['id'] : null;
+        $accepted = false;
+
+        try {
+            $behavior = isset($command['streamingBehavior']) ? (string) $command['streamingBehavior'] : null;
+
+            $this->session->prompt(
+                self::text($command, 'message'),
+                self::images($command),
+                'rpc',
+                $behavior,
+                function (string $disposition) use (&$accepted, $id): void {
+                    $accepted = true;
+                    $this->respond($id, 'prompt', ['disposition' => $disposition]);
+                },
+            );
+        } catch (Throwable $error) {
+            if (!$accepted) {
+                $this->refuse($id, 'prompt', $error->getMessage());
+
+                return;
+            }
+
+            fwrite($this->err, "prompt {$id}: {$error->getMessage()}\n");
+        }
+    }
+
+    /**
+     * Upstream's `ImageContent[]`: `{type: "image", data, mimeType}` each.
+     *
+     * @param array<string, mixed> $command
+     * @return list<ImageContent>
+     */
+    private static function images(array $command): array
+    {
         $images = [];
 
-        foreach ((array) ($command['images'] ?? []) as $image) {
-            if (is_array($image) && isset($image['data'], $image['mimeType'])) {
-                $images[] = new ImageContent((string) $image['data'], (string) $image['mimeType']);
+        foreach ((array) ($command['images'] ?? []) as $at => $image) {
+            if (!is_array($image) || !is_string($image['data'] ?? null) || !is_string($image['mimeType'] ?? null)) {
+                throw new \RuntimeException("'images[{$at}]' must be {type: \"image\", data, mimeType}.");
             }
+
+            $images[] = new ImageContent($image['data'], $image['mimeType']);
         }
 
-        // The response goes out before the turn finishes — the events are the turn. A host
-        // that waited for the response to mean "done" would be waiting for the wrong thing,
-        // which is why `agent_end` exists.
-        Async::spawn(function () use ($message, $images, $id): void {
-            try {
-                $this->session->prompt($message, $images, 'rpc');
-            } catch (Throwable $error) {
-                $this->send(array_filter([
-                    'id' => $id,
-                    'type' => 'response',
-                    'command' => 'prompt',
-                    'success' => false,
-                    'error' => $error->getMessage(),
-                ], static fn (mixed $v): bool => $v !== null));
-            }
-        });
-
-        return null;
+        return $images;
     }
 
-    /** @param array<string, mixed> $command */
-    private function queue(array $command, bool $steer): ?array
-    {
-        $message = self::text($command, 'message');
-
-        if ($steer) {
-            $this->session->steer($message, 'rpc');
-        } else {
-            $this->session->followUp($message, 'rpc');
-        }
-
-        return null;
-    }
-
-    private function abort(): ?array
+    private function abort(): string
     {
         $this->session->abort()->await();
 
-        return null;
+        return self::NO_DATA;
+    }
+
+    /**
+     * Upstream's `clear_queue`: both queues, as they were typed, then empty.
+     *
+     * @return array{steering: list<string>, followUp: list<string>}
+     */
+    private function clearQueue(): array
+    {
+        $queued = $this->session->queuedByKind();
+        $this->session->clearQueue();
+
+        return $queued;
     }
 
     // ---- state ---------------------------------------------------------------------------
 
-    /** @return array<string, mixed> */
+    /**
+     * Upstream's `RpcSessionState`, and after it the fields pig's web tab draws.
+     *
+     * `model` and `sessionName` are left out when there is none, as `JSON.stringify` drops
+     * an undefined field; `sessionFile` likewise. `sessionId` is the session file's id, or the
+     * in-memory session's under `--no-session` (`AgentSession::sessionId()`), as upstream's is.
+     *
+     * @return array<string, mixed>
+     */
     private function state(): array
     {
         $model = $this->session->model();
+        $store = $this->session->store();
+        $name = $this->session->getSessionName();
 
         return [
-            'model' => $model === null ? null : self::model($model),
+            ...($model === null ? [] : ['model' => self::model($model)]),
             'thinkingLevel' => $this->session->thinkingLevel()->value,
             'isStreaming' => $this->session->isStreaming(),
-            // Upstream's `RpcSessionState` declares both of these and pig's answer carried
-            // neither: a host had no way to know a summarisation was running, and could set the
-            // queue modes without ever being able to read them back. `sessionId` is the third field
-            // on that interface and stays out — pig has no session identity apart from the file,
-            // which `sessionFile` already is.
             'isCompacting' => $this->session->isCompacting(),
             'steeringMode' => $this->session->steeringMode()->value,
             'followUpMode' => $this->session->followUpMode()->value,
-            'isBashRunning' => $this->session->isBashRunning(),
-            'sessionFile' => $this->session->store()?->path,
-            'isPersisted' => $this->session->store()?->isPersisted() ?? false,
-            'messageCount' => count($this->session->messages()),
-            'queuedMessageCount' => count($this->session->queued()),
-            'contextTokens' => $this->session->contextTokens(),
+            ...($store === null ? [] : ['sessionFile' => $store->path]),
+            'sessionId' => $this->session->sessionId(),
+            ...($name === null ? [] : ['sessionName' => $name]),
             'autoCompactionEnabled' => $this->settings?->compactionEnabled() ?? true,
+            'messageCount' => count($this->session->messages()),
+            'pendingMessageCount' => count($this->session->queued()),
+
+            // pig's, for the web shell: none of them is upstream's, and a pi client ignores them.
+            'isBashRunning' => $this->session->isBashRunning(),
+            'isPersisted' => $store?->isPersisted() ?? false,
+            'contextTokens' => $this->session->contextTokens(),
             'autoRetryEnabled' => $this->settings?->retryEnabled() ?? true,
             'isRetrying' => $this->session->isRetrying(),
             // Under a virtual model, where the latest response actually went — what the TUI's
@@ -429,12 +558,10 @@ final class RpcMode
                 'id' => $routed->model->id,
                 'thinkingLevel' => $routed->thinkingLevel?->value,
             ],
-            // Three fields upstream's state has no need of and the web shell's tab bar does: a
-            // tab is labelled by the session's name or its opening line, and grouped by
+            // A tab is labelled by the session's name or its opening line, and grouped by
             // directory. Reading them off the file on the shell side would mean the shell
             // knowing the session format; the child already does.
             'cwd' => $this->session->cwd(),
-            'sessionName' => $this->session->getSessionName(),
             'opening' => $this->opening(),
         ];
     }
@@ -455,23 +582,39 @@ final class RpcMode
         return '';
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Upstream's `SessionStats`: the counts, the tokens in one object, the cost, and the context
+     * window's use — left out when there is no model or window to measure against.
+     *
+     * @return array<string, mixed>
+     */
     private function stats(): array
     {
         $stats = $this->session->stats();
+        $store = $this->session->store();
+        $usage = $this->session->contextUsage();
 
         return [
+            ...($store === null ? [] : ['sessionFile' => $store->path]),
+            'sessionId' => $this->session->sessionId(),
             'userMessages' => $stats->userMessages,
             'assistantMessages' => $stats->assistantMessages,
             'toolCalls' => $stats->toolCalls,
             'toolResults' => $stats->toolResults,
             'totalMessages' => $stats->totalMessages,
-            'input' => $stats->input,
-            'output' => $stats->output,
-            'cacheRead' => $stats->cacheRead,
-            'cacheWrite' => $stats->cacheWrite,
-            'totalTokens' => $stats->totalTokens(),
+            'tokens' => [
+                'input' => $stats->input,
+                'output' => $stats->output,
+                'cacheRead' => $stats->cacheRead,
+                'cacheWrite' => $stats->cacheWrite,
+                'total' => $stats->totalTokens(),
+            ],
             'cost' => $stats->cost,
+            ...($usage === null ? [] : ['contextUsage' => [
+                'tokens' => $usage->tokens,
+                'contextWindow' => $usage->contextWindow,
+                'percent' => $usage->percent,
+            ]]),
         ];
     }
 
@@ -484,7 +627,7 @@ final class RpcMode
         $provider = isset($command['provider']) && $command['provider'] !== '' ? (string) $command['provider'] : null;
 
         // A combined `provider/id` with no separate provider is the other spelling of the same
-        // request, and a host sending it got "No such model" for a model that exists.
+        // request, and a host sending it got "Model not found" for a model that exists.
         if ($provider === null && str_contains($id, '/')) {
             [$provider, $id] = explode('/', $id, 2);
         }
@@ -497,7 +640,7 @@ final class RpcMode
         $model = $provider === null ? Models::get($id) : Models::find($provider, $id);
 
         if ($model === null) {
-            throw new \RuntimeException('No such model: ' . ($provider === null ? $id : "{$provider}/{$id}"));
+            throw new \RuntimeException('Model not found: ' . ($provider === null ? $id : "{$provider}/{$id}"));
         }
 
         $level = isset($command['thinkingLevel']) ? ThinkingLevel::tryFrom((string) $command['thinkingLevel']) : null;
@@ -507,16 +650,12 @@ final class RpcMode
     }
 
     /**
-     * The next model along, which is ctrl+p in the terminal.
+     * The next model along, which is ctrl+p in the terminal — upstream's `{model, thinkingLevel,
+     * isScoped}`, `isScoped` saying whether the rotation was `--models`' scope or every model with
+     * a key. `null` for a machine with one usable model, or one model in the scope.
      *
-     * Ported after all: the docblock at the top of this file said `get_available_models` and
-     * `set_model` were what it is made of, and that was true for a host — but not for pig, which
-     * had the keys reserved in the editor and no method behind them. A host doing the rotation by
-     * hand would be a second implementation of it, and this audit's whole subject is what that
-     * costs — which is why the rotation, the key check and the thinking level a `--models` scope
-     * entry carries are all `AgentSession::cycleModel()`'s.
-     *
-     * `null` for a machine with one usable model, or one model in the scope, as upstream answers.
+     * The rotation, the key check and the thinking level a scope entry carries are all
+     * `AgentSession::cycleModel()`'s. `direction: "backward"` is pig's, for shift+ctrl+p.
      *
      * @param array<string, mixed> $command
      * @return array<string, mixed>|null
@@ -532,10 +671,13 @@ final class RpcMode
             return null;
         }
 
-        return ['model' => self::model($choice->model), 'thinkingLevel' => $choice->thinking->value];
+        return [
+            'model' => self::model($choice->model),
+            'thinkingLevel' => $choice->thinking->value,
+            'isScoped' => $this->session->modelScope() !== [],
+        ];
     }
 
-    /** @param array<string, mixed> $command */
     /**
      * Upstream's `set_steering_mode` and `set_follow_up_mode`: whether messages typed mid-run are
      * handed over together or one at a time, one command per queue.
@@ -543,7 +685,7 @@ final class RpcMode
      * @param array<string, mixed> $command
      * @param Closure(QueueMode): void $set
      */
-    private function setQueueMode(array $command, Closure $set): ?array
+    private function setQueueMode(array $command, Closure $set): string
     {
         $wanted = self::text($command, 'mode');
 
@@ -553,156 +695,381 @@ final class RpcMode
                     . implode(' and ', array_map(static fn (QueueMode $m): string => $m->value, QueueMode::cases())) . '.'),
         );
 
-        return null;
+        return self::NO_DATA;
     }
 
-    private function setThinking(array $command): ?array
+    /**
+     * Upstream's `set_thinking_level`: `session.setThinkingLevel(command.level)`, which clamps a
+     * level the model does not offer to the nearest one it does — `AgentSession::setThinkingLevel()`
+     * does the clamping, so the answer is the empty success either way and `get_state` says what
+     * was set. A string that is not a thinking level at all is still refused: there is nothing to
+     * clamp from.
+     *
+     * @param array<string, mixed> $command
+     */
+    private function setThinking(array $command): string
     {
         $wanted = ThinkingLevel::tryFrom(self::text($command, 'level'))
             ?? throw new \RuntimeException('No such thinking level: ' . self::text($command, 'level'));
 
-        if (!in_array($wanted, $this->session->availableThinkingLevels(), true)) {
-            throw new \RuntimeException("This model cannot think at '{$wanted->value}'.");
-        }
-
         $this->session->setThinkingLevel($wanted);
 
-        return null;
+        return self::NO_DATA;
+    }
+
+    /**
+     * Upstream's `getAvailableThinkingLevels()`: `["off"]` for a model that cannot reason, which
+     * `AgentSession::availableThinkingLevels()` answers as an empty list for its own callers.
+     *
+     * @return list<string>
+     */
+    private function thinkingLevels(): array
+    {
+        $levels = $this->session->availableThinkingLevels();
+
+        return $levels === [] ? [ThinkingLevel::Off->value] : array_map(static fn (ThinkingLevel $l): string => $l->value, $levels);
     }
 
     // ---- making room ---------------------------------------------------------------------
 
-    /** @param array<string, mixed> $command */
+    /**
+     * Upstream's `compact`, answering its `CompactionResult`.
+     *
+     * `AgentSession::compact()` returns the entry the terminal draws; the result is what its
+     * `CompactionEndEvent` carries, which arrives while `compact()` runs — so it is caught on the
+     * way past, matched to the entry by identity, rather than worked out a second time here.
+     *
+     * @param array<string, mixed> $command
+     * @return array<string, mixed>
+     */
     private function compact(array $command): array
     {
         $instructions = isset($command['customInstructions'])
             ? (string) $command['customInstructions']
             : null;
 
-        $summary = $this->session->compact($instructions === '' ? null : $instructions);
+        $ended = [];
+        $unsubscribe = $this->session->subscribe(static function (AgentEvent $event) use (&$ended): void {
+            if ($event instanceof CompactionEndEvent) {
+                $ended[] = $event;
+            }
+        });
 
-        return [
-            'cancelled' => $summary === null,
-            'summary' => $summary === null ? null : SessionCodec::encode($summary),
-        ];
+        try {
+            $summary = $this->session->compact($instructions === '' ? null : $instructions);
+        } finally {
+            $unsubscribe();
+        }
+
+        if ($summary === null) {
+            // Upstream's `compact()` throws on a cancel; the summariser was stopped part-way.
+            throw new \RuntimeException('Compaction cancelled');
+        }
+
+        foreach ($ended as $event) {
+            if ($event->summary === $summary && $event->result !== null) {
+                return RpcEvents::compactionResult($event->result);
+            }
+        }
+
+        throw new \RuntimeException('The compaction finished without saying what it wrote.');
     }
 
     /** @param array<string, mixed> $command */
-    private function setAutoCompaction(array $command): ?array
+    private function setAutoCompaction(array $command): string
     {
         $this->settings?->set('compaction.enabled', (bool) ($command['enabled'] ?? true));
 
-        return null;
+        return self::NO_DATA;
     }
 
     // ---- waiting out a provider -----------------------------------------------------------
 
     /** @param array<string, mixed> $command */
-    private function setAutoRetry(array $command): ?array
+    private function setAutoRetry(array $command): string
     {
         $this->settings?->setRetryEnabled(($command['enabled'] ?? true) === true);
 
-        return null;
+        return self::NO_DATA;
     }
 
-    private function abortRetry(): ?array
+    private function abortRetry(): string
     {
         $this->session->abortRetry();
 
-        return null;
+        return self::NO_DATA;
     }
 
     // ---- bash ----------------------------------------------------------------------------
 
-    /** @param array<string, mixed> $command */
+    /**
+     * Upstream's `bash`: the command runs, its output streams as `bash_execution_update` events
+     * carrying this command's id, and the answer is upstream's `BashResult` — `output`, `exitCode`
+     * (left out for a command that was cancelled, as upstream's `undefined` is), `cancelled`,
+     * `truncated`, and `fullOutputPath` when the output was too long to keep.
+     *
+     * `excludeFromContext` is `!!`: the command is kept in the session, out of the model's sight.
+     *
+     * @param array<string, mixed> $command
+     * @return array<string, mixed>
+     */
     private function bash(array $command): array
     {
-        $text = self::text($command, 'command');
-        $id = isset($command['id']) ? (string) $command['id'] : null;
-
-        // The TUI draws a `!command`'s output as it arrives; a host gets the same through
-        // `bash_output` events carrying the command's id, so it can find the card. Without
-        // them a long-running command — `flutter run`, `npm run dev` — shows nothing until
-        // it is stopped, and "nothing" is what a stuck process looks like.
         $execution = $this->session->executeBash(
-            $text,
-            ($command['remember'] ?? true) === true,
-            function (string $output) use ($id): void {
-                $this->send(array_filter([
-                    'type' => 'bash_output',
-                    'id' => $id,
-                    'output' => $output,
-                ], static fn ($v) => $v !== null));
-            },
+            self::text($command, 'command'),
+            ($command['excludeFromContext'] ?? false) === true,
+            null,
+            isset($command['id']) ? (string) $command['id'] : null,
         );
 
-        // `encode()` is nullable for a message type it does not know, and `BashExecution` is
-        // one it knows. A null here would mean the codec had stopped handling it, which is
-        // worth failing loudly over rather than putting an empty object on the wire.
-        return SessionCodec::encode($execution)
-            ?? throw new \RuntimeException('The codec did not encode the bash execution.');
+        return [
+            'output' => $execution->output,
+            ...($execution->exitCode === null ? [] : ['exitCode' => $execution->exitCode]),
+            'cancelled' => $execution->cancelled,
+            'truncated' => $execution->truncated,
+            ...($execution->fullOutputPath === null ? [] : ['fullOutputPath' => $execution->fullOutputPath]),
+        ];
     }
 
-    private function abortBash(): ?array
+    private function abortBash(): string
     {
         $this->session->abortBash();
 
-        return null;
+        return self::NO_DATA;
     }
 
     // ---- the session ---------------------------------------------------------------------
 
-    /** @return array<string, mixed> */
-    private function branch(): array
+    /**
+     * Upstream's `get_entries`: every entry in append order, the header left out, and `since` as a
+     * cursor — only the entries strictly after it. An id the file has not got is a refusal, as
+     * upstream's is, rather than everything: a host that lost its place should know it.
+     *
+     * An entry pig cannot write back as a line — one a newer tool wrote, that pig carries as a
+     * node holding nothing — is not in the list; its children still are, with their parent id.
+     *
+     * @param array<string, mixed> $command
+     * @return array{entries: list<array<string, mixed>>, leafId: string|null}
+     */
+    private function entries(array $command): array
     {
-        $points = [];
+        $store = $this->session->store();
+        $entries = $store?->entries() ?? [];
 
-        foreach ($this->session->store()?->branch() ?? [] as $point) {
-            $points[] = [
-                'entryId' => $point['id'],
-                'message' => SessionCodec::encode($point['message']),
-                'branches' => $point['branches'],
+        if (isset($command['since'])) {
+            $since = (string) $command['since'];
+            $at = null;
+
+            foreach ($entries as $index => $entry) {
+                if ($entry->id === $since) {
+                    $at = $index;
+                    break;
+                }
+            }
+
+            if ($at === null) {
+                throw new \RuntimeException("Entry not found: {$since}");
+            }
+
+            $entries = array_slice($entries, $at + 1);
+        }
+
+        $encoded = [];
+
+        foreach ($entries as $entry) {
+            $line = SessionEntries::encode($entry->message, $entry->id, $entry->parentId);
+
+            if ($line !== null) {
+                $encoded[] = $line;
+            }
+        }
+
+        return ['entries' => $encoded, 'leafId' => $store?->leaf()];
+    }
+
+    /**
+     * Upstream's `get_tree`: `{entry, children, label?}` nodes, roots first, and the leaf.
+     *
+     * @return array{tree: list<array<string, mixed>>, leafId: string|null}
+     */
+    private function tree(): array
+    {
+        $store = $this->session->store();
+
+        return ['tree' => $store === null ? [] : $this->treeNodes($store->tree(), $store), 'leafId' => $store?->leaf()];
+    }
+
+    /**
+     * @param list<array{id: string, message: mixed, label: string|null, children: list<array<string, mixed>>}> $nodes
+     * @return list<array<string, mixed>>
+     */
+    private function treeNodes(array $nodes, \Pig\CodingAgent\Session\SessionManager $store): array
+    {
+        $out = [];
+
+        foreach ($nodes as $node) {
+            $id = (string) $node['id'];
+            $entry = SessionEntries::encode($node['message'], $id, $store->entry($id)['parent'] ?? null);
+
+            if ($entry === null) {
+                continue;
+            }
+
+            $out[] = [
+                'entry' => $entry,
+                'children' => $this->treeNodes($node['children'], $store),
+                ...($node['label'] === null ? [] : ['label' => $node['label']]),
             ];
         }
 
-        return ['points' => $points];
+        return $out;
     }
 
     /** @param array<string, mixed> $command */
-    private function goTo(array $command): array
+    private function setSessionName(array $command): string
     {
-        $instructions = isset($command['customInstructions']) ? (string) $command['customInstructions'] : null;
+        $name = trim(self::text($command, 'name'));
 
-        $jump = $this->session->goTo(
-            isset($command['entryId']) ? (string) $command['entryId'] : null,
-            ($command['summarise'] ?? false) === true,
-            $instructions === '' ? null : $instructions,
-        );
+        if ($name === '') {
+            throw new \RuntimeException('Session name cannot be empty');
+        }
 
-        $this->report($this->customTools?->notify('tree') ?? []);
+        $this->session->setSessionName($name);
+
+        return self::NO_DATA;
+    }
+
+    /**
+     * Upstream's `get_commands`: what `prompt` can be sent with a slash — the hooks' commands, the
+     * prompt templates, and the skills as `skill:name`. The terminal's own (`/settings` and the
+     * rest) are not here, as upstream's are not: they are the screen's, and a `prompt` would send
+     * them to the model as text.
+     *
+     * `sourceInfo` is upstream's shape. pig keeps less provenance than upstream's `SourceInfo` — a
+     * template or a skill knows the root it was found under, a hook its path — so `source`,
+     * `scope` and `origin` are read off that: `user` and `project` roots are `local` at that
+     * scope, a package's is `package`, and a path given on the command line or by an extension is
+     * `temporary`. See `sourceInfo()`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function commands(): array
+    {
+        $commands = [];
+
+        foreach ($this->hooks?->commands()[0] ?? [] as $name => $command) {
+            $commands[] = [
+                'name' => (string) $name,
+                ...($command->description === '' ? [] : ['description' => $command->description]),
+                'source' => 'extension',
+                'sourceInfo' => $this->sourceInfo(
+                    $command->hookPath,
+                    str_starts_with($command->hookPath, rtrim($this->cwd, '/') . '/') ? 'project' : 'user',
+                ),
+            ];
+        }
+
+        foreach ($this->session->fileCommands() as $template) {
+            $commands[] = [
+                'name' => $template->name,
+                'description' => $template->description,
+                'source' => 'prompt',
+                'sourceInfo' => $this->sourceInfo($template->path ?? '', trim($template->source, '()')),
+            ];
+        }
+
+        foreach ($this->session->skills() as $skill) {
+            $commands[] = [
+                'name' => "skill:{$skill->name}",
+                'description' => $skill->description,
+                'source' => 'skill',
+                'sourceInfo' => $this->sourceInfo($skill->path, $skill->source, $skill->baseDir),
+            ];
+        }
+
+        return $commands;
+    }
+
+    /**
+     * Upstream's `SourceInfo` from the root label pig keeps: `user`, `project`, `package`, `path`
+     * (a command-line `--skill` or `--prompt-template`) or `extension` (a hook's
+     * `resources_discover`).
+     *
+     * @return array{path: string, source: string, scope: string, origin: string, baseDir?: string}
+     */
+    private function sourceInfo(string $path, string $root, ?string $baseDir = null): array
+    {
+        [$source, $scope, $origin] = match ($root) {
+            'user' => ['local', 'user', 'top-level'],
+            'project' => ['local', 'project', 'top-level'],
+            'package' => ['package', 'user', 'package'],
+            'path' => ['cli', 'temporary', 'top-level'],
+            default => [$root, 'temporary', 'top-level'],
+        };
 
         return [
-            'moved' => $jump->moved,
-            'aborted' => $jump->aborted,
-            'summary' => $jump->summary === null ? null : SessionCodec::encode($jump->summary),
-            // What was said at the point gone back to, when that point is something somebody said:
-            // upstream's `editorText`, and a host with an input box wants it there for the same
-            // reason the terminal puts it in the prompt.
-            'editorText' => $jump->editorText,
+            'path' => $path,
+            'source' => $source,
+            'scope' => $scope,
+            'origin' => $origin,
+            ...($baseDir === null ? [] : ['baseDir' => $baseDir]),
         ];
     }
 
     /**
-     * Throw this conversation away and start another.
+     * Upstream's `navigateTree(targetId, {summarize, customInstructions, replaceInstructions,
+     * label})` as a command, answering its `{cancelled, aborted?, editorText?, summaryEntry?}`.
+     *
+     * Not an upstream RPC command — upstream offers it to extensions only — and pig's because the
+     * web shell has the tree to offer. Going back to something somebody said goes back to *before*
+     * it, and `editorText` is what they said, for the host's input box. `summaryEntry` is the
+     * `branch_summary` entry written for the branch left behind, when one was asked for.
+     *
+     * @param array<string, mixed> $command
+     * @return array<string, mixed>
+     */
+    private function navigateTree(array $command): array
+    {
+        $instructions = isset($command['customInstructions']) ? (string) $command['customInstructions'] : null;
+
+        $jump = $this->session->goTo(
+            self::text($command, 'targetId'),
+            ($command['summarize'] ?? false) === true,
+            $instructions === '' ? null : $instructions,
+            replaceInstructions: isset($command['replaceInstructions']) ? $command['replaceInstructions'] === true : null,
+            label: isset($command['label']) ? (string) $command['label'] : null,
+        );
+
+        $this->report($this->customTools?->notify('tree') ?? []);
+
+        $store = $this->session->store();
+        $summaryId = $jump->summary === null ? null : $store?->entryOf($jump->summary);
+        $summaryEntry = $summaryId === null ? null : SessionEntries::encode($jump->summary, $summaryId, $store?->entry($summaryId)['parent'] ?? null);
+
+        return [
+            'cancelled' => $jump->cancelled,
+            ...($jump->aborted ? ['aborted' => true] : []),
+            ...($jump->editorText === null ? [] : ['editorText' => $jump->editorText]),
+            ...($summaryEntry === null ? [] : ['summaryEntry' => $summaryEntry]),
+        ];
+    }
+
+    /**
+     * Throw this conversation away and start another — upstream's `new_session`, with its
+     * `parentSession` written on the new file's header.
      *
      * The hook, the abort and the emptied queue are `AgentSession::startNew()`'s, not this
      * file's: they were missing here and present in the terminal, and one of the two having
-     * them is how they went missing. What is left is this mode's own share — telling the host
-     * which file it is writing now, and telling the custom tools.
+     * them is how they went missing. What is left is this mode's own share — telling the
+     * custom tools.
+     *
+     * @param array<string, mixed> $command
+     * @return array{cancelled: bool}
      */
-    private function newSession(): array
+    private function newSession(array $command): array
     {
-        $switch = $this->session->startNew();
+        $parent = isset($command['parentSession']) && $command['parentSession'] !== '' ? (string) $command['parentSession'] : null;
+        $switch = $this->session->startNew($parent);
 
         if (!$switch->switched) {
             return ['cancelled' => true];
@@ -710,11 +1077,7 @@ final class RpcMode
 
         $this->report($this->customTools?->notify('switch', $switch->previous) ?? []);
 
-        return [
-            'cancelled' => false,
-            'sessionFile' => $this->session->store()?->path,
-            'isPersisted' => $this->session->store()?->isPersisted() ?? false,
-        ];
+        return ['cancelled' => false];
     }
 
     /**
@@ -771,7 +1134,14 @@ final class RpcMode
      */
     private function switchSession(array $command): array
     {
-        $switch = $this->session->switchTo(self::text($command, 'sessionPath'));
+        // Upstream's: a session from another project carries on in its directory, in a runtime
+        // built for it; one whose directory has gone is `MissingSessionCwdError`'s message, as an
+        // error — nobody here to ask whether to carry on in this one.
+        $createRuntime = $this->createRuntime;
+        $switch = $this->session->switchTo(
+            self::text($command, 'sessionPath'),
+            relocate: $createRuntime === null ? null : static fn (string $cwd, \Pig\CodingAgent\Session\SessionManager $opened): \Pig\CodingAgent\StartedSession => $createRuntime($cwd, $opened, null),
+        );
 
         if (!$switch->switched) {
             // `cancelled` rather than an error: a hook saying no is an answer, not a failure, and
@@ -779,16 +1149,17 @@ final class RpcMode
             return ['cancelled' => true];
         }
 
+        if ($switch->replacement !== null) {
+            $this->rebind($switch->replacement, $switch->previous);
+
+            return ['cancelled' => false];
+        }
+
         $this->report($this->customTools?->notify('switch', $switch->previous) ?? []);
 
-        return [
-            'cancelled' => false,
-            'sessionFile' => $this->session->store()?->path,
-            'messageCount' => $switch->messages,
-            // The model that conversation was on, not the one this process happened to start
-            // with: `switchTo()` restored it, and a host asking `get_state` next should agree.
-            'model' => $this->session->model() === null ? null : self::model($this->session->model()),
-        ];
+        // `{cancelled}`, upstream's whole answer: the file, the model it restored and the rest are
+        // `get_state`'s to say, and saying them twice is two places to disagree.
+        return ['cancelled' => false];
     }
 
     /** @param array<string, mixed> $command */
@@ -858,7 +1229,13 @@ final class RpcMode
         return ['format' => 'md', 'markdown' => \Pig\CodingAgent\Export\MarkdownExport::render($store->messages(), $this->session->cwd())];
     }
 
-    private function export(array $command): array
+    /**
+     * Upstream's `export_html`, `outputPath` honoured — the session as one HTML file.
+     *
+     * @param array<string, mixed> $command
+     * @return array{path: string}
+     */
+    private function exportHtml(array $command): array
     {
         $store = $this->session->store()
             ?? throw new \RuntimeException('This session is not being saved, so there is nothing to export.');
@@ -941,17 +1318,30 @@ final class RpcMode
         return $out;
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Upstream's Model object, as `rpc-commands.md` lists it: the costs in dollars per million
+     * tokens. `headers` stays out — a `models.json` entry may carry a key in one.
+     *
+     * @return array<string, mixed>
+     */
     private static function model(\Pig\Ai\Model $model): array
     {
         return [
             'id' => $model->id,
             'name' => $model->name,
-            'provider' => $model->provider,
             'api' => $model->api->value,
+            'provider' => $model->provider,
+            'baseUrl' => $model->baseUrl,
+            'reasoning' => $model->reasoning,
+            'input' => $model->input,
             'contextWindow' => $model->contextWindow,
             'maxTokens' => $model->maxTokens,
-            'reasoning' => $model->reasoning,
+            'cost' => [
+                'input' => $model->pricing->input,
+                'output' => $model->pricing->output,
+                'cacheRead' => $model->pricing->cacheRead,
+                'cacheWrite' => $model->pricing->cacheWrite,
+            ],
         ];
     }
 

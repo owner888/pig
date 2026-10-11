@@ -24,6 +24,12 @@ enum ThinkingLevel: string
     case Medium = 'medium';
     case High = 'high';
     case Xhigh = 'xhigh';
+    /**
+     * Upstream's `max`: "only supported by selected model families" — offered only where a model's
+     * `thinkingLevelMap` names it (Anthropic's adaptive models from Opus 4.7 on, GLM-5.3, …), sent as
+     * the map's word for it, and a token-budget provider spends `high`'s budget on it.
+     */
+    case Max = 'max';
 
     public function toReasoning(): ?ReasoningEffort
     {
@@ -34,6 +40,7 @@ enum ThinkingLevel: string
             self::Medium => ReasoningEffort::Medium,
             self::High => ReasoningEffort::High,
             self::Xhigh => ReasoningEffort::Xhigh,
+            self::Max => ReasoningEffort::Max,
         };
     }
 
@@ -54,23 +61,14 @@ enum ThinkingLevel: string
      * about `ThinkingLevel` — that is the layering, and `Model` carries only the string-keyed
      * half of this.
      *
-     * Upstream's `max` has no case here and cannot be offered. A `max` key in a `models.json`
-     * written for pi is read and ignored rather than being an error.
+     * `Model::supportedThinkingLevels()` is the rule, over upstream's seven levels: `xhigh` and `max`
+     * only where the map names them, every other level unless the map sets it to null.
      *
      * @return list<self>
      */
     public static function supportedBy(Model $model): array
     {
-        if (!$model->reasoning) {
-            return [self::Off];
-        }
-
-        return array_values(array_filter(
-            self::cases(),
-            static fn (self $level): bool => $level === self::Xhigh
-                ? $model->supportsXhigh()
-                : $model->hasThinkingLevel($level->value),
-        ));
+        return array_map(self::from(...), $model->supportedThinkingLevels());
     }
 
     /**

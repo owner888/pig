@@ -28,10 +28,12 @@ use Pig\Tui\Process;
  *
  * `resolve()` reads the `packages` of both scopes, reconciles them by identity (a project entry
  * replaces the user's; with `autoload: false` it is a delta over it), installs what is missing
- * when allowed to, and hands back every resource with its metadata, ranked. The top-level
- * `extensions` / `skills` settings and the auto-discovered directories are the four loaders' own
- * business, as they were before packages existed; a package's resources are ranked *after* them
- * (`ResolvedPaths::rank()`), which is upstream's order too.
+ * when allowed to, and hands back every resource with its metadata, ranked. The other half of
+ * upstream's `resolve()` — the top-level `skills` / `prompts` / `themes` settings and the
+ * auto-discovered directories — is `resolveLocalResources()`, kept apart so `pig config` (which
+ * switches package resources) and a caller that must not install anything can each have the half
+ * they need; the top-level `extensions` setting stays `ExtensionLoader`'s. A package's resources
+ * rank *after* the local ones (`ResolvedPaths::rank()`), which is upstream's order too.
  */
 final class PackageManager
 {
@@ -107,6 +109,125 @@ final class PackageManager
         $this->resolvePackageSources($entries, $accumulator, null);
 
         return $accumulator->toResolvedPaths();
+    }
+
+    /**
+     * The skills, prompt templates and themes the settings and the conventional directories give —
+     * the second half of upstream's `resolve()`: `resolveLocalEntries()` over each scope's
+     * `skills` / `prompts` / `themes` setting (project first, so a project's resource wins a name),
+     * then `addAutoDiscoveredResources()`. Ranked as upstream ranks them (`ResolvedPaths::rank()`):
+     * project setting, project directory, user setting, user directory.
+     *
+     * The directories are upstream's: `<agent-dir>/skills|prompts|themes`, the project's
+     * `.pig/skills|prompts|themes` once it is trusted, `~/.agents/skills`, and — trusted projects
+     * only — `.agents/skills` in the working directory and each ancestor up to the repository root.
+     * A conventional prompt or theme directory loads its direct children only; a directory named in
+     * a setting is walked (`ResourceDiscovery::collect()`). Every auto-discovered file answers to
+     * the same scope's `!pattern` / `+path` / `-path` entries (`isEnabledByOverrides()`).
+     *
+     * Not here, and why: `extensions` stays `ExtensionLoader`'s, which reads the setting and the
+     * directories itself, so a top-level extension is not loaded twice; and nothing is installed —
+     * this reads only what is on disk.
+     *
+     * @param bool|null $projectTrusted whether the project's half is read; the settings' own answer
+     *        when null
+     */
+    public function resolveLocalResources(?bool $projectTrusted = null): ResolvedPaths
+    {
+        $projectTrusted ??= $this->settings->isProjectTrusted();
+        $accumulator = new ResourceAccumulator();
+        $globalBaseDir = $this->home();
+        $projectBaseDir = rtrim($this->cwd, '/') . '/.pig';
+
+        foreach (Settings::RESOURCE_LISTS as $type) {
+            if ($projectTrusted) {
+                $this->resolveLocalEntries($this->settings->resourceEntries($type, 'project'), $type, $accumulator, new PathMetadata('local', 'project', 'top-level'), $projectBaseDir);
+            }
+
+            $this->resolveLocalEntries($this->settings->resourceEntries($type, 'user'), $type, $accumulator, new PathMetadata('local', 'user', 'top-level'), $globalBaseDir);
+        }
+
+        $this->addAutoDiscoveredResources($accumulator, $projectTrusted, $globalBaseDir, $projectBaseDir);
+
+        return $accumulator->toResolvedPaths();
+    }
+
+    /**
+     * Upstream's `resolveLocalEntries()`: the plain entries resolved from $baseDir and expanded to
+     * files, each added on or off by the patterns among the entries (`applyPatterns()`). An entry
+     * that does not exist is skipped, as upstream skips it.
+     *
+     * @param list<string> $entries
+     */
+    private function resolveLocalEntries(array $entries, string $type, ResourceAccumulator $accumulator, PathMetadata $metadata, string $baseDir): void
+    {
+        if ($entries === []) {
+            return;
+        }
+
+        $plain = array_values(array_filter($entries, static fn (string $entry): bool => !PackageFilter::isPattern($entry)));
+        $patterns = array_values(array_filter($entries, PackageFilter::isPattern(...)));
+        $files = [];
+
+        foreach ($plain as $entry) {
+            $path = Paths::resolve($entry, $baseDir);
+
+            if (is_file($path)) {
+                $files[] = $path;
+            } elseif (is_dir($path)) {
+                $files = [...$files, ...ResourceDiscovery::collect($path, $type)];
+            }
+        }
+
+        $enabled = PackageFilter::apply($files, $patterns, $baseDir);
+
+        foreach ($files as $file) {
+            $accumulator->add($type, $file, $metadata, in_array($file, $enabled, true));
+        }
+    }
+
+    /** Upstream's `addAutoDiscoveredResources()`, for skills, prompts and themes — see `resolveLocalResources()`. */
+    private function addAutoDiscoveredResources(ResourceAccumulator $accumulator, bool $projectTrusted, string $globalBaseDir, string $projectBaseDir): void
+    {
+        $userMetadata = new PathMetadata('auto', 'user', 'top-level', $globalBaseDir);
+        $projectMetadata = new PathMetadata('auto', 'project', 'top-level', $projectBaseDir);
+        $override = fn (string $type, string $scope): array => $this->settings->resourceEntries($type, $scope);
+        $add = static function (string $type, array $paths, PathMetadata $metadata, array $overrides, string $baseDir) use ($accumulator): void {
+            foreach ($paths as $path) {
+                $accumulator->add($type, $path, $metadata, PackageFilter::isEnabledByOverrides($path, $overrides, $baseDir));
+            }
+        };
+
+        $userAgentsSkillsDir = Config::userHome() . '/.agents/skills';
+        $projectAgentsSkillDirs = $projectTrusted
+            ? array_values(array_filter(
+                ResourceDiscovery::ancestorAgentsSkillDirs($this->cwd),
+                static fn (string $dir): bool => Paths::resolve($dir, '/') !== Paths::resolve($userAgentsSkillsDir, '/'),
+            ))
+            : [];
+
+        if ($projectTrusted) {
+            $add('skills', ResourceDiscovery::autoSkills("{$projectBaseDir}/skills", 'pi'), $projectMetadata, $override('skills', 'project'), $projectBaseDir);
+        }
+
+        // Each `.agents` directory is its own base, so a `!pattern` names a skill relative to it.
+        foreach ($projectAgentsSkillDirs as $agentsSkillsDir) {
+            $agentsBaseDir = dirname($agentsSkillsDir);
+            $add('skills', ResourceDiscovery::autoSkills($agentsSkillsDir, 'agents'), $projectMetadata->with($agentsBaseDir), $override('skills', 'project'), $agentsBaseDir);
+        }
+
+        if ($projectTrusted) {
+            $add('prompts', ResourceDiscovery::autoFiles("{$projectBaseDir}/prompts", '.md'), $projectMetadata, $override('prompts', 'project'), $projectBaseDir);
+            $add('themes', ResourceDiscovery::autoFiles("{$projectBaseDir}/themes", '.json'), $projectMetadata, $override('themes', 'project'), $projectBaseDir);
+        }
+
+        $add('skills', ResourceDiscovery::autoSkills("{$globalBaseDir}/skills", 'pi'), $userMetadata, $override('skills', 'user'), $globalBaseDir);
+
+        $userAgentsBaseDir = dirname($userAgentsSkillsDir);
+        $add('skills', ResourceDiscovery::autoSkills($userAgentsSkillsDir, 'agents'), $userMetadata->with($userAgentsBaseDir), $override('skills', 'user'), $userAgentsBaseDir);
+
+        $add('prompts', ResourceDiscovery::autoFiles("{$globalBaseDir}/prompts", '.md'), $userMetadata, $override('prompts', 'user'), $globalBaseDir);
+        $add('themes', ResourceDiscovery::autoFiles("{$globalBaseDir}/themes", '.json'), $userMetadata, $override('themes', 'user'), $globalBaseDir);
     }
 
     /**
@@ -932,9 +1053,10 @@ final class PackageManager
         return is_string($package) ? $package : (string) $package['source'];
     }
 
+    /** Upstream's `isOfflineModeEnabled()`: `PIG_OFFLINE` (upstream's `PI_OFFLINE`) is `1`, `true` or `yes`. */
     private static function offline(): bool
     {
-        return getenv('PIG_OFFLINE') === '1' || getenv('PI_OFFLINE') === '1';
+        return in_array(strtolower((string) getenv('PIG_OFFLINE')), ['1', 'true', 'yes'], true);
     }
 
     private function home(): string

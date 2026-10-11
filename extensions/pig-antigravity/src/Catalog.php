@@ -80,7 +80,7 @@ final readonly class Catalog
     ) {
     }
 
-    /** Nothing at all, for `--no-save` and for a session that should not read the person's files. */
+    /** Nothing at all, for `--no-session` and for a session that should not read the person's files. */
     public static function none(): self
     {
         return new self([], [], [], []);

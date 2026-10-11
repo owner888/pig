@@ -127,7 +127,7 @@ pig 不会在包里跑任何包管理器：需要第三方库的包自带 `vendo
 pig
 ```
 
-- **配置 API Key**：启动时通过环境变量传入 `ANTHROPIC_API_KEY=sk-... pig`，或使用 `--api-key <key>` 为当前运行单独设置而不写入磁盘。
+- **配置 API Key**：启动时通过环境变量传入 `ANTHROPIC_API_KEY=sk-... pig`（`ANTHROPIC_AUTH_TOKEN` 以 Bearer 令牌发送），或用 `--api-key <key>` 配合 `--model` 为当前运行单独设置而不写入磁盘。
 - **Google Vertex AI 与 Amazon Bedrock**：与 pi 一致，云平台自己的凭据在场时无需 Key。Vertex 读 `GOOGLE_CLOUD_API_KEY`，或 Application Default Credentials（`gcloud auth application-default login`、`GOOGLE_APPLICATION_CREDENTIALS` 指向的服务账号文件、或元数据服务器），并需 `GOOGLE_CLOUD_PROJECT` 与 `GOOGLE_CLOUD_LOCATION`。Bedrock 读 `AWS_BEARER_TOKEN_BEDROCK`，或 AWS SDK 的凭据链——`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`、`AWS_PROFILE` 与 `~/.aws`（assume role、`credential_process`、SSO）、web identity、ECS/EKS 与 EC2 角色——区域取 `AWS_REGION` 或 profile。选模型写作 `google-vertex/gemini-2.5-pro` 或 `amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`。
 - **Azure OpenAI 与 Radius**：与 pi 一致。Azure 读 `AZURE_OPENAI_API_KEY`，端点取 `AZURE_OPENAI_BASE_URL` 或 `AZURE_OPENAI_RESOURCE_NAME`（`https://<name>.openai.azure.com/openai/v1`），API 版本取 `AZURE_OPENAI_API_VERSION`（默认 `v1`），部署名与模型不同时写在 `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`（`gpt-5.4=prod,o3=reasoning`）；选模型写作 `azure/gpt-5.4`。Radius 网关读 `RADIUS_API_KEY`，模型如 `radius/balanced`。
 - **pi 在这些 API 上内置的其余 provider**：各读 pi 的 Key 变量，选模型写作 `<provider>/<id>`（裸 id 指模型厂商自己的 provider）。DeepSeek `DEEPSEEK_API_KEY`、OpenRouter `OPENROUTER_API_KEY`（`openrouter/moonshotai/kimi-k2.6`）、Vercel AI Gateway `AI_GATEWAY_API_KEY`、Together `TOGETHER_API_KEY`、Fireworks `FIREWORKS_API_KEY`、Baseten `BASETEN_API_KEY`、Hugging Face `HF_TOKEN`、NVIDIA `NVIDIA_API_KEY`、MiniMax `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`（`minimax-cn`）、Moonshot `MOONSHOT_API_KEY`（`moonshotai`、`moonshotai-cn`）、Kimi For Coding `KIMI_API_KEY`（`kimi-coding`）、Meta `META_API_KEY`、OpenCode Zen 与 Go `OPENCODE_API_KEY`（`opencode`、`opencode-go`）、小米 MiMo `XIAOMI_API_KEY` 及其 Token Plan `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `_AMS_` / `_SGP_`（`xiaomi-token-plan-cn` …）、通义 Token Plan `QWEN_TOKEN_PLAN_API_KEY`（`qwen-token-plan`、`qwen-token-plan-individual`）与 `QWEN_TOKEN_PLAN_CN_API_KEY`（`qwen-token-plan-cn`）、智谱国内编程套餐 `ZAI_CODING_CN_API_KEY`（`zai-coding-cn`）、Ant Ling `ANT_LING_API_KEY`。OpenRouter、Kimi、Meta、xAI 的登录没有移植，Key 可用。xAI 的模型（`XAI_API_KEY`）与 pi 一致走它的 Responses API。
@@ -136,15 +136,16 @@ pig
 - **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot、ChatGPT Plus/Pro（用于 `openai-codex` 模型，如 `openai-codex/gpt-6.1-sol`——浏览器回调到 `localhost:1455`，或在无浏览器的机器上用设备码）或 Google Antigravity。Claude 登录与 pi 1.0 一致提供两种方式：浏览器回调到 `localhost:53692`（默认），或在无浏览器的机器上从 Anthropic 页面复制代码粘贴。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
 - **恢复与续接历史会话**：
   - `pig -c` / `pig --continue`：毫秒级秒开接上当前目录下最新修改的历史会话。
-  - `pig -r` / `pig --resume`：唤出带模糊搜索的历史会话选择器。
-  - `pig --session <id>`：直接按会话 ID 或文件路径恢复会话。
+  - `pig -r` / `pig --resume`：唤出历史会话选择器——支持模糊词、`"短语"` 或 `re:<正则>` 搜索；Tab 在本目录与全部项目之间切换，`Ctrl+S` 循环切换树状 / 最近 / 模糊排序，`Ctrl+N` 只看已命名会话，`Ctrl+D` 删除。
+  - `pig --session <id|path>`：按会话 ID 前缀或文件路径打开会话；只在别的项目里找到的 ID 会询问是否分叉到当前项目。恢复的会话在它自己的工作目录里继续。
+  - `pig --fork <id|path>` 把一个会话复制成当前项目的新会话；`pig --session-id <id>` 打开或新建该 ID 的会话；`pig --no-session` 运行但不保存对话。
 - **模型选择与动态切换**：
-  - `pig --model sonnet` 或 `pig --model antigravity/gemini-3.8-flash`
+  - `pig --model sonnet`、`pig --model antigravity/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high`（同时设置模型与思考强度）
   - 按 `Ctrl+L` 呼出模型选择菜单；按 `Ctrl+P` / `Shift+Ctrl+P` 快捷切换上一/下一模型。
   - `pig --list-models [query]`：查看当前已配置密钥的所有可用模型、上下文上限与定价。
 - **生成期间实时交互与输入快捷键**：
-  - **长按 `⌘`（Command）键 ~0.5s**：如同 **Blink Shell / iPadOS** 般在屏幕中央弹出快捷键速查面板（HUD），松开即自动消失，支持 TUI 终端与 Web 界面。
+  - **长按 `⌘`（Command）键 ~0.85s**：如同 **Blink Shell / iPadOS** 般在屏幕中央弹出快捷键速查面板（HUD），松开即自动消失，支持 TUI 终端与 Web 界面。
   - 按 **Shift+Enter**：输入框内**换行**（多行自由编写 Prompt 或粘贴代码块，绝不误发）。
   - 空闲时按 **回车（Enter）** 或 **Command+Enter**（`⌘+Enter` / `Ctrl+Enter`）：发送消息（Submit）。
   - 模型生成期间按 **Command+Enter**（或 **Alt+Enter**）：**排队追问（Follow-up）**（加入后续队列，等本轮完全结束后再自动处理）。
@@ -152,14 +153,17 @@ pig
   - 按 **Alt+Up**：将已排队的待发送内容全部撤回编辑输入框。
   - 按 **Escape**：立即终止当前生成轮次或取消重试等待。
   - 按 **Ctrl+G**：将输入框内容调起外部编辑器（支持在 `settings.json` 中配置 `"externalEditor": "vim"`，支持 `$VISUAL` 或 `$EDITOR`，未配置时自动回退至系统可用编辑器）进行长文本编辑，保存即自动带回。
+  - 编辑器具备上游的编辑键——撤销、可 yank / yank-pop 的 kill ring、向前删词、跳到指定字符——所有按键（包括编辑键）都可以在 `~/.pig/agent/keybindings.json` 里按 pi 的 action id 重新绑定。
 - **常用会话控制命令**：
   - `/name <新标题>`：查看或修改当前会话标题（终端底部与 Web 界面即时联动更新）。
   - `/label <标签名>`：为当前会话树节点打上书签标记。
   - `/tree`：将整场会话各分支以树状图可视化展示，可随时回跳到任意历史分支。
   - `/fork`：选一条你发过的消息，把会话截至该消息之前的部分物理分叉成一个独立的新会话文件，并把该消息放回输入框改写重问；`/clone` 把当前会话原样复制成一个新会话文件继续。新文件的头部以 `parentSession` 记录来源文件。
   - `/compact`：手动触发会话上下文智能压缩摘要。
-  - `/export [file.html]`：将当前会话导出为离线单文件 HTML，自带语法高亮与折叠。
-  - `/reload`：不重启进程，热重载所有扩展、Skills、工具与项目上下文文件（`CLAUDE.md` / `AGENTS.md`）。声明了 PHP 类的扩展在重载后仍运行启动时加载的那个版本（PHP 无法卸载类）；文件已改动时重载会明确提示，重启 `pig` 即可生效。
+  - `/export [file.html|file.jsonl]`：将当前会话导出为离线单文件 HTML（自带语法高亮与折叠），或把当前分支导出为会话文件。
+  - `/import <file.jsonl>`：把会话文件复制进当前项目并恢复它。`/share`：把 HTML 导出上传为 GitHub 私密 gist（需要 `gh`）。
+  - `/scoped-models`：选择 `Ctrl+P` 循环的模型范围，并可保存为 `enabledModels`。
+  - `/reload`：不重启进程，热重载所有扩展、Skills、提示模板、主题、快捷键、工具与项目上下文文件（`CLAUDE.md` / `AGENTS.md`）。声明了 PHP 类的扩展在重载后仍运行启动时加载的那个版本（PHP 无法卸载类）；文件已改动时重载会明确提示，重启 `pig` 即可生效。
   - `/doctor`：运行全面系统诊断，排查 PHP 扩展、网络端点、权限与外部工具依赖。
 
 ### 2. Web UI 界面模式（`pig web`）
@@ -194,6 +198,10 @@ pig web stop                  # 安全平滑终止 Web 进程
 # 纯文本单次回答模式：直接将结果输出到 stdout 并退出
 pig -p "简述本项目的架构设计" | pbcopy
 pig -p @error.log "分析该崩溃日志的根本原因"
+git diff | pig -p "审查这些改动"           # 管道输入的内容排在消息最前面
+
+# 不启动会话，检查某个 provider 的凭据
+pig auth check --provider anthropic
 
 # JSON 结构化流式模式：将每轮事件以 JSON 行流式输出
 pig --mode json -p "解析 index.php"
@@ -288,17 +296,20 @@ Logger::timeEnd('benchmark');
 
 ## 配置文件与完全互通兼容
 
-`pig` 与上游 `pi` 在会话文件、登录凭据和自定义配置上保持 **100% 格式与目录互通**：
+`pig` 与上游 `pi` 在会话文件、登录凭据和自定义配置上保持 **100% 格式与目录互通**。agent 目录是 `~/.pig/agent`，设置了 `PIG_CODING_AGENT_DIR`（对应 pi 的 `PI_CODING_AGENT_DIR`）时以它为准；环境变量一律是 pi 的 `PI_*` 对应的 `PIG_*` 写法：
 
 | 配置文件路径 | 用途说明 |
 | :--- | :--- |
 | `~/.pig/agent/settings.json` | 全局偏好设置（主题、默认模型、思考强度、自动压缩、自动重试）。 |
 | `~/.pig/agent/auth.json` | 各提供商的 API Key 与 OAuth Token（与 `~/.pi/agent/auth.json` 互通共享）。 |
-| `~/.pig/agent/models.json` | 自定义 OpenAI 兼容端点或本地模型（llama.cpp、vLLM、Ollama）。 |
+| `~/.pig/agent/models.json` | 自定义 OpenAI 兼容端点或本地模型（llama.cpp、vLLM、Ollama），以及对内置 provider 的覆盖（`modelOverrides`）。`apiKey` 与 headers 用 `$NAME` / `${NAME}` 引用环境变量，用 `!command` 取命令输出；其余写法（包括裸变量名）一律按字面值使用。 |
 | `~/.pig/agent/mcp.json` | 标准 MCP 服务配置（stdio 与 HTTP）。 |
 | `~/.pig/agent/trust.json` | 项目资源信任授权记录。 |
 | `~/.pig/agent/keybindings.json` | 快捷键自定义映射表。 |
 | `~/.pig/agent/themes/` | 自定义主题 JSON 目录（内置 `dark`、`light`、`labra`，支持任意第三方主题）。 |
+| `~/.pig/agent/prompts/` | 提示模板：`review.md` 即 `/review`，支持 `$1`、`$@`、`${1:-默认值}`、`${@:2}` 等替换。 |
+| `~/.pig/agent/skills/`、`~/.agents/skills/` | 技能（含 `SKILL.md` 的文件夹）；受信任项目的 `.pig/skills` 以及直到仓库根目录的各级 `.agents/skills` 也会读取。 |
+| `~/.pig/agent/SYSTEM.md`、`APPEND_SYSTEM.md` | 替换或追加系统提示（受信任项目 `.pig/` 下的同名文件优先）；`--system-prompt` / `--append-system-prompt` 只对本次运行生效。 |
 | `~/.pig/agent/sessions/` | 遵循标准 `.jsonl` 格式的持久化会话树日志。 |
 
 **提示缓存预热。** 工具运行时间超过提供商的缓存寿命（Anthropic 为五分钟）时，pig 会在缓存条目过期前，以 1 个 token 的上限重发上一次请求——只在预计能省下至少 $0.05 时才发——让下一次请求从缓存读取提示，而不是再付一次写入的全价。每次预热都记在会话文件里，计入 `/session` 的花费。全局 `settings.json` 的 `cacheWarming`（或 `/settings` 里的 *Cache warming* 一行）默认 `streaming`（agent 运行期间），可设为 `idle`（两次运行之间也预热，最多 30 分钟）或 `off`。扩展可以通过 `cache_warming_decision` 事件否决或强制每一次预热。`-p` 从不预热。
@@ -309,7 +320,7 @@ Logger::timeEnd('benchmark');
 
 **图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。`defaultProjectTrust`（`ask`、`always`、`never`）决定还没被决定过的项目（`-a`/`--approve` 或 `-na`/`--no-approve` 只替这一次运行决定，什么都不保存），`collapseChangelog: true` 在升级后只显示一行而不是完整更新说明，`steeringMode` / `followUpMode`（`one-at-a-time` 或 `all`）决定排队消息怎么交出去，`httpProxy` 是 `--proxy` 和环境变量都没给时用的代理，`transport`（`auto`、`websocket`、`websocket-cached`、`sse`）决定怎么连 ChatGPT 的 Codex 后端——默认走为会话保留的 WebSocket，失败时退回 SSE——`websocketConnectTimeoutMs` 是它握手的时限。
 
-**图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。`--skill`、`--prompt-template` 和 `--theme` 为本次运行加载一个文件或目录（都可重复，`-e` 现在也可以，且 `-ne` 下 `-e` 仍会加载）；启动用的主题是 `--use-theme <name>`，`--no-themes` 除内置主题和 `--theme` 指定的之外不找任何主题。不加载 `~/.pig/agent/tools` 和 `.pig/tools` 里的工具文件现在是 `--no-tool-files`。pig 会告诉 OpenRouter、NVIDIA 和 Cloudflare 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
+**图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。`--skill`、`--prompt-template` 和 `--theme` 为本次运行加载一个文件或目录（都可重复，`-e` 现在也可以，且 `-ne` 下 `-e` 仍会加载）；启动用的主题是 `--use-theme <name>`，`--no-themes` 除内置主题和 `--theme` 指定的之外不找任何主题。不加载 `~/.pig/agent/tools` 和 `.pig/tools` 里的工具文件现在是 `--no-tool-files`。同样来自 pi 的还有：`--provider`、`--system-prompt`、`--append-system-prompt`、`--tui-mode regular|fullscreen`、`--verbose`、`--offline`（启动时不联网，等同 `PIG_OFFLINE=1`）和 `--update-check`。`bash` 命令能通过 `PIG_SESSION_ID`、`PIG_SESSION_FILE`、`PIG_PROVIDER`、`PIG_MODEL` 和 `PIG_REASONING_LEVEL` 得知当前会话；在 Windows 上可以用 `--tools` 或 `defaultTools` 打开 `powershell` 工具。pig 会告诉 OpenRouter、NVIDIA 和 Cloudflare 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
 
 ### 订阅账号登录
 
@@ -319,7 +330,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- | :--- |
 | **Anthropic（Claude Pro/Max）** | **浏览器**（默认）：pig 监听 `http://localhost:53692/callback`，打开 `claude.ai`，授权码自动回传。同时保留一个粘贴框——浏览器在另一台机器上时，把最终跳转的 URL 粘贴进去即可。**复制代码**（无头机器）：浏览器停在 Anthropic 自己的页面上，显示 `code#state`，复制粘贴。 | 令牌以 Claude Code 的身份发出——`claude-cli` User-Agent、两个 beta 头、工具名按 `Read`/`Bash`/`Edit`/`Write` 拼写——因为 Anthropic 就是把它签发给 Claude Code 的。53692 端口已在 Anthropic 注册，不可更改。 |
 | **GitHub Copilot** | 设备码：pig 显示一个代码，你到 `github.com/login/device` 输入，pig 轮询直到通过。Enterprise 提示处留空即 `github.com`。 | 登录后自动为账号开通 Claude 与 Grok 系列模型。 |
-| **OpenAI（ChatGPT Plus/Pro）** | **浏览器**（默认）：pig 监听 `http://localhost:1455/auth/callback`（设置了 `PI_OAUTH_CALLBACK_HOST` 时监听该地址），打开 `auth.openai.com`，授权码自动回传；同时保留粘贴框，可粘贴跳转 URL 或授权码。1455 端口被占用时（Codex CLI 也用它），只靠粘贴框完成登录。**设备码**（无头机器）：pig 显示一个代码，你到 `auth.openai.com/codex/device` 输入，pig 轮询直到通过。 | 只用于 `openai-codex` 模型——ChatGPT 的 Codex 后端，账号 id 从令牌里读出。 |
+| **OpenAI（ChatGPT Plus/Pro）** | **浏览器**（默认）：pig 监听 `http://localhost:1455/auth/callback`（设置了 `PIG_OAUTH_CALLBACK_HOST` 时监听该地址），打开 `auth.openai.com`，授权码自动回传；同时保留粘贴框，可粘贴跳转 URL 或授权码。1455 端口被占用时（Codex CLI 也用它），只靠粘贴框完成登录。**设备码**（无头机器）：pig 显示一个代码，你到 `auth.openai.com/codex/device` 输入，pig 轮询直到通过。 | 只用于 `openai-codex` 模型——ChatGPT 的 Codex 后端，账号 id 从令牌里读出。 |
 | **Antigravity**（扩展） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在 `pig-antigravity` 加载时出现——它是扩展的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
 
 令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 可忘记某个登录。

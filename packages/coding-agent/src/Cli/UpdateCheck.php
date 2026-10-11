@@ -71,6 +71,13 @@ final class UpdateCheck
     /** The newest released version if it is newer than $current, or null when there is nothing to say. */
     public function newerThan(string $current): ?string
     {
+        // Upstream's `checkForNewPiVersion()` and `getLatestPiRelease()`: `PIG_SKIP_VERSION_CHECK`
+        // skips the check, and `PIG_OFFLINE` skips the request — set to anything, as there. `--offline`
+        // sets both.
+        if ((string) getenv('PIG_SKIP_VERSION_CHECK') !== '' || (string) getenv('PIG_OFFLINE') !== '') {
+            return null;
+        }
+
         // Nothing to be behind, and nothing asked of Packagist either — a developer running from a
         // checkout gets no request, which is the other half of not drawing anything.
         if (!Version::isRelease($current)) {

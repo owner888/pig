@@ -32,7 +32,7 @@
    }
   },
   "env": {
-   "PI_CACHE_RETENTION": "long"
+   "PIG_CACHE_RETENTION": "long"
   },
   "options": {
    "apiKey": "rad-key",

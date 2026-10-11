@@ -13,6 +13,9 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Tools\BashTool;
 use Pig\CodingAgent\Tools\Run;
+use Pig\CodingAgent\Tools\SessionEnvironment;
+use Pig\CodingAgent\Tools\ShellTool;
+use Pig\CodingAgent\Tools\SpawnContext;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\Test\AssertsThrows;
@@ -252,7 +255,7 @@ final class BashToolTest extends ToolTestCase
             $error = $this->assertThrows(
                 AgentError::class,
                 fn () => $this->bash(['command' => 'echo hi']),
-                'not executable',
+                'Custom shell path not found',
             );
 
             // Falling back to `/bin/bash` would be the bug they wrote the setting to work
@@ -453,14 +456,22 @@ final class BashToolTest extends ToolTestCase
         $this->assertSame('untouched', file_get_contents($this->cwd . '/marker.txt'));
     }
 
-    public function testATimeoutOfNothingMeansNoTimeoutRatherThanNoTime(): void
+    public function testATimeoutThatIsNotAPositiveNumberOfSecondsIsRefused(): void
     {
-        // The schema says `number` and the description says there is none by default, so a model
-        // spelling "no limit" as 0 is an ordinary thing to receive. Armed at zero the timer fires
-        // on the next tick, and every command comes back `timed out after 0 seconds`.
-        $this->assertSame("ok\n", $this->textOf($this->bash(['command' => 'sleep 0.1; echo ok', 'timeout' => 0])));
+        // Upstream's `resolveTimeoutMs()`: zero or less is not "no limit" but a mistake, said to the
+        // model before anything runs. pig used to take 0 as no timeout; the port follows upstream.
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => 'echo ok', 'timeout' => 0]),
+            'Invalid timeout: must be a finite number of seconds',
+        );
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => 'echo ok', 'timeout' => 3_000_000]),
+            'Invalid timeout: maximum is 2147483.647 seconds',
+        );
 
-        // The other side of the same guard: something positive really does stop it.
+        // Something positive really does stop it.
         $this->assertThrows(
             AgentError::class,
             fn () => $this->bash(['command' => 'sleep 30', 'timeout' => 0.2]),
@@ -547,6 +558,166 @@ final class BashToolTest extends ToolTestCase
 
         $this->assertStringContainsString('parent_done', $output);
         $this->assertLessThan(2.0, $elapsed, 'command finishes when the parent shell exits, not after 5 seconds');
+    }
+
+    // ---- the session's environment ------------------------------------------------------------
+
+    public function testTheSessionIsDescribedToTheCommandInPigVariables(): void
+    {
+        $tool = new BashTool($this->cwd, sessionEnvironment: static fn (): SessionEnvironment => new SessionEnvironment(
+            'sess-1',
+            '/tmp/sess-1.jsonl',
+            'anthropic',
+            'claude-x',
+            'high',
+        ));
+
+        $result = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', [
+            'command' => 'printf "%s|%s|%s|%s|%s" "$PIG_SESSION_ID" "$PIG_SESSION_FILE" "$PIG_PROVIDER" "$PIG_MODEL" "$PIG_REASONING_LEVEL"',
+        ]));
+
+        $this->assertSame('sess-1|/tmp/sess-1.jsonl|anthropic|claude-x|high', $this->textOf($result));
+    }
+
+    public function testTheVariablesAreAskedForWhenEachCommandStarts(): void
+    {
+        // Upstream reads them off `ctx` on every call: a model switched between two commands is
+        // the second command's model.
+        $model = 'first';
+        $tool = new BashTool($this->cwd, sessionEnvironment: static function () use (&$model): SessionEnvironment {
+            return new SessionEnvironment(model: $model);
+        });
+
+        $one = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'printf %s "$PIG_MODEL"']));
+        $model = 'second';
+        $two = Async::run(static fn (): AgentToolResult => $tool->execute('call-2', ['command' => 'printf %s "$PIG_MODEL"']));
+
+        $this->assertSame('first', $this->textOf($one));
+        $this->assertSame('second', $this->textOf($two));
+    }
+
+    public function testInheritedSessionVariablesAreTakenOutAndUnknownOnesLeftUnset(): void
+    {
+        // A pig started from inside another pig's command must not describe the outer session.
+        putenv('PIG_SESSION_ID=outer');
+        putenv('PIG_MODEL=outer-model');
+
+        try {
+            $tool = new BashTool($this->cwd, sessionEnvironment: static fn (): SessionEnvironment => new SessionEnvironment(sessionId: 'inner'));
+            $result = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', [
+                'command' => 'printf "%s|%s|%s" "$PIG_SESSION_ID" "${PIG_MODEL-unset}" "${PIG_SESSION_FILE-unset}"',
+            ]));
+
+            $this->assertSame('inner|unset|unset', $this->textOf($result));
+
+            $off = new BashTool($this->cwd, exposeSessionEnvironment: false, sessionEnvironment: static fn (): SessionEnvironment => new SessionEnvironment(sessionId: 'inner'));
+            $result = Async::run(static fn (): AgentToolResult => $off->execute('call-2', ['command' => 'printf %s "${PIG_SESSION_ID-unset}"']));
+
+            $this->assertSame('unset', $this->textOf($result));
+        } finally {
+            putenv('PIG_SESSION_ID');
+            putenv('PIG_MODEL');
+        }
+    }
+
+    public function testTheSpawnHookSeesTheVariablesAndCanChangeTheCommandAndEnvironment(): void
+    {
+        $seen = null;
+        $tool = new BashTool(
+            $this->cwd,
+            sessionEnvironment: static fn (): SessionEnvironment => new SessionEnvironment(sessionId: 'sess-9'),
+            spawnHook: static function (SpawnContext $context) use (&$seen): SpawnContext {
+                $seen = $context;
+
+                return $context->withEnv([...$context->env, 'EXTRA' => 'yes'])->withCommand($context->command . '; printf " %s" "$EXTRA"');
+            },
+        );
+
+        $result = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'printf %s "$PIG_SESSION_ID"']));
+
+        $this->assertInstanceOf(SpawnContext::class, $seen);
+        $this->assertSame('sess-9', $seen->env['PIG_SESSION_ID']);
+        $this->assertSame($this->cwd, $seen->cwd);
+        $this->assertSame('sess-9 yes', $this->textOf($result));
+    }
+
+    public function testTheSessionDescribesItselfFromItsStoreModelAndLevel(): void
+    {
+        $inherited = ['PATH' => '/bin', 'PIG_PROVIDER' => 'stale'];
+
+        $this->assertSame(['PATH' => '/bin'], SessionEnvironment::apply($inherited, null));
+        $this->assertSame(
+            ['PATH' => '/bin', 'PIG_SESSION_ID' => 'a', 'PIG_REASONING_LEVEL' => 'off'],
+            SessionEnvironment::apply($inherited, new SessionEnvironment('a', reasoningLevel: 'off')),
+        );
+    }
+
+    // ---- the structured result ------------------------------------------------------------------
+
+    public function testTheResultCarriesTheStructuredOutputCodemodeScriptsGet(): void
+    {
+        $result = $this->bash(['command' => 'echo hello']);
+
+        $this->assertSame(ShellTool::OUTPUT_SCHEMA, (new BashTool($this->cwd))->definition()->outputSchema);
+        $this->assertIsArray($result->structuredContent);
+        $this->assertSame("hello\n", $result->structuredContent['output']);
+        $this->assertFalse($result->structuredContent['truncated']);
+        $this->assertSame(0, $result->structuredContent['exit_code']);
+        $this->assertArrayNotHasKey('full_output_path', $result->structuredContent);
+        $this->assertIsFloat($result->structuredContent['wall_time_seconds']);
+    }
+
+    public function testAFailingCommandStillCarriesItsStructuredOutput(): void
+    {
+        $error = $this->assertThrows(AgentError::class, fn () => $this->bash(['command' => 'echo nope; exit 3']), 'exited with code 3');
+
+        $this->assertSame(['output' => "nope\n", 'truncated' => false, 'exit_code' => 3], array_diff_key($error->structuredContent, ['wall_time_seconds' => true]));
+    }
+
+    public function testTheStructuredOutputIsNotCutWhereTheModelsIs(): void
+    {
+        // 3000 lines is past the model's 2000, well inside the script's 1 MiB.
+        $result = $this->bash(['command' => 'seq 1 3000']);
+
+        $this->assertStringContainsString('Showing lines', $this->textOf($result));
+        $this->assertSame(implode("\n", range(1, 3000)) . "\n", $result->structuredContent['output']);
+        $this->assertFalse($result->structuredContent['truncated']);
+        unlink((string) $result->details['fullOutputPath']);
+    }
+
+    public function testPastAMebibyteTheStructuredOutputKeepsBothEnds(): void
+    {
+        $result = $this->bash(['command' => "printf 'HEAD'; head -c 2000000 /dev/zero | tr '\\0' 'a'; printf 'TAIL'"]);
+        $structured = $result->structuredContent;
+
+        $this->assertTrue($structured['truncated']);
+        $this->assertSame($result->details['fullOutputPath'], $structured['full_output_path']);
+        $this->assertStringStartsWith('HEAD', $structured['output']);
+        $this->assertStringEndsWith('TAIL', $structured['output']);
+        $this->assertStringContainsString("\n\n[... " . (2_000_008 - ShellTool::STRUCTURED_OUTPUT_MAX_BYTES) . " bytes omitted ...]\n\n", $structured['output']);
+        unlink((string) $structured['full_output_path']);
+    }
+
+    public function testAWorkingDirectoryThatIsGoneIsSaidByName(): void
+    {
+        $tool = new BashTool($this->cwd . '/gone');
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'true'])),
+            'Working directory does not exist: ' . $this->cwd . '/gone',
+        );
+    }
+
+    public function testAToolsOwnShellPathWinsOverTheSetting(): void
+    {
+        $marker = $this->cwd . '/own-shell';
+        file_put_contents($marker, "#!/bin/sh\necho \"own shell\"\n");
+        chmod($marker, 0o755);
+
+        $tool = new BashTool($this->cwd, shellPath: $marker);
+
+        $this->assertSame("own shell\n", $this->textOf(Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'x']))));
     }
 
     /** Where `Run` put the whole output of a command that printed $bytes bytes, if anywhere. */

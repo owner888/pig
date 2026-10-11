@@ -28,20 +28,62 @@ final class ContextFilesTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['/home', '/project', ''] as $suffix) {
-            $directory = $this->root . $suffix;
+        exec('chmod -R u+rw ' . escapeshellarg($this->root) . ' && rm -rf ' . escapeshellarg($this->root));
+    }
 
-            foreach (glob($directory . '/*') ?: [] as $file) {
-                if (is_file($file)) {
-                    chmod($file, 0o644);
-                    unlink($file);
-                }
-            }
+    /** @return list<string> the loaded files' paths, relative to the root */
+    private function loaded(string $cwd): array
+    {
+        return array_map(
+            fn (object $file): string => substr($file->path, strlen($this->root) + 1),
+            ContextFiles::load($cwd, $this->root . '/home'),
+        );
+    }
 
-            if (is_dir($directory)) {
-                rmdir($directory);
-            }
+    public function testUpstreamsFiveNamesInOrderOneFilePerDirectory(): void
+    {
+        foreach (['CLAUDE.MD', 'CLAUDE.md', 'AGENTS.MD', 'AGENTS.md', 'AGENTS.override.md'] as $name) {
+            file_put_contents($this->root . '/project/' . $name, $name);
+            $first = $this->loaded($this->root . '/project');
+
+            // On a case-insensitive filesystem `AGENTS.MD` *is* `AGENTS.md`; either spelling is
+            // the second-best, and the override always wins.
+            $this->assertCount(1, $first);
+            $this->assertSame(strtolower('project/' . $name), strtolower($first[0]));
         }
+    }
+
+    public function testAnOverrideReplacesOnlyItsOwnDirectoryAndTheAgentDirectoryComesFirst(): void
+    {
+        mkdir($this->root . '/project/pkg', 0o755, true);
+        file_put_contents($this->root . '/home/AGENTS.md', 'mine');
+        file_put_contents($this->root . '/project/AGENTS.md', 'root');
+        file_put_contents($this->root . '/project/pkg/AGENTS.md', 'pkg');
+        file_put_contents($this->root . '/project/pkg/AGENTS.override.md', 'pkg override');
+
+        $this->assertSame(['home/AGENTS.md', 'project/AGENTS.md', 'project/pkg/AGENTS.override.md'], $this->loaded($this->root . '/project/pkg'));
+    }
+
+    public function testANestedLinkedWorktreeDoesNotLoadTheMainCheckoutsCopyOfItsOwnFile(): void
+    {
+        // `git worktree add .worktrees/feat` laid out by hand: the main checkout's `.git` directory,
+        // the worktree's `.git` file pointing into `.git/worktrees/feat`, and its `commondir`.
+        $main = $this->root . '/project';
+        $worktree = $main . '/.worktrees/feat';
+        mkdir($main . '/.git/worktrees/feat', 0o755, true);
+        mkdir($worktree, 0o755, true);
+        file_put_contents($main . '/.git/HEAD', "ref: refs/heads/main\n");
+        file_put_contents($main . '/.git/worktrees/feat/HEAD', "ref: refs/heads/feat\n");
+        file_put_contents($main . '/.git/worktrees/feat/commondir', "../..\n");
+        file_put_contents($worktree . '/.git', 'gitdir: ' . realpath($main) . "/.git/worktrees/feat\n");
+        file_put_contents($main . '/AGENTS.md', 'main');
+        file_put_contents($worktree . '/AGENTS.md', 'feat');
+
+        $this->assertSame(['project/.worktrees/feat/AGENTS.md'], $this->loaded($worktree));
+
+        // An ordinary repository's own file and a subdirectory under it are untouched.
+        mkdir($main . '/src', 0o755, true);
+        $this->assertSame(['project/AGENTS.md'], $this->loaded($main . '/src'));
     }
 
     public function testAReadableFileIsLoadedAndSaysNothing(): void

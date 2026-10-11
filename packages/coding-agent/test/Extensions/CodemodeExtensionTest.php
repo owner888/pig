@@ -51,7 +51,7 @@ final class CodemodeExtensionTest extends TestCase
         $this->cwd = $this->root . '/project';
         mkdir($this->home, 0o700, true);
         mkdir($this->cwd . '/.pig', 0o755, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
         putenv('PI_HOME=' . $this->root . '/pi');
         putenv('HOME=' . $this->root . '/nobody');
         $this->forgetProviderKeys();
@@ -62,7 +62,7 @@ final class CodemodeExtensionTest extends TestCase
     protected function tearDown(): void
     {
         $this->restoreProviderKeys();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
         // Unsetting `HOME` rather than restoring it blinded every later test that looks under
         // `~` — `fd is not installed` in `SearchToolsTest`, fourteen skips elsewhere.
@@ -115,17 +115,91 @@ final class CodemodeExtensionTest extends TestCase
         return $names;
     }
 
+    /** The description the model is offered for $name — after `prepareLoadout`. */
+    private static function declared(StartedSession $started, string $name): ?string
+    {
+        foreach ($started->session->agent->tools() as $tool) {
+            if ($tool->definition()->name === $name) {
+                return $tool->definition()->description;
+            }
+        }
+
+        return null;
+    }
+
     private function stop(StartedSession $started): void
     {
         Async::run(static fn () => $started->hooks->emit(new SessionShutdownEvent()));
     }
 
-    public function testWithNoCodemodeServerAndNoSettingTheToolIsNotThere(): void
+    public function testWithNoCodemodeServerAndNothingNamingItTheToolIsRegisteredButInactive(): void
     {
         $started = $this->start(['fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct']]);
 
         $this->assertSame(['bash', 'edit', 'mcp__fixture__echo', 'read', 'write'], self::toolNames($started));
         $this->assertStringNotContainsString('- codemode:', $started->session->systemPrompt());
+        // Upstream's `defaultActive: false`: registered, so it can be named, but not active.
+        $this->assertNotNull($started->customTools->find('codemode'));
+        $this->assertFalse($started->customTools->find('codemode')->defaultActive);
+        $this->assertNotContains('codemode', $started->session->activeTools());
+        $this->assertContains('codemode', array_column($started->session->allTools(), 'name'));
+        $this->stop($started);
+    }
+
+    public function testNamingItInToolsActivatesIt(): void
+    {
+        $started = $this->start(extra: ['tools' => ['read', 'bash', 'codemode']]);
+
+        $this->assertSame(['bash', 'codemode', 'read'], self::toolNames($started));
+        $this->assertStringContainsString('- codemode: Run PHP that calls other tools', $started->session->systemPrompt());
+        $this->stop($started);
+    }
+
+    public function testAPlusModifierInToolsActivatesIt(): void
+    {
+        $started = $this->start(extra: ['tools' => ['+codemode']]);
+
+        $this->assertSame(['bash', 'codemode', 'edit', 'read', 'write'], self::toolNames($started));
+        $this->stop($started);
+    }
+
+    public function testNamingItInDefaultToolsActivatesIt(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['read', 'codemode']]));
+        $started = $this->start();
+
+        $this->assertSame(['codemode', 'read'], self::toolNames($started));
+        $this->stop($started);
+    }
+
+    public function testSetActiveToolsActivatesIt(): void
+    {
+        $started = $this->start();
+        $this->assertNotContains('codemode', self::toolNames($started));
+
+        $started->session->setActiveTools([...$started->session->activeTools(), 'codemode']);
+
+        $this->assertContains('codemode', self::toolNames($started));
+        $this->stop($started);
+    }
+
+    public function testTheRemovedEnabledSettingDoesNothing(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        $started = $this->start();
+
+        $this->assertSame(['bash', 'edit', 'read', 'write'], self::toolNames($started));
+        $this->stop($started);
+    }
+
+    public function testToolsThatLeaveItOutKeepItOffEvenForACodemodeServer(): void
+    {
+        $started = $this->start(['fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]]], ['tools' => ['read']]);
+
+        // Upstream's `_isAllowedTool()`: not named, so not registered, and the MCP extension's
+        // activation has nothing to activate.
+        $this->assertSame(['read'], self::toolNames($started));
+        $this->assertNull($started->customTools->find('codemode'));
         $this->stop($started);
     }
 
@@ -140,9 +214,10 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertStringContainsString('- codemode: Run PHP that calls other tools', $prompt, "upstream's promptSnippet, in the Available tools list");
         $this->assertStringContainsString('- Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output', $prompt, "and its guideline");
 
+        // Upstream's tool keeps one description; `prepareLoadout` is what lists the callable tools.
         $codemode = $started->customTools->find('codemode');
-        $this->assertStringContainsString('## fixture', $codemode->description, 'the server is a namespace in the catalog');
-        $this->assertStringContainsString('$tools->mcp__fixture__echo(array{text?: string} $input): array{', $codemode->description);
+        $this->assertStringContainsString('## fixture', (string) self::declared($started, 'codemode'), 'the server is a namespace in the catalog');
+        $this->assertStringContainsString('$tools->mcp__fixture__echo(array{text?: string} $input): array{', (string) self::declared($started, 'codemode'));
 
         // A script calls it and the result is the whole CallToolResult, which the script filters.
         $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => '$r = $tools->mcp__fixture__echo(["text" => "hi"]); return strtoupper($r["content"][0]["text"]);'], null, $started->hooks->context(), null));
@@ -151,14 +226,15 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertSame('mcp__fixture__echo', $result->details['calls'][0]['name']);
         $this->assertSame('ok', $result->details['calls'][0]['status']);
 
-        // Shutting down takes it away again.
+        // Like upstream's `ensureDiscoveryActive()`, it only ever activates: the session ending
+        // does not take it off the loadout.
         $this->stop($started);
-        $this->assertSame(['bash', 'edit', 'read', 'write'], self::toolNames($started));
+        $this->assertContains('codemode', self::toolNames($started));
     }
 
-    public function testTheSettingTurnsItOnWithoutAnyServer(): void
+    public function testDefaultToolsTurnsItOnWithoutAnyServer(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
 
         $this->assertContains('codemode', self::toolNames($started));
@@ -183,14 +259,14 @@ final class CodemodeExtensionTest extends TestCase
 
     public function testANestedCallGoesThroughTheToolCallHookLikeAnyOther(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         mkdir($this->home . '/hooks', 0o755, true);
         file_put_contents($this->home . '/hooks/guard.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 return function ($pi): void {
     $pi->on('tool_call', function ($event) {
-        file_put_contents(getenv('PIG_HOME') . '/seen-call-id', $event->toolCallId);
+        file_put_contents(getenv('PIG_CODING_AGENT_DIR') . '/seen-call-id', $event->toolCallId);
 
         return $event->toolName === 'bash' ? new ToolCallEventResult(block: true, reason: 'No shells from scripts.') : null;
     });
@@ -215,7 +291,7 @@ PHP);
 
     public function testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         mkdir($this->home . '/extensions', 0o755, true);
         file_put_contents($this->home . '/extensions/spend.php', <<<'PHP'
 <?php
@@ -270,7 +346,7 @@ PHP);
 
     public function testTextItemsAreNumberedAndWhatEchoWroteFollowsInAConsoleBlock(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
@@ -291,7 +367,7 @@ PHP);
 
     public function testOnModeTellsEachToolHowAScriptCallsItAndOnlyModeHidesThemFromTheModel(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $read = null;
 
@@ -307,7 +383,7 @@ PHP);
         $this->assertStringNotContainsString('### `read`', $codemode->description, 'in `on` mode the agent\'s own tools are not listed again');
         $this->stop($started);
 
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true, 'mode' => 'only']]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode'], 'codemode' => ['mode' => 'only']]));
         $started = $this->start();
         $this->assertSame(['codemode'], self::toolNames($started), 'upstream\'s `only` mode: the model is offered scripts alone');
         $declared = null;
@@ -329,7 +405,7 @@ PHP);
 
     public function testTheCodemodeToolAsksForGrammarSamplingSoAModelCanWriteRawSource(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
@@ -341,7 +417,7 @@ PHP);
 
     public function testDescribeNamespaceFindsAServerByAnyOfItsNamesAndSearchToolsFiltersByThem(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $space = ['name' => 'mcp__dev-radius', 'description' => 'the radius server', 'instructions' => 'be gentle'];
         Registry::register('mcp__dev-radius__search', 'search radius', ['type' => 'object', 'properties' => []], static fn (): string => 'found', $space, 'codemode');
@@ -372,7 +448,7 @@ PHP);
 
     public function testTheModelsNamespaceAnswersTheCatalogueAndRefusesABadCallBeforeAnyProviderIsReached(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
@@ -427,7 +503,7 @@ PHP);
         // are. pig's pictures come back from tools — `read` on a PNG, `generate_image` — and a
         // script used to get the text half only: "Saved image to …", and then a second `read`
         // to show what it had just made. The pictures ride beside the text now, MCP-shaped.
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         // A 1×1 PNG is a valid PNG and is all `read` needs; nothing here reaches a provider.
         $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
         file_put_contents($this->cwd . '/dot.png', $png);
@@ -459,9 +535,46 @@ PHP);
         $this->stop($started);
     }
 
+    public function testBashResolvesToItsStructuredOutputEvenWhenTheCommandFails(): void
+    {
+        // Upstream's `bashOutputSchema` and `toScriptValue()`: `{ output, truncated,
+        // full_output_path?, exit_code, wall_time_seconds }`, also for a non-zero exit — and the
+        // session variables, which the session describes to every command.
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $started = $this->start();
+        $bash = null;
+
+        foreach ($started->session->agent->tools() as $tool) {
+            if ($tool->definition()->name === 'bash') {
+                $bash = $tool->definition();
+            }
+        }
+
+        $this->assertNotNull($bash);
+        $this->assertStringEndsWith(
+            "\n\nCodemode: `\$tools->bash([...])` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`.",
+            $bash->description,
+        );
+
+        $codemode = $started->customTools->find('codemode');
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
+            $ok = $tools->bash(['command' => 'printf "%s" "$PIG_SESSION_ID"']);
+            $bad = $tools->bash(['command' => 'echo nope; exit 2']);
+            return ['ok' => $ok['output'], 'okExit' => $ok['exit_code'], 'bad' => $bad['output'], 'badExit' => $bad['exit_code'], 'keys' => array_keys($bad)];
+            PHP], null, $started->hooks->context(), null));
+
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertSame($started->session->store()?->id, $value['ok']);
+        $this->assertSame(0, $value['okExit']);
+        $this->assertSame("nope\n", $value['bad']);
+        $this->assertSame(2, $value['badExit']);
+        $this->assertSame(['output', 'truncated', 'exit_code', 'wall_time_seconds'], $value['keys']);
+        $this->stop($started);
+    }
+
     public function testAFailedScriptIsAnErrorThatStillShowsItsCalls(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
@@ -487,7 +600,7 @@ PHP);
 
     public function testTheStoreSurvivesBetweenScriptsThroughTheSessionFile(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
         $ctx = $started->hooks->context();
@@ -504,7 +617,7 @@ PHP);
 
     public function testOutputPastTheBudgetIsCutInTheMiddleAndSaved(): void
     {
-        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 

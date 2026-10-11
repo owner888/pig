@@ -7,7 +7,8 @@ namespace Pig\Ai;
 /**
  * How much thinking to ask a reasoning model for.
  *
- * Xhigh is OpenAI-only; providers without it clamp to High.
+ * Upstream's `ThinkingLevel` without `off`. `xhigh` and `max` exist only on the models whose
+ * `thinkingLevelMap` names them; a provider that thinks on a token budget spends `high`'s on both.
  */
 enum ReasoningEffort: string
 {
@@ -16,9 +17,11 @@ enum ReasoningEffort: string
     case Medium = 'medium';
     case High = 'high';
     case Xhigh = 'xhigh';
+    case Max = 'max';
 
+    /** Upstream's `clampReasoning()`: `xhigh` and `max` are `high`. */
     public function clampToHigh(): self
     {
-        return $this === self::Xhigh ? self::High : $this;
+        return $this === self::Xhigh || $this === self::Max ? self::High : $this;
     }
 }

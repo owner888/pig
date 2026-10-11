@@ -139,7 +139,7 @@ final class InteractiveModeTest extends TestCase
         $this->cwd = sys_get_temp_dir() . '/pig-interactive-' . bin2hex(random_bytes(4));
         $this->home = $this->cwd . '-home';
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
 
         // `/model` lists the models there is a key for when this mode is given an `Auth`, and what
         // the shell running the suite exports is not something an assertion should turn on.
@@ -155,10 +155,12 @@ final class InteractiveModeTest extends TestCase
     {
         $this->tearDownGlobalTheme();
         $this->mode->stop();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PIG_OFFLINE');
         $this->restoreProviderKeys();
         Models::forgetRegistered();
+        // The mode points the TUI's process-wide keybinding registry at its own manager.
+        \Pig\Tui\Keybindings::reset();
         self::remove($this->home);
         self::remove($this->cwd);
     }
@@ -211,6 +213,8 @@ final class InteractiveModeTest extends TestCase
         array $modelScope = [],
         bool $projectTrusted = true,
         ?\Pig\CodingAgent\Keybindings $keybindings = null,
+        ?string $tuiMode = null,
+        ?Closure $createRuntime = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -280,6 +284,8 @@ final class InteractiveModeTest extends TestCase
             $changelog,
             projectTrusted: $projectTrusted,
             keybindings: $keybindings ?? new \Pig\CodingAgent\Keybindings(),
+            tuiMode: $tuiMode,
+            createRuntime: $createRuntime,
         );
 
         $this->mode->start();
@@ -298,6 +304,12 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
+        // Upstream's order: what went wrong first, with the hint typed after `/bug` in the field.
+        $this->assertStringContainsString('What went wrong? (optional)', $this->screenText());
+        $this->assertStringContainsString('something odd', $this->screenText());
+        $this->type(self::ENTER);
+        $this->settle();
+
         $this->assertStringContainsString('Include the session transcript?', $this->screenText(), 'the question is asked');
         $this->assertStringNotContainsString('Undefined property', $this->screenText());
 
@@ -306,6 +318,44 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertStringNotContainsString('Include the session transcript?', $this->screenText());
+        $this->assertStringContainsString('Bug report cancelled', $this->screenText());
+    }
+
+    public function testSlashBugExportsAZipWithoutTheTranscriptAndRecordsIt(): void
+    {
+        $this->start(['the answer'], store: true);
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/bug the footer');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // the description, as typed
+        $this->settle();
+        $this->type("\e[B");      // transcript: No
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Attach a summary written by', $this->screenText());
+        $this->type("\e[B");      // summary: No
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Transcript: not included', $this->screenText());
+        $this->type("\e[B");      // Export as Zip
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $zips = glob($this->cwd . '/pig-bug-report-*.zip') ?: [];
+        $this->assertCount(1, $zips);
+        $this->assertStringContainsString('Bug report exported to: ' . $zips[0], $this->screenText());
+        $this->assertStringContainsString('report.md', (string) file_get_contents($zips[0]));
+        $this->assertStringNotContainsString('session.jsonl', (string) file_get_contents($zips[0]));
+
+        $recorded = $this->session->store()?->customEntries(\Pig\CodingAgent\BugReport::CUSTOM_ENTRY_TYPE) ?? [];
+        $this->assertCount(1, $recorded);
+        $this->assertSame('zip', $recorded[0]->data['delivery']);
+        $this->assertSame('the footer', $recorded[0]->data['hint']);
+        $this->assertFalse($recorded[0]->data['sessionIncluded']);
     }
 
     public function testTheLastCrashIsAnnouncedOnceAtStartup(): void
@@ -562,7 +612,7 @@ final class InteractiveModeTest extends TestCase
         $this->type("\e[100;6u");
         $this->settle();
 
-        $path = getenv('PIG_HOME') . '/pig-debug.log';
+        $path = getenv('PIG_CODING_AGENT_DIR') . '/pig-debug.log';
         $this->assertFileExists($path);
 
         $written = (string) file_get_contents($path);
@@ -587,7 +637,7 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertFileExists(getenv('PIG_HOME') . '/pig-debug.log');
+        $this->assertFileExists(getenv('PIG_CODING_AGENT_DIR') . '/pig-debug.log');
 
         // Known and not offered, like `quit`: `COMMANDS` is what `/help` prints and what the
         // autocomplete lists, and this is for reporting a fault rather than for using pig.
@@ -1162,7 +1212,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('/reload');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('Reloaded extensions, skills, commands, tools, and context files', $this->screen());
+        $this->assertStringContainsString('Reloaded keybindings, extensions, skills, commands, tools, themes, and context files', $this->screenText());
     }
 
     public function testReloadLoadsTheExtensionsThatAreThereAndComplainsAboutNoneOfThem(): void
@@ -1184,7 +1234,7 @@ final class InteractiveModeTest extends TestCase
         // they were command-line paths, so every one of them came back as
         // `<cwd>/greeter.php (load): not a readable file`.
         $this->assertStringNotContainsString('not a readable file', $screen);
-        $this->assertStringContainsString('Reloaded extensions', $screen);
+        $this->assertStringContainsString('Reloaded keybindings, extensions', $screen);
 
         // And the extension is live afterwards: its command is known.
         $this->type('/greet');
@@ -1469,7 +1519,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertCount(2, SessionManager::listFor($this->cwd));
     }
 
-    /** `--no-save` means no file, and `/new` does not quietly start one. */
+    /** `--no-session` means no file, and `/new` does not quietly start one. */
     public function testANewSessionWritesNothingWhenNothingWasBeingWritten(): void
     {
         $this->start(['answered']);
@@ -1496,7 +1546,7 @@ final class InteractiveModeTest extends TestCase
 
         // Labelled by what was asked, which is how anyone remembers a conversation.
         $this->assertStringContainsString('something memorable', $this->screen());
-        $this->assertStringContainsString('Pick a session', $this->screen());
+        $this->assertStringContainsString('Resume Session (Current Fold', $this->screen());
     }
 
     public function testPickingOneReplacesTheConversation(): void
@@ -1511,6 +1561,8 @@ final class InteractiveModeTest extends TestCase
         $this->type('/resume');
         $this->type(self::ENTER);
         $this->type(self::ENTER);
+        // The resume runs in a fiber of its own, as it may have to ask something.
+        $this->settle();
 
         $screen = $this->screen();
 
@@ -1573,7 +1625,8 @@ final class InteractiveModeTest extends TestCase
             $this->type($key);
         }
 
-        $this->assertStringContainsString('No sessions found', $this->screen());
+        // Upstream's wording for the current folder, which points at Tab for every project's.
+        $this->assertStringContainsString('No sessions in current folder. Press Tab to view all.', $this->screen());
     }
 
     public function testEscapeClosesThePickerAndChangesNothing(): void
@@ -1636,7 +1689,11 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('$ echo quiet', $screen);
         $this->assertStringContainsString('quiet', $screen);
         $this->assertStringNotContainsString('Not added', $screen);
-        $this->assertSame([], $this->session->messages());
+        // Kept in the session, flagged, as upstream records it — and out of what the model is sent.
+        $kept = array_values(array_filter($this->session->messages(), static fn ($m) => $m instanceof \Pig\CodingAgent\Session\BashExecution));
+        $this->assertCount(1, $kept);
+        $this->assertTrue($kept[0]->excludeFromContext);
+        $this->assertSame([], \Pig\CodingAgent\CodingAgent::toLlm($kept));
     }
 
     public function testATypedCommandKeepsTwentyLinesAndCountsTheRest(): void
@@ -2061,7 +2118,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('hello', $html);
         $this->assertStringContainsString('the answer', $html);
         $this->assertStringNotContainsString('<script', $html);
-        $this->assertStringContainsString('Exported to ' . $path, $this->screenText());
+        $this->assertStringContainsString('Session exported to: ' . $path, $this->screenText());
     }
 
     public function testASessionThatIsNotSavedHasNothingToExport(): void
@@ -2072,7 +2129,7 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        // The file is built from what is on disk, so a `--no-save` run has nothing to
+        // The file is built from what is on disk, so a `--no-session` run has nothing to
         // build from — saying so beats writing an empty page.
         $this->assertStringContainsString('not being saved', $this->screen());
     }
@@ -2526,6 +2583,10 @@ final class InteractiveModeTest extends TestCase
 
         $this->type('/model gpt-5');
         $this->type(self::ENTER);
+        // Nothing cached matches, so the catalogs are refreshed first, as upstream's
+        // `findExactModelMatch()` does, and the pattern is looked for again after.
+        $this->assertStringContainsString('Refreshing model catalogs…', $this->screen());
+        $this->settle();
 
         // Rather than switching to it and failing on the next turn, from inside the turn.
         $this->assertStringContainsString('No model matches "gpt-5"', $this->screen());
@@ -2587,6 +2648,51 @@ final class InteractiveModeTest extends TestCase
         $text = $this->screenText();
         $this->assertMatchesRegularExpression('/ctrl\+e\s+choose a model from the list/', $text);
         $this->assertDoesNotMatchRegularExpression('/ctrl\+l\s+choose a model/', $text);
+    }
+
+    public function testReloadReadsKeybindingsJsonAgain(): void
+    {
+        is_dir($this->home) || mkdir($this->home, 0o755, true);
+        $this->start(keybindings: \Pig\CodingAgent\Keybindings::load($this->home));
+
+        file_put_contents($this->home . '/keybindings.json', json_encode(['app.model.select' => 'ctrl+e', 'app.nope' => 'x']));
+        $this->type('/reload');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString("binds 'app.nope', which pig has no action for", $this->screenText());
+
+        $this->type("\x0c");
+        $this->assertStringNotContainsString('Pick a model', $this->screen(), 'ctrl+l is the old key');
+        $this->type("\x05");
+        $this->assertStringContainsString('Pick a model', $this->screen(), 'the reloaded binding works without a restart');
+    }
+
+    public function testASessionActionGivenAKeyRunsItsCommand(): void
+    {
+        // Upstream's `app.session.tree` has no key until `keybindings.json` gives it one.
+        $this->start(keybindings: new \Pig\CodingAgent\Keybindings(['app.session.tree' => ['f5']]));
+
+        $this->type("\x1b[15~");
+        $this->settle();
+
+        $this->assertStringContainsString('This session is not being saved', $this->screenText());
+        $this->assertSame('', $this->editorText(), 'the key is the action, not typing');
+    }
+
+    public function testTheEditingKeysAtThePromptGoThroughTheRegistry(): void
+    {
+        $this->start(keybindings: new \Pig\CodingAgent\Keybindings(['tui.editor.undo' => ['ctrl+z'], 'app.suspend' => []]));
+
+        $this->type('hello');
+        $this->type(' world');
+        $this->type("\x1a"); // ctrl+z, moved onto undo
+        $this->assertSame('hello', $this->editorText());
+
+        $this->type("\x17"); // ctrl+w kills the word...
+        $this->assertSame('', $this->editorText());
+        $this->type("\x19"); // ...and ctrl+y yanks it back
+        $this->assertSame('hello', $this->editorText());
     }
 
     public function testCtrlPStaysInsideTheScopeAndCarriesItsThinkingLevel(): void
@@ -2685,8 +2791,9 @@ final class InteractiveModeTest extends TestCase
         $screen = $this->screen();
 
         $this->assertStringContainsString('[compaction]', $screen);
-        $this->assertStringContainsString('Compacted', $screen);
-        $this->assertStringContainsString('earlier messages', $screen);
+        // `tokensBefore` is upstream's estimate of the projected context, so it is known even
+        // before any answer reported a usage.
+        $this->assertMatchesRegularExpression('/Compacted from [\d,]+ tokens/', $screen);
 
         // Collapsed by default: the summary is long, and the transcript above it is what
         // the person was reading.
@@ -2796,7 +2903,8 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
-        $this->assertStringContainsString('Context is nearly full', $screen);
+        // The session's own check before the prompt (`AgentSession::prompt()`, upstream's
+        // `_checkCompaction()`), drawn from its `compaction_start` / `compaction_end`.
         $this->assertStringContainsString('Compacted', $screen);
         $this->assertStringContainsString('and the answer', $screen);
     }
@@ -5000,7 +5108,8 @@ final class InteractiveModeTest extends TestCase
 
     public function testTheWorkingLoaderBorderMatchesTheThinkingLevelBorderColor(): void
     {
-        $this->start(['done']);
+        // A model that reasons: on one that does not, `setThinkingLevel()` clamps medium to off.
+        $this->start(['done'], reasoning: true);
         $this->session->setThinkingLevel(ThinkingLevel::Medium);
         $held = $this->holdTheAgent();
 
@@ -5185,176 +5294,362 @@ final class InteractiveModeTest extends TestCase
 
     public function testFullscreenViewportPinsDockAndShowsJumpToBottomIndicatorWhenScrolledUp(): void
     {
-        putenv('PIG_TUI_MODE=fullscreen');
-        try {
-            $this->start(array_fill(0, 10, "an answer with several lines of output\nsecond line\nthird line"));
-            $tui = $this->mode->screen();
-            $this->assertInstanceOf(TuiAltScreen::class, $tui);
-            // The frame actually written, not the document: the pill is composited onto it.
-            $frame = static fn (): string => implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines()));
+        $this->start(array_fill(0, 10, "an answer with several lines of output\nsecond line\nthird line"), tuiMode: 'fullscreen');
+        $tui = $this->mode->screen();
+        $this->assertInstanceOf(TuiAltScreen::class, $tui);
+        // The frame actually written, not the document: the pill is composited onto it.
+        $frame = static fn (): string => implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines()));
 
-            for ($i = 1; $i <= 8; $i++) {
-                $this->type("user question {$i}");
-                $this->type(self::ENTER);
-                $this->settle();
-            }
-
-            // PageUp — upstream's `tui.altScreen.pageUp`.
-            $this->type("\x1b[5~");
+        for ($i = 1; $i <= 8; $i++) {
+            $this->type("user question {$i}");
+            $this->type(self::ENTER);
             $this->settle();
-            $this->assertStringContainsString('Jump to latest message · Ctrl+End', $frame());
-
-            // A click on the pill jumps back to the end.
-            $row = null;
-            $column = null;
-            foreach ($tui->getScreenLines() as $index => $line) {
-                $at = mb_strpos(Ansi::strip($line), 'Jump to latest');
-                if ($at !== false) {
-                    [$row, $column] = [$index, $at];
-                }
-            }
-            $this->assertNotNull($row);
-            $this->type("\x1b[<0;" . ($column + 2) . ';' . ($row + 1) . 'M');
-            $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $frame());
-
-            // Ctrl+End — upstream's `tui.altScreen.bottom`.
-            $this->type("\x1b[5~");
-            $this->settle();
-            $this->assertStringContainsString('Jump to latest message', $frame());
-            $this->type("\x1b[1;5F");
-            $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $frame());
-
-            // A trackpad gesture arrives as several wheel reports in one read.
-            $this->type("\x1b[<64;40;10M\x1b[<64;40;10M\x1b[<64;40;10M");
-            $this->settle();
-            $this->assertStringContainsString('Jump to latest message', $frame());
-            $this->type("\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M");
-            $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $frame());
-
-            // The editor and footer stay on the last rows whatever the transcript does.
-            $lines = $tui->getScreenLines();
-            $this->assertSame(24, count($lines));
-        } finally {
-            putenv('PIG_TUI_MODE');
         }
+
+        // PageUp — upstream's `tui.altScreen.pageUp`.
+        $this->type("\x1b[5~");
+        $this->settle();
+        $this->assertStringContainsString('Jump to latest message · Ctrl+End', $frame());
+
+        // A click on the pill jumps back to the end.
+        $row = null;
+        $column = null;
+        foreach ($tui->getScreenLines() as $index => $line) {
+            $at = mb_strpos(Ansi::strip($line), 'Jump to latest');
+            if ($at !== false) {
+                [$row, $column] = [$index, $at];
+            }
+        }
+        $this->assertNotNull($row);
+        $this->type("\x1b[<0;" . ($column + 2) . ';' . ($row + 1) . 'M');
+        $this->settle();
+        $this->assertStringNotContainsString('Jump to latest message', $frame());
+
+        // Ctrl+End — upstream's `tui.altScreen.bottom`.
+        $this->type("\x1b[5~");
+        $this->settle();
+        $this->assertStringContainsString('Jump to latest message', $frame());
+        $this->type("\x1b[1;5F");
+        $this->settle();
+        $this->assertStringNotContainsString('Jump to latest message', $frame());
+
+        // A trackpad gesture arrives as several wheel reports in one read.
+        $this->type("\x1b[<64;40;10M\x1b[<64;40;10M\x1b[<64;40;10M");
+        $this->settle();
+        $this->assertStringContainsString('Jump to latest message', $frame());
+        $this->type("\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M");
+        $this->settle();
+        $this->assertStringNotContainsString('Jump to latest message', $frame());
+
+        // The editor and footer stay on the last rows whatever the transcript does.
+        $lines = $tui->getScreenLines();
+        $this->assertSame(24, count($lines));
     }
 
     public function testSwitchingTuiModeMovesTheSameTreeAndListenersToTheNewRenderer(): void
     {
         // Upstream's `switchTuiMode()`: the transcript, the focus and an extension's terminal
         // listener all carry over, and what components hold keeps working.
-        putenv('PIG_TUI_MODE=fullscreen');
-        try {
-            $this->start(['first answer']);
-            $this->assertInstanceOf(TuiAltScreen::class, $this->mode->screen());
+        $this->start(['first answer'], tuiMode: 'fullscreen');
+        $this->assertInstanceOf(TuiAltScreen::class, $this->mode->screen());
 
-            $heard = [];
-            $ui = (new \ReflectionProperty($this->mode, 'ui'))->getValue($this->mode);
-            $ui->onTerminalInput(static function (string $data) use (&$heard): null {
-                $heard[] = $data;
+        $heard = [];
+        $ui = (new \ReflectionProperty($this->mode, 'ui'))->getValue($this->mode);
+        $ui->onTerminalInput(static function (string $data) use (&$heard): null {
+            $heard[] = $data;
 
-                return null;
-            });
+            return null;
+        });
 
-            $this->type('hello');
-            $this->type(self::ENTER);
-            $this->settle();
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
 
-            $switch = new \ReflectionMethod($this->mode, 'switchTuiMode');
-            $this->assertTrue($switch->invoke($this->mode, 'regular'));
-            $this->settle();
+        $switch = new \ReflectionMethod($this->mode, 'switchTuiMode');
+        $this->assertTrue($switch->invoke($this->mode, 'regular'));
+        $this->settle();
 
-            $this->assertInstanceOf(\Pig\Tui\TuiMainScreen::class, $this->mode->screen());
-            $this->assertStringContainsString('first answer', $this->screen());
-            $this->type('x');
-            $this->settle();
-            $this->assertContains('x', $heard, 'the listener was moved to the new renderer');
-            $this->assertStringContainsString('x', $this->screen(), 'the editor still has the focus');
+        $this->assertInstanceOf(\Pig\Tui\TuiMainScreen::class, $this->mode->screen());
+        $this->assertStringContainsString('first answer', $this->screen());
+        $this->type('x');
+        $this->settle();
+        $this->assertContains('x', $heard, 'the listener was moved to the new renderer');
+        $this->assertStringContainsString('x', $this->screen(), 'the editor still has the focus');
 
-            $this->assertTrue($switch->invoke($this->mode, 'fullscreen'));
-            $this->settle();
-            $tui = $this->mode->screen();
-            $this->assertInstanceOf(TuiAltScreen::class, $tui);
-            $this->assertStringContainsString('first answer', implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines())));
-        } finally {
-            putenv('PIG_TUI_MODE');
-        }
+        $this->assertTrue($switch->invoke($this->mode, 'fullscreen'));
+        $this->settle();
+        $tui = $this->mode->screen();
+        $this->assertInstanceOf(TuiAltScreen::class, $tui);
+        $this->assertStringContainsString('first answer', implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines())));
     }
 
     public function testLeavingFullscreenPrintsTheTranscriptThroughARegularRenderer(): void
     {
-        putenv('PIG_TUI_MODE=fullscreen');
-        try {
-            $this->start(['an answer to keep']);
-            $this->type('question');
-            $this->type(self::ENTER);
-            $this->settle();
-            $this->terminal->clearWrites();
+        $this->start(['an answer to keep'], tuiMode: 'fullscreen');
+        $this->type('question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->terminal->clearWrites();
 
-            $this->mode->stop();
+        $this->mode->stop();
 
-            $written = $this->terminal->output();
-            $this->assertStringContainsString("\x1b[?1049l", $written, 'the alternate screen is left first');
-            $this->assertGreaterThan(strpos($written, "\x1b[?1049l"), strpos($written, 'an answer to keep'), 'then the transcript is drawn on the normal screen');
-        } finally {
-            putenv('PIG_TUI_MODE');
-        }
+        $written = $this->terminal->output();
+        $this->assertStringContainsString("\x1b[?1049l", $written, 'the alternate screen is left first');
+        $this->assertGreaterThan(strpos($written, "\x1b[?1049l"), strpos($written, 'an answer to keep'), 'then the transcript is drawn on the normal screen');
     }
 
     public function testResumeHintExitLeavesOnlyTheNormalScreen(): void
     {
-        putenv('PIG_TUI_MODE=fullscreen');
-        try {
-            $this->start(['an answer not to print'], settings: Settings::inMemory(['fullscreenExitOutput' => 'resume-hint']));
-            $this->type('question');
-            $this->type(self::ENTER);
-            $this->settle();
-            $this->terminal->clearWrites();
+        $this->start(['an answer not to print'], settings: Settings::inMemory(['fullscreenExitOutput' => 'resume-hint']), tuiMode: 'fullscreen');
+        $this->type('question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->terminal->clearWrites();
 
-            $this->mode->stop();
+        $this->mode->stop();
 
-            $written = $this->terminal->output();
-            $this->assertStringContainsString("\x1b[?1049l", $written);
-            $this->assertStringNotContainsString('an answer not to print', $written);
-        } finally {
-            putenv('PIG_TUI_MODE');
-        }
+        $written = $this->terminal->output();
+        $this->assertStringContainsString("\x1b[?1049l", $written);
+        $this->assertStringNotContainsString('an answer not to print', $written);
     }
 
     public function testAClickInTheFullscreenPromptMovesTheCursorThere(): void
     {
         // Upstream's custom editor is an `Editor` and inherits its `handleMouse()`; pig's wraps
         // one and forwards. Press and release on one cell is the click that places the cursor.
-        putenv('PIG_TUI_MODE=fullscreen');
-        try {
-            $this->start();
-            $tui = $this->mode->screen();
-            $this->assertInstanceOf(TuiAltScreen::class, $tui);
-            $this->type('hello');
-            $this->settle();
+        $this->start(tuiMode: 'fullscreen');
+        $tui = $this->mode->screen();
+        $this->assertInstanceOf(TuiAltScreen::class, $tui);
+        $this->type('hello');
+        $this->settle();
 
-            $row = null;
-            $column = null;
-            foreach ($tui->getScreenLines() as $index => $line) {
-                $at = mb_strpos(Ansi::strip($line), 'hello');
-                if ($at !== false) {
-                    [$row, $column] = [$index, $at];
-                }
+        $row = null;
+        $column = null;
+        foreach ($tui->getScreenLines() as $index => $line) {
+            $at = mb_strpos(Ansi::strip($line), 'hello');
+            if ($at !== false) {
+                [$row, $column] = [$index, $at];
             }
-            $this->assertNotNull($row, 'the prompt is on screen');
-            $sgr = ';' . ($column + 2) . ';' . ($row + 1);
-            $this->type("\x1b[<0{$sgr}M\x1b[<0{$sgr}m");
-            $this->settle();
-            $this->type('X');
+        }
+        $this->assertNotNull($row, 'the prompt is on screen');
+        $sgr = ';' . ($column + 2) . ';' . ($row + 1);
+        $this->type("\x1b[<0{$sgr}M\x1b[<0{$sgr}m");
+        $this->settle();
+        $this->type('X');
+        $this->settle();
+
+        $this->assertSame('hXello', $this->editorText());
+    }
+
+    // ---- /scoped-models, /export .jsonl, /import, /share --------------------------------------
+
+    public function testScopedModelsNarrowsCtrlPAndSavesOnlyWhenAsked(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
+
+        $this->type('/scoped-models');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Model Configuration', $this->screen());
+        $this->assertStringContainsString('all enabled', $this->screenText());
+
+        $this->type("\x18"); // ctrl+x: app.models.clearAll
+        $this->type('claude-haiku-4-5');
+        $this->type(self::ENTER); // toggles the top match on
+
+        $this->assertSame(['anthropic/claude-haiku-4-5'], array_map(
+            static fn (\Pig\CodingAgent\ModelChoice $c): string => "{$c->model->provider}/{$c->model->id}",
+            $this->session->modelScope(),
+        ));
+        $this->assertStringContainsString('(unsaved)', $this->screenText());
+        $this->assertNull($this->settings->enabledModels(), 'session-only until saved');
+
+        $this->type("\x13"); // ctrl+s: app.models.save
+        $this->assertSame(['anthropic/claude-haiku-4-5'], $this->settings->enabledModels());
+
+        $this->type(self::ESC);
+        $this->settle();
+        $this->assertStringContainsString('Model selection saved to settings', $this->screenText());
+        $this->assertStringNotContainsString('Model Configuration', $this->screen());
+    }
+
+    public function testScopedModelsAndModelRefreshTheCatalogsWhileOpen(): void
+    {
+        // Upstream's `refreshModelCatalogs()` from both selectors: a status line while it runs,
+        // then the outcome — here no provider has a catalog to fetch, so it is quickly done.
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
+
+        $this->type('/scoped-models');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Refreshing model catalogs…', $this->screenText());
+        $this->settle();
+        $this->assertStringContainsString('Model catalogs refreshed.', $this->screenText());
+        $this->assertStringContainsString('all enabled', $this->screenText());
+        $this->type(self::ESC);
+        $this->settle();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->assertStringContainsString('Refreshing model catalogs…', $this->screenText());
+        $this->settle();
+        $this->assertStringContainsString('Model catalogs refreshed.', $this->screenText());
+        $this->assertStringContainsString('claude-haiku-4-5', $this->screenText());
+    }
+
+    public function testExportToAJsonlPathWritesTheBranchAsASessionFile(): void
+    {
+        $this->start(['the answer'], store: true);
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/export "out dir/branch.jsonl"');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $path = $this->cwd . '/out dir/branch.jsonl';
+        $this->assertFileExists($path);
+        $lines = array_map(static fn (string $l): array => json_decode($l, true), file($path, FILE_IGNORE_NEW_LINES) ?: []);
+        $this->assertSame('session', $lines[0]['type']);
+        $this->assertSame($this->session->store()?->id, $lines[0]['id']);
+        $this->assertNull($lines[1]['parentId']);
+        $this->assertSame($lines[1]['id'], $lines[2]['parentId'], 're-chained root to leaf');
+        $this->assertStringContainsString('Session exported to: ' . $path, $this->screenText());
+
+        // And it opens as a conversation of its own.
+        $this->assertCount(2, self::said(SessionManager::open($path)->messages()));
+    }
+
+    public function testImportAsksThenResumesACopyInThisProject(): void
+    {
+        $this->start(['the answer'], store: true);
+        $this->type('imported question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $source = $this->cwd . '/elsewhere.jsonl';
+        file_put_contents($source, (string) $this->session->store()?->serializeBranch());
+        $this->mode->stop();
+
+        $this->start(store: true);
+        $this->type('/import');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Usage: /import <path.jsonl>', $this->screenText());
+
+        $this->type('/import ' . $source);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Replace current session with', $this->screenText());
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $this->assertStringContainsString('Session imported from: ' . $source, $this->screenText());
+        $this->assertStringContainsString('imported question', $this->screenText());
+        $copy = (string) $this->session->store()?->path;
+        $this->assertSame(SessionManager::directory($this->cwd) . '/elsewhere.jsonl', $copy);
+        $this->assertFileExists($source, 'the original is left alone');
+    }
+
+    public function testImportingAnotherProjectsSessionCarriesOnInItsDirectory(): void
+    {
+        // Upstream's `importFromJsonl()` → `createRuntime({ cwd: sessionManager.getCwd() })`: the
+        // runtime factory builds a session for the directory the file names, and the screen
+        // carries on with it — the footer names that directory now.
+        $other = $this->cwd . '/other-project';
+        mkdir($other);
+        $file = SessionManager::create($other);
+        $file->append(new UserMessage('asked over there'));
+        $file->append(new AssistantMessage([new TextContent('answered over there')], Api::AnthropicMessages, 'anthropic', 'claude-test', new Usage(), StopReason::Stop));
+        $source = $this->cwd . '/other.jsonl';
+        copy($file->path, $source);
+        $asked = [];
+
+        $createRuntime = function (string $cwd, SessionManager $opened, ?Closure $askTrust) use (&$asked): \Pig\CodingAgent\StartedSession {
+            $asked[] = $cwd;
+            $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
+            $agent->setModel($this->session->model());
+            $hooks = new HookRunner([], $cwd, $opened);
+            $session = new AgentSession($agent, $cwd, $opened, $this->settings, $hooks);
+            $session->restore($opened->messages());
+
+            return new \Pig\CodingAgent\StartedSession($session, $agent->state->model, $session->thinkingLevel(), [], [], [], $hooks, new CustomToolSet([], new \Pig\CodingAgent\CustomTools\CustomToolApi($cwd)), $opened, ['a warning from over there'], true);
+        };
+
+        $this->start(store: true, createRuntime: $createRuntime);
+        $this->type('/import ' . $source);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $screen = $this->screenText();
+        $this->assertSame([$other], $asked);
+        $this->assertStringContainsString('answered over there', $screen);
+        $this->assertStringContainsString('a warning from over there', $screen);
+        $this->assertStringContainsString('other-project', $screen);
+        $this->assertStringContainsString('Session imported from: ' . $source, $screen);
+    }
+
+    public function testShareMakesASecretGistAndAnswersTheViewerUrl(): void
+    {
+        // A `gh` of this test's own, first on PATH: it says it is signed in, and answers
+        // `gist create` with a URL after checking it was asked for a secret one.
+        $bin = $this->cwd . '/bin';
+        mkdir($bin);
+        file_put_contents("{$bin}/gh", "#!/bin/sh\n"
+            . "if [ \"$1\" = auth ]; then exit 0; fi\n"
+            . "if [ \"$1 $2 $3\" = 'gist create --public=false' ] && [ -f \"$4\" ]; then echo https://gist.github.com/someone/abc123; exit 0; fi\n"
+            . "echo \"unexpected: $*\" >&2; exit 1\n");
+        chmod("{$bin}/gh", 0o755);
+        $path = (string) getenv('PATH');
+        putenv("PATH={$bin}:{$path}");
+        putenv('PIG_SHARE_VIEWER_URL=https://viewer.test/s/');
+
+        try {
+            $this->start(['the answer'], store: true);
+            $this->type('hello');
+            $this->type(self::ENTER);
             $this->settle();
 
-            $this->assertSame('hXello', $this->editorText());
+            $this->type('/share');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertStringContainsString('Share URL: https://viewer.test/s/#abc123', $this->screenText());
+            $this->assertStringContainsString('Gist: https://gist.github.com/someone/abc123', $this->screenText());
         } finally {
-            putenv('PIG_TUI_MODE');
+            putenv("PATH={$path}");
+            putenv('PIG_SHARE_VIEWER_URL');
         }
+    }
+
+    public function testShareWithoutGhSaysWhereToGetIt(): void
+    {
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $this->cwd);
+
+        try {
+            $this->start(['the answer'], store: true);
+            $this->type('/share');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertStringContainsString('GitHub CLI (gh) is not installed', $this->screenText());
+        } finally {
+            putenv("PATH={$path}");
+        }
+    }
+
+    public function testQuitIsTheListedNameAsUpstreamsIs(): void
+    {
+        // `/exit` still quits (see the test that types it); `/quit` is the one the menu offers.
+        $this->start();
+        $this->type('/');
+        $this->type('qui');
+        $this->assertStringContainsString('Quit pig', $this->screen());
     }
 
     /**

@@ -43,9 +43,6 @@ final class TerminalImageTest extends TestCase
         'CMUX_WORKSPACE_ID',
         'WARP_SESSION_ID',
         'WARP_TERMINAL_SESSION_UUID',
-        'PI_HYPERLINKS',
-        'PI_IMAGE_PROTOCOL',
-        'PI_TRUE_COLOR',
         'PIG_HYPERLINKS',
         'PIG_IMAGE_PROTOCOL',
         'PIG_TRUE_COLOR',
@@ -157,23 +154,23 @@ final class TerminalImageTest extends TestCase
 
     public function testAppliesEnvironmentOverrides(): void
     {
-        self::env(['PI_HYPERLINKS' => '1', 'PI_IMAGE_PROTOCOL' => 'kitty', 'PI_TRUE_COLOR' => '1']);
+        self::env(['PIG_HYPERLINKS' => '1', 'PIG_IMAGE_PROTOCOL' => 'kitty', 'PIG_TRUE_COLOR' => '1']);
         $this->assertEquals(self::caps(ImageProtocol::Kitty, true, true), TerminalImage::detectCapabilities());
 
-        self::env(['TERM_PROGRAM' => 'iterm.app', 'PI_HYPERLINKS' => '0', 'PI_IMAGE_PROTOCOL' => 'none', 'PI_TRUE_COLOR' => '0']);
+        self::env(['TERM_PROGRAM' => 'iterm.app', 'PIG_HYPERLINKS' => '0', 'PIG_IMAGE_PROTOCOL' => 'none', 'PIG_TRUE_COLOR' => '0']);
         $this->assertEquals(self::caps(null, false, false), TerminalImage::detectCapabilities());
     }
 
     public function testPreservesAutoDetectionForAutoEnvironmentOverrides(): void
     {
-        self::env(['TERM_PROGRAM' => 'ghostty', 'PI_HYPERLINKS' => 'auto', 'PI_IMAGE_PROTOCOL' => 'auto', 'PI_TRUE_COLOR' => 'auto']);
+        self::env(['TERM_PROGRAM' => 'ghostty', 'PIG_HYPERLINKS' => 'auto', 'PIG_IMAGE_PROTOCOL' => 'auto', 'PIG_TRUE_COLOR' => 'auto']);
 
         $this->assertEquals(self::caps(ImageProtocol::Kitty, true, true), TerminalImage::detectCapabilities());
     }
 
     public function testAppliesAndClearsProgrammaticOverrides(): void
     {
-        self::env(['PI_HYPERLINKS' => '1', 'PI_IMAGE_PROTOCOL' => 'kitty', 'PI_TRUE_COLOR' => '1']);
+        self::env(['PIG_HYPERLINKS' => '1', 'PIG_IMAGE_PROTOCOL' => 'kitty', 'PIG_TRUE_COLOR' => '1']);
         TerminalImage::setCapabilityOverrides(['images' => null, 'trueColor' => false, 'hyperlinks' => false]);
         $this->assertEquals(self::caps(null, false, false), TerminalImage::getCapabilities());
         TerminalImage::setCapabilityOverrides([]);
@@ -182,7 +179,7 @@ final class TerminalImageTest extends TestCase
 
     public function testBypassesTheTmuxProbeWhenHyperlinksAreOverridden(): void
     {
-        self::env(['TMUX' => '/tmp/tmux-1000/default,1234,0', 'PI_HYPERLINKS' => '1', 'PI_IMAGE_PROTOCOL' => 'kitty']);
+        self::env(['TMUX' => '/tmp/tmux-1000/default,1234,0', 'PIG_HYPERLINKS' => '1', 'PIG_IMAGE_PROTOCOL' => 'kitty']);
         $probed = false;
         $caps = TerminalImage::detectCapabilities(static function () use (&$probed): bool {
             $probed = true;
@@ -323,17 +320,19 @@ final class TerminalImageTest extends TestCase
         $this->assertEquals(self::caps(null, false, false), TerminalImage::detectCapabilities(static fn (): bool => true), "{$name} is set but empty");
     }
 
-    public function testPigOverridesComeBeforeUpstreamOnes(): void
+    public function testUpstreamSpellingsAreNotRead(): void
     {
-        // `PIG_HYPERLINKS=0` must win over `PI_HYPERLINKS=1` — `'0'` is falsy, so a `?:` chain
-        // would have fallen through to the `PI_` value.
-        self::env([
-            'PIG_HYPERLINKS' => '0', 'PI_HYPERLINKS' => '1',
-            'PIG_IMAGE_PROTOCOL' => 'iterm2', 'PI_IMAGE_PROTOCOL' => 'kitty',
-            'PIG_TRUE_COLOR' => '0', 'PI_TRUE_COLOR' => '1',
-        ]);
+        // Upstream's `PI_HYPERLINKS` / `PI_IMAGE_PROTOCOL` / `PI_TRUE_COLOR` are pig's `PIG_` ones,
+        // and only those: the `PI_` spelling is pi's, not a fallback.
+        self::env(['PI_HYPERLINKS' => '1', 'PI_IMAGE_PROTOCOL' => 'kitty', 'PI_TRUE_COLOR' => '1']);
 
-        $this->assertEquals(self::caps(ImageProtocol::ITerm2, false, false), TerminalImage::detectCapabilities());
+        try {
+            $this->assertEquals(self::caps(null, false, false), TerminalImage::detectCapabilities(static fn (): bool => true));
+        } finally {
+            putenv('PI_HYPERLINKS');
+            putenv('PI_IMAGE_PROTOCOL');
+            putenv('PI_TRUE_COLOR');
+        }
     }
 
     // ---- encoding ------------------------------------------------------------------

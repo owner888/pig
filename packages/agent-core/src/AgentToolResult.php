@@ -16,6 +16,11 @@ use Pig\Ai\Usage;
  * script's classifier calls). It goes onto the tool result message, where the session's bill
  * counts it, and is "not part of main LLM context accounting" — upstream's
  * `AgentToolResult.usage`.
+ *
+ * `structuredContent` is a fourth: upstream's `AgentToolResult.structuredContent`, the
+ * "machine-readable result matching the tool's `outputSchema`, for programmatic callers" — a
+ * codemode script gets it in place of the text. Never sent to the model and, unlike `details`,
+ * never written to the session: `bash` puts up to 1 MiB of output here.
  */
 final readonly class AgentToolResult
 {
@@ -27,6 +32,7 @@ final readonly class AgentToolResult
         public array $content,
         public mixed $details = null,
         public ?Usage $usage = null,
+        public mixed $structuredContent = null,
     ) {
     }
 }

@@ -78,31 +78,84 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
     public function __construct(
         private readonly Editor $editor,
         // Which key means which action. The defaults are upstream's; `keybindings.json` moves
-        // one, and this is the one place that reads the file's answer, so `on()` binds actions
-        // and never keys.
+        // one, so `on()` binds actions and never keys.
         private readonly Keybindings $keybindings = new Keybindings(),
     ) {
     }
 
     /**
-     * @param string $key one of escape, ctrl+c, ctrl+d, ctrl+g, ctrl+l, ctrl+o, ctrl+t,
-     *        ctrl+z, shift+tab, ctrl+p, shift+ctrl+p
+     * Register a handler for an app action — upstream's `onAction()`. The key is whatever
+     * `Keybindings` says the action is on.
+     *
+     * @param string $action an `app.*` keybinding id
      * @param Closure(): void $handler
      */
-    public function on(string $key, Closure $handler): void
+    public function on(string $action, Closure $handler): void
     {
-        $this->handlers[$key] = $handler;
+        $this->handlers[$action] = $handler;
     }
 
+    /**
+     * Upstream's `CustomEditor.handleInput()`, in its order: the paste key, interrupt (unless the
+     * completion list is open, where Escape closes it), exit (only from an empty prompt — with
+     * text in it the key is the editor's delete-forward), the dedicated history keys (which win
+     * over an app action on the same key, so `ctrl+p` can be bound to history), then every other
+     * action a handler is registered for, in registration order.
+     *
+     * Extension shortcuts come after the app's actions rather than before, which is where
+     * upstream's land too: its runner drops a shortcut on a reserved app key before it gets here.
+     */
     #[\Override]
     public function handleInput(string $data): void
     {
-        $key = $this->claimed($data);
+        $kb = $this->keybindings;
 
-        if ($key !== null && isset($this->handlers[$key])) {
-            ($this->handlers[$key])();
+        if ($kb->matches($data, 'app.clipboard.pasteImage')) {
+            if (isset($this->handlers['app.clipboard.pasteImage'])) {
+                ($this->handlers['app.clipboard.pasteImage'])();
+            } else {
+                $this->editor->pasteFromClipboard();
+            }
 
             return;
+        }
+
+        if ($kb->matches($data, 'app.interrupt')) {
+            if (!$this->editor->isShowingSuggestions() && isset($this->handlers['app.interrupt'])) {
+                ($this->handlers['app.interrupt'])();
+
+                return;
+            }
+
+            $this->editor->handleInput($data);
+
+            return;
+        }
+
+        if ($kb->matches($data, 'app.exit') && $this->editor->text() === '') {
+            if (isset($this->handlers['app.exit'])) {
+                ($this->handlers['app.exit'])();
+            }
+
+            return;
+        }
+
+        if ($kb->matches($data, 'tui.editor.historyPrevious') || $kb->matches($data, 'tui.editor.historyNext')) {
+            $this->editor->handleInput($data);
+
+            return;
+        }
+
+        foreach ($this->handlers as $action => $handler) {
+            if (in_array($action, ['app.interrupt', 'app.exit', 'app.clipboard.pasteImage'], true)) {
+                continue;
+            }
+
+            if ($kb->matches($data, $action)) {
+                $handler();
+
+                return;
+            }
         }
 
         foreach ($this->shortcuts as $spec) {
@@ -113,32 +166,19 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
             }
         }
 
-        // Ctrl+D is swallowed either way: it means end-of-input, and there is nothing
-        // sensible for a text field to do with it.
-        if (Keys::isCtrlD($data)) {
-            return;
-        }
-
         $this->editor->handleInput($data);
     }
 
-    /**
-     * Which of the application's keys this is, if any.
-     *
-     * Shift+Ctrl+P is tested before Ctrl+P because the first also matches the second.
-     */
-    private function claimed(string $data): ?string
+    /** Upstream's `pageScroll()` reads the terminal's rows; see `Editor::setTerminalRows()`. */
+    public function setTerminalRows(?Closure $rows): void
     {
-        $action = $this->keybindings->actionFor($data);
+        $this->editor->setTerminalRows($rows);
+    }
 
-        return match ($action) {
-            // While the completion list is open, Escape belongs to it: it closes the
-            // list, which is what someone who pressed it there meant.
-            'app.interrupt' => $this->editor->isShowingSuggestions() ? null : $action,
-            // Exit only from an empty prompt; with text in it the key is end-of-input, swallowed.
-            'app.exit' => $this->editor->text() === '' ? $action : null,
-            default => $action,
-        };
+    /** The clipboard paste `app.clipboard.pasteImage` does when nobody registered another. */
+    public function pasteFromClipboard(): void
+    {
+        $this->editor->pasteFromClipboard();
     }
 
     // ---- the editor underneath -------------------------------------------------------

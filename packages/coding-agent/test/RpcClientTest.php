@@ -171,7 +171,7 @@ final class RpcClientTest extends TestCase
             'providers' => [
                 'stand-in' => [
                     'baseUrl' => 'http://127.0.0.1:' . $this->port,
-                    'apiKey' => 'KEY_FOR_THE_STAND_IN',
+                    'apiKey' => '\$KEY_FOR_THE_STAND_IN',
                     'api' => 'anthropic-messages',
                     'models' => [[
                         'id' => 'stand-in',
@@ -193,9 +193,8 @@ final class RpcClientTest extends TestCase
                     'baseUrl' => 'http://127.0.0.1:' . $this->port,
                     // The variable the two cases below turn on: with it set the switch is
                     // allowed, and without it `hasKeyFor()` says no and the refusal is the one
-                    // being tested. `CustomModels` requires an `apiKey`, and an unset all-capitals
-                    // name resolves to no key rather than travelling as one.
-                    'apiKey' => 'ANTHROPIC_API_KEY',
+                    // being tested — a `$NAME` reference whose variable is unset is no key.
+                    'apiKey' => '\$ANTHROPIC_API_KEY',
                     'api' => 'anthropic-messages',
                     'models' => [
                         [
@@ -249,7 +248,7 @@ final class RpcClientTest extends TestCase
             $client->start();
             $client->promptAndWait('say something');
             $answer = $client->newSession();
-            $messages = $client->messages();
+            $messages = $client->getMessages();
             $client->stop();
 
             return [$answer, $messages];
@@ -268,14 +267,113 @@ final class RpcClientTest extends TestCase
             $client->start();
             $client->followUp('meant for the conversation being discarded');
             $client->newSession();
-            $state = $client->state();
+            $state = $client->getState();
             $client->stop();
 
             return $state;
         });
 
-        $this->assertSame(0, $state['queuedMessageCount'] ?? null);
+        $this->assertSame(0, $state['pendingMessageCount'] ?? null);
         $this->assertSame(0, $state['messageCount'] ?? null);
+    }
+
+    /** A saved conversation whose header names `$cwd`, written where the child will look for sessions. */
+    private function conversationIn(string $cwd): string
+    {
+        $previous = getenv('PIG_CODING_AGENT_DIR');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home . '/.pig');
+
+        try {
+            $file = \Pig\CodingAgent\Session\SessionManager::create($cwd);
+            $file->append(new \Pig\Ai\UserMessage('asked in ' . basename($cwd)));
+            $file->append(new \Pig\Ai\AssistantMessage(
+                [new \Pig\Ai\TextContent('answered')],
+                \Pig\Ai\Api::AnthropicMessages,
+                'anthropic',
+                'claude-sonnet-4-5',
+                new \Pig\Ai\Usage(),
+                \Pig\Ai\StopReason::Stop,
+            ));
+
+            return $file->path;
+        } finally {
+            putenv($previous === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $previous);
+        }
+    }
+
+    public function testASessionFromAnotherProjectCarriesOnInItsOwnDirectory(): void
+    {
+        // Upstream's `main()` and `switchSession()`: `--session <path>` and `switch_session` open a
+        // conversation in the directory its header names, with everything loaded for that one.
+        $other = $this->root . '/other';
+        mkdir($other);
+        $there = $this->conversationIn($other);
+        $here = $this->conversationIn($this->cwd);
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in', '--session', $there]);
+
+        [$first, $second, $third] = Async::run(static function () use ($client, $here, $there): array {
+            $client->start();
+            $first = $client->getState();
+            $client->switchSession($here);
+            $second = $client->getState();
+            $client->switchSession($there);
+            $third = $client->getState();
+            $client->stop();
+
+            return [$first, $second, $third];
+        });
+
+        $this->assertSame($other, $first['cwd'] ?? null);
+        $this->assertSame($this->cwd, $second['cwd'] ?? null);
+        $this->assertSame($here, $second['sessionFile'] ?? null);
+        $this->assertSame($other, $third['cwd'] ?? null);
+        $this->assertSame(2, $third['messageCount'] ?? null);
+    }
+
+    public function testStartingOnASessionWhoseDirectoryHasGoneFailsWithUpstreamsSentence(): void
+    {
+        // Upstream's `main()`: not interactive, so `MissingSessionCwdError`'s message and exit 1.
+        $gone = $this->root . '/gone';
+        mkdir($gone);
+        $there = $this->conversationIn($gone);
+        rmdir($gone);
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in', '--session', $there]);
+
+        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static function () use ($client): void {
+            $client->start();
+
+            try {
+                $client->getState();
+            } finally {
+                $client->stop();
+            }
+        }));
+
+        $this->assertStringContainsString("Stored session working directory does not exist: {$gone}", $error->getMessage());
+    }
+
+    public function testASessionWhoseDirectoryHasGoneIsAnErrorWithoutATerminal(): void
+    {
+        $gone = $this->root . '/gone';
+        mkdir($gone);
+        $there = $this->conversationIn($gone);
+        rmdir($gone);
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in']);
+
+        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static function () use ($client, $there): void {
+            $client->start();
+
+            try {
+                $client->switchSession($there);
+            } finally {
+                $client->stop();
+            }
+        }));
+
+        $this->assertStringContainsString("Stored session working directory does not exist: {$gone}", $error->getMessage());
     }
 
     /**
@@ -303,7 +401,7 @@ final class RpcClientTest extends TestCase
             // the machine running the tests is not this file's business.
             arguments: [...($withHooks ? [] : ['--no-hooks']), '--no-tool-files', ...$arguments],
             environment: [
-                'PIG_HOME' => $this->home . '/.pig',
+                'PIG_CODING_AGENT_DIR' => $this->home . '/.pig',
                 'PI_HOME' => $this->root . '/pi',
                 'HOME' => $this->home,
                 'KEY_FOR_THE_STAND_IN' => 'not-checked-by-the-stand-in',
@@ -333,7 +431,7 @@ final class RpcClientTest extends TestCase
 
         $state = Async::run(static function () use ($client): array {
             $client->start();
-            $state = $client->state();
+            $state = $client->getState();
             $client->stop();
 
             return $state;
@@ -351,7 +449,7 @@ final class RpcClientTest extends TestCase
         [$events, $text] = Async::run(static function () use ($client): array {
             $client->start();
             $events = $client->promptAndWait('say something');
-            $text = $client->lastAssistantText();
+            $text = $client->getLastAssistantText();
             $client->stop();
 
             return [$events, $text];
@@ -364,6 +462,7 @@ final class RpcClientTest extends TestCase
         $this->assertContains('agent_start', $types);
         $this->assertContains('message_update', $types, 'the deltas arrived as they happened');
         $this->assertContains('agent_end', $types);
+        $this->assertSame('agent_settled', end($types), 'and the wait ends where upstream\'s does');
     }
 
     public function testTheConversationIsReadableAfterwards(): void
@@ -374,7 +473,7 @@ final class RpcClientTest extends TestCase
         $messages = Async::run(static function () use ($client): array {
             $client->start();
             $client->promptAndWait('a question');
-            $messages = $client->messages();
+            $messages = $client->getMessages();
             $client->stop();
 
             return $messages;
@@ -407,6 +506,36 @@ final class RpcClientTest extends TestCase
         $this->assertSame(0, $result['exitCode'] ?? null);
     }
 
+    public function testUpstreamsNewerCommandsAnswerThroughTheBinary(): void
+    {
+        $this->serveOneTurn('an answer');
+        $client = $this->client(['--model', 'stand-in']);
+
+        $seen = Async::run(static function () use ($client): array {
+            $client->start();
+            $client->promptAndWait('a question');
+            $client->setSessionName('named here');
+            $seen = [
+                'levels' => $client->getAvailableThinkingLevels(),
+                'commands' => $client->getCommands(),
+                'entries' => $client->getEntries(),
+                'tree' => $client->getTree(),
+                'state' => $client->getState(),
+                'cleared' => $client->clearQueue(),
+            ];
+            $client->stop();
+
+            return $seen;
+        });
+
+        $this->assertNotSame([], $seen['levels']);
+        $this->assertIsArray($seen['commands']);
+        $this->assertSame($seen['entries']['leafId'], end($seen['entries']['entries'])['id']);
+        $this->assertSame($seen['entries']['leafId'], $seen['tree']['leafId']);
+        $this->assertSame('named here', $seen['state']['sessionName']);
+        $this->assertSame(['steering' => [], 'followUp' => []], $seen['cleared']);
+    }
+
     public function testTheModelCanBeChangedAndTheStateSaysSo(): void
     {
         $this->serveOneTurn('unused');
@@ -418,7 +547,7 @@ final class RpcClientTest extends TestCase
         [$set, $state] = Async::run(static function () use ($client): array {
             $client->start();
             $set = $client->setModel('anthropic', 'zzp-alpha');
-            $state = $client->state();
+            $state = $client->getState();
             $client->stop();
 
             return [$set, $state];
@@ -458,7 +587,8 @@ final class RpcClientTest extends TestCase
             $client->start();
             $first = $client->cycleModel();
             $second = $client->cycleModel();
-            $back = $client->cycleModel(backward: true);
+            // `direction` is pig's, and not on upstream's client — sent as a host would send it.
+            $back = (new \ReflectionMethod($client, 'send'))->invoke($client, ['type' => 'cycle_model', 'direction' => 'backward']);
             $client->stop();
 
             return [$first, $second, $back];
@@ -483,7 +613,7 @@ final class RpcClientTest extends TestCase
 
         [$opened, $next, $round] = Async::run(static function () use ($client): array {
             $client->start();
-            $opened = $client->state();
+            $opened = $client->getState();
             $next = $client->cycleModel();
             $round = $client->cycleModel();
             $client->stop();
@@ -498,6 +628,7 @@ final class RpcClientTest extends TestCase
         $this->assertSame('zzp-alpha', $next['model']['id'] ?? null);
         $this->assertSame('high', $next['thinkingLevel'] ?? null, 'and the level that entry named');
         $this->assertSame('zzp-plain', $round['model']['id'] ?? null, 'round the end of the scope');
+        $this->assertTrue($next['isScoped'] ?? null);
     }
 
     public function testTheModelListIsTheModelsThereIsAKeyFor(): void
@@ -507,7 +638,7 @@ final class RpcClientTest extends TestCase
 
         $models = Async::run(static function () use ($client): array {
             $client->start();
-            $models = $client->availableModels();
+            $models = $client->getAvailableModels();
             $client->stop();
 
             return $models;
@@ -529,7 +660,7 @@ final class RpcClientTest extends TestCase
 
         $models = Async::run(static function () use ($client): array {
             $client->start();
-            $models = $client->availableModels();
+            $models = $client->getAvailableModels();
             $client->stop();
 
             return $models;
@@ -589,7 +720,7 @@ final class RpcClientTest extends TestCase
     {
         $client = $this->client();
 
-        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static fn () => $client->state()));
+        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static fn () => $client->getState()));
 
         $this->assertStringContainsString('not started', $error->getMessage());
     }
@@ -620,7 +751,7 @@ final class RpcClientTest extends TestCase
             $client->start();
 
             try {
-                $client->state();
+                $client->getState();
             } finally {
                 $client->stop();
             }
@@ -649,7 +780,7 @@ final class RpcClientTest extends TestCase
                 $client->start();
 
                 try {
-                    $client->state();
+                    $client->getState();
                 } finally {
                     $client->stop();
                 }
@@ -682,7 +813,7 @@ final class RpcClientTest extends TestCase
                 $client->start();
 
                 try {
-                    $client->state();
+                    $client->getState();
                 } finally {
                     $client->stop();
                 }
@@ -765,7 +896,7 @@ final class RpcClientTest extends TestCase
         [$answer, $state] = Async::run(static function () use ($client, $elsewhere): array {
             $client->start();
             $answer = $client->switchSession($elsewhere);
-            $state = $client->state();
+            $state = $client->getState();
             $client->stop();
 
             return [$answer, $state];
@@ -790,8 +921,8 @@ final class RpcClientTest extends TestCase
             return $answer;
         });
 
-        $this->assertFalse($answer['cancelled'] ?? null);
-        $this->assertSame(0, $answer['messageCount'] ?? null);
+        // Upstream's whole answer.
+        $this->assertSame(['cancelled' => false], $answer);
     }
 
     public function testSwitchingEmptiesTheQueueOfTheConversationBeingLeft(): void
@@ -807,13 +938,13 @@ final class RpcClientTest extends TestCase
             $client->start();
             $client->followUp('meant for the old conversation');
             $client->switchSession($elsewhere);
-            $state = $client->state();
+            $state = $client->getState();
             $client->stop();
 
             return $state;
         });
 
-        $this->assertSame(0, $state['queuedMessageCount'] ?? null);
+        $this->assertSame(0, $state['pendingMessageCount'] ?? null);
     }
 
     // ---- what the binary says about itself -------------------------------------------

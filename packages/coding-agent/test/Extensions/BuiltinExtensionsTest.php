@@ -20,13 +20,13 @@ final class BuiltinExtensionsTest extends TestCase
         $this->root = sys_get_temp_dir() . '/pig-builtin-' . bin2hex(random_bytes(4));
         mkdir("{$this->root}/home/extensions", 0o700, true);
         mkdir("{$this->root}/project/.pig", 0o755, true);
-        putenv("PIG_HOME={$this->root}/home");
+        putenv("PIG_CODING_AGENT_DIR={$this->root}/home");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         exec('rm -rf ' . escapeshellarg($this->root));
     }
 

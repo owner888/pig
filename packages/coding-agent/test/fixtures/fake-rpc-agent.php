@@ -5,9 +5,9 @@
  * `SessionPool` to be tested without a model.
  *
  * The event shapes are `RpcEvents::encode()`'s — a streamed answer is `message_update` lines
- * carrying `{delta: {type: "text_delta", delta}}` plus the whole message so far, not a bare
+ * carrying upstream's `{usage, assistantMessageEvent: {type: "text_delta", delta}}`, not a bare
  * `text_delta` — because the page is written to the real wire and a fixture speaking a simpler
- * one would pass tests the real child fails. Remembers what was said, so `get_messages` after
+ * one would pass tests the real child fails. A turn ends in `agent_settled`, as a real one does. Remembers what was said, so `get_messages` after
  * a prompt answers with it the way a real child's session would.
  *
  * Ignores `--mode rpc` on its argv; honours `--session <path>` as the file it reports; a
@@ -54,30 +54,32 @@ while (($raw = fgets(STDIN)) !== false) {
             'thinkingLevel' => 'off',
             'isStreaming' => $streaming,
             'contextTokens' => 0,
+            'pendingMessageCount' => 0,
             'pid' => getmypid(),
         ]);
     } elseif ($type === 'get_session_stats') {
-        $respond(['input' => 10, 'output' => 20, 'cost' => 0.001, 'totalTokens' => 30]);
+        $respond(['tokens' => ['input' => 10, 'output' => 20, 'cacheRead' => 0, 'cacheWrite' => 0, 'total' => 30], 'cost' => 0.001]);
     } elseif ($type === 'get_messages') {
         $respond(['messages' => $messages]);
     } elseif ($type === 'prompt') {
         $text = (string) ($cmd['message'] ?? '');
         $messages[] = ['role' => 'user', 'content' => [['type' => 'text', 'text' => $text]], 'timestamp' => (int) (microtime(true) * 1000)];
-        $respond();
+        $respond(['disposition' => 'started']);
         $streaming = true;
         $out(['type' => 'agent_start']);
         $out(['type' => 'turn_start']);
         $reply = 'echo: ' . $text;
         $partial = ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => $reply]], 'stopReason' => 'stop'];
         $out(['type' => 'message_start', 'message' => ['role' => 'assistant', 'content' => []]]);
-        $out(['type' => 'message_update', 'message' => $partial, 'delta' => ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => $reply]]);
+        $out(['type' => 'message_update', 'usage' => ['input' => 0, 'output' => 0], 'assistantMessageEvent' => ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => $reply]]);
         // A turn takes a moment, so a test can observe `running`.
         usleep((int) (($cmd['holdMs'] ?? 50) * 1000));
         $out(['type' => 'message_end', 'message' => $partial]);
         $messages[] = $partial + ['timestamp' => (int) (microtime(true) * 1000)];
         $out(['type' => 'turn_end']);
         $streaming = false;
-        $out(['type' => 'agent_end']);
+        $out(['type' => 'agent_end', 'messages' => [], 'willRetry' => false]);
+        $out(['type' => 'agent_settled', 'aborted' => false]);
     } elseif ($type === 'die') {
         exit(3);
     } else {

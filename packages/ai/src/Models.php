@@ -2716,6 +2716,85 @@ final class Models
      */
     private static array $virtual = [];
 
+    /**
+     * @var array<string, array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>}> a provider's
+     *      whole model list, every type, put in place of its built-in and registered rows — see
+     *      `replaceProvider()`
+     */
+    private static array $providerReplacements = [];
+
+    /** @var list<ImageModel> image models a provider declared elsewhere — see `registerImages()` */
+    private static array $registeredImages = [];
+
+    /**
+     * @var (\Closure(array<string, Model>): array<string, Model>)|null the `models.json` layer — see
+     *      `useOverlay()`
+     */
+    private static ?\Closure $overlay = null;
+
+    /** @var array<string, Model>|null the chat table before the overlay and the virtual models */
+    private static ?array $base = null;
+
+    /**
+     * Put a provider's model list in place of every row it has — upstream's legacy
+     * `registerProvider(name, config)` with `models`: "Supplying `models` in the legacy form replaces
+     * that provider's models across chat, image, and classifier operations." `forgetProvider()` takes it
+     * back, and the built-in rows return. Also the way a config with only a `baseUrl` or `headers` for a
+     * built-in provider is laid over it: the rows, rewritten, in place of themselves.
+     *
+     * @param list<Model> $chat
+     * @param list<ClassifierModel> $classifiers
+     * @param list<ImageModel> $images
+     */
+    public static function replaceProvider(string $provider, array $chat, array $classifiers = [], array $images = []): void
+    {
+        self::$providerReplacements[$provider] = [$chat, $classifiers, $images];
+        self::$models = null;
+        self::$classifiers = null;
+        self::$images = null;
+    }
+
+    /**
+     * Image models the table does not know about — the image half of an extension provider's models.
+     * A built-in row wins a collision, as `register()` has it.
+     *
+     * @param list<ImageModel> $models
+     */
+    public static function registerImages(array $models): void
+    {
+        self::$registeredImages = [...self::$registeredImages, ...$models];
+        self::$images = null;
+    }
+
+    /**
+     * The `models.json` layer: a function from the finished chat table to the table — upstream's
+     * `applyModelsJson()` and `modelOverrides`, which compose over built-in and extension providers
+     * alike. Applied after every other layer and before the virtual models; **replaced**, not added
+     * to, because the file is read again whenever `/model` opens. `CodingAgent\CustomModels` is what
+     * builds it; null takes it away.
+     *
+     * @param (\Closure(array<string, Model>): array<string, Model>)|null $overlay
+     */
+    public static function useOverlay(?\Closure $overlay): void
+    {
+        self::$overlay = $overlay;
+        self::$models = null;
+    }
+
+    /**
+     * A provider's chat models as the built-in table, the registrations and the provider replacements
+     * have them — **before** the `models.json` layer: the defaults upstream's `findModelDefaults()`
+     * reads for a model a file declares under that provider.
+     *
+     * @return list<Model>
+     */
+    public static function baseModelsOf(string $provider): array
+    {
+        self::table();
+
+        return array_values(array_filter(self::$base ?? [], static fn (Model $model): bool => $model->provider === $provider));
+    }
+
     /** Forget what `register()` added. For tests, which must not leak models into each other. */
     public static function forgetRegistered(): void
     {
@@ -2723,8 +2802,12 @@ final class Models
         self::$replacing = [];
         self::$virtual = [];
         self::$registeredClassifiers = [];
+        self::$registeredImages = [];
+        self::$providerReplacements = [];
+        self::$overlay = null;
         self::$models = null;
         self::$classifiers = null;
+        self::$images = null;
     }
 
     /**
@@ -2781,8 +2864,11 @@ final class Models
         self::$registered = array_values(array_filter(self::$registered, $keep));
         self::$replacing = array_values(array_filter(self::$replacing, $keep));
         self::$registeredClassifiers = array_values(array_filter(self::$registeredClassifiers, static fn (ClassifierModel $model): bool => $model->provider !== $provider));
+        self::$registeredImages = array_values(array_filter(self::$registeredImages, static fn (ImageModel $model): bool => $model->provider !== $provider));
+        unset(self::$providerReplacements[$provider]);
         self::$models = null;
         self::$classifiers = null;
+        self::$images = null;
     }
 
     /**
@@ -2990,7 +3076,7 @@ final class Models
             $models[$model->provider . '/' . $model->id] ??= $model;
         }
 
-        return self::$classifiers = $models;
+        return self::$classifiers = self::withReplacements($models, 1);
     }
 
     /** @return array<string, ImageModel> keyed by "provider/id" */
@@ -3008,7 +3094,12 @@ final class Models
             $models[$key] = new ImageModel($id, $name, $api, $provider, $baseUrl, $input, $output, self::pricing($in, $out, $read, $write), inputLimits: self::inputLimits($provider, $input, 0));
         }
 
-        return self::$images = $models;
+        // Last, and only where nothing is already: see `registerImages()`.
+        foreach (self::$registeredImages as $model) {
+            $models[$model->provider . '/' . $model->id] ??= $model;
+        }
+
+        return self::$images = self::withReplacements($models, 2);
     }
 
     /**
@@ -3347,6 +3438,15 @@ final class Models
             $models[$model->provider . '/' . $model->id] = $model;
         }
 
+        // A provider whose whole list was replaced — see `replaceProvider()`.
+        $models = self::withReplacements($models, 0);
+        self::$base = $models;
+
+        // `models.json` over all of that — see `useOverlay()`.
+        if (self::$overlay !== null) {
+            $models = (self::$overlay)($models);
+        }
+
         // And the virtual ones over everything, hiding a physical model of the same id — see
         // `registerVirtual()`.
         foreach (self::$virtual as $key => $model) {
@@ -3354,6 +3454,27 @@ final class Models
         }
 
         return self::$models = $models;
+    }
+
+    /**
+     * A table with each replaced provider's rows taken out and its replacement list put in.
+     *
+     * @template T of Model|ClassifierModel|ImageModel
+     * @param array<string, T> $models
+     * @param 0|1|2 $type chat, classifier, image — the position in `$providerReplacements`
+     * @return array<string, T>
+     */
+    private static function withReplacements(array $models, int $type): array
+    {
+        foreach (self::$providerReplacements as $provider => $replacement) {
+            $models = array_filter($models, static fn (Model|ClassifierModel|ImageModel $model): bool => $model->provider !== $provider);
+
+            foreach ($replacement[$type] as $model) {
+                $models[$model->provider . '/' . $model->id] = $model;
+            }
+        }
+
+        return $models;
     }
 
     /**
@@ -3897,9 +4018,7 @@ final class Models
      *
      * A string value is what is sent for that level, null means the model does not have the level,
      * and a level the map leaves out is offered under its own name — except `xhigh` and `max`,
-     * which are offered only when the map names them (`Model::supportedThinkingLevels()`). pig's
-     * agent has no `max` level, so those entries are carried as upstream writes them and nothing
-     * offers them.
+     * which are offered only when the map names them (`Model::supportedThinkingLevels()`).
      *
      * Between 2 and 3, `applyModelsDevReasoningOptionMetadata()`: `$effortLevelMap`, the map the
      * generator made of models.dev's `reasoning_options` (`getEffortThinkingLevelMap()`, written as

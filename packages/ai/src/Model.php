@@ -13,7 +13,7 @@ namespace Pig\Ai;
  */
 final readonly class Model
 {
-    /** Upstream's `EXTENDED_THINKING_LEVELS`, in effort order — `max` included, which pig's agent has no level for. */
+    /** Upstream's `EXTENDED_THINKING_LEVELS`, in effort order — `Pig\\Agent\\ThinkingLevel`'s cases. */
     public const array THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
     /**

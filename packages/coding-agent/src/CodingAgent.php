@@ -37,7 +37,10 @@ use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Packages\ResolvedPaths;
+use Pig\CodingAgent\Packages\ResolvedResource;
+use Pig\CodingAgent\Prompt\SystemPromptFiles;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Prompt\SlashCommands;
@@ -59,12 +62,15 @@ use Throwable;
 final class CodingAgent
 {
     /**
-     * What a session opens on when nothing names a model: not `--model`, not `PIG_MODEL`, not the
-     * settings. The one this document and both READMEs have said all along; for a while the code
-     * said `gemini-3.8-flash` on `antigravity`, which was a provider that only exists once an
+     * What a session opens on when nothing names a model: not `--model`, not the settings. The
+     * one this document and both READMEs have said all along; for a while the code said
+     * `gemini-3.8-flash` on `antigravity`, which was a provider that only exists once an
      * extension has loaded and is the extension's default to make, not the core's.
      */
     public const string DEFAULT_MODEL = 'claude-sonnet-4-5';
+
+    /** Upstream's `DEFAULT_THINKING_LEVEL` (`core/defaults.ts`): what a session opens on when nothing says otherwise. */
+    public const ThinkingLevel DEFAULT_THINKING_LEVEL = ThinkingLevel::Medium;
 
     /**
      * An agent ready to be prompted.
@@ -155,7 +161,7 @@ final class CodingAgent
      * Upstream's `createAgentSession()`, and the reason it is here rather than left in `bin/pig` is
      * the reason `Cli\Arguments`, `Cli\ModelList` and `Cli\SignIn` are classes: **a script that
      * ends in `exit()` cannot be called twice, so none of this had a test.** Two hundred lines of
-     * resolution order — which of `--model`, `PIG_MODEL`, the settings and the built-in default
+     * resolution order — which of `--model`, the settings and the built-in default
      * wins, when a thinking level gets clamped, which session file `--continue` picks, what happens
      * to a broken hook — were only ever exercised by running pig and looking.
      *
@@ -173,10 +179,7 @@ final class CodingAgent
      * - **Printing.** Nothing here writes to a stream; warnings come back in the result and
      *   anything fatal throws, which is what makes the whole thing testable.
      *
-     * @param array<string, string|false> $environment `getenv()`, or a fixture — the same shape
-     *        `Http\Proxy::fromEnvironment()` takes, and for the same reason: an environment read
-     *        inside the thing under test is an environment a test cannot set
-     * @param string|null $model    what `--model` said, or null for the environment and settings
+     * @param string|null $model    what `--model` said, or null for the settings
      * @param string|null $thinking what `--thinking` said, which beats a `:level` on the model
      * @param string|null $resume   a session file to open, already chosen
      * @param string|null $apiKey   a key for this run only, never written down
@@ -193,8 +196,8 @@ final class CodingAgent
      *        of only `+name`/`-name` entries then changes an empty default rather than the four
      * @param bool $withPromptTemplates false is upstream's `--no-prompt-templates`: no prompt
      *        template is looked for, the packages' included; an extension's still arrive
-     * @param bool $withContextFiles false is upstream's `--no-context-files`: no `AGENTS.md` or
-     *        `CLAUDE.md` is read into the prompt
+     * @param bool $withContextFiles false is upstream's `--no-context-files`: no `AGENTS.md`,
+     *        `CLAUDE.md` or their siblings are read into the prompt
      * @param list<string> $skillPaths upstream's `--skill`: skill files or directories, absolute
      * @param list<string> $promptTemplatePaths upstream's `--prompt-template`, the same for templates
      * @param list<string> $disabledExtensions bundled extensions not to load this run, by their
@@ -211,7 +214,25 @@ final class CodingAgent
      *        this session is narrowed to, whose first entry is what it opens on
      * @param bool $projectTrusted whether `<cwd>/.pig/` may be loaded — `ProjectTrust::resolve()`'s
      *        answer, decided by the caller because deciding it may need a screen. False keeps the
-     *        project's hooks, tools, extensions, skills and commands out and says so in a warning.
+     *        project's hooks, tools, extensions, skills, prompt templates, themes, `.agents/skills`
+     *        and `SYSTEM.md` / `APPEND_SYSTEM.md` out and says so in a warning.
+     * @param string|null $systemPrompt upstream's `systemPrompt` option (`--system-prompt`): replaces
+     *        the default prompt — text, or a file to read when one exists at that path. Null
+     *        discovers `.pig/SYSTEM.md` (trusted), then `<agent-dir>/SYSTEM.md`.
+     * @param list<string>|null $appendSystemPrompt upstream's `appendSystemPrompt` option
+     *        (`--append-system-prompt`, repeatable): each text or a file, joined by blank lines and
+     *        added after the prompt. Null discovers `APPEND_SYSTEM.md` the same way.
+     * @param ResolvedPaths|null $packageResources what `PackageManager::resolve()` gave, the `-e`
+     *        packages' (scope `temporary`) included; the settings' and the directories' own are
+     *        resolved here (`resolveLocalResources()`)
+     * @param string|null $provider upstream's `--provider`: the provider `$model` is looked up in
+     *        (`resolveCliModel()`'s `cliProvider`). Requires `$model`.
+     * @param string|null $sessionId upstream's `--session-id` for a new session: its id instead of
+     *        a fresh one — the in-memory session's when `$save` is false. Ignored when `$resume`
+     *        opens a file, which is the caller's existing match.
+     * @param string|null $cwdOverride upstream's `SessionManager.open(…, cwdOverride)`: for a
+     *        `$resume` whose stored working directory has gone, the one carried on in instead —
+     *        `$cwd`, after somebody said yes to `SessionCwd::prompt()`.
      *
      * @throws CodingAgentError with a sentence worth showing as-is
      */
@@ -219,7 +240,6 @@ final class CodingAgent
         string $cwd,
         Settings $settings,
         Auth $auth,
-        array $environment = [],
         ?string $model = null,
         ?string $thinking = null,
         ?string $apiKey = null,
@@ -246,6 +266,11 @@ final class CodingAgent
         bool $withContextFiles = true,
         array $skillPaths = [],
         array $promptTemplatePaths = [],
+        ?string $systemPrompt = null,
+        ?array $appendSystemPrompt = null,
+        ?string $provider = null,
+        ?string $sessionId = null,
+        ?string $cwdOverride = null,
     ): StartedSession {
         $warnings = [];
 
@@ -296,10 +321,30 @@ final class CodingAgent
             $warnings[] = $problem;
         }
 
-        if ($model === null && $scope !== []) {
+        // Upstream's `buildSessionOptions()` diagnostic, word for word.
+        if ($provider !== null && $model === null) {
+            throw new CodingAgentError("--provider requires --model (for example: --provider {$provider} --model <pattern>)");
+        }
+
+        if ($provider !== null) {
+            // Upstream's `resolveCliModel()` with a `cliProvider`: the provider is matched without
+            // regard to case, a `<provider>/` the model repeats is tolerated, and the pattern is
+            // looked for among that provider's models alone.
+            $known = [];
+
+            foreach (Models::all() as $candidate) {
+                $known[strtolower($candidate->provider)] = $candidate->provider;
+            }
+
+            $canonical = $known[strtolower($provider)]
+                ?? throw new CodingAgentError("Unknown provider \"{$provider}\". Use --list-models to see available providers/models.");
+            $pattern = str_starts_with(strtolower($model), strtolower($canonical) . '/') ? substr($model, strlen($canonical) + 1) : $model;
+            $choice = ModelResolver::parse($pattern, array_values(array_filter(Models::all(), static fn ($candidate): bool => $candidate->provider === $canonical)))
+                ?? throw new CodingAgentError("No model matches '{$model}' for provider {$canonical}. Try --list-models for the list.");
+        } elseif ($model === null && $scope !== []) {
             // The first of the scope is what the session opens on, which is upstream's rule and
             // sits exactly here in the order: below `--model`, which is somebody naming one
-            // model, and above the environment. A resumed conversation still wins over both —
+            // model, and above the settings. A resumed conversation still wins over both —
             // `restoreSettings()` below puts the file's model back unless `--model` was typed.
             //
             // Unless the remembered default is in the scope: upstream opens on that one, so
@@ -316,18 +361,16 @@ final class CodingAgent
                 }
             }
         } else {
-            // The order stated at the top of `bin/pig`: what was typed, then the environment, then
-            // what was chosen last time, then the built-in default.
-            $envModel = self::fromEnvironment($environment, 'PIG_MODEL') ?? self::fromEnvironment($environment, 'PI_MODEL');
-            $envProvider = self::fromEnvironment($environment, 'PIG_PROVIDER') ?? self::fromEnvironment($environment, 'PI_PROVIDER');
-            $typed = $model ?? $envModel;
-            $wanted = $typed ?? $settings->defaultModel() ?? self::DEFAULT_MODEL;
+            // Upstream's order: what was typed, then what was chosen last time, then the built-in
+            // default. No environment variable names a model: upstream's `PI_MODEL` / `PI_PROVIDER`
+            // are what its bash tool *tells* a command (`SessionEnvironment`), never read back — a
+            // pig started from inside another's command would otherwise open on the outer model.
+            $wanted = $model ?? $settings->defaultModel() ?? self::DEFAULT_MODEL;
 
             // Provider precedence:
             // 1) Explicit in the model name (e.g. `antigravity/gemini-3.8-flash`)
-            // 2) From environment (PIG_PROVIDER / PI_PROVIDER)
-            // 3) Stored defaultProvider in settings (when using stored defaultModel)
-            $provider = $envProvider ?? ($typed === null ? $settings->defaultProvider() : null);
+            // 2) Stored defaultProvider in settings (when using stored defaultModel)
+            $provider = $model === null ? $settings->defaultProvider() : null;
 
             if ($provider !== null && !str_contains($wanted, '/')) {
                 $choice = ModelResolver::parse($provider . '/' . $wanted) ?? ModelResolver::parse($wanted);
@@ -354,20 +397,27 @@ final class CodingAgent
                 throw new CodingAgentError('--api-key needs a key after it.');
             }
 
+            // Upstream's check, and its sentence: a runtime key belongs to the provider of a model
+            // somebody chose, not to whichever default this run happened to fall back on.
+            if ($model === null && $scope === []) {
+                throw new CodingAgentError('--api-key requires a model to be specified via --model, --provider/--model, or --models');
+            }
+
             $auth->setRuntimeApiKey($chosen->provider, $apiKey);
         }
 
-        $envThinking = self::fromEnvironment($environment, 'PIG_THINKING') ?? self::fromEnvironment($environment, 'PI_REASONING_LEVEL');
-        $thinkingArg = $thinking ?? $envThinking;
+        // `--thinking` alone: upstream's `PI_REASONING_LEVEL` is set for a bash command, not read.
+        $thinkingArg = $thinking;
 
         // Upstream's order: what was typed, the pattern's own `:level`, the model's own
-        // `modelThinkingLevels` entry, `defaultThinkingLevel`, off. (A resumed conversation's
+        // `modelThinkingLevels` entry, `defaultThinkingLevel`, then `DEFAULT_THINKING_LEVEL`
+        // (medium) — clamped below, so a model that cannot reason still opens on off. (A resumed conversation's
         // recorded level beats all but the first, in `restoreSettings()`.)
         $level = $thinkingArg !== null
             ? ThinkingLevel::tryFrom($thinkingArg) ?? ThinkingLevel::Off
             : ($choice->explicitThinking
                 ? $choice->thinking
-                : ($settings->modelThinkingLevel($chosen->provider, $chosen->id) ?? $settings->defaultThinkingLevel() ?? ThinkingLevel::Off));
+                : ($settings->modelThinkingLevel($chosen->provider, $chosen->id) ?? $settings->defaultThinkingLevel() ?? self::DEFAULT_THINKING_LEVEL));
 
         // Clamped rather than refused: a model that cannot reason and a request that asks it to is
         // a request the provider rejects, and nobody typing `--thinking high` meant to be told no.
@@ -385,103 +435,29 @@ final class CodingAgent
             $warnings[] = $problem;
         }
 
-
         Timings::mark('contextFiles');
 
-        // Upstream's `--no-skills`, and the reason it is here rather than only in the settings is
-        // its two siblings: `--no-hooks` and `--no-tool-files` are flags, and a third loader with a
-        // settings switch and no flag is the asymmetry that makes somebody think skills cannot be
-        // turned off for one run. The settings still decide when nothing was typed.
-        [$skills, $skillWarnings] = $withSkills && $settings->skillsEnabled()
-            ? Skills::load(
-                $cwd,
-                extraDirs: array_filter([$skillsDir, ...$settings->skillList('customDirectories')]),
-                ignored: $settings->skillList('ignoredSkills'),
-                only: $settings->skillList('includeSkills'),
-                // Upstream's five per-root switches. The join between its key names and the root
-                // each one governs is written here, once, because this is where the settings are
-                // read — `Skills` takes plain values and knows no key names, the same way it takes
-                // `ignored` rather than reading `ignoredSkills` itself.
-                roots: [
-                    'codex-user' => $settings->skillRoot('enableCodexUser'),
-                    'claude-user' => $settings->skillRoot('enableClaudeUser'),
-                    'claude-project' => $settings->skillRoot('enableClaudeProject'),
-                    'pi-user' => $settings->skillRoot('enablePiUser'),
-                    'pi-project' => $projectTrusted && $settings->skillRoot('enablePiProject'),
-                    // pig's own project root has no settings key (see `Skills`' docblock), so
-                    // trust is the only thing that switches it off.
-                    'project' => $projectTrusted,
-                ],
-            )
-            : [[], []];
-        Timings::mark('skills');
+        // Upstream's `DefaultResourceLoader.reload()`: `SYSTEM.md` and `APPEND_SYSTEM.md`, the
+        // project's (trusted) over the agent directory's, unless the run named its own.
+        $promptFiles = SystemPromptFiles::load($cwd, Config::home(), $projectTrusted, $systemPrompt, $appendSystemPrompt);
 
-        foreach ($skillWarnings as $warning) {
-            $warnings[] = "skill {$warning->path}: {$warning->message}";
+        foreach ($promptFiles->warnings as $problem) {
+            $warnings[] = $problem;
         }
 
-        $fileCommands = $withPromptTemplates ? SlashCommands::load($cwd, projectTrusted: $projectTrusted) : [];
-        Timings::mark('slashCommands');
+        $resources = self::resources($cwd, $settings, $projectTrusted, $packageResources, $withSkills, $withPromptTemplates, [...$skillPaths, ...($skillsDir === null ? [] : [$skillsDir])], $promptTemplatePaths);
+        $skills = $resources['skills'];
+        $fileCommands = $resources['fileCommands'];
 
-        // The packages' skills, prompts and themes — after the local ones, which is the rank
-        // upstream gives a package's resource (`ResolvedPaths::rank()`): a skill the person has
-        // under the same name is the one the model hears about.
-        if ($packageResources !== null) {
-            if ($withSkills && $settings->skillsEnabled()) {
-                [$packageSkills, $packageSkillWarnings] = Skills::fromFiles($packageResources->enabled('skills'));
-                $byName = [];
-
-                foreach ([...$skills, ...$packageSkills] as $skill) {
-                    $byName[$skill->name] ??= $skill;
-                }
-
-                $skills = array_values($byName);
-
-                foreach ($packageSkillWarnings as $warning) {
-                    $warnings[] = "skill {$warning->path}: {$warning->message}";
-                }
-            }
-
-            if ($withPromptTemplates) {
-                $fileCommands = [...$fileCommands, ...SlashCommands::fromFiles($packageResources->enabled('prompts'))];
-            }
-
-            Themes::setPackageThemeFiles($packageResources->enabled('themes'));
+        foreach ($resources['warnings'] as $problem) {
+            $warnings[] = $problem;
         }
 
-        // Upstream's `--skill` and `--prompt-template`: files or directories for this run, after
-        // everything else (its `additionalSkillPaths`), and loaded under `--no-skills` and
-        // `--no-prompt-templates` too — naming one is asking for it.
-        if ($skillPaths !== []) {
-            $cliSkills = self::cliResources($skillPaths, 'Skill', $warnings);
-            [$fromDirectories, $directoryWarnings] = Skills::fromDirectories($cliSkills['dirs']);
-            [$fromFiles, $fileWarnings] = Skills::fromFiles($cliSkills['files']);
-            $byName = [];
-
-            foreach ([...$skills, ...$fromDirectories, ...$fromFiles] as $skill) {
-                $byName[$skill->name] ??= $skill;
-            }
-
-            $skills = array_values($byName);
-
-            foreach ([...$directoryWarnings, ...$fileWarnings] as $warning) {
-                $warnings[] = "skill {$warning->path}: {$warning->message}";
-            }
-        }
-
-        if ($promptTemplatePaths !== []) {
-            $cliPrompts = self::cliResources($promptTemplatePaths, 'Prompt template', $warnings);
-            $fileCommands = [
-                ...$fileCommands,
-                ...SlashCommands::fromDirectories($cliPrompts['dirs']),
-                ...SlashCommands::fromFiles($cliPrompts['files']),
-            ];
-        }
         Timings::mark('packages');
 
         // Before the agent as well as before any UI, because the hooks are handed the session file
         // and the agent is handed the hooks.
-        $store = $save ? self::store($cwd, $resume, $continue) : null;
+        $store = $save ? self::store($cwd, $resume, $continue, $sessionId, $cwdOverride) : null;
         $resumed = $save && ($resume !== null || $continue);
         Timings::mark('session');
 
@@ -512,8 +488,10 @@ final class CodingAgent
         //
         // `defaultTools` changes the four (upstream's `getDefaultTools() ?? DEFAULT_TOOL_NAMES`), and a
         // `--tools` of only `+name`/`-name` entries changes whatever the default was rather than
-        // naming the whole set. pig registers every custom tool active, so for them only a `-name`
-        // means anything: it takes that tool away.
+        // naming the whole set. A custom tool is active on registration unless it was registered
+        // with `defaultActive: false` (codemode is); naming one of those — by `--tools`, a plain
+        // `defaultTools` entry or a `+name` — activates it, as upstream's `initialActiveToolNames`
+        // and `allowedTools` do, and a `-name` takes any custom tool away.
         if ($tools !== null && ($toolListError = Settings::toolListError($tools)) !== null) {
             throw new CodingAgentError("Invalid tools option: {$toolListError}");
         }
@@ -537,12 +515,19 @@ final class CodingAgent
         $selection = $tools === null ? null : new ToolSelection($tools);
         $excluded = $excludeTools === null ? null : new ToolSelection($excludeTools);
         $builtIn = $readOnly ? ToolSet::READ_ONLY : ToolSet::CODING;
+        // What the run named, for the custom tools registered inactive (`ToolLoadout::useNamed()`).
+        $named = null;
 
         if ($selection !== null) {
             // `--tools` names the whole set: the built-ins it matches, in `ToolSet::ALL`'s order.
             $builtIn = array_values(array_filter(ToolSet::ALL, $selection->allows(...)));
+            // Upstream's `allowedTools(toolName)`: matched by name or pattern, not merely kept —
+            // an MCP tool `allows()` keeps without an `mcp__` entry is not named.
+            $named = $selection->matches(...);
         } elseif ($defaultTools !== null && (!$readOnly || $noTools !== null)) {
             $builtIn = array_values(array_filter(ToolSet::ALL, static fn (string $name): bool => in_array($name, $defaultTools, true)));
+            // Upstream's `initialActiveToolNames`: the resolved list, `+name` modifiers applied.
+            $named = static fn (string $name): bool => in_array($name, $defaultTools, true);
         }
 
         // The custom tools a `defaultTools` or `--tools` modifier took out by name.
@@ -615,6 +600,8 @@ final class CodingAgent
             // Asked per turn rather than resolved once, because an OAuth token expires
             // mid-conversation and `Auth` renews it on the way past.
             getApiKey: $auth->apiKey(...),
+            systemPrompt: $promptFiles->custom(),
+            appendSystemPrompt: $promptFiles->appended(),
             contextFiles: $contextFiles,
             thinking: $level,
             skills: $skills,
@@ -626,7 +613,8 @@ final class CodingAgent
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
         // same way the ones at startup did: beside the built-ins, wrapped with the hooks, and
         // activated on registration as upstream's `_refreshToolRegistry()` does (`refresh()`).
-        $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills);
+        $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills, $promptFiles->custom(), $promptFiles->appended());
+        $loadout->useNamed($named);
         $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
 
@@ -636,7 +624,20 @@ final class CodingAgent
         // message would be in the transcript and never in the file, so it is taken out here.
         $agent->replaceMessages([]);
 
-        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth, loadout: $loadout, projectTrusted: $projectTrusted);
+        $session = new AgentSession(
+            $agent,
+            $cwd,
+            $store,
+            $settings,
+            $hooks,
+            $fileCommands,
+            $scope,
+            auth: $auth,
+            loadout: $loadout,
+            projectTrusted: $projectTrusted,
+            // Upstream's `SessionManager.inMemory(cwd, { id: parsed.sessionId })` for `--no-session`.
+            sessionId: $store === null ? $sessionId : null,
+        );
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not
         // here: the interactive one is what has a screen to draw a dialog on, and upstream says the
@@ -682,28 +683,130 @@ final class CodingAgent
     }
 
     /**
-     * `--skill` or `--prompt-template` paths split into directories and files; one that is neither
-     * is upstream's diagnostic, `<kind> path does not exist`.
+     * The skills, prompt templates and themes a session loads — the resource half of upstream's
+     * `DefaultResourceLoader.reload()`, for `session()` and for `/reload`.
      *
-     * @param list<string> $paths
-     * @param list<string> $warnings
-     * @return array{dirs: list<string>, files: list<string>}
+     * In upstream's order: an `-e` package's first, then what the settings and the conventional
+     * directories give (`PackageManager::resolveLocalResources()`, project before user), then the
+     * configured packages', then `--skill` / `--prompt-template` — and the first of a name wins.
+     * `$withSkills` / `$withPromptTemplates` false (`--no-skills`, `--no-prompt-templates`) drop
+     * all but the first and the last, as upstream's `noSkills` keeps `cliEnabledSkills` and
+     * `additionalSkillPaths`. The themes go to `Themes::setResolvedThemeFiles()`; `--no-themes` is
+     * the theme loader's own switch.
+     *
+     * @param ResolvedPaths|null $packageResources `PackageManager::resolve()`'s, the `-e` packages'
+     *        (scope `temporary`) included
+     * @param list<string> $skillPaths upstream's `additionalSkillPaths`
+     * @param list<string> $promptTemplatePaths upstream's `additionalPromptTemplatePaths`, absolute
+     * @return array{skills: list<Skill>, skillWarnings: list<\Pig\CodingAgent\Prompt\SkillWarning>, fileCommands: list<\Pig\CodingAgent\Prompt\FileCommand>, promptWarnings: list<string>, warnings: list<string>}
+     *         `warnings` is the skill and prompt-template warnings as `session()` reports them
      */
-    private static function cliResources(array $paths, string $kind, array &$warnings): array
-    {
-        $found = ['dirs' => [], 'files' => []];
+    public static function resources(
+        string $cwd,
+        Settings $settings,
+        bool $projectTrusted,
+        ?ResolvedPaths $packageResources = null,
+        bool $withSkills = true,
+        bool $withPromptTemplates = true,
+        array $skillPaths = [],
+        array $promptTemplatePaths = [],
+    ): array {
+        $warnings = [];
+        $local = (new PackageManager($cwd, $settings))->resolveLocalResources($projectTrusted);
+        $temporary = static fn (ResolvedResource $r): bool => $r->metadata->scope === 'temporary';
+        $ordered = static fn (string $type, bool $all): array => [
+            ...array_values(array_filter($packageResources?->of($type) ?? [], $temporary)),
+            ...($all ? $local->of($type) : []),
+            ...($all ? array_values(array_filter($packageResources?->of($type) ?? [], static fn (ResolvedResource $r): bool => !$temporary($r))) : []),
+        ];
 
-        foreach ($paths as $path) {
-            if (is_dir($path)) {
-                $found['dirs'][] = $path;
-            } elseif (is_file($path)) {
-                $found['files'][] = $path;
-            } else {
-                $warnings[] = "{$kind} path does not exist: {$path}";
-            }
+        [$skills, $skillWarnings] = Skills::fromResources($ordered('skills', $withSkills));
+        $skillPaths = array_values(array_filter($skillPaths, static fn (string $path): bool => $path !== ''));
+
+        if ($skillPaths !== []) {
+            // After everything else; a missing one is `skill path does not exist`, said by `fromPaths()`.
+            [$skills, $skillWarnings] = self::firstByName($skills, $skillWarnings, Skills::fromPaths($skillPaths, $cwd));
         }
 
-        return $found;
+        Timings::mark('skills');
+
+        foreach ($skillWarnings as $warning) {
+            $warnings[] = "skill {$warning->path}: {$warning->message}";
+        }
+
+        [$fileCommands, $promptWarnings] = SlashCommands::fromResources($ordered('prompts', $withPromptTemplates));
+
+        if ($promptTemplatePaths !== []) {
+            foreach ($promptTemplatePaths as $path) {
+                if (!file_exists($path)) {
+                    $warnings[] = "Prompt template path does not exist: {$path}";
+                }
+            }
+
+            [$cliPrompts, $cliPromptWarnings] = SlashCommands::fromPaths($promptTemplatePaths);
+            $taken = [];
+
+            foreach ($fileCommands as $command) {
+                $taken[$command->name] = $command;
+            }
+
+            foreach ($cliPrompts as $command) {
+                if (isset($taken[$command->name])) {
+                    $promptWarnings[] = "{$command->path}: name \"/{$command->name}\" collision: {$taken[$command->name]->path} is loaded and this one is skipped";
+
+                    continue;
+                }
+
+                $fileCommands[] = $taken[$command->name] = $command;
+            }
+
+            $promptWarnings = [...$promptWarnings, ...$cliPromptWarnings];
+        }
+
+        $promptWarnings = array_map(static fn (string $warning): string => "prompt template {$warning}", $promptWarnings);
+        $warnings = [...$warnings, ...$promptWarnings];
+
+        Timings::mark('slashCommands');
+
+        Themes::setResolvedThemeFiles(array_map(
+            static fn (ResolvedResource $r): string => $r->path,
+            array_values(array_filter($ordered('themes', true), static fn (ResolvedResource $r): bool => $r->enabled)),
+        ));
+
+        return ['skills' => $skills, 'skillWarnings' => $skillWarnings, 'fileCommands' => $fileCommands, 'promptWarnings' => $promptWarnings, 'warnings' => $warnings];
+    }
+
+    /**
+     * $more's skills after $skills, the first of a name kept — upstream's `loadSkills()` over one
+     * list, for the `--skill` paths that arrive after the resolved ones.
+     *
+     * @param list<Skill> $skills
+     * @param list<\Pig\CodingAgent\Prompt\SkillWarning> $warnings
+     * @param array{0: list<Skill>, 1: list<\Pig\CodingAgent\Prompt\SkillWarning>} $more
+     * @return array{0: list<Skill>, 1: list<\Pig\CodingAgent\Prompt\SkillWarning>}
+     */
+    private static function firstByName(array $skills, array $warnings, array $more): array
+    {
+        [$extra, $extraWarnings] = $more;
+        $byName = [];
+
+        foreach ($skills as $skill) {
+            $byName[$skill->name] = $skill;
+        }
+
+        foreach ($extra as $skill) {
+            if (isset($byName[$skill->name])) {
+                if ((realpath($skill->path) ?: $skill->path) !== (realpath($byName[$skill->name]->path) ?: $byName[$skill->name]->path)) {
+                    $extraWarnings[] = new \Pig\CodingAgent\Prompt\SkillWarning($skill->path, "name \"{$skill->name}\" collision: {$byName[$skill->name]->path} is loaded and this one is skipped");
+                }
+
+                continue;
+            }
+
+            $byName[$skill->name] = $skill;
+        }
+
+        return [array_values($byName), [...$warnings, ...$extraWarnings]];
     }
 
     /**
@@ -711,7 +814,7 @@ final class CodingAgent
      *
      * @throws CodingAgentError
      */
-    private static function store(string $cwd, ?string $resume, bool $continue): SessionManager
+    private static function store(string $cwd, ?string $resume, bool $continue, ?string $sessionId = null, ?string $cwdOverride = null): SessionManager
     {
         if ($resume === null && $continue) {
             $latestPath = SessionManager::latestPathFor($cwd);
@@ -732,7 +835,7 @@ final class CodingAgent
         }
 
         try {
-            return $resume === null ? SessionManager::create($cwd) : SessionManager::open($resume);
+            return $resume === null ? SessionManager::create($cwd, id: $sessionId) : SessionManager::open($resume, $cwdOverride);
         } catch (Throwable $error) {
             // Re-thrown rather than swallowed, and as the sentence it came with: a session file
             // that will not open says why, and the why is the useful half.
@@ -741,28 +844,13 @@ final class CodingAgent
     }
 
     /**
-     * One environment variable, or null when it is absent or empty.
-     *
-     * `getenv()` gives `false` for absent and `''` for set-but-empty, and an empty `PIG_MODEL` is
-     * somebody turning it off for one command rather than asking for a model called nothing.
-     *
-     * @param array<string, string|false> $environment
-     */
-    private static function fromEnvironment(array $environment, string $name): ?string
-    {
-        $value = $environment[$name] ?? false;
-
-        return is_string($value) && $value !== '' ? $value : null;
-    }
-
-    /**
      * The conversation as the model should see it.
      *
      * The agent's own default keeps the three LLM message types and drops everything
      * else, which is right for an app message nobody meant to send. A `!` command is the
      * exception: the whole point of typing one is that its output reaches the model, so
-     * it is turned into a user message here. A `!!` command never becomes one of these
-     * in the first place, so it falls through the same filter and stays out.
+     * it is turned into a user message here. A `!!` command is recorded too, with
+     * `excludeFromContext`, and is skipped here — upstream's `convertToLlm()`.
      *
      * A compaction summary is the same shape for a different reason: it stands in for the
      * messages it replaced, so it has to reach the model as something the model reads. A
@@ -780,6 +868,11 @@ final class CodingAgent
         $converted = [];
 
         foreach ($messages as $message) {
+            // `!!`: in the session, not in the request — upstream's `convertToLlm()` skips it.
+            if ($message instanceof BashExecution && $message->excludeFromContext) {
+                continue;
+            }
+
             if ($message instanceof BashExecution
                 || $message instanceof CompactionSummary
                 || $message instanceof BranchSummary

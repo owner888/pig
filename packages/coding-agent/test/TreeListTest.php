@@ -35,12 +35,16 @@ final class TreeListTest extends TestCase
     protected function setUp(): void
     {
         $this->setUpGlobalTheme();
+        // The tree reads its `app.tree.*` keys from the TUI's registry, which `InteractiveMode`
+        // points at the coding agent's manager; a test does the same.
+        \Pig\Tui\Keybindings::setKeybindings(new \Pig\CodingAgent\Keybindings(platform: 'linux', env: []));
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
+        \Pig\Tui\Keybindings::reset();
     }
 
     private const string UP = "\e[A";
@@ -128,8 +132,9 @@ final class TreeListTest extends TestCase
     {
         $screen = self::plain(self::list(self::forked(), 'f'));
 
-        $this->assertStringContainsString('├─', $screen);
-        $this->assertStringContainsString('└─', $screen);
+        // Upstream draws the fold state in the connector: `⊟` on a branch that can be folded.
+        $this->assertStringContainsString('├⊟', $screen);
+        $this->assertStringContainsString('└⊟', $screen);
         $this->assertStringContainsString('the road taken', $screen);
         $this->assertStringContainsString('the road not taken', $screen, 'the branch that was left is here');
     }
@@ -572,12 +577,13 @@ final class TreeListTest extends TestCase
             $asked = [$id, $current];
         });
 
-        $list->handleInput('l');
+        // Upstream's `app.tree.editLabel` is shift+l, which a terminal without the protocol sends as `L`.
+        $list->handleInput('L');
 
         $this->assertSame(['a', 'before the refactor'], $asked);
     }
 
-    public function testLIsALetterWhileSomethingIsBeingSearchedFor(): void
+    public function testALowercaseLIsALetter(): void
     {
         $asked = false;
         $list = self::list(self::forked(), 'f');
@@ -585,11 +591,88 @@ final class TreeListTest extends TestCase
             $asked = true;
         });
 
-        $list->handleInput('r');
         $list->handleInput('l');
+        $list->handleInput('r');
 
         $this->assertFalse($asked, 'or "label" could never be typed');
-        $this->assertSame('rl', $list->search());
+        $this->assertSame('lr', $list->search());
+    }
+
+    public function testFoldOrUpFoldsABranchAndUnfoldOrDownOpensIt(): void
+    {
+        $list = self::list(self::forked(), 'f');
+        $this->assertSame(6, $list->count());
+
+        // Up to `e`, the start of the branch being talked on, which can be folded.
+        $list->handleInput(self::UP);
+        $this->assertSame('e', $list->current());
+
+        $list->handleInput("\e[1;5D");
+        $this->assertSame(5, $list->count(), 'its answer is hidden under it');
+        $this->assertStringContainsString('├⊞', self::plain($list));
+
+        // Folded already: the same key climbs to the segment start above instead.
+        $list->handleInput("\e[1;5D");
+        $this->assertSame('a', $list->current());
+
+        $list->handleInput(self::DOWN);
+        $list->handleInput(self::DOWN);
+        $this->assertSame('e', $list->current());
+        $list->handleInput("\e[1;5C");
+        $this->assertSame(6, $list->count(), 'unfolded');
+    }
+
+    public function testTheDirectFilterKeysToggleAgainstTheDefault(): void
+    {
+        $list = self::list(self::forked(), 'f');
+
+        $list->handleInput("\x15"); // ctrl+u: user-only
+        $this->assertSame(' [user-only]', $list->filterLabel());
+        $list->handleInput("\x15");
+        $this->assertSame('', $list->filterLabel(), 'the same key goes back to the default');
+
+        $list->handleInput("\x01"); // ctrl+a: all
+        $this->assertSame(' [all]', $list->filterLabel());
+        $list->handleInput("\x04"); // ctrl+d: default, directly
+        $this->assertSame('', $list->filterLabel());
+    }
+
+    public function testCopyGivesTheSelectedEntrysText(): void
+    {
+        $copied = 'unset';
+        $list = self::list(self::forked(), 'f');
+        $list->setCopyHandler(static function (?string $text) use (&$copied): void {
+            $copied = $text;
+        });
+
+        $list->handleInput("\x18"); // ctrl+x: app.message.copy
+
+        $this->assertSame('down this way', $copied);
+    }
+
+    public function testShiftTShowsWhenEachNameWasGiven(): void
+    {
+        $tree = [self::node('a', self::said('hello'), [
+            self::node('l', new Label('a', 'start', 0)),
+        ], 'start')];
+        $list = self::list($tree, 'a');
+
+        $this->assertStringNotContainsString('[+label time]', self::plain($list));
+        $list->handleInput('T');
+
+        $this->assertStringContainsString('[+label time]', self::plain($list));
+        $this->assertMatchesRegularExpression('#\[start\] \d{2}/\d{1,2}/\d{1,2} \d{2}:\d{2} user: hello#', self::plain($list));
+    }
+
+    public function testTheTreeKeysAreTheOnesKeybindingsJsonSays(): void
+    {
+        \Pig\Tui\Keybindings::setKeybindings(new \Pig\CodingAgent\Keybindings(['app.tree.filter.cycleForward' => ['ctrl+y']]));
+        $list = self::list(self::forked(), 'f');
+
+        $list->handleInput("\x0f"); // ctrl+o: no longer the filter key
+        $this->assertSame('', $list->filterLabel());
+        $list->handleInput("\x19"); // ctrl+y
+        $this->assertSame(' [no-tools]', $list->filterLabel());
     }
 
     // ---- shapes a file can hold ----------------------------------------------------------------

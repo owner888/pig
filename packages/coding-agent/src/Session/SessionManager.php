@@ -104,7 +104,7 @@ final class SessionManager
     }
 
     /**
-     * The same for a session that is not being written down (`--no-save`): the messages the
+     * The same for a session that is not being written down (`--no-session`): the messages the
      * agent holds, appended to a session nothing writes. An id-addressed draft — a context edit,
      * a compaction's `firstKeptEntryId` — has nothing to name here, as nothing there has an id.
      *
@@ -122,10 +122,19 @@ final class SessionManager
         return $copy;
     }
 
-    /** A session that will be written to $cwd's directory once it has something to say. */
-    public static function create(string $cwd, ?string $path = null, ?string $parentSession = null): self
+    /**
+     * A session that will be written to $cwd's directory once it has something to say.
+     *
+     * @param string|null $id upstream's `NewSessionOptions.id` (`--session-id`): this id instead of a
+     *        fresh one, checked by `assertValidSessionId()`
+     */
+    public static function create(string $cwd, ?string $path = null, ?string $parentSession = null, ?string $id = null): self
     {
-        $id = self::uuid();
+        if ($id !== null) {
+            self::assertValidSessionId($id);
+        }
+
+        $id ??= self::uuid();
         $now = Timestamp::nowMs();
 
         // pi's name: the ISO timestamp with its colons and dots turned into dashes, an
@@ -140,6 +149,83 @@ final class SessionManager
             $now,
             $parentSession,
         );
+    }
+
+    /**
+     * Upstream's `assertValidSessionId()`: what `--session-id` (and a fork's chosen id) may be, since
+     * the id ends up in a file name.
+     *
+     * @throws AgentError with upstream's sentence when it is not one
+     */
+    public static function assertValidSessionId(string $id): void
+    {
+        if (preg_match('/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/', $id) !== 1) {
+            throw new AgentError(
+                "Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
+            );
+        }
+    }
+
+    /**
+     * Upstream's `SessionManager.forkFrom()`: a new session in $cwd's directory holding every entry
+     * of the file at $sourcePath, under a new header that names $cwd and points back at the source
+     * as `parentSession`. Written at once, as upstream writes it — this is what `--fork` and the
+     * cross-project `--session` offer open, so there is something to open.
+     *
+     * The entries are copied line for line rather than decoded and re-encoded: they are the same
+     * entries, and a round trip through this class could only lose what it does not model.
+     *
+     * @param string|null $id the new session's id (`--fork … --session-id <id>`), else a fresh one
+     * @throws AgentError when the source is not a session file or the new one cannot be written
+     */
+    public static function forkFrom(string $sourcePath, string $cwd, ?string $id = null): self
+    {
+        $source = realpath($sourcePath) ?: $sourcePath;
+        $lines = self::lines($source);
+
+        if ($lines === null || $lines === []) {
+            throw new AgentError("Cannot fork: source session file is empty or invalid: {$source}");
+        }
+
+        $header = json_decode($lines[0], true);
+
+        if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+            throw new AgentError("Cannot fork: source session has no header: {$source}");
+        }
+
+        $target = realpath($cwd) ?: $cwd;
+        $fork = self::create($target, parentSession: $source, id: $id);
+        $directory = dirname($fork->path);
+
+        if (!is_dir($directory) && !mkdir($directory, 0o755, true) && !is_dir($directory)) {
+            throw new AgentError("Could not create {$directory} for the forked session.");
+        }
+
+        $newHeader = [
+            'type' => 'session',
+            'version' => self::VERSION,
+            'id' => $fork->id,
+            'timestamp' => SessionEntries::iso($fork->createdAt),
+            'cwd' => $target,
+            'parentSession' => $source,
+        ];
+
+        // Upstream's `{ flag: "wx" }`: a fork never lands on a file that is already there.
+        $handle = is_file($fork->path) ? false : fopen($fork->path, 'x');
+
+        if ($handle === false) {
+            throw new AgentError("Could not write the forked session to {$fork->path}");
+        }
+
+        fwrite($handle, self::line($newHeader));
+
+        foreach (array_slice($lines, 1) as $line) {
+            fwrite($handle, $line . "\n");
+        }
+
+        fclose($handle);
+
+        return self::open($fork->path);
     }
 
     /** Whether this session has been written to disk. */
@@ -159,6 +245,15 @@ final class SessionManager
         }
 
         return "pig --session {$this->id}";
+    }
+
+    /**
+     * A fresh session id — upstream's `createSessionId()`, for a session that has no file to be
+     * named in (`--no-session`) as well as one that has.
+     */
+    public static function createSessionId(): string
+    {
+        return self::uuid();
     }
 
     /** A v4 UUID, which is what pi's ids are made of. */
@@ -197,8 +292,15 @@ final class SessionManager
         return $lines === false ? null : $lines;
     }
 
-    /** Read one back. Its messages are in `messages()`. */
-    public static function open(string $path): self
+    /**
+     * Read one back. Its messages are in `messages()`.
+     *
+     * @param string|null $cwdOverride upstream's `SessionManager.open(path, sessionDir, cwdOverride)`:
+     *        the working directory to carry on in instead of the one the header names — the
+     *        answer to "the session's directory is gone, continue here?" (`SessionCwd`). The file's
+     *        header is left as it was.
+     */
+    public static function open(string $path, ?string $cwdOverride = null): self
     {
         if (!is_file($path) || !is_readable($path)) {
             throw new AgentError("Could not read the session at {$path}");
@@ -238,13 +340,13 @@ final class SessionManager
                 self::rewrite($path, $lines);
             }
 
-            return self::buildFromLines($path, $lines, $header);
+            return self::buildFromLines($path, $lines, $header, $cwdOverride);
         }
 
         $session = new self(
             $path,
             (string) ($header['id'] ?? ''),
-            (string) ($header['cwd'] ?? ''),
+            $cwdOverride ?? (string) ($header['cwd'] ?? ''),
             SessionEntries::millis($header['timestamp'] ?? null),
             is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
         );
@@ -275,12 +377,12 @@ final class SessionManager
     }
 
     /** @param list<string> $lines */
-    private static function buildFromLines(string $path, array $lines, array $header): self
+    private static function buildFromLines(string $path, array $lines, array $header, ?string $cwdOverride = null): self
     {
         $session = new self(
             $path,
             (string) ($header['id'] ?? ''),
-            (string) ($header['cwd'] ?? ''),
+            $cwdOverride ?? (string) ($header['cwd'] ?? ''),
             SessionEntries::millis($header['timestamp'] ?? null),
             is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
         );
@@ -499,6 +601,69 @@ final class SessionManager
             static fn (array $entry): mixed => $entry['message'],
             $this->entries,
         ));
+    }
+
+    /**
+     * The header line, as the file opens with it — upstream's `getHeader()`, which `--mode json`
+     * writes first so a reader knows which session the events that follow belong to.
+     *
+     * @return array<string, mixed>
+     */
+    public function header(): array
+    {
+        return self::headerOf($this->id, $this->createdAt, $this->cwd, $this->parentSession);
+    }
+
+    /**
+     * The header a session nothing writes down would have — upstream's `SessionManager.inMemory()`,
+     * whose `newSession()` makes the same header as a file's and keeps it in memory. pig's
+     * `--no-session` has no manager to hold it (`AgentSession` holds the id), so it is built here,
+     * in the one place that knows the shape.
+     *
+     * @return array<string, mixed>
+     */
+    public static function inMemoryHeader(string $id, int $createdAt, string $cwd): array
+    {
+        return self::headerOf($id, $createdAt, $cwd, null);
+    }
+
+    /** @return array<string, mixed> */
+    private static function headerOf(string $id, int $createdAt, string $cwd, ?string $parentSession): array
+    {
+        $header = [
+            'type' => 'session',
+            'version' => self::VERSION,
+            'id' => $id,
+            'timestamp' => SessionEntries::iso($createdAt),
+            'cwd' => $cwd,
+        ];
+
+        // Only on a fork, as pi writes it: a key that is absent and a key that is null read the
+        // same, and pi's own header has no key when there is no parent.
+        if ($parentSession !== null) {
+            $header['parentSession'] = $parentSession;
+        }
+
+        return $header;
+    }
+
+    /**
+     * Every entry, in the order it was appended, the header left out — upstream's `getEntries()`,
+     * which RPC's `get_entries` answers with. Every branch and everything compacted away, as the
+     * file has them, so an entry id is a cursor that outlives a compaction.
+     *
+     * @return list<SessionEntry>
+     */
+    public function entries(): array
+    {
+        $entries = [];
+
+        foreach ($this->entries as $id => $entry) {
+            // Cast, because an all-digit id comes back out of an array key as an int.
+            $entries[] = new SessionEntry((string) $id, $entry['parent'], $entry['message']);
+        }
+
+        return $entries;
     }
 
     /**
@@ -832,13 +997,153 @@ final class SessionManager
     }
 
     /**
+     * The entries from the root down to the current leaf — upstream's `getBranch()`.
+     *
+     * Every entry on the path, including the ones that are not part of the conversation (a model
+     * change, a label, a context edit): an extension reading a branch for its own state wants
+     * them, and `Compaction::prepareCompaction()` needs to know where they sit.
+     *
+     * @return list<SessionEntry>
+     */
+    public function branchEntries(): array
+    {
+        return $this->pathEntries($this->leaf);
+    }
+
+    /**
+     * The branch being talked on as a file of its own — upstream's `serializeSessionBranch()`
+     * (`core/session-export.ts`), which `/export x.jsonl`, `/share` and `/bug` all write.
+     *
+     * A fresh header (this session's id and cwd, the time of the export, and no `parentSession`),
+     * then every entry from the root to the leaf re-chained so each one's `parentId` is the line
+     * above it — the other branches are not in it, so their ids could not be pointed at — and then
+     * whatever $trailing adds after the last one.
+     *
+     * @param (Closure(?string, string): list<array<string, mixed>>)|null $trailing given the last
+     *        entry's id and the export's timestamp, as upstream's `createTrailingEntries`
+     */
+    public function serializeBranch(?\Closure $trailing = null): string
+    {
+        $timestamp = SessionEntries::iso(Timestamp::nowMs());
+        $lines = self::line([
+            'type' => 'session',
+            'version' => self::VERSION,
+            'id' => $this->id,
+            'timestamp' => $timestamp,
+            'cwd' => $this->cwd,
+        ]);
+        $parent = null;
+
+        foreach ($this->branchEntries() as $entry) {
+            $encoded = SessionEntries::encode($entry->message, $entry->id, $parent);
+
+            if ($encoded === null) {
+                continue;
+            }
+
+            $lines .= self::line($encoded);
+            $parent = $entry->id;
+        }
+
+        foreach ($trailing === null ? [] : $trailing($parent, $timestamp) as $extra) {
+            $lines .= self::line($extra);
+        }
+
+        return $lines;
+    }
+
+    /**
+     * The entries from the root down to $id — upstream's `getBranch(fromId)`. Null is the empty
+     * path, which is where going back to before the first message lands.
+     *
+     * @return list<SessionEntry>
+     */
+    public function pathEntries(?string $id): array
+    {
+        $entries = [];
+
+        foreach ($this->pathTo($id) as $entryId) {
+            $entries[] = new SessionEntry(
+                (string) $entryId,
+                $this->entries[$entryId]['parent'],
+                $this->entries[$entryId]['message'],
+            );
+        }
+
+        return $entries;
+    }
+
+    /**
+     * What the model is shown of a path, entry by entry — upstream's `buildSessionProjection()`.
+     *
+     * `buildContextEntries()`'s list — the newest compaction, the entries it kept (their system
+     * messages left out, as the compaction carries their replay), then everything after it — each
+     * with what `messages()` makes of it. Which messages those are is `resolve()`'s answer, so
+     * the edits and the compaction are applied by the same code a resume uses and the two cannot
+     * disagree. An older compaction inside the kept range contributes nothing, as upstream's
+     * "Only the newest compaction at index zero contributes a checkpoint and summary".
+     *
+     * @param list<SessionEntry> $path root first
+     * @return list<ProjectedSessionEntry>
+     */
+    public static function buildSessionProjection(array $path): array
+    {
+        $contributed = [];
+
+        foreach (self::resolve(array_map(static fn (SessionEntry $entry): array => [$entry->id, $entry->message], $path)) as [$id, $message]) {
+            $contributed[(string) $id][] = $message;
+        }
+
+        $compactionIndex = null;
+
+        foreach ($path as $index => $entry) {
+            if ($entry->message instanceof CompactionSummary) {
+                $compactionIndex = $index;
+            }
+        }
+
+        if ($compactionIndex === null) {
+            $context = $path;
+        } else {
+            $compaction = $path[$compactionIndex];
+            $context = [$compaction];
+            $keeping = false;
+
+            for ($index = 0; $index < $compactionIndex; $index++) {
+                $entry = $path[$index];
+                $keeping = $keeping || $entry->id === $compaction->message->firstKeptEntryId;
+
+                if ($keeping && !$entry->message instanceof SystemMessage) {
+                    $context[] = $entry;
+                }
+            }
+
+            array_push($context, ...array_slice($path, $compactionIndex + 1));
+        }
+
+        $projected = [];
+
+        foreach ($context as $index => $entry) {
+            $projected[] = new ProjectedSessionEntry(
+                $entry,
+                $entry->message instanceof CompactionSummary && $index > 0 ? [] : ($contributed[$entry->id] ?? []),
+            );
+        }
+
+        return $projected;
+    }
+
+    /**
      * Whether this entry is part of the conversation at all.
      *
      * Five things in a session file are not: a hook's private note, a model change, a
      * thinking-level change, a label, and a line pig cannot read. They are in the tree because the
      * entries after them hang off them, and they are walked past everywhere else.
+     *
+     * Public for `Compaction`, whose cut asks the same question of an entry upstream's
+     * `sessionEntryToContextMessages()` answers.
      */
-    private static function isSaid(mixed $item): bool
+    public static function isSaid(mixed $item): bool
     {
         return $item !== null
             && !$item instanceof CustomEntry
@@ -1436,21 +1741,7 @@ final class SessionManager
      */
     private function prologue(array $entries): string
     {
-        $header = [
-            'type' => 'session',
-            'version' => self::VERSION,
-            'id' => $this->id,
-            'timestamp' => SessionEntries::iso($this->createdAt),
-            'cwd' => $this->cwd,
-        ];
-
-        // Only on a fork, as pi writes it: a key that is absent and a key that is null read the
-        // same, and pi's own header has no key when there is no parent.
-        if ($this->parentSession !== null) {
-            $header['parentSession'] = $this->parentSession;
-        }
-
-        $lines = self::line($header);
+        $lines = self::line($this->header());
 
         foreach ($entries as $id => $entry) {
             // Cast, because PHP turns an array key that looks like an integer into one:
@@ -1779,6 +2070,51 @@ final class SessionManager
      */
     public static function find(string $cwd, string $sessionArg): ?string
     {
+        return self::locate($cwd, $sessionArg)?->path;
+    }
+
+    /**
+     * `find()`, and whether the match belongs to another project — upstream's `ResolvedSession`
+     * with its `global` case, which is what `--session` needs to offer a fork into this one
+     * rather than opening a conversation whose working directory is somewhere else.
+     *
+     * A path that was typed is never "another project's": somebody who names the file has said
+     * which one they mean. Only an id found by the global search is, and only when its header
+     * names a different directory.
+     */
+    public static function locate(string $cwd, string $sessionArg): ?FoundSession
+    {
+        $path = self::search($cwd, $sessionArg, $global);
+
+        if ($path === null) {
+            return null;
+        }
+
+        $elsewhere = $global && !self::namesCwd($path, $cwd) ? self::headerCwd($path) : null;
+
+        return new FoundSession($path, $elsewhere);
+    }
+
+    /** The `cwd` a session file's header names, or null when it names none. */
+    private static function headerCwd(string $path): ?string
+    {
+        $handle = is_readable($path) ? fopen($path, 'r') : false;
+
+        if ($handle === false) {
+            return null;
+        }
+
+        $line = fgets($handle);
+        fclose($handle);
+        $header = $line === false ? null : json_decode(trim($line), true);
+
+        return is_array($header) && is_string($header['cwd'] ?? null) && $header['cwd'] !== '' ? $header['cwd'] : null;
+    }
+
+    /** `find()`'s search; `$global` says whether the match came from the all-projects pass. */
+    private static function search(string $cwd, string $sessionArg, ?bool &$global = false): ?string
+    {
+        $global = false;
         $sessionArg = trim($sessionArg);
 
         if ($sessionArg === '') {
@@ -1858,6 +2194,8 @@ final class SessionManager
             Config::piHome() . '/sessions',
         ];
 
+        $global = true;
+
         foreach ($globalRoots as $root) {
             if (!is_dir($root)) {
                 continue;
@@ -1879,10 +2217,33 @@ final class SessionManager
         return null;
     }
 
-    /** Find an exact session ID without loading transcript bodies. */
+    /**
+     * Upstream's `SessionManager.findById()`: the project's session with exactly this id, or null —
+     * no prefix match and no other project's, which is what `--session-id` means by "this project's
+     * session". Every candidate's header is read, not `listFor()`'s newest thirty, and a
+     * `sessionDir` shared by projects keeps only the files naming this one, as `listFor()` does.
+     */
     public static function findById(string $cwd, string $id): ?string
     {
-        return self::find($cwd, $id);
+        [$paths, $filter] = self::candidates($cwd);
+
+        foreach ($paths as $path) {
+            $handle = is_readable($path) ? fopen($path, 'r') : false;
+
+            if ($handle === false) {
+                continue;
+            }
+
+            $line = fgets($handle);
+            fclose($handle);
+            $header = $line === false ? null : json_decode(trim($line), true);
+
+            if (is_array($header) && ($header['id'] ?? null) === $id && (!$filter || self::namesCwd($path, $cwd))) {
+                return $path;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1977,7 +2338,19 @@ final class SessionManager
             $messages,
             $sessionName ?? ($opening === '' ? 'a conversation' : $opening),
             implode(' ', $said),
+            $sessionName,
+            is_string($header['parentSession'] ?? null) && $header['parentSession'] !== '' ? $header['parentSession'] : null,
+            ((int) filemtime($path)) * 1000,
         );
+    }
+
+    /**
+     * One session file as a list describes it, or null when it is not one — what the picker reads
+     * back after renaming a row, so the row shows the name the file now holds.
+     */
+    public static function info(string $path): ?SessionInfo
+    {
+        return self::describe($path);
     }
 
     /**

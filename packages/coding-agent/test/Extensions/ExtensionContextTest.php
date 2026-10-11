@@ -65,14 +65,14 @@ final class ExtensionContextTest extends TestCase
         Loop::reset();
         $this->home = sys_get_temp_dir() . '/pig-ext-ctx-test-' . bin2hex(random_bytes(4));
         mkdir($this->home, 0700, true);
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         Loop::reset();
     }
 
@@ -196,11 +196,11 @@ PHP);
         $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
         $session = $this->createSession([], $runner);
 
-        $execution = $session->executeBash('echo real', remember: true);
+        $execution = $session->executeBash('echo real');
 
         $this->assertSame('intercepted: echo real', $execution->output);
         $this->assertSame(0, $execution->exitCode);
-        // It joined the conversation because remember: true
+        // It joined the conversation: not excluded from context
         $this->assertSame($execution, $session->messages()[0]);
     }
 
@@ -308,7 +308,7 @@ PHP);
         $session = $this->createSession([], $runner);
 
         try {
-            $session->compact(reason: 'manual');
+            $session->compact();
         } catch (\Throwable) {
             // expected
         }
@@ -316,7 +316,9 @@ PHP);
         $this->assertCount(1, $failures);
         $this->assertSame('manual', $failures[0]->reason);
         $this->assertFalse($failures[0]->aborted);
-        $this->assertStringContainsString('too small', (string) $failures[0]->errorMessage);
+        $this->assertSame('Compaction failed: Nothing to compact (session too small)', $failures[0]->errorMessage);
+        $this->assertFalse($failures[0]->willRetry);
+        $this->assertFalse($failures[0]->fromExtension);
     }
 
     // ---- ContextUsage ---------------------------------------------------------------

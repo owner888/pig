@@ -82,25 +82,25 @@ final class SearchToolsTest extends ToolTestCase
      * downloaded copy beats one the PATH later shadows — so on any machine where pig has ever
      * fetched `fd` or `rg` into `~/.pig/agent/bin`, these two tests found the tool and nothing threw.
      * It passed in a container with no tools and failed on a machine that had used pig, which is
-     * the wrong way round for a test about something being absent. `PIG_HOME` points that lookup
+     * the wrong way round for a test about something being absent. `PIG_CODING_AGENT_DIR` points that lookup
      * at an empty directory, as `ToolInstallerTest` already does in its `setUp`.
      */
     private function withNoToolInstalled(Closure $work): void
     {
         $path = getenv('PATH');
-        $home = getenv('PIG_HOME');
+        $home = getenv('PIG_CODING_AGENT_DIR');
         $empty = $this->cwd . '/no-tools-here';
 
         mkdir($empty . '/tools', 0o755, true);
         putenv('PATH=/nonexistent');
-        putenv('PIG_HOME=' . $empty);
+        putenv('PIG_CODING_AGENT_DIR=' . $empty);
         ExternalTool::forget();
 
         try {
             $work();
         } finally {
             putenv('PATH=' . $path);
-            putenv($home === false ? 'PIG_HOME' : 'PIG_HOME=' . $home);
+            putenv($home === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $home);
             ExternalTool::forget();
         }
     }

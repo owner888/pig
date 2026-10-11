@@ -4,9 +4,19 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Closure;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
+use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\DoneEvent;
+use Pig\Ai\Model;
+use Pig\Ai\SimpleStreamOptions;
+use Pig\Ai\TranscriptContext;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
+use Pig\Async\Async;
+use Pig\CodingAgent\CodingAgent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Cost;
 use Pig\Ai\StopReason;
@@ -22,8 +32,13 @@ use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummarization;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\Compaction;
+use Pig\CodingAgent\Session\CompactionSettings;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\ContextEdit;
+use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\SessionCodec;
+use Pig\CodingAgent\Session\SessionEntry;
+use Pig\CodingAgent\Session\SessionManager;
 
 /** Deciding what to throw away, without a provider in sight. */
 final class CompactionTest extends TestCase
@@ -70,20 +85,20 @@ final class CompactionTest extends TestCase
     {
         // A tokeniser knows things an estimate does not, so its own number wins whenever
         // it gave one.
-        $this->assertSame(999, Compaction::contextTokens(new Usage(10, 20, 30, 40, 999)));
+        $this->assertSame(999, Compaction::calculateContextTokens(new Usage(10, 20, 30, 40, 999)));
     }
 
     public function testWithNoTotalThePartsAreAddedUp(): void
     {
-        $this->assertSame(100, Compaction::contextTokens(new Usage(10, 20, 30, 40, 0)));
+        $this->assertSame(100, Compaction::calculateContextTokens(new Usage(10, 20, 30, 40, 0)));
     }
 
     public function testCompactionHappensBeforeTheWallRatherThanAtIt(): void
     {
         // 200k window, 16k reserved: at 190k there is no longer room for an answer, even
         // though the window is not full.
-        $this->assertTrue(Compaction::shouldCompact(190_000, 200_000));
-        $this->assertFalse(Compaction::shouldCompact(150_000, 200_000));
+        $this->assertTrue(Compaction::shouldCompact(190_000, 200_000, new CompactionSettings()));
+        $this->assertFalse(Compaction::shouldCompact(150_000, 200_000, new CompactionSettings()));
     }
 
     public function testTheThresholdIsWhereItSaysItIsAndNotOneTokenEitherSide(): void
@@ -95,15 +110,15 @@ final class CompactionTest extends TestCase
         $window = 200_000;
         $exact = $window - Compaction::RESERVE_TOKENS;
 
-        $this->assertFalse(Compaction::shouldCompact($exact, $window), 'exactly the reserve is still room');
-        $this->assertTrue(Compaction::shouldCompact($exact + 1, $window), 'and one token more is not');
+        $this->assertFalse(Compaction::shouldCompact($exact, $window, new CompactionSettings()), 'exactly the reserve is still room');
+        $this->assertTrue(Compaction::shouldCompact($exact + 1, $window, new CompactionSettings()), 'and one token more is not');
     }
 
     public function testAModelWithNoStatedWindowIsNeverCompactedFor(): void
     {
         // Guessing a window and compacting against the guess throws away a conversation
         // for a number nobody supplied.
-        $this->assertFalse(Compaction::shouldCompact(1_000_000, 0));
+        $this->assertFalse(Compaction::shouldCompact(1_000_000, 0, new CompactionSettings()));
     }
 
     public function testOpenAisLongContextModelsCompactBeforeTheLongContextPrice(): void
@@ -115,8 +130,8 @@ final class CompactionTest extends TestCase
         $model = \Pig\Ai\Models::find('openai', 'gpt-5.5');
         $this->assertNotNull($model);
 
-        $this->assertTrue(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS + 1, $model->contextWindow));
-        $this->assertFalse(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS, $model->contextWindow));
+        $this->assertTrue(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS + 1, $model->contextWindow, new CompactionSettings()));
+        $this->assertFalse(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS, $model->contextWindow, new CompactionSettings()));
     }
 
     public function testTheUsageThatCountsIsTheLastTurnThatFinished(): void
@@ -182,7 +197,7 @@ final class CompactionTest extends TestCase
     {
         $messages = [new UserMessage('hi'), self::assistant('hello'), new UserMessage('bye')];
 
-        $this->assertSame(0, Compaction::cutPoint($messages));
+        $this->assertSame(0, self::cut($messages));
     }
 
     public function testTheCutKeepsRoughlyTheBudgetAndDropsWhatIsOlder(): void
@@ -194,7 +209,7 @@ final class CompactionTest extends TestCase
             $messages[] = new UserMessage(str_repeat('x', 1_000));
         }
 
-        $cut = Compaction::cutPoint($messages, 500);
+        $cut = self::cut($messages, 500);
 
         $this->assertSame(8, $cut);
     }
@@ -215,7 +230,7 @@ final class CompactionTest extends TestCase
         ];
 
         for ($budget = 1; $budget <= 6_000; $budget += 37) {
-            $cut = Compaction::cutPoint($messages, $budget);
+            $cut = self::cut($messages, $budget);
 
             $this->assertFalse(
                 $messages[$cut] instanceof ToolResultMessage,
@@ -235,7 +250,7 @@ final class CompactionTest extends TestCase
             new UserMessage('thanks'),
         ];
 
-        $cut = Compaction::cutPoint($messages, 550);
+        $cut = self::cut($messages, 550);
         $kept = array_slice($messages, $cut);
 
         $this->assertSame(1, $cut);
@@ -251,7 +266,7 @@ final class CompactionTest extends TestCase
 
         // There is nowhere legal to cut, so nothing is cut — a wrong cut is worse than
         // a full window, because it fails the request outright.
-        $this->assertSame(0, Compaction::cutPoint($messages, 100));
+        $this->assertSame(0, self::cut($messages, 100));
     }
 
     // ---- sizes ----------------------------------------------------------------------
@@ -307,7 +322,7 @@ final class CompactionTest extends TestCase
             );
         }
 
-        $cut = Compaction::cutPoint($messages, 2_000);
+        $cut = self::cut($messages, 2_000);
 
         $this->assertGreaterThan(0, $cut, 'something is dropped');
         $this->assertLessThan(count($messages), $cut);
@@ -334,49 +349,88 @@ final class CompactionTest extends TestCase
 
     public function testTheConversationIsFlattenedIntoLabelledLines(): void
     {
-        $text = Compaction::serialize([
+        // Upstream's `serializeConversation(convertToLlm(...))`: the app messages are what the
+        // model would be shown — a command's output and a summary are user messages — and the
+        // three LLM roles are labelled.
+        $text = Compaction::serializeConversation(CodingAgent::toLlm([
             new UserMessage('fix the parser'),
             self::assistant('looking'),
             self::calling('c1', 'read', ['path' => 'parser.php']),
             new ToolResultMessage('c1', 'read', [new TextContent('<?php')]),
             new BashExecution('phpunit', 'ok', 0),
             new CompactionSummary('what came before'),
-        ]);
+        ]));
 
         $this->assertStringContainsString('[User]: fix the parser', $text);
         $this->assertStringContainsString('[Assistant]: looking', $text);
         $this->assertStringContainsString('[Assistant tool calls]: read(path="parser.php")', $text);
         $this->assertStringContainsString('[Tool result]: <?php', $text);
-        $this->assertStringContainsString('[Ran]: phpunit', $text);
-        $this->assertStringContainsString('[Earlier summary]: what came before', $text);
+        $this->assertMatchesRegularExpression('/\[User\]: [^\n]*phpunit/', $text);
+        $this->assertStringContainsString("<summary>\nwhat came before\n</summary>", $text);
+    }
+
+    public function testALongToolResultIsCutForTheSummariser(): void
+    {
+        // Upstream's `TOOL_RESULT_MAX_CHARS`: the summariser does not need the whole of a 28KB
+        // `read`, and tool results are what makes a conversation big in the first place.
+        $text = Compaction::serializeConversation([
+            new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('a', 2_000) . str_repeat('b', 500))]),
+        ]);
+
+        $this->assertSame('[Tool result]: ' . str_repeat('a', 2_000) . "\n\n[... 500 more characters truncated]", $text);
+
+        $short = Compaction::serializeConversation([new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('a', 2_000))])]);
+        $this->assertSame('[Tool result]: ' . str_repeat('a', 2_000), $short, 'exactly the limit is not cut');
     }
 
     public function testTheRequestIsADocumentAboutAConversationRatherThanTheConversation(): void
     {
-        $request = Compaction::request([new UserMessage('hello')]);
+        [$request, $context] = self::askedFor(static fn (Closure $streamFn) => Compaction::generateSummary(
+            [new UserMessage('hello')],
+            self::model(),
+            Compaction::RESERVE_TOKENS,
+            'key',
+            streamFn: $streamFn,
+        ));
 
         // Tagged and flattened, because a model handed a conversation answers it.
         $this->assertStringContainsString('<conversation>', $request);
         $this->assertStringContainsString('</conversation>', $request);
         $this->assertStringContainsString('## Goal', $request);
         $this->assertStringNotContainsString('<previous-summary>', $request);
+        $this->assertStringContainsString('summarization assistant', Transcript::getCurrentSystemPrompt($context->messages));
     }
 
     public function testASecondCompactionUpdatesTheFirstSummaryRatherThanStartingOver(): void
     {
-        $request = Compaction::request([new UserMessage('hello')], 'what came before');
+        [$request] = self::askedFor(static fn (Closure $streamFn) => Compaction::generateSummary(
+            [new UserMessage('hello')],
+            self::model(),
+            Compaction::RESERVE_TOKENS,
+            'key',
+            previousSummary: 'what came before',
+            streamFn: $streamFn,
+        ));
 
-        // The *text*, not the tag: `UPDATE_PROMPT` says "provided in <previous-summary> tags", so
+        // The *text*, not the tag: the update prompt says "provided in <previous-summary> tags", so
         // asserting the tag passes whether or not the block was ever added — and what that costs
         // is the model being told to update a summary it was not given, which drops everything
         // the first compaction said.
         $this->assertStringContainsString("<previous-summary>\nwhat came before\n</previous-summary>", $request);
         $this->assertStringContainsString('PRESERVE all existing information', $request);
+        $this->assertStringContainsString('[Preserve existing goals, add new ones if the task expanded]', $request, "upstream's format block");
     }
 
     public function testAFirstCompactionCarriesNoEmptySummaryBlock(): void
     {
-        $request = Compaction::request([new UserMessage('hello')]);
+        [$request] = self::askedFor(static fn (Closure $streamFn) => Compaction::generateSummary(
+            [new UserMessage('hello')],
+            self::model(),
+            Compaction::RESERVE_TOKENS,
+            'key',
+            previousSummary: '',
+            streamFn: $streamFn,
+        ));
 
         $this->assertStringNotContainsString("<previous-summary>\n", $request);
         $this->assertStringContainsString('Keep each section concise', $request, 'the first-time prompt');
@@ -384,17 +438,176 @@ final class CompactionTest extends TestCase
 
     public function testWhatThePersonAskedToFocusOnIsPassedOn(): void
     {
-        $request = Compaction::request([new UserMessage('hello')], null, 'the parser bug');
+        [$request, , $options] = self::askedFor(static fn (Closure $streamFn) => Compaction::generateSummary(
+            [new UserMessage('hello')],
+            self::model(),
+            10_000,
+            'key',
+            customInstructions: 'the parser bug',
+            streamFn: $streamFn,
+        ));
 
         $this->assertStringContainsString('Additional focus: the parser bug', $request);
+        $this->assertSame(8_000, $options->maxTokens, '80% of the reserve');
+        $this->assertSame('none', $options->cacheRetention, 'a one-off summary writes no cache');
+        $this->assertNotNull($options->sessionId, 'and gets a routing id of its own');
     }
 
     public function testTheNewestSummaryIsTheOneTheNextOneUpdates(): void
     {
-        $messages = [new CompactionSummary('older'), new UserMessage('x'), new CompactionSummary('newer')];
+        // Upstream's `prepareCompaction()`: the previous compaction is where the next one starts,
+        // and its summary is handed on to be updated rather than summarised as a message.
+        $first = self::entries([
+            new UserMessage(str_repeat('a', 4_000)),
+            self::assistant(str_repeat('b', 4_000)),
+        ]);
+        $compaction = new SessionEntry('c', 'e1', new CompactionSummary('older', [], [], 0, 'e1'));
+        $path = [
+            ...$first,
+            $compaction,
+            new SessionEntry('u2', 'c', new UserMessage(str_repeat('c', 4_000))),
+            new SessionEntry('a2', 'u2', self::assistant(str_repeat('d', 4_000))),
+            new SessionEntry('u3', 'a2', new UserMessage(str_repeat('e', 4_000))),
+        ];
 
-        $this->assertSame('newer', Compaction::previousSummary($messages));
-        $this->assertNull(Compaction::previousSummary([new UserMessage('x')]));
+        $preparation = Compaction::prepareCompaction($path, new CompactionSettings(keepRecentTokens: 1_000));
+
+        $this->assertNotNull($preparation);
+        $this->assertSame('older', $preparation->previousSummary);
+        $this->assertSame('u3', $preparation->firstKeptEntryId);
+        $this->assertFalse($preparation->isSplitTurn);
+
+        // The kept assistant message from before the compaction and the two after it — never the
+        // compaction itself, which `previousSummary` already carries.
+        $this->assertCount(3, $preparation->messagesToSummarize);
+        foreach ($preparation->messagesToSummarize as $message) {
+            $this->assertNotInstanceOf(CompactionSummary::class, $message);
+        }
+
+        $this->assertNull(Compaction::prepareCompaction([...$path, new SessionEntry('c2', 'u3', new CompactionSummary('newest'))], new CompactionSettings()), 'already compacted');
+    }
+
+    public function testASplitTurnGetsTwoSummariesMerged(): void
+    {
+        // One turn bigger than the budget: the cut lands on an assistant message inside it, so
+        // upstream summarises the turn's beginning separately and joins the two.
+        $path = self::entries([
+            new UserMessage('earlier question'),
+            self::assistant('earlier answer'),
+            new UserMessage(str_repeat('q', 400)),
+            self::calling('c1', 'read', ['path' => 'big.php']),
+            new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('r', 4_000))]),
+            self::assistant(str_repeat('s', 4_000)),
+        ]);
+
+        $preparation = Compaction::prepareCompaction($path, new CompactionSettings(keepRecentTokens: 500));
+
+        $this->assertNotNull($preparation);
+        $this->assertTrue($preparation->isSplitTurn);
+        $this->assertSame('e5', $preparation->firstKeptEntryId);
+        $this->assertCount(2, $preparation->messagesToSummarize, 'the turns before the split one');
+        $this->assertCount(3, $preparation->turnPrefixMessages, 'the split turn up to the cut');
+        $this->assertSame(['big.php'], Compaction::computeFileLists($preparation->fileOps)['readFiles']);
+
+        $asked = new \ArrayObject();
+        $result = Async::run(static fn () => Compaction::compact(
+            $preparation,
+            self::model(),
+            'key',
+            streamFn: self::answering(['the history', 'the turn so far'], $asked),
+        ));
+
+        $this->assertCount(2, $asked);
+        $this->assertStringContainsString('## Goal', $asked[0][0]);
+        $this->assertStringContainsString('## Original Request', $asked[1][0]);
+        $this->assertSame(8_192, $asked[1][2]->maxTokens, 'half the reserve for the turn prefix');
+        $this->assertSame(13_107, $asked[0][2]->maxTokens, '80% of it for the history');
+        $this->assertSame("the history\n\n---\n\n**Turn Context (split turn):**\n\nthe turn so far", $result->summary);
+        $this->assertSame('e5', $result->firstKeptEntryId);
+        $this->assertSame(['readFiles' => ['big.php'], 'modifiedFiles' => []], $result->details);
+        $this->assertSame(20, $result->usage?->input, 'both requests are paid for');
+    }
+
+    public function testASplitTurnWithNoEarlierHistoryKeepsThePreviousSummary(): void
+    {
+        $path = self::entries([
+            new UserMessage(str_repeat('q', 400)),
+            self::calling('c1', 'read', ['path' => 'big.php']),
+            new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('r', 4_000))]),
+            self::assistant(str_repeat('s', 4_000)),
+        ]);
+
+        $preparation = Compaction::prepareCompaction($path, new CompactionSettings(keepRecentTokens: 500));
+
+        $this->assertNotNull($preparation);
+        $this->assertSame([], $preparation->messagesToSummarize);
+
+        $asked = new \ArrayObject();
+        $result = Async::run(static fn () => Compaction::compact($preparation, self::model(), 'key', streamFn: self::answering(['the turn so far'], $asked)));
+
+        $this->assertCount(1, $asked, 'nothing to summarise before the split turn');
+        $this->assertStringStartsWith("No prior history.\n\n---", $result->summary);
+    }
+
+    public function testTheCutReportsTheTurnItSplits(): void
+    {
+        $entries = self::entries([
+            new UserMessage('ask'),
+            self::calling('c1', 'read', ['path' => 'a.php']),
+            new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('r', 4_000))]),
+            self::assistant(str_repeat('s', 4_000)),
+        ]);
+
+        $cut = Compaction::findCutPoint($entries, 0, count($entries), 500);
+
+        $this->assertSame(3, $cut->firstKeptEntryIndex);
+        $this->assertSame(0, $cut->turnStartIndex);
+        $this->assertTrue($cut->isSplitTurn);
+
+        $atATurn = Compaction::findCutPoint(self::entries([new UserMessage(str_repeat('x', 4_000)), new UserMessage(str_repeat('y', 4_000))]), 0, 2, 500);
+
+        $this->assertSame(1, $atATurn->firstKeptEntryIndex);
+        $this->assertFalse($atATurn->isSplitTurn);
+        $this->assertSame(-1, $atATurn->turnStartIndex);
+    }
+
+    public function testAnOmittedRecoveryAttemptMovesTheCutPastTheInputItAnswered(): void
+    {
+        // Upstream's recovery rule: the attempt an overflow gave up on stays in the file, omitted by
+        // a context edit, after the input that overflowed. Over budget, the input is summarised
+        // and the kept part starts at the omitted attempt, so the edit keeping it out survives.
+        $path = [
+            ...self::entries([new UserMessage('first'), self::assistant('fine'), new UserMessage(str_repeat('big ', 2_000))]),
+            new SessionEntry('e3', 'e2', self::assistant('the attempt that overflowed')),
+            new SessionEntry('e4', 'e3', new ContextEdit('e3')),
+        ];
+
+        $preparation = Compaction::prepareCompaction($path, new CompactionSettings(keepRecentTokens: 100));
+
+        $this->assertNotNull($preparation);
+        $this->assertSame('e3', $preparation->firstKeptEntryId);
+        // The cut is now inside the turn the input started, so the input is that turn's prefix.
+        $this->assertTrue($preparation->isSplitTurn);
+        $this->assertCount(2, $preparation->messagesToSummarize);
+        $this->assertSame([$path[2]->message], $preparation->turnPrefixMessages, 'the over-budget input is summarised');
+    }
+
+    public function testTokensBeforeDoesNotBelieveAUsageMeasuredBeforeAnEdit(): void
+    {
+        $answered = self::assistant('answer', 50_000);
+        $path = [
+            ...self::entries([new UserMessage(str_repeat('a', 400)), $answered]),
+            new SessionEntry('e2', 'e1', new ContextEdit('e0', 'short')),
+        ];
+
+        $projection = SessionManager::buildSessionProjection($path);
+        $estimate = Compaction::estimateProjectedContextTokens($projection, $path);
+
+        $this->assertNull($estimate->lastUsageIndex, 'the edit came after the usage, so it measured another context');
+        $this->assertLessThan(50_000, $estimate->tokens);
+
+        $believed = Compaction::estimateProjectedContextTokens(SessionManager::buildSessionProjection(array_slice($path, 0, 2)), array_slice($path, 0, 2));
+        $this->assertSame(50_000, $believed->tokens);
     }
 
     // ---- which files -------------------------------------------------------------------
@@ -516,12 +729,12 @@ final class CompactionTest extends TestCase
 
     public function testABranchSummaryIsSerialisedAsOneRatherThanDropped(): void
     {
-        $text = Compaction::serialize([
+        $text = Compaction::serializeConversation(CodingAgent::toLlm([
             new UserMessage('carry on'),
             new BranchSummary('it was about the parser'),
-        ]);
+        ]));
 
-        $this->assertStringContainsString('[Another branch]: it was about the parser', $text);
+        $this->assertStringContainsString("<summary>\nit was about the parser</summary>", $text);
     }
 
     // ---- what a handover is made of ------------------------------------------------------
@@ -530,9 +743,7 @@ final class CompactionTest extends TestCase
      * A tool result is left out at every budget, including "no budget".
      *
      * Its context is in the assistant message that asked for it, and results are the bulk of a
-     * long branch — so this is a rule about what a handover *is*, not a way of saving room.
-     * Gated on the budget, a model that declares no context window got the whole branch plus
-     * every file it had read: 28,808 characters of request against 792 for the same branch.
+     * long branch — upstream's `getMessageFromEntry()` skips them before the budget is looked at.
      */
     #[DataProvider('everyBudget')]
     public function testAToolResultIsNeverPartOfAHandover(int $budget): void
@@ -544,13 +755,14 @@ final class CompactionTest extends TestCase
             new UserMessage('what did it say'),
         ];
 
-        [$kept] = BranchSummarization::prepare($messages, $budget);
+        $kept = BranchSummarization::prepareBranchEntries(self::entries($messages), $budget)->messages;
 
-        $this->assertCount(3, $kept);
         $this->assertNotContains($messages[2], $kept);
+        $this->assertContains($messages[3], $kept);
 
-        // And the request built from it is the conversation rather than the file.
-        $this->assertStringNotContainsString('FILE CONTENTS', BranchSummarization::request($kept));
+        if ($budget === 0 || $budget > 1_000) {
+            $this->assertCount(3, $kept);
+        }
     }
 
     /** @return iterable<string, array{0: int}> */
@@ -562,27 +774,158 @@ final class CompactionTest extends TestCase
     }
 
     /**
-     * Which files the branch touched is complete even when the prose is not.
-     *
-     * The file lists come from every message, the prose from as much as fits. Upstream's
-     * collection sits inside the loop that stops at the budget, so a long branch there reports
-     * the files at its recent end and forgets the rest — see the docblock on `prepare()`.
+     * Upstream's two passes: a nested pig branch summary's lists are carried whatever the budget,
+     * and a tool call's file only when its message made it into the budget.
      */
-    public function testTheFileListSurvivesABudgetThatDropsTheMessageThatNamedIt(): void
+    public function testTheBranchFileListsAreTheNestedSummariesAndWhatFitTheBudget(): void
     {
         $messages = [
+            new BranchSummary('an older branch', ['nested-read.php'], ['nested-edit.php']),
             self::calling('c1', 'read', ['path' => 'read-at-the-far-end.php']),
             new UserMessage(str_repeat('padding ', 200)),
+            self::calling('c2', 'edit', ['path' => 'edited-recently.php']),
             new UserMessage('and this is where we got to'),
         ];
 
-        [$kept, $read] = BranchSummarization::prepare($messages, 40);
+        $preparation = BranchSummarization::prepareBranchEntries(self::entries($messages), 40);
+        $lists = Compaction::computeFileLists($preparation->fileOps);
 
-        $this->assertSame(['read-at-the-far-end.php'], $read);
-        $this->assertNotContains($messages[0], $kept, 'the message that named it did not fit');
+        $this->assertSame(['nested-read.php'], $lists['readFiles']);
+        $this->assertSame(['edited-recently.php', 'nested-edit.php'], $lists['modifiedFiles']);
+        $this->assertNotContains($messages[1], $preparation->messages, 'the message that named it did not fit');
+    }
+
+    public function testTheMovesCommonAncestorIsFoundAndTheRestOfTheOldBranchCollected(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $store->append(new UserMessage('root'));
+        $root = (string) $store->leaf();
+        $store->append(self::assistant('down the old road'));
+        $store->append(new UserMessage('more of the old road'));
+        $old = (string) $store->leaf();
+        $store->goTo($root);
+        $store->append(self::assistant('the new road'));
+        $target = (string) $store->leaf();
+        $store->goTo($old);
+
+        $collected = BranchSummarization::collectEntriesForBranchSummary($store, $old, $target);
+
+        $this->assertSame($root, $collected->commonAncestorId);
+        $this->assertCount(2, $collected->entries);
+        $this->assertSame($old, $collected->entries[1]->id);
+
+        $this->assertSame([], BranchSummarization::collectEntriesForBranchSummary($store, null, $target)->entries);
+    }
+
+    public function testABranchSummaryHasThePreambleAndTheInstructionsAreAddedOrReplaceThePrompt(): void
+    {
+        $entries = self::entries([new UserMessage('try the other parser'), self::assistant('tried it')]);
+
+        $asked = new \ArrayObject();
+        $result = Async::run(static fn () => BranchSummarization::generateBranchSummary(
+            $entries,
+            self::model(),
+            'key',
+            customInstructions: 'the parser',
+            streamFn: self::answering(['what happened'], $asked),
+        ));
+
+        $this->assertSame(BranchSummarization::PREAMBLE . 'what happened', $result->summary);
+        $this->assertStringContainsString("## Goal\n[What was the user trying to accomplish in this branch?]", $asked[0][0]);
+        $this->assertStringContainsString('Additional focus: the parser', $asked[0][0]);
+        $this->assertNull($asked[0][2]->reasoning, 'a branch summary asks for no reasoning');
+
+        $replaced = new \ArrayObject();
+        Async::run(static fn () => BranchSummarization::generateBranchSummary(
+            $entries,
+            self::model(),
+            'key',
+            customInstructions: 'Only list the files.',
+            replaceInstructions: true,
+            streamFn: self::answering(['files'], $replaced),
+        ));
+
+        $this->assertStringEndsWith("</conversation>\n\nOnly list the files.", $replaced[0][0]);
+
+        $nothing = BranchSummarization::generateBranchSummary(self::entries([new ModelChange('anthropic', 'x')]), self::model());
+        $this->assertSame('No content to summarize', $nothing->summary);
     }
 
     // ---- scaffolding -----------------------------------------------------------------------
+
+    /**
+     * Messages as a branch of session entries, `e0` first, each hanging off the one before.
+     *
+     * @param list<mixed> $messages
+     * @return list<SessionEntry>
+     */
+    private static function entries(array $messages): array
+    {
+        $entries = [];
+
+        foreach (array_values($messages) as $index => $message) {
+            $entries[] = new SessionEntry("e{$index}", $index === 0 ? null : 'e' . ($index - 1), $message);
+        }
+
+        return $entries;
+    }
+
+    /** `findCutPoint()` over messages as entries: the index of the first one kept. @param list<mixed> $messages */
+    private static function cut(array $messages, int $keepRecentTokens = Compaction::KEEP_RECENT_TOKENS): int
+    {
+        return Compaction::findCutPoint(self::entries($messages), 0, count($messages), $keepRecentTokens)->firstKeptEntryIndex;
+    }
+
+    private static function model(): Model
+    {
+        return new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000);
+    }
+
+    /**
+     * A stream function that answers each request with the next of $answers (each costing ten
+     * input tokens) and records what it was asked: the prompt text, the context, the options.
+     *
+     * @param list<string> $answers
+     * @param \ArrayObject<int, array{0: string, 1: TranscriptContext, 2: SimpleStreamOptions}> $asked
+     */
+    private static function answering(array $answers, \ArrayObject $asked): Closure
+    {
+        return static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (&$answers, $asked): AssistantMessageEventStream {
+            $user = array_values(array_filter($context->messages, static fn (mixed $m): bool => $m instanceof UserMessage))[0];
+            $asked[] = [Text::contentText($user->content), $context, $options];
+            $message = new AssistantMessage(
+                [new TextContent(array_shift($answers) ?? throw new \RuntimeException('out of answers'))],
+                Api::AnthropicMessages,
+                'anthropic',
+                'test-model',
+                new Usage(10, 5, 0, 0, 15),
+                StopReason::Stop,
+            );
+            $stream = new AssistantMessageEventStream();
+
+            Async::spawn(static function () use ($stream, $message): void {
+                $stream->push(new DoneEvent(StopReason::Stop, $message));
+                $stream->end();
+            });
+
+            return $stream;
+        };
+    }
+
+    /**
+     * What one summarisation call asked for.
+     *
+     * @param Closure(Closure): mixed $call given the stream function to use
+     * @return array{0: string, 1: TranscriptContext, 2: SimpleStreamOptions}
+     */
+    private static function askedFor(Closure $call): array
+    {
+        $asked = new \ArrayObject();
+        $streamFn = self::answering(['a summary'], $asked);
+        Async::run(static fn () => $call($streamFn));
+
+        return $asked[0];
+    }
 
     private static function assistant(
         string $text,

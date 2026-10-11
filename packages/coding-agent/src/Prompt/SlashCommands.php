@@ -4,21 +4,24 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Prompt;
 
-use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Packages\ResolvedResource;
 use Pig\CodingAgent\Tools\Paths;
 
 /**
- * Prompts kept as files, reachable as `/name`.
+ * Prompt templates: markdown files reachable as `/name` — upstream's `core/prompt-templates.ts`.
  *
- * A markdown file in `~/.pig/agent/commands/` or `.pig/commands/` becomes a slash command whose
- * body is the prompt. `/review src/Foo.php` sends `review.md` with `$1` filled in — which
- * is the whole feature: the thing people retype every day, typed once.
+ * A `.md` in `~/.pig/agent/prompts/` or `.pig/prompts/` becomes a slash command whose body is the
+ * prompt. `/review src/Foo.php` sends `review.md` with `$1` filled in — which is the whole
+ * feature: the thing people retype every day, typed once.
  *
  * Not the same as a skill, though both are markdown with frontmatter. A skill is
- * *offered* to the model, which reads it when a task matches; a command is *sent* by the
+ * *offered* to the model, which reads it when a task matches; a template is *sent* by the
  * person, now, as the message. One is a capability, the other is a macro.
  *
- * Ported from upstream's `core/slash-commands.ts`.
+ * **Where templates are looked for is the package manager's** (`PackageManager::
+ * resolveLocalResources()` for the two directories and the `prompts` setting, `resolve()` for the
+ * packages), as it is upstream's; this loads what it is handed, in that order, and the first
+ * template of a name wins — upstream's `dedupePrompts()`, a later one a collision warning.
  */
 final class SlashCommands
 {
@@ -26,83 +29,130 @@ final class SlashCommands
     private const int DESCRIPTION_LENGTH = 60;
 
     /**
-     * Every command this machine offers.
+     * The templates a resolution names, the enabled ones in its order, labelled `(project)`,
+     * `(user)`, `(package)` or `(path)` by where they came from.
      *
-     * @return list<FileCommand>
+     * @param list<ResolvedResource> $resources
+     * @return array{0: list<FileCommand>, 1: list<string>} the templates, then the collisions
      */
-    public static function load(string $cwd, ?string $home = null, bool $projectTrusted = true): array
+    public static function fromResources(array $resources): array
     {
-        $home ??= Config::home();
+        $entries = [];
 
-        return [
-            ...self::scan($home . '/commands', 'user'),
-            ...($projectTrusted ? self::scan(rtrim($cwd, '/') . '/.pig/commands', 'project') : []),
-        ];
+        foreach ($resources as $resource) {
+            if ($resource->enabled) {
+                $entries[] = [$resource->path, match (true) {
+                    $resource->metadata->origin === 'package' => 'package',
+                    $resource->metadata->scope === 'project' => 'project',
+                    $resource->metadata->scope === 'user' => 'user',
+                    default => 'path',
+                }];
+            }
+        }
+
+        return self::load($entries);
+    }
+
+    /**
+     * Upstream's `loadPromptTemplates()` with `includeDefaults: false`, for the paths `--prompt-template`
+     * named: a directory loads its direct `.md` children (`loadTemplatesFromDir()` is not recursive),
+     * a `.md` file loads itself, and anything else — a path that is not there included — is
+     * skipped, as upstream skips it (the resource loader names a missing one; see
+     * `CodingAgent::session()`).
+     *
+     * @param list<string> $paths absolute
+     * @return array{0: list<FileCommand>, 1: list<string>}
+     */
+    public static function fromPaths(array $paths, string $source = 'path'): array
+    {
+        return self::load(array_map(static fn (string $path): array => [$path, $source], $paths));
     }
 
     /**
      * Prompt templates from the directories an extension adds (`resources_discover`), under the
-     * source `extension`, each scanned as a commands folder is.
+     * source `extension`, each loaded as a templates directory is: its direct `.md` children.
      *
      * @param list<string> $directories
      * @return list<FileCommand>
      */
     public static function fromDirectories(array $directories): array
     {
-        $commands = [];
-
-        foreach ($directories as $directory) {
-            $commands = [...$commands, ...self::scan(Paths::expand($directory), 'extension')];
-        }
-
-        return $commands;
+        return self::fromPaths(array_map(Paths::expand(...), $directories), 'extension')[0];
     }
 
     /**
-     * Prompt templates from the files a package resolved to, under the source `package`. The
-     * name is the file's, as it is for a file in a commands folder; no folder label, because a
-     * package's manifest may have gathered them from anywhere.
-     *
-     * @param list<string> $files
-     * @return list<FileCommand>
+     * @param list<array{0: string, 1: string}> $entries path, source
+     * @return array{0: list<FileCommand>, 1: list<string>}
      */
-    public static function fromFiles(array $files): array
+    private static function load(array $entries): array
     {
         $commands = [];
+        $collisions = [];
 
-        foreach ($files as $file) {
-            if (!str_ends_with($file, '.md')) {
-                continue;
-            }
+        foreach ($entries as [$path, $source]) {
+            $files = is_dir($path) ? self::directChildren($path) : (is_file($path) && str_ends_with($path, '.md') ? [$path] : []);
 
-            $command = self::read($file, basename($file, '.md'), 'package', '');
+            foreach ($files as $file) {
+                $command = self::read($file, $source);
 
-            if ($command !== null) {
-                $commands[] = $command;
+                if ($command === null) {
+                    continue;
+                }
+
+                if (isset($commands[$command->name])) {
+                    $collisions[] = "{$file}: name \"/{$command->name}\" collision: {$commands[$command->name]->path} is loaded and this one is skipped";
+
+                    continue;
+                }
+
+                $commands[$command->name] = $command;
             }
         }
 
-        return $commands;
+        return [array_values($commands), $collisions];
     }
 
     /**
-     * What `/name args` should be sent as, or null when no command has that name.
+     * The `.md` files directly in $directory, sorted.
+     *
+     * `scandir()` sorts, which upstream's `readdirSync` does not promise, and the reason is
+     * `CustomToolLoader::discover()`'s: two templates of one name is decided by load order, and
+     * readdir order is not an order.
+     *
+     * @return list<string>
+     */
+    private static function directChildren(string $directory): array
+    {
+        $entries = is_readable($directory) ? scandir($directory) : false;
+        $files = [];
+
+        foreach ($entries === false ? [] : $entries as $entry) {
+            $path = $directory . '/' . $entry;
+
+            if (str_ends_with($entry, '.md') && is_file($path)) {
+                $files[] = $path;
+            }
+        }
+
+        return $files;
+    }
+
+    /**
+     * What `/name args` should be sent as, or null when no template has that name — upstream's
+     * `expandPromptTemplate()`: the name runs to the first whitespace, the arguments are what
+     * follows it.
      *
      * @param list<FileCommand> $commands
      */
     public static function expand(string $text, array $commands): ?string
     {
-        if (!str_starts_with($text, '/')) {
+        if (preg_match('/^\/(\S+)(?:\s+(.*))?$/s', $text, $match) !== 1) {
             return null;
         }
 
-        $space = strpos($text, ' ');
-        $name = $space === false ? substr($text, 1) : substr($text, 1, $space - 1);
-        $rest = $space === false ? '' : substr($text, $space + 1);
-
         foreach ($commands as $command) {
-            if ($command->name === $name) {
-                return self::substitute($command->content, self::arguments($rest));
+            if ($command->name === $match[1]) {
+                return self::substitute($command->content, self::arguments($match[2] ?? ''));
             }
         }
 
@@ -147,7 +197,9 @@ final class SlashCommands
                 continue;
             }
 
-            if ($character === ' ' || $character === "\t") {
+            // Upstream's `/\s/`, for the bytes it can be: a newline separates two arguments as a
+            // space does.
+            if (in_array($character, [' ', "\t", "\n", "\r", "\v", "\f"], true)) {
                 if ($current !== '') {
                     $arguments[] = $current;
                     $current = '';
@@ -167,92 +219,60 @@ final class SlashCommands
     }
 
     /**
-     * Fill `$1`, `$2` and `$@` in.
+     * Upstream's `substituteArgs()`:
      *
-     * A placeholder with no argument behind it becomes nothing rather than staying as
-     * `$2`, because a prompt that asks the model about `$2` is worse than one that asks
-     * about nothing.
+     * - `$1`, `$2`, … one positional argument (nothing when it is missing)
+     * - `$@` and `$ARGUMENTS` every argument, joined by spaces
+     * - `${N:-default}` argument N, or the default when it is missing or empty
+     * - `${@:-default}` and `${ARGUMENTS:-default}` every argument, or the default when there are none
+     * - `${@:N}` the arguments from the Nth on; `${@:N:L}` L of them from the Nth (0 counts as 1)
+     *
+     * One pass over the template, so an argument or a default holding `$1` is not substituted
+     * again. A callback rather than a replacement string for the same reason: `$&` in an argument
+     * is the argument, not the match.
      *
      * @param list<string> $arguments
      */
     public static function substitute(string $content, array $arguments): string
     {
-        // `$@` first: it is the only one whose replacement can itself contain a `$1`,
-        // and substituting it last would fill in arguments that came from an argument.
-        //
-        // `str_replace`, so the arguments go in as themselves. Upstream uses
-        // `String.replace()` with a string replacement, where `$&` and `$1` in the
-        // *replacement* are special — so an argument that is literally `$&` inserts the match
-        // there. Same reason `EditTool` splices rather than replaces.
-        $content = str_replace('$@', implode(' ', $arguments), $content);
+        $all = implode(' ', $arguments);
 
         return (string) preg_replace_callback(
-            '/\$(\d+)/',
-            static fn (array $match): string => $arguments[(int) $match[1] - 1] ?? '',
+            '/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/',
+            static function (array $match) use ($arguments, $all): string {
+                if (($match[1] ?? '') !== '') {
+                    $value = $match[1] === '@' || $match[1] === 'ARGUMENTS' ? $all : ($arguments[(int) $match[1] - 1] ?? '');
+
+                    return $value !== '' ? $value : $match[2];
+                }
+
+                if (($match[3] ?? '') !== '') {
+                    $start = max(0, (int) $match[3] - 1);
+                    $slice = ($match[4] ?? '') !== ''
+                        ? array_slice($arguments, $start, (int) $match[4])
+                        : array_slice($arguments, $start);
+
+                    return implode(' ', $slice);
+                }
+
+                if ($match[5] === '@' || $match[5] === 'ARGUMENTS') {
+                    return $all;
+                }
+
+                return $arguments[(int) $match[5] - 1] ?? '';
+            },
             $content,
         );
     }
 
-    // ---- looking -------------------------------------------------------------------------
+    // ---- reading -------------------------------------------------------------------------
 
     /**
-     * Every `.md` under $directory, and under its folders.
-     *
-     * `scandir()` sorts, which upstream's `readdirSync` does not, and the reason is
-     * `CustomToolLoader::discover()`'s: two commands of one name is decided by load order, and
-     * readdir order is not an order. Here the first one found wins in `expand()`, so without this
-     * which of two files answers `/review` could differ between two machines holding the same
-     * folders.
-     *
-     * @return list<FileCommand>
+     * Upstream's `loadTemplateFromFile()`: the name is the file's, the description the
+     * frontmatter's or else the first line with something on it, and `argument-hint` is kept for
+     * the completion list.
      */
-    private static function scan(string $directory, string $source, string $under = ''): array
-    {
-        if (!is_dir($directory)) {
-            return [];
-        }
-
-        $entries = scandir($directory);
-
-        if ($entries === false) {
-            return [];
-        }
-
-        $commands = [];
-
-        foreach ($entries as $entry) {
-            // Dotted names are skipped, which upstream does not do here: it would recurse into
-            // a `.git` in a commands folder and offer every `.md` in the history of it as a
-            // command. The same call `HookLoader::discover()`'s note argues for.
-            if (str_starts_with($entry, '.')) {
-                continue;
-            }
-
-            $path = $directory . '/' . $entry;
-
-            if (is_dir($path)) {
-                // A folder becomes part of the label rather than part of the name:
-                // `/review` is what someone types whichever folder it is filed under.
-                $commands = [...$commands, ...self::scan($path, $source, $under === '' ? $entry : "{$under}:{$entry}")];
-
-                continue;
-            }
-
-            if (!str_ends_with($entry, '.md')) {
-                continue;
-            }
-
-            $command = self::read($path, substr($entry, 0, -3), $source, $under);
-
-            if ($command !== null) {
-                $commands[] = $command;
-            }
-        }
-
-        return $commands;
-    }
-
-    private static function read(string $path, string $name, string $source, string $under): ?FileCommand
+    private static function read(string $path, string $source): ?FileCommand
     {
         $raw = is_readable($path) ? file_get_contents($path) : false;
 
@@ -261,29 +281,28 @@ final class SlashCommands
         }
 
         [$frontmatter, $content] = self::frontmatter($raw);
-        $label = '(' . ($under === '' ? $source : "{$source}:{$under}") . ')';
-        $description = trim($frontmatter['description'] ?? '');
+        $label = "({$source})";
+        $description = $frontmatter['description'] ?? '';
 
         if ($description === '') {
             $description = self::firstLine($content);
         }
 
         return new FileCommand(
-            $name,
+            basename($path, '.md'),
             $description === '' ? $label : "{$description} {$label}",
             $content,
             $label,
+            $frontmatter['argument-hint'] ?? null,
+            $path,
         );
     }
 
     /**
      * The first line with something on it, as a description, cut to fit a list.
      *
-     * Trimmed once rather than in one of the two branches. Upstream trims in neither and gets an
-     * indented description; this trimmed the short one and not the cut one, which is only invisible
-     * because `frontmatter()` trims the whole body, so the first line with anything on it cannot
-     * start with a space. A rule that holds because of a `trim()` in another method is a rule that
-     * breaks when that method changes.
+     * Trimmed, which upstream does not do: an indented first line would otherwise be an indented
+     * description in the completion list.
      */
     private static function firstLine(string $content): string
     {
@@ -301,45 +320,63 @@ final class SlashCommands
     }
 
     /**
-     * The `---` block at the top, if there is one.
+     * Upstream's `parseFrontmatter()`, for the string fields a template has: the `---` block's
+     * `key: value` lines, and the body after it, trimmed. Without a block the body is the file
+     * (byte-order mark gone, line ends `\n`), untrimmed, as upstream's is.
      *
-     * The same hand-rolled reader as `Skills`: key-and-scalar lines, because that is all
-     * either format uses and pig has no YAML parser to reach for.
-     *
-     * **The key pattern is `Skills`', not this file's upstream.** Upstream has two readers and two
-     * answers — `skills.ts` matches `\w[\w-]*` and `slash-commands.ts` only `\w+` — and a
-     * hyphen in a frontmatter key is ordinary (`allowed-tools`, `argument-hint`). Nothing here
-     * reads such a key yet, so today the two spellings behave the same; taking the wider one in
-     * both places is what stops that from being luck the day one of them does.
-     *
-     * CRLF is normalised first, which upstream does not do. `indexOf("\n---")` survives a CRLF
-     * file by accident — `\r\n---` contains `\n---` — and every value then carries a trailing
-     * `\r` that only `.trim()` removes. Doing it once at the top is the same fact in one place.
+     * A value is the string YAML would give it or nothing: quotes come off, and an unquoted value
+     * that YAML reads as something else — a `[list]`, a `{map}`, a number, `true` — is not a string,
+     * so `typeof === "string"` upstream leaves it out. That is why the docs quote
+     * `argument-hint: "[focus]"`: unquoted, it is a list.
      *
      * @return array{0: array<string, string>, 1: string} fields, then the body
      */
     private static function frontmatter(string $raw): array
     {
-        $raw = str_replace(["\r\n", "\r"], "\n", $raw);
+        $raw = str_replace(["\r\n", "\r"], "\n", str_starts_with($raw, "\u{FEFF}") ? substr($raw, 3) : $raw);
 
         if (!str_starts_with($raw, '---')) {
-            return [[], trim($raw)];
+            return [[], $raw];
         }
 
         $end = strpos($raw, "\n---", 3);
 
         if ($end === false) {
-            return [[], trim($raw)];
+            return [[], $raw];
         }
 
         $fields = [];
 
         foreach (explode("\n", substr($raw, 4, $end - 4)) as $line) {
             if (preg_match('/^(\w[\w-]*):\s*(.*)$/', $line, $match) === 1) {
-                $fields[$match[1]] = trim($match[2]);
+                $value = self::yamlString(trim($match[2]));
+
+                if ($value !== null) {
+                    $fields[$match[1]] = $value;
+                }
             }
         }
 
         return [$fields, trim(substr($raw, $end + 4))];
+    }
+
+    /** One scalar as YAML reads it, when it is a string; null when it is anything else. */
+    private static function yamlString(string $value): ?string
+    {
+        foreach (['"', "'"] as $quote) {
+            if (strlen($value) >= 2 && str_starts_with($value, $quote) && str_ends_with($value, $quote)) {
+                return substr($value, 1, -1);
+            }
+        }
+
+        $value = trim(preg_replace('/\s+#.*$/', '', $value) ?? $value);
+
+        if ($value === '' || $value[0] === '[' || $value[0] === '{' || is_numeric($value)
+            || in_array(strtolower($value), ['true', 'false', 'null', '~'], true)
+        ) {
+            return null;
+        }
+
+        return $value;
     }
 }

@@ -8,7 +8,7 @@ use Closure;
 use Pig\Tui\Component;
 use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Keys;
+use Pig\Tui\Keybindings;
 use Pig\Tui\MouseHandler;
 use Pig\Tui\TuiMouseDispatchResult;
 use Pig\Tui\TuiMouseEvent;
@@ -45,6 +45,9 @@ final class SelectList implements Component, InputHandler, MouseHandler
 
     /** @var Closure(SelectItem): void|null */
     private ?Closure $onSaveDefault = null;
+
+    /** The keybinding id `setSaveDefaultHandler()` answers to. */
+    private string $saveDefaultKeybinding = 'app.models.save';
 
     /** @var Closure(SelectItem): void|null */
     private ?Closure $onSelectionChange = null;
@@ -141,14 +144,16 @@ final class SelectList implements Component, InputHandler, MouseHandler
     }
 
     /**
-     * Called when Ctrl+S is pressed on an item, to set it as a persistent default.
-     * Upstream's `onSelectAsDefault`.
+     * Called when the save key is pressed on an item, to set it as a persistent default.
+     * Upstream's `onSelectAsDefault`; the key is a keybinding id the caller names — the model
+     * picker's is `app.models.save` (ctrl+s), as upstream's `ModelSelectorComponent` checks.
      *
      * @param Closure(SelectItem): void|null $handler
      */
-    public function setSaveDefaultHandler(?Closure $handler): void
+    public function setSaveDefaultHandler(?Closure $handler, string $keybinding = 'app.models.save'): void
     {
         $this->onSaveDefault = $handler;
+        $this->saveDefaultKeybinding = $keybinding;
     }
 
     /** @param Closure(SelectItem): void|null $handler */
@@ -334,14 +339,16 @@ final class SelectList implements Component, InputHandler, MouseHandler
     public function handleInput(string $data): void
     {
         $last = count($this->filtered) - 1;
+        $kb = Keybindings::getKeybindings();
 
+        // Upstream's `SelectList.handleInput()` ids; the save key and the query are pig's.
         match (true) {
-            Keys::isArrowUp($data) => $this->moveTo($this->selected === 0 ? $last : $this->selected - 1),
-            Keys::isArrowDown($data) => $this->moveTo($this->selected === $last ? 0 : $this->selected + 1),
-            Keys::isEnter($data) => $this->choose(),
-            Keys::isCtrlS($data) && $this->onSaveDefault !== null => $this->saveDefault(),
-            Keys::isEscape($data) || Keys::isCtrlC($data) => $this->cancel(),
-            Keys::isBackspace($data) => $this->backspace(),
+            $kb->matches($data, 'tui.select.up') => $this->moveTo($this->selected === 0 ? $last : $this->selected - 1),
+            $kb->matches($data, 'tui.select.down') => $this->moveTo($this->selected === $last ? 0 : $this->selected + 1),
+            $kb->matches($data, 'tui.select.confirm') => $this->choose(),
+            $this->onSaveDefault !== null && $kb->matches($data, $this->saveDefaultKeybinding) => $this->saveDefault(),
+            $kb->matches($data, 'tui.select.cancel') => $this->cancel(),
+            $kb->matches($data, 'tui.editor.deleteCharBackward') => $this->backspace(),
             self::isPrintable($data) => $this->setFilter($this->query . $data),
             default => null,
         };

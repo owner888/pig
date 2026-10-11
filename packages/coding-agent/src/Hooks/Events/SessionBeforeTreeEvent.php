@@ -4,24 +4,24 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Hooks\Events;
 
+use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Hooks\HookEvent;
 
 /**
- * About to jump to another point in the session tree — `/tree`.
+ * About to jump to another point in the session tree — `/tree`. Upstream's
+ * `SessionBeforeTreeEvent`.
  *
- * `$entries` is what is being left behind: the messages on the old branch that the new
- * leaf does not have, and `$summarise` says whether the person asked for them to be written
- * down. Cancellable — and a handler may hand back prose of its own instead, which is then
- * what gets written rather than anything the model was asked for.
+ * Fired whether or not a summary was asked for (`$preparation->userWantsSummary`). A handler
+ * answers with a `SessionBeforeTreeResult`: `cancel` to stop the jump, `summary` to supply the
+ * handover itself (used only when a summary was asked for), or new `customInstructions`,
+ * `replaceInstructions` or `label` for the default summariser. `$signal` is aborted when the
+ * summary is.
  */
 final readonly class SessionBeforeTreeEvent implements HookEvent
 {
-    /** @param list<mixed> $entries */
     public function __construct(
-        public ?string $targetId,
-        public ?string $oldLeafId,
-        public array $entries = [],
-        public bool $summarise = false,
+        public TreePreparation $preparation,
+        public AbortSignal $signal,
     ) {
     }
 

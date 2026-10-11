@@ -137,7 +137,7 @@ Launch `pig` in your project directory:
 pig
 ```
 
-- **Set API Key**: Run with `ANTHROPIC_API_KEY=sk-... pig` or use `--api-key <key>` for a single run without persisting.
+- **Set API Key**: Run with `ANTHROPIC_API_KEY=sk-... pig` (`ANTHROPIC_AUTH_TOKEN` is sent as a bearer token), or use `--api-key <key>` together with `--model` for a single run without persisting.
 - **Google Vertex AI and Amazon Bedrock**: no key needed when the cloud's own credentials are there, as in pi. Vertex takes `GOOGLE_CLOUD_API_KEY`, or Application Default Credentials (`gcloud auth application-default login`, a service-account file in `GOOGLE_APPLICATION_CREDENTIALS`, or the metadata server) with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. Bedrock takes `AWS_BEARER_TOKEN_BEDROCK`, or the AWS SDK's credential chain — `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE` and `~/.aws` (assumed roles, `credential_process`, SSO), web identity, ECS/EKS and EC2 roles — with the region from `AWS_REGION` or the profile. Pick a model as `google-vertex/gemini-2.5-pro` or `amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
 - **Azure OpenAI and Radius**: as in pi. Azure takes `AZURE_OPENAI_API_KEY` and its endpoint from `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME` (`https://<name>.openai.azure.com/openai/v1`), the API version from `AZURE_OPENAI_API_VERSION` (default `v1`), and deployments named differently from the model in `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` (`gpt-5.4=prod,o3=reasoning`); pick a model as `azure/gpt-5.4`. The Radius gateway takes `RADIUS_API_KEY`, with models such as `radius/balanced`.
 - **The other providers pi ships on these APIs**: each with pi's key variable, and a model picked as `<provider>/<id>` (a bare id is the maker's own provider). DeepSeek `DEEPSEEK_API_KEY`, OpenRouter `OPENROUTER_API_KEY` (`openrouter/moonshotai/kimi-k2.6`), Vercel AI Gateway `AI_GATEWAY_API_KEY`, Together `TOGETHER_API_KEY`, Fireworks `FIREWORKS_API_KEY`, Baseten `BASETEN_API_KEY`, Hugging Face `HF_TOKEN`, NVIDIA `NVIDIA_API_KEY`, MiniMax `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY` (`minimax-cn`), Moonshot `MOONSHOT_API_KEY` (`moonshotai`, `moonshotai-cn`), Kimi For Coding `KIMI_API_KEY` (`kimi-coding`), Meta `META_API_KEY`, OpenCode Zen and Go `OPENCODE_API_KEY` (`opencode`, `opencode-go`), Xiaomi MiMo `XIAOMI_API_KEY` and its Token Plans `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `_AMS_` / `_SGP_` (`xiaomi-token-plan-cn` …), Qwen's Token Plans `QWEN_TOKEN_PLAN_API_KEY` (`qwen-token-plan`, `qwen-token-plan-individual`) and `QWEN_TOKEN_PLAN_CN_API_KEY` (`qwen-token-plan-cn`), Z.ai's China Coding Plan `ZAI_CODING_CN_API_KEY` (`zai-coding-cn`), Ant Ling `ANT_LING_API_KEY`. The OpenRouter, Kimi, Meta and xAI sign-ins are not here; their keys are. xAI's models (`XAI_API_KEY`) speak its Responses API, as in pi.
@@ -146,15 +146,16 @@ pig
 - **Subscription Login**: Run `/login` inside pig to sign in with Claude Pro/Max, GitHub Copilot, ChatGPT Plus/Pro (for the `openai-codex` models, e.g. `openai-codex/gpt-6.1-sol` — a browser that comes back to `localhost:1455`, or a device code for a headless machine), or Google Antigravity. Claude offers two ways in, as pi 1.0 does: a browser that comes back to `localhost:53692` (the default), or copying the code off Anthropic's page for a headless machine. Tokens are saved in `~/.pig/agent/auth.json` (or shared with `~/.pi/agent/auth.json`).
 - **Resume Sessions**:
   - `pig -c` / `pig --continue`: Instantly resume the most recently modified session in the current directory.
-  - `pig -r` / `pig --resume`: Open the interactive session picker with fuzzy search.
-  - `pig --session <id>`: Open a specific session by ID or file path directly.
+  - `pig -r` / `pig --resume`: Open the interactive session picker — fuzzy words, `"phrases"` or `re:<pattern>`; Tab switches between this folder and all projects, `Ctrl+S` cycles threaded / recent / fuzzy order, `Ctrl+N` shows named sessions only, `Ctrl+D` deletes.
+  - `pig --session <id|path>`: Open a specific session by ID prefix or file path; an ID found only in another project is offered as a fork into this one. A resumed session carries on in its own working directory.
+  - `pig --fork <id|path>` copies a session into a new one here; `pig --session-id <id>` opens or creates a session with that exact id; `pig --no-session` runs without saving the conversation.
 - **Model Selection**:
-  - `pig --model sonnet` or `pig --model antigravity/gemini-3.8-flash`
+  - `pig --model sonnet`, `pig --model antigravity/gemini-3.8-flash`, or `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high` (sets model and thinking level simultaneously)
   - Press `Ctrl+L` to open the in-session model picker; press `Ctrl+P` / `Shift+Ctrl+P` to cycle models on the fly.
   - `pig --list-models [query]`: View available models with context limits and pricing.
 - **Interactive Shortcuts & Mid-Turn Controls**:
-  - **Hold `⌘` (Command) for ~0.5s**: Pops up an interactive **Blink Shell / iPadOS style** shortcuts cheat sheet (HUD) in the center of the screen, automatically dismissing when released (supported in both TUI and Web UI).
+  - **Hold `⌘` (Command) for ~0.85s**: Pops up an interactive **Blink Shell / iPadOS style** shortcuts cheat sheet (HUD) in the center of the screen, automatically dismissing when released (supported in both TUI and Web UI).
   - Press **Shift+Enter**: Insert a **newline** in the editor (draft multiline prompts or paste code safely without accidental sending).
   - Press **Enter** or **Command+Enter** (`⌘+Enter` / `Ctrl+Enter`) when idle: Submit message.
   - Press **Command+Enter** (or **Alt+Enter**) while the model is answering: **Queue a follow-up** for after the turn ends.
@@ -162,14 +163,17 @@ pig
   - Press **Alt+Up**: Restore all queued messages back to the editor.
   - Press **Escape**: Interrupt the active turn or cancel retries.
   - Press **Ctrl+G**: Edit complex prompts in your external editor (supports `"externalEditor": "vim"` in `settings.json`, `$VISUAL` or `$EDITOR`, or auto-fallback to system-available editors).
+  - The editor has upstream's editing keys — undo, a kill ring with yank / yank-pop, delete word forward, jump to character — and every key, editing keys included, can be rebound in `~/.pig/agent/keybindings.json` under pi's action ids.
 - **Context & Session Commands**:
   - `/name <new-name>`: View or change the active session title (reflected in footer and Web UI).
   - `/label <name>`: Bookmark the current point in the session tree.
   - `/tree`: Visualize conversation branches as an interactive tree and jump between forks.
   - `/fork`: Pick one of your messages and fork the conversation up to before it into a new session file, with that message back in the prompt; `/clone` copies the conversation as it stands into a new file. The new file names the old one as its `parentSession`.
   - `/compact`: Manually trigger conversation summarization.
-  - `/export [file.html]`: Export the session as a standalone offline HTML document with syntax highlighting.
-  - `/reload`: Hot-reload extensions, skills, tools, and context files without restarting `pig`. An extension that declares PHP classes keeps running the version loaded at startup (PHP cannot unload a class) and the reload says so when its files changed — restart `pig` to pick that up.
+  - `/export [file.html|file.jsonl]`: Export the session as a standalone offline HTML document with syntax highlighting, or the current branch as a session file.
+  - `/import <file.jsonl>`: Copy a session file into this project and resume it. `/share`: Upload the HTML export as a secret GitHub gist (needs `gh`).
+  - `/scoped-models`: Choose which models `Ctrl+P` cycles through, and save the choice as `enabledModels`.
+  - `/reload`: Hot-reload extensions, skills, prompt templates, themes, keybindings, tools, and context files without restarting `pig`. An extension that declares PHP classes keeps running the version loaded at startup (PHP cannot unload a class) and the reload says so when its files changed — restart `pig` to pick that up.
   - `/doctor`: Run system diagnostic checks on PHP extensions, tools, permissions, and network endpoints.
 
 ### 2. Web UI Interface (`pig web`)
@@ -204,6 +208,10 @@ Open `http://localhost:8080` in your browser or mobile phone:
 # Print mode: output final answer directly to stdout and exit
 pig -p "summarize the architecture of this repo" | pbcopy
 pig -p @error.log "what caused this crash?"
+git diff | pig -p "review this"            # piped stdin comes first in the message
+
+# Check a provider's credentials without starting a session
+pig auth check --provider anthropic
 
 # JSON event stream: emit each turn event as a JSON line
 pig --mode json -p "explain index.php"
@@ -299,17 +307,20 @@ Logger::timeEnd('benchmark');
 
 ## Configuration & Compatibility
 
-`pig` shares configuration and session structures seamlessly with upstream `pi`:
+`pig` shares configuration and session structures seamlessly with upstream `pi`. The agent directory is `~/.pig/agent`, or `PIG_CODING_AGENT_DIR` when set (pi's `PI_CODING_AGENT_DIR`); environment variables are always the `PIG_*` spelling of pi's `PI_*` ones:
 
 | Path | Purpose |
 | :--- | :--- |
 | `~/.pig/agent/settings.json` | Global preferences (theme, model, thinking, auto-compact, auto-retry). |
 | `~/.pig/agent/auth.json` | Provider API keys and OAuth tokens (shared with `~/.pi/agent/auth.json`). |
-| `~/.pig/agent/models.json` | Custom OpenAI-compatible endpoints, local models (llama.cpp, vLLM). |
+| `~/.pig/agent/models.json` | Custom OpenAI-compatible endpoints, local models (llama.cpp, vLLM), and overrides for built-in providers (`modelOverrides`). `apiKey` and headers take `$NAME` / `${NAME}` for an environment variable or `!command` for a command's output; anything else, a bare name included, is the literal value. |
 | `~/.pig/agent/mcp.json` | MCP server configurations (stdio & HTTP). |
 | `~/.pig/agent/trust.json` | Project resource authorization records. |
 | `~/.pig/agent/keybindings.json` | Custom keyboard shortcut mappings. |
 | `~/.pig/agent/themes/` | Custom JSON themes directory (built-in `dark`, `light`, `labra`, plus any user-defined theme). |
+| `~/.pig/agent/prompts/` | Prompt templates: `review.md` becomes `/review`, with `$1`, `$@`, `${1:-default}` and `${@:2}` filled in. |
+| `~/.pig/agent/skills/`, `~/.agents/skills/` | Skills (folders with a `SKILL.md`); a trusted project's `.pig/skills` and `.agents/skills` up to the repository root are read too. |
+| `~/.pig/agent/SYSTEM.md`, `APPEND_SYSTEM.md` | Replace or extend the system prompt (a trusted project's `.pig/` copy wins); `--system-prompt` / `--append-system-prompt` do it for one run. |
 | `~/.pig/agent/sessions/` | Saved session logs in standard `.jsonl` format. |
 
 **Prompt cache warming.** While a long tool runs past the provider's cache lifetime (five minutes on Anthropic), pig re-sends the last request with a one-token cap just before the cache entry expires — only when the expected saving is at least $0.05 — so the next request reads the prompt from the cache instead of paying to write it again. Each refresh is in the session file and in `/session`'s cost. `cacheWarming` in the global `settings.json` (or the *Cache warming* row in `/settings`) is `streaming` by default (while the agent runs), `idle` (between runs too, for up to 30 minutes) or `off`. An extension can overrule each refresh with the `cache_warming_decision` event. `-p` never warms.
@@ -320,7 +331,7 @@ Logger::timeEnd('benchmark');
 
 **Images, the shell, sessions.** Pictures from `read`, `@file`, a prompt or any tool are fitted inside the provider's limits on the way in (2000×2000, or the model's own), which needs PHP's `gd` extension for anything that has to be shrunk; `images.autoResize: false` sends them as they are and `images.blockImages: true` sends none. `shellCommandPrefix` runs a line before every command (`shopt -s expand_aliases`, say), and `sessionDir`, `PIG_CODING_AGENT_SESSION_DIR` or `--session-dir <dir>` keeps every project's sessions in one directory. `defaultProjectTrust` (`ask`, `always`, `never`) decides a project nothing has decided about yet (and `-a`/`--approve` or `-na`/`--no-approve` decides for one run without saving anything), `collapseChangelog: true` shows one line after an upgrade instead of the release notes, `steeringMode` / `followUpMode` (`one-at-a-time` or `all`) say how queued messages are handed over, `httpProxy` is the proxy when neither `--proxy` nor the environment names one, and `transport` (`auto`, `websocket`, `websocket-cached`, `sse`) says how ChatGPT's Codex backend is reached — over a WebSocket kept for the session by default, SSE when that fails — with `websocketConnectTimeoutMs` for its handshake.
 
-**Diagrams, flags, attribution.** A ```mermaid block in a message is drawn as a Unicode diagram (flowcharts, state, class, ER and sequence diagrams — a pure-PHP port of the renderer pi uses); `markdown.mermaid` is `streaming` (the default), `final` or `off`. Every one of pi's short options works: `-t`/`-xt` choose tools, `-nt`/`--no-tools` starts with none at all and `-nbt`/`--no-builtin-tools` without the built-ins, `-ns`, `-np`, `-nc` and `-ne` leave out skills, prompt templates, `AGENTS.md`/`CLAUDE.md` and extensions, and `-n`/`--name` names the session. `--skill`, `--prompt-template` and `--theme` load a file or directory for one run (each repeatable, as `-e` now is, and `-e` still loads under `-ne`); the theme to start on is `--use-theme <name>`, and `--no-themes` looks for none but the built-ins and `--theme`'s. Skipping the tool files in `~/.pig/agent/tools` and `.pig/tools` is now `--no-tool-files`. OpenRouter, NVIDIA and Cloudflare are told pig is calling them; `enableInstallTelemetry: false` or `PIG_TELEMETRY=0` stops that, and pig sends no install report anywhere.
+**Diagrams, flags, attribution.** A ```mermaid block in a message is drawn as a Unicode diagram (flowcharts, state, class, ER and sequence diagrams — a pure-PHP port of the renderer pi uses); `markdown.mermaid` is `streaming` (the default), `final` or `off`. Every one of pi's short options works: `-t`/`-xt` choose tools, `-nt`/`--no-tools` starts with none at all and `-nbt`/`--no-builtin-tools` without the built-ins, `-ns`, `-np`, `-nc` and `-ne` leave out skills, prompt templates, `AGENTS.md`/`CLAUDE.md` and extensions, and `-n`/`--name` names the session. `--skill`, `--prompt-template` and `--theme` load a file or directory for one run (each repeatable, as `-e` now is, and `-e` still loads under `-ne`); the theme to start on is `--use-theme <name>`, and `--no-themes` looks for none but the built-ins and `--theme`'s. Skipping the tool files in `~/.pig/agent/tools` and `.pig/tools` is now `--no-tool-files`. Also from pi: `--provider`, `--system-prompt`, `--append-system-prompt`, `--tui-mode regular|fullscreen`, `--verbose`, `--offline` (no startup network activity, as `PIG_OFFLINE=1`) and `--update-check`. `bash` commands see the session as `PIG_SESSION_ID`, `PIG_SESSION_FILE`, `PIG_PROVIDER`, `PIG_MODEL` and `PIG_REASONING_LEVEL`, and on Windows a `powershell` tool can be turned on with `--tools` or `defaultTools`. OpenRouter, NVIDIA and Cloudflare are told pig is calling them; `enableInstallTelemetry: false` or `PIG_TELEMETRY=0` stops that, and pig sends no install report anywhere.
 
 ### Signing in with a subscription
 
@@ -330,7 +341,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- | :--- |
 | **Anthropic (Claude Pro/Max)** | **Browser** (default): pig listens on `http://localhost:53692/callback`, opens `claude.ai`, and the code comes back by itself. A paste box stays open beside it — if the browser is on another machine, paste the final redirect URL there. **Copy code** (headless): the browser lands on Anthropic's own page showing `code#state`; paste that. | The token goes out as Claude Code's — `claude-cli` user agent, both betas, tool names spelled `Read`/`Bash`/`Edit`/`Write` — because that is the identity Anthropic issued it to. Port 53692 is registered with Anthropic and cannot be changed. |
 | **GitHub Copilot** | Device flow: pig shows a code, you type it at `github.com/login/device`, pig polls until it is accepted. Blank at the Enterprise prompt means `github.com`. | Claude's and Grok's models are switched on for the account after signing in. |
-| **OpenAI (ChatGPT Plus/Pro)** | **Browser** (default): pig listens on `http://localhost:1455/auth/callback` (on `PI_OAUTH_CALLBACK_HOST` when set), opens `auth.openai.com`, and the code comes back by itself; a paste box stays open beside it for the redirect URL or the code. When port 1455 is taken (the Codex CLI shares it), the paste box alone finishes the sign-in. **Device code** (headless): pig shows a code to type at `auth.openai.com/codex/device` and polls until it is accepted. | For the `openai-codex` models only — ChatGPT's Codex backend, with the account id read off the token. |
+| **OpenAI (ChatGPT Plus/Pro)** | **Browser** (default): pig listens on `http://localhost:1455/auth/callback` (on `PIG_OAUTH_CALLBACK_HOST` when set), opens `auth.openai.com`, and the code comes back by itself; a paste box stays open beside it for the redirect URL or the code. When port 1455 is taken (the Codex CLI shares it), the paste box alone finishes the sign-in. **Device code** (headless): pig shows a code to type at `auth.openai.com/codex/device` and polls until it is accepted. | For the `openai-codex` models only — ChatGPT's Codex backend, with the account id read off the token. |
 | **Antigravity** (extension) | Browser callback on `localhost:51121/oauth-callback`. The row is there only while `pig-antigravity` is loaded — it is the extension's provider, not the core's. | Needs `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET` in the environment or `antigravity.clientId` / `antigravity.clientSecret` in `settings.json`; pig does not ship them. |
 
 Tokens are renewed automatically when they expire; the file is the same one pi reads, so a sign-in in either tool is a sign-in in both. `/logout` forgets one.

@@ -43,6 +43,70 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.0] - 2026-10-10
+
+### New Features
+
+- **Upstream's RPC protocol, unchanged (`Rpc\RpcMode`, `RpcEvents`, `RpcUi`, `RpcClient`)**:
+  - `pig --mode rpc` now speaks pi's wire exactly: every command, field, response and event name, so a client written for `pi --mode rpc` drives pig. New commands `clear_queue`, `get_available_thinking_levels`, `get_entries`, `get_tree`, `set_session_name`, `get_commands`; `prompt` answers once with `{disposition}` and takes `streamingBehavior`; `steer` / `follow_up` take images; `get_state` and `get_session_stats` have upstream's shapes; `compact` returns the `CompactionResult`; `bash` takes `excludeFromContext` and streams `bash_execution_update`.
+  - Events are upstream's: `message_update` carries deltas (`{usage, assistantMessageEvent}`) instead of the whole message, `toolcall_start/delta/end`, `agent_settled`, `queue_update`, `entry_appended`, `thinking_level_changed`, `auto_retry_start/end`, and `compaction_start/end` for manual, threshold and overflow compactions. `--mode json` writes the session header first.
+  - Hook dialogs are `extension_ui_request` / `extension_ui_response` with a UUID on every request, `setStatus` / `setWidget` / `setTitle`, and dialog timeouts in every UI.
+- **Keybindings registry with upstream's ids (`Keybindings`, `Pig\Tui\KeybindingsManager`, `KillRing`, `UndoStack`)**:
+  - Every upstream keybinding id can be rebound in `keybindings.json`, editor and input keys included, with upstream's platform defaults (Windows/WSL, macOS) and old-name migrations; `/reload` reloads keybindings and themes.
+  - New editing keys: undo, kill ring with yank / yank-pop, delete word forward, jump to character, page up/down; the tree gets fold/unfold, label edit (`Shift+L`) and label timestamps (`Shift+T`); the session list gets path toggle, delete (confirmed, to the trash when possible) and page keys.
+- **Session picker search and sorting (`Cli\SessionList`, `Cli\SessionSearch`)**: Tab switches between this folder and all projects, `Ctrl+S` cycles threaded / recent / fuzzy, `Ctrl+N` shows named sessions only, `Ctrl+R` renames (inside `/resume`), and the search takes `"phrases"` and `re:<pattern>`.
+- **Resuming another project's session carries on in its directory (`Session\SessionCwd`, `Cli\StartupSelector`)**: `pig` picks the session before trust, settings and extensions and builds everything for the session's own working directory; `/resume`, `/import` and RPC's `switch_session` rebuild the runtime the same way. A directory that has gone is asked about on a terminal ("continue in current cwd") and is an error otherwise.
+- **`SYSTEM.md` and `APPEND_SYSTEM.md` (`Prompt\SystemPromptFiles`)**: replace or extend the system prompt from the trusted project's `.pig/` or the agent directory; `--system-prompt` and `--append-system-prompt` do the same for one run (text or a file path).
+- **Structured `bash` results and the `powershell` tool (`Tools\ShellTool`, `PowerShellTool`)**: `bash` returns upstream's `{output, truncated, full_output_path?, exit_code, wall_time_seconds}` to codemode scripts (up to 1 MiB of output); `powershell` is available on native Windows through `--tools` / `defaultTools` (untested on Windows).
+
+### Added
+
+- Added CLI options `--provider`, `--system-prompt`, `--append-system-prompt` (repeatable), `--session-id`, `--fork`, `--tui-mode regular|fullscreen`, `--verbose`, `--offline` and `--update-check`, and the `pig auth check|print-api-key|print-bearer-token` subcommand (`--json`, `--credentials`, `--no-refresh`, `--min-expiry`).
+- Added piped standard input to the first message: `git diff | pig -p "review this"` sends the diff, then any `@file` text, then the message.
+- Added `/scoped-models` (pick the `--models` scope in a session; save writes `enabledModels`), `/import <path>` (copy a session file into this project and resume it), `/share` (a secret GitHub gist of the HTML export via `gh`, viewed on `PIG_SHARE_VIEWER_URL`) and `/export <file>.jsonl`.
+- Added upstream's `/bug` flow: describe the problem, choose whether to include the transcript (a model-written summary otherwise), then Upload Report or Export as Zip (`pig-bug-report-<id>.zip`); uploads are refused under `PIG_OFFLINE`.
+- Added prompt-template substitutions `${N:-default}`, `${@:-default}`, `${ARGUMENTS:-default}`, `${@:N}` and `${@:N:L}`, and `argument-hint` in the completion list.
+- Added skill discovery from `~/.agents/skills` and, in a trusted project, `.agents/skills` in the working directory and each ancestor up to the repository root; `disable-model-invocation: true` keeps a skill out of the prompt while `/skill:name` still works.
+- Added `AGENTS.override.md`, `AGENTS.MD` and `CLAUDE.MD` to the context-file names (one file per directory, upstream's order); a nested linked git worktree no longer loads the main checkout's copy.
+- Added the `max` thinking level where a model supports it, with upstream's descriptions in the thinking menus.
+- Added `$NAME`, `${NAME}` and `!command` values for `models.json` `apiKey` and headers and for `auth.json` keys; `models.json` entries can now target a built-in or extension provider (`baseUrl`, `headers`, `compat` for all its models), replace a model by id, and use `modelOverrides`; `apiKey` is optional.
+- Added `ANTHROPIC_AUTH_TOKEN` (sent as `Authorization: Bearer`, ahead of `ANTHROPIC_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`).
+- Added upstream's legacy `registerProvider(name, config)` form for extensions, `$ctx->modelRegistry`, and `(request, ctx)` for virtual model routers.
+- Added `PIG_SESSION_ID`, `PIG_SESSION_FILE`, `PIG_PROVIDER`, `PIG_MODEL` and `PIG_REASONING_LEVEL` to the environment of `bash` / `powershell` commands, and `PIG_CODING_AGENT=true` / `AI_AGENT=pig` for every child process.
+- Added `PIG_PACKAGE_DIR`, `PIG_TUI_ESC_TIMEOUT` and `PIG_SKIP_VERSION_CHECK`, and Termux clipboard support (`termux-clipboard-get` / `termux-clipboard-set`).
+- Added per-model cost lines and a Tools/summaries line to `/session`.
+- Added catalog refresh when `/model` or `/scoped-models` opens, and for `/model <pattern>` when nothing cached matches.
+
+### Changed
+
+- `codemode` is always registered but inactive, as upstream's (`CustomTool(defaultActive: false)`): turn it on with `--tools …,codemode`, `--tools +codemode`, `defaultTools` (`["+codemode"]`) or `setActiveTools()`; an MCP server with `codemode` exposure turns it on and it stays on. **Breaking:** `codemode.enabled` is removed — use `"defaultTools": ["+codemode"]`.
+- `/share` links to pigagent.dev's own viewer, `https://pigagent.dev/session/#<gist id>` (still overridable with `PIG_SHARE_VIEWER_URL`).
+
+- **Breaking — `PIG_HOME` is now `PIG_CODING_AGENT_DIR`** (upstream's `PI_CODING_AGENT_DIR`, `~` expanded). `PIG_HOME` is not read: rename it in your shell profile.
+- **Breaking — `--no-save` is now `--no-session`**, with no alias. A `--no-session` run now reads your settings and `models.json` like any other run; only the conversation is not written. Its session still has an id (`--session-id` sets it).
+- **Breaking — a bare `apiKey` in `models.json` (or a key in `auth.json`) is a literal.** `"apiKey": "MY_KEY"` used to name an environment variable; write `"$MY_KEY"` (or `"${MY_KEY}"`) now.
+- **Breaking — prompt templates live in `prompts/`, not `commands/`**: move `~/.pig/agent/commands/*.md` to `~/.pig/agent/prompts/` and `.pig/commands/` to `.pig/prompts/`. The conventional directories load their direct children only.
+- **Breaking — skills are no longer read from other tools' folders**: `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `.pi/skills` (and pi's theme directories) are gone. Add any of them to the `skills` setting to keep it. The first skill of a name now wins, with a collision warning for the rest.
+- **Breaking — `skills`, `prompts` and `themes` settings are lists of paths** with `!pattern`, `+path` and `-path`. The old `skills` object (`enabled`, `ignoredSkills`, `includeSkills`, the `enable*` switches) is reported and ignored; `enableSkillCommands` is a top-level key.
+- **Breaking — RPC wire renames**: `hook_ui_request` / `hook_ui_response` → `extension_ui_request` / `extension_ui_response`; `export` → `export_html`; `go_to` → `navigate_tree` (`{targetId, summarize, customInstructions, replaceInstructions, label}`, answering `{cancelled, …}`); `get_branch` is removed (use `get_entries` / `get_tree`); `auto_compaction_start/end` → `compaction_start/end`; `retry_start/end` → `auto_retry_start/end`; `bash_output` → `bash_execution_update`; `message_update` sends deltas; `hook_error` → `extension_error {extensionPath, event, error}`; `switch_session` / `new_session` return `{cancelled}`; a bad line is `Failed to parse command: …`. `RpcClient` methods use upstream's names (`getState()`, `getAvailableModels()`, `exportHtml()`, …) and wait for `agent_settled`.
+- **Breaking — environment variables no longer read**: `PIG_MODEL`, `PI_MODEL`, `PIG_PROVIDER`, `PI_PROVIDER`, `PIG_THINKING`, `PI_REASONING_LEVEL`, `PIG_TUI_MODE`, `PI_TUI_MODE` and `ALL_PROXY`. Use `--model`, `--provider`, `--thinking`, `--tui-mode` or the settings instead.
+- **Breaking — `PIG_*` only, no `PI_*` fallback**: `PI_CACHE_RETENTION` → `PIG_CACHE_RETENTION`; `PIG_TUI_TRACE` → `PIG_TUI_WRITE_LOG` (a directory gets `tui-<timestamp>-<pid>.log`); `PIG_CLEAR_ON_SHRINK`, `PIG_HARDWARE_CURSOR`, `PIG_OFFLINE` (`1`/`true`/`yes`), `PIG_PROGRAM_STATUS`, `PIG_HYPERLINKS`, `PIG_IMAGE_PROTOCOL`, `PIG_TRUE_COLOR` and `PIG_OAUTH_CALLBACK_HOST` no longer read their `PI_` names.
+- **Breaking — command-line parsing follows upstream's**: `-r` / `--resume` takes no value (use `--session <path|id>`); Escape in the startup picker prints `No session selected` and exits 0; an unknown short option is an error, and an unknown long option is an error unless an extension registers it; `--api-key` requires `--model` / `--models`; `--mode text` on a terminal opens the TUI, while `-p` or a non-terminal stream is print mode; print mode with nothing to send exits 0 quietly; `--list-models` takes a search only when one follows; after `--`, `@file` is still a file.
+- Changed `--session <id|path>` for another project's session to ask whether to fork it into this one (on standard error when nothing can answer); `--session-id` opens that exact id or creates a session with it.
+- Changed proxy selection to undici's rules: `https://` uses `https_proxy` → `HTTPS_PROXY` → the HTTP proxy; `http://` uses `http_proxy` → `HTTP_PROXY` → direct; `httpProxy` fills an unset `HTTP_PROXY` / `HTTPS_PROXY`; `no_proxy` accepts `*.example.com`; an empty `proxy.bypass` no longer clears `no_proxy`.
+- Changed compaction to upstream's implementation and names (`Compaction::calculateContextTokens()`, `prepareCompaction()`, `compact()`, …): a cut inside a turn is summarised as two requests joined under "Turn Context (split turn)", tool results shown to the summariser are cut at 2,000 characters, and "Compacted from N tokens" uses the projected estimate. Threshold compaction now runs in every mode, before each prompt and after each run; an overflow is compacted and retried once.
+- Changed branch summaries to upstream's: file lists come only from the part of the branch that fits the budget, with "Additional focus" or full replacement instructions, a label, and "No content to summarize" for an empty branch.
+- Changed compaction and tree hook events to upstream's fields (`SessionBeforeCompactEvent`, `SessionCompactEvent`, `SessionBeforeTreeEvent`, `SessionTreeEvent`; `fromHook` → `fromExtension`); `session_before_*` handlers stop at the first cancel, else the last answer wins.
+- Changed `!!command` to be recorded in the session (left out of model requests) instead of not being saved; a bash execution's `spillPath` is now `fullOutputPath`.
+- Changed `defaultThinkingLevel`'s default to `medium`, clamped to the model; `set_thinking_level` over RPC clamps too.
+- Changed `models.json` to be re-read whenever `/model` opens, and to apply after extension providers.
+- Changed `shellPath` to expand `~` and `file://`; bash is found as upstream finds it (`shellPath`, then Git Bash / `bash.exe` on Windows, else `/bin/bash`, `bash` on `PATH`, `sh`), so a Homebrew bash needs `shellPath`.
+- Changed compaction settings to accept only non-negative safe integers (0 allowed); an invalid value is reported with upstream's message.
+- Changed the project trust prompt's triggers to upstream's (`settings.json`, `mcp.json`, extensions, skills, prompts, themes, `SYSTEM.md`, `APPEND_SYSTEM.md`, `.agents/skills`), plus pig's `hooks` and `tools`.
+- Changed Ctrl+C to cancel a loader or close the config selector, and Ctrl+D with text in the editor to delete forward (it exits only on an empty editor).
+- Changed `pig -r` to open the list even when this project has no sessions, so other projects can be reached with Tab.
+- Changed the slash command list to add `/scoped-models`, `/import` and `/share`, with `/quit` as the listed name (`/exit` still works).
+
 ## [0.5.31] - 2026-10-10
 
 ### New Features

@@ -7,7 +7,7 @@ namespace Pig\Tui\Components;
 use Closure;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Keys;
+use Pig\Tui\Keybindings;
 use Pig\Tui\MouseHandler;
 use Pig\Tui\TuiMouseDispatchResult;
 use Pig\Tui\TuiMouseEvent;
@@ -324,6 +324,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler
         }
 
         $last = count($this->items) - 1;
+        $kb = Keybindings::getKeybindings();
 
         match (true) {
             // Any key leaves a list with nothing in it, where upstream answers only Escape and
@@ -331,12 +332,12 @@ final class SettingsList implements Component, InputHandler, MouseHandler
             // which always has rows; the alternative is a screen that cannot be left by the key
             // somebody presses first.
             $last < 0 => $this->close(),
-            Keys::isArrowUp($data) => $this->selected = $this->selected === 0 ? $last : $this->selected - 1,
-            Keys::isArrowDown($data) => $this->selected = $this->selected === $last ? 0 : $this->selected + 1,
+            $kb->matches($data, 'tui.select.up') => $this->selected = $this->selected === 0 ? $last : $this->selected - 1,
+            $kb->matches($data, 'tui.select.down') => $this->selected = $this->selected === $last ? 0 : $this->selected + 1,
             // Space as well as Enter, as upstream does: a row that is a switch reads like
             // a checkbox, and a checkbox is toggled with the space bar.
-            Keys::isEnter($data) || $data === ' ' => $this->activate(),
-            Keys::isEscape($data) || Keys::isCtrlC($data) => $this->close(),
+            $kb->matches($data, 'tui.select.confirm') || $data === ' ' => $this->activate(),
+            $kb->matches($data, 'tui.select.cancel') => $this->close(),
             default => null,
         };
     }

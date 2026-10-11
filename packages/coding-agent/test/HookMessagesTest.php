@@ -67,14 +67,14 @@ final class HookMessagesTest extends TestCase
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-hookmsg-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->cwd . '-home');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->cwd . '-home');
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         self::remove($this->cwd);
         self::remove($this->cwd . '-home');
     }
@@ -167,13 +167,13 @@ final class HookMessagesTest extends TestCase
         $this->assertSame($original->timestamp, $back->timestamp);
     }
 
-    public function testACompactionNamesTheHookRatherThanPretendingSomeoneSaidIt(): void
+    public function testACompactionReadsAHooksMessageAsTheModelWasShownIt(): void
     {
-        $serialised = Compaction::serialize([new HookMessage('build', [new TextContent('broken')])]);
+        // Upstream's `serializeConversation(convertToLlm(...))`: a hook's message reaches the model
+        // as a user message, so that is how the summariser reads it.
+        $serialised = Compaction::serializeConversation(CodingAgent::toLlm([new HookMessage('build', [new TextContent('broken')])]));
 
-        // "the user said the build is broken" would send the model looking for a
-        // conversation that did not happen.
-        $this->assertStringContainsString('[Hook build]: broken', $serialised);
+        $this->assertSame('[User]: broken', $serialised);
     }
 
     public function testItIsCountedTowardsTheContextItTakesUp(): void
@@ -401,7 +401,7 @@ final class HookMessagesTest extends TestCase
         $this->start($hooks, ['answered']);
 
         // No store, so nothing to write to — and nothing to throw about either: the point
-        // of a note is that it is there next time, and `--no-save` has no next time.
+        // of a note is that it is there next time, and `--no-session` has no next time.
         $api->appendEntry('permissions', ['level' => 'full']);
 
         $this->assertSame([], SessionManager::listFor($this->cwd));

@@ -50,7 +50,7 @@ final class ThinkingLevelTest extends TestCase
         $this->assertNotNull($model);
 
         $this->assertSame(
-            [ThinkingLevel::Off, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh],
+            [ThinkingLevel::Off, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh, ThinkingLevel::Max],
             ThinkingLevel::supportedBy($model),
         );
         $this->assertSame(ThinkingLevel::Low, ThinkingLevel::clampedFor($model, ThinkingLevel::Minimal));
@@ -65,7 +65,7 @@ final class ThinkingLevelTest extends TestCase
     {
         $this->assertNull(ThinkingLevel::Off->toReasoning());
 
-        foreach ([ThinkingLevel::Minimal, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh] as $level) {
+        foreach ([ThinkingLevel::Minimal, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh, ThinkingLevel::Max] as $level) {
             $this->assertSame($level->value, $level->toReasoning()?->value);
         }
     }
@@ -83,9 +83,22 @@ final class ThinkingLevelTest extends TestCase
     {
         // A map written in any order must not reorder the menu: these are a scale, and a picker
         // that lists them out of order is a picker nobody can use by muscle memory.
-        $levels = ThinkingLevel::supportedBy($this->model(map: ['xhigh' => 'x', 'off' => 'none']));
+        $levels = ThinkingLevel::supportedBy($this->model(map: ['max' => 'max', 'xhigh' => 'x', 'off' => 'none']));
 
         $this->assertSame(ThinkingLevel::cases(), $levels);
+    }
+
+    /** Upstream's `max`: like `xhigh`, offered only where the map names it, and sent under its own name. */
+    public function testMaxHasToBeSaidOutLoudToo(): void
+    {
+        $this->assertNotContains(ThinkingLevel::Max, ThinkingLevel::supportedBy($this->model(map: ['xhigh' => 'xhigh'])));
+        $this->assertContains(ThinkingLevel::Max, ThinkingLevel::supportedBy($this->model(map: ['max' => 'max'])));
+        $this->assertSame('max', ThinkingLevel::Max->toReasoning()?->value);
+        $this->assertSame(ThinkingLevel::Max, ThinkingLevel::fromReasoning(\Pig\Ai\ReasoningEffort::Max));
+
+        // A model without it is clamped down from it, to the highest level it has.
+        $this->assertSame(ThinkingLevel::Xhigh, ThinkingLevel::clampedFor($this->model(map: ['xhigh' => 'xhigh']), ThinkingLevel::Max));
+        $this->assertSame(ThinkingLevel::High, ThinkingLevel::clampedFor($this->model(), ThinkingLevel::Max));
     }
 
     // ---- clamping -------------------------------------------------------------------------

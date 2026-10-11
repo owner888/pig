@@ -85,13 +85,16 @@ final class RpcModeTest extends TestCase
     /** @var list<string> one per model call */
     private array $answers = [];
 
+    /** When set, the scripted model waits on it before answering — a turn a test can hold open. */
+    private ?\Pig\Async\Deferred $gate = null;
+
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-rpc-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->cwd . '-home');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->cwd . '-home');
 
         // The scope case needs two models with known ids — see `ProbeModels`.
         self::registerProbeModels();
@@ -101,7 +104,7 @@ final class RpcModeTest extends TestCase
     protected function tearDown(): void
     {
         $this->mode->stop();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         Models::forgetRegistered();
         fclose($this->peer);
         fclose($this->in);
@@ -205,7 +208,11 @@ final class RpcModeTest extends TestCase
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $stream = new AssistantMessageEventStream();
 
-        Async::spawn(static function () use ($stream, $text): void {
+        $gate = $this->gate;
+
+        Async::spawn(static function () use ($stream, $text, $gate): void {
+            $gate?->future->await();
+
             // The whole sequence a real provider sends, not just the ends of it: `AgentLoop`
             // turns `StartEvent` and `DoneEvent` into `message_start` and `message_end`, and
             // a `message_update` only exists if something streamed in between.
@@ -413,6 +420,16 @@ final class RpcModeTest extends TestCase
         $response = $this->of('response')[0];
         $this->assertSame('parse', $response['command']);
         $this->assertFalse($response['success']);
+        // Upstream's sentence, with V8's words after the colon.
+        $this->assertStringStartsWith('Failed to parse command: Unexpected token', $response['error']);
+    }
+
+    public function testACarriageReturnBeforeTheLineFeedIsNotPartOfTheCommand(): void
+    {
+        $this->start();
+        $this->write(json_encode(['id' => 'crlf', 'type' => 'get_state']) . "\r\n");
+
+        $this->assertTrue($this->of('response')[0]['success']);
     }
 
     public function testAJsonScalarIsNotACommandEither(): void
@@ -516,11 +533,32 @@ final class RpcModeTest extends TestCase
         $this->assertStringContainsString('whenever', $response['error']);
     }
 
-    public function testAnUnsavedSessionHasNoSessionFileRatherThanAMadeUpOne(): void
+    public function testAnUnsavedSessionHasNoSessionFileButStillAnId(): void
     {
         $this->start();
 
-        $this->assertNull($this->data(['type' => 'get_state'])['sessionFile']);
+        // Left out, as upstream's undefined `sessionFile` is — but upstream's in-memory session has
+        // an id, and so does pig's.
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertArrayNotHasKey('sessionFile', $state);
+        $this->assertSame($this->session->sessionId(), $state['sessionId']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $state['sessionId']);
+        $this->assertArrayNotHasKey('sessionName', $state);
+    }
+
+    public function testGetStateHasUpstreamsFieldsUnderUpstreamsNames(): void
+    {
+        $this->start(store: true);
+        $state = $this->data(['type' => 'get_state']);
+
+        $this->assertSame($this->session->store()?->id, $state['sessionId']);
+        $this->assertSame(0, $state['pendingMessageCount']);
+        $this->assertArrayNotHasKey('queuedMessageCount', $state);
+        $this->assertTrue($state['autoCompactionEnabled']);
+        // The Model object `rpc-commands.md` describes.
+        $this->assertSame('http://127.0.0.1:1', $state['model']['baseUrl']);
+        $this->assertSame(['text'], $state['model']['input']);
+        $this->assertSame(['input', 'output', 'cacheRead', 'cacheWrite'], array_keys($state['model']['cost']));
     }
 
     public function testGetSessionStatsCountsWhatHappened(): void
@@ -533,6 +571,10 @@ final class RpcModeTest extends TestCase
         $this->assertSame(1, $stats['assistantMessages']);
         // Upstream counts every message entry, and the leading system message is one now.
         $this->assertSame(3, $stats['totalMessages']);
+        // Upstream's `SessionStats`: the tokens in one object, and the window's use.
+        $this->assertSame(['input', 'output', 'cacheRead', 'cacheWrite', 'total'], array_keys($stats['tokens']));
+        $this->assertSame(200_000, $stats['contextUsage']['contextWindow']);
+        $this->assertArrayHasKey('sessionId', $stats);
     }
 
     public function testGetLastAssistantTextIsTheAnswerWithoutTheEvents(): void
@@ -573,7 +615,8 @@ final class RpcModeTest extends TestCase
         // long turn had finished before it began.
         $this->assertSame('response', $lines[0]['type']);
         $this->assertSame('p1', $lines[0]['id']);
-        $this->assertArrayNotHasKey('data', $lines[0]);
+        $this->assertSame(['disposition' => 'started'], $lines[0]['data']);
+        $this->assertCount(1, $this->of('response', $lines), 'one response, not one per outcome');
 
         $order = array_column($lines, 'type');
         $this->assertContains('agent_start', $order);
@@ -584,9 +627,40 @@ final class RpcModeTest extends TestCase
             array_search('agent_end', $order, true),
             array_search('message_start', $order, true),
         );
+        // `agent_settled` is the end: nothing follows the prompt automatically after it.
+        $this->assertSame('agent_settled', end($order));
+        $this->assertFalse(end($lines)['aborted']);
     }
 
-    public function testEveryUpdateCarriesTheWholeMessageSoFarBesideTheDelta(): void
+    public function testAPromptWhileBusyIsRefusedOnceAndAStreamingBehaviorQueuesIt(): void
+    {
+        $this->gate = new \Pig\Async\Deferred();
+        $this->start(answers: ['hello', 'later']);
+        $this->send(['id' => 'p1', 'type' => 'prompt', 'message' => 'hi']);
+        $this->assertSame('started', $this->of('response')[0]['data']['disposition']);
+
+        // Busy and nothing said about what to do with it: one failure, and only one — pig used
+        // to send a success and then the failure for the same id.
+        $this->send(['id' => 'p2', 'type' => 'prompt', 'message' => 'again']);
+        $responses = $this->of('response');
+        $this->assertCount(1, $responses);
+        $this->assertFalse($responses[0]['success']);
+        $this->assertStringContainsString('streamingBehavior', $responses[0]['error']);
+
+        $this->send(['id' => 'p3', 'type' => 'prompt', 'message' => 'afterwards', 'streamingBehavior' => 'followUp']);
+        $lines = $this->lines();
+        $this->assertSame(['disposition' => 'queued'], $this->of('response', $lines)[0]['data']);
+        $this->assertSame(['steering' => [], 'followUp' => ['afterwards']], array_diff_key($this->of('queue_update', $lines)[0], ['type' => 0]));
+        $this->assertSame(1, $this->data(['type' => 'get_state'])['pendingMessageCount']);
+
+        $this->assertSame(['steering' => [], 'followUp' => ['afterwards']], $this->data(['type' => 'clear_queue']));
+        $this->assertSame(0, $this->data(['type' => 'get_state'])['pendingMessageCount']);
+
+        $this->gate->complete(null);
+        $this->settle();
+    }
+
+    public function testAnUpdateCarriesTheDeltaAndTheUsageRatherThanTheWholeMessage(): void
     {
         $this->start(answers: ['hello']);
         $this->send(['type' => 'prompt', 'message' => 'hi']);
@@ -594,21 +668,52 @@ final class RpcModeTest extends TestCase
         $updates = $this->of('message_update');
         $this->assertNotSame([], $updates);
 
+        // Upstream's `toJsonEvent()`: `usage` and `assistantMessageEvent`, and no `partial`.
         foreach ($updates as $update) {
-            $this->assertSame('assistant', $update['message']['role']);
-            $this->assertIsString($update['delta']['type']);
+            $this->assertSame(['type', 'usage', 'assistantMessageEvent'], array_keys($update));
+            $this->assertArrayNotHasKey('partial', $update['assistantMessageEvent']);
         }
     }
 
-    public function testAnEventTypeIsTheClassNameInSnakeCaseWithoutTheSuffix(): void
+    public function testTheStreamingEventsAreUpstreams(): void
     {
         $this->start(answers: ['hello']);
         $this->send(['type' => 'prompt', 'message' => 'hi']);
 
-        $deltas = array_column(array_column($this->of('message_update'), 'delta'), 'type');
-        $this->assertContains('text_start', $deltas);
-        $this->assertContains('text_delta', $deltas);
-        $this->assertContains('text_end', $deltas);
+        $deltas = array_column($this->of('message_update'), 'assistantMessageEvent');
+        $types = array_column($deltas, 'type');
+        $this->assertContains('text_start', $types);
+        $this->assertContains('text_delta', $types);
+        $this->assertContains('text_end', $types);
+        $this->assertSame('hello', implode('', array_column(array_filter($deltas, static fn (array $d): bool => $d['type'] === 'text_delta'), 'delta')));
+    }
+
+    public function testAToolCallsStartNamesItAndItsEndCarriesIt(): void
+    {
+        $this->start();
+        $partial = new AssistantMessage(
+            [new \Pig\Ai\ToolCall('call-1', 'read', [])],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(),
+            StopReason::ToolUse,
+        );
+
+        $start = RpcEvents::encode(new \Pig\Agent\MessageUpdateEvent($partial, new \Pig\Ai\ToolCallStartEvent(0, $partial)));
+        $this->assertSame(['type' => 'toolcall_start', 'contentIndex' => 0, 'id' => 'call-1', 'toolName' => 'read'], $start['assistantMessageEvent']);
+
+        $end = RpcEvents::encode(new \Pig\Agent\MessageUpdateEvent($partial, new \Pig\Ai\ToolCallEndEvent(0, $partial->content[0], $partial)));
+        $this->assertSame('toolcall_end', $end['assistantMessageEvent']['type']);
+        $this->assertSame('call-1', $end['assistantMessageEvent']['toolCall']['id']);
+
+        $done = RpcEvents::delta(new DoneEvent(StopReason::ToolUse, $partial));
+        $this->assertSame('toolUse', $done['reason']);
+        $this->assertSame('assistant', $done['message']['role']);
+
+        // `args`, and an object even when empty.
+        $tool = RpcEvents::encode(new \Pig\Agent\ToolExecutionStartEvent('call-1', 'read', []));
+        $this->assertSame('{}', json_encode($tool['args']));
     }
 
     public function testTurnEndCarriesTheMessageAndItsToolResults(): void
@@ -627,8 +732,21 @@ final class RpcModeTest extends TestCase
 
         // Nothing is running, so both land in the conversation the next prompt starts
         // from — the point being that the protocol has both, because pig has both.
-        $this->assertTrue($this->response(['type' => 'steer', 'message' => 'a'])['success']);
-        $this->assertTrue($this->response(['type' => 'follow_up', 'message' => 'b'])['success']);
+        $this->assertSame(['disposition' => 'queued'], $this->data(['type' => 'steer', 'message' => 'a']));
+        $this->assertSame(['disposition' => 'queued'], $this->data(['type' => 'follow_up', 'message' => 'b']));
+    }
+
+    public function testSteeringCarriesItsPictures(): void
+    {
+        $this->start(answers: ['seen']);
+        $this->data(['type' => 'steer', 'message' => 'look', 'images' => [['type' => 'image', 'data' => 'aGk=', 'mimeType' => 'image/png']]]);
+        $this->send(['type' => 'prompt', 'message' => 'go']);
+
+        $steered = array_values(array_filter(
+            $this->session->messages(),
+            static fn (mixed $m): bool => $m instanceof UserMessage && ($m->content[0]->text ?? null) === 'look',
+        ));
+        $this->assertInstanceOf(\Pig\Ai\ImageContent::class, $steered[0]->content[1] ?? null);
     }
 
     public function testAHostsSlashCommandsReachTheSameDispatchTheTerminalDoes(): void
@@ -646,9 +764,21 @@ final class RpcModeTest extends TestCase
         );
 
         // A hook's command runs, and nothing is asked of the model.
-        $this->assertTrue($this->response(['type' => 'prompt', 'message' => '/deploy staging'])['success']);
+        $this->assertSame(['disposition' => 'handled'], $this->data(['type' => 'prompt', 'message' => '/deploy staging']));
         $this->assertSame('staging', $seen);
         $this->assertSame([], $this->session->messages());
+
+        // It cannot be queued, as upstream's `_throwIfExtensionCommand()` says.
+        $refused = $this->response(['type' => 'steer', 'message' => '/deploy later']);
+        $this->assertFalse($refused['success']);
+        $this->assertStringContainsString('cannot be queued', $refused['error']);
+
+        // `get_commands` lists both kinds, under upstream's `source`.
+        $commands = array_column($this->data(['type' => 'get_commands'])['commands'], null, 'name');
+        $this->assertSame('extension', $commands['deploy']['source']);
+        $this->assertSame('deploy.php', $commands['deploy']['sourceInfo']['path']);
+        $this->assertSame('prompt', $commands['review']['source']);
+        $this->assertSame('user', $commands['review']['sourceInfo']['scope']);
 
         // A stored prompt is expanded, through `prompt` and through both queueing commands —
         // the three doors text comes in by, which is why the expansion is on all three. The
@@ -692,6 +822,9 @@ final class RpcModeTest extends TestCase
         $this->assertIsString($models[0]['id']);
         $this->assertIsInt($models[0]['contextWindow']);
         $this->assertIsBool($models[0]['reasoning']);
+        $this->assertIsString($models[0]['baseUrl']);
+        $this->assertIsArray($models[0]['input']);
+        $this->assertIsArray($models[0]['cost']);
     }
 
     public function testSetModelTakesAWholeIdAndAnswersWithTheModel(): void
@@ -817,6 +950,7 @@ final class RpcModeTest extends TestCase
         $this->assertSame('high', $first['thinkingLevel']);
         $this->assertSame('zzp-plain', $second['model']['id']);
         $this->assertSame('off', $second['thinkingLevel']);
+        $this->assertTrue($first['isScoped']);
     }
 
     public function testAModelThatDoesNotExistIsAnErrorNotASilentNoChange(): void
@@ -825,17 +959,18 @@ final class RpcModeTest extends TestCase
         $response = $this->response(['type' => 'set_model', 'modelId' => 'gpt-9']);
 
         $this->assertFalse($response['success']);
-        $this->assertStringContainsString('gpt-9', $response['error']);
+        $this->assertSame('Model not found: gpt-9', $response['error']);
         $this->assertSame('claude-test', $this->data(['type' => 'get_state'])['model']['id']);
     }
 
-    public function testAThinkingLevelAModelCannotReachIsRefused(): void
+    public function testAThinkingLevelAModelCannotReachIsClampedRatherThanRefused(): void
     {
+        // Upstream's `setThinkingLevel()` clamps: a model that cannot reason lands on off.
         $this->start(reasoning: false);
         $response = $this->response(['type' => 'set_thinking_level', 'level' => 'high']);
 
-        $this->assertFalse($response['success']);
-        $this->assertStringContainsString('cannot think', $response['error']);
+        $this->assertTrue($response['success']);
+        $this->assertSame('off', $this->data(['type' => 'get_state'])['thinkingLevel']);
     }
 
     public function testAThinkingLevelAModelCanReachIsTaken(): void
@@ -862,6 +997,20 @@ final class RpcModeTest extends TestCase
         $this->assertIsString($this->data(['type' => 'cycle_thinking_level'])['level']);
     }
 
+    public function testTheAvailableThinkingLevelsAreOffAloneForAModelThatCannotReason(): void
+    {
+        $this->start(reasoning: false);
+        $this->assertSame(['off'], $this->data(['type' => 'get_available_thinking_levels'])['levels']);
+    }
+
+    public function testAThinkingLevelChangeIsAnnounced(): void
+    {
+        $this->start(reasoning: true);
+        $this->send(['type' => 'set_thinking_level', 'level' => 'high']);
+
+        $this->assertSame([['type' => 'thinking_level_changed', 'level' => 'high']], $this->of('thinking_level_changed'));
+    }
+
     // ---- compaction --------------------------------------------------------------------
 
     public function testSetAutoCompactionIsRememberedInTheSettings(): void
@@ -885,28 +1034,81 @@ final class RpcModeTest extends TestCase
         $this->assertStringContainsString('too small', $response['error']);
     }
 
-    // ---- bash --------------------------------------------------------------------------
-
-    public function testBashAnswersWithTheExecutionAsTheCodecWritesIt(): void
+    public function testCompactAnswersUpstreamsCompactionResultAndTheEventsSayItHappened(): void
     {
-        $this->start();
-        $execution = $this->data(['type' => 'bash', 'command' => 'echo hello']);
+        $hooks = $this->hooks(['session_before_compact' => static fn (\Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent $event) => new \Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult(
+            compaction: new \Pig\CodingAgent\Session\CompactionResult('a hook wrote this', $event->preparation->firstKeptEntryId, 1234, details: ['readFiles' => ['a.php'], 'modifiedFiles' => []]),
+        )]);
+        $this->start(hooks: $hooks);
 
-        // `role`, not a `type` of its own: the codec gives every entry a role and a bash
-        // execution is one of them, which is what lets a host render the session file and
-        // this answer with the same code.
-        $this->assertSame('bashExecution', $execution['role']);
-        $this->assertSame('echo hello', $execution['command']);
-        $this->assertSame(0, $execution['exitCode']);
-        $this->assertStringContainsString('hello', $execution['output']);
+        $filler = str_repeat('a lot has been said about this already. ', 400);
+        $messages = [];
+        for ($turn = 0; $turn < 8; $turn++) {
+            $messages[] = new UserMessage("question {$turn}: {$filler}");
+            $messages[] = self::message("answer {$turn}: {$filler}");
+        }
+        $this->session->restore($messages);
+        $this->lines();
+
+        $this->send(['type' => 'compact']);
+        $lines = $this->lines();
+        $response = $this->of('response', $lines)[0];
+        $this->assertTrue($response['success'], $response['error'] ?? '');
+        $result = $response['data'];
+        $this->assertSame('a hook wrote this', $result['summary']);
+        $this->assertSame(1234, $result['tokensBefore']);
+        $this->assertIsString($result['firstKeptEntryId']);
+        $this->assertIsInt($result['estimatedTokensAfter']);
+        $this->assertSame(['a.php'], $result['details']['readFiles']);
+
+        // `compaction_start` / `compaction_end`, for `manual` too — `auto_compaction_*` was overflow only.
+        $this->assertSame([['type' => 'compaction_start', 'reason' => 'manual']], $this->of('compaction_start', $lines));
+        $end = $this->of('compaction_end', $lines)[0];
+        $this->assertSame('manual', $end['reason']);
+        $this->assertSame($result, $end['result']);
+        $this->assertFalse($end['aborted']);
+        $this->assertArrayNotHasKey('errorMessage', $end);
     }
 
-    public function testBashCanBeToldNotToJoinTheConversation(): void
+    public function testCompactionEventsAreUpstreams(): void
     {
         $this->start();
-        $this->send(['type' => 'bash', 'command' => 'echo hello', 'remember' => false]);
+        $this->assertSame(['type' => 'compaction_start', 'reason' => 'threshold'], RpcEvents::encode(new \Pig\CodingAgent\Session\CompactionStartEvent('threshold')));
 
-        $this->assertSame(0, $this->data(['type' => 'get_state'])['messageCount']);
+        $failed = RpcEvents::encode(new \Pig\CodingAgent\Session\CompactionEndEvent('overflow', null, false, false, 'Context overflow recovery failed: no'));
+        $this->assertSame(['type' => 'compaction_end', 'reason' => 'overflow', 'aborted' => false, 'willRetry' => false, 'errorMessage' => 'Context overflow recovery failed: no'], $failed);
+
+        $retry = RpcEvents::encode(new \Pig\CodingAgent\Session\RetryStartEvent(1, 3, 2.0, '503'));
+        $this->assertSame(['type' => 'auto_retry_start', 'attempt' => 1, 'maxAttempts' => 3, 'delayMs' => 2000, 'errorMessage' => '503'], $retry);
+        $this->assertSame(['type' => 'auto_retry_end', 'success' => false, 'attempt' => 3, 'finalError' => '503'], RpcEvents::encode(new \Pig\CodingAgent\Session\RetryEndEvent(false, 3, '503')));
+        $this->assertSame(['type' => 'auto_retry_end', 'success' => true, 'attempt' => 1], RpcEvents::encode(new \Pig\CodingAgent\Session\RetryEndEvent(true, 1)));
+    }
+
+    // ---- bash --------------------------------------------------------------------------
+
+    public function testBashAnswersWithUpstreamsBashResult(): void
+    {
+        $this->start();
+        $result = $this->data(['type' => 'bash', 'command' => 'echo hello']);
+
+        // `BashResult`: `{output, exitCode, cancelled, truncated, fullOutputPath?}`, and no more.
+        $this->assertSame(['output', 'exitCode', 'cancelled', 'truncated'], array_keys($result));
+        $this->assertSame(0, $result['exitCode']);
+        $this->assertStringContainsString('hello', $result['output']);
+    }
+
+    public function testBashExcludedFromContextIsKeptButNotSentToTheModel(): void
+    {
+        $this->start();
+        $this->send(['type' => 'bash', 'command' => 'echo hello', 'excludeFromContext' => true]);
+
+        // Upstream records it either way: in the session, flagged, and left out of the request.
+        $messages = $this->data(['type' => 'get_messages'])['messages'];
+        $last = end($messages);
+        $this->assertSame('bashExecution', $last['role']);
+        $this->assertTrue($last['excludeFromContext']);
+        $held = $this->session->messages();
+        $this->assertSame([], \Pig\CodingAgent\CodingAgent::toLlm([end($held)]));
     }
 
     /**
@@ -920,12 +1122,13 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'bash', 'id' => 'b1', 'command' => 'echo one; echo two']);
         $lines = $this->lines();
 
-        $events = $this->of('bash_output', $lines);
-        $this->assertNotEmpty($events, 'expected at least one bash_output event');
+        $events = $this->of('bash_execution_update', $lines);
+        $this->assertNotEmpty($events, 'expected at least one bash_execution_update event');
         foreach ($events as $event) {
             $this->assertSame('b1', $event['id'], 'the event names the command it belongs to');
         }
-        $this->assertStringContainsString('two', end($events)['output']);
+        // Deltas, which put together are the output.
+        $this->assertSame("one\ntwo\n", implode('', array_column($events, 'delta')));
 
         $response = $this->of('response', $lines)[0];
         $this->assertSame('b1', $response['id']);
@@ -941,19 +1144,37 @@ final class RpcModeTest extends TestCase
 
     // ---- the session -------------------------------------------------------------------
 
-    public function testGetBranchNamesEveryPointThatCouldBeGoneBackTo(): void
+    public function testGetEntriesListsEveryEntryAndSinceIsACursor(): void
     {
         $this->start(answers: ['one', 'two'], store: true);
         $this->send(['type' => 'prompt', 'message' => 'first']);
-        $this->send(['type' => 'prompt', 'message' => 'second']);
 
-        $points = $this->data(['type' => 'get_branch'])['points'];
-        // The system message the session was started with is an entry like any other, as it is
-        // upstream, and the first one.
-        $this->assertCount(5, $points);
-        $this->assertSame('system', $points[0]['message']['role']);
-        $this->assertIsString($points[1]['entryId']);
-        $this->assertSame('first', $points[1]['message']['content'][0]['text']);
+        $all = $this->data(['type' => 'get_entries']);
+        // The system message, the question and the answer; the header is not an entry.
+        $this->assertSame(['message', 'message', 'message'], array_column($all['entries'], 'type'));
+        $this->assertSame(end($all['entries'])['id'], $all['leafId']);
+
+        $this->send(['type' => 'prompt', 'message' => 'second']);
+        $since = $this->data(['type' => 'get_entries', 'since' => $all['leafId']]);
+        $this->assertCount(2, $since['entries']);
+        $this->assertSame('second', $since['entries'][0]['message']['content'][0]['text']);
+
+        $lost = $this->response(['type' => 'get_entries', 'since' => 'nope0000']);
+        $this->assertFalse($lost['success']);
+        $this->assertSame('Entry not found: nope0000', $lost['error']);
+    }
+
+    public function testGetTreeIsUpstreamsNodes(): void
+    {
+        $this->start(answers: ['one'], store: true);
+        $this->send(['type' => 'prompt', 'message' => 'first']);
+
+        $tree = $this->data(['type' => 'get_tree']);
+        $root = $tree['tree'][0];
+        $this->assertSame(['entry', 'children'], array_keys($root));
+        $this->assertNull($root['entry']['parentId']);
+        $this->assertSame($root['entry']['id'], $root['children'][0]['entry']['parentId']);
+        $this->assertSame($tree['leafId'], $root['children'][0]['children'][0]['entry']['id']);
     }
 
     public function testGoingBackMovesTheLeafAndSaysSo(): void
@@ -962,21 +1183,23 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'prompt', 'message' => 'first']);
         $this->send(['type' => 'prompt', 'message' => 'second']);
 
-        $points = $this->data(['type' => 'get_branch'])['points'];
+        $entries = $this->data(['type' => 'get_entries'])['entries'];
         // The first answer: behind it the system message and the first question
         // (upstream's `messageCount: session.messages.length` counts the system message).
-        $jump = $this->data(['type' => 'go_to', 'entryId' => $points[2]['entryId']]);
+        $jump = $this->data(['type' => 'navigate_tree', 'targetId' => $entries[2]['id']]);
 
-        $this->assertTrue($jump['moved']);
-        $this->assertFalse($jump['aborted']);
-        $this->assertNull($jump['summary']);
+        $this->assertSame(['cancelled' => false], $jump);
         $this->assertSame(3, $this->data(['type' => 'get_state'])['messageCount']);
+
+        // Back to something somebody said goes back to before it, and hands the words back.
+        $words = $this->data(['type' => 'navigate_tree', 'targetId' => $entries[1]['id']]);
+        $this->assertSame('first', $words['editorText']);
     }
 
     public function testGoingBackInASessionThatIsNotSavedIsAnError(): void
     {
         $this->start();
-        $response = $this->response(['type' => 'go_to', 'entryId' => 'nope']);
+        $response = $this->response(['type' => 'navigate_tree', 'targetId' => 'nope']);
 
         $this->assertFalse($response['success']);
         $this->assertStringContainsString('not being saved', $response['error']);
@@ -988,7 +1211,8 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'prompt', 'message' => 'first']);
         $first = $this->data(['type' => 'get_state'])['sessionFile'];
 
-        $second = $this->data(['type' => 'new_session'])['sessionFile'];
+        $this->assertSame(['cancelled' => false], $this->data(['type' => 'new_session', 'parentSession' => $first]));
+        $second = $this->data(['type' => 'get_state'])['sessionFile'];
         $this->assertNotSame($first, $second);
         $this->assertSame(0, $this->data(['type' => 'get_state'])['messageCount']);
 
@@ -1002,6 +1226,8 @@ final class RpcModeTest extends TestCase
         // Each file: its system message, the question and the answer.
         $this->assertCount(3, SessionManager::open($first)->messages());
         $this->assertCount(3, SessionManager::open($second)->messages());
+        // `parentSession`, written on the new header for a host tracking lineage.
+        $this->assertSame($first, SessionManager::open($second)->parentSession);
     }
 
     public function testForkingFromAMessageMovesToANewFileAndHandsItsWordsBack(): void
@@ -1056,10 +1282,11 @@ final class RpcModeTest extends TestCase
         $first = $this->data(['type' => 'get_state'])['sessionFile'];
 
         $this->send(['type' => 'new_session']);
-        $back = $this->data(['type' => 'switch_session', 'sessionPath' => $first]);
+        $this->assertSame(['cancelled' => false], $this->data(['type' => 'switch_session', 'sessionPath' => $first]));
 
-        $this->assertSame($first, $back['sessionFile']);
-        $this->assertSame(2, $back['messageCount']);
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertSame($first, $state['sessionFile']);
+        $this->assertSame(3, $state['messageCount']);
         // Behind the system message the conversation starts with.
         $this->assertSame('first', $this->data(['type' => 'get_messages'])['messages'][1]['content'][0]['text']);
     }
@@ -1069,7 +1296,7 @@ final class RpcModeTest extends TestCase
         $this->start(answers: ['one'], store: true);
         $this->send(['type' => 'prompt', 'message' => 'first']);
 
-        $path = $this->data(['type' => 'export'])['path'];
+        $path = $this->data(['type' => 'export_html'])['path'];
         $this->assertFileExists($path);
         $this->assertStringContainsString('pig-session-', $path);
         $this->assertStringContainsString('first', (string) file_get_contents($path));
@@ -1081,7 +1308,7 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'prompt', 'message' => 'first']);
 
         $wanted = $this->cwd . '/somewhere.html';
-        $this->assertSame($wanted, $this->data(['type' => 'export', 'outputPath' => $wanted])['path']);
+        $this->assertSame($wanted, $this->data(['type' => 'export_html', 'outputPath' => $wanted])['path']);
         $this->assertFileExists($wanted);
     }
 
@@ -1089,7 +1316,7 @@ final class RpcModeTest extends TestCase
     {
         $this->start();
 
-        $this->assertFalse($this->response(['type' => 'export'])['success']);
+        $this->assertFalse($this->response(['type' => 'export_html'])['success']);
     }
 
     // ---- hooks over the wire -----------------------------------------------------------
@@ -1115,7 +1342,7 @@ final class RpcModeTest extends TestCase
         ));
 
         $this->settle();
-        $request = $this->of('hook_ui_request')[0];
+        $request = $this->of('extension_ui_request')[0];
 
         $this->assertSame('confirm', $request['method']);
         $this->assertSame('Let it read?', $request['title']);
@@ -1123,7 +1350,7 @@ final class RpcModeTest extends TestCase
         $this->assertSame([], $asked, 'the handler must still be parked');
         $this->assertFalse($reading->isComplete());
 
-        $this->send(['type' => 'hook_ui_response', 'id' => $request['id'], 'confirmed' => true]);
+        $this->send(['type' => 'extension_ui_response', 'id' => $request['id'], 'confirmed' => true]);
 
         $this->assertSame([true], $asked);
         $this->assertTrue($reading->isComplete());
@@ -1148,8 +1375,8 @@ final class RpcModeTest extends TestCase
         ));
         $this->settle();
 
-        $id = $this->of('hook_ui_request')[0]['id'];
-        $this->send(['type' => 'hook_ui_response', 'id' => $id, 'cancelled' => true]);
+        $id = $this->of('extension_ui_request')[0]['id'];
+        $this->send(['type' => 'extension_ui_response', 'id' => $id, 'cancelled' => true]);
 
         // Walking away from the question is a no, which is what makes a `tool_call` guard
         // safe against a host that does not implement the dialogs at all.
@@ -1175,10 +1402,10 @@ final class RpcModeTest extends TestCase
         ));
         $this->settle();
 
-        $request = $this->of('hook_ui_request')[0];
+        $request = $this->of('extension_ui_request')[0];
         $this->assertSame(['a', 'b'], $request['options']);
 
-        $this->send(['type' => 'hook_ui_response', 'id' => $request['id'], 'value' => 'b']);
+        $this->send(['type' => 'extension_ui_response', 'id' => $request['id'], 'value' => 'b']);
         $this->assertSame(['b'], $chosen);
     }
 
@@ -1196,7 +1423,7 @@ final class RpcModeTest extends TestCase
         $this->settle();
 
         $this->assertSame('k', $key);
-        $this->assertSame([], $this->of('hook_error'));
+        $this->assertSame([], $this->of('extension_error'));
     }
 
     public function testTwoQuestionsAtOnceAreAnsweredByIdInAnyOrder(): void
@@ -1216,13 +1443,13 @@ final class RpcModeTest extends TestCase
         $this->start(hooks: $hooks);
         $this->settle();
 
-        $requests = $this->of('hook_ui_request');
+        $requests = $this->of('extension_ui_request');
         $this->assertCount(2, $requests);
 
         // Backwards on purpose: a host is not a keyboard, and there is no "one dialog at a
         // time" to make the order matter. The id is what pairs them up.
-        $this->send(['type' => 'hook_ui_response', 'id' => $requests[1]['id'], 'value' => 'B']);
-        $this->send(['type' => 'hook_ui_response', 'id' => $requests[0]['id'], 'value' => 'A']);
+        $this->send(['type' => 'extension_ui_response', 'id' => $requests[1]['id'], 'value' => 'B']);
+        $this->send(['type' => 'extension_ui_response', 'id' => $requests[0]['id'], 'value' => 'A']);
 
         $this->assertSame(['second' => 'B', 'first' => 'A'], $seen);
     }
@@ -1230,7 +1457,7 @@ final class RpcModeTest extends TestCase
     public function testAnAnswerNobodyIsWaitingForIsDropped(): void
     {
         $this->start();
-        $this->send(['type' => 'hook_ui_response', 'id' => 'ui-99', 'value' => 'x']);
+        $this->send(['type' => 'extension_ui_response', 'id' => 'ui-99', 'value' => 'x']);
 
         // Not a response either: a reply is not a command, so nothing is owed to it.
         $this->assertSame([], $this->lines());
@@ -1246,13 +1473,59 @@ final class RpcModeTest extends TestCase
         }]);
 
         $this->start(hooks: $hooks);
-        $requests = $this->of('hook_ui_request');
+        $requests = $this->of('extension_ui_request');
 
         $this->assertSame('notify', $requests[0]['method']);
-        $this->assertSame('warning', $requests[0]['level']);
-        $this->assertSame('set_status', $requests[1]['method']);
+        $this->assertSame('warning', $requests[0]['notifyType']);
+        $this->assertSame('setStatus', $requests[1]['method']);
         $this->assertSame('mine', $requests[1]['statusKey']);
-        $this->assertArrayNotHasKey('id', $requests[0], 'nothing to answer, so nothing to answer with');
+        // Upstream gives the told-not-asked ones an id too.
+        $this->assertIsString($requests[0]['id']);
+        $this->assertNotSame($requests[0]['id'], $requests[1]['id']);
+    }
+
+    public function testAWidgetAndATitleGoOutUnderUpstreamsNamesAndTheTuiOnlyOnesSayNothing(): void
+    {
+        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
+            $ctx->ui->setWidget('w', ['one line'], ['placement' => 'below']);
+            $ctx->ui->setTitle('pig');
+            $ctx->ui->setWorkingMessage('busy');
+            $ctx->ui->setWorkingVisible(false);
+            $ctx->ui->setHiddenThinkingLabel('hmm');
+            $ctx->ui->setToolsExpanded(true);
+            $ctx->ui->pasteToEditor('pasted');
+
+            return null;
+        }]);
+
+        $this->start(hooks: $hooks);
+        $requests = $this->of('extension_ui_request');
+
+        $this->assertSame(['setWidget', 'setTitle', 'set_editor_text'], array_column($requests, 'method'));
+        $this->assertSame('w', $requests[0]['widgetKey']);
+        $this->assertSame(['one line'], $requests[0]['widgetLines']);
+        $this->assertSame('belowEditor', $requests[0]['widgetPlacement']);
+        $this->assertSame('pasted', $requests[2]['text']);
+    }
+
+    public function testADialogWithATimeoutSaysSoAndAnswersNoWhenItRunsOut(): void
+    {
+        $answers = [];
+        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
+            Async::spawn(static function () use ($ctx, &$answers): void {
+                $answers[] = $ctx->ui->confirm('quick?', 'or not', 300);
+            });
+
+            return null;
+        }]);
+
+        $this->start(hooks: $hooks);
+        $this->settle(3);
+        $this->assertSame(300, $this->of('extension_ui_request')[0]['timeout']);
+        $this->assertSame([], $answers, 'still waiting');
+
+        $this->settle(200, 0.002);
+        $this->assertSame([false], $answers);
     }
 
     public function testCustomDrawsNothingBecauseThereIsNothingToDrawOn(): void
@@ -1268,7 +1541,7 @@ final class RpcModeTest extends TestCase
         $this->start(hooks: $hooks);
 
         $this->assertSame([null, ''], $drawn);
-        $this->assertSame([], $this->of('hook_ui_request'));
+        $this->assertSame([], $this->of('extension_ui_request'));
     }
 
     public function testAHookThatThrowsIsReportedOnTheWireRatherThanKillingTheSession(): void
@@ -1278,8 +1551,9 @@ final class RpcModeTest extends TestCase
         }]);
 
         $this->start(hooks: $hooks);
-        $errors = $this->of('hook_error');
+        $errors = $this->of('extension_error');
 
+        $this->assertSame('test.php', $errors[0]['extensionPath']);
         $this->assertSame('session_start', $errors[0]['event']);
         $this->assertStringContainsString('bad hook', $errors[0]['error']);
         $this->assertTrue($this->response(['type' => 'get_state'])['success']);
@@ -1299,7 +1573,7 @@ final class RpcModeTest extends TestCase
         $this->settle();
 
         $this->assertTrue($reading->isComplete());
-        $this->assertStringContainsString('Blocked', $this->of('hook_error')[0]['error'] ?? 'Blocked');
+        $this->assertStringContainsString('Blocked', $this->of('extension_error')[0]['error'] ?? 'Blocked');
     }
 
     // ---- custom tools ------------------------------------------------------------------
@@ -1351,6 +1625,30 @@ final class RpcModeTest extends TestCase
         $events = $this->of('session_info_changed');
         $this->assertCount(1, $events);
         $this->assertSame('自动总结标题测试', $events[0]['name']);
+    }
+
+    public function testSetSessionNameNamesItAndAnEmptyNameIsRefused(): void
+    {
+        $this->start(store: true);
+
+        $this->assertTrue($this->response(['type' => 'set_session_name', 'name' => '  my work  '])['success']);
+        $this->assertSame('my work', $this->data(['type' => 'get_state'])['sessionName']);
+
+        $empty = $this->response(['type' => 'set_session_name', 'name' => '   ']);
+        $this->assertFalse($empty['success']);
+        $this->assertSame('Session name cannot be empty', $empty['error']);
+    }
+
+    public function testAHooksEntryIsAnnouncedAsAppended(): void
+    {
+        $this->start(store: true);
+        $this->session->appendHookEntry('mine', ['n' => 1]);
+
+        $appended = $this->of('entry_appended');
+        $this->assertCount(1, $appended);
+        $this->assertSame('custom', $appended[0]['entry']['type']);
+        $this->assertSame('mine', $appended[0]['entry']['customType']);
+        $this->assertSame($this->session->store()?->leaf(), $appended[0]['entry']['id']);
     }
 
     public function testNewSessionStartsUnpersistedAndPersistsAfterFirstTurn(): void

@@ -258,10 +258,21 @@ final class SystemPrompt
             $guidelines[] = 'Use bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files';
         }
 
-        if ($has('bash') && !$has('grep') && !$has('find') && !$has('ls')) {
+        // Upstream's `buildRules()` names PowerShell when that is the shell the model has.
+        if ($has('powershell') && !$has('grep') && !$has('find') && !$has('ls')) {
+            $guidelines[] = $has('bash')
+                ? 'Use bash or PowerShell for file operations like listing, searching, and finding files'
+                : 'Use PowerShell for file operations like listing, searching, and finding files';
+        } elseif ($has('bash') && !$has('grep') && !$has('find') && !$has('ls')) {
             $guidelines[] = 'Use bash for file operations like ls, rg, find';
         } elseif ($has('bash') && ($has('grep') || $has('find') || $has('ls'))) {
             $guidelines[] = 'Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)';
+        }
+
+        // The shells' own `promptGuidelines`, which upstream gives while they expose the session's
+        // variables — always, for the built-ins.
+        if ($has('bash') || $has('powershell')) {
+            $guidelines[] = \Pig\CodingAgent\Tools\BashTool::SESSION_ENVIRONMENT_GUIDELINE;
         }
 
         if ($has('read') && $has('edit')) {

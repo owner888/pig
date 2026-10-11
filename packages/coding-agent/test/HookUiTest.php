@@ -288,6 +288,53 @@ final class HookUiTest extends TestCase
         $this->assertFalse($answer);
     }
 
+    public function testAConfirmWithATimeoutCountsDownAndRunsOutAsANo(): void
+    {
+        $answer = 'unanswered';
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->confirm('Run this?', 'rm -rf build', 2000);
+        });
+
+        // Upstream's `CountdownTimer`: the seconds left in the title, one fewer each second.
+        Loop::get()->tick();
+        $this->assertMatchesRegularExpression('/Run this\? — rm -rf build \([12]s\)/', $this->screen());
+        $this->assertSame('unanswered', $answer);
+
+        for ($tick = 0; $tick < 20 && $answer === 'unanswered'; $tick++) {
+            Loop::get()->tick();
+        }
+
+        $this->assertFalse($answer, 'out of time is the escape answer');
+        $this->assertStringNotContainsString('Run this?', $this->screen(), 'and the dialog is gone');
+    }
+
+    public function testAnAnswerBeforeTheTimeoutStopsTheClock(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->select('Which?', ['a', 'b'], 5000);
+        });
+
+        $this->settleWithoutTimers();
+        $this->assertStringContainsString('Which? (5s)', $this->screen());
+        $this->type("\r");
+        $this->settleWithoutTimers();
+
+        $this->assertSame('a', $answer);
+        $this->assertTrue(Loop::get()->isIdle(), 'no countdown left running');
+    }
+
+    /** A few ticks with a zero-wait timer in front of each, so a pending countdown is not waited out. */
+    private function settleWithoutTimers(): void
+    {
+        for ($tick = 0; $tick < 10; $tick++) {
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
+    }
+
     public function testEscapingAConfirmIsANo(): void
     {
         $answer = null;

@@ -47,6 +47,36 @@ final class ClipboardTest extends TestCase
         return [$editor, $clipboard];
     }
 
+    // ---- Termux ----------------------------------------------------------------------
+
+    public function testUnderTermuxTextGoesThroughTermuxApi(): void
+    {
+        // Upstream's `readClipboardText()` / `copyToClipboard()`: `termux-clipboard-get` and
+        // `termux-clipboard-set` when `TERMUX_VERSION` is set. Stand-ins on `PATH` that keep the
+        // clipboard in a file.
+        $store = $this->directory . '/clip';
+        file_put_contents($this->directory . '/termux-clipboard-set', "#!/bin/sh\ncat > " . escapeshellarg($store) . "\n");
+        file_put_contents($this->directory . '/termux-clipboard-get', "#!/bin/sh\ncat " . escapeshellarg($store) . "\n");
+        chmod($this->directory . '/termux-clipboard-set', 0o755);
+        chmod($this->directory . '/termux-clipboard-get', 0o755);
+
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $this->directory . ':' . $path);
+        putenv('TERMUX_VERSION=0.118.0');
+
+        try {
+            $clipboard = new \Pig\Tui\Clipboard\SystemClipboard('linux');
+
+            $this->assertTrue($clipboard->write('from pig'));
+            $this->assertSame('from pig', file_get_contents($store));
+            $this->assertSame('from pig', $clipboard->text());
+            $this->assertNull($clipboard->image());
+        } finally {
+            putenv('PATH=' . $path);
+            putenv('TERMUX_VERSION');
+        }
+    }
+
     // ---- running other programs ----------------------------------------------------
 
     public function testCaptureTakesWhatTheCommandPrinted(): void
@@ -212,7 +242,7 @@ final class ClipboardTest extends TestCase
     {
         [$editor] = $this->editor(image: new ClipboardImage('PNGBYTES', 'image/png'));
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         // A terminal cannot carry image bytes in a line of text, and the agent's tools
         // take paths, so the path is what goes into the prompt.
@@ -234,7 +264,7 @@ final class ClipboardTest extends TestCase
             $editor->handleInput("\x1b[D");
         }
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         $this->assertStringStartsWith('look at ', $editor->text());
         $this->assertStringEndsWith(' please', $editor->text());
@@ -247,7 +277,7 @@ final class ClipboardTest extends TestCase
     {
         [$editor] = $this->editor(text: 'some text');
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         $this->assertSame('some text', $editor->text());
     }
@@ -256,7 +286,7 @@ final class ClipboardTest extends TestCase
     {
         [$editor] = $this->editor(text: "one\r\ntwo");
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         // Through the paste path, so newlines become lines rather than literal escapes.
         $this->assertSame("one\ntwo", $editor->text());
@@ -266,7 +296,7 @@ final class ClipboardTest extends TestCase
     {
         [$editor] = $this->editor(text: 'ignored', image: new ClipboardImage('B', 'image/png'));
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         $this->assertStringNotContainsString('ignored', $editor->text());
 
@@ -277,7 +307,7 @@ final class ClipboardTest extends TestCase
     {
         [$editor] = $this->editor(text: 'fallback', image: new ClipboardImage('B', 'image/tiff'));
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         $this->assertSame('fallback', $editor->text());
     }
@@ -287,7 +317,7 @@ final class ClipboardTest extends TestCase
         [$editor] = $this->editor();
         $editor->setText('typed');
 
-        $editor->handleInput("\x16");
+        $editor->pasteFromClipboard();
 
         $this->assertSame('typed', $editor->text());
     }

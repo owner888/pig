@@ -26,14 +26,14 @@ final class ExtensionDiscoveryTest extends TestCase
         mkdir($this->piHomeDir, 0755, true);
         mkdir($this->cwd, 0755, true);
 
-        putenv("PIG_HOME={$this->homeDir}");
+        putenv("PIG_CODING_AGENT_DIR={$this->homeDir}");
         putenv("PI_HOME={$this->piHomeDir}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
 
         $this->removeDirectory($this->tempDir);

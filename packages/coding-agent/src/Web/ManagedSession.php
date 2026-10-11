@@ -21,7 +21,7 @@ final class ManagedSession
     /** @var array<int, array<string, true>> connectionId => [tabId => true] subscribers */
     public array $clients = [];
 
-    /** True between `agent_start` and `agent_end`: a turn in flight keeps an idle child alive. */
+    /** True between `agent_start` and `agent_settled`: a turn in flight keeps an idle child alive. */
     public bool $running = false;
 
     /** The loop timer that will stop this child for being idle, when one is armed. */

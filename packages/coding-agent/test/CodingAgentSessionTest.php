@@ -30,7 +30,7 @@ use Pig\Test\WithoutProviderKeys;
  * `CodingAgent::session()` — the startup, minus the terminal.
  *
  * Every case here was, until this class existed, two hundred lines in the middle of `bin/pig`: a
- * script that ends in `exit()` cannot be called twice, so which of `--model`, `PIG_MODEL`, the
+ * script that ends in `exit()` cannot be called twice, so which of `--model`, the
  * settings and the built-in default wins was only ever checked by running pig and looking. That is
  * also why nothing in `session()` writes to a stream — warnings come back on the result and
  * anything fatal throws.
@@ -58,12 +58,11 @@ final class CodingAgentSessionTest extends TestCase
         $this->cwd = $this->root . '/project';
         mkdir($this->home, 0o755, true);
         mkdir($this->cwd . '/.pig', 0o755, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
         // Pointed somewhere empty: `SessionManager` reads pi's directory too, and on a real machine
         // that is a real directory with real conversations in it.
         putenv('PI_HOME=' . $this->root . '/pi');
-        // And `HOME`, because `Skills::load()` reads `~/.claude/skills` and `~/.codex/skills` as
-        // well as pig's own. Without this the container these tests were written on contributed a
+        // And `HOME`, because `~/.agents/skills` is read as well as pig's own. Without this the container these tests were written on contributed a
         // real skill of its own to every assertion about which skills loaded — a test that passes
         // or fails on what the person running it happens to have installed.
         $this->realHome = getenv('HOME');
@@ -82,7 +81,7 @@ final class CodingAgentSessionTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
         putenv($this->realHome === false ? 'HOME' : 'HOME=' . $this->realHome);
 
@@ -117,19 +116,18 @@ final class CodingAgentSessionTest extends TestCase
     }
 
     /**
-     * @param array<string, string|false> $environment
-     * @param array<string, mixed>        $named
+     * @param array<string, mixed> $named
      */
     public function testAnUntrustedProjectWithResourcesSaysSoAndLoadsNoneOfThem(): void
     {
-        mkdir($this->cwd . '/.pig/commands', 0o755, true);
-        file_put_contents($this->cwd . '/.pig/commands/deploy.md', "ship it\n");
+        mkdir($this->cwd . '/.pig/prompts', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/prompts/deploy.md', "ship it\n");
 
         $trusted = $this->start();
         $this->assertSame(['deploy'], array_map(static fn ($c) => $c->name, $trusted->fileCommands));
         $this->assertSame([], $trusted->warnings);
 
-        $untrusted = $this->start([], ['projectTrusted' => false]);
+        $untrusted = $this->start(['projectTrusted' => false]);
         $this->assertSame([], $untrusted->fileCommands);
         $this->assertContains(\Pig\CodingAgent\ProjectTrust::warning(), $untrusted->warnings);
     }
@@ -183,7 +181,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testAnUntrustedProjectWithNothingToTrustIsNotWarnedAbout(): void
     {
-        $started = $this->start([], ['projectTrusted' => false]);
+        $started = $this->start(['projectTrusted' => false]);
 
         // Nothing under `.pig/` worth gating, so a warning would be about nothing.
         $this->assertSame([], $started->warnings);
@@ -209,7 +207,7 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertStringContainsString('AGENTS.md could not be read', implode(' | ', $started->warnings));
     }
 
-    private function start(array $environment = [], array $named = [], ?Auth $auth = null): StartedSession
+    private function start(array $named = [], ?Auth $auth = null): StartedSession
     {
         $settings = Settings::load($this->cwd, $this->home);
 
@@ -218,7 +216,6 @@ final class CodingAgentSessionTest extends TestCase
             $this->cwd,
             $settings,
             $auth ?? Auth::inMemory($settings),
-            'environment' => $environment,
             ...$named,
         ];
 
@@ -231,16 +228,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $started = $this->start(['PIG_MODEL' => 'plain'], ['model' => 'zzp-beta-20250101']);
-
-        $this->assertSame('zzp-beta-20250101', $started->model->id);
-    }
-
-    public function testTheEnvironmentComesNext(): void
-    {
-        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
-
-        $started = $this->start(['PIG_MODEL' => 'zzp-beta-20250101']);
+        $started = $this->start(['model' => 'zzp-beta-20250101']);
 
         $this->assertSame('zzp-beta-20250101', $started->model->id);
     }
@@ -260,7 +248,7 @@ final class CodingAgentSessionTest extends TestCase
         // was written from the start and read by nothing.
         $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'github-copilot']);
 
-        $started = $this->start(['GITHUB_TOKEN' => 'gho_x']);
+        $started = $this->start();
 
         $this->assertSame('zzp-alpha', $started->model->id);
         $this->assertSame('github-copilot', $started->model->provider);
@@ -271,7 +259,7 @@ final class CodingAgentSessionTest extends TestCase
         // Settings files written before the provider was read back have no `defaultProvider`.
         $this->writeSettings(['defaultModel' => 'zzp-alpha']);
 
-        $this->assertSame('anthropic', $this->start(['GITHUB_TOKEN' => 'gho_x'])->model->provider);
+        $this->assertSame('anthropic', $this->start()->model->provider);
     }
 
     public function testARememberedProviderThatHasGoneFallsBackRatherThanRefusingToStart(): void
@@ -295,16 +283,7 @@ final class CodingAgentSessionTest extends TestCase
         // Antigravity's because of something the last session saved.
         $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $this->assertSame('anthropic', $this->start([], ['model' => 'zzp-alpha'])->model->provider);
-        $this->assertSame('anthropic', $this->start(['PIG_MODEL' => 'zzp-alpha'])->model->provider);
-    }
-
-    public function testPiModelAndPiProviderAreSupportedAsEnvironmentFallbacks(): void
-    {
-        $started = $this->start(['PI_MODEL' => 'zzp-alpha', 'PI_PROVIDER' => 'github-copilot', 'PI_REASONING_LEVEL' => 'medium', 'GITHUB_TOKEN' => 'gho_x']);
-        $this->assertSame('github-copilot', $started->model->provider);
-        $this->assertSame('zzp-alpha', $started->model->id);
-        $this->assertSame(ThinkingLevel::Medium, $started->thinking);
+        $this->assertSame('anthropic', $this->start(['model' => 'zzp-alpha'])->model->provider);
     }
 
     public function testStartupThinkingLevelIsClampedForModelsThatRequireReasoning(): void
@@ -312,7 +291,7 @@ final class CodingAgentSessionTest extends TestCase
         // A model with `off => null` in its thinkingLevelMap cannot be turned off (every
         // Antigravity row is one). Startup must clamp `off` to a level it has rather than leaving
         // it `off`, or the first request is refused.
-        $started = $this->start(['GITHUB_TOKEN' => 'gho_x'], ['model' => 'github-copilot/zzp-thinker']);
+        $started = $this->start(['model' => 'github-copilot/zzp-thinker']);
         $this->assertNotSame(ThinkingLevel::Off, $started->thinking);
     }
 
@@ -324,28 +303,19 @@ final class CodingAgentSessionTest extends TestCase
         $default = $this->start();
         $this->assertSame(CodingAgent::DEFAULT_MODEL, $default->model->id);
         $this->assertSame('anthropic', $default->model->provider);
-        $this->assertSame(ThinkingLevel::Off, $default->thinking);
-    }
-
-    public function testAnEmptyEnvironmentVariableIsOffRatherThanAModelCalledNothing(): void
-    {
-        // `PIG_MODEL= pig …` is how somebody turns it off for one command.
-        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
-
-        $this->assertSame('zzp-alpha', $this->start(['PIG_MODEL' => ''])->model->id);
-        $this->assertSame('zzp-alpha', $this->start(['PIG_MODEL' => false])->model->id);
+        $this->assertSame(CodingAgent::DEFAULT_THINKING_LEVEL, $default->thinking);
     }
 
     public function testAPartOfTheNameIsEnough(): void
     {
-        $this->assertSame('zzp-alpha', $this->start([], ['model' => 'Probe Alpha'])->model->id);
+        $this->assertSame('zzp-alpha', $this->start(['model' => 'Probe Alpha'])->model->id);
     }
 
     public function testAModelThatMatchesNothingRefusesToStart(): void
     {
         $error = $this->assertThrows(
             CodingAgentError::class,
-            fn () => $this->start([], ['model' => 'gpt-9-ultra']),
+            fn () => $this->start(['model' => 'gpt-9-ultra']),
         );
 
         $this->assertStringContainsString("No model matches 'gpt-9-ultra'", $error->getMessage());
@@ -356,10 +326,10 @@ final class CodingAgentSessionTest extends TestCase
     {
         // `sonnet:veryhard` names a model and then a thinking level that is not one. The model was
         // understood, so the run goes on — with a sentence saying what was dropped.
-        $started = $this->start([], ['model' => 'zzp-alpha:veryhard']);
+        $started = $this->start(['model' => 'zzp-alpha:veryhard']);
 
         $this->assertSame('zzp-alpha', $started->model->id);
-        $this->assertSame(ThinkingLevel::Off, $started->thinking);
+        $this->assertSame(ThinkingLevel::clampedFor($started->model, CodingAgent::DEFAULT_THINKING_LEVEL), $started->thinking);
         $this->assertStringContainsString('veryhard', $started->warnings[0]);
     }
 
@@ -367,7 +337,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testThinkingFromTheFlagBeatsTheSuffixOnTheModel(): void
     {
-        $started = $this->start([], ['model' => 'zzp-alpha:low', 'thinking' => 'high']);
+        $started = $this->start(['model' => 'zzp-alpha:low', 'thinking' => 'high']);
 
         $this->assertSame(ThinkingLevel::High, $started->thinking);
     }
@@ -376,7 +346,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         $this->writeSettings(['defaultThinkingLevel' => 'minimal']);
 
-        $this->assertSame(ThinkingLevel::High, $this->start([], ['model' => 'sonnet:high'])->thinking);
+        $this->assertSame(ThinkingLevel::High, $this->start(['model' => 'sonnet:high'])->thinking);
     }
 
     public function testTheSettingIsUsedWhenNeitherSaysAnything(): void
@@ -386,24 +356,28 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame(ThinkingLevel::Medium, $this->start()->thinking);
     }
 
-    public function testNothingAnywhereIsOff(): void
+    public function testNothingAnywhereIsUpstreamsDefaultMedium(): void
     {
-        $this->assertSame(ThinkingLevel::Off, $this->start()->thinking);
+        // Upstream's `DEFAULT_THINKING_LEVEL` (`core/defaults.ts`), clamped to what the model has.
+        $started = $this->start();
+
+        $this->assertSame(ThinkingLevel::Medium, CodingAgent::DEFAULT_THINKING_LEVEL);
+        $this->assertSame(ThinkingLevel::clampedFor($started->model, ThinkingLevel::Medium), $started->thinking);
     }
 
     public function testAThinkingLevelThatIsNotOneClampsToSupportedLevel(): void
     {
         // A level that is not one reads as `off`, and a model that refuses `off` clamps that up
         // to the nearest level it has.
-        $this->assertSame(ThinkingLevel::Low, $this->start(['GITHUB_TOKEN' => 'gho_x'], ['model' => 'github-copilot/zzp-thinker', 'thinking' => 'very hard'])->thinking);
-        $this->assertSame(ThinkingLevel::Off, $this->start([], ['thinking' => 'very hard'])->thinking);
+        $this->assertSame(ThinkingLevel::Low, $this->start(['model' => 'github-copilot/zzp-thinker', 'thinking' => 'very hard'])->thinking);
+        $this->assertSame(ThinkingLevel::Off, $this->start(['thinking' => 'very hard'])->thinking);
     }
 
     public function testAModelThatCannotReasonIsClampedRatherThanRefused(): void
     {
         // A request that asks a non-reasoning model to think is one the provider rejects, and
         // nobody typing `--thinking high` meant to be told no.
-        $started = $this->start([], ['model' => 'zzp-plain', 'thinking' => 'high']);
+        $started = $this->start(['model' => 'zzp-plain', 'thinking' => 'high']);
 
         $this->assertFalse($started->model->reasoning);
         $this->assertSame(ThinkingLevel::Off, $started->thinking);
@@ -416,7 +390,7 @@ final class CodingAgentSessionTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
 
         try {
-            $started = $this->start([], ['models' => ['zzp-plain', 'zzp-alpha']]);
+            $started = $this->start(['models' => ['zzp-plain', 'zzp-alpha']]);
 
             // Upstream's rule: below `--model`, above the environment and the settings. So
             // `pig --models haiku,opus` opens on haiku, and ctrl+p reaches opus and nothing else.
@@ -436,7 +410,7 @@ final class CodingAgentSessionTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
 
         try {
-            $started = $this->start([], ['models' => ['zzp-plain'], 'model' => 'zzp-alpha']);
+            $started = $this->start(['models' => ['zzp-plain'], 'model' => 'zzp-alpha']);
 
             // The scope is still the scope — it is what ctrl+p walks — but what the session opens
             // on is the one model somebody named.
@@ -452,7 +426,7 @@ final class CodingAgentSessionTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
 
         try {
-            $started = $this->start([], ['models' => ['no-such-model-anywhere']]);
+            $started = $this->start(['models' => ['no-such-model-anywhere']]);
 
             $this->assertSame(['No model matches "no-such-model-anywhere".'], $started->warnings);
 
@@ -499,10 +473,10 @@ final class CodingAgentSessionTest extends TestCase
     {
         $this->writeSettings(['defaultThinkingLevel' => 'low', 'modelThinkingLevels' => ['anthropic/zzp-alpha' => 'high']]);
 
-        $this->assertSame(ThinkingLevel::High, $this->start([], ['model' => 'zzp-alpha'])->thinking);
-        $this->assertSame(ThinkingLevel::Medium, $this->start([], ['model' => 'zzp-alpha:medium'])->thinking);
-        $this->assertSame(ThinkingLevel::Off, $this->start([], ['model' => 'zzp-alpha:off'])->thinking, 'an off that was typed is not a default');
-        $this->assertSame(ThinkingLevel::Low, $this->start([], ['model' => 'zzp-beta-20250101'])->thinking);
+        $this->assertSame(ThinkingLevel::High, $this->start(['model' => 'zzp-alpha'])->thinking);
+        $this->assertSame(ThinkingLevel::Medium, $this->start(['model' => 'zzp-alpha:medium'])->thinking);
+        $this->assertSame(ThinkingLevel::Off, $this->start(['model' => 'zzp-alpha:off'])->thinking, 'an off that was typed is not a default');
+        $this->assertSame(ThinkingLevel::Low, $this->start(['model' => 'zzp-beta-20250101'])->thinking);
     }
 
     // ---- the key for this run ------------------------------------------------------------------
@@ -512,7 +486,7 @@ final class CodingAgentSessionTest extends TestCase
         $settings = Settings::load($this->cwd, $this->home);
         $auth = Auth::inMemory($settings);
 
-        $this->start([], ['model' => 'claude-sonnet-4-5', 'apiKey' => 'sk-typed'], $auth);
+        $this->start(['model' => 'claude-sonnet-4-5', 'apiKey' => 'sk-typed'], $auth);
 
         $this->assertSame('sk-typed', Async::run(static fn (): ?string => $auth->apiKey('anthropic')));
     }
@@ -521,12 +495,48 @@ final class CodingAgentSessionTest extends TestCase
     {
         // It would beat the environment and then fail as a missing key, which is the least
         // informative way this could go wrong.
-        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start([], ['apiKey' => '']));
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['apiKey' => '']));
 
         $this->assertStringContainsString('--api-key needs a key', $error->getMessage());
     }
 
+    public function testARuntimeKeyWithNoModelChosenIsUpstreamsError(): void
+    {
+        // A key for whichever default this run fell back on is a key for a provider nobody named.
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['apiKey' => 'sk-typed']));
+
+        $this->assertSame('--api-key requires a model to be specified via --model, --provider/--model, or --models', $error->getMessage());
+    }
+
+    // ---- --provider ------------------------------------------------------------------------------
+
+    public function testProviderNarrowsTheModelLookupToThatProvider(): void
+    {
+        // `zzp-alpha` is Anthropic's and resold by Copilot; `--provider` says which.
+        $started = $this->start(['model' => 'zzp-alpha', 'provider' => 'GitHub-Copilot']);
+
+        $this->assertSame('github-copilot', $started->model->provider);
+        $this->assertSame('github-copilot', $this->start(['model' => 'github-copilot/zzp-alpha', 'provider' => 'github-copilot'])->model->provider, 'a repeated prefix is tolerated');
+    }
+
+    public function testProviderWithoutAModelOrUnknownIsUpstreamsError(): void
+    {
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['provider' => 'openai']));
+        $this->assertSame('--provider requires --model (for example: --provider openai --model <pattern>)', $error->getMessage());
+
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['provider' => 'nope', 'model' => 'zzp-alpha']));
+        $this->assertSame('Unknown provider "nope". Use --list-models to see available providers/models.', $error->getMessage());
+    }
+
     // ---- which session file --------------------------------------------------------------------
+
+    public function testSessionIdNamesTheNewSession(): void
+    {
+        $started = $this->start(['sessionId' => 'my-run.1']);
+
+        $this->assertSame('my-run.1', $started->store?->id);
+        $this->assertStringEndsWith('_my-run.1.jsonl', (string) $started->store?->path);
+    }
 
     public function testANewSessionGetsAFileOnceThereIsAConversationInIt(): void
     {
@@ -549,7 +559,7 @@ final class CodingAgentSessionTest extends TestCase
         // Upstream's two lines, and they were missing: the model survived by luck because
         // `SessionManager::settings()` falls back to the last assistant message, but the thinking
         // level has no such fallback — so `--thinking high` came back as `off` after `--continue`.
-        $started = $this->start([], ['model' => 'zzp-alpha:high']);
+        $started = $this->start(['model' => 'zzp-alpha:high']);
         self::converse($started, 'hello');
 
         $recorded = $started->store?->settings() ?? [];
@@ -560,13 +570,13 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testAResumedSessionComesBackOnTheLevelItWasHadOn(): void
     {
-        $first = $this->start([], ['model' => 'zzp-alpha:high']);
+        $first = $this->start(['model' => 'zzp-alpha:high']);
         self::converse($first, 'earlier');
 
         // A key, because coming back to the model a conversation was on now needs one: without it
         // the file would be describing a model whose every turn fails, and `restoreSettings()`
         // falls back instead. The test below is that fallback.
-        $again = $this->start([], ['continue' => true, 'model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
+        $again = $this->start(['continue' => true, 'model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
 
         $this->assertSame('zzp-alpha', $again->session->agent->state->model?->id);
         $this->assertSame(ThinkingLevel::High, $again->session->agent->state->thinkingLevel);
@@ -576,10 +586,10 @@ final class CodingAgentSessionTest extends TestCase
     {
         // A key for the run that had the conversation, and none for the run that reopens it: an
         // afternoon on somebody's borrowed `--api-key`, picked up the next morning.
-        $first = $this->start([], ['model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
+        $first = $this->start(['model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
         self::converse($first, 'earlier');
 
-        $again = $this->start([], ['continue' => true]);
+        $again = $this->start(['continue' => true]);
 
         // Upstream's `restoreModelFromSession()` checks the key as well as the model and falls
         // back on either. Restoring it would mean a conversation that reopens onto a model whose
@@ -603,9 +613,9 @@ final class CodingAgentSessionTest extends TestCase
         ));
     }
 
-    public function testNoSaveMeansNoFileAtAll(): void
+    public function testNoSessionMeansNoFileAtAll(): void
     {
-        $started = $this->start([], ['save' => false]);
+        $started = $this->start(['save' => false]);
 
         $this->assertNull($started->store);
         $this->assertSame([], glob($this->home . '/sessions/*/*.jsonl') ?: []);
@@ -613,7 +623,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testContinueWithNothingToContinueRefuses(): void
     {
-        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start([], ['continue' => true]));
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['continue' => true]));
 
         $this->assertStringContainsString('No earlier session', $error->getMessage());
         $this->assertStringContainsString($this->cwd, $error->getMessage(), 'and where it looked');
@@ -624,7 +634,7 @@ final class CodingAgentSessionTest extends TestCase
         $first = $this->start();
         self::converse($first, 'the first thing said');
 
-        $again = $this->start([], ['continue' => true]);
+        $again = $this->start(['continue' => true]);
 
         $this->assertTrue($again->resumed);
         $this->assertSame($first->store?->path, $again->store?->path);
@@ -643,7 +653,7 @@ final class CodingAgentSessionTest extends TestCase
         self::converse($first, 'earlier');
         $path = (string) $first->store?->path;
 
-        $again = $this->start([], ['resume' => $path]);
+        $again = $this->start(['resume' => $path]);
 
         $this->assertTrue($again->resumed);
         $this->assertSame($path, $again->store?->path);
@@ -655,7 +665,7 @@ final class CodingAgentSessionTest extends TestCase
         self::converse($first, 'earlier');
         $id = (string) $first->store?->id;
 
-        $again = $this->start([], ['resume' => $id]);
+        $again = $this->start(['resume' => $id]);
 
         $this->assertTrue($again->resumed);
         $this->assertSame($first->store?->path, $again->store?->path);
@@ -665,18 +675,18 @@ final class CodingAgentSessionTest extends TestCase
     {
         $error = $this->assertThrows(
             CodingAgentError::class,
-            fn () => $this->start([], ['resume' => $this->root . '/not/a/file.jsonl']),
+            fn () => $this->start(['resume' => $this->root . '/not/a/file.jsonl']),
         );
 
         // The sentence the session manager came with, not a stack trace: the why is the useful half.
         $this->assertStringContainsString('not/a/file.jsonl', $error->getMessage());
     }
 
-    public function testNoSaveIgnoresAResumePathRatherThanFailingOnIt(): void
+    public function testNoSessionIgnoresAResumePathRatherThanFailingOnIt(): void
     {
-        // `--no-save` means this run writes nothing of the person's down, which includes not
+        // `--no-session` means this run writes nothing of the person's down, which includes not
         // appending to a file they asked to pick up.
-        $started = $this->start([], ['save' => false, 'resume' => $this->root . '/not/a/file.jsonl']);
+        $started = $this->start(['save' => false, 'resume' => $this->root . '/not/a/file.jsonl']);
 
         $this->assertNull($started->store);
         $this->assertFalse($started->resumed);
@@ -692,8 +702,8 @@ final class CodingAgentSessionTest extends TestCase
             $this->cwd . '/.pig/skills/greet/SKILL.md',
             "---\nname: greet\ndescription: Say hello to somebody\n---\n\nSay hello.\n",
         );
-        mkdir($this->cwd . '/.pig/commands', 0o755, true);
-        file_put_contents($this->cwd . '/.pig/commands/ship.md', "Ship it.\n");
+        mkdir($this->cwd . '/.pig/prompts', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/prompts/ship.md', "Ship it.\n");
 
         $started = $this->start();
 
@@ -717,76 +727,66 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertStringStartsWith('skill ', $started->warnings[0], 'and it says which kind of thing broke');
     }
 
-    public function testSkillsTurnedOffInTheSettingsLoadsNone(): void
+    public function testASkillTurnedOffByAPatternInTheSettingsIsNotLoaded(): void
     {
-        mkdir($this->cwd . '/.pig/skills/greet', 0o755, true);
-        file_put_contents(
-            $this->cwd . '/.pig/skills/greet/SKILL.md',
-            "---\nname: greet\ndescription: Say hello to somebody\n---\n\nSay hello.\n",
-        );
-        $this->writeSettings(['skills' => ['enabled' => false]]);
+        foreach (['home/skills/greet', 'project/.pig/skills/wave'] as $dir) {
+            mkdir($this->root . '/' . $dir, 0o755, true);
+            file_put_contents($this->root . "/{$dir}/SKILL.md", "---\nname: " . basename($dir) . "\ndescription: d\n---\n\nDo it.\n");
+        }
 
-        $this->assertSame([], $this->start()->skills);
+        // Each scope's patterns govern that scope's directory: the person's `!*` leaves the
+        // project's skills alone, as upstream's `projectOverrides` do.
+        $this->writeSettings(['skills' => ['!*']]);
+
+        $this->assertSame(['wave'], array_map(static fn (object $s): string => $s->name, $this->start()->skills));
     }
 
     /**
-     * One of upstream's five per-root switches, read from a settings file end to end.
-     *
-     * `Skills::load()` can switch any root off; which ones a settings file can *reach* is decided
-     * here, and this is the half that pins it — the loader's own tests prove the mechanism and say
-     * nothing about which keys are wired to it. Claude's user root is the case worth spending a
-     * test on: a large `~/.claude/skills` in front of the model is the reason somebody wants this.
+     * Upstream's directories, end to end: `~/.agents/skills` is read and another tool's folder is
+     * not — `~/.claude/skills` was pig's addition, gone with upstream's per-root switches.
      */
-    public function testAClaudeRootTurnedOffInTheSettingsIsNotRead(): void
+    public function testTheAgentsSkillsDirectoryIsReadAndClaudesIsNot(): void
     {
-        mkdir($this->root . '/user/.claude/skills/theirs', 0o755, true);
-        file_put_contents(
-            $this->root . '/user/.claude/skills/theirs/SKILL.md',
-            "---\nname: theirs\ndescription: A skill another tool owns\n---\n\nDo it.\n",
-        );
-        mkdir($this->cwd . '/.pig/skills/ours', 0o755, true);
-        file_put_contents(
-            $this->cwd . '/.pig/skills/ours/SKILL.md',
-            "---\nname: ours\ndescription: A skill of our own\n---\n\nDo it.\n",
-        );
+        foreach (['user/.claude/skills/theirs' => 'theirs', 'user/.agents/skills/shared' => 'shared'] as $dir => $name) {
+            mkdir($this->root . '/' . $dir, 0o755, true);
+            file_put_contents($this->root . "/{$dir}/SKILL.md", "---\nname: {$name}\ndescription: d\n---\n\nDo it.\n");
+        }
 
-        $names = static fn (object $started): array
-            => array_map(static fn (object $s): string => $s->name, $started->skills);
-
-        $both = $names($this->start());
-        sort($both);
-        $this->assertSame(['ours', 'theirs'], $both, 'both are there to begin with');
-
-        $this->writeSettings(['skills' => ['enableClaudeUser' => false]]);
-
-        // Theirs is gone and pig's own is untouched, which is the whole point of a per-root switch
-        // rather than `skills.enabled`.
-        $this->assertSame(['ours'], $names($this->start()));
+        $this->assertSame(['shared'], array_map(static fn (object $s): string => $s->name, $this->start()->skills));
     }
 
-    /** And pig's own root has no such key, so nothing in a settings file can turn it off. */
-    public function testThereIsNoSettingThatTurnsOffPigsOwnSkills(): void
+    public function testSystemMdReplacesTheDefaultPromptAndAppendSystemMdIsAdded(): void
     {
-        mkdir($this->home . '/skills/ours', 0o755, true);
-        file_put_contents(
-            $this->home . '/skills/ours/SKILL.md',
-            "---\nname: ours\ndescription: A skill of our own\n---\n\nDo it.\n",
-        );
+        file_put_contents($this->home . '/SYSTEM.md', 'You are a pirate.');
+        file_put_contents($this->cwd . '/.pig/APPEND_SYSTEM.md', 'Say arr.');
 
-        // Every one of upstream's five off at once. pig's own root is not one of them — upstream's
-        // `enablePiUser` names `~/.pi/agent/skills`, which is a different directory.
-        $this->writeSettings(['skills' => [
-            'enableCodexUser' => false,
-            'enableClaudeUser' => false,
-            'enableClaudeProject' => false,
-            'enablePiUser' => false,
-            'enablePiProject' => false,
-        ]]);
+        $prompt = $this->start()->session->systemPrompt();
 
-        $this->assertSame(
-            ['ours'],
-            array_map(static fn (object $s): string => $s->name, $this->start()->skills),
-        );
+        $this->assertStringStartsWith('You are a pirate.', $prompt);
+        $this->assertStringNotContainsString('You are an expert coding assistant', $prompt);
+        $this->assertStringContainsString('Say arr.', $prompt);
+
+        // Untrusted, the project's file is not read and the person's still is.
+        $untrusted = $this->start(['projectTrusted' => false])->session->systemPrompt();
+        $this->assertStringStartsWith('You are a pirate.', $untrusted);
+        $this->assertStringNotContainsString('Say arr.', $untrusted);
+    }
+
+    public function testTheRunsOwnSystemPromptIsUsedInsteadOfTheFiles(): void
+    {
+        file_put_contents($this->home . '/SYSTEM.md', 'You are a pirate.');
+        file_put_contents($this->home . '/APPEND_SYSTEM.md', 'Say arr.');
+        file_put_contents($this->root . '/extra.md', 'From a file.');
+
+        $prompt = $this->start([
+            'systemPrompt' => 'You are a lighthouse keeper.',
+            'appendSystemPrompt' => ['Mind the lamp.', $this->root . '/extra.md'],
+        ])->session->systemPrompt();
+
+        $this->assertStringStartsWith('You are a lighthouse keeper.', $prompt);
+        $this->assertStringContainsString("Mind the lamp.\n\nFrom a file.", $prompt);
+        $this->assertStringNotContainsString('pirate', $prompt);
+        $this->assertStringNotContainsString('Say arr.', $prompt);
     }
 
     public function testAHookThatDoesNotLoadIsAWarningAndNotAFailedStartup(): void
@@ -805,7 +805,7 @@ final class CodingAgentSessionTest extends TestCase
         mkdir($this->home . '/hooks', 0o755, true);
         file_put_contents($this->home . '/hooks/broken.php', "<?php\n\nreturn 'not a callable';\n");
 
-        $this->assertSame([], $this->start([], ['withHooks' => false])->warnings);
+        $this->assertSame([], $this->start(['withHooks' => false])->warnings);
     }
 
     public function testACustomToolThatDoesNotLoadIsAWarningToo(): void
@@ -837,14 +837,14 @@ final class CodingAgentSessionTest extends TestCase
 
         $this->assertSame([...ToolSet::CODING, 'mine'], $this->toolNames($this->start()));
         // Upstream's `noTools: "all"` and `"builtin"`.
-        $this->assertSame([], $this->toolNames($this->start([], ['noTools' => 'all'])));
-        $this->assertSame(['mine'], $this->toolNames($this->start([], ['noTools' => 'builtin'])));
-        $this->assertSame([], $this->toolNames($this->start([], ['noTools' => 'builtin', 'readOnly' => true, 'withTools' => false])));
+        $this->assertSame([], $this->toolNames($this->start(['noTools' => 'all'])));
+        $this->assertSame(['mine'], $this->toolNames($this->start(['noTools' => 'builtin'])));
+        $this->assertSame([], $this->toolNames($this->start(['noTools' => 'builtin', 'readOnly' => true, 'withTools' => false])));
         // Modifiers change the empty default: under `all` they are the whole set.
-        $this->assertSame(['read'], $this->toolNames($this->start([], ['noTools' => 'all', 'tools' => ['+read']])));
-        $this->assertSame(['read', 'mine'], $this->toolNames($this->start([], ['noTools' => 'builtin', 'tools' => ['+read']])));
+        $this->assertSame(['read'], $this->toolNames($this->start(['noTools' => 'all', 'tools' => ['+read']])));
+        $this->assertSame(['read', 'mine'], $this->toolNames($this->start(['noTools' => 'builtin', 'tools' => ['+read']])));
         // A named set wins over both.
-        $this->assertSame(['bash'], $this->toolNames($this->start([], ['noTools' => 'all', 'tools' => ['bash']])));
+        $this->assertSame(['bash'], $this->toolNames($this->start(['noTools' => 'all', 'tools' => ['bash']])));
     }
 
     public function testSkillAndPromptTemplatePathsLoadEvenWithTheirDiscoveryOff(): void
@@ -856,7 +856,7 @@ final class CodingAgentSessionTest extends TestCase
         file_put_contents($this->cwd . '/prompts/ship.md', "Ship it.\n");
         file_put_contents($this->cwd . '/greet.md', "Hello \$1\n");
 
-        $started = $this->start([], [
+        $started = $this->start([
             'withSkills' => false,
             'withPromptTemplates' => false,
             'skillPaths' => [$this->cwd . '/extra', $this->cwd . '/tidy.md', $this->cwd . '/nowhere'],
@@ -865,16 +865,16 @@ final class CodingAgentSessionTest extends TestCase
 
         $this->assertSame(['review', 'tidy'], array_map(static fn (object $s): string => $s->name, $started->skills));
         $this->assertSame(['ship', 'greet'], array_map(static fn (object $c): string => $c->name, $started->fileCommands));
-        $this->assertContains("Skill path does not exist: {$this->cwd}/nowhere", $started->warnings);
+        $this->assertContains("skill {$this->cwd}/nowhere: skill path does not exist", $started->warnings);
     }
 
     public function testNoPromptTemplatesAndNoContextFilesLeaveThemOut(): void
     {
         file_put_contents($this->cwd . '/AGENTS.md', 'Use tabs, obviously.');
-        mkdir($this->cwd . '/.pig/commands', 0o755, true);
-        file_put_contents($this->cwd . '/.pig/commands/ship.md', "Ship it.\n");
+        mkdir($this->cwd . '/.pig/prompts', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/prompts/ship.md', "Ship it.\n");
 
-        $started = $this->start([], ['withPromptTemplates' => false, 'withContextFiles' => false]);
+        $started = $this->start(['withPromptTemplates' => false, 'withContextFiles' => false]);
 
         $this->assertSame([], $started->fileCommands);
         $this->assertSame([], $started->contextFiles);
@@ -887,7 +887,7 @@ final class CodingAgentSessionTest extends TestCase
         mkdir($this->home . '/tools/broken', 0o755, true);
         file_put_contents($this->home . '/tools/broken/index.php', "<?php\n\nreturn 'not a callable';\n");
 
-        $this->assertSame([], $this->start([], ['withTools' => false])->warnings);
+        $this->assertSame([], $this->start(['withTools' => false])->warnings);
     }
 
     public function testNoSkillsLoadsNoneOfThem(): void
@@ -902,7 +902,7 @@ final class CodingAgentSessionTest extends TestCase
 
         // Its two siblings have had `--no-hooks` and `--no-tool-files` from the start, and skills had a
         // settings switch and no flag — which reads as "this one cannot be turned off for one run".
-        $this->assertSame([], $this->start([], ['withSkills' => false])->skills);
+        $this->assertSame([], $this->start(['withSkills' => false])->skills);
     }
 
     // ---- the agent it built --------------------------------------------------------------------
@@ -911,7 +911,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         file_put_contents($this->cwd . '/AGENTS.md', 'Use tabs, obviously.');
 
-        $started = $this->start([], ['model' => 'zzp-alpha:high']);
+        $started = $this->start(['model' => 'zzp-alpha:high']);
         $agent = $started->session->agent;
 
         $this->assertSame('zzp-alpha', $agent->state->model?->id);
@@ -928,7 +928,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         $names = array_map(
             static fn (object $t): string => $t->definition()->name,
-            $this->start([], ['readOnly' => true])->session->agent->state->tools,
+            $this->start(['readOnly' => true])->session->agent->state->tools,
         );
 
         foreach (ToolSet::READ_ONLY as $expected) {
@@ -952,14 +952,14 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testToolsNamesTheSetOutright(): void
     {
-        $names = $this->toolNames($this->start([], ['tools' => ['read', 'grep', 'find', 'ls']]));
+        $names = $this->toolNames($this->start(['tools' => ['read', 'grep', 'find', 'ls']]));
 
         $this->assertSame(['read', 'grep', 'find', 'ls'], $names);
     }
 
     public function testReadOnlyStillSwapsTheWholeSetRatherThanNarrowingIt(): void
     {
-        $this->assertSame(ToolSet::READ_ONLY, $this->toolNames($this->start([], ['readOnly' => true])));
+        $this->assertSame(ToolSet::READ_ONLY, $this->toolNames($this->start(['readOnly' => true])));
     }
 
     public function testDefaultToolsChangesTheFour(): void
@@ -973,13 +973,13 @@ final class CodingAgentSessionTest extends TestCase
     {
         $this->writeSettings(['defaultTools' => ['read', 'bash']]);
 
-        $this->assertSame(['read', 'bash', 'ls'], $this->toolNames($this->start([], ['tools' => ['+ls']])));
-        $this->assertSame(['read'], $this->toolNames($this->start([], ['tools' => ['-bash']])));
+        $this->assertSame(['read', 'bash', 'ls'], $this->toolNames($this->start(['tools' => ['+ls']])));
+        $this->assertSame(['read'], $this->toolNames($this->start(['tools' => ['-bash']])));
     }
 
     public function testAToolsListMixingNamesAndModifiersIsRefusedByName(): void
     {
-        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start([], ['tools' => ['read', '+grep']]));
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['tools' => ['read', '+grep']]));
 
         $this->assertSame('Invalid tools option: tool names cannot be mixed with +name or -name entries', $error->getMessage());
     }
@@ -1025,7 +1025,7 @@ final class CodingAgentSessionTest extends TestCase
         )]);
 
         try {
-            $this->assertSame('local/zzz-coder', $this->start([], ['model' => 'zzz-coder'])->model->id);
+            $this->assertSame('local/zzz-coder', $this->start(['model' => 'zzz-coder'])->model->id);
         } finally {
             Models::forgetRegistered();
         }
@@ -1060,7 +1060,7 @@ PHP);
         $this->assertArrayHasKey('bundled_cmd', $commands);
 
         // Disabling withExtensions
-        $disabled = $this->start([], ['withExtensions' => false]);
+        $disabled = $this->start(['withExtensions' => false]);
         $this->assertNotContains('bundled_tool', $disabled->customTools->names());
         [$disabledCommands] = $disabled->hooks->commands();
         $this->assertArrayNotHasKey('bundled_cmd', $disabledCommands);
@@ -1096,7 +1096,7 @@ PHP);
         $this->writeAnExtensionWithThreeTools();
 
         // pi's `--tools read,codemode,'mcp__radius__*'` shape: an exact built-in and a pattern.
-        $names = $this->toolNames($this->start([], ['tools' => ['read', 'zoo_*']]));
+        $names = $this->toolNames($this->start(['tools' => ['read', 'zoo_*']]));
 
         // `mcp__gh__issues` survives: an MCP tool is kept unless an entry starts with `mcp__`,
         // because `--tools read` means "that built-in" and not "and no MCP servers either".
@@ -1107,7 +1107,7 @@ PHP);
     {
         $this->writeAnExtensionWithThreeTools();
 
-        $names = $this->toolNames($this->start([], ['tools' => ['read', 'mcp__other__*']]));
+        $names = $this->toolNames($this->start(['tools' => ['read', 'mcp__other__*']]));
 
         // Now an entry asked about MCP tools, so the ones it does not match go.
         $this->assertSame(['read'], $names);
@@ -1117,7 +1117,7 @@ PHP);
     {
         $this->writeAnExtensionWithThreeTools();
 
-        $names = $this->toolNames($this->start([], ['excludeTools' => ['bash', 'zoo_clean', 'mcp__*']]));
+        $names = $this->toolNames($this->start(['excludeTools' => ['bash', 'zoo_clean', 'mcp__*']]));
 
         // The default four less `bash`, the extension's tools less the two named — a denylist
         // means what it names, MCP exception or not.
@@ -1130,7 +1130,7 @@ PHP);
 
         $problem = $this->assertThrows(
             CodingAgentError::class,
-            fn (): StartedSession => $this->start([], ['tools' => ['read', 'raed']]),
+            fn (): StartedSession => $this->start(['tools' => ['read', 'raed']]),
         );
 
         // Said with the list, which now has the custom tools in it too: that is why the check
@@ -1143,7 +1143,7 @@ PHP);
     {
         $problem = $this->assertThrows(
             CodingAgentError::class,
-            fn (): StartedSession => $this->start([], ['tools' => ['nope_*']]),
+            fn (): StartedSession => $this->start(['tools' => ['nope_*']]),
         );
 
         $this->assertStringContainsString("No tool called 'nope_*'", $problem->getMessage());
@@ -1154,7 +1154,7 @@ PHP);
         $this->writeAnExtensionWithThreeTools();
 
         // `--no-mcp` is this with `pig-mcp`; the mechanism is by name, so the fixture's name does.
-        $started = $this->start([], ['disabledExtensions' => ['zoo']]);
+        $started = $this->start(['disabledExtensions' => ['zoo']]);
 
         $this->assertNotContains('zoo_feed', $started->customTools->names());
         $this->assertSame([], array_filter($started->extensions, static fn ($ext): bool => $ext->name === 'zoo'));

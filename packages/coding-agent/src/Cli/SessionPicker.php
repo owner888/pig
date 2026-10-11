@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Cli;
 
+use Closure;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Session\SessionInfo;
-use Pig\CodingAgent\Theme\Themes;
-use Pig\Tui\Components\SelectItem;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\Tui\Components\Spacer;
-use Pig\Tui\Components\Text;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Terminal;
 use Pig\Tui\TuiMainScreen;
@@ -27,10 +26,9 @@ use Pig\Tui\TuiMainScreen;
  * return value and the session is opened by the same code that opens a `--resume <path>`.
  *
  * Ported from upstream's `cli/session-picker.ts`; `SessionList` beside it is the component
- * half, from `components/session-selector.ts`, and is where the searching happens. Upstream's
- * has a third key — delete — which is not here: a session file is a record of something that
- * happened, and a list you navigate with the arrow keys is the wrong place to put an
- * irreversible key.
+ * half, from `components/session-selector.ts`, and is where the searching, sorting, scope and
+ * delete keys live. Upstream's `--resume` picker has no rename (`showRenameHint: false`, no
+ * `renameSession`), and neither has this one.
  *
  * **Three answers, not two**, which is why this returns a `SessionChoice`: upstream's picker takes
  * three callbacks and the third one exits the process.
@@ -44,8 +42,10 @@ final class SessionPicker
      * Ask, and answer with the path, or with what was meant instead — see `SessionChoice`.
      *
      * @param list<SessionInfo> $sessions newest first, as `SessionManager::listFor()` gives them
+     * @param (Closure(): list<SessionInfo>)|null $loadAll what Tab switches to — upstream's
+     *        `SessionManager.listAll(sessionDir)`; every project's sessions when not given
      */
-    public static function ask(array $sessions, ?Terminal $terminal = null): SessionChoice
+    public static function ask(array $sessions, ?Terminal $terminal = null, ?Closure $loadAll = null): SessionChoice
     {
         if ($sessions === []) {
             return new SessionChoice();
@@ -55,7 +55,11 @@ final class SessionPicker
         $chosen = null;
         $quit = false;
 
-        $list = new SessionList($sessions, self::VISIBLE);
+        $list = new SessionList(
+            $sessions,
+            self::VISIBLE,
+            $loadAll ?? static fn (): array => SessionManager::listAll(PHP_INT_MAX)[0],
+        );
 
         // Both handlers stop the *loop* and nothing else. Stopping the terminal here as
         // well would stop it twice — once from the handler and once on the way out — and
@@ -76,12 +80,9 @@ final class SessionPicker
             Loop::get()->stop();
         });
 
-        $tui->addChild(new Spacer(1));
-        $tui->addChild(new Text(
-            Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to start a new one'),
-            1,
-            0,
-        ));
+        // `app.session.delete` (ctrl+d), confirmed in the list — upstream's resume picker has it too.
+        $list->setDeleteHandler(SessionList::deleteSessionFile(...));
+
         $tui->addChild(new Spacer(1));
         $tui->addChild($list);
         $tui->setFocus($list);
@@ -98,29 +99,5 @@ final class SessionPicker
         $tui->stop();
 
         return new SessionChoice($chosen, $quit);
-    }
-
-    /**
-     * One line per session: what was said first, and when.
-     *
-     * The opening line rather than the id, because the id is six random bytes and the thing
-     * anyone remembers about a conversation is how it started.
-     *
-     * @param list<SessionInfo> $sessions
-     * @return list<SelectItem>
-     */
-    public static function items(array $sessions): array
-    {
-        $items = [];
-
-        foreach ($sessions as $index => $info) {
-            $items[] = new SelectItem(
-                (string) $index,
-                $info->opening === '' ? '(nothing was said)' : $info->opening,
-                $info->when() . ' · ' . $info->messages . ' messages',
-            );
-        }
-
-        return $items;
     }
 }

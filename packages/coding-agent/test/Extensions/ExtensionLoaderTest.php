@@ -29,13 +29,13 @@ final class ExtensionLoaderTest extends TestCase
         mkdir($this->cwd . '/.pig/extensions', 0755, true);
         mkdir($this->cwd . '/extensions', 0755, true);
 
-        putenv("PIG_HOME={$this->homeDir}");
+        putenv("PIG_CODING_AGENT_DIR={$this->homeDir}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         $this->removeDirectory($this->tempDir);
     }
 

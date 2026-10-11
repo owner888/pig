@@ -38,14 +38,14 @@ final class ToolInstallerTest extends ToolTestCase
 
         $this->home = $this->cwd . '/pig-home';
         mkdir($this->home . '/bin', 0o755, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
         ExternalTool::forget();
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PIG_OFFLINE');
         ExternalTool::forget();
         parent::tearDown();

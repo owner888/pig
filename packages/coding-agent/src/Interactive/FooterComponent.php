@@ -68,11 +68,23 @@ final class FooterComponent implements Component
      *        billed — and that every model in the table counts, which is what `Models::all()` says
      */
     public function __construct(
-        private readonly AgentSession $session,
-        private readonly string $cwd,
-        private readonly ?Settings $settings = null,
+        private AgentSession $session,
+        private string $cwd,
+        private ?Settings $settings = null,
         private readonly ?Auth $auth = null,
     ) {
+    }
+
+    /**
+     * The session a runtime factory built for another directory, in place of this one's —
+     * `InteractiveMode::rebind()`: the footer upstream reads off `runtimeHost.session` each frame.
+     */
+    public function rebind(AgentSession $session, string $cwd, ?Settings $settings): void
+    {
+        $this->session = $session;
+        $this->cwd = $cwd;
+        $this->settings = $settings;
+        $this->invalidate();
     }
 
     #[\Override]

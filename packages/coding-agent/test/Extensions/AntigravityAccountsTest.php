@@ -294,7 +294,7 @@ final class AntigravityAccountsTest extends TestCase
 
     public function testASessionThatWritesNothingDownReadsNoStore(): void
     {
-        // `--no-save` and `Auth::inMemory()` both come through here with no path.
+        // `--no-session` and `Auth::inMemory()` both come through here with no path.
         $accounts = Accounts::beside(null);
 
         self::assertNull($accounts->path());

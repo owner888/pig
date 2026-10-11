@@ -27,6 +27,10 @@ final readonly class Tool
      *        TypeBox made, so it does something for the built-ins and nothing for a plain JSON
      *        schema (an extension's, an MCP server's). `Agent\ToolArguments` reads this to take the
      *        same path. Never sent to a provider.
+     * @param array<string, mixed>|null $outputSchema upstream's `AgentTool.outputSchema`: the JSON
+     *        Schema of the tool's `AgentToolResult::$structuredContent`. Codemode declares a tool
+     *        that has one as resolving to that shape rather than to a string, and hands a script
+     *        the structured value. Never sent to a provider.
      */
     public function __construct(
         public string $name,
@@ -34,6 +38,7 @@ final readonly class Tool
         public array $parameters,
         public array|false|null $constrainedSampling = null,
         public bool $typeBox = false,
+        public ?array $outputSchema = null,
     ) {
     }
 }

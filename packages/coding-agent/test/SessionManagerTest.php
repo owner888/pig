@@ -35,7 +35,7 @@ final class SessionManagerTest extends TestCase
     protected function setUp(): void
     {
         $this->home = sys_get_temp_dir() . '/pig-sessions-' . bin2hex(random_bytes(4));
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
 
         // `listFor()` reads pi's directory too, and on a real machine that is a real
         // directory with real conversations in it. Pointed somewhere empty so a test
@@ -46,7 +46,7 @@ final class SessionManagerTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         putenv('PI_HOME');
         SessionManager::useSessionDir(null);
         self::remove($this->home);
@@ -1258,6 +1258,77 @@ final class SessionManagerTest extends TestCase
         // 5. Unknown session ID returns null
         $this->assertNull(SessionManager::find($cwdA, 'non-existent-session-id'));
         $this->assertNull(SessionManager::find($cwdA, ''));
+    }
+
+    public function testLocateSaysWhenTheMatchIsAnotherProjects(): void
+    {
+        // What `--session` needs to offer a fork rather than open another project's conversation.
+        $cwdA = $this->cwd() . '/project-a';
+        $cwdB = $this->cwd() . '/project-b';
+        $sessionA = SessionManager::create($cwdA);
+        $this->converse($sessionA, 'hello in project A');
+        $sessionB = SessionManager::create($cwdB);
+        $this->converse($sessionB, 'hello in project B');
+
+        $this->assertNull(SessionManager::locate($cwdA, $sessionA->id)?->elsewhere, 'this project\'s');
+        $this->assertSame($cwdB, SessionManager::locate($cwdA, $sessionB->id)?->elsewhere);
+        $this->assertNull(SessionManager::locate($cwdA, $sessionB->path)?->elsewhere, 'a path that was typed is never offered');
+    }
+
+    public function testFindByIdIsExactAndThisProjectsOnly(): void
+    {
+        $cwdA = $this->cwd() . '/project-a';
+        $sessionA = SessionManager::create($cwdA);
+        $this->converse($sessionA, 'hello');
+        $sessionB = SessionManager::create($this->cwd() . '/project-b');
+        $this->converse($sessionB, 'hello');
+
+        $this->assertSame($sessionA->path, SessionManager::findById($cwdA, $sessionA->id));
+        $this->assertNull(SessionManager::findById($cwdA, substr($sessionA->id, 0, 8)), 'no prefix');
+        $this->assertNull(SessionManager::findById($cwdA, $sessionB->id), 'no other project\'s');
+    }
+
+    public function testASessionIdIsUpstreamsShape(): void
+    {
+        SessionManager::assertValidSessionId('a');
+        SessionManager::assertValidSessionId('my-run_1.2');
+
+        foreach (['', '-a', 'a-', 'a/b', 'a b', '.a'] as $bad) {
+            try {
+                SessionManager::assertValidSessionId($bad);
+                $this->fail("'{$bad}' was accepted");
+            } catch (\Pig\Agent\AgentError $error) {
+                $this->assertStringContainsString('Session id must be non-empty', $error->getMessage());
+            }
+        }
+
+        $this->assertSame('chosen-1', SessionManager::create($this->cwd(), id: 'chosen-1')->id);
+    }
+
+    public function testForkFromCopiesEveryEntryUnderANewHeaderForThisProject(): void
+    {
+        // Upstream's `forkFrom()`, which `--fork` and the cross-project `--session` offer use.
+        $source = SessionManager::create($this->cwd() . '/elsewhere');
+        $this->converse($source, 'first');
+        $this->converse($source, 'second');
+
+        $here = $this->cwd() . '/here';
+        mkdir($here, 0o755, true);
+        $fork = SessionManager::forkFrom($source->path, $here, 'forked-1');
+
+        $this->assertSame('forked-1', $fork->id);
+        $this->assertSame(realpath($here), $fork->cwd);
+        $this->assertSame(realpath($source->path), $fork->parentSession);
+        $this->assertFileExists($fork->path, 'written at once');
+        $this->assertStringStartsWith(SessionManager::directory(realpath($here)), $fork->path);
+
+        $sourceLines = file($source->path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $forkLines = file($fork->path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $this->assertSame(array_slice($sourceLines, 1), array_slice($forkLines, 1), 'the entries, line for line');
+        $this->assertCount(count($source->messages()), $fork->messages());
+
+        $this->expectException(\Pig\Agent\AgentError::class);
+        SessionManager::forkFrom($this->cwd() . '/nothing.jsonl', $here);
     }
 
     public function testCleanSessionNameStripsTelemetrySuffixAndStandaloneMetrics(): void

@@ -5,74 +5,82 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Tools;
 
 use Closure;
-use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
-use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 
 /**
- * Run a shell command.
+ * The `bash` tool — upstream's `createBashTool(cwd, options)`. What it does is `ShellTool`'s, which
+ * `powershell` shares; this is the bash half of upstream's `ShellToolConfig` and the options an
+ * extension or an SDK caller builds one with:
  *
- * The one tool that has to cooperate with the event loop. A build takes minutes, and for
- * every second of it the UI has to keep drawing, the keyboard has to keep working, and
- * Escape has to actually stop the thing. So the pipes are watched by the loop and the
- * coroutine suspends — the same `select()` that waits on the model's socket waits on
- * this command's output. Reading it with a blocking loop would freeze the screen and
- * make Escape arrive after the command had already finished.
+ * ```php
+ * $bash = new BashTool($cwd,
+ *     spawnHook: fn (SpawnContext $c): SpawnContext => $c->withEnv([...$c->env, 'CI' => '1']),
+ *     sessionEnvironment: fn (): SessionEnvironment => SessionEnvironment::of($ctx->session),
+ * );
+ * ```
  *
- * It follows that `execute()` must be called inside `Async::run()`, like everything else
- * here that waits for something.
- *
- * Output is tail-truncated, not head: the interesting part of a failed build is the error
- * at the bottom, and the first nine hundred lines are a log.
+ * Upstream's `operations` (a replacement for local execution, for running over SSH) is not here:
+ * a pig command is a process the event loop watches, and a `spawnHook` that rewrites the command
+ * into `ssh host …` does what most of those wanted.
  */
-final class BashTool implements AgentTool
+final readonly class BashTool implements AgentTool
 {
+    /**
+     * Upstream's `bashToolSystemPromptContribution.guidelines` (and `powershell`'s), which the system
+     * prompt carries for a built-in shell tool — the built-ins always expose the session variables.
+     */
+    public const string SESSION_ENVIRONMENT_GUIDELINE = 'You can inspect PIG_* environment variables for current model and session details.';
+
+    private ShellTool $tool;
+
     /**
      * @param ?string $commandPrefix upstream's `commandPrefix` (`shellCommandPrefix`): a line run in
      *        front of the command — `shopt -s expand_aliases`, say — joined to it with a newline
+     * @param ?string $shellPath upstream's `shellPath` option: this tool's own bash, in place of the
+     *        `shellPath` setting `Shell::useShellPath()` was given
+     * @param bool $exposeSessionEnvironment upstream's option, default true: `PIG_SESSION_ID`,
+     *        `PIG_SESSION_FILE`, `PIG_PROVIDER`, `PIG_MODEL` and `PIG_REASONING_LEVEL` in the
+     *        command's environment
+     * @param (Closure(): ?SessionEnvironment)|null $sessionEnvironment the session those describe,
+     *        asked as each command starts; the session wires its own, and a tool without one sets none
+     * @param (Closure(SpawnContext): SpawnContext)|null $spawnHook upstream's `spawnHook`
      */
-    public function __construct(private readonly string $cwd, private readonly ?string $commandPrefix = null)
-    {
+    public function __construct(
+        string $cwd,
+        ?string $commandPrefix = null,
+        ?string $shellPath = null,
+        bool $exposeSessionEnvironment = true,
+        ?Closure $sessionEnvironment = null,
+        ?Closure $spawnHook = null,
+    ) {
+        $this->tool = new ShellTool(
+            $cwd,
+            'bash',
+            'Bash',
+            'bash',
+            'pig-bash',
+            static fn (): ShellConfig => Shell::config($shellPath),
+            static fn (string $command): string => $command,
+            $commandPrefix,
+            $exposeSessionEnvironment,
+            $sessionEnvironment,
+            $spawnHook,
+        );
     }
 
     #[\Override]
     public function definition(): Tool
     {
-        $lines = Truncate::MAX_LINES;
-        $bytes = Truncate::size(Truncate::MAX_BYTES);
-
-        return new Tool(
-            'bash',
-            "Run a bash command in the working directory. Returns stdout and stderr together. "
-                . "Output is cut to the last {$lines} lines or {$bytes}, whichever comes first, and the "
-                . 'full output is written to a file whose path is included when that happens. '
-                . 'A timeout in seconds can be given; there is none by default.',
-            [
-                'type' => 'object',
-                'properties' => [
-                    'command' => ['type' => 'string', 'description' => 'The command to run'],
-                    'timeout' => ['type' => 'number', 'description' => 'Seconds to allow before killing it'],
-                ],
-                'required' => ['command'],
-            ],
-            // Upstream's `constrainedSampling: { type: "json_schema", strict: "prefer" }` on bash,
-            // edit, read and write (and on none of grep, find or ls): strict sampling where the
-            // provider has it, the schema as written where it does not. Under strict sampling an
-            // optional parameter arrives as null, which `ToolArguments` drops before validation.
-            ['type' => 'json_schema', 'strict' => 'prefer'],
-            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
-            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
-            typeBox: true,
-        );
+        return $this->tool->definition();
     }
 
     #[\Override]
     public function label(): string
     {
-        return 'Bash';
+        return $this->tool->label();
     }
 
     #[\Override]
@@ -82,79 +90,6 @@ final class BashTool implements AgentTool
         ?AbortSignal $signal = null,
         ?Closure $onUpdate = null,
     ): AgentToolResult {
-        $signal?->throwIfAborted();
-
-        $command = (string) $arguments['command'];
-        $timeout = isset($arguments['timeout']) ? (float) $arguments['timeout'] : null;
-
-        $run = new Run($this->cwd, $this->commandPrefix !== null ? "{$this->commandPrefix}\n{$command}" : $command, $onUpdate);
-        $run->start();
-        $exit = $run->wait($signal, $timeout);
-        $output = $run->output();
-
-        if ($run->aborted) {
-            throw new AgentError(self::withNote($output, 'Command aborted'));
-        }
-
-        if ($run->timedOut) {
-            throw new AgentError(self::withNote($output, "Command timed out after {$timeout} seconds"));
-        }
-
-        $truncation = Truncate::tail($output);
-        $text = $truncation->content === '' ? '(no output)' : $truncation->content;
-        $notice = $truncation->truncated ? self::notice($truncation, $output, $run->spillPath) : null;
-
-        if ($notice !== null) {
-            $text .= "\n\n[{$notice}]";
-        }
-
-        if ($exit !== 0) {
-            // A failing command is something the model reads and reacts to, so the
-            // output goes with the error rather than being swallowed by it.
-            throw new AgentError($text . "\n\nCommand exited with code {$exit}");
-        }
-
-        // `notice` is beside the other two so every tool that cuts its own output carries the
-        // same three keys. The transcript does not need it here — a command's preview keeps the
-        // *tail*, which is where this line already is — and a shape that holds for four tools
-        // and not the fifth is the next person's puzzle.
-        return new AgentToolResult(
-            [new TextContent($text)],
-            $notice === null ? null : array_filter(
-                [
-                    'truncation' => $truncation,
-                    'fullOutputPath' => $run->spillPath,
-                    'notice' => $notice,
-                ],
-                static fn (mixed $value): bool => $value !== null,
-            ),
-        );
-    }
-
-    private static function withNote(string $output, string $note): string
-    {
-        return $output === '' ? $note : $output . "\n\n" . $note;
-    }
-
-    /** Where the output was cut, and where the whole of it is. */
-    private static function notice(Truncation $truncation, string $output, ?string $spillPath): string
-    {
-        $first = $truncation->totalLines - $truncation->outputLines + 1;
-        $last = $truncation->totalLines;
-        $where = $spillPath === null ? '' : ". Full output: {$spillPath}";
-
-        if ($truncation->lastLinePartial) {
-            // One line longer than the whole budget — a progress bar with no newlines,
-            // usually. There are no line numbers worth quoting.
-            $lines = explode("\n", $output);
-            $size = Truncate::size(strlen($lines[count($lines) - 1]));
-
-            return 'Showing the last ' . Truncate::size($truncation->outputBytes)
-                . " of line {$last}, which is {$size}{$where}";
-        }
-
-        $limit = $truncation->truncatedBy === 'lines' ? '' : ' (' . Truncate::size(Truncate::MAX_BYTES) . ' limit)';
-
-        return "Showing lines {$first}-{$last} of {$truncation->totalLines}{$limit}{$where}";
+        return $this->tool->execute($toolCallId, $arguments, $signal, $onUpdate);
     }
 }

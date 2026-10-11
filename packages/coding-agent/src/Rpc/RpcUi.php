@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Rpc;
 
 use Closure;
+use Pig\Ai\Utils\Uuid;
 use Pig\Async\Deferred;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
 
 /**
- * `HookUi` over the wire: the question goes out as a line of JSON, the answer comes back as
- * one.
+ * `HookUi` over the wire: the question goes out as an `extension_ui_request` line, the answer comes
+ * back as an `extension_ui_response` — upstream's names and fields (`rpc-types.ts`), so a client
+ * written against pi answers pig's hooks unchanged.
  *
  * `TerminalUi` with a different transport, and the same trick underneath — the handler's
  * fiber parks on a `Deferred` while the loop keeps turning, and the line that arrives on
@@ -22,36 +25,28 @@ use Pig\CodingAgent\Theme\Themes;
  * The host is another program rather than a person, so two things differ from the terminal:
  *
  * - **Every request has an id**, and the reply names it. A host may answer three questions
- *   in any order, or never answer one at all.
+ *   in any order, or never answer one at all. The told-not-asked ones (`notify`, `setStatus`,
+ *   `setWidget`, `setTitle`, `set_editor_text`) carry one too, as upstream's do.
  * - **There is no "only one at a time".** The terminal refuses a second dialog because a
  *   second one would steal the keyboard from the first; a host has no keyboard to steal, and
  *   an editor showing two prompts at once is its own business.
  *
- * Ported from the `createHookUIContext()` closure inside upstream's `rpc-mode.ts`. Not
- * ported: `custom()`, which hands back a `Pig\Tui\Component` — there is no terminal here to
- * draw one on, and upstream leaves it out of the RPC context for the same reason.
+ * Ported from the `createExtensionUIContext()` closure inside upstream's `rpc-mode.ts`, method for
+ * method — including the ones that send nothing: `setWorkingMessage()`, `setWorkingVisible()`,
+ * `setWorkingIndicator()`, `setHiddenThinkingLabel()` and `setToolsExpanded()` need the TUI's loader
+ * or transcript and are no-ops over RPC, as upstream's are. pig used to send each as a request of
+ * its own (`set_working_message` and the rest) that no upstream client knows. `custom()` returns
+ * null: it hands back a `Pig\Tui\Component`, and there is no terminal here to draw one on.
  */
 final class RpcUi implements HookUi
 {
     /** @var array<string, Deferred> questions asked and not yet answered, by id */
     private array $pending = [];
 
-    private int $next = 0;
-
-    /**
-     * Makes this process's question ids unlike any other's. A counter alone restarts at `ui-1`
-     * with every pig, and a browser tab left over from the last one reconnects to the next and
-     * still holds a dialog called `ui-1` — which its "one question at a time" rule then cancels
-     * on sight, refusing a tool call nobody was asked about. Measured, not imagined: one run in
-     * two failed that way until the stale tab was found.
-     */
-    private readonly string $epoch;
-
     /** @param Closure(array<string, mixed>): void $send one JSON line out */
     public function __construct(
         private readonly Closure $send,
     ) {
-        $this->epoch = bin2hex(random_bytes(4));
     }
 
     /**
@@ -83,15 +78,21 @@ final class RpcUi implements HookUi
     }
 
     #[\Override]
-    public function select(string $title, array $options): ?string
+    public function select(string $title, array $options, ?int $timeout = null): ?string
     {
-        return self::text($this->ask(['method' => 'select', 'title' => $title, 'options' => $options]));
+        return self::text($this->ask(
+            ['method' => 'select', 'title' => $title, 'options' => $options, ...self::timeout($timeout)],
+            timeout: $timeout,
+        ));
     }
 
     #[\Override]
-    public function confirm(string $title, string $message): bool
+    public function confirm(string $title, string $message, ?int $timeout = null): bool
     {
-        $reply = $this->ask(['method' => 'confirm', 'title' => $title, 'message' => $message]);
+        $reply = $this->ask(
+            ['method' => 'confirm', 'title' => $title, 'message' => $message, ...self::timeout($timeout)],
+            timeout: $timeout,
+        );
 
         // Cancelled, unanswerable, or answered with anything but a yes: all false, which is
         // what makes a `tool_call` guard safe against a host that does not implement this.
@@ -99,13 +100,14 @@ final class RpcUi implements HookUi
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null, ?int $timeout = null): ?string
     {
         return self::text($this->ask([
             'method' => 'input',
             'title' => $title,
             'placeholder' => $placeholder,
-        ], $signal));
+            ...self::timeout($timeout),
+        ], $signal, $timeout));
     }
 
     #[\Override]
@@ -127,17 +129,18 @@ final class RpcUi implements HookUi
         return null;
     }
 
-    /** One-way: a notification is told, not asked. */
+    /** One-way: a notification is told, not asked. Upstream's field is `notifyType`. */
     #[\Override]
     public function notify(string $message, string $level = 'info'): void
     {
-        $this->tell(['method' => 'notify', 'message' => $message, 'level' => $level]);
+        $this->tell(['method' => 'notify', 'message' => $message, 'notifyType' => $level]);
     }
 
     #[\Override]
     public function setStatus(string $key, ?string $text): void
     {
-        $this->tell(['method' => 'set_status', 'statusKey' => $key, 'statusText' => $text]);
+        // A cleared status is the key left out, as upstream's `statusText: undefined` is on the wire.
+        $this->tell(['method' => 'setStatus', 'statusKey' => $key, ...($text === null ? [] : ['statusText' => $text])]);
     }
 
     #[\Override]
@@ -165,28 +168,29 @@ final class RpcUi implements HookUi
         return Themes::theme();
     }
 
+    /** Upstream's: "paste handling not supported in RPC mode — falls back to setEditorText". */
     #[\Override]
     public function pasteToEditor(string $text): void
     {
-        $this->tell(['method' => 'paste_to_editor', 'text' => $text]);
+        $this->setEditorText($text);
     }
 
     #[\Override]
     public function setTitle(string $title): void
     {
-        $this->tell(['method' => 'set_title', 'title' => $title]);
+        $this->tell(['method' => 'setTitle', 'title' => $title]);
     }
 
+    /** Not supported over RPC, as upstream's is not: the message is the TUI loader's. */
     #[\Override]
     public function setWorkingMessage(?string $message = null): void
     {
-        $this->tell(['method' => 'set_working_message', 'message' => $message]);
     }
 
+    /** Not supported over RPC, as upstream's is not: the loader is the TUI's. */
     #[\Override]
     public function setWorkingVisible(bool $visible): void
     {
-        $this->tell(['method' => 'set_working_visible', 'visible' => $visible]);
     }
 
     /** Not supported over RPC, as upstream's is not: the indicator is the TUI loader's. */
@@ -195,10 +199,10 @@ final class RpcUi implements HookUi
     {
     }
 
+    /** Not supported over RPC, as upstream's is not: the label is drawn by the TUI's transcript. */
     #[\Override]
     public function setHiddenThinkingLabel(?string $label = null): void
     {
-        $this->tell(['method' => 'set_hidden_thinking_label', 'label' => $label]);
     }
 
     #[\Override]
@@ -207,20 +211,39 @@ final class RpcUi implements HookUi
         return false;
     }
 
+    /** Not supported over RPC, as upstream's is not: there is no transcript here to expand. */
     #[\Override]
     public function setToolsExpanded(bool $expanded): void
     {
-        $this->tell(['method' => 'set_tools_expanded', 'expanded' => $expanded]);
     }
 
+    /**
+     * Lines go to the host, and none — a cleared widget — is `widgetLines` left out, as upstream's
+     * undefined is. A factory does not go at all, because it builds a terminal component and there
+     * is no terminal — upstream sends only `string[] | undefined` and drops the rest the same way.
+     * `widgetPlacement` is upstream's `aboveEditor` or `belowEditor` — `HookUi`'s `above` and
+     * `below` in upstream's words — and left out when the hook did not say, as upstream's
+     * `options?.placement` is.
+     */
     #[\Override]
     public function setWidget(string $key, array|Closure|null $content, array $options = []): void
     {
+        if ($content instanceof Closure) {
+            return;
+        }
+
+        $placement = match ($options['placement'] ?? null) {
+            null => null,
+            'above' => 'aboveEditor',
+            'below' => 'belowEditor',
+            default => throw new \InvalidArgumentException("No such widget placement: '{$options['placement']}'. There is above and below."),
+        };
+
         $this->tell([
-            'method' => 'set_widget',
-            'key' => $key,
-            'content' => is_array($content) ? $content : null,
-            'placement' => $options['placement'] ?? 'above',
+            'method' => 'setWidget',
+            'widgetKey' => $key,
+            ...($content === null ? [] : ['widgetLines' => array_values($content)]),
+            ...($placement === null ? [] : ['widgetPlacement' => $placement]),
         ]);
     }
 
@@ -265,31 +288,37 @@ final class RpcUi implements HookUi
      * @param array<string, mixed> $request
      * @return array<string, mixed> the reply, whatever shape the host sent
      */
-    private function ask(array $request, ?\Pig\Async\AbortSignal $signal = null): array
+    private function ask(array $request, ?\Pig\Async\AbortSignal $signal = null, ?int $timeout = null): array
     {
         if ($signal?->aborted() === true) {
             return ['cancelled' => true];
         }
 
-        $id = "ui-{$this->epoch}-" . (++$this->next);
+        $id = self::id();
         $answer = new Deferred();
         $this->pending[$id] = $answer;
 
-        // Aborted from this side: the host is told the question is withdrawn, so a stale answer
-        // to it is not read as the next question's.
-        $listener = $signal?->onAbort(function () use ($id, $answer): void {
+        // Aborted from this side, or out of time: the question is dropped and answered as a
+        // cancel, which is upstream's `createDialogPromise()` — it resolves the default and tells
+        // the host nothing, and a late answer to the id is one nobody is waiting for any more.
+        $withdraw = function () use ($id, $answer): void {
             if (!$answer->isComplete()) {
                 unset($this->pending[$id]);
-                $this->tell(['id' => $id, 'method' => 'cancel']);
                 $answer->complete(['cancelled' => true]);
             }
-        });
+        };
+        $listener = $signal?->onAbort($withdraw);
+        $timer = $timeout !== null && $timeout > 0 ? Loop::get()->delay($timeout / 1000, $withdraw) : null;
 
-        $this->tell(['id' => $id, ...$request]);
+        $this->send(['id' => $id, ...$request]);
 
         try {
             $reply = $answer->future->await();
         } finally {
+            if ($timer !== null) {
+                Loop::get()->cancel($timer);
+            }
+
             if ($signal !== null && $listener !== null) {
                 $signal->removeListener($listener);
             }
@@ -298,10 +327,38 @@ final class RpcUi implements HookUi
         return is_array($reply) ? $reply : [];
     }
 
-    /** @param array<string, mixed> $request */
+    /** @param array<string, mixed> $request one told, not asked: an id of its own, as upstream gives it */
     private function tell(array $request): void
     {
-        ($this->send)(['type' => 'hook_ui_request', ...$request]);
+        $this->send(['id' => self::id(), ...$request]);
+    }
+
+    /** @param array<string, mixed> $request */
+    private function send(array $request): void
+    {
+        ($this->send)(['type' => 'extension_ui_request', ...$request]);
+    }
+
+    /**
+     * A fresh id for each request — upstream's `crypto.randomUUID()`. Random rather than counted:
+     * a counter restarts with every pig, and a browser tab left over from the last one reconnects
+     * to the next still holding a dialog of the same id, which its "one question at a time" rule
+     * then cancels on sight — measured, one run in two, before the ids stopped repeating.
+     */
+    private static function id(): string
+    {
+        return Uuid::v7();
+    }
+
+    /**
+     * Upstream's `timeout: opts?.timeout` on the request, which `JSON.stringify` leaves out when it
+     * is undefined.
+     *
+     * @return array{timeout?: int}
+     */
+    private static function timeout(?int $timeout): array
+    {
+        return $timeout === null ? [] : ['timeout' => $timeout];
     }
 
     /**

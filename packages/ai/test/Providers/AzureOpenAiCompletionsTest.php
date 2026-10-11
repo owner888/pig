@@ -55,7 +55,7 @@ final class AzureOpenAiCompletionsTest extends TestCase
             "data: [DONE]\n\n",
         ]), '/');
 
-        foreach (['PI_CACHE_RETENTION', 'AZURE_OPENAI_DEPLOYMENT_NAME_MAP', 'AZURE_OPENAI_RESOURCE_NAME', 'AZURE_OPENAI_BASE_URL'] as $name) {
+        foreach (['PIG_CACHE_RETENTION', 'AZURE_OPENAI_DEPLOYMENT_NAME_MAP', 'AZURE_OPENAI_RESOURCE_NAME', 'AZURE_OPENAI_BASE_URL'] as $name) {
             $this->set($name, null);
         }
 
@@ -97,7 +97,7 @@ final class AzureOpenAiCompletionsTest extends TestCase
 
     public function testPromptCacheParametersAreOmittedEvenWhenLongRetentionIsAskedFor(): void
     {
-        $this->set('PI_CACHE_RETENTION', 'long');
+        $this->set('PIG_CACHE_RETENTION', 'long');
         $fromEnvironment = $this->start(new OpenAiOptions(apiKey: 'test-key', sessionId: 'session-env'));
 
         $this->assertArrayNotHasKey('prompt_cache_key', $fromEnvironment);

@@ -14,11 +14,15 @@ use Pig\Ai\Timestamp;
  * the model. The point of `!` is that running `git diff` or the tests puts the result in
  * front of the model without anyone copying it there by hand.
  *
- * `!!` runs the same command and does not make one of these, for the times the answer is
- * for the person and not for the model — `ls`, `git log`, checking a path. Context is the
- * scarce thing in a session, and half of what someone types at a shell is not worth any.
+ * `!!` runs the same command and makes one of these with `excludeFromContext` set, for the times
+ * the answer is for the person and not for the model — `ls`, `git log`, checking a path. It is
+ * kept in the session as upstream keeps it, so the transcript still shows it, and `CodingAgent::
+ * toLlm()` leaves it out of what the model is sent. Context is the scarce thing in a session, and
+ * half of what someone types at a shell is not worth any.
  *
- * Ported from upstream's `BashExecutionMessage` in `core/messages.ts`.
+ * Ported from upstream's `BashExecutionMessage` in `core/messages.ts`, field for field:
+ * `fullOutputPath` is the file the whole output was written to when it was too long to keep, and
+ * is the session file's field name as pi writes it.
  */
 final readonly class BashExecution
 {
@@ -30,8 +34,10 @@ final readonly class BashExecution
         public ?int $exitCode = null,
         public bool $cancelled = false,
         public bool $truncated = false,
-        public ?string $spillPath = null,
+        public ?string $fullOutputPath = null,
         ?int $timestamp = null,
+        /** Upstream's `excludeFromContext`: `!!`, kept in the session and not sent to the model. */
+        public bool $excludeFromContext = false,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }
@@ -54,8 +60,8 @@ final readonly class BashExecution
             $text .= "\n\nCommand exited with code {$this->exitCode}";
         }
 
-        if ($this->truncated && $this->spillPath !== null) {
-            $text .= "\n\n[Output truncated. Full output: {$this->spillPath}]";
+        if ($this->truncated && $this->fullOutputPath !== null) {
+            $text .= "\n\n[Output truncated. Full output: {$this->fullOutputPath}]";
         }
 
         return $text;

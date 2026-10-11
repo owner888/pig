@@ -29,13 +29,13 @@ final class SystemPromptTest extends ToolTestCase
         // A real ~/.pig would make these tests depend on whoever is running them.
         $this->home = $this->cwd . '/pig-home';
         mkdir($this->home, 0o755, true);
-        putenv('PIG_HOME=' . $this->home);
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home);
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         parent::tearDown();
     }
 
@@ -84,7 +84,7 @@ final class SystemPromptTest extends ToolTestCase
             "Unknown tool 'telepathy'",
         );
 
-        $this->assertStringContainsString('read, bash, edit, write', $error->getMessage());
+        $this->assertStringContainsString('read, bash, powershell, edit, write', $error->getMessage());
     }
 
     // ---- the prompt ----------------------------------------------------------------

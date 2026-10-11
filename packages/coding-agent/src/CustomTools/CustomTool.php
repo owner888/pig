@@ -78,6 +78,10 @@ final readonly class CustomTool
      *        active tool (the hooked ones, in the order the model is offered them), it answers the
      *        descriptions to show in place of the tools' own, by name, and the names of tools to
      *        keep callable but not declare to the model. The codemode tool is what this exists for
+     * @param bool $defaultActive upstream's `ToolDefinition.defaultActive`: whether registering the
+     *        tool activates it. False keeps it registered but off the model until something names it
+     *        — `--tools`, the `defaultTools` setting (or a `+name` modifier of either), or
+     *        `setActiveTools()`. The codemode tool is registered this way (see `ToolLoadout`)
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -93,6 +97,7 @@ final readonly class CustomTool
         public array $promptGuidelines = [],
         public array|false|null $constrainedSampling = null,
         public ?Closure $prepareLoadout = null,
+        public bool $defaultActive = true,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

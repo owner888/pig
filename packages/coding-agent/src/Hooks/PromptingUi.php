@@ -35,21 +35,21 @@ final class PromptingUi implements HookUi
     }
 
     #[\Override]
-    public function select(string $title, array $options): ?string
+    public function select(string $title, array $options, ?int $timeout = null): ?string
     {
-        return $this->prompting('select', $title, fn (): ?string => $this->ui->select($title, $options));
+        return $this->prompting('select', $title, fn (): ?string => $this->ui->select($title, $options, $timeout));
     }
 
     #[\Override]
-    public function confirm(string $title, string $message): bool
+    public function confirm(string $title, string $message, ?int $timeout = null): bool
     {
-        return $this->prompting('confirm', $title, fn (): bool => $this->ui->confirm($title, $message));
+        return $this->prompting('confirm', $title, fn (): bool => $this->ui->confirm($title, $message, $timeout));
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = '', ?AbortSignal $signal = null): ?string
+    public function input(string $title, string $placeholder = '', ?AbortSignal $signal = null, ?int $timeout = null): ?string
     {
-        return $this->prompting('input', $title, fn (): ?string => $this->ui->input($title, $placeholder, $signal));
+        return $this->prompting('input', $title, fn (): ?string => $this->ui->input($title, $placeholder, $signal, $timeout));
     }
 
     #[\Override]

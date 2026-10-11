@@ -99,9 +99,14 @@ final readonly class HookedTool implements AgentTool
             throw new AgentError(self::text($answer->content ?? $result->content));
         }
 
+        // Upstream's `afterResult.structuredContent ?? (afterResult.content ? undefined :
+        // result.structuredContent)`: a hook that replaced the content drops the structured
+        // result, which may no longer describe it. A hook here cannot supply one of its own.
         return new AgentToolResult(
             $answer->content ?? $result->content,
             $answer->details ?? $result->details,
+            $result->usage,
+            $answer->content === null ? $result->structuredContent : null,
         );
     }
 

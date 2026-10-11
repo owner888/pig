@@ -27,13 +27,13 @@ final class BugReportTest extends TestCase
     {
         $this->home = sys_get_temp_dir() . '/pig-bug-' . bin2hex(random_bytes(4));
         mkdir($this->home, 0700, true);
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
     }
 
     private function assistant(string $text, StopReason $stop, ?string $error = null, ?string $raw = null): AssistantMessage
@@ -153,7 +153,7 @@ final class BugReportTest extends TestCase
     {
         $path = BugReport::write("# pig bug report\n\nbody\n");
 
-        // `PIG_HOME` *is* the agent directory, so there is no `/agent` in between.
+        // `PIG_CODING_AGENT_DIR` *is* the agent directory, so there is no `/agent` in between.
         $this->assertStringStartsWith($this->home . '/bug-reports/bug-', $path);
         $this->assertFileExists($path);
 
@@ -201,9 +201,84 @@ final class BugReportTest extends TestCase
         ));
     }
 
-    public function testUploadAnswersNullWhenServerRejectsOrFails(): void
+    public function testUploadSaysWhyWhenTheServerCannotBeReached(): void
     {
+        // Not a null the caller has to guess about: the reason is what the "Upload failed" dialog
+        // shows before it offers the zip.
         $http = new \Pig\Ai\Http\HttpClient(timeout: 0.05);
-        $this->assertNull(BugReport::upload('test hint', '# report', $http));
+
+        $this->expectException(\RuntimeException::class);
+        BugReport::upload('test hint', '# report', $http);
+    }
+
+    public function testASummaryIsItsOwnSectionNamingTheModel(): void
+    {
+        $report = BugReport::build($this->session([new UserMessage('hi')]), Auth::inMemory(), '', false, "## What went wrong\nit broke");
+
+        $this->assertStringContainsString("## Summary written by", $report);
+        $this->assertStringContainsString("## What went wrong\nit broke", $report);
+        $this->assertStringNotContainsString('## Summary', BugReport::build($this->session([]), Auth::inMemory(), '', false));
+    }
+
+    public function testTheZipHoldsTheReportTheTranscriptAndTheSummary(): void
+    {
+        $files = BugReport::archiveFiles("# pig bug report\n", "{\"type\":\"session\"}\n", 'a summary');
+        $this->assertSame(['report.md', 'session.jsonl', 'summary.md'], array_keys($files));
+        $this->assertSame("a summary\n", $files['summary.md']);
+        $this->assertSame(['report.md'], array_keys(BugReport::archiveFiles('r', null, null)));
+
+        $path = "{$this->home}/" . BugReport::archiveFileName('0199-id');
+        $this->assertStringEndsWith('/pig-bug-report-0199-id.zip', $path);
+        BugReport::writeArchive($path, $files);
+
+        // Read back by something that is not the writer: `unzip`, when this machine has it.
+        $unzip = \Pig\CodingAgent\Cli\SessionList::onPath('unzip');
+
+        if ($unzip === null) {
+            $this->assertStringStartsWith("PK\x03\x04", (string) file_get_contents($path));
+
+            return;
+        }
+
+        exec(escapeshellarg($unzip) . ' -p ' . escapeshellarg($path) . ' summary.md', $out, $code);
+        $this->assertSame(0, $code);
+        $this->assertSame(['a summary'], $out);
+        exec(escapeshellarg($unzip) . ' -t ' . escapeshellarg($path), $test, $code);
+        $this->assertSame(0, $code, implode("\n", $test));
+    }
+
+    public function testTheSummaryIsAskedOfTheModelWithTheHintAndUpstreamsInstructions(): void
+    {
+        $asked = [];
+        $streamFn = static function (\Pig\Ai\Model $model, \Pig\Ai\TranscriptContext $context, \Pig\Ai\SimpleStreamOptions $options) use (&$asked): \Pig\Ai\Utils\AssistantMessageEventStream {
+            $asked[] = [$context, $options];
+            $message = new AssistantMessage([new TextContent("  ## What went wrong\nthe footer  ")], Api::AnthropicMessages, 'anthropic', 'm', new Usage(), StopReason::Stop);
+            $stream = new \Pig\Ai\Utils\AssistantMessageEventStream();
+            \Pig\Async\Async::spawn(static function () use ($stream, $message): void {
+                $stream->push(new \Pig\Ai\DoneEvent(StopReason::Stop, $message));
+                $stream->end();
+            });
+
+            return $stream;
+        };
+        $model = new \Pig\Ai\Model('m', 'Model M', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000);
+
+        $summary = \Pig\Async\Async::run(static fn (): string => BugReport::generateSummary(
+            [new UserMessage('why is the footer crooked')],
+            'footer',
+            $model,
+            'key',
+            streamFn: $streamFn,
+        ));
+
+        $this->assertSame("## What went wrong\nthe footer", $summary);
+        [$context, $options] = $asked[0];
+        $said = array_map(static fn (mixed $m): string => is_string($m->content) ? $m->content : \Pig\Ai\Utils\Text::contentText($m->content), $context->messages);
+        $this->assertStringContainsString('bug report about pig', $said[0], 'the system prompt is the summariser\'s own');
+        $prompt = (string) end($said);
+        $this->assertStringContainsString('why is the footer crooked', $prompt);
+        $this->assertStringContainsString("<user-report>\nfooter\n</user-report>", $prompt);
+        $this->assertStringContainsString('## Steps to reproduce', $prompt);
+        $this->assertSame(4096, $options->maxTokens);
     }
 }

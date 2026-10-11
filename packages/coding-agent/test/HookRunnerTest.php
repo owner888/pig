@@ -20,6 +20,12 @@ use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Hooks\Events\ResourcesDiscoverEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
+use Pig\CodingAgent\Hooks\Events\TreePreparation;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
+use Pig\CodingAgent\Session\CompactionPreparation;
+use Pig\CodingAgent\Session\CompactionSettings;
+use Pig\CodingAgent\Session\FileOperations;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
@@ -374,7 +380,7 @@ final class HookRunnerTest extends TestCase
             ], 'good.php'),
         ]);
 
-        $answer = $runner->emitBeforeCompact(new SessionBeforeCompactEvent([], 'summarise this'));
+        $answer = $runner->emitBeforeCompact(self::beforeCompact());
 
         $this->assertTrue($answer?->cancel);
         $this->assertCount(1, $this->errors);
@@ -392,7 +398,7 @@ final class HookRunnerTest extends TestCase
             }]),
         ]);
 
-        $this->assertNull($runner->emitBeforeCompact(new SessionBeforeCompactEvent([], 'summarise this')));
+        $this->assertNull($runner->emitBeforeCompact(self::beforeCompact()));
         $this->assertCount(1, $this->errors);
     }
 
@@ -515,13 +521,47 @@ final class HookRunnerTest extends TestCase
         $this->assertSame(['a'], $asked);
     }
 
-    public function testNotCancellingIsTheSameAsSayingNothing(): void
+    public function testNotCancellingIsAnAnswerThatCancelsNothing(): void
     {
+        // Upstream's runner keeps the last answer that is not a cancel and returns it at the end.
         $runner = new HookRunner([
             $this->hook(['session_before_switch' => static fn () => new SessionBeforeSwitchResult()]),
         ]);
 
-        $this->assertNull($runner->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume')));
+        $this->assertFalse($runner->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume'))?->cancel);
+    }
+
+    public function testTheLastAnswerToABeforeEventWinsUnlessOneCancels(): void
+    {
+        // A handler that only changes the label is still heard — the first version stopped only at
+        // a cancel or a summary, and dropped every other answer on the floor.
+        $runner = new HookRunner([
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'first')], 'a.php'),
+            $this->hook(['session_before_tree' => static fn () => null], 'b.php'),
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'second')], 'c.php'),
+        ]);
+        $event = new SessionBeforeTreeEvent(new TreePreparation('t', 'o', null, [], false), (new AbortController())->signal);
+
+        $this->assertSame('second', $runner->emitBeforeTree($event)?->label);
+
+        $cancelling = new HookRunner([
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(cancel: true)], 'a.php'),
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'never asked')], 'b.php'),
+        ]);
+
+        $this->assertTrue($cancelling->emitBeforeTree($event)?->cancel);
+    }
+
+    private static function beforeCompact(): SessionBeforeCompactEvent
+    {
+        return new SessionBeforeCompactEvent(
+            new CompactionPreparation('e1', [], [], false, 0, null, new FileOperations(), new CompactionSettings()),
+            [],
+            null,
+            'manual',
+            false,
+            (new AbortController())->signal,
+        );
     }
 
     // ---- commands ----------------------------------------------------------------------

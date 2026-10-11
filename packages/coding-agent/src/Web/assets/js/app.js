@@ -177,14 +177,14 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
           }
           return;
         }
-        if (evt.type === "bash_output") {
+        if (evt.type === "bash_execution_update") {
           const card = this.bashCards?.get(evt.id);
-          if (card) card.updateProgress(evt.output || "");
+          if (card) card.updateProgress((card.rawOutput || "") + (evt.delta || ""));
           return;
         }
-        if (evt.type === "hook_ui_request") { this.render(() => onHookUiRequest(evt)); return; }
-        if (evt.type === "hook_error" || evt.type === "tool_error") {
-          this.render(() => appendErrorMessage((evt.hookPath ? evt.hookPath + ": " : "") + evt.error));
+        if (evt.type === "extension_ui_request") { this.render(() => onHookUiRequest(evt)); return; }
+        if (evt.type === "extension_error" || evt.type === "tool_error") {
+          this.render(() => appendErrorMessage((evt.extensionPath ? evt.extensionPath + ": " : "") + evt.error));
           return;
         }
         this.render(() => onEvent(evt));
@@ -775,9 +775,8 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
           appendErrorMessage(err);
         }
       } else if (evt.type === "message_update") {
-        // `RpcMode` sends the whole message so far plus the delta that changed it; the delta
-        // is what streams, so it is what is drawn.
-        const d = evt.delta || {};
+        // `RpcMode` sends upstream's `assistantMessageEvent`, the delta alone; it is what is drawn.
+        const d = evt.assistantMessageEvent || {};
         if (d.type === "thinking_delta") {
           currentThinkingText += d.delta || "";
           const box = ensureAssistantBlock();
@@ -811,16 +810,16 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         currentAssistantBlock = null;
         currentAssistantText = "";
         tab.toolCards = tab.toolCards || new Map();
-        const card = new ToolCard(evt);
+        const card = new ToolCard({ ...evt, arguments: evt.args });
         tab.toolCards.set(evt.toolCallId, card);
         chatScroll.appendChild(card.element);
         scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
         const card = tab?.toolCards?.get(evt.toolCallId);
         if (card) {
-          card.updateProgress(textOf(evt.partial?.content));
+          card.updateProgress(textOf(evt.partialResult?.content));
         } else {
-          updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partial?.content) });
+          updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partialResult?.content) });
         }
       } else if (evt.type === "tool_execution_end") {
         const card = tab?.toolCards?.get(evt.toolCallId);
@@ -831,13 +830,13 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         }
         currentAssistantBlock = null;
         currentAssistantText = "";
-      } else if (evt.type === "retry_start") {
-        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round(evt.delaySeconds), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.error }));
-      } else if (evt.type === "retry_end") {
+      } else if (evt.type === "auto_retry_start") {
+        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage }));
+      } else if (evt.type === "auto_retry_end") {
         if (tab === active) hideStatusBanner();
         tab?.refreshState();
-        if (!evt.succeeded && evt.error) {
-          appendErrorMessage(evt.error);
+        if (!evt.success && evt.finalError) {
+          appendErrorMessage(evt.finalError);
         }
       } else if (evt.type === "model_fallback") {
         // pig's own event (v0.5.4): the quota wall moved the session to a `fallbackModels` entry
@@ -857,12 +856,12 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         if (tab === active) showStatusBanner(t(evt.source === "branchSummary" ? "summarising_branch_banner" : "compacting_banner"));
       } else if (evt.type === "summarization_retry_finished") {
         if (tab === active) hideStatusBanner();
-      } else if (evt.type === "auto_compaction_start") {
+      } else if (evt.type === "compaction_start") {
         if (tab === active) showStatusBanner(t("compacting_banner"));
-      } else if (evt.type === "auto_compaction_end") {
+      } else if (evt.type === "compaction_end") {
         if (tab === active) hideStatusBanner();
-        if (evt.summary) appendSummaryMessage(evt.summary);
-        if (!evt.succeeded && evt.error) appendErrorMessage(evt.error);
+        if (evt.result) appendSummaryMessage({ role: "compactionSummary", summary: evt.result.summary, tokensBefore: evt.result.tokensBefore, timestamp: Date.now() });
+        if (evt.errorMessage) appendErrorMessage(evt.errorMessage);
         tab?.refreshState();
       } else if (evt.type === "session_info_changed") {
         if (tab) {
@@ -1011,7 +1010,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       // conversation as a BashExecution (the model reads it next turn, zero tokens to run);
       // `!!` runs it and remembers nothing. Neither goes anywhere near the model to execute,
       // which is what makes it deterministic — before this they were sent as prompt text and
-      // the model decided whether to run them. The card streams through `bash_output` events
+      // the model decided whether to run them. The card streams through `bash_execution_update` events
       // and the Stop button sends `abort_bash`, so a `flutter run` can be ended from here.
       if (text.startsWith("!")) {
         const remember = !text.startsWith("!!");
@@ -1089,7 +1088,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
               window.open(URL.createObjectURL(blob), "_blank");
             }
           } else {
-            const data = await active.rpc({ type: "export" });
+            const data = await active.rpc({ type: "export_html" });
             loading.remove();
             const block = document.createElement("div");
             block.className = "msg-block msg-assistant prose";
@@ -1176,7 +1175,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
      * Run a `!command` through the child's `bash` rpc command and draw it as a bash card.
      *
      * The card is registered under the rpc id *before* the command is sent (via `onId`), so
-     * the first `bash_output` event — which can arrive before the response — finds it. The
+     * the first `bash_execution_update` event — which can arrive before the response — finds it. The
      * rpc has no timeout: `!` is "I am watching this", and the Stop button is how it ends.
      */
     async function runBangCommand(tab, command, remember) {
@@ -1210,15 +1209,15 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       let rpcId = null;
       try {
         const data = await tab.rpc(
-          { type: "bash", command, remember },
+          { type: "bash", command, excludeFromContext: !remember },
           0,
           (id) => { rpcId = id; tab.bashCards.set(id, card); },
         );
-        // `data` is SessionCodec::encode(BashExecution): output, exitCode, cancelled, truncated, spillPath.
+        // `data` is upstream's BashResult: output, exitCode?, cancelled, truncated, fullOutputPath?.
         const details = {};
         if (data?.exitCode !== undefined && data.exitCode !== null) details.exitCode = data.exitCode;
         if (data?.cancelled) details.cancelled = true;
-        if (data?.spillPath) details.fullOutputPath = data.spillPath;
+        if (data?.fullOutputPath) details.fullOutputPath = data.fullOutputPath;
         card.finish({
           result: { content: [{ type: "text", text: data?.output ?? "" }], details },
           isError: !!data?.cancelled || (typeof data?.exitCode === "number" && data.exitCode !== 0),
@@ -1239,7 +1238,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
 
     // ---- a hook asks ----------------------------------------------------------------------
     //
-    // `hook_ui_request` is the RPC protocol's line, sent to every browser; the first to answer
+    // `extension_ui_request` is the RPC protocol's line, sent to every browser; the first to answer
     // wins and the rest see the dialog go. A tool call is parked on the other end until the
     // answer arrives, so every dialog here can be escaped — escape is "no" for a confirm and
     // "nothing chosen" for the rest, which is the only safe reading of a question nobody answered.
@@ -1249,7 +1248,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     // `openHookDialog` records it, because the person may have switched tabs since.
     function hookReply(reply) {
       const tab = hookDialog?.tab || active;
-      tab?.send({ type: "rpc_command", command: { type: "hook_ui_response", ...reply } });
+      tab?.send({ type: "rpc_command", command: { type: "extension_ui_response", ...reply } });
     }
 
     function closeHookDialog() {
@@ -1325,12 +1324,12 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     const hookStatuses = {};
     function onHookUiRequest(req) {
       if (req.method === "notify") {
-        const level = req.level || "info";
+        const level = req.notifyType || "info";
         if (level === "error") appendErrorMessage(req.message);
         else { showStatusBanner(req.message); setTimeout(() => { if (document.getElementById("status-banner").innerText === req.message) hideStatusBanner(); }, 6000); }
         return;
       }
-      if (req.method === "set_status") {
+      if (req.method === "setStatus") {
         if (req.statusText) hookStatuses[req.statusKey] = req.statusText; else delete hookStatuses[req.statusKey];
         const extra = Object.values(hookStatuses).join(" · ");
         telemetryStats.dataset.hook = extra;
@@ -1618,7 +1617,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       // footer does (`model → routed-id • level`).
       const routed = s.routedModel ? ` → ${s.routedModel.id}${s.routedModel.thinkingLevel ? ` • ${s.routedModel.thinkingLevel}` : ""}` : "";
       telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "")
-        + `↑${formatK(stats.input || 0)} ↓${formatK(stats.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`;
+        + `↑${formatK(stats.tokens?.input || 0)} ↓${formatK(stats.tokens?.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`;
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;
@@ -2104,7 +2103,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
      * its text under `thinking`.
      */
     function appendSummaryMessage(message) {
-      // Both a message event and auto_compaction_end may announce the same summary.
+      // Both a message event and compaction_end may announce the same summary.
       if (Array.from(chatScroll.querySelectorAll("[data-summary-key]")).some(el => el.dataset.summaryKey === `${message.role}:${message.timestamp}`)) return;
       const branch = message.role === "branchSummary";
       const block = document.createElement("details");
@@ -2228,7 +2227,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
           } else if (m.role === "bashExecution") {
             const card = new ToolCard({ toolCallId: `bash-${m.timestamp}`, toolName: "bash", arguments: { command: m.command } });
             card.finish({
-              result: { content: [{ type: "text", text: m.output }], details: { exitCode: m.exitCode, cancelled: m.cancelled, fullOutputPath: m.spillPath } },
+              result: { content: [{ type: "text", text: m.output }], details: { exitCode: m.exitCode, cancelled: m.cancelled, fullOutputPath: m.fullOutputPath } },
               isError: !!m.cancelled || (typeof m.exitCode === "number" && m.exitCode !== 0),
             });
             chatScroll.appendChild(card.element);

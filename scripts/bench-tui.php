@@ -9,7 +9,7 @@ declare(strict_types=1);
  *   php scripts/bench-tui.php [session.jsonl] [regular|fullscreen] [columns] [rows]
  *
  * With no session given, the largest file under `~/.pig/agent/sessions` is used. Nothing is
- * written anywhere: `PIG_HOME` is pointed at a temporary directory, the provider is never called,
+ * written anywhere: `PIG_CODING_AGENT_DIR` is pointed at a temporary directory, the provider is never called,
  * and the terminal is `FakeTerminal`, which only counts bytes.
  *
  * What is measured, each as wall time per frame and bytes written per frame:
@@ -60,7 +60,7 @@ if ($sessionPath === null) {
 
 $scratch = sys_get_temp_dir() . '/pig-bench-' . getmypid();
 mkdir($scratch, 0o700, true);
-putenv("PIG_HOME={$scratch}");
+putenv("PIG_CODING_AGENT_DIR={$scratch}");
 
 // `InteractiveMode` draws a terminal that is not a `ProcessTerminal` in regular mode whatever
 // the settings say, so the fullscreen renderer is asked for the way the tests ask for it.

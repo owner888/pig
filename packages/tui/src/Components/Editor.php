@@ -16,7 +16,10 @@ use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
 use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
+use Pig\Tui\Keybindings;
 use Pig\Tui\Keys;
+use Pig\Tui\KillRing;
+use Pig\Tui\UndoStack;
 use Pig\Tui\MouseHandler;
 use Pig\Tui\TUI;
 use Pig\Tui\TuiMouseDispatchResult;
@@ -139,11 +142,48 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     /** @var ?Closure(int): string */
     private ?Closure $borderStatus = null;
 
+    /** Upstream's `killRing`: what the kill keys deleted, for `tui.editor.yank`. */
+    private KillRing $killRing;
+
+    /**
+     * Upstream's `undoStack`, for `tui.editor.undo`.
+     *
+     * @var UndoStack<array{lines: non-empty-list<string>, cursorLine: int, cursorCol: int, pastes: array<int, string>, pasteCounter: int}>
+     */
+    private UndoStack $undoStack;
+
+    /**
+     * Upstream's `lastAction`: what the previous key did, for the three things that care —
+     * consecutive kills accumulate, `yankPop` only follows a yank, and a run of typed word
+     * characters is one undo step.
+     */
+    private ?string $lastAction = null;
+
+    /** Upstream's `jumpMode`: `tui.editor.jumpForward`/`jumpBackward` was pressed and the next character is the target. */
+    private ?string $jumpMode = null;
+
+    /** @var ?Closure(): int the terminal's rows, for `tui.editor.pageUp`/`pageDown` — upstream reads `tui.terminal.rows` */
+    private ?Closure $terminalRows = null;
+
     public function __construct(?EditorTheme $theme = null)
     {
         // Not a default parameter: a theme is made of closures, and a default value has
         // to be a constant expression.
         $this->theme = $theme ?? EditorTheme::default();
+        $this->killRing = new KillRing();
+        $this->undoStack = new UndoStack();
+    }
+
+    /**
+     * Where `tui.editor.pageUp`/`pageDown` learn how tall the terminal is. Upstream's editor holds
+     * the TUI and reads `tui.terminal.rows`; this one is built without it, so whoever has the
+     * terminal says. Without it a page is upstream's minimum, five rows.
+     *
+     * @param ?Closure(): int $rows
+     */
+    public function setTerminalRows(?Closure $rows): void
+    {
+        $this->terminalRows = $rows;
     }
 
     /**
@@ -245,6 +285,13 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     public function setText(string $text): void
     {
         $this->historyIndex = -1;
+        $this->lastAction = null;
+
+        // Upstream: a programmatic change is undoable too, when it changes anything.
+        if ($this->text() !== str_replace(["\r\n", "\r"], "\n", $text)) {
+            $this->pushUndo();
+        }
+
         $this->replaceText($text);
     }
 
@@ -252,6 +299,8 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     public function insertAtCursor(string $text): void
     {
         if ($text !== '') {
+            $this->pushUndo();
+            $this->lastAction = null;
             $this->insert($text);
         }
     }
@@ -542,9 +591,36 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         return $chunks;
     }
 
+    /**
+     * Upstream's `Editor.handleInput()`: every key is looked up through the global keybinding
+     * registry (`Keybindings::getKeybindings()`), in upstream's order, so `keybindings.json` moves
+     * any of them — undo, the kill ring, the jumps and the history keys included.
+     */
     #[\Override]
     public function handleInput(string $data): void
     {
+        $kb = Keybindings::getKeybindings();
+
+        // Character jump mode: the key after jumpForward/jumpBackward is the character to go to.
+        if ($this->jumpMode !== null) {
+            if ($kb->matches($data, 'tui.editor.jumpForward') || $kb->matches($data, 'tui.editor.jumpBackward')) {
+                $this->jumpMode = null;
+
+                return;
+            }
+
+            if (Chars::isPrintable($data)) {
+                $direction = $this->jumpMode;
+                $this->jumpMode = null;
+                $this->jumpToChar($data, $direction);
+
+                return;
+            }
+
+            // A control key cancels the jump and is handled as itself.
+            $this->jumpMode = null;
+        }
+
         if ($this->pasting || str_contains($data, self::PASTE_START)) {
             $this->bufferPaste($data);
 
@@ -553,7 +629,13 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
 
         // Ctrl+C belongs to whatever is hosting the editor: at an empty prompt it means
         // quit, and only the application knows whether it is empty enough to quit from.
-        if (Keys::isCtrlC($data)) {
+        if ($kb->matches($data, 'tui.input.copy')) {
+            return;
+        }
+
+        if ($kb->matches($data, 'tui.editor.undo')) {
+            $this->undo();
+
             return;
         }
 
@@ -561,7 +643,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             return;
         }
 
-        if (Keys::isTab($data)) {
+        if ($kb->matches($data, 'tui.input.tab')) {
             $this->completeOnTab();
 
             return;
@@ -578,25 +660,27 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
      */
     private function suggestionKey(string $data): bool
     {
-        if (Keys::isEscape($data)) {
+        $kb = Keybindings::getKeybindings();
+
+        if ($kb->matches($data, 'tui.select.cancel')) {
             $this->cancelSuggestions();
 
             return true;
         }
 
-        if (Keys::isArrowUp($data) || Keys::isArrowDown($data)) {
+        if ($kb->matches($data, 'tui.select.up') || $kb->matches($data, 'tui.select.down')) {
             $this->suggestionList?->handleInput($data);
 
             return true;
         }
 
-        if (Keys::isTab($data)) {
+        if ($kb->matches($data, 'tui.input.tab')) {
             $this->applySuggestion();
 
             return true;
         }
 
-        if (!Keys::isEnter($data)) {
+        if (!$kb->matches($data, 'tui.select.confirm')) {
             return false;
         }
 
@@ -614,33 +698,88 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         return true;
     }
 
+    /**
+     * The rest of upstream's `handleInput()`, after the completion list: deletion, the kill ring,
+     * the dedicated history keys, movement, new line, submit, the arrows, paging and the jumps.
+     * Each arm names the action it answers to; the order is upstream's, which matters where two
+     * actions share a key.
+     */
     private function editingKey(string $data): void
     {
-        match (true) {
-            Keys::isCtrl($data, 'v') => $this->pasteFromClipboard(),
-            Keys::isCtrlK($data) => $this->deleteToLineEnd(),
-            Keys::isCtrlU($data) => $this->deleteToLineStart(),
-            Keys::isCtrlW($data), Keys::isAltBackspace($data) => $this->deleteWordBackwards(),
-            Keys::isCtrlA($data), Keys::isHome($data) => $this->cursorCol = 0,
-            Keys::isCtrlE($data), Keys::isEnd($data) => $this->cursorCol = strlen($this->lines[$this->cursorLine]),
-            self::isNewLine($data) => $this->breakLine(),
-            Keys::isCmdEnter($data) => $this->submit(),
-            Keys::isEnter($data) => $this->submit(),
-            Keys::isBackspace($data) => $this->backspace(),
-            Keys::isDelete($data) => $this->forwardDelete(),
-            Keys::isAltLeft($data), Keys::isCtrlLeft($data) => $this->moveWordBackwards(),
-            Keys::isAltRight($data), Keys::isCtrlRight($data) => $this->moveWordForwards(),
-            Keys::isArrowUp($data) => $this->up(),
-            Keys::isArrowDown($data) => $this->down(),
-            Keys::isArrowLeft($data) => $this->moveHorizontally(-1),
-            Keys::isArrowRight($data) => $this->moveHorizontally(1),
-            Chars::isPrintable($data) => $this->insert($data),
-            default => null,
-        };
+        $kb = Keybindings::getKeybindings();
+
+        /** @var list<array{0: string|Closure(string): bool, 1: Closure(): void}> $actions */
+        $actions = [
+            ['tui.editor.deleteToLineEnd', $this->deleteToLineEnd(...)],
+            ['tui.editor.deleteToLineStart', $this->deleteToLineStart(...)],
+            ['tui.editor.deleteWordBackward', $this->deleteWordBackwards(...)],
+            ['tui.editor.deleteWordForward', $this->deleteWordForward(...)],
+            [static fn (string $d): bool => $kb->matches($d, 'tui.editor.deleteCharBackward') || Keys::matchesName($d, 'shift+backspace'), $this->backspace(...)],
+            [static fn (string $d): bool => $kb->matches($d, 'tui.editor.deleteCharForward') || Keys::matchesName($d, 'shift+delete'), $this->forwardDelete(...)],
+            ['tui.editor.yank', $this->yank(...)],
+            ['tui.editor.yankPop', $this->yankPop(...)],
+            ['tui.editor.historyPrevious', function (): void {
+                $this->cancelSuggestions();
+                $this->recall(-1);
+            }],
+            ['tui.editor.historyNext', function (): void {
+                $this->cancelSuggestions();
+                $this->recall(1);
+            }],
+            ['tui.editor.cursorLineStart', function (): void {
+                $this->cursorCol = 0;
+            }],
+            ['tui.editor.cursorLineEnd', function (): void {
+                $this->cursorCol = strlen($this->lines[$this->cursorLine]);
+            }],
+            ['tui.editor.cursorWordLeft', $this->moveWordBackwards(...)],
+            ['tui.editor.cursorWordRight', $this->moveWordForwards(...)],
+            [static fn (string $d): bool => $kb->matches($d, 'tui.input.newLine') || self::isNewLine($d), $this->breakLine(...)],
+            ['tui.input.submit', $this->submit(...)],
+            ['tui.editor.cursorUp', $this->up(...)],
+            ['tui.editor.cursorDown', $this->down(...)],
+            ['tui.editor.cursorRight', fn () => $this->moveHorizontally(1)],
+            ['tui.editor.cursorLeft', fn () => $this->moveHorizontally(-1)],
+            ['tui.editor.pageUp', fn () => $this->pageScroll(-1)],
+            ['tui.editor.pageDown', fn () => $this->pageScroll(1)],
+            ['tui.editor.jumpForward', function (): void {
+                $this->jumpMode = 'forward';
+            }],
+            ['tui.editor.jumpBackward', function (): void {
+                $this->jumpMode = 'backward';
+            }],
+        ];
+
+        foreach ($actions as [$test, $action]) {
+            if (is_string($test) ? $kb->matches($data, $test) : $test($data)) {
+                $before = $this->lastAction;
+                $this->lastAction = null;
+                // The kill and yank actions read what came before them and set their own.
+                if (in_array($test, ['tui.editor.deleteToLineEnd', 'tui.editor.deleteToLineStart', 'tui.editor.deleteWordBackward', 'tui.editor.deleteWordForward', 'tui.editor.yank', 'tui.editor.yankPop'], true)) {
+                    $this->lastAction = $before;
+                }
+                $action();
+
+                return;
+            }
+        }
+
+        // Upstream's Shift+Space: a plain space.
+        if (Keys::matchesName($data, 'shift+space')) {
+            $this->type(' ');
+
+            return;
+        }
+
+        if (Chars::isPrintable($data)) {
+            $this->type($data);
+        }
     }
 
     /**
-     * Ctrl+V: a picture if there is one on the clipboard, otherwise the text.
+     * `app.clipboard.pasteImage` (Ctrl+V): a picture if there is one on the clipboard, otherwise
+     * the text. `CustomEditor` calls this for the key, the way upstream's calls `onPasteImage`; the
+     * editor itself does not claim an `app.*` key.
      *
      * A picture cannot go into a line of text, so it is written to a file and the file's
      * path is what gets typed — which the agent's tools can then read, and which reads
@@ -650,7 +789,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
      * are handled by the terminal itself and arrive as a bracketed paste, which is a
      * different path entirely and cannot carry an image. This is the one that can.
      */
-    private function pasteFromClipboard(): void
+    public function pasteFromClipboard(): void
     {
         if ($this->clipboard === null) {
             return;
@@ -687,8 +826,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
      */
     private static function isNewLine(string $data): bool
     {
-        return Keys::isShiftEnter($data)
-            || Keys::isAltEnter($data)
+        return Keys::isAltEnter($data)
             || $data === "\n"
             || $data === "\x1b\r"
             || $data === "\x1b[13;2~"
@@ -698,6 +836,22 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     }
 
     // ---- editing -------------------------------------------------------------------
+
+    /**
+     * A typed character — upstream's `insertCharacter()` with its fish-style undo coalescing: a
+     * run of word characters is one undo step, and each space is one of its own.
+     */
+    private function type(string $text): void
+    {
+        // A chunk of several characters (a fast typist, a terminal that batches) is judged by
+        // its first, as the key that started it.
+        if (Chars::isWhitespace(mb_substr($text, 0, 1)) || $this->lastAction !== 'type-word') {
+            $this->pushUndo();
+        }
+
+        $this->lastAction = 'type-word';
+        $this->insert($text);
+    }
 
     private function insert(string $text): void
     {
@@ -747,6 +901,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function breakLine(): void
     {
         $this->historyIndex = -1;
+        $this->pushUndo();
         $line = $this->lines[$this->cursorLine];
 
         $this->lines[$this->cursorLine] = substr($line, 0, $this->cursorCol);
@@ -760,6 +915,10 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function backspace(): void
     {
         $this->historyIndex = -1;
+
+        if ($this->cursorCol > 0 || $this->cursorLine > 0) {
+            $this->pushUndo();
+        }
 
         if ($this->cursorCol > 0) {
             $line = $this->lines[$this->cursorLine];
@@ -780,6 +939,10 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         $this->historyIndex = -1;
         $line = $this->lines[$this->cursorLine];
 
+        if ($this->cursorCol < strlen($line) || $this->cursorLine < count($this->lines) - 1) {
+            $this->pushUndo();
+        }
+
         if ($this->cursorCol < strlen($line)) {
             $length = self::firstGraphemeLength(substr($line, $this->cursorCol));
             $this->lines[$this->cursorLine] = substr($line, 0, $this->cursorCol) . substr($line, $this->cursorCol + $length);
@@ -794,11 +957,19 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function deleteToLineStart(): void
     {
         $this->historyIndex = -1;
+        $accumulate = $this->lastAction === 'kill';
 
         if ($this->cursorCol > 0) {
+            $this->pushUndo();
+            $this->killRing->push(substr($this->lines[$this->cursorLine], 0, $this->cursorCol), prepend: true, accumulate: $accumulate);
+            $this->lastAction = 'kill';
             $this->lines[$this->cursorLine] = substr($this->lines[$this->cursorLine], $this->cursorCol);
             $this->cursorCol = 0;
         } elseif ($this->cursorLine > 0) {
+            // At the start of a line the newline is what is deleted, and it is killed too.
+            $this->pushUndo();
+            $this->killRing->push("\n", prepend: true, accumulate: $accumulate);
+            $this->lastAction = 'kill';
             $this->joinWithPrevious();
         }
 
@@ -808,10 +979,17 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function deleteToLineEnd(): void
     {
         $this->historyIndex = -1;
+        $accumulate = $this->lastAction === 'kill';
 
         if ($this->cursorCol < strlen($this->lines[$this->cursorLine])) {
+            $this->pushUndo();
+            $this->killRing->push(substr($this->lines[$this->cursorLine], $this->cursorCol), prepend: false, accumulate: $accumulate);
+            $this->lastAction = 'kill';
             $this->lines[$this->cursorLine] = substr($this->lines[$this->cursorLine], 0, $this->cursorCol);
         } elseif ($this->cursorLine < count($this->lines) - 1) {
+            $this->pushUndo();
+            $this->killRing->push("\n", prepend: false, accumulate: $accumulate);
+            $this->lastAction = 'kill';
             $this->joinWithNext();
         }
 
@@ -821,9 +999,13 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function deleteWordBackwards(): void
     {
         $this->historyIndex = -1;
+        $accumulate = $this->lastAction === 'kill';
 
         if ($this->cursorCol === 0) {
             if ($this->cursorLine > 0) {
+                $this->pushUndo();
+                $this->killRing->push("\n", prepend: true, accumulate: $accumulate);
+                $this->lastAction = 'kill';
                 $this->joinWithPrevious();
             }
 
@@ -832,12 +1014,210 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             return;
         }
 
+        $this->pushUndo();
         $line = $this->lines[$this->cursorLine];
         $from = Chars::wordStart($line, $this->cursorCol);
 
+        $this->killRing->push(substr($line, $from, $this->cursorCol - $from), prepend: true, accumulate: $accumulate);
+        $this->lastAction = 'kill';
         $this->lines[$this->cursorLine] = substr($line, 0, $from) . substr($line, $this->cursorCol);
         $this->cursorCol = $from;
         $this->changed();
+    }
+
+    /** Upstream's `deleteWordForward()` (`tui.editor.deleteWordForward`, alt+d): the word ahead, into the kill ring. */
+    private function deleteWordForward(): void
+    {
+        $this->historyIndex = -1;
+        $accumulate = $this->lastAction === 'kill';
+        $line = $this->lines[$this->cursorLine];
+
+        if ($this->cursorCol >= strlen($line)) {
+            if ($this->cursorLine < count($this->lines) - 1) {
+                $this->pushUndo();
+                $this->killRing->push("\n", prepend: false, accumulate: $accumulate);
+                $this->lastAction = 'kill';
+                $this->joinWithNext();
+            }
+
+            $this->changed();
+
+            return;
+        }
+
+        $this->pushUndo();
+        $to = Chars::wordEnd($line, $this->cursorCol);
+
+        $this->killRing->push(substr($line, $this->cursorCol, $to - $this->cursorCol), prepend: false, accumulate: $accumulate);
+        $this->lastAction = 'kill';
+        $this->lines[$this->cursorLine] = substr($line, 0, $this->cursorCol) . substr($line, $to);
+        $this->changed();
+    }
+
+    // ---- kill ring and undo --------------------------------------------------------
+
+    /** Upstream's `yank()` (`tui.editor.yank`): the newest kill, put back at the cursor. */
+    private function yank(): void
+    {
+        $text = $this->killRing->peek();
+
+        if ($text === null) {
+            return;
+        }
+
+        $this->pushUndo();
+        $this->insertYankedText($text);
+        $this->lastAction = 'yank';
+    }
+
+    /**
+     * Upstream's `yankPop()` (`tui.editor.yankPop`): straight after a yank, swap what was yanked
+     * for the kill before it.
+     */
+    private function yankPop(): void
+    {
+        if ($this->lastAction !== 'yank' || $this->killRing->length() <= 1) {
+            return;
+        }
+
+        $this->pushUndo();
+        $this->deleteYankedText();
+        $this->killRing->rotate();
+        $this->insertYankedText((string) $this->killRing->peek());
+        $this->lastAction = 'yank';
+    }
+
+    private function insertYankedText(string $text): void
+    {
+        $this->historyIndex = -1;
+        $pieces = explode("\n", $text);
+        $line = $this->lines[$this->cursorLine];
+        $before = substr($line, 0, $this->cursorCol);
+        $after = substr($line, $this->cursorCol);
+        $last = $pieces[count($pieces) - 1];
+
+        if (count($pieces) === 1) {
+            $this->lines[$this->cursorLine] = $before . $text . $after;
+            $this->cursorCol += strlen($text);
+        } else {
+            $replacement = [$before . $pieces[0], ...array_slice($pieces, 1, -1), $last . $after];
+            array_splice($this->lines, $this->cursorLine, 1, $replacement);
+            $this->cursorLine += count($pieces) - 1;
+            $this->cursorCol = strlen($last);
+        }
+
+        $this->changed();
+    }
+
+    /** The text the last yank put in, which ends at the cursor — upstream's `deleteYankedText()`. */
+    private function deleteYankedText(): void
+    {
+        $yanked = $this->killRing->peek();
+
+        if ($yanked === null) {
+            return;
+        }
+
+        $pieces = explode("\n", $yanked);
+
+        if (count($pieces) === 1) {
+            $line = $this->lines[$this->cursorLine];
+            $from = max(0, $this->cursorCol - strlen($yanked));
+            $this->lines[$this->cursorLine] = substr($line, 0, $from) . substr($line, $this->cursorCol);
+            $this->cursorCol = $from;
+        } else {
+            $startLine = $this->cursorLine - (count($pieces) - 1);
+            $startCol = strlen($this->lines[$startLine]) - strlen($pieces[0]);
+            $afterCursor = substr($this->lines[$this->cursorLine], $this->cursorCol);
+            $beforeYank = substr($this->lines[$startLine], 0, $startCol);
+            array_splice($this->lines, $startLine, count($pieces), [$beforeYank . $afterCursor]);
+            $this->cursorLine = $startLine;
+            $this->cursorCol = $startCol;
+        }
+
+        $this->changed();
+    }
+
+    /** Upstream's `pushUndoSnapshot()`: the text, the cursor, and the pastes the markers stand for. */
+    private function pushUndo(): void
+    {
+        $this->undoStack->push([
+            'lines' => $this->lines,
+            'cursorLine' => $this->cursorLine,
+            'cursorCol' => $this->cursorCol,
+            'pastes' => $this->pastes,
+            'pasteCounter' => $this->pasteCounter,
+        ]);
+    }
+
+    /** Upstream's `undo()` (`tui.editor.undo`). */
+    private function undo(): void
+    {
+        $this->historyIndex = -1;
+        $snapshot = $this->undoStack->pop();
+
+        if ($snapshot === null) {
+            return;
+        }
+
+        $this->lines = $snapshot['lines'];
+        $this->cursorLine = $snapshot['cursorLine'];
+        $this->cursorCol = $snapshot['cursorCol'];
+        $this->pastes = $snapshot['pastes'];
+        $this->pasteCounter = $snapshot['pasteCounter'];
+        $this->lastAction = null;
+        $this->changed();
+    }
+
+    /**
+     * Upstream's `jumpToChar()`: the next (or previous) occurrence of $char, across lines,
+     * case-sensitive, skipping the one under the cursor. No match leaves the cursor where it is.
+     */
+    private function jumpToChar(string $char, string $direction): void
+    {
+        $forward = $direction === 'forward';
+        $count = count($this->lines);
+
+        for ($index = $this->cursorLine; $forward ? $index < $count : $index >= 0; $index += $forward ? 1 : -1) {
+            $line = $this->lines[$index];
+            $current = $index === $this->cursorLine;
+
+            if ($forward) {
+                $from = $current ? $this->cursorCol + 1 : 0;
+                $at = $from > strlen($line) ? false : strpos($line, $char, $from);
+            } else {
+                $haystack = $current ? substr($line, 0, max(0, $this->cursorCol)) : $line;
+                // `cursorCol - 1` upstream is the last place a match may *start*.
+                $at = $haystack === '' ? false : strrpos($haystack, $char);
+                if ($current && $at !== false && $at > $this->cursorCol - 1) {
+                    $at = false;
+                }
+            }
+
+            if ($at !== false) {
+                $this->cursorLine = $index;
+                $this->cursorCol = $at;
+
+                return;
+            }
+        }
+    }
+
+    /**
+     * Upstream's `pageScroll()` (`tui.editor.pageUp`/`pageDown`): the cursor moves by a page of
+     * drawn rows — 30% of the terminal, at least five.
+     */
+    private function pageScroll(int $direction): void
+    {
+        $rows = $this->terminalRows === null ? 0 : ($this->terminalRows)();
+        $pageSize = max(5, intdiv($rows * 3, 10));
+        $visual = $this->visualLines($this->lastWidth);
+        $current = $this->currentRow($visual);
+        $target = max(0, min(count($visual) - 1, $current + $direction * $pageSize));
+
+        if ($target !== $current) {
+            $this->moveVertically($visual, $target - $current);
+        }
     }
 
     private function joinWithPrevious(): void
@@ -1095,6 +1475,8 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         $this->pastes = [];
         $this->pasteCounter = 0;
         $this->historyIndex = -1;
+        $this->undoStack->clear();
+        $this->lastAction = null;
 
         $this->changed();
 
@@ -1136,11 +1518,14 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     private function paste(string $text): void
     {
         $this->historyIndex = -1;
+        $this->lastAction = null;
         $text = self::cleanPaste($text);
 
         if ($text === '') {
             return;
         }
+
+        $this->pushUndo();
 
         // A path pasted straight after a word runs into it; a space makes it readable,
         // and the user would have typed one.
@@ -1315,6 +1700,8 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             return;
         }
 
+        $this->pushUndo();
+        $this->lastAction = null;
         $result = $this->provider->apply(
             $this->lines,
             $this->cursorLine,

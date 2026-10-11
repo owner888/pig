@@ -35,7 +35,7 @@ final class AntigravityCatalogTest extends TestCase
         // sixteen models came back — and one directory for both reads the fixture twice.
         putenv('PI_HOME=' . $this->home);
         mkdir($this->home . '/pig', 0o700);
-        putenv('PIG_HOME=' . $this->home . '/pig');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->home . '/pig');
     }
 
     #[\Override]
@@ -43,7 +43,7 @@ final class AntigravityCatalogTest extends TestCase
     {
         \Pig\Ai\Extension\ProviderRegistry::forget();
         putenv('PI_HOME');
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         Models::forgetRegistered();
         Routing::forgetTables();
 
@@ -254,7 +254,7 @@ final class AntigravityCatalogTest extends TestCase
 
     public function testNoneReadsNothingAtAll(): void
     {
-        // What `--no-save` gets, and the flag means this run touches nothing of the person's.
+        // What `--no-session` gets, and the flag means this run touches nothing of the person's.
         $this->writeStore(['gemini-4-flash' => []]);
 
         self::assertSame([], Catalog::none()->models);

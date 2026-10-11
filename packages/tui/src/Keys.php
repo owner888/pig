@@ -45,6 +45,10 @@ final class Keys
     private const int PAGE_DOWN = -13;
     private const int HOME = -14;
     private const int END = -15;
+    private const int CLEAR = -16;
+
+    /** The function keys match by their legacy sequences only, so they share one codepoint nothing parses to. */
+    private const int FUNCTION_KEY = -100;
 
     /**
      * Kitty's keypad keys (`KP_Left` … `KP_Delete`) with Num Lock off are the navigation keys
@@ -371,12 +375,105 @@ final class Keys
     }
 
     /**
+     * The symbol keys a key id may name — upstream's `SYMBOL_KEYS` in `keys.ts`.
+     *
+     * @var list<string>
+     */
+    private const array SYMBOL_KEYS = ['`', '-', '=', '[', ']', '\\', ';', "'", ',', '.', '/', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '|', '~', '{', '}', ':', '<', '>', '?'];
+
+    /**
+     * The legacy sequences of the keys that have no codepoint — upstream's `LEGACY_KEY_SEQUENCES`,
+     * `LEGACY_SHIFT_SEQUENCES` and `LEGACY_CTRL_SEQUENCES`. The function keys and `clear` are only
+     * ever these: no terminal reports them through the kitty protocol in a form `parse()` reads.
+     *
+     * @var array<string, array{0: int, 1: list<string>, 2: list<string>, 3: list<string>}> codepoint, plain, shift, ctrl
+     */
+    private const array NAMED_KEYS = [
+        'escape' => [self::ESCAPE, ["\x1b"], [], []],
+        'esc' => [self::ESCAPE, ["\x1b"], [], []],
+        'tab' => [self::TAB, ["\t"], ["\x1b[Z"], []],
+        'enter' => [self::ENTER, ["\r", "\x1bOM"], [], []],
+        'return' => [self::ENTER, ["\r", "\x1bOM"], [], []],
+        'space' => [32, [' '], [], ["\x00"]],
+        'backspace' => [self::BACKSPACE, ["\x7f", "\x08"], [], []],
+        'up' => [self::UP, ["\x1b[A", "\x1bOA"], ["\x1b[a"], ["\x1bOa"]],
+        'down' => [self::DOWN, ["\x1b[B", "\x1bOB"], ["\x1b[b"], ["\x1bOb"]],
+        'right' => [self::RIGHT, ["\x1b[C", "\x1bOC"], ["\x1b[c"], ["\x1bOc"]],
+        'left' => [self::LEFT, ["\x1b[D", "\x1bOD"], ["\x1b[d"], ["\x1bOd"]],
+        'home' => [self::HOME, ["\x1b[H", "\x1bOH", "\x1b[1~", "\x1b[7~"], ["\x1b[7$"], ["\x1b[7^"]],
+        'end' => [self::END, ["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"], ["\x1b[8$"], ["\x1b[8^"]],
+        'delete' => [self::DELETE, ["\x1b[3~"], ["\x1b[3$"], ["\x1b[3^"]],
+        'insert' => [self::INSERT, ["\x1b[2~"], ["\x1b[2$"], ["\x1b[2^"]],
+        'pageup' => [self::PAGE_UP, ["\x1b[5~", "\x1b[[5~"], ["\x1b[5$"], ["\x1b[5^"]],
+        'pagedown' => [self::PAGE_DOWN, ["\x1b[6~", "\x1b[[6~"], ["\x1b[6$"], ["\x1b[6^"]],
+        'clear' => [self::CLEAR, ["\x1b[E", "\x1bOE"], ["\x1b[e"], ["\x1bOe"]],
+        'f1' => [self::FUNCTION_KEY, ["\x1bOP", "\x1b[11~", "\x1b[[A"], [], []],
+        'f2' => [self::FUNCTION_KEY, ["\x1bOQ", "\x1b[12~", "\x1b[[B"], [], []],
+        'f3' => [self::FUNCTION_KEY, ["\x1bOR", "\x1b[13~", "\x1b[[C"], [], []],
+        'f4' => [self::FUNCTION_KEY, ["\x1bOS", "\x1b[14~", "\x1b[[D"], [], []],
+        'f5' => [self::FUNCTION_KEY, ["\x1b[15~", "\x1b[[E"], [], []],
+        'f6' => [self::FUNCTION_KEY, ["\x1b[17~"], [], []],
+        'f7' => [self::FUNCTION_KEY, ["\x1b[18~"], [], []],
+        'f8' => [self::FUNCTION_KEY, ["\x1b[19~"], [], []],
+        'f9' => [self::FUNCTION_KEY, ["\x1b[20~"], [], []],
+        'f10' => [self::FUNCTION_KEY, ["\x1b[21~"], [], []],
+        'f11' => [self::FUNCTION_KEY, ["\x1b[23~"], [], []],
+        'f12' => [self::FUNCTION_KEY, ["\x1b[24~"], [], []],
+    ];
+
+    /**
+     * Upstream's `rawCtrlChar()`: the control character Ctrl+<key> sends in a legacy terminal —
+     * `code & 0x1f` for the letters and `[`, `\`, `]`, `_`, and `-` as `_` (one physical key on a
+     * US keyboard), which is how `ctrl+-` (undo) and `ctrl+]` (jump) arrive without the protocol.
+     */
+    private static function rawCtrlChar(string $key): ?string
+    {
+        if (($key >= 'a' && $key <= 'z') || in_array($key, ['[', '\\', ']', '_'], true)) {
+            return chr(ord($key) & 0x1f);
+        }
+
+        return $key === '-' ? chr(31) : null;
+    }
+
+    /**
+     * Split a key id into its modifier names and its key — upstream's `parseKeyId()`. A `+` at the
+     * end is the plus key (`ctrl++`), not a missing one.
+     *
+     * @return array{0: list<string>, 1: string}|null
+     */
+    private static function splitName(string $name): ?array
+    {
+        $name = strtolower(trim($name));
+
+        if ($name === '+') {
+            return [[], '+'];
+        }
+
+        if (str_ends_with($name, '++')) {
+            return [array_map('trim', explode('+', substr($name, 0, -2))), '+'];
+        }
+
+        $parts = array_map('trim', explode('+', $name));
+        $key = array_pop($parts);
+
+        return $key === null || $key === '' ? null : [$parts, $key];
+    }
+
+    /**
+     * Upstream's `matchesKey()` table, as data: what each key id is as a codepoint and modifier for
+     * `parse()`, and which legacy byte strings also mean it.
+     *
      * @return array{0: int, 1: int, 2: list<string>}|null codepoint, modifier bits, legacy sequences
      */
     private static function spec(string $name): ?array
     {
-        $parts = array_map('strtolower', array_map('trim', explode('+', $name)));
-        $key = array_pop($parts);
+        $split = self::splitName($name);
+
+        if ($split === null) {
+            return null;
+        }
+
+        [$parts, $key] = $split;
         $modifier = 0;
 
         foreach ($parts as $part) {
@@ -388,58 +485,52 @@ final class Keys
                 default => null,
             };
 
-            if ($bit === null) {
+            // A modifier named twice is a typo upstream refuses, and so does this.
+            if ($bit === null || ($modifier & $bit) !== 0) {
                 return null;
             }
 
             $modifier |= $bit;
         }
 
-        if ($key === null || $key === '') {
-            return null;
-        }
+        if (strlen($key) === 1 && (($key >= 'a' && $key <= 'z') || ($key >= '0' && $key <= '9') || in_array($key, self::SYMBOL_KEYS, true))) {
+            $rawCtrl = self::rawCtrlChar($key);
+            $isLetter = $key >= 'a' && $key <= 'z';
 
-        if (strlen($key) === 1 && $key >= 'a' && $key <= 'z') {
             $legacy = match ($modifier) {
-                self::CTRL => [chr(ord($key) - 96)],
-                self::ALT => ["\x1b" . $key],
                 0 => [$key],
+                self::CTRL => $rawCtrl === null ? [] : [$rawCtrl],
+                self::ALT => ["\x1b" . $key],
+                self::CTRL | self::ALT => $rawCtrl === null ? [] : ["\x1b" . $rawCtrl],
+                // Shift+<letter> without the protocol is the capital.
+                self::SHIFT => $isLetter ? [strtoupper($key)] : [],
                 default => [],
             };
 
             return [ord($key), $modifier, $legacy];
         }
 
-        $named = [
-            'escape' => [self::ESCAPE, ["\x1b"]],
-            'esc' => [self::ESCAPE, ["\x1b"]],
-            'tab' => [self::TAB, ["\t"]],
-            'enter' => [self::ENTER, ["\r"]],
-            'return' => [self::ENTER, ["\r"]],
-            'backspace' => [self::BACKSPACE, ["\x7f", "\x08"]],
-            'up' => [self::UP, ["\x1b[A"]],
-            'down' => [self::DOWN, ["\x1b[B"]],
-            'right' => [self::RIGHT, ["\x1b[C"]],
-            'left' => [self::LEFT, ["\x1b[D"]],
-            'home' => [self::HOME, ["\x1b[H", "\x1b[1~"]],
-            'end' => [self::END, ["\x1b[F", "\x1b[4~"]],
-            'delete' => [self::DELETE, ["\x1b[3~"]],
-            'insert' => [self::INSERT, ["\x1b[2~"]],
-            'pageup' => [self::PAGE_UP, ["\x1b[5~"]],
-            'pagedown' => [self::PAGE_DOWN, ["\x1b[6~"]],
-        ];
-
-        if (!isset($named[$key])) {
+        if (!isset(self::NAMED_KEYS[$key])) {
             return null;
         }
 
-        [$codepoint, $plain] = $named[$key];
+        [$codepoint, $plain, $shifted, $ctrl] = self::NAMED_KEYS[$key];
 
-        // The legacy forms with a modifier: Shift+Tab is its own sequence, Alt+<key> is ESC in
-        // front of the plain one, and `\e[1;<mod>X` is what `parse()` already reads.
+        if ($codepoint === self::FUNCTION_KEY && $modifier !== 0) {
+            return null;
+        }
+
         $legacy = match (true) {
             $modifier === 0 => $plain,
-            $modifier === self::SHIFT && $key === 'tab' => ["\x1b[Z"],
+            $modifier === self::SHIFT => $shifted,
+            $modifier === self::CTRL => $ctrl,
+            $modifier === self::ALT && $key === 'space' => ["\x1b "],
+            // Upstream's `\ep` / `\en` for Alt+Up / Alt+Down, and `\eb` / `\ef` for Alt+Left / Alt+Right.
+            $modifier === self::ALT && $key === 'up' => ["\x1bp", "\x1b\x1b[A"],
+            $modifier === self::ALT && $key === 'down' => ["\x1bn", "\x1b\x1b[B"],
+            $modifier === self::ALT && $key === 'left' => ["\x1bb", "\x1b\x1b[D"],
+            $modifier === self::ALT && $key === 'right' => ["\x1bf", "\x1b\x1b[C"],
+            $modifier === self::ALT && $key === 'backspace' => ["\x1b\x7f", "\x1b\x08"],
             // Not for Enter: `\e\r` is Apple Terminal's Shift+Enter — see `isAltEnter()`.
             $modifier === self::ALT && $key !== 'enter' && $key !== 'return'
                 => array_map(static fn (string $raw): string => "\x1b" . $raw, $plain),

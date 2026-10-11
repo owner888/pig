@@ -17,6 +17,11 @@ namespace Pig\CodingAgent\Session;
  * `messages` is how many came back, for a caller that says so on screen. `editorText` is what
  * `fork()` hands back for the prompt when the chosen point was something somebody said — the
  * same thing `TreeJump::$editorText` is for `goTo()`, and null everywhere else.
+ *
+ * `replacement` is set when the session switched to belongs to another working directory and a
+ * runtime factory built a new session for it (`AgentSession::switchTo()`'s `$relocate`, upstream's
+ * `createRuntime()`): the old session has been disposed, and the caller carries on with this one —
+ * upstream's `rebindSession()`, including telling its hooks `session_start`.
  */
 final readonly class SessionSwitch
 {
@@ -25,6 +30,7 @@ final readonly class SessionSwitch
         public ?string $previous = null,
         public int $messages = 0,
         public ?string $editorText = null,
+        public ?\Pig\CodingAgent\StartedSession $replacement = null,
     ) {
     }
 }

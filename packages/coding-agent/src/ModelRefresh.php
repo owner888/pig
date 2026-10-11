@@ -26,7 +26,7 @@ use Throwable;
  * - **A newer refresh of the same provider supersedes an older one**: the older one's signal is
  *   aborted and whatever it publishes afterwards is refused.
  * - **The store is pig's `~/.pig/agent/models-store.json`**, in pi's shape, one entry per
- *   provider; with `--no-save` (`Auth::path()` null) nothing is read or written.
+ *   provider; with `--no-session` (`Auth::path()` null) nothing is read or written.
  * - **A failure is the provider's**, kept in the result's `errors` and nowhere else, so one
  *   provider that cannot be reached does not stop the next.
  *

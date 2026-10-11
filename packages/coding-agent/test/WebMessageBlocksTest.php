@@ -15,7 +15,8 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Rpc\RpcEvents;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionEndEvent;
+use Pig\CodingAgent\Session\CompactionResult;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -52,7 +53,7 @@ final class WebMessageBlocksTest extends TestCase
             new ToolResultMessage('read1', 'read', [new TextContent('file excerpt')], details: ['notice' => 'Use offset=6 to continue']),
             new ToolResultMessage('write1', 'write', [new TextContent('Wrote 16 bytes')]),
             new BashExecution('exit 3', '', 3, timestamp: 105),
-            new BashExecution('seq 2500', 'tail', 0, truncated: true, spillPath: '/tmp/pig-output.txt', timestamp: 106),
+            new BashExecution('seq 2500', 'tail', 0, truncated: true, fullOutputPath: '/tmp/pig-output.txt', timestamp: 106),
             new BashExecution('sleep 5', '', null, cancelled: true, timestamp: 107),
         ];
         $fixture = [
@@ -60,7 +61,7 @@ final class WebMessageBlocksTest extends TestCase
             'events' => [
                 RpcEvents::encode(new MessageEndEvent($hook)),
                 RpcEvents::encode(new MessageEndEvent($hidden)),
-                RpcEvents::encode(new AutoCompactionEndEvent(true, true, $compaction)),
+                RpcEvents::encode(new CompactionEndEvent('overflow', new CompactionResult('A **summary**', 'kept0001', 256653, 1200), false, true, summary: $compaction)),
                 RpcEvents::encode(new MessageEndEvent($compaction)),
             ],
         ];

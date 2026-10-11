@@ -180,7 +180,7 @@ final class PiMessages
 
     /**
      * Upstream's `resolveCacheRetention()` for this API: "Backend defaults apply when unset; only the
-     * legacy env opt-in is mapped" — the option, else `long` for `PI_CACHE_RETENTION=long`, else
+     * legacy env opt-in is mapped" — the option, else `long` for `PIG_CACHE_RETENTION=long`, else
      * nothing at all (never `short`).
      */
     private static function resolveCacheRetention(?StreamOptions $options): ?string
@@ -189,7 +189,7 @@ final class PiMessages
             return $options->cacheRetention;
         }
 
-        return StreamOptions::providerEnvValue('PI_CACHE_RETENTION', $options?->env) === 'long' ? 'long' : null;
+        return StreamOptions::providerEnvValue('PIG_CACHE_RETENTION', $options?->env) === 'long' ? 'long' : null;
     }
 
     /**

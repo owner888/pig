@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Closure;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Theme\Theme;
@@ -146,7 +147,7 @@ final class TerminalUi implements HookUi
     }
 
     #[\Override]
-    public function select(string $title, array $options): ?string
+    public function select(string $title, array $options, ?int $timeout = null): ?string
     {
         // The empty check first: a hook offering nothing to choose from is its own mistake
         // and does not need a line about the screen being busy.
@@ -156,7 +157,7 @@ final class TerminalUi implements HookUi
 
         $items = array_map(static fn (string $option): SelectItem => new SelectItem($option), $options);
 
-        return $this->ask($title, new SelectList($items, 8, Themes::getSelectListTheme()));
+        return $this->ask($title, new SelectList($items, 8, Themes::getSelectListTheme()), timeout: $timeout);
     }
 
     /**
@@ -166,7 +167,7 @@ final class TerminalUi implements HookUi
      * because escape then means the same thing here as everywhere else.
      */
     #[\Override]
-    public function confirm(string $title, string $message): bool
+    public function confirm(string $title, string $message, ?int $timeout = null): bool
     {
         if (!$this->canAsk()) {
             return false;
@@ -182,11 +183,12 @@ final class TerminalUi implements HookUi
             trim($message) === '' ? $title : $title . ' — ' . $message,
             $list,
             new BlockedStatus('permission', $title),
+            $timeout,
         ) === 'yes';
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null, ?int $timeout = null): ?string
     {
         if (!$this->canAsk() || $signal?->aborted() === true) {
             return null;
@@ -196,15 +198,20 @@ final class TerminalUi implements HookUi
         $answer = new Deferred();
         $field = new Input();
 
+        $cancel = function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $this->close();
+                $answer->complete(null);
+            }
+        };
+        [$heading, $stopCountdown] = $this->countdown($title . ($placeholder === '' ? '' : " ({$placeholder})"), $timeout, $cancel);
+
         $field->setSubmitHandler(function (string $value) use ($answer): void {
             $this->close();
             $answer->complete($value);
         });
 
-        $field->setCancelHandler(function () use ($answer): void {
-            $this->close();
-            $answer->complete(null);
-        });
+        $field->setCancelHandler($cancel);
 
         // Something else answered first: the dialog goes the way escape would take it.
         $listener = $signal?->onAbort(function () use ($answer): void {
@@ -215,7 +222,7 @@ final class TerminalUi implements HookUi
         });
 
         $this->open(
-            $title . ($placeholder === '' ? '' : " ({$placeholder})"),
+            $heading,
             $field,
             'enter to submit, esc to cancel',
             new BlockedStatus('question', $title),
@@ -224,6 +231,8 @@ final class TerminalUi implements HookUi
         try {
             $value = $answer->future->await();
         } finally {
+            $stopCountdown();
+
             if ($signal !== null && $listener !== null) {
                 $signal->removeListener($listener);
             }
@@ -576,26 +585,84 @@ final class TerminalUi implements HookUi
      *
      * @return string|null the chosen value, or null on escape
      */
-    private function ask(string $title, SelectList $list, ?BlockedStatus $blocked = null): ?string
+    private function ask(string $title, SelectList $list, ?BlockedStatus $blocked = null, ?int $timeout = null): ?string
     {
         $this->busy = true;
         $answer = new Deferred();
+
+        $cancel = function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $this->close();
+                $answer->complete(null);
+            }
+        };
+        [$heading, $stopCountdown] = $this->countdown($title, $timeout, $cancel);
 
         $list->setSelectHandler(function (SelectItem $item) use ($answer): void {
             $this->close();
             $answer->complete($item->value);
         });
 
-        $list->setCancelHandler(function () use ($answer): void {
-            $this->close();
-            $answer->complete(null);
-        });
+        $list->setCancelHandler($cancel);
 
-        $this->open($title, $list, 'enter to choose, esc to cancel', $blocked ?? new BlockedStatus('question', $title));
+        $this->open($heading, $list, 'enter to choose, esc to cancel', $blocked ?? new BlockedStatus('question', $title));
 
-        $value = $answer->future->await();
+        try {
+            $value = $answer->future->await();
+        } finally {
+            $stopCountdown();
+        }
 
         return is_string($value) ? $value : null;
+    }
+
+    /**
+     * Upstream's `CountdownTimer` on a dialog with a `timeout`: the title says `(Ns)`, one second
+     * fewer each second, and at nought the dialog is cancelled as escape would cancel it.
+     *
+     * The seconds are `ceil(timeout / 1000)`, as upstream rounds them. No timeout, or 0, is no
+     * countdown: the plain title and a stop that does nothing.
+     *
+     * @param Closure(): void $expire
+     * @return array{0: string|Closure(): string, 1: Closure(): void} the title to draw, and what
+     *         stops the clock once the dialog is answered some other way
+     */
+    private function countdown(string $title, ?int $timeout, Closure $expire): array
+    {
+        if ($timeout === null || $timeout <= 0) {
+            return [$title, static fn () => null];
+        }
+
+        $remaining = (int) ceil($timeout / 1000);
+        $timer = null;
+
+        $tick = function () use (&$tick, &$remaining, &$timer, $expire): void {
+            $timer = null;
+            $remaining--;
+            $this->tui->requestRender();
+
+            if ($remaining <= 0) {
+                $expire();
+
+                return;
+            }
+
+            $timer = Loop::get()->delay(1.0, $tick);
+        };
+
+        $timer = Loop::get()->delay(1.0, $tick);
+
+        return [
+            static function () use ($title, &$remaining): string {
+                return "{$title} ({$remaining}s)";
+            },
+            static function () use (&$timer): void {
+                if ($timer !== null) {
+                    Loop::get()->cancel($timer);
+                    $timer = null;
+                }
+            },
+        ];
     }
 
     /**
@@ -612,7 +679,8 @@ final class TerminalUi implements HookUi
      * `$blocked` is what the terminal is told the dialog waits for (OSC 7501). `custom()` passes
      * none, as upstream reports none for it.
      */
-    private function open(string $title, object $component, string $hint = '', ?BlockedStatus $blocked = null): void
+    /** @param string|Closure(): string $title a closure for one that changes — a countdown */
+    private function open(string|Closure $title, object $component, string $hint = '', ?BlockedStatus $blocked = null): void
     {
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
@@ -620,7 +688,11 @@ final class TerminalUi implements HookUi
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', $title), 1, 0));
+            $this->overlay->addChild(new ThemedText(
+                static fn (): string => Themes::theme()->fg('muted', $title instanceof Closure ? $title() : $title),
+                1,
+                0,
+            ));
         }
 
         $this->overlay->addChild($component);

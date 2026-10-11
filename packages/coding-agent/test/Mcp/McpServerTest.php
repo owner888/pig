@@ -55,7 +55,7 @@ final class McpServerTest extends TestCase
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-mcp-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
-        putenv('PIG_HOME=' . $this->cwd . '-home');
+        putenv('PIG_CODING_AGENT_DIR=' . $this->cwd . '-home');
         $this->answers = [];
         $this->failure = null;
 
@@ -73,7 +73,7 @@ final class McpServerTest extends TestCase
     {
         $this->server->stop();
         $this->session->dispose();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
         self::remove($this->cwd);
         self::remove($this->cwd . '-home');
     }

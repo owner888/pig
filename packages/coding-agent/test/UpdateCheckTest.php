@@ -57,6 +57,22 @@ final class UpdateCheckTest extends TestCase
         )]];
     }
 
+    public function testSkipVersionCheckAndOfflineAskNothing(): void
+    {
+        // Upstream's `PI_SKIP_VERSION_CHECK` and `PI_OFFLINE`, renamed: `--offline` sets both.
+        $check = $this->asking(self::packagist(['0.2.0', '0.1.0']));
+
+        foreach (['PIG_SKIP_VERSION_CHECK', 'PIG_OFFLINE'] as $name) {
+            putenv("{$name}=1");
+
+            try {
+                $this->assertNull(Async::run(static fn () => $check->newerThan('0.1.0')), $name);
+            } finally {
+                putenv($name);
+            }
+        }
+    }
+
     public function testANewerReleaseIsReported(): void
     {
         $check = $this->asking(self::packagist(['0.2.0', '0.1.0']));

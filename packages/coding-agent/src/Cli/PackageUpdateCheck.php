@@ -25,7 +25,8 @@ final class PackageUpdateCheck
      */
     public function checkForUpdates(?string $cwd = null): array
     {
-        if (getenv('PIG_OFFLINE') === '1' || getenv('PI_OFFLINE') === '1') {
+        // Upstream's `isOfflineModeEnabled()`: `PIG_OFFLINE` of 1/true/yes, which `--offline` sets.
+        if (!\Pig\CodingAgent\ModelRefresh::networkEnabled()) {
             return [];
         }
 

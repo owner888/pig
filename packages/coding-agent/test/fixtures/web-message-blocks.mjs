@@ -118,7 +118,11 @@ assert.match(html, /\$ seq 2500/);
 assert.match(html, /\$ sleep 5/);
 
 const before = chatScroll.children.length;
-appendSummaryMessage(fixture.events.find(e => e.type === 'auto_compaction_end').summary);
+// `compaction_end` carries upstream's `CompactionResult`, not the entry: no pig-only `summary` on the wire.
+const compactionEnd = fixture.events.find(e => e.type === 'compaction_end');
+assert.equal(compactionEnd.result.summary, 'A **summary**');
+assert.equal(compactionEnd.result.tokensBefore, 256653);
+assert.equal(compactionEnd.summary, undefined);
 appendSummaryMessage(fixture.events.find(e => e.type === 'message_end' && e.message.role === 'compactionSummary').message);
 assert.equal(chatScroll.children.length, before, 'duplicate compaction event appended another block');
 appendHookMessage(fixture.events.find(e => e.type === 'message_end' && e.message.role === 'custom').message);

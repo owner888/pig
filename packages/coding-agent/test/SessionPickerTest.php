@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Cli\SessionChoice;
+use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\Tui\Test\FakeTerminal;
@@ -27,6 +28,7 @@ final class SessionPickerTest extends TestCase
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
+        \Pig\Tui\Keybindings::reset();
     }
 
     private const string ESC = "\e";
@@ -42,6 +44,7 @@ final class SessionPickerTest extends TestCase
     {
         $this->setUpGlobalTheme();
         Loop::reset();
+        \Pig\Tui\Keybindings::setKeybindings(new \Pig\CodingAgent\Keybindings(platform: 'linux', env: []));
     }
 
     /** @param list<string> $keys typed in order, before the picker opens */
@@ -67,11 +70,15 @@ final class SessionPickerTest extends TestCase
         string $opening,
         int $messages = 4,
         ?string $text = null,
+        ?string $name = null,
+        ?string $parent = null,
+        int $modified = 0,
+        string $cwd = '/somewhere',
     ): SessionInfo {
         return new SessionInfo(
             $path,
             basename($path, '.jsonl'),
-            '/somewhere',
+            $cwd,
             1_700_000_000_000,
             $messages,
             $opening,
@@ -79,7 +86,59 @@ final class SessionPickerTest extends TestCase
             // whose only text is its opening is a real one — the first thing said, before
             // anything has answered.
             $text ?? $opening,
+            $name,
+            $parent,
+            $modified,
         );
+    }
+
+    public function testDeleteAsksFirstAndThenRemovesTheFileAndTheRow(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-sessions-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+        file_put_contents("{$dir}/a.jsonl", '');
+        file_put_contents("{$dir}/b.jsonl", '');
+        $list = new SessionList([self::session("{$dir}/a.jsonl", 'first'), self::session("{$dir}/b.jsonl", 'second')]);
+        $deleted = [];
+        $list->setDeleteHandler(static function (string $path) use (&$deleted): ?string {
+            $deleted[] = $path;
+
+            return SessionList::deleteSessionFile($path);
+        }, "{$dir}/b.jsonl");
+
+        $list->handleInput("\x04"); // ctrl+d: app.session.delete
+        $this->assertStringContainsString('Delete session?', self::text($list));
+        $list->handleInput(self::ESC);
+        $this->assertSame([], $deleted, 'escape keeps it');
+
+        $list->handleInput("\x04");
+        $list->handleInput(self::ENTER);
+        $this->assertSame(["{$dir}/a.jsonl"], $deleted);
+        $this->assertFileDoesNotExist("{$dir}/a.jsonl");
+        $this->assertCount(1, $list->matching());
+
+        // The session being talked in is refused before anything is asked.
+        $list->handleInput("\x04");
+        $this->assertStringContainsString('Cannot delete the currently active session', self::text($list));
+        $this->assertFileExists("{$dir}/b.jsonl");
+
+        unlink("{$dir}/b.jsonl");
+        rmdir($dir);
+    }
+
+    public function testCtrlPShowsEachSessionsPath(): void
+    {
+        $list = new SessionList([self::session('/tmp/where/a.jsonl', 'first')]);
+        $this->assertStringNotContainsString('/tmp/where/a.jsonl', self::text($list));
+
+        $list->handleInput("\x10"); // ctrl+p: app.session.togglePath
+        $this->assertStringContainsString('/tmp/where/a.jsonl', self::text($list));
+        $this->assertStringContainsString('path (on)', self::text($list));
+    }
+
+    private static function text(SessionList $list): string
+    {
+        return (string) preg_replace('/\e\[[0-9;]*m/', '', implode("\n", $list->render(200)));
     }
 
     public function testEnterChoosesWhatIsHighlighted(): void
@@ -221,29 +280,140 @@ final class SessionPickerTest extends TestCase
 
     // ---- what the list says --------------------------------------------------------
 
-    public function testEachLineIsTheOpeningAndWhenItWas(): void
+    public function testEachRowIsTheOpeningTheCountAndTheAge(): void
     {
-        $items = SessionPicker::items([self::session('/a.jsonl', 'why is the sky blue?', 12)]);
+        $text = self::text(new SessionList([self::session('/a.jsonl', 'why is the sky blue?', 12)]));
 
-        $this->assertCount(1, $items);
-        $this->assertSame('why is the sky blue?', $items[0]->label);
-        $this->assertStringContainsString('12 messages', (string) $items[0]->description);
+        $this->assertMatchesRegularExpression('/why is the sky blue\?\s+12 \d+(y|mo|w|d|h|m)\b/', $text);
+        $this->assertStringContainsString('Resume Session (Current Folder)', $text);
+        $this->assertStringContainsString('Sort: Threaded', $text);
     }
 
     public function testASessionWithNothingSaidStillHasALine(): void
     {
         // The alternative is a blank row that cannot be told from a rendering bug.
-        $this->assertSame('(nothing was said)', SessionPicker::items([self::session('/a.jsonl', '')])[0]->label);
+        $this->assertStringContainsString('(nothing was said)', self::text(new SessionList([self::session('/a.jsonl', '')])));
     }
 
-    public function testTheValueIsThePositionSoTheRightPathComesBack(): void
+    public function testThreadedPutsAForkUnderTheSessionItCameFrom(): void
     {
-        $sessions = [self::session('/a.jsonl', 'first'), self::session('/b.jsonl', 'second')];
-        $items = SessionPicker::items($sessions);
+        $parent = self::session('/p.jsonl', 'the parent', modified: 1_000);
+        $fork = self::session('/f.jsonl', 'the fork', parent: '/p.jsonl', modified: 3_000);
+        $other = self::session('/o.jsonl', 'another', modified: 2_000);
+        $list = new SessionList([$fork, $other, $parent]);
 
-        // The path is not in the item, so this is the join between the two. Getting it
-        // wrong would open somebody else's conversation, which is the kind of mistake that
-        // looks like data loss.
-        $this->assertSame('/b.jsonl', $sessions[(int) $items[1]->value]->path);
+        // The parent's subtree holds the newest activity, so it comes first, with its fork under it.
+        $this->assertSame(['/p.jsonl', '/f.jsonl', '/o.jsonl'], self::paths($list));
+        $this->assertStringContainsString('   └─ the fork', self::text($list));
+
+        $list->handleInput("\x13"); // ctrl+s: app.session.toggleSort → recent
+        $this->assertStringContainsString('Sort: Recent', self::text($list));
+        $this->assertSame(['/f.jsonl', '/o.jsonl', '/p.jsonl'], self::paths($list), 'recent keeps the order given');
+        $this->assertStringNotContainsString('└─', self::text($list));
+
+        $list->handleInput("\x13"); // → fuzzy
+        $this->assertStringContainsString('Sort: Fuzzy', self::text($list));
+        $list->handleInput("\x13"); // → threaded again
+        $this->assertStringContainsString('Sort: Threaded', self::text($list));
+    }
+
+    public function testCtrlNKeepsOnlyNamedSessions(): void
+    {
+        $list = new SessionList([self::session('/a.jsonl', 'first'), self::session('/b.jsonl', 'my release', name: 'my release')]);
+
+        $list->handleInput("\x0e"); // ctrl+n: app.session.toggleNamedFilter
+        $this->assertSame(['/b.jsonl'], self::paths($list));
+        $this->assertStringContainsString('Name: Named', self::text($list));
+
+        $list->handleInput("\x0e");
+        $this->assertCount(2, $list->matching());
+    }
+
+    public function testTabSwitchesToEveryProjectsSessionsAndBack(): void
+    {
+        $loads = 0;
+        $list = new SessionList(
+            [self::session('/here.jsonl', 'here')],
+            10,
+            static function () use (&$loads): array {
+                $loads++;
+
+                return [self::session('/here.jsonl', 'here'), self::session('/there.jsonl', 'there', cwd: '/elsewhere')];
+            },
+        );
+
+        $list->handleInput("\t");
+        $this->assertSame(['/here.jsonl', '/there.jsonl'], self::paths($list));
+        $this->assertStringContainsString('Resume Session (All)', self::text($list));
+        $this->assertStringContainsString('/elsewhere', self::text($list), 'every project shows each one\'s folder');
+
+        $list->handleInput("\t");
+        $list->handleInput("\t");
+        $this->assertSame(1, $loads, 'read once');
+
+        $list->handleInput("\t");
+        $this->assertSame(['/here.jsonl'], self::paths($list));
+    }
+
+    public function testCtrlRRenamesInPlace(): void
+    {
+        $renamed = [];
+        $list = new SessionList([self::session('/nowhere/a.jsonl', 'first', name: 'old')]);
+        $list->handleInput("\x12");
+        $this->assertStringNotContainsString('Rename Session', self::text($list), 'nothing to rename with, nothing happens');
+
+        $list->setRenameHandler(static function (string $path, string $name) use (&$renamed): void {
+            $renamed[] = [$path, $name];
+        });
+        $this->assertStringContainsString('rename', self::text($list), 'offered once it can be done');
+
+        $list->handleInput("\x12"); // ctrl+r: app.session.rename
+        $this->assertStringContainsString('Rename Session', self::text($list));
+
+        // The field starts with the name it has, and the cursor where upstream's starts: at 0.
+        foreach (["\x05", "\x7f", "\x7f", "\x7f", 'n', 'e', 'w'] as $key) {
+            $list->handleInput($key);
+        }
+
+        $list->handleInput(self::ENTER);
+        $this->assertSame([['/nowhere/a.jsonl', 'new']], $renamed);
+        $this->assertStringContainsString('new', self::text($list));
+        $this->assertSame('new', $list->matching()[0]->name);
+
+        // Escape leaves the field without renaming anything.
+        $list->handleInput("\x12");
+        $list->handleInput(self::ESC);
+        $this->assertCount(1, $renamed);
+        $this->assertStringNotContainsString('Rename Session', self::text($list));
+    }
+
+    public function testQuotesSearchForAPhraseAndReSearchesForAPattern(): void
+    {
+        $sessions = [
+            self::session('/a.jsonl', 'a', text: 'node is not the cve here'),
+            self::session('/b.jsonl', 'b', text: 'the node cve fix'),
+        ];
+
+        $this->assertSame(['/b.jsonl'], self::paths(self::typed($sessions, '"node cve"')));
+        $this->assertSame(['/a.jsonl'], self::paths(self::typed($sessions, 're:not\s+the')));
+        $this->assertSame([], self::paths(self::typed($sessions, 're:(')), 'a pattern that does not compile matches nothing');
+    }
+
+    /** @param list<SessionInfo> $sessions */
+    private static function typed(array $sessions, string $query): SessionList
+    {
+        $list = new SessionList($sessions);
+
+        foreach (mb_str_split($query) as $key) {
+            $list->handleInput($key);
+        }
+
+        return $list;
+    }
+
+    /** @return list<string> */
+    private static function paths(SessionList $list): array
+    {
+        return array_map(static fn (SessionInfo $s): string => $s->path, $list->matching());
     }
 }

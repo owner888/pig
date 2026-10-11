@@ -26,7 +26,7 @@ use Pig\Async\Loop;
  * a `rewrite` and a provider thinking level on `done`; the backend's own `error` event; a refusal
  * with a JSON error and one with an HTML body (each a `pi_messages_response_failure` diagnostic); a
  * body that ends with no terminal event, `\r\n` frames, a comment and `[DONE]`; `stream()`'s options
- * with `debug`, `cacheRetention`, an object `toolChoice`; `PI_CACHE_RETENTION=long`.
+ * with `debug`, `cacheRetention`, an object `toolChoice`; `PIG_CACHE_RETENTION=long`.
  *
  * **The request body is compared as JSON, with one difference allowed**: upstream sends a user
  * message's content as the caller gave it — a bare string stays one — and pig's `UserMessage`

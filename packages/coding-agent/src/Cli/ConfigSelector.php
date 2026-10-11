@@ -17,6 +17,7 @@ use Pig\Tui\Components\Input;
 use Pig\Tui\Container;
 use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
+use Pig\Tui\Keybindings;
 use Pig\Tui\Keys;
 use Pig\Tui\Width;
 
@@ -190,11 +191,15 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
     #[\Override]
     public function handleInput(string $data): void
     {
-        if (Keys::isArrowUp($data)) {
+        $kb = Keybindings::getKeybindings();
+
+        // Upstream's `ResourceList.handleInput()` ids, in its order: cancel (escape and ctrl+c by
+        // default) closes; ctrl+c as such exits only when cancel was moved off it.
+        if ($kb->matches($data, 'tui.select.up')) {
             $this->selected = $this->nextItem($this->selected, -1);
-        } elseif (Keys::isArrowDown($data)) {
+        } elseif ($kb->matches($data, 'tui.select.down')) {
             $this->selected = $this->nextItem($this->selected, 1);
-        } elseif (Keys::isPageUp($data)) {
+        } elseif ($kb->matches($data, 'tui.select.pageUp')) {
             $target = max(0, $this->selected - $this->maxVisible);
             while ($target < count($this->filtered) && $this->filtered[$target]['type'] !== 'item') {
                 $target++;
@@ -202,7 +207,7 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
             if ($target < count($this->filtered)) {
                 $this->selected = $target;
             }
-        } elseif (Keys::isPageDown($data)) {
+        } elseif ($kb->matches($data, 'tui.select.pageDown')) {
             $target = min(count($this->filtered) - 1, $this->selected + $this->maxVisible);
             while ($target >= 0 && $this->filtered[$target]['type'] !== 'item') {
                 $target--;
@@ -210,7 +215,7 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
             if ($target >= 0) {
                 $this->selected = $target;
             }
-        } elseif (Keys::isEscape($data)) {
+        } elseif ($kb->matches($data, 'tui.select.cancel')) {
             if ($this->onClose !== null) {
                 ($this->onClose)();
             }
@@ -218,13 +223,13 @@ final class ConfigSelector extends Container implements Focusable, InputHandler
             if ($this->onExit !== null) {
                 ($this->onExit)();
             }
-        } elseif (Keys::isTab($data)) {
+        } elseif ($kb->matches($data, 'tui.input.tab')) {
             if ($this->projectModeAvailable) {
                 $this->writeScope = $this->writeScope === 'global' ? 'project' : 'global';
                 $this->rebuild();
                 $this->filter($this->search->value());
             }
-        } elseif ($data === ' ' || Keys::isEnter($data)) {
+        } elseif ($data === ' ' || $kb->matches($data, 'tui.select.confirm')) {
             $entry = $this->filtered[$this->selected] ?? null;
 
             if ($entry !== null && $entry['type'] === 'item' && ($this->writeScope === 'project' || $entry['item']['metadata']->scope === 'user')) {

@@ -12,8 +12,9 @@ namespace Pig\CodingAgent\Packages;
  *   `extra.pig.extensions`, else an `index.php` (upstream's `index.ts`). A directory with neither
  *   is walked for both.
  * - skills: a `SKILL.md` claims its directory and the walk stops there; a `.md` directly under
- *   the root is a skill on its own (upstream's `pi` mode).
- * - prompts: every `.md` under the root; themes: every `.json`.
+ *   the root is a skill on its own (upstream's `pi` mode; `autoSkills()` has the `agents` one).
+ * - prompts: every `.md` under the root; themes: every `.json`. A conventional directory loads its
+ *   direct children only, which is `autoFiles()`.
  *
  * Dot entries, `vendor` and `node_modules` are skipped. Upstream also honours `.gitignore`,
  * `.ignore` and `.fdignore` on the way down, with the `ignore` package; pig does not, on purpose:
@@ -94,8 +95,83 @@ final class ResourceDiscovery
         return $entries;
     }
 
-    /** @return list<string> */
-    private static function skills(string $dir, string $root): array
+    /**
+     * Upstream's `collectAutoSkillEntries()`: a conventional skills directory. `pi` (the agent
+     * directory's and `.pig/`'s) takes a `.md` directly under the root as a skill of its own; `agents`
+     * (`.agents/skills`, the Agent Skills layout) takes one only below the root, in a directory with
+     * no `SKILL.md`. Either way a `SKILL.md` claims its directory and the walk stops there.
+     *
+     * @param 'pi'|'agents' $mode
+     * @return list<string>
+     */
+    public static function autoSkills(string $dir, string $mode): array
+    {
+        return is_dir($dir) ? self::skills($dir, $dir, $mode) : [];
+    }
+
+    /**
+     * Upstream's `collectAutoPromptEntries()` and `collectAutoThemeEntries()`: the direct children of
+     * a conventional directory with the suffix, not its subdirectories.
+     *
+     * @return list<string>
+     */
+    public static function autoFiles(string $dir, string $suffix): array
+    {
+        $entries = [];
+
+        foreach (self::listing($dir) as $name => $path) {
+            if (is_file($path) && str_ends_with($name, $suffix)) {
+                $entries[] = $path;
+            }
+        }
+
+        return $entries;
+    }
+
+    /**
+     * Upstream's `collectAncestorAgentsSkillDirs()`: `<dir>/.agents/skills` for $cwd and each of its
+     * ancestors, stopping at the repository root (the nearest directory with a `.git`) when there is
+     * one, at `/` when there is not. Existing or not — the caller's walk skips what is not there.
+     *
+     * @return list<string>
+     */
+    public static function ancestorAgentsSkillDirs(string $cwd): array
+    {
+        $start = \Pig\CodingAgent\Tools\Paths::resolve($cwd, '/');
+        $repoRoot = null;
+
+        for ($dir = $start; ; $dir = dirname($dir)) {
+            if (file_exists(rtrim($dir, '/') . '/.git')) {
+                $repoRoot = $dir;
+
+                break;
+            }
+
+            if (dirname($dir) === $dir) {
+                break;
+            }
+        }
+
+        $dirs = [];
+
+        for ($dir = $start; ; $dir = dirname($dir)) {
+            $dirs[] = rtrim($dir, '/') . '/.agents/skills';
+
+            if (($repoRoot !== null && $dir === $repoRoot) || dirname($dir) === $dir) {
+                break;
+            }
+        }
+
+        return $dirs;
+    }
+
+    /**
+     * Upstream's `collectSkillEntries()`.
+     *
+     * @param 'pi'|'agents' $mode
+     * @return list<string>
+     */
+    private static function skills(string $dir, string $root, string $mode = 'pi'): array
     {
         if (is_file("{$dir}/SKILL.md")) {
             return ["{$dir}/SKILL.md"];
@@ -105,11 +181,11 @@ final class ResourceDiscovery
 
         foreach (self::listing($dir) as $name => $path) {
             if (is_file($path)) {
-                if ($dir === $root && str_ends_with($name, '.md')) {
+                if (str_ends_with($name, '.md') && ($mode === 'pi' ? $dir === $root : $dir !== $root)) {
                     $entries[] = $path;
                 }
             } elseif (is_dir($path)) {
-                $entries = [...$entries, ...self::skills($path, $root)];
+                $entries = [...$entries, ...self::skills($path, $root, $mode)];
             }
         }
 

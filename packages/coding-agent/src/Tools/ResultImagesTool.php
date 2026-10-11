@@ -53,6 +53,6 @@ final readonly class ResultImagesTool implements AgentTool
         $result = $this->tool->execute($toolCallId, $arguments, $signal, $onUpdate);
         $content = ($this->normalize)($result->content);
 
-        return $content === $result->content ? $result : new AgentToolResult($content, $result->details, $result->usage);
+        return $content === $result->content ? $result : new AgentToolResult($content, $result->details, $result->usage, $result->structuredContent);
     }
 }

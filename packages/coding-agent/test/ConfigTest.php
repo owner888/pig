@@ -19,7 +19,7 @@ final class ConfigTest extends TestCase
     /** @var array<string, string|false> */
     private array $saved = [];
 
-    private const array VARIABLES = ['PIG_HOME', 'PI_CODING_AGENT_DIR', 'PI_AGENT_DIR', 'PI_HOME', 'HOME'];
+    private const array VARIABLES = ['PIG_CODING_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'PI_AGENT_DIR', 'PI_HOME', 'HOME', 'PIG_PACKAGE_DIR'];
 
     #[\Override]
     protected function setUp(): void
@@ -49,7 +49,7 @@ final class ConfigTest extends TestCase
 
     public function testPigHomeOverridesIt(): void
     {
-        putenv('PIG_HOME=/somewhere/else/');
+        putenv('PIG_CODING_AGENT_DIR=/somewhere/else/');
 
         // Trailing slash off, because everything downstream appends `/sessions` and the like.
         $this->assertSame('/somewhere/else', Config::home());
@@ -88,5 +88,19 @@ final class ConfigTest extends TestCase
         putenv('PI_AGENT_DIR=/a/name/pig/invented');
 
         $this->assertSame('/tmp/pig-config-home/.pi/agent', Config::piHome());
+    }
+
+    public function testThePackageIsTheRepositoryRootUnlessPigPackageDirSaysOtherwise(): void
+    {
+        $this->assertSame(dirname(__DIR__, 3), Config::packageDir());
+        $this->assertFileExists(Config::packageDir() . '/composer.json');
+
+        // Upstream's `getPackageDir()`: `PI_PACKAGE_DIR`, through `normalizePath()`.
+        putenv('PIG_PACKAGE_DIR=/nix/store/abc-pig');
+        $this->assertSame('/nix/store/abc-pig', Config::packageDir());
+        $this->assertSame('/nix/store/abc-pig/CHANGELOG.md', \Pig\CodingAgent\Changelog::path());
+
+        putenv('PIG_PACKAGE_DIR=~/pig');
+        $this->assertSame('/tmp/pig-config-home/pig', Config::packageDir());
     }
 }

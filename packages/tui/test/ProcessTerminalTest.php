@@ -94,28 +94,91 @@ final class ProcessTerminalTest extends TestCase
         $this->assertSame("\x1b[A", $this->sift($terminal, "\x1b[A"));
     }
 
-    public function testPiProgramStatusEnvironmentVariableForcesSupport(): void
+    public function testPigProgramStatusEnvironmentVariableForcesSupport(): void
     {
-        putenv('PIG_PROGRAM_STATUS');
-        putenv('PI_PROGRAM_STATUS=1');
+        // Upstream's `PI_PROGRAM_STATUS`, spelled pig's way and only that way.
+        putenv('PIG_PROGRAM_STATUS=1');
         try {
             $output = fopen('php://memory', 'w+');
             $terminal = new ProcessTerminal(STDIN, $output);
             // Reflect private properties to verify override resolution
-            $init = new \ReflectionMethod(ProcessTerminal::class, 'writeProgramStatus');
             $supported = new \ReflectionProperty(ProcessTerminal::class, 'programStatusSupported');
             $pending = new \ReflectionProperty(ProcessTerminal::class, 'programStatusQueryPending');
             // Mock start initialization logic
-            $override = \Pig\Tui\Env::isSet('PIG_PROGRAM_STATUS')
-                ? getenv('PIG_PROGRAM_STATUS')
-                : (\Pig\Tui\Env::isSet('PI_PROGRAM_STATUS') ? getenv('PI_PROGRAM_STATUS') : false);
+            $override = getenv('PIG_PROGRAM_STATUS');
             $supported->setValue($terminal, $override === '1');
             $pending->setValue($terminal, $override !== '1' && $override !== '0');
 
             $this->assertTrue($supported->getValue($terminal));
             $this->assertFalse($pending->getValue($terminal));
         } finally {
-            putenv('PI_PROGRAM_STATUS');
+            putenv('PIG_PROGRAM_STATUS');
+        }
+    }
+
+    public function testTheEscapeTimeoutIsTheSettingThenLongerOverSsh(): void
+    {
+        $this->assertSame(10.0, (float) ProcessTerminal::resolveEscapeTimeoutMs([]));
+        $this->assertSame(100.0, (float) ProcessTerminal::resolveEscapeTimeoutMs(['SSH_TTY' => '/dev/pts/1']));
+        $this->assertSame(100.0, (float) ProcessTerminal::resolveEscapeTimeoutMs(['SSH_CONNECTION' => '1 2 3 4']));
+        $this->assertSame(250.0, ProcessTerminal::resolveEscapeTimeoutMs(['PIG_TUI_ESC_TIMEOUT' => '250', 'SSH_TTY' => 'x']));
+        // `Number(…)` that is not finite and positive is not a setting.
+        $this->assertSame(10.0, (float) ProcessTerminal::resolveEscapeTimeoutMs(['PIG_TUI_ESC_TIMEOUT' => '0']));
+        $this->assertSame(10.0, (float) ProcessTerminal::resolveEscapeTimeoutMs(['PIG_TUI_ESC_TIMEOUT' => 'soon']));
+    }
+
+    public function testALoneEscapeWaitsForTheRestOfAnAltKey(): void
+    {
+        \Pig\Async\Loop::reset();
+        putenv('PIG_TUI_ESC_TIMEOUT=40');
+
+        try {
+            $terminal = new ProcessTerminal(STDIN, fopen('php://memory', 'w+'));
+            $hold = new \ReflectionMethod(ProcessTerminal::class, 'holdLoneEscape');
+            $keys = [];
+            $onInput = static function (string $data) use (&$keys): void {
+                $keys[] = $data;
+            };
+
+            // ESC, then `x` inside the window: one key, Alt+x.
+            $this->assertNull($hold->invoke($terminal, "\x1b", $onInput));
+            $this->assertSame("\x1bx", $hold->invoke($terminal, 'x', $onInput));
+
+            // ESC and nothing after it: the Escape key, once the window has passed.
+            $this->assertNull($hold->invoke($terminal, "\x1b", $onInput));
+            \Pig\Async\Loop::get()->run();
+            $this->assertSame(["\x1b"], $keys);
+
+            // Anything else is not held.
+            $this->assertSame("\x1b[A", $hold->invoke($terminal, "\x1b[A", $onInput));
+        } finally {
+            putenv('PIG_TUI_ESC_TIMEOUT');
+            \Pig\Async\Loop::reset();
+        }
+    }
+
+    public function testTheWriteLogGetsEveryByteAndADirectoryGetsAFilePerRun(): void
+    {
+        putenv('PIG_TUI_WRITE_LOG=' . $this->target);
+
+        try {
+            $terminal = new ProcessTerminal(STDIN, fopen('php://memory', 'w+'));
+            $terminal->write("\x1b[2Jhello");
+            $terminal->write(' world');
+            $this->assertSame("\x1b[2Jhello world", file_get_contents($this->target));
+            unlink($this->target);
+
+            mkdir($this->target);
+            putenv('PIG_TUI_WRITE_LOG=' . $this->target);
+            (new ProcessTerminal(STDIN, fopen('php://memory', 'w+')))->write('frame');
+            $files = glob($this->target . '/tui-*-' . getmypid() . '.log') ?: [];
+            $this->assertCount(1, $files);
+            $this->assertSame('frame', file_get_contents($files[0]));
+            $this->assertMatchesRegularExpression('/tui-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d+\.log$/', $files[0]);
+            unlink($files[0]);
+            rmdir($this->target);
+        } finally {
+            putenv('PIG_TUI_WRITE_LOG');
         }
     }
 

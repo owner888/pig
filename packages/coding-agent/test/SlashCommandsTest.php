@@ -7,8 +7,10 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\SlashCommands;
+use Pig\CodingAgent\Packages\PackageManager;
+use Pig\CodingAgent\Settings;
 
-/** Prompts kept as files, and what `/name args` turns into. */
+/** Prompt templates, and what `/name args` turns into. */
 final class SlashCommandsTest extends TestCase
 {
     private string $root;
@@ -62,40 +64,107 @@ final class SlashCommandsTest extends TestCase
         file_put_contents($path, $content);
     }
 
-    /** @return list<FileCommand> */
-    private function load(): array
+    /**
+     * What a session loads: `PackageManager::resolveLocalResources()`, then `fromResources()`.
+     *
+     * @param array<string, mixed> $user the person's settings
+     * @return list<FileCommand>
+     */
+    private function load(array $user = [], bool $trusted = true): array
     {
-        return SlashCommands::load($this->cwd, $this->home);
+        return $this->loadWithWarnings($user, $trusted)[0];
+    }
+
+    /**
+     * @param array<string, mixed> $user
+     * @return array{0: list<FileCommand>, 1: list<string>}
+     */
+    private function loadWithWarnings(array $user = [], bool $trusted = true): array
+    {
+        if ($user !== []) {
+            $this->command('home/.pig/settings.json', (string) json_encode($user));
+        }
+
+        $settings = Settings::load($this->cwd, $this->home, $trusted);
+
+        return SlashCommands::fromResources((new PackageManager($this->cwd, $settings, $this->home))->resolveLocalResources()->prompts);
+    }
+
+    /** @param list<FileCommand> $commands @return list<string> */
+    private static function names(array $commands): array
+    {
+        $names = array_map(static fn (FileCommand $c): string => $c->name, $commands);
+        sort($names);
+
+        return $names;
     }
 
     // ---- where they are found ----------------------------------------------------------
 
-    public function testBothRootsAreRead(): void
+    public function testBothPromptsDirectoriesAreRead(): void
     {
-        $this->command('home/.pig/commands/mine.md', 'A prompt of my own.');
-        $this->command('project/.pig/commands/ours.md', 'A prompt for this project.');
+        $this->command('home/.pig/prompts/mine.md', 'A prompt of my own.');
+        $this->command('project/.pig/prompts/ours.md', 'A prompt for this project.');
+        // The old name is not read.
+        $this->command('home/.pig/commands/old.md', 'Not any more.');
 
-        $names = array_map(static fn (FileCommand $c): string => $c->name, $this->load());
-
-        sort($names);
-        $this->assertSame(['mine', 'ours'], $names);
+        $this->assertSame(['mine', 'ours'], self::names($this->load()));
     }
 
-    public function testAFolderBecomesALabelAndNotPartOfTheName(): void
+    public function testAnUntrustedProjectsPromptsAreLeftOut(): void
     {
-        $this->command('project/.pig/commands/frontend/review.md', 'Review the CSS.');
+        $this->command('home/.pig/prompts/mine.md', 'A prompt of my own.');
+        $this->command('project/.pig/prompts/ours.md', 'A prompt for this project.');
 
-        $command = $this->load()[0];
+        $this->assertSame(['mine'], self::names($this->load(trusted: false)));
+    }
 
-        // `/review` is what someone types, whichever folder it is filed under.
-        $this->assertSame('review', $command->name);
-        $this->assertSame('(project:frontend)', $command->source);
+    public function testAConventionalDirectoryLoadsItsDirectChildrenOnly(): void
+    {
+        $this->command('home/.pig/prompts/top.md', 'Loaded.');
+        $this->command('home/.pig/prompts/frontend/review.md', 'Not loaded: a subdirectory.');
+
+        $this->assertSame(['top'], self::names($this->load()));
+    }
+
+    public function testADirectoryInThePromptsSettingIsWalked(): void
+    {
+        $this->command('home/.pig/library/top.md', 'Loaded.');
+        $this->command('home/.pig/library/frontend/review.md', 'Loaded too: a setting may select nested files.');
+        $this->command('home/.pig/prompts/drop.md', 'Turned off by a pattern.');
+
+        $this->assertSame(['review', 'top'], self::names($this->load(['prompts' => ['library', '!drop.md']])));
+    }
+
+    public function testTheFirstOfANameWinsAndTheProjectsComesFirst(): void
+    {
+        $this->command('home/.pig/prompts/review.md', 'The person\'s.');
+        $this->command('project/.pig/prompts/review.md', 'The project\'s.');
+
+        [$commands, $warnings] = $this->loadWithWarnings();
+
+        $this->assertCount(1, $commands);
+        $this->assertSame("The project's.", $commands[0]->content);
+        $this->assertSame('(project)', $commands[0]->source);
+        $this->assertCount(1, $warnings);
+        $this->assertStringContainsString('name "/review" collision', $warnings[0]);
+    }
+
+    public function testACommandLineDirectoryLoadsItsDirectChildren(): void
+    {
+        $this->command('typed/one.md', 'One.');
+        $this->command('typed/deeper/two.md', 'Not loaded.');
+
+        [$commands] = SlashCommands::fromPaths([$this->root . '/typed', $this->root . '/nowhere']);
+
+        $this->assertSame(['one'], self::names($commands));
+        $this->assertSame('(path)', $commands[0]->source);
     }
 
     public function testOnlyMarkdownFilesAreCommands(): void
     {
-        $this->command('home/.pig/commands/notes.txt', 'not a command');
-        $this->command('home/.pig/commands/real.md', 'a command');
+        $this->command('home/.pig/prompts/notes.txt', 'not a command');
+        $this->command('home/.pig/prompts/real.md', 'a command');
 
         $this->assertCount(1, $this->load());
     }
@@ -109,7 +178,7 @@ final class SlashCommandsTest extends TestCase
 
     public function testTheDescriptionComesFromTheFrontmatterWhenThereIsOne(): void
     {
-        $this->command('home/.pig/commands/review.md', "---\ndescription: Review a file closely\n---\n\nReview $1.");
+        $this->command('home/.pig/prompts/review.md', "---\ndescription: Review a file closely\n---\n\nReview $1.");
 
         $command = $this->load()[0];
 
@@ -119,26 +188,67 @@ final class SlashCommandsTest extends TestCase
 
     public function testWithNoFrontmatterTheFirstLineIsTheDescription(): void
     {
-        $this->command('home/.pig/commands/tidy.md', "Tidy up the file I name.\n\nDo it carefully.");
+        $this->command('home/.pig/prompts/tidy.md', "Tidy up the file I name.\n\nDo it carefully.");
 
         $this->assertSame('Tidy up the file I name. (user)', $this->load()[0]->description);
     }
 
     public function testALongFirstLineIsCutSoTheListStaysAList(): void
     {
-        $this->command('home/.pig/commands/long.md', str_repeat('word ', 40));
+        $this->command('home/.pig/prompts/long.md', str_repeat('word ', 40));
 
         $this->assertStringEndsWith('... (user)', $this->load()[0]->description);
     }
 
     public function testACommandWithNothingInItIsStillOfferedUnderItsSource(): void
     {
-        $this->command('home/.pig/commands/empty.md', '');
+        $this->command('home/.pig/prompts/empty.md', '');
 
         $this->assertSame('(user)', $this->load()[0]->description);
     }
 
+    public function testArgumentHintIsReadWhenItIsAString(): void
+    {
+        $this->command('home/.pig/prompts/quoted.md', "---\ndescription: d\nargument-hint: \"[focus]\"\n---\nx");
+        $this->command('home/.pig/prompts/plain.md', "---\nargument-hint: <file>\n---\nx");
+        // Unquoted, `[focus]` is a YAML list, and upstream keeps only a string.
+        $this->command('home/.pig/prompts/list.md', "---\nargument-hint: [focus]\n---\nx");
+
+        $byName = [];
+
+        foreach ($this->load() as $command) {
+            $byName[$command->name] = $command->argumentHint;
+        }
+
+        $this->assertSame(['list' => null, 'plain' => '<file>', 'quoted' => '[focus]'], $byName);
+    }
+
     // ---- expanding ------------------------------------------------------------------------
+
+    /** @return iterable<string, array{0: string, 1: string, 2: string}> template, typed, expected */
+    public static function substitutions(): iterable
+    {
+        yield 'positional' => ['$1 and $2', 'a b', 'a and b'];
+        yield '$ARGUMENTS' => ['all: $ARGUMENTS', 'a b c', 'all: a b c'];
+        yield 'default used when missing' => ['focus on ${1:-correctness}', '', 'focus on correctness'];
+        yield 'default not used when given' => ['focus on ${1:-correctness}', 'speed', 'focus on speed'];
+        yield 'default for all' => ['${@:-nothing}', '', 'nothing'];
+        yield 'default for ARGUMENTS' => ['${ARGUMENTS:-nothing}', 'x y', 'x y'];
+        yield 'slice from N' => ['${@:2}', 'a b c d', 'b c d'];
+        yield 'slice N L' => ['${@:2:2}', 'a b c d', 'b c'];
+        yield 'slice from 0 is from 1' => ['${@:0}', 'a b', 'a b'];
+        yield '$0 is nothing' => ['[$0]', 'a', '[]'];
+        yield 'a default is not substituted again' => ['${2:-$1}', 'a', '$1'];
+        yield 'newline separates arguments' => ['$2', "a\nb", 'b'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('substitutions')]
+    public function testUpstreamsSubstitutions(string $template, string $typed, string $expected): void
+    {
+        $commands = [new FileCommand('t', 'd', $template, '(user)')];
+
+        $this->assertSame($expected, SlashCommands::expand($typed === '' ? '/t' : "/t {$typed}", $commands));
+    }
 
     public function testACommandExpandsToItsContent(): void
     {

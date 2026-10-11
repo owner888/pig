@@ -104,8 +104,6 @@ final class GoogleShared
 
     // ---- thinking --------------------------------------------------------------------------
 
-    /** The levels in upstream's `EXTENDED_THINKING_LEVELS` order, without `max`, which pig has no level for. */
-    private const array THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
     /**
      * Upstream's `usesGoogleThinkingLevel()`: whether this model takes Gemini's named
@@ -175,28 +173,10 @@ final class GoogleShared
         return ['thinkingLevel' => self::toGoogleThinkingLevel(self::resolveGoogleThinkingLevel($model, $fallback))];
     }
 
-    /**
-     * Upstream's `clampThinkingLevel(model, "off")`, over `getSupportedThinkingLevels()`.
-     *
-     * Here rather than `Pig\Agent\ThinkingLevel::clampedFor()`, which is the same search, because
-     * this package cannot see that one. Only the search from `off` is needed, and from `off` it is
-     * upward only: the first level the model has, which is also upstream's `availableLevels[0]`.
-     */
+    /** Upstream's `clampThinkingLevel(model, "off")`, over `getSupportedThinkingLevels()` — `Model`'s. */
     private static function clampOff(Model $model): string
     {
-        if (!$model->reasoning) {
-            return 'off';
-        }
-
-        foreach (self::THINKING_LEVELS as $level) {
-            $supported = $level === 'xhigh' ? $model->supportsXhigh() : $model->hasThinkingLevel($level);
-
-            if ($supported) {
-                return $level;
-            }
-        }
-
-        return 'off';
+        return $model->clampThinkingLevel('off');
     }
 
     /**

@@ -25,7 +25,7 @@ use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Keys;
+use Pig\Tui\Keybindings;
 use Pig\Tui\Width;
 
 /**
@@ -52,8 +52,14 @@ use Pig\Tui\Width;
  *
  * Five filters on Ctrl+O, backwards on Shift+Ctrl+O — `default` hides the bookkeeping entries,
  * `no-tools` also hides tool results, `user-only` keeps what the person said, `labeled-only` keeps
- * what they named, `all` hides nothing. Anything else typed is a search, matched against every
- * token; escape clears it before it cancels, so a search is not a trap.
+ * what they named, `all` hides nothing — and each has a direct key (`app.tree.filter.*`) that
+ * toggles it against the default. Anything else typed is a search, matched against every token;
+ * escape clears it before it cancels, so a search is not a trap.
+ *
+ * Every key is upstream's keybinding id, read through `Pig\Tui\Keybindings`: `app.tree.foldOrUp`
+ * folds the branch under the cursor (or climbs to the start of its segment), `unfoldOrDown`
+ * reverses it, `app.tree.editLabel` names a point, `app.tree.toggleLabelTimestamp` shows when each
+ * name was given, and `app.message.copy` copies the selected entry's text.
  */
 final class TreeList implements Component, InputHandler
 {
@@ -106,6 +112,24 @@ final class TreeList implements Component, InputHandler
     /** @var Closure(string, ?string): void|null */
     private ?Closure $onLabel = null;
 
+    /** @var Closure(?string): void|null upstream's `onCopy`, given the selected entry's text or null */
+    private ?Closure $onCopy = null;
+
+    /** @var array<string, true> upstream's `foldedNodes` */
+    private array $folded = [];
+
+    /** @var array<string, string|null> visible id to its nearest visible ancestor — upstream's `visibleParentMap` */
+    private array $visibleParent = [];
+
+    /** @var array<string, list<string>> visible id ('' for the roots) to its visible children — `visibleChildrenMap` */
+    private array $visibleChildren = [];
+
+    /** Upstream's `showLabelTimestamps`. */
+    private bool $showLabelTimestamps = false;
+
+    /** @var array<string, int> target id to when its current name was given, in ms, from the `Label` entries */
+    private array $labelTimestamps = [];
+
     /**
      * @param list<array{id: string, message: mixed, label: string|null, children: list<array<string, mixed>>}> $tree
      * @param string|null $leaf the point the conversation is at, which is where the cursor starts
@@ -152,10 +176,16 @@ final class TreeList implements Component, InputHandler
         $this->onCancel = $handler;
     }
 
-    /** @param Closure(string, ?string): void|null $handler asked for on `l`, with the current name */
+    /** @param Closure(string, ?string): void|null $handler asked for on `app.tree.editLabel`, with the current name */
     public function setLabelHandler(?Closure $handler): void
     {
         $this->onLabel = $handler;
+    }
+
+    /** @param Closure(?string): void|null $handler asked for on `app.message.copy`, with the entry's text */
+    public function setCopyHandler(?Closure $handler): void
+    {
+        $this->onCopy = $handler;
     }
 
     /** What is typed, for whoever draws the search line. */
@@ -164,10 +194,11 @@ final class TreeList implements Component, InputHandler
         return $this->search;
     }
 
-    /** `[no-tools]`, or the empty string in the default view. */
+    /** `[no-tools]`, or the empty string in the default view; `[+label time]` while timestamps show. */
     public function filterLabel(): string
     {
-        return $this->filter === self::DEFAULT ? '' : " [{$this->filter}]";
+        return ($this->filter === self::DEFAULT ? '' : " [{$this->filter}]")
+            . ($this->showLabelTimestamps ? ' [+label time]' : '');
     }
 
     /** How many rows the filter admits, for a test and for a caller that wants to say so. */
@@ -230,6 +261,11 @@ final class TreeList implements Component, InputHandler
             [$node, $indent, $justForked, $connector, $last, $gutters, $virtual] = array_pop($stack);
 
             $this->rememberToolCalls($node['message']);
+
+            if ($node['message'] instanceof Label && $node['message']->label !== null) {
+                $target = $node['message']->targetId;
+                $this->labelTimestamps[$target] = max($this->labelTimestamps[$target] ?? 0, $node['message']->timestamp);
+            }
 
             $flat[] = [
                 'id' => $node['id'],
@@ -378,6 +414,24 @@ final class TreeList implements Component, InputHandler
             $this->visible[] = $index;
         }
 
+        // Upstream: the descendants of a folded node go, whatever the filter said about them.
+        // `$flat` is depth-first, so a parent is always decided before its children.
+        if ($this->folded !== []) {
+            $skip = [];
+
+            foreach ($this->flat as $row) {
+                $parent = $this->parents[$row['id']] ?? null;
+
+                if ($parent !== null && (isset($this->folded[$parent]) || isset($skip[$parent]))) {
+                    $skip[$row['id']] = true;
+                }
+            }
+
+            $this->visible = array_values(array_filter($this->visible, fn (int $index): bool => !isset($skip[$this->flat[$index]['id']])));
+        }
+
+        $this->buildVisibleMaps();
+
         // The cursor stays on the row it was on, when the new filter still admits it. Anything else
         // is a filter key that silently moves the selection, and then enter goes somewhere nobody
         // chose.
@@ -390,6 +444,103 @@ final class TreeList implements Component, InputHandler
         }
 
         $this->selected = max(0, min($this->selected, count($this->visible) - 1));
+    }
+
+    /**
+     * Upstream's `visibleParentMap` and `visibleChildrenMap`, recomputed from the rows the filter
+     * kept: a row's visible parent is its nearest ancestor that is shown.
+     */
+    private function buildVisibleMaps(): void
+    {
+        $shown = [];
+
+        foreach ($this->visible as $index) {
+            $shown[$this->flat[$index]['id']] = true;
+        }
+
+        $this->visibleParent = [];
+        $this->visibleChildren = [];
+
+        foreach ($this->visible as $index) {
+            $id = $this->flat[$index]['id'];
+            $parent = $this->parents[$id] ?? null;
+            $seen = [];
+
+            while ($parent !== null && !isset($shown[$parent]) && !isset($seen[$parent])) {
+                $seen[$parent] = true;
+                $parent = $this->parents[$parent] ?? null;
+            }
+
+            $this->visibleParent[$id] = $parent;
+            $this->visibleChildren[$parent ?? ''][] = $id;
+        }
+    }
+
+    /**
+     * Upstream's `isFoldable()`: a node with visible children that is a root or the start of a
+     * segment (its visible parent has more than one visible child).
+     */
+    private function isFoldable(string $id): bool
+    {
+        if (($this->visibleChildren[$id] ?? []) === []) {
+            return false;
+        }
+
+        $parent = $this->visibleParent[$id] ?? null;
+
+        return $parent === null || count($this->visibleChildren[$parent] ?? []) > 1;
+    }
+
+    /**
+     * Upstream's `findBranchSegmentStart()`: up walks the visible parents to the nearest segment
+     * start above the cursor; down follows first children to the next fork's first child, or the
+     * branch's end.
+     */
+    private function findBranchSegmentStart(string $direction): int
+    {
+        $selectedId = $this->current();
+
+        if ($selectedId === null) {
+            return $this->selected;
+        }
+
+        $positions = [];
+
+        foreach ($this->visible as $position => $index) {
+            $positions[$this->flat[$index]['id']] = $position;
+        }
+
+        $currentId = $selectedId;
+
+        if ($direction === 'down') {
+            while (true) {
+                $children = $this->visibleChildren[$currentId] ?? [];
+
+                if ($children === []) {
+                    return $positions[$currentId];
+                }
+
+                if (count($children) > 1) {
+                    return $positions[$children[0]];
+                }
+
+                $currentId = $children[0];
+            }
+        }
+
+        while (true) {
+            $parent = $this->visibleParent[$currentId] ?? null;
+
+            if ($parent === null) {
+                return $positions[$currentId];
+            }
+
+            if (count($this->visibleChildren[$parent] ?? []) > 1 && $positions[$currentId] < $this->selected) {
+                return $positions[$currentId];
+            }
+
+            $currentId = $parent;
+        }
     }
 
     /**
@@ -538,8 +689,15 @@ final class TreeList implements Component, InputHandler
         $cursor = $isSelected ? Themes::theme()->fg('accent', '› ') : '  ';
         $marker = isset($this->active[$row['id']]) ? Themes::theme()->fg('accent', '• ') : '';
         $label = $row['label'] === null ? '' : Themes::theme()->fg('warning', "[{$row['label']}] ");
+        $stamp = $this->showLabelTimestamps && $row['label'] !== null && isset($this->labelTimestamps[$row['id']])
+            ? Themes::theme()->fg('muted', self::formatLabelTimestamp($this->labelTimestamps[$row['id']]) . ' ')
+            : '';
+        // Upstream draws the fold in the connector; a row without one (a root) gets `⊞ ` in front.
+        $foldMarker = isset($this->folded[$row['id']]) && !($row['connector'] && !$row['virtual'])
+            ? Themes::theme()->fg('accent', '⊞ ')
+            : '';
         $text = $this->describe($row['message']);
-        $line = $cursor . Themes::theme()->fg('dim', $this->prefix($row)) . $marker . $label . $text;
+        $line = $cursor . Themes::theme()->fg('dim', $this->prefix($row)) . $foldMarker . $marker . $label . $stamp . $text;
 
         return Width::truncate($isSelected ? Themes::theme()->bg('selectedBg', $line) : $line, $width, '');
     }
@@ -573,7 +731,8 @@ final class TreeList implements Component, InputHandler
             if ($level === $connectorLevel) {
                 $prefix .= match ($within) {
                     0 => $row['last'] ? '└' : '├',
-                    1 => '─',
+                    // Upstream's fold indicator: folded, foldable, or a plain connector.
+                    1 => isset($this->folded[$row['id']]) ? '⊞' : ($this->isFoldable($row['id']) ? '⊟' : '─'),
                     default => ' ',
                 };
 
@@ -694,106 +853,158 @@ final class TreeList implements Component, InputHandler
 
     // ---- keys ----------------------------------------------------------------------------------
 
+    /** Upstream's `TreeList.handleInput()`, every key by its keybinding id and in upstream's order. */
     #[\Override]
     public function handleInput(string $data): void
     {
+        $kb = Keybindings::getKeybindings();
         $total = count($this->visible);
 
-        if (Keys::isArrowUp($data)) {
+        if ($kb->matches($data, 'tui.select.up')) {
             $this->selected = $this->selected === 0 ? max(0, $total - 1) : $this->selected - 1;
-
-            return;
-        }
-
-        if (Keys::isArrowDown($data)) {
+        } elseif ($kb->matches($data, 'tui.select.down')) {
             $this->selected = $total === 0 || $this->selected === $total - 1 ? 0 : $this->selected + 1;
+        } elseif ($kb->matches($data, 'app.tree.foldOrUp')) {
+            $id = $this->current();
 
-            return;
-        }
+            if ($id !== null && $this->isFoldable($id) && !isset($this->folded[$id])) {
+                $this->folded[$id] = true;
+                $this->applyFilter();
+            } else {
+                $this->selected = $this->findBranchSegmentStart('up');
+            }
+        } elseif ($kb->matches($data, 'app.tree.unfoldOrDown')) {
+            $id = $this->current();
 
-        // Left and right are a page at a time, which is upstream's choice and the right one: there
-        // is nothing to expand or collapse — every row is already shown.
-        if (Keys::isArrowLeft($data)) {
+            if ($id !== null && isset($this->folded[$id])) {
+                unset($this->folded[$id]);
+                $this->applyFilter();
+            } else {
+                $this->selected = $this->findBranchSegmentStart('down');
+            }
+        } elseif ($kb->matches($data, 'tui.editor.cursorLeft') || $kb->matches($data, 'tui.select.pageUp')) {
             $this->selected = max(0, $this->selected - $this->maxVisible);
-
-            return;
-        }
-
-        if (Keys::isArrowRight($data)) {
+        } elseif ($kb->matches($data, 'tui.editor.cursorRight') || $kb->matches($data, 'tui.select.pageDown')) {
             $this->selected = max(0, min($total - 1, $this->selected + $this->maxVisible));
-
-            return;
-        }
-
-        if (Keys::isEnter($data)) {
+        } elseif ($kb->matches($data, 'tui.select.confirm')) {
             $id = $this->current();
 
             if ($id !== null && $this->onSelect !== null) {
                 ($this->onSelect)($id);
             }
+        } elseif ($kb->matches($data, 'app.message.copy')) {
+            $index = $this->visible[$this->selected] ?? null;
 
-            return;
-        }
-
-        if (Keys::isEscape($data)) {
+            if ($this->onCopy !== null) {
+                ($this->onCopy)($index === null ? null : self::copyText($this->flat[$index]['message']));
+            }
+        } elseif ($kb->matches($data, 'tui.select.cancel')) {
             // A search is cleared first and cancels second, so a typed search is never a trap: the
             // way out of "nothing matches" is the key already under your finger.
             if ($this->search !== '') {
                 $this->search = '';
+                $this->folded = [];
                 $this->applyFilter();
-
-                return;
+            } else {
+                ($this->onCancel ?? static fn () => null)();
             }
-
-            ($this->onCancel ?? static fn () => null)();
-
-            return;
-        }
-
-        if (Keys::isCtrlC($data)) {
-            ($this->onCancel ?? static fn () => null)();
-
-            return;
-        }
-
-        if (Keys::isShiftCtrlO($data)) {
+        } elseif ($kb->matches($data, 'app.tree.filter.default')) {
+            $this->setFilter(self::DEFAULT);
+        } elseif ($kb->matches($data, 'app.tree.filter.noTools')) {
+            $this->toggleFilter(self::NO_TOOLS);
+        } elseif ($kb->matches($data, 'app.tree.filter.userOnly')) {
+            $this->toggleFilter(self::USER_ONLY);
+        } elseif ($kb->matches($data, 'app.tree.filter.labeledOnly')) {
+            $this->toggleFilter(self::LABELED_ONLY);
+        } elseif ($kb->matches($data, 'app.tree.filter.all')) {
+            $this->toggleFilter(self::ALL);
+        } elseif ($kb->matches($data, 'app.tree.filter.cycleBackward')) {
             $this->cycleFilter(-1);
-
-            return;
-        }
-
-        if (Keys::isCtrlO($data)) {
+        } elseif ($kb->matches($data, 'app.tree.filter.cycleForward')) {
             $this->cycleFilter(1);
-
-            return;
-        }
-
-        if (Keys::isBackspace($data)) {
+        } elseif ($kb->matches($data, 'tui.editor.deleteCharBackward')) {
             if ($this->search !== '') {
                 $this->search = mb_substr($this->search, 0, -1);
+                $this->folded = [];
                 $this->applyFilter();
             }
-
-            return;
-        }
-
-        // `l` names the point under the cursor — but only when nothing is being searched for, or a
-        // search for "label" could never be typed.
-        if ($data === 'l' && $this->search === '') {
+        } elseif ($kb->matches($data, 'app.tree.editLabel')) {
             $id = $this->current();
             $index = $this->visible[$this->selected] ?? null;
 
             if ($id !== null && $index !== null && $this->onLabel !== null) {
                 ($this->onLabel)($id, $this->flat[$index]['label']);
             }
-
-            return;
-        }
-
-        if ($data !== '' && !self::hasControlCharacters($data)) {
+        } elseif ($kb->matches($data, 'app.tree.toggleLabelTimestamp')) {
+            $this->showLabelTimestamps = !$this->showLabelTimestamps;
+        } elseif ($data !== '' && !self::hasControlCharacters($data)) {
             $this->search .= $data;
+            $this->folded = [];
             $this->applyFilter();
         }
+    }
+
+    private function setFilter(string $filter): void
+    {
+        $this->filter = $filter;
+        $this->folded = [];
+        $this->applyFilter();
+    }
+
+    /** Upstream's direct filter keys: the mode against the default, toggled. */
+    private function toggleFilter(string $filter): void
+    {
+        $this->setFilter($this->filter === $filter ? self::DEFAULT : $filter);
+    }
+
+    /**
+     * Upstream's `getEntryCopyText()`: what a message says, in full — a bash entry's command, a
+     * failed answer's error, a summary's summary — or null when there is nothing to copy.
+     */
+    private static function copyText(mixed $message): ?string
+    {
+        $text = match (true) {
+            $message instanceof BashExecution => $message->command,
+            $message instanceof AssistantMessage => self::fullText($message->content) ?: ($message->errorMessage ?? ''),
+            $message instanceof UserMessage, $message instanceof HookMessage => self::fullText($message->content),
+            $message instanceof ToolResultMessage => self::fullText($message->content),
+            $message instanceof CompactionSummary, $message instanceof BranchSummary => $message->summary,
+            default => '',
+        };
+
+        return trim($text) === '' ? null : $text;
+    }
+
+    /** @param list<mixed> $content the text blocks joined, as upstream's `extractFullContent()` */
+    private static function fullText(array $content): string
+    {
+        $text = '';
+
+        foreach ($content as $block) {
+            if ($block instanceof TextContent) {
+                $text .= $block->text;
+            }
+        }
+
+        return $text;
+    }
+
+    /** Upstream's `formatLabelTimestamp()`: `14:05` today, `3/9 14:05` this year, `25/3/9 14:05` before. */
+    private static function formatLabelTimestamp(int $ms): string
+    {
+        $date = (new \DateTimeImmutable('@' . intdiv($ms, 1000)))->setTimezone(new \DateTimeZone(date_default_timezone_get()));
+        $now = new \DateTimeImmutable('now', new \DateTimeZone(date_default_timezone_get()));
+        $time = $date->format('H:i');
+
+        if ($date->format('Y-m-d') === $now->format('Y-m-d')) {
+            return $time;
+        }
+
+        if ($date->format('Y') === $now->format('Y')) {
+            return $date->format('n/j') . ' ' . $time;
+        }
+
+        return $date->format('y/n/j') . ' ' . $time;
     }
 
     private function cycleFilter(int $by): void
@@ -801,6 +1012,7 @@ final class TreeList implements Component, InputHandler
         $at = (int) array_search($this->filter, self::FILTERS, true);
         $count = count(self::FILTERS);
         $this->filter = self::FILTERS[(($at + $by) % $count + $count) % $count];
+        $this->folded = [];
         $this->applyFilter();
     }
 

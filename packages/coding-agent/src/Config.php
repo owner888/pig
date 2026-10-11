@@ -10,7 +10,7 @@ use Pig\Tui\Env;
 final class Config
 {
     /**
-     * `~/.pig/agent`, or whatever `PIG_HOME` says.
+     * `~/.pig/agent`, or whatever `PIG_CODING_AGENT_DIR` says.
      *
      * Settings, sessions and a global `AGENTS.md` live here. Overridable because tests
      * must not read or write the real one, and because a person with several setups
@@ -21,17 +21,18 @@ final class Config
      * two layouts being different shapes is the kind of difference that costs an afternoon every
      * time somebody compares a path across the two tools.
      *
-     * No migration: `PIG_HOME` still points wherever it is told, and an existing `~/.pig` is not
+     * No migration: `PIG_CODING_AGENT_DIR` still points wherever it is told, and an existing `~/.pig` is not
      * searched as a fallback. The developer asked for the move rather than for compatibility with
      * the old layout, and a fallback that quietly reads the old directory forever is how two
      * homes end up half-populated. Moving the old `~/.pig/*` into `~/.pig/agent/` is the whole upgrade.
      */
     public static function home(): string
     {
-        $override = getenv('PIG_HOME');
+        $override = getenv('PIG_CODING_AGENT_DIR');
 
+        // Upstream's `getAgentDir()`: `PI_CODING_AGENT_DIR`, with `~` expanded.
         if ($override !== false && $override !== '') {
-            return rtrim($override, '/');
+            return rtrim(Settings::normalizePath($override), '/');
         }
 
         return self::homeDirectory() . '/.pig/agent';
@@ -49,9 +50,8 @@ final class Config
      * Anthropic rotates refresh tokens, so two files holding the same token is two tools
      * taking it in turns to log each other out.
      *
-     * **`PI_CODING_AGENT_DIR` is upstream's own override**, and it is read first for the same reason
-     * the skills loader reads Claude's and Codex's directories: somebody who already told one tool
-     * where things are should not have to tell the other. The name is built rather than written
+     * **`PI_CODING_AGENT_DIR` is upstream's own override**, and it is read first because somebody
+     * who already told one tool where things are should not have to tell the other. The name is built rather than written
      * there — `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR` with `APP_NAME` from `package.json` — so
      * reading it off `getAgentDir()` alone gives `PI_AGENT_DIR`, which is what this used to look for
      * and what nothing sets. `PI_HOME` is pig's own, for a test and for anyone who prefers it.
@@ -70,10 +70,31 @@ final class Config
     }
 
     /**
-     * The person's home directory, which is not `home()` — that is `~/.pig` inside it.
+     * Where pig itself is installed: the repository root, beside `CHANGELOG.md` and `bin/pig`.
      *
-     * Public because `Prompt\Skills` needs it for other tools' roots (`~/.codex/skills`) and
-     * had its own copy of these four lines, fallback and all. One lookup, one answer.
+     * Upstream's `getPackageDir()` in `config.ts`, override first: `PI_PACKAGE_DIR` — here
+     * `PIG_PACKAGE_DIR` — "useful for Nix/Guix where store paths tokenize poorly", passed through
+     * `normalizePath()` so `~` names the home directory. Without it, the directory this file is in,
+     * three levels up (`packages/coding-agent/src` → the root), which is upstream's walk up to the
+     * `package.json` with the walk already done.
+     */
+    public static function packageDir(): string
+    {
+        $override = getenv('PIG_PACKAGE_DIR');
+
+        if ($override !== false && $override !== '') {
+            return Settings::normalizePath($override);
+        }
+
+        return dirname(__DIR__, 3);
+    }
+
+    /**
+     * The person's home directory, which is not `home()` — that is `~/.pig/agent` inside it.
+     *
+     * Public because the resource loaders need it for `~/.agents/skills` (`PackageManager`,
+     * `ProjectTrust`), and one of them had its own copy of these four lines, fallback and all.
+     * One lookup, one answer.
      */
     public static function userHome(): string
     {

@@ -35,11 +35,11 @@ use Throwable;
  *
  * - **Builtin themes** are `dark.json` and `light.json` (upstream's, verbatim) and pig's own
  *   `labra.json`, all beside this file, as upstream keeps its two beside `theme.ts`.
- * - **Custom themes** come from four directories rather than upstream's one
- *   (`getCustomThemesDir()`, which is `~/.pi/agent/themes`): pig's home, pi's home, and the
- *   project's `.pig/themes` and `.pi/themes` — see `getCustomThemesDirs()`. The project directory is
- *   set with `setCustomThemesCwd()`, which upstream does not have: its project themes arrive through
- *   the resource loader and `setRegisteredThemes()`, which pig has no counterpart for yet.
+ * - **Custom themes** come from upstream's directory (`getCustomThemesDir()`, `<agent-dir>/themes`),
+ *   the directories extensions add, and the theme files `PackageManager` resolved — the project's
+ *   `.pig/themes` once it is trusted, the `themes` setting's entries, the packages' themes — handed
+ *   in with `setResolvedThemeFiles()`, where upstream's resource loader registers them with
+ *   `setRegisteredThemes()`.
  * - For the same reason a custom theme is also found by the `name` inside it, not only by its file
  *   name: upstream's picker lists content names and relies on the resource loader to register them
  *   under that name, and without it `foo.json` named `bar` would be listed and then not found.
@@ -179,14 +179,11 @@ final class Themes
     /** @var array<string, Theme> */
     private static array $registeredThemes = [];
 
-    /** Project directory whose `.pig/themes` and `.pi/themes` hold custom themes (pig addition). */
-    private static ?string $customThemesCwd = null;
-
     /** @var list<string> */
     private static array $extensionThemeDirs = [];
 
-    /** @var list<string> the theme files the packages provide, see `setPackageThemeFiles()` */
-    private static array $packageThemeFiles = [];
+    /** @var list<string> the theme files `PackageManager` resolved, see `setResolvedThemeFiles()` */
+    private static array $resolvedThemeFiles = [];
 
     /** @var list<string> the files and directories `--theme` named, see `setCliThemePaths()` */
     private static array $cliThemePaths = [];
@@ -325,8 +322,9 @@ final class Themes
     }
 
     /**
-     * Upstream's `getCustomThemesDir()`, as pig's four directories, in precedence order: a theme name
-     * found in an earlier one hides the same name in a later one.
+     * Upstream's `getCustomThemesDir()`, `<agent-dir>/themes`, then the directories extensions added,
+     * in precedence order: a theme name found in an earlier one hides the same name in a later one.
+     * `<name>.json` here is what a theme name is looked up by and what the watcher reloads.
      *
      * @return list<string>
      */
@@ -336,19 +334,12 @@ final class Themes
             return self::$extensionThemeDirs;
         }
 
-        $dirs = [Config::home() . '/themes', Config::piHome() . '/themes'];
-        $cwd = self::$customThemesCwd;
-        if ($cwd !== null && $cwd !== '') {
-            $dirs[] = rtrim($cwd, '/') . '/.pig/themes';
-            $dirs[] = rtrim($cwd, '/') . '/.pi/themes';
-        }
-
-        return [...$dirs, ...self::$extensionThemeDirs];
+        return [Config::home() . '/themes', ...self::$extensionThemeDirs];
     }
 
     /**
-     * The directories extensions added through `resources_discover`, searched after the four
-     * above. Replaced whole on each discovery, so a `/reload` that drops one drops its themes.
+     * The directories extensions added through `resources_discover`, searched after the agent
+     * directory's. Replaced whole on each discovery, so a `/reload` that drops one drops its themes.
      *
      * @param list<string> $dirs
      */
@@ -358,15 +349,16 @@ final class Themes
     }
 
     /**
-     * The theme files the packages resolved to (`PackageManager::resolve()`), listed after the
-     * directories: files rather than directories, because a package's filter can leave one theme
-     * out of a folder, and a directory cannot say that.
+     * The theme files `PackageManager` resolved and left enabled, in its precedence order — the
+     * `themes` setting's entries, the trusted project's `.pig/themes`, `<agent-dir>/themes`, the
+     * packages' — listed after the directories. Files rather than directories, because a `!pattern`
+     * can leave one theme out of a folder, and a directory cannot say that.
      *
      * @param list<string> $files
      */
-    public static function setPackageThemeFiles(array $files): void
+    public static function setResolvedThemeFiles(array $files): void
     {
-        self::$packageThemeFiles = array_values($files);
+        self::$resolvedThemeFiles = array_values($files);
     }
 
     /**
@@ -381,18 +373,12 @@ final class Themes
     }
 
     /**
-     * Upstream's `--no-themes` when false: no theme is looked for in the four directories or the
-     * packages. The built-in ones, an extension's and `--theme`'s are still there.
+     * Upstream's `--no-themes` when false: no theme is looked for in the agent directory or the
+     * resolved files. The built-in ones, an extension's and `--theme`'s are still there.
      */
     public static function useThemeDiscovery(bool $enabled): void
     {
         self::$themeDiscovery = $enabled;
-    }
-
-    /** The project whose `.pig/themes` and `.pi/themes` are searched; null searches only the two homes. */
-    public static function setCustomThemesCwd(?string $cwd): void
-    {
-        self::$customThemesCwd = $cwd;
     }
 
     /**
@@ -505,9 +491,9 @@ final class Themes
             }
         }
 
-        // After the directories: a package's theme ranks after every local one, so a name
-        // both have is the person's. `--theme`'s come last, as upstream's additional paths do.
-        foreach ([...(self::$themeDiscovery ? self::$packageThemeFiles : []), ...self::cliThemeFiles()] as $themePath) {
+        // After the directories, in the resolution's order: a project's theme before the person's,
+        // a package's after both. `--theme`'s come last, as upstream's additional paths do.
+        foreach ([...(self::$themeDiscovery ? self::$resolvedThemeFiles : []), ...self::cliThemeFiles()] as $themePath) {
             try {
                 $packageTheme = self::loadThemeFromPath($themePath);
             } catch (Throwable $error) {

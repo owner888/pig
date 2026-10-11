@@ -71,8 +71,12 @@ final class SessionCodec
                 'exitCode' => $message->exitCode,
                 'cancelled' => $message->cancelled,
                 'truncated' => $message->truncated,
-                'spillPath' => $message->spillPath,
+                // Upstream's two optional fields, written only when they say something, as
+                // `JSON.stringify` drops an undefined one — so a pi file and a pig file of the same
+                // command are the same line.
+                ...($message->fullOutputPath === null ? [] : ['fullOutputPath' => $message->fullOutputPath]),
                 'timestamp' => $message->timestamp,
+                ...($message->excludeFromContext ? ['excludeFromContext' => true] : []),
             ],
             default => null,
         };
@@ -129,8 +133,9 @@ final class SessionCodec
                 isset($entry['exitCode']) ? (int) $entry['exitCode'] : null,
                 (bool) ($entry['cancelled'] ?? false),
                 (bool) ($entry['truncated'] ?? false),
-                $entry['spillPath'] ?? null,
+                is_string($entry['fullOutputPath'] ?? null) ? $entry['fullOutputPath'] : null,
                 $timestamp,
+                ($entry['excludeFromContext'] ?? false) === true,
             ),
             default => null,
         };

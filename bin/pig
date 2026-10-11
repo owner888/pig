@@ -23,12 +23,21 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 
 ini_set('memory_limit', '512M');
 
+// Upstream's `setupCli()` (`cli/setup.ts`) and `rpc-entry.ts` mark the process before anything
+// else runs, so every child — a `bash` command, a hook, an MCP server — can tell it runs inside
+// the agent: `AI_AGENT` is the generic marker, `PIG_CODING_AGENT` pig's own. One entry point here
+// covers both, since `--mode rpc` is this file too.
+putenv('PIG_CODING_AGENT=true');
+putenv('AI_AGENT=pig');
+
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Proxy;
 use Pig\Async\Async;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Cli\Arguments;
+use Pig\CodingAgent\Cli\AuthCommand;
+use Pig\CodingAgent\Cli\InitialMessage;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
@@ -101,6 +110,33 @@ set_exception_handler(static function (Throwable $error) use (&$running, &$sessi
     exit(1);
 });
 
+// Upstream's `main()` opens with this: `--offline` (or `PIG_OFFLINE` of 1/true/yes) is
+// `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for everything below — the model refresh, the tool
+// downloads, the package and version checks all read the environment, so the flag is said once.
+// Looked for anywhere in the arguments, as upstream's `args.includes("--offline")`, so a
+// subcommand gets it too.
+if (in_array('--offline', array_slice($argv, 1), true)
+    || in_array(strtolower((string) getenv('PIG_OFFLINE')), ['1', 'true', 'yes'], true)) {
+    putenv('PIG_OFFLINE=1');
+    putenv('PIG_SKIP_VERSION_CHECK=1');
+}
+
+// `pig auth <check|print-api-key|print-bearer-token>` — upstream's `runAuthCommand()`, first of the
+// subcommands as there. The credentials and `models.json`, and nothing else: no settings, no
+// extensions, no session.
+if (($argv[1] ?? '') === 'auth') {
+    $auth = Auth::discover();
+    $custom = CustomModels::discover();
+    $custom->install($auth);
+
+    exit((new AuthCommand(
+        $auth,
+        static function (string $text): void { fwrite(STDOUT, $text); },
+        static function (string $text): void { fwrite(STDERR, $text); },
+        $custom->problems,
+    ))->run(array_slice($argv, 1)));
+}
+
 // `pig install | remove | uninstall | update | list` — the package commands, upstream's
 // `package-manager-cli.ts`. `update` without a target is still the self-update.
 if (in_array($argv[1] ?? '', PackageCommands::COMMANDS, true)) {
@@ -122,6 +158,18 @@ if (($argv[1] ?? '') === 'mcp') {
 
 $arguments = Arguments::parse(array_slice($argv, 1));
 $options = $arguments->options;
+
+// Upstream's: every diagnostic said, as `Error:` or `Warning:`, and any error ends the run.
+foreach ($arguments->diagnostics as $diagnostic) {
+    fwrite(STDERR, $diagnostic['type'] === 'error'
+        ? Style::red("Error: {$diagnostic['message']}\n")
+        : Style::yellow("Warning: {$diagnostic['message']}\n"));
+}
+
+if ($arguments->errors() !== []) {
+    exit(1);
+}
+
 Timings::mark('parseArgs');
 
 if (isset($options['version'])) {
@@ -134,16 +182,21 @@ if (isset($options['help'])) {
     echo <<<TEXT
     pig — a coding agent in a terminal.
 
+    Usage:
+      pig [options] [--] [@files...] [messages...]
+
     Commands:
       install <source>  install a package (git:github.com/user/repo, https://…, or a path) and add it to settings
       remove <source>   remove a package and its settings entry (alias: uninstall)
       update            update pig; --extensions / --all / <source> for packages (pig update --help)
       list              list the packages in the user and project settings
       config [-l]       switch a package's extensions, skills, prompts and themes on and off
+      auth <command>    print credentials or check provider readiness (pig auth --help)
       mcp               add, remove and check MCP servers (pig mcp --help)
       web               the browser UI as a server: start [-d], stop, status, restart (pig web --help)
 
     Options:
+      --provider <name> the provider to look --model up in (requires --model)
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.
@@ -152,14 +205,21 @@ if (isset($options['help'])) {
                         may be a glob and may carry a level: `sonnet:high,'anthropic/*'`
       --list-models [s] list the models there is a key for, and stop. With a search
                         it is fuzzy over provider and id: `--list-models gem pro`
-      --api-key <key>   use this key for the model's provider, this run only.
-                        Not saved; beats the environment and any stored sign-in.
+      --api-key <key>   use this key for the model's provider, this run only (requires
+                        --model or --models). Not saved; beats the environment and any
+                        stored sign-in.
+      --system-prompt <text|file>
+                        replace the default system prompt with this text or file
+      --append-system-prompt <text|file>
+                        add this text or file after the system prompt (repeatable)
       --proxy <url>     reach providers through this proxy, this run only:
                         `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
-                        Otherwise `https_proxy`/`all_proxy`, then `httpProxy` in
-                        the settings. `no_proxy` and `proxy.bypass` list the hosts
-                        to reach directly; loopback always is.
+                        Otherwise `https_proxy`/`http_proxy`, with `httpProxy` in
+                        the settings filling an unset HTTP_PROXY / HTTPS_PROXY.
+                        `no_proxy` and `proxy.bypass` list the hosts to reach
+                        directly; loopback always is.
       --no-proxy        ignore all of that and connect directly
+      --offline         no startup network activity (the same as PIG_OFFLINE=1)
       -v, --version     print the version, and stop
       -h, --help        this
       --use-theme <name>
@@ -167,7 +227,7 @@ if (isset($options['help'])) {
                         (default: the `theme` setting, else `system`)
       --theme <path>    load a theme file or directory for this run (repeatable)
       --no-themes       look for no themes but the built-in ones and --theme's
-      --thinking <l>    off, minimal, low, medium, high, xhigh
+      --thinking <l>    off, minimal, low, medium, high, xhigh, max
       -t, --tools <list>
                         which tools the model gets, comma-separated; names or patterns
                         with `*`: `--tools read,codemode,'mcp__gh__*'`
@@ -181,11 +241,16 @@ if (isset($options['help'])) {
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
       -c, --continue    pick up the most recent session here
-      -r, --resume      choose from a list; `--resume <file>` opens one by path
-      --session <id>    resume a session by its ID or path
+      -r, --resume      choose a session from a list
+      --session <path|id>
+                        open a session by its file, ID or ID prefix; one of another
+                        project's is offered as a fork into this one
+      --session-id <id> open this project's session with exactly this ID, creating it
+                        if there is none
+      --fork <path|id>  fork a session file or ID into a new session here
       --session-dir <d> keep every session in this one directory
       -n, --name <name> name this session, as /name does
-      --no-save         do not write this session to disk
+      --no-session      do not write this session to disk
       -a, --approve     trust project-local files for this run
       -na, --no-approve ignore project-local files for this run
       --export <file>   write a session file out as HTML and stop. A second word is
@@ -207,23 +272,32 @@ if (isset($options['help'])) {
       -ne, --no-extensions
                         start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
-      -p, --print       say it, print the answer, exit — the same as --mode text
-      --mode <m>        text, json, rpc, web or mcp. Any of them leaves the terminal behind:
-                        text prints the last answer, json prints every event as it
-                        happens, rpc reads commands as JSON lines on stdin, web
-                        launches a browser-based chat UI, mcp serves this conversation
-                        as an MCP server (one tool, `ask`) over Streamable HTTP.
+      --update-check    ask even when the `update.check` setting says not to
+      --verbose         show the full startup header, whatever `quietStartup` says
+      --tui-mode <m>    regular or fullscreen (default: the `tuiMode` setting)
+      -p, --print       say it, print the answer, exit. Also what happens when standard
+                        input or output is not a terminal; piped input goes in front of
+                        the first message: `git diff | pig "review this"`
+      --mode <m>        text (the default), json, rpc, web or mcp. json prints every event
+                        as it happens and exits, rpc reads commands as JSON lines on
+                        stdin, web launches a browser-based chat UI, mcp serves this
+                        conversation as an MCP server (one tool, `ask`) over Streamable HTTP.
       --mcp-host <h>, --mcp-port <n>
                         where --mode mcp listens (default: 127.0.0.1:8089).
       --mcp-stdio       --mode mcp on stdin/stdout instead, for a host that spawns its servers.
 
     Anything that is not an option is a message, and `@some/file` is read in front of
     the first one — an image goes in as an image. `--` ends the options, for a message
-    that starts with a dash.
+    that starts with a dash. Extensions can register options of their own; any other
+    unknown option is an error.
 
       bin/pig "what does bin/pig do?"          ask, then carry on in the terminal
       bin/pig -p @src/Thing.php "why so slow?"  ask, print, exit
-      bin/pig --mode json -p "..." | jq        every event, as it happens
+      bin/pig --mode json "..." | jq            every event, as it happens
+
+    Environment:
+      PIG_OFFLINE=1               no startup network activity, as --offline
+      PIG_SKIP_VERSION_CHECK=1    do not ask Packagist whether there is a newer pig
 
     TEXT;
 
@@ -250,36 +324,234 @@ $cliPaths = static fn (string $option): array => array_map(
 Themes::setCliThemePaths($cliPaths('theme'));
 Themes::useThemeDiscovery(!isset($options['no-themes']));
 
-// Which way in. Upstream's rule, kept: `--mode` given at all means no terminal, and `-p` is
-// the short way of saying `--mode text`. So the terminal is the default and nothing but the
-// absence of both selects it.
-$mode = $arguments->mode();
-
-if (!$arguments->isKnownMode()) {
-    fwrite(STDERR, Style::red("No mode called '{$mode}'. There is " . implode(', ', Arguments::MODES) . ".\n"));
-
-    exit(1);
-}
-
-$interactive = $arguments->isInteractive();
+// Which way in — upstream's `resolveAppMode()`: `--mode rpc|json` (and pig's `web` and `mcp`) as
+// said; otherwise `-p`, or standard input or output not being a terminal, is print mode; and the
+// terminal UI only when both are terminals. `--mode text` is the default output, not a way out of
+// the terminal. Print mode with nothing to say says nothing and exits, as upstream's does.
+$mode = $arguments->appMode(stream_isatty(STDIN), stream_isatty(STDOUT));
+$interactive = $mode === 'interactive';
 $messages = $arguments->messages;
 $fileArgs = $arguments->files;
 
-// Refused rather than ignored, as upstream refuses it: in rpc mode the conversation arrives
-// as commands, so a file read here would be prepended to a prompt that never comes.
-if (($mode === 'rpc' || $mode === 'mcp') && ($fileArgs !== [] || $messages !== [])) {
-    fwrite(STDERR, Style::red("--mode {$mode} takes its messages over its protocol, not as arguments.\n"));
+// Upstream's refusal, and its sentence: in rpc mode the conversation arrives as commands, so a
+// file read here would be prepended to a prompt that never comes.
+if ($mode === 'rpc' && $fileArgs !== []) {
+    fwrite(STDERR, Style::red("Error: @file arguments are not supported in RPC mode\n"));
 
     exit(1);
 }
 
-// `needsAMessage()` rather than `!$interactive`, and the difference is rpc mode: its conversation
-// arrives as commands on standard input, so it needs no message — and demanding one here, while the
-// guard above refuses one, made `--mode rpc` impossible to start by either route.
-if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
-    fwrite(STDERR, Style::red("Nothing to say. Pass a message, or leave off --mode for the terminal.\n"));
+// pig's MCP mode takes its conversation as tool calls, so neither a file nor a message has
+// anywhere to go.
+if ($mode === 'mcp' && ($fileArgs !== [] || $messages !== [])) {
+    fwrite(STDERR, Style::red("--mode mcp takes its messages over its protocol, not as arguments.\n"));
 
     exit(1);
+}
+
+// Upstream's `validateForkFlags()` and `validateSessionIdFlags()`, before anything is loaded.
+$conflicts = static fn (array $flags): array => array_values(array_map(
+    static fn (string $flag): string => "--{$flag}",
+    array_filter($flags, static fn (string $flag): bool => isset($options[$flag])),
+));
+
+if (isset($options['fork']) && ($with = $conflicts(['session', 'continue', 'resume', 'no-session'])) !== []) {
+    fwrite(STDERR, Style::red('Error: --fork cannot be combined with ' . implode(', ', $with) . "\n"));
+
+    exit(1);
+}
+
+if (isset($options['session-id'])) {
+    if (($with = $conflicts(['session', 'continue', 'resume'])) !== []) {
+        fwrite(STDERR, Style::red('Error: --session-id cannot be combined with ' . implode(', ', $with) . "\n"));
+
+        exit(1);
+    }
+
+    try {
+        SessionManager::assertValidSessionId($options['session-id']);
+    } catch (Throwable $error) {
+        fwrite(STDERR, Style::red("Error: {$error->getMessage()}\n"));
+
+        exit(1);
+    }
+}
+
+// `--list-models` and `--export` print and exit without a session, so they open none (upstream's
+// `createSessionManager()` answers them with an in-memory one), and the web shell starts none of
+// its own.
+$startsASession = !isset($options['list-models']) && !isset($options['export']);
+$choosesASession = $startsASession && $mode !== 'web';
+
+// The theme a screen drawn before the mode exists is drawn in — the session picker, the missing
+// session directory question — from the person's own settings, since the project's are not yet
+// allowed in. Upstream's `createStartupTui(startupSettingsManager)`.
+$initStartupTheme = static function () use ($cwd, $options): void {
+    $own = Settings::load($cwd, projectTrusted: false);
+    $themeError = Themes::initTheme(Themes::resolveThemeSetting($options['use-theme'] ?? (getenv('PIG_THEME') ?: $own->theme()), Themes::getTerminalTheme()));
+
+    if ($themeError !== null) {
+        fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
+    }
+};
+
+// **The session is chosen before anything bound to a directory is loaded**, as upstream's `main()`
+// decides it: `--session`, `--resume` and `--session-id` may open a conversation from another
+// project, and that conversation carries on in its own directory — so the project's settings,
+// trust, extensions, context files and tools have to be the ones *there*, resolved only once the
+// session's directory is known.
+$noSession = isset($options['no-session']);
+$sessionId = $options['session-id'] ?? null;
+$resumePath = null;
+// The id a new session gets — only when `--session-id` names none of this project's.
+$newSessionId = null;
+// Upstream's `cwdOverride`: the directory a resumed session carries on in when its own has gone.
+$sessionCwdOverride = null;
+
+if ($choosesASession) {
+    // Upstream's `sessionDir`: `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the
+    // setting — the project's read before trust, as upstream reads it — and with none each project
+    // has its own directory as before. A relative path is the working directory's. Set before
+    // anything looks a session up.
+    $sessionDir = ($options['session-dir'] ?? '') !== '' ? $options['session-dir']
+        : ((string) getenv('PIG_CODING_AGENT_SESSION_DIR') !== '' ? (string) getenv('PIG_CODING_AGENT_SESSION_DIR')
+        : Settings::startupSessionDir($cwd));
+    SessionManager::useSessionDir($sessionDir === null ? null : Pig\CodingAgent\Tools\Paths::resolve($sessionDir, $cwd));
+
+    // Upstream's `createSessionManager()`, in its order: `--no-session` is no file whatever else was
+    // said; then `--fork`, `--session`, `--resume`, `--continue`, and `--session-id`. Resolved here rather
+    // than inside the assembly, because choosing one draws on the terminal and `CodingAgent::session()`
+    // has no screen: it takes a path, or nothing.
+
+    $forkOrExit = static function (string $source) use ($cwd, $sessionId): string {
+        try {
+            return SessionManager::forkFrom($source, $cwd, $sessionId)->path;
+        } catch (Throwable $error) {
+            fwrite(STDERR, Style::red("Error: {$error->getMessage()}\n"));
+
+            exit(1);
+        }
+    };
+
+    $locateOrExit = static function (string $option) use ($cwd, $options): Pig\CodingAgent\Session\FoundSession {
+        $found = $options[$option] === '' ? null : SessionManager::locate($cwd, $options[$option]);
+
+        if ($found === null) {
+            fwrite(STDERR, Style::red($options[$option] === ''
+                ? "--{$option} requires a session ID or path.\n"
+                : "No session found matching '{$options[$option]}'\n"));
+
+            exit(1);
+        }
+
+        return $found;
+    };
+
+    if ($noSession) {
+        // Nothing to open and nothing to write — upstream's `SessionManager.inMemory(cwd, { id })`, so
+        // `--session-id` still names the session nobody saves.
+        $newSessionId = $sessionId;
+    } elseif (isset($options['fork'])) {
+        if ($sessionId !== null && SessionManager::findById($cwd, $sessionId) !== null) {
+            fwrite(STDERR, Style::red("Session already exists with id '{$sessionId}'\n"));
+
+            exit(1);
+        }
+
+        // Wherever it is — a path, this project's, another's — forked into this one.
+        $resumePath = $forkOrExit($locateOrExit('fork')->path);
+    } elseif (isset($options['session'])) {
+        $found = $locateOrExit('session');
+
+        if ($found->elsewhere === null) {
+            $resumePath = $found->path;
+        } else {
+            // Upstream's `promptConfirm()`: another project's conversation is offered as a fork into
+            // this one, `[y/N]` on standard input whatever the mode, as upstream asks. The question goes
+            // where the answer's reader can see it without spoiling a protocol on standard output.
+            $ask = $interactive ? STDOUT : STDERR;
+            fwrite($ask, Style::yellow("Session found in different project: {$found->elsewhere}") . "\n");
+            fwrite($ask, 'Fork this session into current directory? [y/N] ');
+            $answer = strtolower(trim((string) fgets(STDIN)));
+
+            if ($answer !== 'y' && $answer !== 'yes') {
+                fwrite($ask, Style::dim('Aborted.') . "\n");
+
+                exit(0);
+            }
+
+            $resumePath = $forkOrExit($found->path);
+        }
+    } elseif (isset($options['resume'])) {
+        // Upstream's `-r` takes no value: it opens the list. A list needs a terminal to be drawn on and
+        // a keyboard to answer it, so without one there is nobody to choose and it is an error.
+        if (!$interactive) {
+            fwrite(STDERR, Style::red("--resume needs a terminal to choose on. Use --session <path|id>.\n"));
+
+            exit(1);
+        }
+
+        // Upstream's `selectSession()`: the list even when this project has none — Tab shows every
+        // project's. Escape chooses nothing, which is "No session selected" and an ordinary exit,
+        // not a new session; Ctrl+C leaves without a word. Either way the list has already put the
+        // terminal back, so this is an ordinary end to the program and not a signal.
+        $initStartupTheme();
+        $choice = SessionPicker::ask(SessionManager::listFor($cwd));
+
+        if ($choice->quit) {
+            exit(0);
+        }
+
+        if ($choice->path === null) {
+            echo Style::dim('No session selected'), "\n";
+
+            exit(0);
+        }
+
+        $resumePath = $choice->path;
+    } elseif (!isset($options['continue']) && $sessionId !== null) {
+        $resumePath = SessionManager::findById($cwd, $sessionId);
+
+        if ($resumePath === null) {
+            fwrite(STDERR, Style::yellow("Warning: No project session found with id '{$sessionId}'; creating a new session with that id.\n"));
+            $newSessionId = $sessionId;
+        }
+    }
+
+
+    // Upstream's `sessionManager.getCwd()` and `getMissingSessionCwdIssue()`: an opened session's
+    // directory is the one everything below is loaded for; one that has gone is asked about on a
+    // terminal ("continue in current cwd"), and is an error anywhere else. `--continue` stays here,
+    // as upstream's `continueRecent()` does.
+    if ($resumePath !== null) {
+        try {
+            $openedSession = SessionManager::open($resumePath);
+        } catch (Throwable $error) {
+            fwrite(STDERR, Style::red("Error: {$error->getMessage()}\n"));
+
+            exit(1);
+        }
+
+        $cwdIssue = \Pig\CodingAgent\Session\SessionCwd::missingIssue($openedSession, $cwd);
+
+        if ($cwdIssue !== null) {
+            if (!$interactive) {
+                fwrite(STDERR, Style::red(\Pig\CodingAgent\Session\SessionCwd::errorMessage($cwdIssue)) . "\n");
+
+                exit(1);
+            }
+
+            $initStartupTheme();
+
+            if (\Pig\CodingAgent\Cli\StartupSelector::ask(\Pig\CodingAgent\Session\SessionCwd::prompt($cwdIssue), ['Continue', 'Cancel']) !== 'Continue') {
+                exit(0);
+            }
+
+            $sessionCwdOverride = $cwd;
+        } elseif ($openedSession->cwd !== '') {
+            $cwd = $openedSession->cwd;
+        }
+    }
 }
 
 // Whether this project's own `.pig/` may be loaded at all is decided **after** the person's own
@@ -290,13 +562,12 @@ if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
 // a saved answer next; otherwise the terminal asks, and a mode with no terminal answers no.
 // `--list-models` and `--export` print and exit without loading anything of the project's, so
 // they are not asked either.
-$startsASession = !isset($options['list-models']) && !isset($options['export']);
 $trustUndecided = ProjectTrust::hasResources($cwd);
 $projectTrusted = !$trustUndecided;
 
 // The order everywhere below: what was typed, then the environment, then what was chosen
 // last time, then the built-in default.
-$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd, projectTrusted: $projectTrusted);
+$settings = Settings::load($cwd, projectTrusted: $projectTrusted);
 
 foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
@@ -319,21 +590,29 @@ $askTrust = $interactive && $startsASession
 Timings::mark('settings');
 
 // Before anything opens a socket, which the first token refresh in `Auth::discover()` already
-// does. `--proxy`, then the environment, then the settings file — the order stated above. A
-// closure because it runs again should a trusted project's settings arrive with a proxy or a
-// timeout of their own.
+// does. `--proxy`, then the environment with the settings' `httpProxy` filling in — upstream's
+// `applyHttpProxySettings()`: `HTTP_PROXY ??= httpProxy; HTTPS_PROXY ??= httpProxy`, so a variable
+// already set (an empty one included) keeps its value, and the uppercase two are the ones filled
+// in. Then `Proxy::fromEnvironment()` reads them as undici's `EnvHttpProxyAgent` does. A closure
+// because it runs again should a trusted project's settings arrive with a timeout of its own.
 $configureHttp = static function (Settings $settings) use ($options): void {
     if (isset($options['no-proxy'])) {
         HttpClient::useProxy(null);
     } else {
         try {
-            $proxy = isset($options['proxy']) && $options['proxy'] !== ''
-                ? Proxy::parse($options['proxy'], $settings->proxyBypass())
-                : Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
+            $environment = getenv();
 
-            if ($proxy === null && $settings->httpProxy() !== null) {
-                $proxy = Proxy::parse($settings->httpProxy(), $settings->proxyBypass());
+            if ($settings->httpProxy() !== null) {
+                $environment['HTTP_PROXY'] ??= $settings->httpProxy();
+                $environment['HTTPS_PROXY'] ??= $settings->httpProxy();
             }
+
+            $bypass = $settings->proxyBypass();
+            $proxy = isset($options['proxy']) && $options['proxy'] !== ''
+                ? Proxy::parse($options['proxy'], $bypass)
+                : Proxy::fromEnvironment($environment);
+            // `proxy.bypass` replaces `no_proxy` when it lists something; an empty one leaves it.
+            $proxy = $bypass === [] ? $proxy : $proxy?->bypassing($bypass);
 
             HttpClient::useProxy($proxy);
         } catch (HttpError $error) {
@@ -362,8 +641,8 @@ Timings::mark('proxy');
 
 // Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
-// `--resume` cannot see. Not affected by `--no-save` for the same reason `Auth` is not — the flag
-// is about not writing *this conversation* down.
+// `--resume` cannot see. Not affected by `--no-session` for the same reason `Auth` is not — the
+// flag is about not writing *this conversation* down.
 $movedCredentials = Migrations::run();
 
 if ($movedCredentials !== []) {
@@ -378,7 +657,7 @@ if ($movedCredentials !== []) {
 
 Timings::mark('migrations');
 
-// Not affected by `--no-save`, which is about not writing this conversation down. A stored
+// Not affected by `--no-session`, which is about not writing this conversation down. A stored
 // sign-in is still the way in, and a token renewed during the run has to be kept or the next
 // run starts by renewing a token that was already replaced.
 $auth = Auth::discover(settings: $settings);
@@ -390,9 +669,10 @@ foreach ($auth->problems() as $problem) {
 Timings::mark('credentials');
 
 // Before the model is resolved, because `--model my-box/qwen3-coder` has to be able to find
-// one of these. `--no-save` gets none of it: that flag means this run touches nothing of the
-// person's, and a declared provider is one more thing read off their disk.
-$custom = isset($options['no-save']) ? CustomModels::none() : CustomModels::discover();
+// one of these. Read with `--no-session` too: it is about not writing the conversation down,
+// and upstream's model runtime reads `models.json` either way — as `auth.json` above is read
+// either way. Read again whenever `/model` opens.
+$custom = CustomModels::discover();
 $custom->install($auth);
 
 foreach ($custom->problems as $problem) {
@@ -490,10 +770,10 @@ $resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources
 
 // Once trust is decided, whichever way: the project's settings join the person's, and what was
 // read off the person's alone is read again with them.
-$settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings, $cwd, $options, $configureHttp): void {
+$settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings, $cwd, $configureHttp): void {
     $projectTrusted = $trusted;
 
-    if ($trusted && !isset($options['no-save'])) {
+    if ($trusted) {
         $own = $settings->problems();
         $settings = Settings::load($cwd, projectTrusted: true);
 
@@ -505,9 +785,10 @@ $settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings
         $configureHttp($settings);
     }
 
-    // The project's `.pig/themes` and `.pi/themes` are the project's resources, so they wait for
-    // trust like its settings do.
-    Themes::setCustomThemesCwd($trusted ? $cwd : null);
+    // The theme files the settings and the directories give, so the theme picked below can be one
+    // of them; the project's `.pig/themes` waits for trust like its settings do. `session()` hands
+    // in the full list again, the packages' included.
+    Themes::setResolvedThemeFiles((new \Pig\CodingAgent\Packages\PackageManager($cwd, $settings))->resolveLocalResources($trusted)->enabled('themes'));
 };
 
 // `project_trust`, over the extensions loaded before the project's: the first yes or no wins over
@@ -703,90 +984,33 @@ if (isset($options['name'])) {
     }
 }
 
-// Upstream's `sessionDir`: `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the
-// setting — the project's read before trust, as upstream reads it — and with none each project
-// has its own directory as before. A relative path is the working directory's. Set before
-// anything looks a session up.
-$sessionDir = ($options['session-dir'] ?? '') !== '' ? $options['session-dir']
-    : ((string) getenv('PIG_CODING_AGENT_SESSION_DIR') !== '' ? (string) getenv('PIG_CODING_AGENT_SESSION_DIR')
-    : (isset($options['no-save']) ? null : Settings::startupSessionDir($cwd)));
-SessionManager::useSessionDir($sessionDir === null ? null : Pig\CodingAgent\Tools\Paths::resolve($sessionDir, $cwd));
-
-// Resolved here rather than inside the assembly, because choosing one draws a list on the
-// terminal and `CodingAgent::session()` has no screen: it takes a path, or nothing.
-$resumePath = $options['session'] ?? $options['resume'] ?? null;
-
-if (isset($options['session'])) {
-    $sessionArg = $options['session'];
-
-    if ($sessionArg === '') {
-        fwrite(STDERR, Style::red("--session requires a session ID or path.\n"));
-
-        exit(1);
-    }
-
-    $resolved = SessionManager::find($cwd, $sessionArg);
-
-    if ($resolved === null) {
-        fwrite(STDERR, Style::red("No session found matching '{$sessionArg}'.\n"));
-
-        exit(1);
-    }
-
-    $resumePath = $resolved;
-} elseif ($resumePath !== null && $resumePath !== '') {
-    $resolved = SessionManager::find($cwd, $resumePath);
-
-    if ($resolved !== null) {
-        $resumePath = $resolved;
-    }
-}
-
-if ($resumePath === '' && !isset($options['no-save'])) {
-    // `--resume` with nothing after it means "show me the list": a session file is named after six
-    // random bytes under a flattened project path, so a flag that demands the path is a flag nobody
-    // can use from memory. Only with a terminal to draw it on — in `--mode text|json|rpc` there is
-    // nobody to ask, so it stays the error it was.
-    if (!$interactive) {
-        fwrite(STDERR, Style::red("--resume needs the path to a session file.\n"));
-
-        exit(1);
-    }
-
-    $sessions = SessionManager::listFor($cwd);
-
-    if ($sessions === []) {
-        fwrite(STDERR, Style::yellow("No earlier sessions in {$cwd}. Starting a new one.\n"));
-    }
-
-    // Escape answers null, which starts a new session — someone who opened the list and changed
-    // their mind still wanted pig, and refusing to start would only make them type the command
-    // again. Ctrl+C is the other thing, and it is the caller's to do: the list has already put
-    // the terminal back, so this is an ordinary end to the program and not a signal.
-    $choice = SessionPicker::ask($sessions);
-
-    if ($choice->quit) {
-        exit(0);
-    }
-
-    $resumePath = $choice->path;
-}
-
 // Everything from the model to the restored conversation. It lives in `CodingAgent::session()`
 // rather than here for the reason `Cli\Arguments` and `Cli\SignIn` are classes: a script ending in
-// `exit()` cannot be called twice, so two hundred lines of resolution order had no test.
-try {
-    $started = CodingAgent::session(
+// `exit()` cannot be called twice, so two hundred lines of resolution order had no test. The one
+// call, for this directory at startup and for another one when a session from there is resumed
+// (`$createRuntime` below): the command line's options are the same for both, as upstream's
+// runtime factory closes over its `parsed` arguments.
+$assemble = static function (
+    string $cwd,
+    Settings $settings,
+    bool $projectTrusted,
+    ?string $resume,
+    bool $continue,
+    ?string $cwdOverride,
+    ?array $preloadedExtensions,
+    \Pig\CodingAgent\Packages\ResolvedPaths $packageResources,
+    ?string $newSessionId,
+) use ($auth, $options, $noSession, $toolNames, $modelPatterns, $cliExtensionPaths, $excludeTools, $cliPaths, $arguments): Pig\CodingAgent\StartedSession {
+    return CodingAgent::session(
         $cwd,
         $settings,
         $auth,
-        environment: getenv(),
         model: $options['model'] ?? null,
         thinking: $options['thinking'] ?? null,
         apiKey: $options['api-key'] ?? null,
-        resume: $resumePath === '' ? null : $resumePath,
-        continue: isset($options['continue']),
-        save: !isset($options['no-save']),
+        resume: $resume,
+        continue: $continue,
+        save: !$noSession,
         readOnly: isset($options['read-only']),
         withHooks: !isset($options['no-hooks']),
         withSkills: !isset($options['no-skills']),
@@ -803,17 +1027,93 @@ try {
         // Every option, for the flags extensions declare (`registerFlag()`); the parser does not
         // refuse an option it has not heard of, which is what makes `--my-flag` reachable at all.
         flags: $options,
-        // Loaded above, once, so `--list-models` could see them; their problems come back in
+        // Loaded before, once, so `--list-models` could see them; their problems come back in
         // `$warnings` with everybody else's.
         preloadedExtensions: $preloadedExtensions,
-        // Resolved above with the extensions, or now — `--no-extensions` skips that loader.
-        packageResources: $resolvePackages($projectTrusted),
+        packageResources: $packageResources,
         // Upstream's `noTools`: `--no-tools` wins over `--no-builtin-tools`.
         noTools: isset($options['no-tools']) ? 'all' : (isset($options['no-builtin-tools']) ? 'builtin' : null),
         withPromptTemplates: !isset($options['no-prompt-templates']),
         withContextFiles: !isset($options['no-context-files']),
         skillPaths: $cliPaths('skill'),
         promptTemplatePaths: $cliPaths('prompt-template'),
+        systemPrompt: $options['system-prompt'] ?? null,
+        appendSystemPrompt: $arguments->values('append-system-prompt') === [] ? null : $arguments->values('append-system-prompt'),
+        provider: $options['provider'] ?? null,
+        sessionId: $newSessionId,
+        cwdOverride: $cwdOverride,
+    );
+};
+
+// Upstream's `CreateAgentSessionRuntimeFactory`, for `AgentSession::switchTo()`'s `$relocate`: a
+// session from another directory gets a runtime built for that directory — its trust (asked once
+// per directory, through `$askTrust` when the mode has a screen to ask on, upstream's
+// `projectTrustByCwd`), its settings, its packages and extensions, and then everything
+// `CodingAgent::session()` builds. What the previous runtime's extensions registered process-wide
+// goes first, as `/reload` clears it, and `models.json` is applied again over what loads.
+$trustByCwd = [$cwd => $projectTrusted];
+$createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?Closure $askTrust) use (&$trustByCwd, $trustOverride, $assemble, $auth, $options, $cliExtensionPaths, $temporaryResources): Pig\CodingAgent\StartedSession {
+    $trusted = $trustByCwd[$runtimeCwd] ??= ProjectTrust::resolve(
+        $runtimeCwd,
+        $askTrust,
+        default: Settings::load($runtimeCwd, projectTrusted: false)->defaultProjectTrust(),
+        override: $trustOverride,
+    );
+    $runtimeSettings = Settings::load($runtimeCwd, projectTrusted: $trusted);
+    \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($runtimeSettings);
+
+    \Pig\Ai\Extension\ProviderRegistry::forget();
+    \Pig\CodingAgent\Extensions\ExtensionApi::forgetHttpRoutes();
+    \Pig\CodingAgent\Extensions\ExtensionApi::forgetFlags();
+    \Pig\CodingAgent\McpServerRegistry::reset();
+    \Pig\CodingAgent\VirtualModelRegistry::reset();
+
+    // Not installed here: a switch is not the moment to clone, as `/reload` does not.
+    try {
+        $resolved = (new \Pig\CodingAgent\Packages\PackageManager($runtimeCwd, $runtimeSettings))->resolve(static fn (): string => 'skip');
+    } catch (\Pig\CodingAgent\Packages\PackageError $error) {
+        throw new CodingAgentError("packages: {$error->getMessage()}", previous: $error);
+    }
+
+    $packages = $temporaryResources === null ? $resolved : new \Pig\CodingAgent\Packages\ResolvedPaths(
+        $resolved->extensions,
+        [...$resolved->skills, ...$temporaryResources->skills],
+        [...$resolved->prompts, ...$temporaryResources->prompts],
+        [...$resolved->themes, ...$temporaryResources->themes],
+    );
+
+    $extensions = isset($options['no-extensions']) && $cliExtensionPaths === []
+        ? null
+        : \Pig\CodingAgent\Extensions\ExtensionLoader::load(
+            $runtimeCwd,
+            $runtimeSettings->extensions(),
+            $cliExtensionPaths,
+            auth: $auth,
+            projectTrusted: $trusted,
+            disabled: array_values(array_unique([...$runtimeSettings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
+            projectConfigured: static fn (): array => $runtimeSettings->extensions(),
+            packageExtensions: static fn (bool $trusted): array => $packages->enabled('extensions'),
+            discover: !isset($options['no-extensions']),
+            builtins: isset($options['no-extensions']) ? [] : $runtimeSettings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
+        );
+
+    CustomModels::discover()->install($auth);
+
+    return $assemble($runtimeCwd, $runtimeSettings, $trusted, $opened->path, false, $runtimeCwd, $extensions, $packages, null);
+};
+
+try {
+    $started = $assemble(
+        $cwd,
+        $settings,
+        $projectTrusted,
+        $resumePath,
+        !$noSession && isset($options['continue']),
+        $sessionCwdOverride,
+        $preloadedExtensions,
+        // Resolved above with the extensions, or now — `--no-extensions` skips that loader.
+        $resolvePackages($projectTrusted),
+        $newSessionId,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying
@@ -830,10 +1130,36 @@ foreach ($started->warnings as $warning) {
     fwrite(STDERR, Style::yellow($warning . "\n"));
 }
 
+// Upstream's `applyExtensionFlagValues()`: an option no list names is an extension's, and once the
+// extensions have loaded, one that none of them registered is an error — as is a string flag
+// given no value.
+$declaredFlags = Pig\CodingAgent\Extensions\ExtensionApi::declaredFlags();
+$unregistered = array_values(array_diff(array_keys($arguments->unknownFlags), array_keys($declaredFlags)));
+$flagErrors = [];
+
+foreach ($arguments->unknownFlags as $name => $value) {
+    if (isset($declaredFlags[$name]) && $declaredFlags[$name]['type'] !== 'boolean' && $value === true) {
+        $flagErrors[] = "Extension flag \"--{$name}\" requires a value";
+    }
+}
+
+if ($unregistered !== []) {
+    $flagErrors[] = 'Unknown option' . (count($unregistered) === 1 ? '' : 's') . ': '
+        . implode(', ', array_map(static fn (string $name): string => "--{$name}", $unregistered));
+}
+
+if ($flagErrors !== []) {
+    foreach ($flagErrors as $problem) {
+        fwrite(STDERR, Style::red("Error: {$problem}\n"));
+    }
+
+    exit(1);
+}
+
 $session = $started->session;
 
 // Upstream's `sessionManager.appendSessionInfo(name)`, onto the file before the first turn. With
-// `--no-save` there is no file for the name to be in.
+// `--no-session` there is no file for the name to be in.
 if ($sessionName !== null) {
     $started->store?->setSessionName($sessionName);
 }
@@ -858,11 +1184,14 @@ try {
     exit(1);
 }
 
-// The files go in front of the first message, which is the one place they can go: the model
+// Upstream's `readPipedStdin()`, not in rpc mode — its standard input is the protocol — nor in pig's
+// web and mcp modes, which serve rather than prompt. Piped input is print mode already
+// (`appMode()`), so what remains is to put it in front.
+$stdinContent = in_array($mode, ['rpc', 'web', 'mcp'], true) ? null : InitialMessage::readPipedStdin();
+
+// Upstream's `buildInitialMessage()`: stdin, then the files, then the first message — the model
 // reading `why is this slow?` needs the code above it, not after it.
-if (!$files->isEmpty()) {
-    $messages = $messages === [] ? [$files->text] : [$files->before($messages[0]), ...array_slice($messages, 1)];
-}
+$messages = InitialMessage::build($stdinContent, $files->text, $messages);
 
 // Here rather than at the end: startup is over the moment a mode takes the screen, and a
 // report printed when pig quits would be one somebody has to scroll back to find — after an
@@ -876,7 +1205,7 @@ Timings::report();
 $exit = 0;
 
 if ($mode === 'rpc') {
-    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings, $auth);
+    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings, $auth, createRuntime: $createRuntime);
 
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
@@ -887,7 +1216,7 @@ if ($mode === 'rpc') {
     $serving = new McpMode($session, $mcpPort, $mcpHost, $hooks, $customTools, stdio: isset($options['mcp-stdio']));
     $exit = (int) Async::run(static fn (): int => $serving->run());
 } elseif (!$interactive) {
-    $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
+    $printing = new PrintMode($session, $mode === 'json' ? 'json' : 'text', $hooks, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));
 } else {
     // What changed since this person last looked, shown once. Not on `-c` or `-r`: somebody
@@ -948,6 +1277,9 @@ if ($mode === 'rpc') {
         extensions: $extensions,
         projectTrusted: $projectTrusted,
         keybindings: $keybindings,
+        tuiMode: $options['tui-mode'] ?? null,
+        verbose: isset($options['verbose']),
+        createRuntime: $createRuntime,
     );
 
     // **Spawned, and inside the one `Async::run()` that owns the program.** It is one HTTPS
@@ -959,7 +1291,9 @@ if ($mode === 'rpc') {
     //
     // Interactive only. `-p`, `--mode json` and `--mode rpc` have somebody parsing standard
     // output, and upstream notifies in its interactive mode alone for the same reason.
-    $checkForUpdates = !isset($options['no-update-check']) && $settings->updateCheckEnabled();
+    // `--update-check` asks whatever the setting says; `PIG_SKIP_VERSION_CHECK` and `PIG_OFFLINE`
+    // (which `--offline` sets) are read by `UpdateCheck` itself, as upstream's `checkForNewPiVersion()`.
+    $checkForUpdates = isset($options['update-check']) || (!isset($options['no-update-check']) && $settings->updateCheckEnabled());
 
     Async::run(static function () use ($running, $checkForUpdates, $cwd): void {
         if ($checkForUpdates) {
@@ -992,6 +1326,9 @@ if ($mode === 'rpc') {
     if ($resume !== null && (!function_exists('posix_isatty') || posix_isatty(STDOUT))) {
         echo Style::dim('To resume this session: '), $resume, "\n";
     }
+
+    // Upstream's `handleFatalRuntimeError()` ends the program with 1.
+    $exit = $running->exitCode();
 }
 
 exit($exit);

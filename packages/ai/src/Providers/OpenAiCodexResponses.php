@@ -162,7 +162,7 @@ final class OpenAiCodexResponses
                 self::compat($model)?->grammarTools ?? false,
             );
             // `options?.cacheRetention === "none" ? undefined : options?.sessionId` — the option as
-            // given, not resolved: `PI_CACHE_RETENTION` plays no part here.
+            // given, not resolved: `PIG_CACHE_RETENTION` plays no part here.
             $cacheSessionId = $options?->cacheRetention === 'none' ? null : $options?->sessionId;
             $codexSessionId = OpenAiPromptCache::clampOpenAIPromptCacheKey($cacheSessionId);
             $body = self::buildRequestBody($model, $context, $options, $codexSessionId, $grammar);

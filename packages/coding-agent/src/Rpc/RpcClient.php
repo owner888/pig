@@ -36,9 +36,9 @@ use Pig\Async\Loop;
  * `collectEvents()` promise registered *before* the prompt is sent; here `promptAndWait()` is three
  * statements in a row.
  *
- * The commands mirror **pig's** twenty-two, not upstream's. `RpcMode`'s docblock lists the six of
- * upstream's that pig does not have and why; a client with a `queueMessage()` that guessed between
- * `steer` and `follow_up` would be worse than no client.
+ * **The methods are upstream's**, name for name — `getState()`, `getAvailableModels()`,
+ * `exportHtml()`, `getTree()` and the rest — over the same wire, plus `navigateTree()` for pig's
+ * `navigate_tree` and `relay()` for a host that is a wire itself.
  */
 final class RpcClient
 {
@@ -319,22 +319,41 @@ final class RpcClient
 
     // ---- the conversation ----------------------------------------------------------------------
 
-    /** @param list<array<string, mixed>> $images `{data, mimeType}` each, as the wire wants them */
-    public function prompt(string $message, array $images = []): void
+    /**
+     * Send a prompt, and answer what became of it — `started`, `queued` or `handled`. The turn
+     * goes on after this returns; `onEvent()` hears it, and `agent_settled` ends it. A prompt
+     * that was `handled` started no turn, so there is no `agent_settled` to wait for.
+     *
+     * @param list<array<string, mixed>> $images `{type: "image", data, mimeType}` each
+     * @param 'steer'|'followUp'|null $streamingBehavior how to queue it while a turn runs
+     */
+    public function prompt(string $message, array $images = [], ?string $streamingBehavior = null): string
     {
-        $this->send(['type' => 'prompt', 'message' => $message, 'images' => $images]);
+        return $this->disposition($this->send(array_filter(
+            ['type' => 'prompt', 'message' => $message, 'images' => $images === [] ? null : $images, 'streamingBehavior' => $streamingBehavior],
+            static fn (mixed $v): bool => $v !== null,
+        )));
     }
 
-    /** Interrupt the turn in flight with something to take into account. */
-    public function steer(string $message): void
+    /**
+     * Interrupt the turn in flight with something to take into account.
+     *
+     * @param list<array<string, mixed>> $images
+     * @return string `queued`, or `handled` when an `input` hook took it
+     */
+    public function steer(string $message, array $images = []): string
     {
-        $this->send(['type' => 'steer', 'message' => $message]);
+        return $this->disposition($this->send(['type' => 'steer', 'message' => $message, ...($images === [] ? [] : ['images' => $images])]));
     }
 
-    /** Ask this once the turn in flight is done. */
-    public function followUp(string $message): void
+    /**
+     * Ask this once the turn in flight is done.
+     *
+     * @param list<array<string, mixed>> $images
+     */
+    public function followUp(string $message, array $images = []): string
     {
-        $this->send(['type' => 'follow_up', 'message' => $message]);
+        return $this->disposition($this->send(['type' => 'follow_up', 'message' => $message, ...($images === [] ? [] : ['images' => $images])]));
     }
 
     public function abort(): void
@@ -342,45 +361,27 @@ final class RpcClient
         $this->send(['type' => 'abort']);
     }
 
-    /** @return array<string, mixed> */
-    public function state(): array
+    /** @return array{steering: list<string>, followUp: list<string>} what was queued, now not */
+    public function clearQueue(): array
+    {
+        return $this->send(['type' => 'clear_queue']) ?? ['steering' => [], 'followUp' => []];
+    }
+
+    /** @return array{cancelled: bool} cancelled when a hook refused to leave the conversation */
+    public function newSession(?string $parentSession = null): array
+    {
+        return $this->send(['type' => 'new_session', ...($parentSession === null ? [] : ['parentSession' => $parentSession])]) ?? [];
+    }
+
+    /** @return array<string, mixed> upstream's `RpcSessionState`, and pig's fields after it */
+    public function getState(): array
     {
         return $this->send(['type' => 'get_state']) ?? [];
     }
 
-    /** @return list<array<string, mixed>> */
-    public function messages(): array
-    {
-        $data = $this->send(['type' => 'get_messages']) ?? [];
-
-        return is_array($data['messages'] ?? null) ? array_values($data['messages']) : [];
-    }
-
-    public function lastAssistantText(): ?string
-    {
-        $data = $this->send(['type' => 'get_last_assistant_text']) ?? [];
-        $text = $data['text'] ?? null;
-
-        return is_string($text) ? $text : null;
-    }
-
-    /** @return array<string, mixed> */
-    public function sessionStats(): array
-    {
-        return $this->send(['type' => 'get_session_stats']) ?? [];
-    }
-
     // ---- the model -----------------------------------------------------------------------------
 
-    /** @return list<array<string, mixed>> */
-    public function availableModels(): array
-    {
-        $data = $this->send(['type' => 'get_available_models']) ?? [];
-
-        return is_array($data['models'] ?? null) ? array_values($data['models']) : [];
-    }
-
-    /** @return array<string, mixed> */
+    /** @return array<string, mixed> the model, as `get_available_models` lists it */
     public function setModel(string $provider, string $modelId): array
     {
         return $this->send(['type' => 'set_model', 'provider' => $provider, 'modelId' => $modelId]) ?? [];
@@ -389,13 +390,19 @@ final class RpcClient
     /**
      * The next model along, or null when only one has a key here.
      *
-     * @return array<string, mixed>|null `{model, thinkingLevel}`
+     * @return array<string, mixed>|null `{model, thinkingLevel, isScoped}`
      */
-    public function cycleModel(bool $backward = false): ?array
+    public function cycleModel(): ?array
     {
-        $data = $this->send(['type' => 'cycle_model', 'direction' => $backward ? 'backward' : 'forward']);
+        return $this->send(['type' => 'cycle_model']);
+    }
 
-        return is_array($data['model'] ?? null) ? $data : null;
+    /** @return list<array<string, mixed>> */
+    public function getAvailableModels(): array
+    {
+        $data = $this->send(['type' => 'get_available_models']) ?? [];
+
+        return is_array($data['models'] ?? null) ? array_values($data['models']) : [];
     }
 
     public function setThinkingLevel(string $level): void
@@ -403,21 +410,38 @@ final class RpcClient
         $this->send(['type' => 'set_thinking_level', 'level' => $level]);
     }
 
-    /** @return string|null the level it moved to, or null when the model cannot think */
-    public function cycleThinkingLevel(): ?string
+    /** @return array{level: string}|null null when the model cannot think */
+    public function cycleThinkingLevel(): ?array
     {
-        $data = $this->send(['type' => 'cycle_thinking_level']) ?? [];
-        $level = $data['level'] ?? null;
+        return $this->send(['type' => 'cycle_thinking_level']);
+    }
 
-        return is_string($level) ? $level : null;
+    /** @return list<string> `["off"]` for a model that cannot reason */
+    public function getAvailableThinkingLevels(): array
+    {
+        $data = $this->send(['type' => 'get_available_thinking_levels']) ?? [];
+
+        return is_array($data['levels'] ?? null) ? array_values($data['levels']) : [];
+    }
+
+    /** @param 'all'|'one-at-a-time' $mode */
+    public function setSteeringMode(string $mode): void
+    {
+        $this->send(['type' => 'set_steering_mode', 'mode' => $mode]);
+    }
+
+    /** @param 'all'|'one-at-a-time' $mode */
+    public function setFollowUpMode(string $mode): void
+    {
+        $this->send(['type' => 'set_follow_up_mode', 'mode' => $mode]);
     }
 
     // ---- context and retries -------------------------------------------------------------------
 
-    /** @return array<string, mixed> `{cancelled, summary}` */
-    public function compact(?string $instructions = null): array
+    /** @return array<string, mixed> upstream's `CompactionResult` */
+    public function compact(?string $customInstructions = null): array
     {
-        return $this->send(['type' => 'compact', 'customInstructions' => $instructions]) ?? [];
+        return $this->send(['type' => 'compact', ...($customInstructions === null ? [] : ['customInstructions' => $customInstructions])]) ?? [];
     }
 
     public function setAutoCompaction(bool $enabled): void
@@ -438,16 +462,15 @@ final class RpcClient
     // ---- the shell -----------------------------------------------------------------------------
 
     /**
-     * Run a command in the agent's own shell, the way `!` does in the terminal.
+     * Run a command in the agent's own shell, the way `!` does in the terminal; `$excludeFromContext`
+     * is `!!`, kept in the session and not shown to the model. Its output streams to `onEvent()` as
+     * `bash_execution_update` events carrying this command's id.
      *
-     * `$remember` is what `!` and `!!` are: kept, the output goes into the conversation the model
-     * sees; not kept, it was for the person at the keyboard.
-     *
-     * @return array<string, mixed> `{command, output, exitCode, cancelled, truncated, spillPath}`
+     * @return array<string, mixed> upstream's `BashResult`: `{output, exitCode?, cancelled, truncated, fullOutputPath?}`
      */
-    public function bash(string $command, bool $remember = true): array
+    public function bash(string $command, bool $excludeFromContext = false): array
     {
-        return $this->send(['type' => 'bash', 'command' => $command, 'remember' => $remember]) ?? [];
+        return $this->send(['type' => 'bash', 'command' => $command, ...($excludeFromContext ? ['excludeFromContext' => true] : [])]) ?? [];
     }
 
     public function abortBash(): void
@@ -455,36 +478,21 @@ final class RpcClient
         $this->send(['type' => 'abort_bash']);
     }
 
-    // ---- moving around the conversation --------------------------------------------------------
+    // ---- the session ---------------------------------------------------------------------------
 
-    /** @return array<string, mixed> the points a `go_to` can name */
-    public function branch(): array
+    /** @return array<string, mixed> upstream's `SessionStats` */
+    public function getSessionStats(): array
     {
-        return $this->send(['type' => 'get_branch']) ?? [];
+        return $this->send(['type' => 'get_session_stats']) ?? [];
     }
 
-    /**
-     * Move to a point in the conversation, optionally summarising the branch being left.
-     *
-     * @return array<string, mixed> `{moved, aborted, summary}`
-     */
-    public function goTo(?string $entryId, bool $summarise = false, ?string $instructions = null): array
+    /** @return array{path: string} */
+    public function exportHtml(?string $outputPath = null): array
     {
-        return $this->send([
-            'type' => 'go_to',
-            'entryId' => $entryId,
-            'summarise' => $summarise,
-            'customInstructions' => $instructions,
-        ]) ?? [];
+        return $this->send(['type' => 'export_html', ...($outputPath === null ? [] : ['outputPath' => $outputPath])]) ?? [];
     }
 
-    /** @return array<string, mixed> */
-    public function newSession(): array
-    {
-        return $this->send(['type' => 'new_session']) ?? [];
-    }
-
-    /** @return array<string, mixed> */
+    /** @return array{cancelled: bool} */
     public function switchSession(string $sessionPath): array
     {
         // `sessionPath`, not `path` — the wire's name, which is the only one that matters here. The
@@ -499,39 +507,100 @@ final class RpcClient
         return $this->send(['type' => 'fork', 'entryId' => $entryId]) ?? [];
     }
 
-    /** @return array<string, mixed> `{cancelled}` */
-    public function cloneSession(): array
+    /** @return array{cancelled: bool} */
+    public function clone(): array
     {
         return $this->send(['type' => 'clone']) ?? [];
     }
 
-    /** @return array<string, mixed> `{messages: [{entryId, text}]}` */
-    public function forkMessages(): array
+    /** @return list<array{entryId: string, text: string}> */
+    public function getForkMessages(): array
     {
-        return $this->send(['type' => 'get_fork_messages']) ?? [];
+        $data = $this->send(['type' => 'get_fork_messages']) ?? [];
+
+        return is_array($data['messages'] ?? null) ? array_values($data['messages']) : [];
     }
 
-    /** @return array<string, mixed> `{path}` — `outputPath` on the wire */
-    public function export(?string $outputPath = null): array
+    /** @return array{entries: list<array<string, mixed>>, leafId: string|null} */
+    public function getEntries(?string $since = null): array
     {
-        return $this->send(['type' => 'export', 'outputPath' => $outputPath]) ?? [];
+        return $this->send(['type' => 'get_entries', ...($since === null ? [] : ['since' => $since])]) ?? [];
+    }
+
+    /** @return array{tree: list<array<string, mixed>>, leafId: string|null} */
+    public function getTree(): array
+    {
+        return $this->send(['type' => 'get_tree']) ?? [];
+    }
+
+    public function getLastAssistantText(): ?string
+    {
+        $data = $this->send(['type' => 'get_last_assistant_text']) ?? [];
+        $text = $data['text'] ?? null;
+
+        return is_string($text) ? $text : null;
+    }
+
+    public function setSessionName(string $name): void
+    {
+        $this->send(['type' => 'set_session_name', 'name' => $name]);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function getMessages(): array
+    {
+        $data = $this->send(['type' => 'get_messages']) ?? [];
+
+        return is_array($data['messages'] ?? null) ? array_values($data['messages']) : [];
+    }
+
+    /** @return list<array<string, mixed>> `{name, description?, source, sourceInfo}` each */
+    public function getCommands(): array
+    {
+        $data = $this->send(['type' => 'get_commands']) ?? [];
+
+        return is_array($data['commands'] ?? null) ? array_values($data['commands']) : [];
+    }
+
+    /**
+     * pig's `navigate_tree`: upstream's `navigateTree()` over the wire.
+     *
+     * @return array<string, mixed> `{cancelled, aborted?, editorText?, summaryEntry?}`
+     */
+    public function navigateTree(
+        string $targetId,
+        bool $summarize = false,
+        ?string $customInstructions = null,
+        ?bool $replaceInstructions = null,
+        ?string $label = null,
+    ): array {
+        return $this->send(array_filter([
+            'type' => 'navigate_tree',
+            'targetId' => $targetId,
+            'summarize' => $summarize,
+            'customInstructions' => $customInstructions,
+            'replaceInstructions' => $replaceInstructions,
+            'label' => $label,
+        ], static fn (mixed $v): bool => $v !== null)) ?? [];
     }
 
     // ---- waiting -------------------------------------------------------------------------------
 
     /**
-     * Suspend until the agent finishes the turn.
+     * Suspend until the agent has settled — upstream's `waitForIdle()`, which waits for
+     * `agent_settled`: `agent_end` is one run, and a retry, an overflow summary or a queued message
+     * can follow it.
      *
      * No listener has to be registered in advance the way upstream's does, because this parks the
      * fiber that called it: there is no window between sending a prompt and starting to listen.
      */
     public function waitForIdle(float $timeout = 60.0): void
     {
-        $this->until(static fn (array $event): bool => ($event['type'] ?? null) === 'agent_end', $timeout);
+        $this->until(static fn (array $event): bool => ($event['type'] ?? null) === 'agent_settled', $timeout);
     }
 
     /**
-     * Every event up to and including the one that ends the turn.
+     * Every event up to and including `agent_settled`.
      *
      * @return list<array<string, mixed>>
      */
@@ -542,7 +611,7 @@ final class RpcClient
         $this->until(static function (array $event) use (&$seen): bool {
             $seen[] = $event;
 
-            return ($event['type'] ?? null) === 'agent_end';
+            return ($event['type'] ?? null) === 'agent_settled';
         }, $timeout);
 
         return $seen;
@@ -557,18 +626,38 @@ final class RpcClient
     public function promptAndWait(string $message, array $images = [], float $timeout = 60.0): array
     {
         $seen = [];
-        $collect = $this->onEvent(static function (array $event) use (&$seen): void {
+        $settled = false;
+
+        // Listening before the prompt goes, as upstream's `collectEvents()` is registered first: the
+        // response and the turn's last line can arrive in one read, and the fiber waiting on the
+        // response resumes only after both have been handed out.
+        $collect = $this->onEvent(static function (array $event) use (&$seen, &$settled): void {
             $seen[] = $event;
+            $settled = $settled || ($event['type'] ?? null) === 'agent_settled';
         });
 
         try {
-            $this->prompt($message, $images);
-            $this->waitForIdle($timeout);
+            // A prompt a hook handled starts no turn, so there is no `agent_settled` to wait for.
+            if ($this->prompt($message, $images) !== 'handled' && !$settled) {
+                $this->waitForIdle($timeout);
+            }
         } finally {
             $collect();
         }
 
         return $seen;
+    }
+
+    /** @param array<string, mixed>|null $data */
+    private function disposition(?array $data): string
+    {
+        $disposition = $data['disposition'] ?? null;
+
+        if (!is_string($disposition)) {
+            throw new RpcError('prompt', 'The answer carried no disposition');
+        }
+
+        return $disposition;
     }
 
     // ---- the wire ------------------------------------------------------------------------------

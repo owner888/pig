@@ -50,7 +50,7 @@ final class McpExtensionTest extends TestCase
         $this->cwd = $this->root . '/project';
         mkdir($this->home, 0o700, true);
         mkdir($this->cwd, 0o755, true);
-        putenv("PIG_HOME={$this->home}");
+        putenv("PIG_CODING_AGENT_DIR={$this->home}");
 
         $repo = dirname(__DIR__, 4);
 
@@ -65,7 +65,7 @@ final class McpExtensionTest extends TestCase
     protected function tearDown(): void
     {
         $this->tearDownGlobalTheme();
-        putenv('PIG_HOME');
+        putenv('PIG_CODING_AGENT_DIR');
     }
 
     private static function fixtureServer(): string
