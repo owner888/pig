@@ -4247,7 +4247,8 @@ interactive `/web restart`, `/web status`, and `/web stop` controls;
 
 The child's UI is `RpcUi`, upstream's RPC context, and what it sends the page draws as `TerminalUi`
 would: `setWidget` lines above or below the prompt, `setStatus` in the footer line, `setTitle` as the
-page title (all per tab, in `assets/js/hooks.js`, colour escapes taken off), `notify` as a transcript
+page title (all per tab, in `assets/js/hooks.js`; widget and status colours drawn by `ansiToHtml()`,
+the sixteen terminal colours as the page's theme tokens), `notify` as a transcript
 line at its level, a dialog's `timeout` as the heading counting down, and the `/` list from
 `get_commands` — the extensions' commands, prompt templates and `skill:` commands after the built-ins.
 Two things the page has to do that the terminal does not:
@@ -4257,12 +4258,24 @@ Two things the page has to do that the terminal does not:
   so a reload shows what the terminal would still show.
 - **A `notify` that arrives before the conversation is drawn is drawn after it**, because drawing the
   conversation clears the chat and a `session_start` handler's notice comes first.
+- **The child draws in the page's theme.** `start_session` carries the page's `theme`, the shell
+  starts the child with `PIG_WEB_THEME`, and `RpcMode` makes it the global theme (truecolor) before
+  `session_start`; the page sends pig's `set_theme` command when a tab binds and whenever its theme
+  changes. Once the host has said, `RpcUi` answers `getAllThemes()` / `getTheme()` from the theme files
+  (without `system`), and an extension's `setTheme(name)` is pig's own
+  `extension_ui_request {method: "setTheme", theme}`, which the page applies to itself — so every
+  tab, and through `set_theme` every tab's child, follows. A host that never says gets upstream's
+  answers: no themes, `setTheme()` refused. Not saved to `settings.json`: the page keeps its own
+  choice (`localStorage`), the terminal its own. A theme only the child has (a custom theme in
+  its project or from an extension) is one the page cannot show, so the page ignores it.
 
 What `RpcUi` does not send — a terminal `Component` (`custom()`, headers, footers, the editor, message
-and tool renderers), the working indicator, shortcuts, theme switching — the page cannot draw either;
+and tool renderers), the working indicator, shortcuts — the page cannot draw either;
 an extension that wants a place in the page needs an API that does not exist yet. Regression tests:
-`WebHookUiTest` (`hooks.js` under Node against `RpcUi`'s real requests) and
-`WebModeTest::testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen`.
+`WebHookUiTest` (`hooks.js` under Node against `RpcUi`'s real requests, a theme colour included),
+`RpcUiThemeTest`, `RpcModeTest`'s `set_theme` / `PIG_WEB_THEME` cases,
+`WebModeTest::testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen` and
+`WebModeTest::testAChildIsStartedInThePagesThemeAndAJoiningPageDoesNotRestartIt`.
 
 ### Scheduled tasks: a timer per task over the session pool
 

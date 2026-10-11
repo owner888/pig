@@ -10,6 +10,8 @@ use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\ThemeInfo;
+use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\Theme\Themes;
 
 /**
@@ -37,11 +39,21 @@ use Pig\CodingAgent\Theme\Themes;
  * or transcript and are no-ops over RPC, as upstream's are. pig used to send each as a request of
  * its own (`set_working_message` and the rest) that no upstream client knows. `custom()` returns
  * null: it hands back a `Pig\Tui\Component`, and there is no terminal here to draw one on.
+ *
+ * **Themes** are pig's own addition. Upstream's RPC context lists none and refuses `setTheme()`,
+ * and so does this one until the host says it draws in a theme — `PIG_WEB_THEME` when it starts
+ * the child, or a `set_theme` command (`useHostTheme()`); the web shell does both. From then on
+ * the themes are the theme files, as `TerminalUi`'s are, the global theme is the host's — so what
+ * `theme()->fg()` writes is in the colours the host shows — and an extension's `setTheme()` is an
+ * `extension_ui_request` of pig's own, `{method: "setTheme", theme}`, that the host applies.
  */
 final class RpcUi implements HookUi
 {
     /** @var array<string, Deferred> questions asked and not yet answered, by id */
     private array $pending = [];
+
+    /** The theme the host draws in, once it has said; null for a host that draws no theme. */
+    private ?string $hostTheme = null;
 
     /** @param Closure(array<string, mixed>): void $send one JSON line out */
     public function __construct(
@@ -161,7 +173,10 @@ final class RpcUi implements HookUi
         return '';
     }
 
-    /** The global theme, as upstream's RPC UI context answers; the host does the rendering. */
+    /**
+     * The global theme, as upstream's RPC UI context answers — the host's, once it has said which
+     * it shows (`useHostTheme()`), so colours written with it are the ones the host draws.
+     */
     #[\Override]
     public function theme(): Theme
     {
@@ -257,23 +272,83 @@ final class RpcUi implements HookUi
     {
     }
 
+    /**
+     * The host draws in `$name` from now on: it becomes the global theme, and the themes and
+     * `setTheme()` are offered to extensions. pig's `set_theme` command, and `PIG_WEB_THEME`.
+     *
+     * Not saved to the settings: the theme is the host's choice, and the terminal keeps its own.
+     *
+     * @throws \RuntimeException for a theme this pig cannot show — the system theme, which is the
+     *         terminal's colours, or a name with no theme file; the theme stays as it was
+     */
+    public function useHostTheme(string $name): void
+    {
+        if ($name === Themes::SYSTEM_THEME_NAME || !in_array($name, Themes::getAvailableThemes(), true) || Themes::getThemeByName($name) === null) {
+            throw new \RuntimeException("No theme called '{$name}'");
+        }
+
+        // The host is a page, which draws every colour exactly: a status written with the theme
+        // is the theme's own colour rather than the nearest of 256, whatever terminal pig was
+        // started from.
+        TerminalImage::setCapabilityOverrides(['trueColor' => true]);
+        $this->hostTheme = $name;
+        Themes::setTheme($name);
+    }
+
+    /** The theme the host said it draws in, or null for a host that has not said. */
+    public function hostTheme(): ?string
+    {
+        return $this->hostTheme;
+    }
+
+    /**
+     * Upstream's RPC answer, none, until the host draws themes; then the theme files, as the
+     * terminal's — all but the system theme, which is the terminal's colours.
+     */
     #[\Override]
     public function getAllThemes(): array
     {
-        return [];
+        if ($this->hostTheme === null) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            Themes::getAvailableThemesWithPaths(),
+            static fn (ThemeInfo $info): bool => $info->name !== Themes::SYSTEM_THEME_NAME,
+        ));
     }
 
     #[\Override]
     public function getTheme(string $name): ?Theme
     {
-        return null;
+        return $this->hostTheme === null ? null : Themes::getThemeByName($name);
     }
 
+    /**
+     * Upstream's refusal, until the host draws themes. Then a theme by name is the host's to show:
+     * it is told `{method: "setTheme", theme}`, and the global theme is that one at once, as the
+     * terminal's is. A `Theme` object has no name the host could show, and is refused.
+     */
     #[\Override]
     public function setTheme(string|Theme $theme): array
     {
-        // Theme switching not supported in RPC mode
-        return ['success' => false, 'error' => 'Theme switching not supported in RPC mode'];
+        if ($this->hostTheme === null) {
+            return ['success' => false, 'error' => 'Theme switching not supported in RPC mode'];
+        }
+
+        if ($theme instanceof Theme) {
+            return ['success' => false, 'error' => 'Only a theme by name can be shown here'];
+        }
+
+        try {
+            $this->useHostTheme($theme);
+        } catch (\RuntimeException $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+
+        $this->tell(['method' => 'setTheme', 'theme' => $theme]);
+
+        return ['success' => true];
     }
 
     #[\Override]

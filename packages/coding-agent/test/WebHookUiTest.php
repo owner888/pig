@@ -8,11 +8,15 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Rpc\RpcUi;
+use Pig\CodingAgent\Theme\Themes;
+use Pig\CodingAgent\Web\ThemeStylesheet;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * The page's half of an extension's `$ctx->ui`: `hooks.js` run under Node against the requests
  * `RpcUi` really sends — widgets above and below the prompt, statuses, the title, the levels of
- * `notify`, a dialog's countdown — so the page and the protocol cannot drift apart unseen.
+ * `notify`, a dialog's countdown, colours drawn in the page's theme, an extension's `setTheme()` —
+ * so the page and the protocol cannot drift apart unseen.
  */
 final class WebHookUiTest extends TestCase
 {
@@ -25,6 +29,8 @@ final class WebHookUiTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        TerminalImage::setCapabilityOverrides([]);
+        Themes::initTheme('dark');
         Loop::reset();
     }
 
@@ -52,6 +58,12 @@ final class WebHookUiTest extends TestCase
         $ui->setStatus('lint', "\e[32mlint ok\e[39m");
         $ui->setTitle('pig — building');
 
+        // The page draws in `dark` and has said so: a status coloured with the theme is in the
+        // page's own `--color-success`, and an extension's `setTheme()` is a request the page applies.
+        $ui->useHostTheme('dark');
+        $ui->setStatus('themed', Themes::theme()->fg('success', 'ok'));
+        $this->assertSame(['success' => true], $ui->setTheme('light'));
+
         $notifies = [];
         foreach (['info', 'warning', 'error'] as $level) {
             $ui->notify("said at {$level}", $level);
@@ -64,7 +76,9 @@ final class WebHookUiTest extends TestCase
         Loop::get()->delay(0.0, static fn () => null);
         Loop::get()->tick();
 
+        $hex = ThemeStylesheet::tokens('dark')['success'];
         $fixture = [
+            'successRgb' => sprintf('rgb(%d, %d, %d)', hexdec(substr($hex, 1, 2)), hexdec(substr($hex, 3, 2)), hexdec(substr($hex, 5, 2))),
             'requests' => $sent,
             'notifies' => $notifies,
             // `RpcMode::commands()`' shape: an extension's command, a prompt template, a skill.

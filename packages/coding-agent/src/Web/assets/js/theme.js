@@ -15,15 +15,32 @@ function themeText(name, suffix = "") {
   return text === key ? (suffix ? "" : name) : text;
 }
 
+/** Whether the page has a theme by that name — the server's list, `system` never among them. */
+export function hasTheme(name) {
+  return themeList.themes.some(th => th.name === name);
+}
+
+const appliedListeners = [];
+/**
+ * Called with the theme's name whenever the page changes theme — picked here or asked for by an
+ * extension's `setTheme()`. `app.js` tells each conversation's child, so what an extension draws
+ * with `theme()` is in the theme the page shows.
+ */
+export function onThemeApplied(listener) {
+  appliedListeners.push(listener);
+}
+
 export function applyTheme(theme) {
   const known = themeList.themes.some(th => th.name === theme);
   if (themeList.themes.length > 0 && !known) theme = themeList.default;
   if (!theme) return;
+  const changed = theme !== currentTheme;
   currentTheme = theme;
   localStorage.setItem("pig_theme", theme);
   document.documentElement.setAttribute("data-theme", theme);
   const themeBtn = document.getElementById("theme-btn");
   if (themeBtn) themeBtn.textContent = "🎨 " + theme;
+  if (changed) for (const listener of appliedListeners) listener(theme);
 }
 
 /** The terminal palette (xterm.js) from the active theme's tokens. */

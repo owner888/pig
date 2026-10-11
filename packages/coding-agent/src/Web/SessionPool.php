@@ -60,8 +60,9 @@ final class SessionPool
     private array $bySubscription = [];
 
     /**
-     * @param Closure(string $cwd, ?string $sessionPath): RpcClient $spawn how a child is made —
-     *        injectable so a test can hand back a client over a fixture rather than `bin/pig`
+     * @param Closure(string $cwd, ?string $sessionPath, ?string $theme): RpcClient $spawn how a
+     *        child is made — injectable so a test can hand back a client over a fixture rather
+     *        than `bin/pig`. `$theme` is the page's, for the child to draw in from the start.
      * @param Closure(ManagedSession, array<string, mixed>): void $onEvent every event from
      *        any child, with the session it came from; `HttpServer` fans it out
      */
@@ -90,7 +91,8 @@ final class SessionPool
 
     /**
      * Bind a connection and tab to the session for `$cwd`/`$sessionFile`, starting a child if
-     * there is none. Rebinding to the same session is a no-op; binding elsewhere detaches first.
+     * there is none — in `$theme`, the page's. Rebinding to the same session is a no-op; binding
+     * elsewhere detaches first.
      *
      * @throws \Throwable whatever `RpcClient::start()` throws when the child cannot be started —
      *         the caller turns that into an `error` line for the browser
@@ -101,6 +103,7 @@ final class SessionPool
         ?string $sessionFile,
         string $clientId,
         ?string $tabId = null,
+        ?string $theme = null,
     ): ManagedSession {
         $tabId ??= 'default';
         $subKey = "{$connectionId}:{$tabId}";
@@ -119,7 +122,7 @@ final class SessionPool
         $managed = $this->byKey[$key] ?? null;
 
         if ($managed === null || $managed->closing) {
-            $managed = $this->spawnSession($cwd, $sessionFile, $key);
+            $managed = $this->spawnSession($cwd, $sessionFile, $key, $theme);
         }
 
         $managed->clients[$connectionId][$tabId] = true;
@@ -278,9 +281,9 @@ final class SessionPool
 
     // ---- internals -------------------------------------------------------------------------
 
-    private function spawnSession(string $cwd, ?string $sessionFile, string $key): ManagedSession
+    private function spawnSession(string $cwd, ?string $sessionFile, string $key, ?string $theme = null): ManagedSession
     {
-        $client = ($this->spawn)($cwd, $sessionFile);
+        $client = ($this->spawn)($cwd, $sessionFile, $theme);
         $managed = new ManagedSession($cwd, $sessionFile, $client);
         $managed->keys[$key] = true;
         $this->byKey[$key] = $managed;

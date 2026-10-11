@@ -4,7 +4,7 @@
 
 import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales } from "./i18n.js";
-import { openThemeModal, initTheme } from "./theme.js";
+import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
 import { renderMarkdown, renderDiff, renderDiffFromUnified, copyCode } from "./markdown.js";
 import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateHook } from "./accounts.js";
@@ -13,7 +13,7 @@ import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
-import { createHookState, applyHookRequest, widgetsAt, statusLine, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
+import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
 import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledTasks.js";
@@ -113,6 +113,9 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
           tabId: this.id,
           cwd: this.cwd,
           sessionFile: this.sessionFile || undefined,
+          // The page's theme, so a child started for this tab draws its extensions' colours in it
+          // from the first line — `session_start` included.
+          theme: currentTheme || undefined,
         });
       }
 
@@ -220,10 +223,21 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       }
 
       async onBound() {
+        // A child someone else started — another browser, a scheduled run — draws in whatever
+        // theme it was given; this page's is the one it should draw in now.
+        this.tellTheme(currentTheme);
         // A fresh child, or a reconnect to one: load what it has, then ask what it is.
         await this.loadMessages();
         await this.refreshState();
         if (this === active) applyActiveTabToChrome();
+      }
+
+      /** pig's `set_theme`: what `theme()` gives this child's extensions is the page's theme. */
+      tellTheme(theme) {
+        if (!theme || !this.bound) return;
+        // A theme only this page has (a child in another directory finds other custom themes) is
+        // refused, and the child keeps the one it had: nothing to tell anyone.
+        this.rpc({ type: "set_theme", theme }).catch(() => {});
       }
 
       /** The commands the `/` list offers beyond the built-ins, as the TUI's list does. */
@@ -1379,6 +1393,9 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
         return;
       }
       if (req.method === "set_editor_text") { if (T() === active) promptInput.value = req.text || ""; return; }
+      // pig's own: an extension's `setTheme()`. The page has one theme, so every tab changes, and
+      // `onThemeApplied` tells each tab's child. A name the page does not have changes nothing.
+      if (req.method === "setTheme") { if (hasTheme(req.theme)) applyTheme(req.theme); return; }
       const tab = T();
       const changed = applyHookRequest(tab.hook, req);
       if (changed !== null) {
@@ -1404,14 +1421,17 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     const hookWidgetsAbove = document.getElementById("hook-widgets-above");
     const hookWidgetsBelow = document.getElementById("hook-widgets-below");
     const pageTitle = document.title;
+    /** The active tab's statuses as HTML, drawn ahead of the numbers by `applyState()`. */
+    let hookStatus = "";
+    onThemeApplied((theme) => { for (const tab of tabs) tab.tellTheme(theme); });
     function drawHookChrome(tab) {
       for (const [el, placement] of [[hookWidgetsAbove, "above"], [hookWidgetsBelow, "below"]]) {
         if (!el) continue;
         const widgets = widgetsAt(tab.hook, placement);
-        el.innerHTML = widgets.map((w) => `<div class="hook-widget" data-key="${escapeHtml(w.key)}">${escapeHtml(w.lines.join("\n"))}</div>`).join("");
+        el.innerHTML = widgets.map((w) => `<div class="hook-widget" data-key="${escapeHtml(w.key)}">${w.lines.map(ansiToHtml).join("\n")}</div>`).join("");
         el.hidden = widgets.length === 0;
       }
-      telemetryStats.dataset.hook = statusLine(tab.hook);
+      hookStatus = statusHtml(tab.hook);
       document.title = tab.hook.title ?? pageTitle;
     }
 
@@ -1710,8 +1730,8 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       // A virtual model routes each request; say where the latest response went, as the TUI's
       // footer does (`model → routed-id • level`).
       const routed = s.routedModel ? ` → ${s.routedModel.id}${s.routedModel.thinkingLevel ? ` • ${s.routedModel.thinkingLevel}` : ""}` : "";
-      telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "")
-        + `↑${formatK(stats.tokens?.input || 0)} ↓${formatK(stats.tokens?.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`;
+      telemetryStats.innerHTML = (hookStatus ? `<span class="hook-status">${hookStatus}</span>  ` : "")
+        + escapeHtml(`↑${formatK(stats.tokens?.input || 0)} ↓${formatK(stats.tokens?.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`);
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;

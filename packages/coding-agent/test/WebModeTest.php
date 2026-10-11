@@ -31,6 +31,9 @@ final class WebModeTest extends TestCase
     private const string FAKE = __DIR__ . '/fixtures/fake-rpc-agent.php';
 
     private string $cwd;
+
+    /** @var list<string|null> the theme each child was started in, in order */
+    private array $spawnedThemes = [];
     private string $home;
 
     private string|false $previousHome = false;
@@ -78,12 +81,16 @@ final class WebModeTest extends TestCase
             $this->cwd,
             $port,
             auth: $auth ?? Auth::inMemory(),
-            spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(
-                cwd: $cwd,
-                binary: self::FAKE,
-                arguments: $file !== null ? ['--session', $file] : [],
-                timeout: 5.0,
-            ),
+            spawn: function (string $cwd, ?string $file, ?string $theme = null): RpcClient {
+                $this->spawnedThemes[] = $theme;
+
+                return new RpcClient(
+                    cwd: $cwd,
+                    binary: self::FAKE,
+                    arguments: $file !== null ? ['--session', $file] : [],
+                    timeout: 5.0,
+                );
+            },
             idleTtl: 0.2,
         );
     }
@@ -358,6 +365,35 @@ final class WebModeTest extends TestCase
 
             fclose($a);
             fclose($b);
+            $server->stop();
+        });
+    }
+
+    public function testAChildIsStartedInThePagesThemeAndAJoiningPageDoesNotRestartIt(): void
+    {
+        $port = 28104;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $a = $this->wsConnect($port);
+            $this->wsSend($a, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'themed.jsonl', 'theme' => 'light']);
+            $this->wsCollect($a, static fn (array $m) => $m['type'] === 'session_bound');
+
+            // Another window in another theme joins the same child; it tells it with `set_theme`.
+            $b = $this->wsConnect($port);
+            $this->wsSend($b, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'themed.jsonl', 'theme' => 'dark']);
+            $this->wsCollect($b, static fn (array $m) => $m['type'] === 'session_bound');
+
+            $c = $this->wsConnect($port);
+            $this->wsSend($c, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'plain.jsonl']);
+            $this->wsCollect($c, static fn (array $m) => $m['type'] === 'session_bound');
+
+            $this->assertSame(['light', null], $this->spawnedThemes);
+
+            fclose($a);
+            fclose($b);
+            fclose($c);
             $server->stop();
         });
     }

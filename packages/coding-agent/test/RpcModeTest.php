@@ -43,6 +43,8 @@ use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\Tools\ToolSet;
 use RuntimeException;
 
@@ -1544,6 +1546,54 @@ final class RpcModeTest extends TestCase
 
         $this->assertSame([null, ''], $drawn);
         $this->assertSame([], $this->of('extension_ui_request'));
+    }
+
+    public function testTheWebShellsThemeIsTheChildsBeforeAnyExtensionRuns(): void
+    {
+        $seen = [];
+        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$seen): mixed {
+            $seen['accent'] = $ctx->ui->theme()->getFgAnsi('accent');
+            $seen['themes'] = count($ctx->ui->getAllThemes());
+            $seen['switched'] = $ctx->ui->setTheme('dark');
+
+            return null;
+        }]);
+
+        putenv('PIG_WEB_THEME=light');
+        try {
+            $this->start(hooks: $hooks);
+
+            $this->assertSame(Themes::getThemeByName('light')?->getFgAnsi('accent'), $seen['accent'], 'the page\'s theme, from session_start on');
+            $this->assertGreaterThan(1, $seen['themes']);
+            $this->assertSame(['success' => true], $seen['switched']);
+            $told = $this->of('extension_ui_request');
+            $this->assertSame([['setTheme', 'dark']], array_map(static fn (array $r): array => [$r['method'], $r['theme']], $told));
+        } finally {
+            putenv('PIG_WEB_THEME');
+            TerminalImage::setCapabilityOverrides([]);
+            Themes::initTheme('dark');
+        }
+    }
+
+    public function testSetThemeIsTheHostSayingWhichThemeItDraws(): void
+    {
+        $this->start();
+        try {
+            $response = $this->response(['id' => '1', 'type' => 'set_theme', 'theme' => 'light']);
+            $this->assertTrue($response['success']);
+            $this->assertArrayNotHasKey('data', $response);
+            $this->assertSame(Themes::getThemeByName('light')?->getFgAnsi('accent'), Themes::theme()->getFgAnsi('accent'));
+
+            $unknown = $this->response(['id' => '2', 'type' => 'set_theme', 'theme' => 'no-such-theme']);
+            $this->assertFalse($unknown['success']);
+            $this->assertStringContainsString("No theme called 'no-such-theme'", $unknown['error']);
+            $this->assertSame(Themes::getThemeByName('light')?->getFgAnsi('accent'), Themes::theme()->getFgAnsi('accent'), 'kept');
+
+            $this->assertStringContainsString("'theme' is required", $this->response(['type' => 'set_theme'])['error']);
+        } finally {
+            TerminalImage::setCapabilityOverrides([]);
+            Themes::initTheme('dark');
+        }
     }
 
     public function testAHookThatThrowsIsReportedOnTheWireRatherThanKillingTheSession(): void

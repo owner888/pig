@@ -123,12 +123,14 @@ final class HttpServer
         $this->auth = $auth ?? Auth::discover();
         $this->nodeManager = new NodeManager();
         $this->pool = new SessionPool(
-            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile): RpcClient {
+            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null): RpcClient {
                 $sessionArg = $sessionFile !== null ? SessionManager::find($cwd, $sessionFile) : null;
 
                 return new RpcClient(
                     cwd: $cwd,
                     arguments: $sessionArg !== null ? ['--session', $sessionArg] : [],
+                    // The page's theme, which `RpcMode` makes the child's before `session_start`.
+                    environment: $theme !== null ? ['PIG_WEB_THEME' => $theme] : [],
                 );
             },
             onEvent: $this->onSessionEvent(...),
@@ -873,6 +875,7 @@ final class HttpServer
             $cwd = is_dir($rawCwd) ? $rawCwd : $this->cwd;
             $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
             $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : 'default';
+            $theme = is_string($data['theme'] ?? null) && $data['theme'] !== '' ? $data['theme'] : null;
 
             // The child is started inside `bind()`, and starting is a `proc_open` plus two
             // watchers — synchronous, no fiber needed. What *is* needed is a catch: a child that
@@ -880,7 +883,7 @@ final class HttpServer
             // tab and nothing else, not a server that falls over.
             try {
                 $clientTag = ($this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId);
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme);
             } catch (Throwable $e) {
                 $conn->send(array_filter([
                     'type' => 'error',

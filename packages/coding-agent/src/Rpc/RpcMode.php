@@ -146,6 +146,17 @@ final class RpcMode
 
         $this->watcher = Loop::get()->onReadable($this->in, $this->onReadable(...));
 
+        // The web shell's page theme, said before `session_start` so an extension that colours or
+        // switches the theme from there already finds the host's. A name this child cannot show
+        // leaves the theme as it was; the page sends `set_theme` again once it is bound.
+        $hostTheme = getenv('PIG_WEB_THEME');
+        if (is_string($hostTheme) && $hostTheme !== '') {
+            try {
+                $this->ui->useHostTheme($hostTheme);
+            } catch (\RuntimeException) {
+            }
+        }
+
         $this->hooks?->emit(new SessionStartEvent());
         $this->session->discoverResources('startup');
         $this->report($this->customTools?->notify('start') ?? []);
@@ -391,6 +402,10 @@ final class RpcMode
             // pig's: upstream's `navigateTree()` as a command, which its RPC mode only offers to
             // extensions (`commandContextActions.navigateTree`).
             'navigate_tree' => $this->navigateTree($command),
+
+            // pig's: the host draws in this theme — see `RpcUi::useHostTheme()`. The web shell
+            // sends it when a tab binds and whenever the page changes theme.
+            'set_theme' => $this->setTheme($command),
 
             // Four the web shell used to answer over HTTP from its one session and cannot now,
             // because it has none: they are the child's. Each is the terminal's slash command
@@ -1014,6 +1029,20 @@ final class RpcMode
             'origin' => $origin,
             ...($baseDir === null ? [] : ['baseDir' => $baseDir]),
         ];
+    }
+
+    /**
+     * pig's `set_theme`: `{theme}` is what the host draws in, so `theme()` is that one and
+     * extensions may list and switch themes. A theme this child cannot show fails, and the theme
+     * stays as it was.
+     *
+     * @param array<string, mixed> $command
+     */
+    private function setTheme(array $command): string
+    {
+        $this->ui->useHostTheme(self::text($command, 'theme'));
+
+        return self::NO_DATA;
     }
 
     /**

@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.17] - 2026-10-11
+
+### Added
+
+- **An extension's `setTheme()` switches the Web UI's theme**: the page changes theme (every tab), as the terminal does, and an unknown name is refused with an error. `getAllThemes()` and `getTheme()` answer from the theme files in the Web UI instead of nothing, and `theme()` is the theme the page shows — the page tells each conversation's agent its theme when the tab opens and whenever it changes (pig's `set_theme` RPC command). A plain RPC host that does not say which theme it shows keeps upstream's answers.
+
+### Fixed
+
+- **An extension's `$ctx->ui` in the Web UI now does what it does in the terminal**: `setWidget` lines are drawn above or below the prompt, `setTitle` sets the page title, `notify` warnings and info stay in the transcript as the TUI's `Warning:` and dim lines (including ones sent from `session_start`), a dialog with a `timeout` counts down and closes, and a `setStatus` coloured with the theme no longer shows raw escape codes. Widgets, statuses and the title are replayed to a page that reloads or joins later.
+- **Colours in extension widgets and statuses are drawn in the Web UI** in the page's theme colours, instead of being stripped.
+- **The Web UI's `/` list offers the conversation's own commands**: extension commands, prompt templates and `skill:` commands from `get_commands`, after the built-ins — and no longer lists Antigravity's commands when that extension is not loaded.
+
 ## [0.6.16] - 2026-10-11
 
 ### Changed
