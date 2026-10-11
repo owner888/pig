@@ -390,8 +390,47 @@ final class AntigravityApiTest extends TestCase
         $this->assertSame('Antigravity rejected an invalid function-call message boundary. Next: update the extension or start a new session, then retry; re-login is not required.', $friendly(400, '{"error":{"message":"Please ensure that function call turn comes immediately after a user turn or after a function response turn."}}'));
         $this->assertSame('Antigravity denied this request. Next: re-login or try another model. Backend said: nope', $friendly(403, 'nope'));
         $this->assertSame('Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.', $friendly(403, 'PERMISSION_DENIED'));
+        $validationJson = (string) json_encode([
+            'error' => [
+                'code' => 403,
+                'message' => 'Verify your account to continue.',
+                'details' => [
+                    ['metadata' => ['validation_url' => 'https://accounts.google.com/signin/continue?plt=session-secret']],
+                ],
+            ],
+        ]);
+        $this->assertSame(
+            'Antigravity denied this request. Next: re-login or try another model. Backend said: Verify your account to continue. Open this link in a browser signed in to the same Google account to verify: https://accounts.google.com/signin/continue?plt=session-secret',
+            $friendly(403, $validationJson),
+        );
         $this->assertSame('Antigravity timed out upstream. Next: retry in a moment.', $friendly(504, ''));
         $this->assertSame('teapot [redacted-access-token]', $friendly(418, 'teapot ya29.abcdef'));
+    }
+
+    public function testToInt64SessionIdIsDeterministicForNonEmptySeedsAndRandomOtherwise(): void
+    {
+        $id1 = Antigravity::toInt64SessionId('test-seed-1');
+        $id2 = Antigravity::toInt64SessionId('test-seed-1');
+        $id3 = Antigravity::toInt64SessionId('test-seed-2');
+
+        $this->assertSame($id1, $id2);
+        $this->assertNotSame($id1, $id3);
+        $this->assertMatchesRegularExpression('/^-?\d+$/', $id1);
+        $this->assertMatchesRegularExpression('/^-?\d+$/', $id3);
+
+        $rnd1 = Antigravity::toInt64SessionId(null);
+        $rnd2 = Antigravity::toInt64SessionId('');
+        $this->assertMatchesRegularExpression('/^-?\d+$/', $rnd1);
+        $this->assertMatchesRegularExpression('/^-?\d+$/', $rnd2);
+        $this->assertNotSame($rnd1, $rnd2);
+    }
+
+    public function testAStreamEndingWithoutAFinishReasonIsAnError(): void
+    {
+        $url = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'cut short']]]]]]]]);
+        $message = $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Antigravity stream ended without a finish reason; the response was terminated before completion.', $message);
     }
 
     public function testAnOrdinaryFailureIsNotCalledAQuotaOne(): void

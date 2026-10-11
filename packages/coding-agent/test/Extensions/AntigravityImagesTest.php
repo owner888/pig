@@ -147,13 +147,31 @@ final class AntigravityImagesTest extends TestCase
 
     public function testA404MovesToTheNextModelAndTheResultSaysWhichOneAnswered(): void
     {
-        $url = $this->server->startSequence([[self::refusal(404, 'no such model')], self::ok([self::imageChunk()])]);
+        $url = $this->server->startSequence([
+            [self::refusal(404, 'no such model on direct endpoint')],
+            [self::refusal(404, 'no such model on streaming endpoint')],
+            self::ok([self::imageChunk()]),
+        ]);
         self::registerAntigravity(images: new ImageGenerator(endpoint: $url));
 
         $result = self::generate('a cat');
 
         $this->assertSame(StopReason::Stop, $result->stopReason, (string) $result->errorMessage);
         $this->assertSame('gemini-3-pro-image', $result->model, 'not silent: the model that answered');
+    }
+
+    public function testA404OnDirectImageEndpointFallsBackToStreamingEndpoint(): void
+    {
+        $url = $this->server->startSequence([
+            [self::refusal(404, 'direct endpoint not found')],
+            self::ok([self::imageChunk()]),
+        ]);
+        self::registerAntigravity(images: new ImageGenerator(endpoint: $url));
+
+        $result = self::generate('a cat');
+
+        $this->assertSame(StopReason::Stop, $result->stopReason, (string) $result->errorMessage);
+        $this->assertSame(ImageGenerator::DEFAULT_MODEL, $result->model);
     }
 
     public function testAQuotaWallFailsOverToTheNextAccount(): void

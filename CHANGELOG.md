@@ -43,6 +43,29 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.12] - 2026-10-11
+
+### Added
+
+- **Google Search grounding tool (`google_search`) and `/antigravity.search` in `pig-antigravity` (aligned with `pi-antigravity` v0.10.0)**:
+  - Added native Google Search Grounding over Cloud Code Assist via `gemini-3.5-flash-lite` (fallbacks: `gemini-3.1-flash-lite`, `gemini-3-flash`), returning synthesized evidence briefs (Findings, Gaps, Next checks), source links, and verified UTF-8 byte offset citations.
+  - Added `/antigravity.search [--thinking] [--url <url>] <query>` slash command for interactive web search.
+  - Added feature toggles `ANTIGRAVITY_NO_SEARCH_TOOL`, `ANTIGRAVITY_NO_IMAGE_TOOL`, and `ANTIGRAVITY_NO_EXTRA_TOOLS` to prevent tool collisions when using dedicated search providers.
+
+### Changed
+
+- **Direct image endpoint with legacy fallback in `pig-antigravity`**:
+  - `ImageGenerator` now queries `/v1internal:generateContent` with `requestType: "image_gen"` first, eliminating SSE stream overhead and falling back to `/v1internal:streamGenerateContent?alt=sse` only on HTTP 404.
+
+### Fixed
+
+- **Stable signed-int64 session IDs in `pig-antigravity`**:
+  - Derived stable signed 64-bit integer session IDs (`toInt64SessionId`) from conversation seeds / session IDs instead of generating a new random integer every turn, enabling Google's server-side session cache and prompt optimization.
+- **Account verification link guidance on 403 `VALIDATION_REQUIRED`**:
+  - Extracted `validation_url` from Google 403 error payloads, guiding users with direct verification URLs to unlock accounts without confusing generic permission errors.
+- **Premature stream termination detection**:
+  - Detected streams closing abruptly without `candidates[0].finishReason` and surfaced clear failure diagnostics instead of truncating responses silently.
+
 ## [0.6.11] - 2026-10-11
 
 ### New Features

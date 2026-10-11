@@ -177,15 +177,25 @@ final class AntigravityExtensionTest extends TestCase
 
         $this->assertNotNull($ext);
 
-        // Check tool registration
+        // Check tool registration: both google_search and generate_image are registered by default
         $tools = $ext->api->tools();
-        $this->assertCount(1, $tools);
-        $tool = $tools[0];
-        $this->assertSame('generate_image', $tool->name);
-        $this->assertSame('Generate image', $tool->label);
-        $this->assertArrayHasKey('prompt', $tool->parameters['properties']);
-        $this->assertArrayHasKey('aspectRatio', $tool->parameters['properties']);
-        $this->assertContains('prompt', $tool->parameters['required']);
+        $this->assertCount(2, $tools);
+        $toolNames = array_map(static fn ($t): string => $t->name, $tools);
+        $this->assertContains('google_search', $toolNames);
+        $this->assertContains('generate_image', $toolNames);
+
+        $imageTool = $tools[array_search('generate_image', $toolNames, true)];
+        $this->assertSame('generate_image', $imageTool->name);
+        $this->assertSame('Generate image', $imageTool->label);
+        $this->assertArrayHasKey('prompt', $imageTool->parameters['properties']);
+        $this->assertArrayHasKey('aspectRatio', $imageTool->parameters['properties']);
+        $this->assertContains('prompt', $imageTool->parameters['required']);
+
+        $searchTool = $tools[array_search('google_search', $toolNames, true)];
+        $this->assertSame('google_search', $searchTool->name);
+        $this->assertSame('Google Search', $searchTool->label);
+        $this->assertArrayHasKey('query', $searchTool->parameters['properties']);
+        $this->assertContains('query', $searchTool->parameters['required']);
 
         // Check commands registered into hookApi
         $commands = [];
@@ -198,6 +208,7 @@ final class AntigravityExtensionTest extends TestCase
         $this->assertArrayHasKey('antigravity.doctor', $registeredCommands);
         $this->assertArrayHasKey('antigravity.refresh', $registeredCommands);
         $this->assertArrayHasKey('antigravity.image', $registeredCommands);
+        $this->assertArrayHasKey('antigravity.search', $registeredCommands);
     }
 
     public function testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst(): void

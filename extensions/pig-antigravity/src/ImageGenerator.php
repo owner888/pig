@@ -207,18 +207,14 @@ final class ImageGenerator implements ImageGenerationApi
                     'model' => $currentModel,
                     'request' => [
                         'contents' => [['role' => 'user', 'parts' => $parts]],
-                        'systemInstruction' => [
-                            'role' => 'user',
-                            'parts' => [['text' => self::SYSTEM_INSTRUCTION]],
-                        ],
                         'generationConfig' => [
                             'imageConfig' => ['aspectRatio' => $ratio],
                             'candidateCount' => 1,
                         ],
                     ],
-                    'requestType' => 'agent',
+                    'requestType' => 'image_gen',
                     'userAgent' => 'antigravity',
-                    'requestId' => sprintf('agent/%s/%d/%s/1', bin2hex(random_bytes(4)), (int) (microtime(true) * 1000), bin2hex(random_bytes(6))),
+                    'requestId' => sprintf('image_gen/%d/%s/1', (int) (microtime(true) * 1000), bin2hex(random_bytes(16))),
                 ];
 
                 if ($options->onPayload !== null) {
@@ -226,16 +222,21 @@ final class ImageGenerator implements ImageGenerationApi
                 }
 
                 foreach ($candidates as $endpoint) {
-                    $url = rtrim($endpoint, '/') . '/v1internal:streamGenerateContent?alt=sse';
+                    $directUrl = rtrim($endpoint, '/') . '/v1internal:generateContent';
                     $headers = [
                         'Authorization' => "Bearer {$token}",
                         'Content-Type' => 'application/json',
-                        'Accept' => 'text/event-stream',
                         'User-Agent' => self::USER_AGENT,
                     ];
 
                     try {
-                        $response = $http->send(new Request('POST', $url, $headers, json_encode($body) ?: '{}'), $options->signal);
+                        $response = $http->send(new Request('POST', $directUrl, $headers, json_encode($body) ?: '{}'), $options->signal);
+
+                        if ($response->status === 404) {
+                            $streamUrl = rtrim($endpoint, '/') . '/v1internal:streamGenerateContent?alt=sse';
+                            $streamHeaders = [...$headers, 'Accept' => 'text/event-stream'];
+                            $response = $http->send(new Request('POST', $streamUrl, $streamHeaders, json_encode($body) ?: '{}'), $options->signal);
+                        }
 
                         if ($options->onResponse !== null) {
                             ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], self::model($currentModel));

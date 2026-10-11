@@ -17,7 +17,7 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
   - **Persistent Web UI & PTY Workbench (`pig web start -d` / `/web`)**: Daemonized multi-tab browser interface with embedded xterm.js PTY terminal drawer, SSH node workbench, SFTP remote file explorer, and full-duplex WebSocket streaming.
   - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), long-lived JSON-RPC socket mode (`--mode rpc`), and MCP server mode (`--mode mcp`) so another agent can call pig as a tool.
 - **Comprehensive Built-in Extensions**:
-  - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` tool.
+  - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` / `google_search` tools.
   - `pig-web-search`: Real-time web search (`web_search`), readable page extraction (`fetch_web_page`), and headless Chrome DOM rendering (`browse_web_page`).
   - `pig-computer`: Anti-detection headless browser automation with mouse, keyboard, scrolling, clicking, and persistent domain cookies.
   - `pig-vless`: A minimal VLESS inbound (TCP, optional TLS) so a phone can proxy through the machine pig runs on.
@@ -266,7 +266,7 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 
 | Extension | Namespace / Location | Capabilities |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, 429 failover to the next account inside the request (as pi-antigravity does), `/antigravity.usage`, `/antigravity.accounts`, and the `generate_image` tool. |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, 429 failover to the next account inside the request (as pi-antigravity does), `/antigravity.usage`, `/antigravity.accounts`, the `generate_image` tool, and the Google Search Grounding `google_search` tool (`/antigravity.search`). |
 | **`pig-web-search`** | `extensions/pig-web-search/` | Real-time web search (`web_search`), readable article extraction (`fetch_web_page`), headless Chrome DOM rendering (`browse_web_page`), `/search <query>`. |
 | **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | The `llama.cpp` provider: models from a running `llama-server` router, `/login llama.cpp` for its URL and key, `/llama` to load, unload and download (Hugging Face search) models. |

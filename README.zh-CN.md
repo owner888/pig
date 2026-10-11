@@ -17,7 +17,7 @@
   - **持久化 Web UI 界面与 PTY 工作台（`pig web start -d` / `/web`）**：常驻后台守护进程，单物理长连接多 Tab 并行会话、内置 xterm.js 原生 PTY 终端抽屉、SSH 远程节点工作台与 SFTP 文件浏览器。
   - **CLI 命令行与自动化集成**：单次快速回答模式（`-p`）、JSON 事件行流式模式（`--mode json`）、长生命周期标准双向通信管道（`--mode rpc`）与 MCP server 模式（`--mode mcp`，让别的 agent 把 pig 当工具调用）。
 - **完善的纯 PHP 内置扩展生态**：
-  - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板与 `generate_image` 生图工具。
+  - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板、`generate_image` 生图工具与 `google_search` 搜索增强工具。
   - `pig-web-search`：DuckDuckGo 实时网络搜索（`web_search`）、网页文本内容提取（`fetch_web_page`）与无头 Chrome 动态渲染（`browse_web_page`）。
   - `pig-computer`：防检测无头浏览器自动化控制，支持精准鼠标移动、点击、滚动、文本键入、高清截图与按域名持久化 Cookie。
   - `pig-vless`：最简 VLESS 入站（仅 TCP，可选 TLS），让手机（Shadowrocket、v2rayNG）通过跑 pig 的这台机器上网。
@@ -248,7 +248,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 
 | 扩展组件 | 命名空间 / 路径 | 核心能力说明 |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts` 与 `generate_image` 工具。 |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts`、`generate_image` 生图工具与基于 Google Search Grounding 的 `google_search` 搜索工具（`/antigravity.search`）。 |
 | **`pig-web-search`** | `extensions/pig-web-search/` | 实时网络搜索（`web_search`）、网页文本抓取（`fetch_web_page`）、无头 Chrome 动态渲染（`browse_web_page`）、`/search <query>` 命令。 |
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | `llama.cpp` provider：模型来自运行中的 `llama-server` router，`/login llama.cpp` 填地址和 key，`/llama` 加载、卸载、下载模型（含 Hugging Face 搜索）。 |

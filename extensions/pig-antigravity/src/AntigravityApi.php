@@ -213,10 +213,18 @@ final class AntigravityApi implements StreamApi
         $parser = new SseParser();
         $open = null;
         $hasContent = false;
+        $sawFinishReason = false;
 
         foreach ($response->body as $chunk) {
             foreach ($parser->feed($chunk) as $event) {
-                $data = json_decode($event->data, true);
+                $raw = trim($event->data);
+
+                // Detect mid-stream stray error objects
+                if (!str_starts_with($raw, '{') && str_contains($raw, '{')) {
+                    $raw = substr($raw, (int) strpos($raw, '{'));
+                }
+
+                $data = json_decode($raw, true);
 
                 if (!is_array($data)) {
                     continue;
@@ -224,9 +232,11 @@ final class AntigravityApi implements StreamApi
 
                 // "if (chunk.error) throw new Error(chunk.error.message || JSON.stringify(chunk.error))".
                 if (isset($data['error']) && $data['error'] !== null && $data['error'] !== false) {
+                    $status = is_int($data['error']['code'] ?? null) ? $data['error']['code'] : null;
                     $message = is_array($data['error']) ? ($data['error']['message'] ?? null) : null;
+                    $friendly = self::friendlyAntigravityError($status, json_encode(['error' => $data['error']]) ?: '');
 
-                    throw new ProviderError(is_string($message) && $message !== '' ? $message : (string) json_encode($data['error']));
+                    throw new ProviderError($status !== null ? "{$friendly} ({$status})" : (is_string($message) && $message !== '' ? $message : (string) json_encode($data['error'])));
                 }
 
                 // `chunk.response || chunk`.
@@ -239,6 +249,10 @@ final class AntigravityApi implements StreamApi
 
                 if (is_string($blocked)) {
                     throw new ProviderError("Gemini refused the prompt: {$blocked}");
+                }
+
+                if (isset($responseData['candidates'][0]['finishReason'])) {
+                    $sawFinishReason = true;
                 }
 
                 foreach ($responseData['candidates'][0]['content']['parts'] ?? [] as $part) {
@@ -260,6 +274,10 @@ final class AntigravityApi implements StreamApi
         }
 
         GoogleShared::close($builder, $stream, $open);
+
+        if (!$sawFinishReason && $hasContent) {
+            throw new ProviderError('Antigravity stream ended without a finish reason; the response was terminated before completion.');
+        }
 
         return $hasContent;
     }
@@ -494,7 +512,8 @@ final class AntigravityApi implements StreamApi
         $trajectory = md5("antigravity:traj:{$seed}");
         $steps = count($inner['contents']);
 
-        $inner['sessionId'] = (string) random_int(100_000_000_000, 999_999_999_999);
+        $sessionSeed = $options?->sessionId ?? $seed;
+        $inner['sessionId'] = self::toInt64SessionId($sessionSeed);
         $inner['labels'] = [
             'last_step_index' => (string) max(0, $steps - 1),
             'request_id' => $trajectory . '-' . self::turnsSoFar($context),
@@ -555,6 +574,32 @@ final class AntigravityApi implements StreamApi
         // rather than something random: every turn of *this* conversation then agrees with
         // itself, which is the only property asked of the seed.
         return $text === '' ? 'conv' : substr($text, 0, 64);
+    }
+
+    /**
+     * Signed int64 session ID: deterministic for nonempty seeds, random otherwise.
+     */
+    public static function toInt64SessionId(?string $seed = null): string
+    {
+        $trimmed = $seed !== null ? trim($seed) : '';
+
+        if ($trimmed !== '') {
+            if (preg_match('/^-?\d+$/', $trimmed) === 1) {
+                if (PHP_INT_SIZE >= 8) {
+                    $val = (int) $trimmed;
+                    if ((string) $val === $trimmed) {
+                        return $trimmed;
+                    }
+                }
+            }
+
+            $hash = hash('sha256', "antigravity:session:{$trimmed}", true);
+            $unpacked = unpack('q', substr($hash, 0, 8));
+
+            return (string) ($unpacked[1] ?? random_int(PHP_INT_MIN, PHP_INT_MAX));
+        }
+
+        return (string) random_int(PHP_INT_MIN, PHP_INT_MAX);
     }
 
     /** How many turns the assistant has already taken, which is the reference's `requestIndex`. */
@@ -650,11 +695,16 @@ final class AntigravityApi implements StreamApi
         }
 
         if ($status === 403) {
-            if (preg_match('/permission|forbidden|access/i', $msg) === 1) {
+            $verifyUrl = self::extractValidationUrl($text);
+            $verifyHint = $verifyUrl !== null
+                ? " Open this link in a browser signed in to the same Google account to verify: {$verifyUrl}"
+                : '';
+
+            if (preg_match('/permission|forbidden|access/i', $msg) === 1 && $verifyUrl === null) {
                 return 'Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.';
             }
 
-            return "Antigravity denied this request. Next: re-login or try another model. Backend said: {$msg}";
+            return "Antigravity denied this request. Next: re-login or try another model. Backend said: {$msg}{$verifyHint}";
         }
 
         if ($status === 404) {
@@ -712,6 +762,34 @@ final class AntigravityApi implements StreamApi
         }
 
         return $msg;
+    }
+
+    /** Pull `validation_url` from a 403 body before message slicing can drop it. */
+    public static function extractValidationUrl(string $text): ?string
+    {
+        try {
+            $parsed = json_decode($text, true);
+            $details = is_array($parsed) && is_array($parsed['error']['details'] ?? null)
+                ? $parsed['error']['details']
+                : null;
+            if (is_array($details)) {
+                foreach ($details as $detail) {
+                    if (is_array($detail) && is_array($detail['metadata'] ?? null)) {
+                        $url = $detail['metadata']['validation_url'] ?? null;
+                        if (is_string($url) && str_starts_with($url, 'https://accounts.google.com/')) {
+                            return $url;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        if (preg_match('/https:\/\/accounts\.google\.com\/[^\s"\'<>]+/', $text, $match) === 1) {
+            return rtrim($match[0], '),.;');
+        }
+
+        return null;
     }
 
     /** pi-antigravity's `redactSecrets()`. Public for `Discovery`, which words its errors the same way. */

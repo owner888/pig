@@ -42,6 +42,7 @@ declare(strict_types=1);
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\AssistantImages;
+use Pig\Ai\Http\HttpClient;
 use Pig\Ai\ImageContent;
 use Pig\Ai\ImagesContext;
 use Pig\Ai\ImagesOptions;
@@ -62,6 +63,7 @@ use PigAntigravity\AntigravityApi;
 use PigAntigravity\AntigravityOauth;
 use PigAntigravity\Catalog;
 use PigAntigravity\Discovery;
+use PigAntigravity\GoogleSearch;
 use PigAntigravity\ImageGenerator;
 use PigAntigravity\LazyAntigravityOauth;
 use PigAntigravity\Models;
@@ -69,13 +71,14 @@ use PigAntigravity\QuotaClient;
 
 // Class files beside the entry. Loading them twice, or beside another copy, is the loader's
 // business — `DeclaredSymbols` — not this file's.
-foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator'] as $class) {
+foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GoogleSearch'] as $class) {
     require_once __DIR__ . "/src/{$class}.php";
 }
 
 return function (ExtensionApi $pi): void {
     $auth = $pi->auth() ?? Auth::discover();
     $accounts = Accounts::beside($auth->path());
+    $http = new HttpClient();
 
     /**
      * The OAuth client this deployment was registered under, which pig does not ship.
@@ -524,6 +527,11 @@ return function (ExtensionApi $pi): void {
             }
 
             $active = $accounts->active();
+            $noExtraTools = (getenv('ANTIGRAVITY_NO_EXTRA_TOOLS') ?: getenv('NOAGY_NO_EXTRA_TOOLS')) === '1';
+            $noSearchTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_SEARCH_TOOL') ?: getenv('NOAGY_NO_SEARCH_TOOL')) === '1';
+            $noImageTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_IMAGE_TOOL') ?: getenv('NOAGY_NO_IMAGE_TOOL')) === '1';
+            $activeTools = array_keys(array_filter(['generate_image' => !$noImageTool, 'google_search' => !$noSearchTool]));
+
             $emit($ctx, implode("\n", [
                 'Antigravity doctor',
                 'provider=' . Models::PROVIDER,
@@ -532,8 +540,8 @@ return function (ExtensionApi $pi): void {
                 'linkedAccounts=' . count($accounts->accounts()),
                 'projectId=' . $projectId,
                 'tokenStatus=' . $tokenStatus,
-                'commands=/antigravity.usage /antigravity.models /antigravity.accounts /antigravity.doctor /antigravity.refresh /antigravity.image',
-                'tools=generate_image',
+                'commands=/antigravity.usage /antigravity.models /antigravity.accounts /antigravity.doctor /antigravity.refresh /antigravity.image /antigravity.search',
+                'tools=' . implode(', ', $activeTools),
             ]), 'info');
         },
         'Show sanitized Antigravity provider diagnostics',
@@ -568,6 +576,36 @@ return function (ExtensionApi $pi): void {
             }
         },
         'Force refresh Antigravity dynamic model catalog',
+    );
+
+    $pi->registerCommand(
+        'antigravity.search',
+        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $http, $emit): void {
+            $parsed = GoogleSearch::parseSearchArgs($args);
+            if ($parsed['query'] === '') {
+                $emit($ctx, 'Usage: /antigravity.search [--thinking] [--url <url>] <query>', 'warning');
+
+                return;
+            }
+
+            $authData = $getAuthAndToken();
+            if ($authData === null) {
+                $emit($ctx, 'No Antigravity credentials. Run /login antigravity first.', 'warning');
+
+                return;
+            }
+
+            [, $token, $projectId] = $authData;
+            $emit($ctx, "Searching Google for \"{$parsed['query']}\"…", 'info');
+
+            try {
+                $result = GoogleSearch::executeSearch($http, $token, $projectId, $parsed['query'], null, $parsed['urls'], $parsed['thinking'], null);
+                $emit($ctx, $result, 'info');
+            } catch (Throwable $e) {
+                $emit($ctx, 'Antigravity search failed: ' . $e->getMessage(), 'error');
+            }
+        },
+        'Search the web via Google Search grounding (usage: /antigravity.search [--thinking] [--url <url>] <query>)',
     );
 
     $pi->registerCommand(
@@ -626,47 +664,91 @@ return function (ExtensionApi $pi): void {
         'Generate an image via Antigravity (usage: /antigravity.image [--ratio 16:9] <prompt>)',
     );
 
-    // ---- the tool -----------------------------------------------------------------------
+    // ---- extra tools: google_search & generate_image -----------------------------------
 
-    $pi->registerTool(new CustomTool(
-        name: 'generate_image',
-        label: 'Generate image',
-        description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pig/generated-images/ unless path is set.',
-        parameters: [
-            'type' => 'object',
-            'properties' => [
-                'prompt' => ['type' => 'string', 'description' => 'Image description.'],
-                'aspectRatio' => ['type' => 'string', 'enum' => ImageGenerator::ASPECT_RATIOS, 'description' => 'Aspect ratio for the generated image.'],
-                'model' => ['type' => 'string', 'description' => 'Image model id. Default: ' . ImageGenerator::DEFAULT_MODEL . '.'],
-                'path' => ['type' => 'string', 'description' => 'Project-relative file or directory to save the image.'],
+    $noExtraTools = (getenv('ANTIGRAVITY_NO_EXTRA_TOOLS') ?: getenv('NOAGY_NO_EXTRA_TOOLS')) === '1';
+    $noSearchTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_SEARCH_TOOL') ?: getenv('NOAGY_NO_SEARCH_TOOL')) === '1';
+    $noImageTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_IMAGE_TOOL') ?: getenv('NOAGY_NO_IMAGE_TOOL')) === '1';
+
+    if (!$noSearchTool) {
+        $pi->registerTool(new CustomTool(
+            name: 'google_search',
+            label: 'Google Search',
+            description: 'Search the live web using Google Search grounding over Google Cloud Code Assist. Returns an evidence brief, sources, and verified citations.',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'query' => ['type' => 'string', 'description' => 'The search query to look up.'],
+                    'instruction' => ['type' => 'string', 'description' => 'Optional specific directive to guide search synthesis.'],
+                    'urls' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Optional specific target URLs to analyze in detail.'],
+                    'thinking' => ['type' => 'boolean', 'description' => 'Optional flag to enable deep reasoning for search planning.'],
+                ],
+                'required' => ['query'],
             ],
-            'required' => ['prompt'],
-        ],
-        execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($generateAndSave): AgentToolResult {
-            if ($onUpdate !== null) {
-                $onUpdate(new AgentToolResult([new TextContent('Generating image…')]));
-            }
-
-            [$result, $savedPaths] = $generateAndSave(
-                (string) ($params['prompt'] ?? ''),
-                (string) ($params['aspectRatio'] ?? '1:1'),
-                (string) ($params['model'] ?? ImageGenerator::DEFAULT_MODEL),
-                isset($params['path']) && is_string($params['path']) ? $params['path'] : null,
-                $ctx->cwd,
-                $signal,
-            );
-
-            $notes = trim(implode(' ', array_map(static fn (TextContent $text): string => $text->text, array_values(array_filter($result->output, static fn ($block): bool => $block instanceof TextContent)))));
-            $contents = [new TextContent('Saved image to ' . implode(', ', $savedPaths) . ($notes !== '' ? ". {$notes}" : ''))];
-
-            foreach ($result->output as $block) {
-                if ($block instanceof ImageContent) {
-                    $contents[] = $block;
+            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($getAuthAndToken, $http): AgentToolResult {
+                if ($onUpdate !== null) {
+                    $onUpdate(new AgentToolResult([new TextContent('Searching Google…')]));
                 }
-            }
 
-            // The usage goes on the result, where the session bills it like any model call's.
-            return new AgentToolResult($contents, ['model' => $result->model, 'savedPaths' => $savedPaths], $result->usage);
-        },
-    ));
+                $authData = $getAuthAndToken();
+                if ($authData === null) {
+                    throw new RuntimeException('No Antigravity credentials. Run /login antigravity first.');
+                }
+
+                [, $token, $projectId] = $authData;
+                $query = (string) ($params['query'] ?? '');
+                $instruction = isset($params['instruction']) && is_string($params['instruction']) ? $params['instruction'] : null;
+                $urls = isset($params['urls']) && is_array($params['urls']) ? array_values(array_filter($params['urls'], 'is_string')) : [];
+                $thinking = ($params['thinking'] ?? false) === true;
+
+                $output = GoogleSearch::executeSearch($http, $token, $projectId, $query, $instruction, $urls, $thinking, $signal);
+
+                return new AgentToolResult([new TextContent($output)]);
+            },
+        ));
+    }
+
+    if (!$noImageTool) {
+        $pi->registerTool(new CustomTool(
+            name: 'generate_image',
+            label: 'Generate image',
+            description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pig/generated-images/ unless path is set.',
+            parameters: [
+                'type' => 'object',
+                'properties' => [
+                    'prompt' => ['type' => 'string', 'description' => 'Image description.'],
+                    'aspectRatio' => ['type' => 'string', 'enum' => ImageGenerator::ASPECT_RATIOS, 'description' => 'Aspect ratio for the generated image.'],
+                    'model' => ['type' => 'string', 'description' => 'Image model id. Default: ' . ImageGenerator::DEFAULT_MODEL . '.'],
+                    'path' => ['type' => 'string', 'description' => 'Project-relative file or directory to save the image.'],
+                ],
+                'required' => ['prompt'],
+            ],
+            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($generateAndSave): AgentToolResult {
+                if ($onUpdate !== null) {
+                    $onUpdate(new AgentToolResult([new TextContent('Generating image…')]));
+                }
+
+                [$result, $savedPaths] = $generateAndSave(
+                    (string) ($params['prompt'] ?? ''),
+                    (string) ($params['aspectRatio'] ?? '1:1'),
+                    (string) ($params['model'] ?? ImageGenerator::DEFAULT_MODEL),
+                    isset($params['path']) && is_string($params['path']) ? $params['path'] : null,
+                    $ctx->cwd,
+                    $signal,
+                );
+
+                $notes = trim(implode(' ', array_map(static fn (TextContent $text): string => $text->text, array_values(array_filter($result->output, static fn ($block): bool => $block instanceof TextContent)))));
+                $contents = [new TextContent('Saved image to ' . implode(', ', $savedPaths) . ($notes !== '' ? ". {$notes}" : ''))];
+
+                foreach ($result->output as $block) {
+                    if ($block instanceof ImageContent) {
+                        $contents[] = $block;
+                    }
+                }
+
+                // The usage goes on the result, where the session bills it like any model call's.
+                return new AgentToolResult($contents, ['model' => $result->model, 'savedPaths' => $savedPaths], $result->usage);
+            },
+        ));
+    }
 };
