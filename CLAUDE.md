@@ -4292,9 +4292,16 @@ heading, text, list of items with buttons, meter, card, actions, lazy) and `pane
 the page's own components and theme, so a panel cannot read other tabs, the WebSocket or the
 credentials endpoints, and the page's internals are not an API. Every string is text; the page's
 locale is in the request and the extension answers in it. A button is an action: `action(name, args,
-request)` returns null or why it failed, and the panel is drawn again either way; a button with a
-`confirm` question asks it in the page's own modal first (`openModal`, which now lets only the top
-modal of a stack answer Escape and Enter). A `lazy` block is
+request, $ui)` returns null or why it failed, and the panel is drawn again either way; a button with
+a `confirm` question asks it in the page's own modal first (`openModal`, which lets only the top
+modal of a stack answer Escape and Enter). `$ui` is the `HookUi` a hook has as `$ctx->ui`, so an
+action asks with the same `confirm()` / `select()` / `input()` / `editor()` the developer's
+extensions already use in the terminal and in conversations: the page sends the action over its
+WebSocket (`panel_action`), `HttpServer` runs it in a fiber with an `RpcUi` whose questions go to
+that page only (`panel_ui`, drawn by `openHookDialog()` with the answer routed back as
+`panel_ui_response`), a `notify()` is a line at the top of the panel, and `panel_result` carries the
+outcome and the blocks. A page that closes mid-question is a cancel (`RpcUi::withdrawAll()`). Over
+plain HTTP (`POST /api/panels/<id>`) there is nobody to ask: `$ui` is `NoUi`. A `lazy` block is
 `render` asked again with its `section`, for what needs a network call (the quota). `commands` open
 the panel from the prompt (`/accounts`) and join the `/` list.
 

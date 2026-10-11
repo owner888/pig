@@ -2,7 +2,7 @@
  * Main application controller for pig web UI (Native ES Module).
  */
 
-import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal } from "./utils.js";
+import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
@@ -1294,27 +1294,35 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     // "nothing chosen" for the rest, which is the only safe reading of a question nobody answered.
     let hookDialog = null;
 
-    // The answer goes to the child that asked, which is the tab the dialog was opened for —
-    // `openHookDialog` records it, because the person may have switched tabs since.
-    function hookReply(reply) {
-      const tab = hookDialog?.tab || active;
-      tab?.send({ type: "rpc_command", command: { type: "extension_ui_response", ...reply } });
+    // The answer goes to whoever asked: by default the child of the tab the dialog was opened for —
+    // `openHookDialog` records it, because the person may have switched tabs since — and for an
+    // extension panel's action, the server, which hands it to the action (`panels.js`).
+    function replyTo(tab) {
+      return (reply) => tab?.send({ type: "rpc_command", command: { type: "extension_ui_response", ...reply } });
+    }
+
+    /** Answer the dialog that is open as a cancel, and close it. */
+    function cancelHookDialog() {
+      if (!hookDialog) return;
+      const { id, send } = hookDialog;
+      closeHookDialog();
+      send({ id, cancelled: true });
     }
 
     function closeHookDialog() {
-      if (hookDialog) { clearInterval(hookDialog.countdown); hookDialog.el.remove(); hookDialog = null; }
+      if (hookDialog) { clearInterval(hookDialog.countdown); leaveModalLayer(hookDialog.el); hookDialog.el.remove(); hookDialog = null; }
     }
 
-    function openHookDialog(req) {
+    function openHookDialog(req, reply = null) {
       // The same question arriving again is not a second question.
       if (hookDialog && hookDialog.id === req.id) return;
       // One at a time, as TerminalUi has it: a second question would take the keys from the first.
-      if (hookDialog) hookReply({ id: hookDialog.id, cancelled: true });
-      closeHookDialog();
+      cancelHookDialog();
 
       const el = document.createElement("div");
       el.className = "modal-backdrop hook-dialog";
-      const answered = (reply) => { closeHookDialog(); hookReply({ id: req.id, ...reply }); };
+      const send = reply ?? replyTo(T() || active);
+      const answered = (answer) => { closeHookDialog(); send({ id: req.id, ...answer }); };
       el.addEventListener("click", (e) => { if (e.target === el) answered({ cancelled: true }); });
 
       let body = "";
@@ -1341,7 +1349,8 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       let remaining = timeoutSeconds(req);
       el.innerHTML = `<div class="modal"><div class="modal-header"><span class="hook-title">${escapeHtml(remaining === null ? title : countdownTitle(title, remaining))}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
       document.body.appendChild(el);
-      hookDialog = { id: req.id, el, tab: T(), countdown: null };
+      hookDialog = { id: req.id, el, countdown: null, send };
+      enterModalLayer(el);
       // `TerminalUi::countdown()`: the heading counts down, and at zero the dialog goes. The child
       // has given up on it by then (`RpcUi` withdraws the question), so nothing is sent back.
       if (remaining !== null) {
@@ -1433,14 +1442,41 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
     }
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && hookDialog) { const id = hookDialog.id; closeHookDialog(); hookReply({ id, cancelled: true }); }
+      // The key is this dialog's alone: a panel under it must not close with it.
+      if (e.key === "Escape" && hookDialog) { e.stopPropagation(); cancelHookDialog(); }
     });
 
     // ---- the extensions' panels ----------------------------------------------------------
     //
     // An entry each in the sidebar's Extensions group (`panels.js`); an action may change what a
     // conversation can use — an account switched — so the active tab is asked again after one.
-    const panels = createPanels({ openModal, t, locale: () => currentLocale, onChanged: () => refreshState() });
+    // A panel's action runs on the server over the WebSocket, so what it asks (`$ui->confirm()`…)
+    // is drawn here as a hook's question is, and answered back to it; what it tells (`notify()`)
+    // goes to the panel. One entry per action still running, by request id.
+    const panelRuns = new Map();
+    network.addMessageListener((m) => {
+      const run = m.requestId ? panelRuns.get(m.requestId) : null;
+      if (!run) return;
+      if (m.type === "panel_ui" && m.request) {
+        if (m.request.method === "notify") run.onNotice(m.request);
+        else openHookDialog(m.request, (reply) => network.send({ type: "panel_ui_response", requestId: m.requestId, reply }));
+      } else if (m.type === "panel_result") {
+        panelRuns.delete(m.requestId);
+        run.resolve(m);
+      }
+    });
+    network.addCloseListener(() => {
+      for (const [id, run] of panelRuns) run.resolve({ ok: false, error: t("panel_unreachable") });
+      panelRuns.clear();
+    });
+    function actOnPanel(panel, action, args, locale, onNotice) {
+      return new Promise((resolve) => {
+        const requestId = "panel-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+        panelRuns.set(requestId, { resolve, onNotice });
+        network.send({ type: "panel_action", requestId, panel, action, args, locale });
+      });
+    }
+    const panels = createPanels({ openModal, t, locale: () => currentLocale, act: actOnPanel, onChanged: () => refreshState() });
     /** The `/` list's rows beyond the built-ins: the panels' commands, then the conversation's own. */
     function extraCommands(tab) {
       const own = panels.commands();

@@ -113,11 +113,14 @@ function writeOverrides(overrides) {
 // ---- the page ----------------------------------------------------------------------------
 
 /**
- * Wire the panels into the page. `deps`: `openModal`, `t` and `locale()` from the page, and
- * `onChanged()`, called after any action — an action may change what the conversation can use
- * (an account switched), so the page asks again.
+ * Wire the panels into the page. `deps`: `openModal`, `t` and `locale()` from the page; `act(panel,
+ * action, args, locale, onNotice)`, which runs an action and resolves to `{ok, error?, blocks}` —
+ * over the WebSocket, so the action can ask the person (`app.js` draws its questions) — and calls
+ * `onNotice(request)` for each `notify()` it sends on the way; and `onChanged()`, called after any
+ * action — an action may change what the conversation can use (an account switched), so the page
+ * asks again.
  */
-export function createPanels({ openModal, t, locale, onChanged = () => {}, onError = () => {} }) {
+export function createPanels({ openModal, t, locale, act, onChanged = () => {} }) {
   let panels = [];
   let overrides = readOverrides();
   const group = document.getElementById("sidebar-panels");
@@ -212,9 +215,14 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
     const url = `/api/panels/${encodeURIComponent(id)}`;
     let body = null;
 
+    // What the last action said with `notify()`, kept above the panel until the next one.
+    let notices = [];
+    const noticeHtml = (n) => `<div class="panel-text${tone(n.notifyType)}">${escapeText(n.message)}</div>`;
+
     const draw = (blocks, error) => {
       if (!body) return;
-      body.innerHTML = (error ? `<div class="panel-text tone-error">${escapeText(error)}</div>` : "") + blocksToHtml(blocks);
+      body.innerHTML = notices.map(noticeHtml).join("")
+        + (error ? `<div class="panel-text tone-error">${escapeText(error)}</div>` : "") + blocksToHtml(blocks);
       body.querySelectorAll(".panel-lazy").forEach(fill);
     };
 
@@ -230,6 +238,7 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
     };
 
     const refresh = async () => {
+      notices = [];
       try {
         const d = await (await fetch(`${url}?locale=${encodeURIComponent(locale())}`)).json();
         draw(d.ok ? d.blocks : [], d.ok ? null : d.error);
@@ -255,18 +264,16 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
       let args = {};
       try { args = JSON.parse(button.dataset.args || "{}"); } catch {}
       button.disabled = true;
+      notices = [];
       try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: button.dataset.action, args, locale: locale() }),
+        const d = await act(id, button.dataset.action, args, locale(), (notice) => {
+          notices.push(notice);
+          body?.insertAdjacentHTML("afterbegin", noticeHtml(notice));
         });
-        const d = await res.json();
-        draw(d.blocks ?? [], d.ok ? null : d.error);
-        if (!d.ok && d.error) onError(d.error);
-      } catch {
-        draw([], t("panel_unreachable"));
+        if (d.blocks) draw(d.blocks, d.ok ? null : d.error);
+        else draw([], d.error ?? t("panel_unreachable"));
       } finally {
+        button.disabled = false;
         onChanged();
       }
     };

@@ -658,6 +658,68 @@ final class WebModeTest extends TestCase
         }
     }
 
+    public function testAPanelsActionAsksThePageThatPressedTheButton(): void
+    {
+        // An action's `$ui` is `$ctx->ui` for a panel: what it asks goes to the page that pressed
+        // the button as `panel_ui`, the answer comes back as `panel_ui_response`, a `notify()` is
+        // told on the way, and the outcome is `panel_result` with the panel drawn again. A page that
+        // closes while it is being asked is a cancel, and the action still finishes.
+        $port = 28106;
+        $server = $this->server($port);
+        $heard = [];
+
+        (new ExtensionApi($this->cwd, 'probe.php', 'probe'))->registerWebPanel(
+            'probe.ask',
+            'Ask',
+            static fn (array $request): array => [['type' => 'text', 'text' => 'drawn']],
+            static function (string $action, array $args, array $request, \Pig\CodingAgent\Hooks\HookUi $ui) use (&$heard): ?string {
+                $name = $ui->input('Name?', 'a name');
+                $heard[] = $name;
+                if ($name === null) {
+                    return 'nobody answered';
+                }
+                $ui->notify("hello {$name}", 'info');
+
+                return $ui->confirm('Sure?', "Call it {$name}?") ? null : 'not sure';
+            },
+        );
+
+        try {
+            Async::run(function () use ($server, $port, &$heard): void {
+                $server->start();
+                $ws = $this->wsConnect($port);
+                $this->wsSend($ws, ['type' => 'panel_action', 'requestId' => 'r1', 'panel' => 'probe.ask', 'action' => 'go', 'args' => [], 'locale' => 'en']);
+
+                $asked = $this->wsCollect($ws, static fn (array $m) => ($m['type'] ?? null) === 'panel_ui');
+                $input = end($asked);
+                $this->assertSame('r1', $input['requestId']);
+                $this->assertSame(['extension_ui_request', 'input', 'Name?', 'a name'], [$input['request']['type'], $input['request']['method'], $input['request']['title'], $input['request']['placeholder']]);
+
+                $this->wsSend($ws, ['type' => 'panel_ui_response', 'requestId' => 'r1', 'reply' => ['id' => $input['request']['id'], 'value' => 'pig']]);
+                $next = $this->wsCollect($ws, static fn (array $m) => ($m['request']['method'] ?? null) === 'confirm');
+                $methods = array_map(static fn (array $m) => $m['request']['method'] ?? null, array_filter($next, static fn (array $m) => ($m['type'] ?? null) === 'panel_ui'));
+                $this->assertSame(['notify', 'confirm'], array_values($methods));
+                $this->assertSame('hello pig', array_values(array_filter($next, static fn (array $m) => ($m['request']['method'] ?? null) === 'notify'))[0]['request']['message']);
+
+                $confirm = end($next);
+                $this->wsSend($ws, ['type' => 'panel_ui_response', 'requestId' => 'r1', 'reply' => ['id' => $confirm['request']['id'], 'confirmed' => true]]);
+                $done = $this->wsCollect($ws, static fn (array $m) => ($m['type'] ?? null) === 'panel_result');
+                $this->assertSame(['type' => 'panel_result', 'requestId' => 'r1', 'ok' => true, 'blocks' => [['type' => 'text', 'text' => 'drawn']]], end($done));
+
+                // Asked again, and the page goes away mid-question.
+                $this->wsSend($ws, ['type' => 'panel_action', 'requestId' => 'r2', 'panel' => 'probe.ask', 'action' => 'go']);
+                $this->wsCollect($ws, static fn (array $m) => ($m['type'] ?? null) === 'panel_ui');
+                fclose($ws);
+                \Pig\Async\Async::delay(0.2);
+                $this->assertSame(['pig', null], $heard, 'the page closed: a cancel, and the action finished');
+
+                $server->stop();
+            });
+        } finally {
+            ExtensionApi::forgetWebPanels();
+        }
+    }
+
     public function testRenameAndDeleteSessionEndpoints(): void
     {
         $port = 28101;

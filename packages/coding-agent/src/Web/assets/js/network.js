@@ -22,6 +22,7 @@ export class SharedNetwork {
     this.reconnectDelay = 1000;
     this.closed = false;
     this.messageListeners = new Set();
+    this.closeListeners = new Set();
 
     // Callbacks provided by app.js / tabs
     this.getTabs = () => [];
@@ -47,6 +48,19 @@ export class SharedNetwork {
   addMessageListener(fn) {
     this.messageListeners.add(fn);
     return () => this.messageListeners.delete(fn);
+  }
+
+  /** Called when the connection drops — what was waiting on an answer over it will not get one. */
+  addCloseListener(fn) {
+    this.closeListeners.add(fn);
+    return () => this.closeListeners.delete(fn);
+  }
+
+  connectionLost() {
+    for (const t of this.getTabs()) t.onConnectionLost();
+    for (const listener of this.closeListeners) {
+      try { listener(); } catch (err) { console.error("Close listener error:", err); }
+    }
   }
 
   connect() {
@@ -109,15 +123,11 @@ export class SharedNetwork {
     };
 
     ws.onclose = () => {
-      const tabs = this.getTabs();
-      for (const t of tabs) t.onConnectionLost();
+      this.connectionLost();
       this.scheduleReconnect();
     };
 
-    ws.onerror = () => {
-      const tabs = this.getTabs();
-      for (const t of tabs) t.onConnectionLost();
-    };
+    ws.onerror = () => this.connectionLost();
   }
 
   reconnectNow() {

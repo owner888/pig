@@ -14,6 +14,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Rpc\RpcClient;
+use Pig\CodingAgent\Rpc\RpcUi;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\Node\NodeManager;
 use Pig\CodingAgent\Web\Protocols\Http;
@@ -82,6 +83,12 @@ final class HttpServer
 
     /** @var array<string, int> terminalId => connectionId */
     private array $terminalClient = [];
+
+    /**
+     * @var array<int, array<string, RpcUi>> connectionId => requestId => the `$ui` of an extension
+     *      panel's action that page started, while it runs — what its answers are handed to
+     */
+    private array $panelUis = [];
 
     private ?string $heartbeatTimer = null;
     private const float PING_INTERVAL = 25.0;
@@ -325,6 +332,12 @@ final class HttpServer
 
     private function handleClose(int $connectionId): void
     {
+        // A panel's action asking a page that has gone is answered as a cancel, and finishes.
+        foreach ($this->panelUis[$connectionId] ?? [] as $ui) {
+            $ui->withdrawAll();
+        }
+        unset($this->panelUis[$connectionId]);
+
         $this->pool->detach($connectionId);
         unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId]);
     }
@@ -992,6 +1005,44 @@ final class HttpServer
                 ]),
                 default => null,
             };
+
+            return;
+        }
+
+        // An extension panel's action (`WebPanels`), from the page that pressed the button: it runs
+        // in a fiber with an `RpcUi` whose questions — `confirm()`, `select()`, `input()`… — go to
+        // this page as `panel_ui` and whose answers come back as `panel_ui_response`; the outcome
+        // and the panel drawn again are `panel_result`. The same request id ties the three.
+        if ($type === 'panel_action') {
+            $requestId = is_string($data['requestId'] ?? null) ? $data['requestId'] : '';
+            if ($requestId === '' || isset($this->panelUis[$connectionId][$requestId])) {
+                return;
+            }
+
+            $ui = new RpcUi(static function (array $line) use ($conn, $requestId): void {
+                $conn->send(['type' => 'panel_ui', 'requestId' => $requestId, 'request' => $line]);
+            });
+            $this->panelUis[$connectionId][$requestId] = $ui;
+
+            Async::spawn(function () use ($conn, $connectionId, $requestId, $data, $ui): void {
+                try {
+                    $result = WebPanels::actFor($data, $ui);
+                } finally {
+                    unset($this->panelUis[$connectionId][$requestId]);
+                }
+
+                if (isset($this->wsClients[$connectionId])) {
+                    $conn->send(['type' => 'panel_result', 'requestId' => $requestId, ...$result]);
+                }
+            });
+
+            return;
+        }
+
+        if ($type === 'panel_ui_response') {
+            $requestId = is_string($data['requestId'] ?? null) ? $data['requestId'] : '';
+            $reply = is_array($data['reply'] ?? null) ? $data['reply'] : [];
+            ($this->panelUis[$connectionId][$requestId] ?? null)?->answer($reply);
 
             return;
         }

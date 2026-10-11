@@ -35,6 +35,19 @@ export function formatSessionFilename(name, fallback = "(in-memory)") {
 const modalStack = [];
 
 /**
+ * A dialog of the page's own making joins the stack too (an extension's question, drawn by
+ * `app.js`), so a modal under it leaves the keys to it.
+ */
+export function enterModalLayer(el) {
+  modalStack.push(el);
+}
+
+export function leaveModalLayer(el) {
+  const at = modalStack.indexOf(el);
+  if (at !== -1) modalStack.splice(at, 1);
+}
+
+/**
  * Unified, reusable Modal Dialog system matching the Accounts popup design.
  * Perfect for mobile touch, centering, keyboard Esc/Enter and backdrop closing.
  */
@@ -83,7 +96,7 @@ export function openModal({
     if (closed) return;
     closed = true;
     window.removeEventListener("keydown", onKeyDown);
-    modalStack.splice(modalStack.indexOf(backdrop), 1);
+    leaveModalLayer(backdrop);
     backdrop.remove();
   };
 
@@ -112,8 +125,10 @@ export function openModal({
   };
 
   const onKeyDown = (e) => {
-    // A modal opened over this one — a confirmation over a panel — takes the keys first.
+    // A modal opened over this one — a confirmation over a panel — takes the keys first, and a key
+    // pressed inside another dialog is that dialog's even once it has closed itself.
     if (modalStack[modalStack.length - 1] !== backdrop) return;
+    if (e.target instanceof Element && e.target.closest(".modal-backdrop") && !backdrop.contains(e.target)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       cancel();
@@ -126,7 +141,7 @@ export function openModal({
     }
   };
   window.addEventListener("keydown", onKeyDown);
-  modalStack.push(backdrop);
+  enterModalLayer(backdrop);
 
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) cancel();

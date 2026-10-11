@@ -83,6 +83,20 @@ final class RpcUi implements HookUi
         $waiting->complete($reply);
     }
 
+    /**
+     * Every question still out answered as a cancel: the host has gone and nobody will answer
+     * them — a page that closed while an extension's panel was asking.
+     */
+    public function withdrawAll(): void
+    {
+        $pending = $this->pending;
+        $this->pending = [];
+
+        foreach ($pending as $waiting) {
+            $waiting->complete(['cancelled' => true]);
+        }
+    }
+
     /** Whether anything is still waiting to be answered. */
     public function isWaiting(): bool
     {

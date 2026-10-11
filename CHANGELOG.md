@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.20] - 2026-10-11
+
+### Added
+
+- **A panel's action can ask the person** like a hook does: its handler gets a `$ui` with the same `confirm()`, `select()`, `input()`, `editor()` and `notify()` as `$ctx->ui`, drawn by the page with the same dialogs as a conversation's extension questions.
+
 ## [0.6.19] - 2026-10-11
 
 ### Added

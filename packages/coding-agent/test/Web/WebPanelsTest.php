@@ -103,6 +103,26 @@ final class WebPanelsTest extends TestCase
         $this->assertSame('things in zh-CN', $done['body']['blocks'][0]['text']);
     }
 
+    public function testOverHttpAnActionHasNobodyToAsk(): void
+    {
+        $asked = [];
+        (new ExtensionApi(sys_get_temp_dir(), 'probe.php', 'probe'))->registerWebPanel(
+            'probe.http',
+            'Http',
+            static fn (): array => [],
+            static function (string $action, array $args, array $request, \Pig\CodingAgent\Hooks\HookUi $ui) use (&$asked): ?string {
+                $asked[] = [$ui->confirm('Sure?', 'x'), $ui->input('Name?')];
+
+                return null;
+            },
+        );
+
+        $answer = self::ask('/api/panels/probe.http', ['method' => 'POST', 'body' => json_encode(['action' => 'go'])]);
+
+        $this->assertTrue($answer['body']['ok']);
+        $this->assertSame([[false, null]], $asked, 'NoUi: no, and nothing');
+    }
+
     public function testAnActionThatFailsSaysWhyAndThePanelIsStillDrawn(): void
     {
         $this->probe();
