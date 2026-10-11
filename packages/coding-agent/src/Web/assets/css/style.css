@@ -480,13 +480,20 @@
     .sidebar-nav-item:disabled .sidebar-nav-icon {
       opacity: 0.6;
     }
-    .sidebar-nav-soon {
+    /* A scheduled run is waiting for an answer */
+    .sidebar-nav-dot {
       margin-left: auto;
-      font-size: 10px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-warning);
+    }
+    .sidebar-nav-dot[hidden] { display: none; }
+    .drawer-scheduled {
+      display: inline-flex;
+      vertical-align: -1px;
+      margin-right: 5px;
       color: var(--color-dim);
-      border: 1px solid var(--color-divider);
-      border-radius: 4px;
-      padding: 0 5px;
     }
     .sidebar-group-title {
       padding: 12px 12px 4px;
@@ -607,6 +614,52 @@
       max-height: 60vh;
       overflow-y: auto;
     }
+
+    /* Scheduled tasks: list, detail and form in one panel */
+    .sched-modal { height: min(640px, 85vh); }
+    .sched-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .sched-subtitle { color: var(--color-text-secondary); font-size: 12px; }
+    .sched-note { padding: 8px 10px; margin-bottom: 10px; border-radius: 6px; font-size: 12px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-primary) 4%, transparent); }
+    .sched-note.error { color: var(--color-error); background: color-mix(in srgb, var(--color-error) 10%, transparent); }
+    .sched-list { display: flex; flex-direction: column; gap: 2px; }
+    .sched-row { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+    .sched-row:hover { background: var(--color-hover); }
+    .sched-row.off .sched-row-name, .sched-row.off .sched-row-meta { color: var(--color-dim); }
+    .sched-toggle { accent-color: var(--color-primary); width: 15px; height: 15px; flex-shrink: 0; cursor: pointer; }
+    .sched-row-main { flex: 1; min-width: 0; }
+    .sched-row-name { font-weight: 500; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sched-row-meta { font-size: 12px; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+    .sched-row-side { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-dim); white-space: nowrap; flex-shrink: 0; }
+    .sched-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--color-dim); }
+    .sched-dot.running { background: var(--color-primary); }
+    .sched-dot.needs_input { background: var(--color-warning); }
+    .sched-dot.done { background: var(--color-success); }
+    .sched-dot.error { background: var(--color-error); }
+    .sched-back { margin: 0 0 10px; padding: 0; }
+    .sched-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sched-detail-name { font-size: 16px; font-weight: 600; color: var(--color-text-primary); }
+    .sched-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .sched-actions.end { justify-content: flex-end; margin-top: 4px; }
+    .sched-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; font-size: 12px; }
+    .sched-facts dt { color: var(--color-dim); }
+    .sched-facts dd { margin: 0; color: var(--color-text-primary); min-width: 0; overflow-wrap: anywhere; }
+    .sched-facts .mono, .sched-form .mono { font-family: var(--font-mono); }
+    .sched-prompt { margin: 0; padding: 10px 12px; max-height: 160px; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text-secondary); background: var(--color-background); border: 1px solid var(--color-divider); border-radius: 6px; }
+    .sched-runs { display: flex; flex-direction: column; gap: 2px; }
+    .sched-run-row { display: grid; grid-template-columns: auto max-content 1fr auto; align-items: center; gap: 4px 10px; padding: 7px 10px; border-radius: 6px; font-size: 12px; }
+    .sched-run-row.openable { cursor: pointer; }
+    .sched-run-row.openable:hover { background: var(--color-hover); }
+    .sched-run-status { color: var(--color-text-primary); }
+    .sched-run-when { color: var(--color-text-secondary); }
+    .sched-run-took { color: var(--color-dim); font-family: var(--font-mono); }
+    .sched-run-error { grid-column: 2 / -1; color: var(--color-error); overflow-wrap: anywhere; }
+    .sched-form { display: flex; flex-direction: column; gap: 12px; }
+    .sched-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--color-text-secondary); flex: 1; min-width: 140px; }
+    .sched-form label[hidden] { display: none; }
+    .sched-form textarea { resize: vertical; font-family: inherit; }
+    .sched-form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .sched-hint { color: var(--color-dim); font-size: 11px; }
+    .sched-form-error[hidden] { display: none; }
 
     /* A hook's question: the same four dialogs TerminalUi draws, in the page */
     .hook-dialog .modal-body { display: flex; flex-direction: column; gap: 10px; }

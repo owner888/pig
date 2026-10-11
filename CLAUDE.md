@@ -4243,6 +4243,33 @@ interactive `/web restart`, `/web status`, and `/web stop` controls;
 - `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
 - Frontend: official `@xterm/xterm` 6.0.0 (`assets/js/vendor/xterm.mjs`, `assets/css/vendor/xterm.css`) + `@xterm/addon-fit` 0.11.0 (`assets/js/vendor/addon-fit.mjs`), copied byte for byte from the npm packages, drive the multi-tab terminal drawer in `WebTerminal.js` and the `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
+### Scheduled tasks: a timer per task over the session pool
+
+pig's own, after the Claude app's; upstream has none. The developer asked for it in the web UI and
+the decisions were the developer's: a hook's question during a run **waits** for an answer as the
+Claude app waits for approval, the form offers presets **and** a custom cron, and there is **no
+minute jitter** — a task runs at the minute it says.
+
+`Web\Schedule\ScheduleManager` arms one `Loop::delay()` per task; `SessionPool::launch()` starts a run
+as a child nobody is bound to, so the run is an ordinary session file the sidebar lists and the page
+binds to like any other. `ScheduledTask` stores the schedule as `manual`, a five-field cron
+(`CronExpression`, hand-written, Vixie semantics: `7` is Sunday, two restricted day fields OR) or
+`once`, in the **browser's** timezone. Tasks and runs are `~/.pig/agent/scheduled-tasks.json`.
+
+- **Missed runs happen once.** The next occurrence counts from `anchorAt`; after a run the anchor is
+  *now*, not the occurrence, so a week asleep is one run. Saving or switching on resets the anchor.
+- **The timer wakes at least once a minute** and compares against the wall clock, so sleep and clock
+  changes are noticed within a minute.
+- **One server runs the schedule**: the first takes `flock` on `scheduled-tasks.lock`; the others
+  show the tasks and refuse writes with a 409.
+- **`WebMode` starts it, not `HttpServer::start()`**, so a test that serves the page from a real home
+  cannot fire that home's tasks.
+- A question asked with nobody bound is kept in `ManagedSession::$pendingUi` and replayed on bind;
+  an `extension_ui_response` relayed by the page removes it, `agent_settled` clears the rest.
+
+Regression tests: `CronExpressionTest`, `ScheduleManagerTest` (both under `test/Web/`) and the two
+scheduled-task cases in `WebModeTest`.
+
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
 happens. What is left is deciding what to print — and it prints **only the text blocks of the
@@ -13213,3 +13240,23 @@ and only the thinking test found it.
 - **UI copy and placeholders stay minimal.** Feature descriptions and shortcut hints are never piled into core controls: the main input's placeholder stays as short as `Ask pig a question` / `向 pig 提问...`, never `(Enter to send, Shift+Enter for new line)` and the like. Shortcuts and usage belong in the shortcuts HUD (`⌘ Shortcuts`), the help text or a hover tooltip, so the core interaction surface stays clean.
 - **Every release bumps the patch version; an existing tag is never overwritten (no force-pushed tags).** SemVer: every release raises the version (`v0.2.3` → `v0.2.4`), gets a new tag of its own pushed to the remote, and never uses `git tag -f` or `git push -f` on an existing tag.
 - **Documentation is updated before the tag, without being reminded.** Before `git tag`, go over everything user-visible in the release (commands, options, settings, slash commands, file formats, defaults) and update, in order: (1) `README.md` + `README.zh-CN.md`; (2) the site docs, `../smart-book/app/Views/pig/docs/{en,zh-cn}/*.md` (a new page also goes into `nav.json`) — pigagent.dev/docs serves them; (3) `CHANGELOG.md`'s `## Unreleased` becomes `## [x.y.z] - date`, and the file is copied to `../smart-book/app/Views/pig/CHANGELOG.md`, which the site's banner version and /changelog page read. A purely internal refactor does (3) only. The release notes say what each of the three changed, or why one was not.
+
+### A command the server sends itself is answered to its caller, not to the pool
+
+**Symptom**: a scheduled run's conversation opened from the page started a *second* child, and a
+hook's question the run was parked on was never shown.
+
+**Cause**: `SessionPool::observe()` learns a child's session file from a `get_state` response, but
+`RpcClient::readOut()` hands a response to the `send()` waiting on its id and **not** to the event
+listeners. A browser's `get_state` is relayed and reaches `observe()`; one the server sends with
+`RpcClient::getState()` never does, so the child was never registered under its file.
+
+**Rule**: whoever sends a command through `RpcClient::send()` and learns the session file says so
+with `SessionPool::remember()`.
+
+```php
+$file = $client->getState()['sessionFile'] ?? null;
+if (is_string($file) && $file !== '') { $this->pool->remember($managed, $file); }
+```
+
+Regression test: `WebModeTest::testAQuestionAScheduledRunAskedIsAskedAgainOfWhoeverOpensIt`.

@@ -47,6 +47,9 @@ final class SessionPool
     /** Seconds a child with nobody looking and nothing running is kept, before it is stopped. */
     public const float IDLE_TTL = 60.0;
 
+    /** The `extension_ui_request` methods that wait for an answer; the rest are told, not asked. */
+    public const array DIALOGS = ['select', 'confirm', 'input', 'editor'];
+
     /** @var array<string, ManagedSession> by key; a session with two keys appears twice */
     private array $byKey = [];
 
@@ -121,6 +124,41 @@ final class SessionPool
         $this->clearIdleTimer($managed);
 
         return $managed;
+    }
+
+    /**
+     * Start a child that nobody is looking at — a scheduled run.
+     *
+     * Not `bind()`: there is no connection to subscribe. The idle timer is armed at once, so a child
+     * whose prompt never starts a turn is stopped like any other; `agent_start` disarms it. A browser
+     * that opens the conversation later finds it by its session file, as for any other child.
+     *
+     * @throws \Throwable whatever `RpcClient::start()` throws when the child cannot be started
+     */
+    public function launch(string $cwd): ManagedSession
+    {
+        $managed = $this->spawnSession($cwd, null, self::key($cwd, null, 'launched-' . bin2hex(random_bytes(6))));
+        $this->reapIfIdle($managed);
+
+        return $managed;
+    }
+
+    /**
+     * Register the child under the session file it reports, so a browser can find it by that file.
+     *
+     * `observe()` does this for a `get_state` a browser relayed. A command the server sends itself
+     * through `RpcClient::send()` is answered to its own caller and never reaches `observe()`, so
+     * whoever sent it says what it learned here.
+     */
+    public function remember(ManagedSession $managed, string $sessionFile): void
+    {
+        if ($managed->closing) {
+            return;
+        }
+
+        $key = self::key($managed->cwd, $sessionFile);
+        $managed->keys[$key] = true;
+        $this->byKey[$key] = $managed;
     }
 
     /** The session a connection and tab is bound to, or null. */
@@ -282,14 +320,15 @@ final class SessionPool
             // `agent_settled`, not `agent_end`: a retry, an overflow summary or a queued message can
             // follow one run's end, and a child reaped in that gap is a turn cut off.
             $managed->running = false;
+            $managed->pendingUi = [];
             $this->reapIfIdle($managed);
+        } elseif ($type === 'extension_ui_request' && in_array($event['method'] ?? null, self::DIALOGS, true) && is_string($event['id'] ?? null)) {
+            $managed->pendingUi[$event['id']] = $event;
         } elseif ($type === 'response' && ($event['command'] ?? null) === 'get_state' && ($event['success'] ?? false) === true) {
             $file = $event['data']['sessionFile'] ?? null;
 
             if (is_string($file) && $file !== '') {
-                $key = self::key($managed->cwd, $file);
-                $managed->keys[$key] = true;
-                $this->byKey[$key] = $managed;
+                $this->remember($managed, $file);
             }
         }
     }

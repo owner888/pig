@@ -1177,9 +1177,12 @@ final class Anthropic
             self::isStrictUnsupportedKeyword(...),
         );
         $parameters = ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict);
+        $properties = ($parameters['properties'] ?? null) === []
+            ? new \stdClass()
+            : ($parameters['properties'] ?? new \stdClass());
         $legacyInputSchema = [
             'type' => 'object',
-            'properties' => $parameters['properties'] ?? new \stdClass(),
+            'properties' => $properties,
             'required' => $parameters['required'] ?? [],
         ];
 

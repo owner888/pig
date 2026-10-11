@@ -674,6 +674,26 @@ final class AnthropicTest extends TestCase
         $this->assertSame(['path'], $tool['input_schema']['required']);
     }
 
+    /**
+     * A tool with an empty array for properties must send an object (`{}`) rather than `[]`,
+     * which Anthropic refuses with `Input should be an object`.
+     */
+    public function testAToolWithEmptyPropertiesSendsAnObjectAndNotAnArray(): void
+    {
+        $tool = new Tool('doctor', 'Diagnose environment', [
+            'type' => 'object',
+            'properties' => [],
+        ]);
+
+        $this->capture($this->model(), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+
+        $bodyRaw = substr((string) strstr($this->server->received(), "\r\n\r\n"), 4);
+        $decodedObjects = json_decode($bodyRaw, false);
+
+        $this->assertInstanceOf(\stdClass::class, $decodedObjects->tools[0]->input_schema->properties);
+        $this->assertStringContainsString('"properties":{}', $bodyRaw);
+    }
+
     // ---- adaptive thinking -------------------------------------------------------------------
 
     /**

@@ -19,6 +19,7 @@ use Pig\CodingAgent\Web\Node\NodeManager;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\Websocket;
 use Pig\CodingAgent\Web\Pty\PtyManager;
+use Pig\CodingAgent\Web\Schedule\ScheduleManager;
 use Pig\CodingAgent\Logger;
 use Throwable;
 
@@ -103,6 +104,7 @@ final class HttpServer
     private readonly Auth $auth;
     private readonly SessionPool $pool;
     private readonly NodeManager $nodeManager;
+    private readonly ScheduleManager $schedules;
 
     /**
      * @param string $cwd where a new conversation opens when the page names no directory
@@ -132,6 +134,16 @@ final class HttpServer
             onEvent: $this->onSessionEvent(...),
             idleTtl: $idleTtl,
         );
+        $this->schedules = new ScheduleManager($this->pool, $this->broadcastSchedules(...));
+    }
+
+    /**
+     * The scheduled tasks. `start()` does not start them: `WebMode` does, so a test that serves
+     * the page from the developer's own home cannot fire the developer's tasks.
+     */
+    public function schedules(): ScheduleManager
+    {
+        return $this->schedules;
     }
 
     /** @internal for tests and `WebMode::stop()` */
@@ -305,6 +317,7 @@ final class HttpServer
         $this->ptyManager = null;
         $this->terminalClient = [];
 
+        $this->schedules->stop();
         $this->pool->shutdown();
     }
 
@@ -494,6 +507,13 @@ final class HttpServer
             return;
         }
 
+        // 7b. Scheduled tasks
+        if (str_starts_with($path, '/api/scheduled')) {
+            $this->handleScheduled($conn, $req, $path, $json);
+
+            return;
+        }
+
         // 8. Folders / Workspaces list (matching pi-web /api/folders)
         if ($path === '/api/folders') {
             $currentCwd = $this->cwd;
@@ -536,6 +556,8 @@ final class HttpServer
             $offset = max(0, (int) ($req['query']['offset'] ?? 0));
             $query = trim((string) ($req['query']['q'] ?? ''));
 
+            $scheduled = $this->schedules->sessionTasks();
+
             if ($query === '') {
                 [$sessions, $total] = SessionManager::listAll($limit, $offset);
             } else {
@@ -553,6 +575,7 @@ final class HttpServer
                 // Grouped by the last write, which is the order the list is in; the header's
                 // timestamp is when the conversation started.
                 'modified' => filemtime($s->path) * 1000,
+                'scheduledTask' => $scheduled[basename($s->path)] ?? null,
             ], $sessions);
 
             $conn->sendResponse(200, [
@@ -875,6 +898,14 @@ final class HttpServer
                 'sessionFile' => $managed->sessionFile,
                 'shared' => count($managed->clients) > 1,
             ], static fn (mixed $v): bool => $v !== null));
+
+            // A question asked before this tab was here — a scheduled run nobody was watching, or a
+            // reload — is asked again, or the turn stays parked on something nobody can see. The page
+            // takes the same id arriving twice as one question.
+            foreach ($managed->pendingUi as $request) {
+                $line = ['type' => 'rpc_event', 'event' => $request];
+                $conn->send($tabId === 'default' ? $line : [...$line, 'tabId' => $tabId]);
+            }
 
             return;
         }
@@ -1217,6 +1248,10 @@ final class HttpServer
                 return;
             }
 
+            if ($command['type'] === 'extension_ui_response' && is_string($command['id'] ?? null)) {
+                unset($managed->pendingUi[$command['id']]);
+            }
+
             try {
                 $managed->client->relay($command);
             } catch (Throwable $e) {
@@ -1261,6 +1296,18 @@ final class HttpServer
                 $client->send($line);
             }
         }
+
+        $this->schedules->observe($managed, $event);
+    }
+
+    /** Every page re-reads `/api/scheduled` on this; the list is small and one shape is enough. */
+    private function broadcastSchedules(): void
+    {
+        foreach ($this->wsClients as $client) {
+            if (!$client->isClosed()) {
+                $client->send(['type' => 'scheduled_update']);
+            }
+        }
     }
 
     private function broadcastNodeState(): void
@@ -1279,6 +1326,70 @@ final class HttpServer
                 $client->send($payload);
             }
         }
+    }
+
+    /**
+     * `/api/scheduled` and the four writes under it. A mistake in what was sent is a 400 with the
+     * reason, and a write to a schedule another server owns is a 409.
+     *
+     * @param array{method: string, path: string, query: array<string, string>, body: string} $req
+     * @param array<string, string> $json
+     */
+    private function handleScheduled(Connection $conn, array $req, string $path, array $json): void
+    {
+        $answer = static fn (int $status, array $body) => $conn->sendResponse($status, $json, (string) json_encode($body, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+
+        if ($path === '/api/scheduled') {
+            $answer(200, [
+                'tasks' => $this->schedules->list(),
+                'owner' => $this->schedules->owns(),
+                'problems' => $this->schedules->problems(),
+            ]);
+
+            return;
+        }
+
+        if ($path === '/api/scheduled/runs') {
+            $answer(200, ['runs' => $this->schedules->runs((string) ($req['query']['id'] ?? ''))]);
+
+            return;
+        }
+
+        if ($req['method'] !== 'POST') {
+            $answer(405, ['success' => false, 'error' => 'POST only']);
+
+            return;
+        }
+
+        $data = json_decode($req['body'] ?: '{}', true);
+        $data = is_array($data) ? $data : [];
+        $id = is_string($data['id'] ?? null) ? $data['id'] : '';
+
+        try {
+            $result = match ($path) {
+                '/api/scheduled/save' => ['task' => $this->schedules->save($data)->toArray()],
+                '/api/scheduled/delete' => $this->schedules->delete($id) ?? [],
+                '/api/scheduled/toggle' => $this->schedules->setEnabled($id, ($data['enabled'] ?? false) === true) ?? [],
+                '/api/scheduled/run' => $this->schedules->runNow($id) ?? [],
+                default => null,
+            };
+        } catch (\InvalidArgumentException $e) {
+            $answer(400, ['success' => false, 'error' => $e->getMessage()]);
+
+            return;
+        } catch (\RuntimeException $e) {
+            $answer(409, ['success' => false, 'error' => $e->getMessage()]);
+
+            return;
+        }
+
+        if ($result === null) {
+            $answer(404, ['success' => false, 'error' => "No such endpoint: {$path}"]);
+
+            return;
+        }
+
+        $answer(200, ['success' => true, ...$result]);
     }
 
     // ---- payloads --------------------------------------------------------------------------

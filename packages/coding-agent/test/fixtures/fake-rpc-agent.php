@@ -11,7 +11,8 @@
  * a prompt answers with it the way a real child's session would.
  *
  * Ignores `--mode rpc` on its argv; honours `--session <path>` as the file it reports; a
- * `prompt` may carry `holdMs` for how long the turn should appear to take.
+ * `prompt` may carry `holdMs` for how long the turn should appear to take. A message starting
+ * `ask:` asks a hook's `confirm` and waits for the answer; one starting `fail:` ends in an error.
  */
 
 declare(strict_types=1);
@@ -70,6 +71,27 @@ while (($raw = fgets(STDIN)) !== false) {
         $out(['type' => 'turn_start']);
         $reply = 'echo: ' . $text;
         $partial = ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => $reply]], 'stopReason' => 'stop'];
+        // `ask:` parks the turn on a hook's question until it is answered, reading and answering
+        // other commands meanwhile, as a real child's loop does; `fail:` ends the turn in an error.
+        if (str_starts_with($text, 'ask:')) {
+            $out(['type' => 'extension_ui_request', 'id' => 'q1', 'method' => 'confirm', 'title' => 'Allow?', 'message' => $text]);
+            while (($inner = fgets(STDIN)) !== false) {
+                $c = json_decode(trim($inner), true);
+                if (!is_array($c)) {
+                    continue;
+                }
+                if (($c['type'] ?? '') === 'extension_ui_response' && ($c['id'] ?? null) === 'q1') {
+                    $reply = 'answered: ' . json_encode($c['confirmed'] ?? null);
+                    // Long enough for a test to look at the server between the answer and the end.
+                    $cmd['holdMs'] = 400;
+                    break;
+                }
+                $out(array_filter([
+                    'type' => 'response', 'command' => $c['type'] ?? '', 'id' => $c['id'] ?? null, 'success' => true,
+                    'data' => ($c['type'] ?? '') === 'get_state' ? ['sessionFile' => $sessionFile, 'cwd' => getcwd(), 'isStreaming' => true] : null,
+                ], static fn ($v) => $v !== null));
+            }
+        }
         $out(['type' => 'message_start', 'message' => ['role' => 'assistant', 'content' => []]]);
         $out(['type' => 'message_update', 'usage' => ['input' => 0, 'output' => 0], 'assistantMessageEvent' => ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => $reply]]);
         // A turn takes a moment, so a test can observe `running`.
@@ -78,7 +100,7 @@ while (($raw = fgets(STDIN)) !== false) {
         $messages[] = $partial + ['timestamp' => (int) (microtime(true) * 1000)];
         $out(['type' => 'turn_end']);
         $streaming = false;
-        $out(['type' => 'agent_end', 'messages' => [], 'willRetry' => false]);
+        $out(array_filter(['type' => 'agent_end', 'messages' => [], 'willRetry' => false, 'error' => str_starts_with($text, 'fail:') ? 'boom' : null], static fn ($v) => $v !== null));
         $out(['type' => 'agent_settled', 'aborted' => false]);
     } elseif ($type === 'die') {
         exit(3);

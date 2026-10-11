@@ -46,8 +46,20 @@ final class WebMode
             return 1;
         }
 
+        // A broken tasks file stops the schedule and not the page: the person can still open it
+        // and read what went wrong.
+        try {
+            $this->server->schedules()->start();
+        } catch (\RuntimeException $e) {
+            fwrite(STDERR, Style::red("Scheduled tasks are off: {$e->getMessage()}\n"));
+        }
+
         $url = "http://{$this->host}:{$port}";
         echo Style::green("✔ Web UI running at: ") . Style::bold($url) . "\n";
+
+        if (!$this->server->schedules()->owns()) {
+            echo Style::dim("Scheduled tasks are run by another pig web server in this home.\n");
+        }
         echo Style::dim("Press Ctrl+C to stop the Web UI server.\n\n");
 
         // SIGTERM is what `pig web stop` sends, SIGINT what Ctrl+C does; both mean "stop, and

@@ -130,7 +130,7 @@ return static function (ExtensionApi $pi): void {
         description: 'Diagnose local desktop automation environment, screen resolution, Retina scale and frontmost application.',
         parameters: [
             'type' => 'object',
-            'properties' => [],
+            'properties' => new \stdClass(),
         ],
         execute: static function (string $id, array $params) use ($desktop): AgentToolResult {
             $available = $desktop->isAvailable();

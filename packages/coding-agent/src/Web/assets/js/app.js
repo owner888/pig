@@ -15,6 +15,7 @@ import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
+import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledTasks.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -1942,6 +1943,15 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         toggleSessionDropdown(item, moreBtn, s, label);
       });
 
+      // A conversation a scheduled task started says which, with the sidebar entry's own clock.
+      if (s.scheduledTask) {
+        const clock = document.createElement("span");
+        clock.className = "drawer-scheduled";
+        clock.title = t("sched_started_by", { name: s.scheduledTask });
+        clock.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+        label.prepend(clock);
+      }
+
       item.append(label, folder, moreBtn);
       item.addEventListener("click", () => {
         closeSessionDropdown();
@@ -2403,6 +2413,15 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
       }
     });
     window.webTerminal = webTerminal;
+
+    // Scheduled tasks: the panel, and the dot that says a run is waiting for an answer.
+    const scheduledDot = document.getElementById("scheduled-tasks-dot");
+    document.getElementById("scheduled-tasks-btn")?.addEventListener("click", () => {
+      openScheduledTasks({ onOpenConversation: (cwd, sessionFile) => switchSession(null, sessionFile, cwd) });
+    });
+    watchScheduledTasks({ onAttention: (waiting) => { if (scheduledDot) scheduledDot.hidden = !waiting; } });
+    // A run is a new conversation, and its time in the list moves as it works.
+    network.addMessageListener((m) => { if (m.type === "scheduled_update") refreshSidebar(); });
 
     const nodeWorkbench = new NodeWorkbench();
     document.getElementById("nodes-btn")?.addEventListener("click", () => nodeWorkbench.open());

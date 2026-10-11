@@ -30,6 +30,16 @@ final class ManagedSession
     /** Set once `close()` has begun; a closing session answers no new binds. */
     public bool $closing = false;
 
+    /**
+     * The hook dialogs the child has asked and nobody has answered, by request id, as they arrived.
+     *
+     * A browser that binds after the question went out — a scheduled run nobody was watching, a
+     * reload — is handed these, or the turn stays parked on a question nobody can see.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    public array $pendingUi = [];
+
     public function __construct(
         public readonly string $cwd,
         public readonly ?string $sessionFile,

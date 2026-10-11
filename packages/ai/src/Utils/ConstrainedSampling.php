@@ -94,7 +94,13 @@ final class ConstrainedSampling
      */
     public static function getJsonSchemaToolParameters(Tool $tool, ?bool $strict): array
     {
-        return $strict === true ? self::makeStrictJsonSchema($tool->parameters) : $tool->parameters;
+        $parameters = $strict === true ? self::makeStrictJsonSchema($tool->parameters) : $tool->parameters;
+
+        if (($parameters['type'] ?? null) === 'object' && array_key_exists('properties', $parameters) && $parameters['properties'] === []) {
+            $parameters['properties'] = new \stdClass();
+        }
+
+        return $parameters;
     }
 
     /**

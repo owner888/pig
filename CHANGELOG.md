@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.11] - 2026-10-11
+
+### New Features
+
+- **Scheduled tasks in the web UI.** The sidebar's Scheduled entry is live: a task is a prompt, a folder, an optional model and thinking level, and a schedule — manual, hourly, daily, weekdays, weekly, once, or a custom cron expression in the browser's timezone. Each run is a fresh `pig --mode rpc` conversation in the session pool, listed in the sidebar with a clock; opening it while it runs shows it live. A hook's question during a run waits for an answer (the run reads "Waiting for your answer" and the sidebar shows a dot), and the question is asked again of whoever opens the conversation. A run missed while the machine slept or the server was down happens once when it is back; an occurrence while the previous run is still going is logged as skipped. Only one web server per home runs the schedule. Tasks and their last 50 runs per task live in `~/.pig/agent/scheduled-tasks.json`.
+
+### Fixed
+
+- **Object serialization for tools without parameters in Anthropic and strict schemas**: Formatted empty tool `properties` definitions as `stdClass` (`{}`) instead of empty PHP lists (`[]`) in `Anthropic::convertTool()` and `ConstrainedSampling::getJsonSchemaToolParameters()`, resolving 400 `tools.N.custom.input_schema.properties: Input should be an object` errors on Anthropic when using no-argument tools like `computer_doctor`.
+
 ## [0.6.10] - 2026-10-11
 
 ### Fixed

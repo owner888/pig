@@ -603,6 +603,105 @@ final class WebModeTest extends TestCase
         });
     }
 
+    // ---- scheduled tasks ---------------------------------------------------------------------
+
+    /** @return array{int, array<string, mixed>} */
+    private function post(HttpClient $http, int $port, string $path, array $body): array
+    {
+        $response = $http->send(new Request('POST', "http://127.0.0.1:{$port}{$path}", ['Content-Type' => 'application/json'], json_encode($body)));
+
+        return [$response->status, json_decode($response->body->all(), true)];
+    }
+
+    /** @return array<string, mixed> */
+    private function get(HttpClient $http, int $port, string $path): array
+    {
+        return json_decode($http->follow(new Request('GET', "http://127.0.0.1:{$port}{$path}"))->body->all(), true);
+    }
+
+    public function testAScheduledTaskIsSavedRunAndToldToEveryPage(): void
+    {
+        $port = 28140;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $server->schedules()->start();
+            $http = new HttpClient(2.0);
+            $ws = $this->wsConnect($port);
+
+            [$status, $refused] = $this->post($http, $port, '/api/scheduled/save', ['name' => 'Brief', 'prompt' => 'hi', 'cwd' => $this->cwd, 'schedule' => 'cron', 'cron' => '0 9 * *', 'timezone' => 'UTC']);
+            $this->assertSame(400, $status);
+            $this->assertStringContainsString('five fields', $refused['error'], 'the reason, for the form to show');
+
+            [$status, $saved] = $this->post($http, $port, '/api/scheduled/save', ['name' => 'Brief', 'prompt' => 'hi', 'cwd' => $this->cwd, 'schedule' => 'manual', 'timezone' => 'UTC']);
+            $this->assertSame(200, $status);
+            $id = $saved['task']['id'];
+            $this->assertNotEmpty($this->wsCollect($ws, static fn (array $m) => $m['type'] === 'scheduled_update'), 'every page hears about it');
+
+            $list = $this->get($http, $port, '/api/scheduled');
+            $this->assertTrue($list['owner']);
+            $this->assertSame('Brief', $list['tasks'][0]['name']);
+            $this->assertNull($list['tasks'][0]['nextRunAt'], 'a manual task runs when it is asked to');
+
+            [$status] = $this->post($http, $port, '/api/scheduled/run', ['id' => $id]);
+            $this->assertSame(200, $status);
+
+            $deadline = microtime(true) + 3.0;
+            do {
+                Async::delay(0.02);
+                $runs = $this->get($http, $port, '/api/scheduled/runs?id=' . $id)['runs'];
+            } while (($runs[0]['status'] ?? null) !== 'done' && microtime(true) < $deadline);
+            $this->assertSame('done', $runs[0]['status'] ?? null);
+
+            $this->assertSame(405, $http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/scheduled/run"))->status);
+
+            fclose($ws);
+            $server->stop();
+        });
+    }
+
+    public function testAQuestionAScheduledRunAskedIsAskedAgainOfWhoeverOpensIt(): void
+    {
+        $port = 28141;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $server->schedules()->start();
+            $http = new HttpClient(2.0);
+
+            [, $saved] = $this->post($http, $port, '/api/scheduled/save', ['name' => 'Ask', 'prompt' => 'ask: may I?', 'cwd' => $this->cwd, 'schedule' => 'manual', 'timezone' => 'UTC']);
+            $id = $saved['task']['id'];
+            $this->post($http, $port, '/api/scheduled/run', ['id' => $id]);
+
+            $deadline = microtime(true) + 3.0;
+            do {
+                Async::delay(0.02);
+                $run = $this->get($http, $port, '/api/scheduled/runs?id=' . $id)['runs'][0] ?? [];
+            } while (($run['status'] ?? null) !== 'needs_input' && microtime(true) < $deadline);
+            $this->assertSame('needs_input', $run['status'] ?? null);
+
+            // Nobody was looking when it asked. Opening the conversation asks again.
+            $ws = $this->wsConnect($port);
+            $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => basename($run['sessionFile'])]);
+            $seen = $this->wsCollect($ws, static fn (array $m) => ($m['event']['type'] ?? null) === 'extension_ui_request');
+            $this->assertSame('q1', end($seen)['event']['id'] ?? null);
+            $this->assertCount(1, $server->pool()->all(), 'the run’s own child, not a second one');
+
+            $this->wsSend($ws, ['type' => 'rpc_command', 'command' => ['type' => 'extension_ui_response', 'id' => 'q1', 'confirmed' => true]]);
+            $this->wsCollect($ws, static fn (array $m) => ($m['event']['type'] ?? null) === 'message_update');
+            $this->assertSame([], $server->pool()->all()[0]->pendingUi, 'answered, so a tab opened now is not asked it again');
+            $this->wsCollect($ws, static fn (array $m) => ($m['event']['type'] ?? null) === 'agent_settled');
+
+            $this->assertSame('done', $this->get($http, $port, '/api/scheduled/runs?id=' . $id)['runs'][0]['status']);
+            $this->assertSame([], $server->pool()->all()[0]->pendingUi);
+
+            fclose($ws);
+            $server->stop();
+        });
+    }
+
     public function testFaultIsolationBoundaryPreventsServerCrashOnErrors(): void
     {
         $port = 28102;

@@ -211,6 +211,7 @@ Open `http://localhost:8080` in your browser or mobile phone:
 - **Multiplexed Multi-Tab Execution**: Switch between workspaces and tabs without interrupting active runs.
 - **Native Bilingual Multi-Language Support (中 / EN)**: Click the header `[中 / EN]` button for instant zero-refresh language toggling, auto-adapting to browser language.
 - **Claude-style Sidebar**: New session, Search (`⌘K`) and Scheduled at the top; every project's conversations below, grouped by Today / Yesterday / date with their folder beside them; "View all" and Search open one panel over names and contents. Hover (or tap on mobile) to rename (`✏️`) or delete (`🗑️`).
+- **Scheduled Tasks**: Click Scheduled in the sidebar to run a prompt manually, hourly, daily, on weekdays, weekly, once, or on a custom cron expression, in a folder and with a model of your choosing. Every run is a new conversation (marked with a clock in the sidebar); a run that stops on a hook's question waits for your answer and the sidebar shows a dot. Tasks run while the web server is up — use `pig web start -d` — and a run missed while the machine slept happens once when it wakes. Stored in `~/.pig/agent/scheduled-tasks.json`.
 - **Touchscreen & Mobile Parity**: Responsive layout optimized for smartphones and tablets.
 - **Antigravity Account Drawer**: Manage Google accounts, token expiration, and view quota meters.
 
