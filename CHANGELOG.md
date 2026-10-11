@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.13] - 2026-10-11
+
+### Added
+
+- **Instant interactive launch and shell profile PATH configuration in `install.sh` (aligned with upstream `pi`)**:
+  - `install.sh` now automatically prompts via `/dev/tty` to append Composer's global bin directory to the user's shell configuration (`~/.zshrc`, `~/.bashrc`, or `config.fish`).
+  - Added `prompt_start_pig` to offer launching `pig` immediately via `exec "$bin_dir/pig"` upon install completion, eliminating `command not found: pig` without requiring manual terminal restarts or manual `export PATH` commands.
+
 ## [0.6.12] - 2026-10-11
 
 ### Added

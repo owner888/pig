@@ -53,6 +53,8 @@ pig_installer_main() {
 
   printf '\nSet a key with ANTHROPIC_API_KEY, or run `%s` and use /login.\n' "$PIG_CMD"
   printf 'Remove it later with: composer global remove %s\n' "$PIG_PACKAGE"
+
+  prompt_start_pig "$bin_dir"
 }
 
 # ---- before anything is touched ---------------------------------------------------------
@@ -226,6 +228,30 @@ config_file_mentions_path() {
 
   [ -f "$config_file" ] || return 1
   grep -Fxq "$command" "$config_file"
+}
+
+# The installer runs as a child process and cannot change the calling shell's
+# PATH in memory, so offer to start the installed pig by its full path. This makes the
+# first run work seamlessly even when the shell still needs a restart to find pig.
+prompt_start_pig() {
+  bin_dir="$1"
+  start_pig_path="$bin_dir/$PIG_CMD"
+  [ -n "$start_pig_path" ] && [ -x "$start_pig_path" ] || return 0
+  have_tty || return 0
+
+  exec 3<>/dev/tty
+  printf '\nStart pig now? [Y/n] ' >&3
+  if ! IFS= read -r answer <&3; then
+    answer=
+  fi
+  exec 3>&-
+
+  case "$answer" in
+    n|N|no|NO) return 0 ;;
+  esac
+
+  printf '\n'
+  exec "$start_pig_path"
 }
 
 # Piped to `sh`, standard input is the script itself, so a prompt has to come from the terminal
