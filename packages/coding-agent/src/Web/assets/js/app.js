@@ -1487,6 +1487,12 @@ import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledT
       });
     }
 
+    // The extensions' panels: the list opens from `panels.js`; here the menu only closes.
+    document.getElementById("more-panels-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMoreMenu(false);
+    });
+
     if (moreLangBtn) {
       moreLangBtn.addEventListener("click", (e) => {
         e.stopPropagation();

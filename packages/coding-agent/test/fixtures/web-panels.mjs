@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 // The Antigravity accounts panel's real blocks (`AccountsPanel`), drawn by the page's `panels.js`.
 const root = process.argv[2];
 const fixture = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'));
-const { blocksToHtml, panelForCommand } = await import(`${root}/panels.js`);
+const { blocksToHtml, panelForCommand, placementOf } = await import(`${root}/panels.js`);
 
 const accounts = blocksToHtml(fixture.accounts);
 
@@ -44,5 +44,14 @@ assert.equal(panelForCommand(panels, '/accounts')?.id, 'antigravity.accounts');
 assert.equal(panelForCommand(panels, ' /antigravity.accounts ')?.id, 'antigravity.accounts');
 assert.equal(panelForCommand(panels, '/accounts now'), null);
 assert.equal(panelForCommand([], '/accounts'), null);
+
+// Where a panel goes: the person's move, else the extension's placement, else the sidebar.
+const top = { id: 'a', placement: 'header' };
+assert.equal(placementOf(top, {}), 'header');
+assert.equal(placementOf(top, { a: 'sidebar' }), 'sidebar');
+assert.equal(placementOf({ id: 'b' }, {}), 'sidebar');
+assert.equal(placementOf({ id: 'b', placement: 'footer' }, { b: 'nowhere' }), 'sidebar', 'nonsense is neither');
+assert.equal(placementOf({ id: 'b' }, { b: 'header' }), 'header');
+assert.equal(placementOf(top, null), 'header');
 
 console.log('Web panels: passed');

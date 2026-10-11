@@ -25,6 +25,10 @@ use Closure;
  * - `['type' => 'lazy', 'section' => …, 'placeholder' => …]` — drawn later, from `render` asked
  *   again with that `section`: what needs a network call does not hold the rest of the panel up
  *
+ * Where it goes: `placement` is the extension's default — `sidebar`, the Extensions group, or
+ * `header`, a button in the page's header, named by `label` (a short name; the title when there is
+ * none). The person can move a panel to the other place in the page; that choice wins.
+ *
  * An action is a button: `['label' => …, 'action' => …, 'args' => [...], 'confirm' => …,
  * 'tone' => 'danger', 'title' => …]`. Pressed (and confirmed, when there is a `confirm` question),
  * it calls `action` with its name and `args`; the panel is drawn again either way, so an action
@@ -35,6 +39,9 @@ use Closure;
  */
 final readonly class WebPanel
 {
+    /** Where a panel can be: the sidebar's Extensions group, or the page's header. */
+    public const array PLACEMENTS = ['sidebar', 'header'];
+
     /**
      * @param string|array<string, string> $title the sidebar entry and the window heading; by
      *        locale, falling back to `en` and then to the first one given
@@ -42,6 +49,8 @@ final readonly class WebPanel
      * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}): ?string)|null $action
      *        null when it worked, else why it did not; a throw is the same as its message
      * @param list<string> $commands slash commands that open the panel in the page (`accounts` for `/accounts`)
+     * @param 'sidebar'|'header' $placement where the page puts it unless the person moves it
+     * @param string|array<string, string>|null $label the header button's short name, by locale like the title
      */
     public function __construct(
         public string $id,
@@ -50,7 +59,13 @@ final readonly class WebPanel
         public ?Closure $action = null,
         public string $icon = '',
         public array $commands = [],
+        public string $placement = 'sidebar',
+        public string|array|null $label = null,
     ) {
+        if (!in_array($placement, self::PLACEMENTS, true)) {
+            throw new \InvalidArgumentException("Web panel '{$id}': no placement '{$placement}'. There is " . implode(' and ', self::PLACEMENTS) . '.');
+        }
+
         if (preg_match('/^[a-z0-9][a-z0-9._-]*$/', $id) !== 1) {
             throw new \InvalidArgumentException("A web panel id is lower-case letters, digits, '.', '_' and '-': '{$id}' is not one.");
         }
@@ -63,20 +78,39 @@ final readonly class WebPanel
     /** The title in `$locale`, else in English, else the first one there is. */
     public function titleFor(string $locale): string
     {
-        if (is_string($this->title)) {
-            return $this->title;
+        return self::inLocale($this->title, $locale);
+    }
+
+    /** The header button's name in `$locale`: the label, or the title without one. */
+    public function labelFor(string $locale): string
+    {
+        return $this->label === null || $this->label === [] ? $this->titleFor($locale) : self::inLocale($this->label, $locale);
+    }
+
+    /** @param string|array<string, string> $text */
+    private static function inLocale(string|array $text, string $locale): string
+    {
+        if (is_string($text)) {
+            return $text;
         }
 
-        return $this->title[$locale] ?? $this->title['en'] ?? (string) array_values($this->title)[0];
+        return $text[$locale] ?? $text['en'] ?? (string) array_values($text)[0];
     }
 
     /**
      * What the sidebar lists.
      *
-     * @return array{id: string, title: string, icon: string, commands: list<string>}
+     * @return array{id: string, title: string, label: string, icon: string, commands: list<string>, placement: string}
      */
     public function describe(string $locale): array
     {
-        return ['id' => $this->id, 'title' => $this->titleFor($locale), 'icon' => $this->icon, 'commands' => $this->commands];
+        return [
+            'id' => $this->id,
+            'title' => $this->titleFor($locale),
+            'label' => $this->labelFor($locale),
+            'icon' => $this->icon,
+            'commands' => $this->commands,
+            'placement' => $this->placement,
+        ];
     }
 }

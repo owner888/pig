@@ -270,7 +270,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及与上游一致的 provider 事件——`before_provider_request`（替换请求 payload）、`before_provider_headers`（原地改 header）、`after_provider_response`（状态码与 header）、`provider_stream_event`（每个原始流事件）——还有 `model_select`、`thinking_level_select`。 |
 | **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |
 | **会话** | `getSettings()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
-| **Web UI** | `registerWebPanel(id, title, render, action, icon, commands)` 在 `pig web` 侧边栏放一个面板：`render` 返回区块（文字、带按钮的列表、进度条、卡片、延迟加载的段落），由页面按自己的主题画出来——Antigravity 账号面板就是这样做的。`registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 用来应答自己的请求。 |
+| **Web UI** | `registerWebPanel(id, title, render, action, icon, commands, placement, label)` 在 `pig web` 侧边栏或页头放一个面板（用户可以自己挪位置）：`render` 返回区块（文字、带按钮的列表、进度条、卡片、延迟加载的段落），由页面按自己的主题画出来——Antigravity 账号面板就是这样做的。`registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 用来应答自己的请求。 |
 | **第二个凭据存储** | `Auth::useSecondStore(provider, read, renewed)`，给在 `auth.json` 旁边另存多账号的 provider 用。 |
 
 ---

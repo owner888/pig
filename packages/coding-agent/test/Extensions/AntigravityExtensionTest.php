@@ -267,6 +267,9 @@ final class AntigravityExtensionTest extends TestCase
         $this->assertNotNull($panel);
         $this->assertSame(['accounts', 'antigravity.accounts'], $panel->commands);
         $this->assertSame('Antigravity 账号管理', $panel->titleFor('zh-CN'));
+        // In the header, where the page's own accounts button was, under the same name.
+        $this->assertSame('header', $panel->placement);
+        $this->assertSame('账号', $panel->labelFor('zh-CN'));
         $this->assertNull(ExtensionApi::httpRouteFor('/api/accounts/usage'));
 
         ProviderRegistry::forget();

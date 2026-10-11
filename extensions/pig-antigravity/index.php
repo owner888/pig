@@ -414,6 +414,9 @@ return function (ExtensionApi $pi): void {
         },
         icon: '🔑',
         commands: ['accounts', 'antigravity.accounts'],
+        // Where the accounts button always was.
+        placement: 'header',
+        label: AccountsPanel::LABEL,
     );
 
     // ---- commands -----------------------------------------------------------------------

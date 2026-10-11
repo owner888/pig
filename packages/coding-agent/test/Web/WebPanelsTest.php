@@ -58,7 +58,7 @@ final class WebPanelsTest extends TestCase
         $this->probe();
 
         $this->assertSame(['status' => 200, 'body' => ['panels' => [
-            ['id' => 'probe.things', 'title' => '东西', 'icon' => '★', 'commands' => ['things']],
+            ['id' => 'probe.things', 'title' => '东西', 'label' => '东西', 'icon' => '★', 'commands' => ['things'], 'placement' => 'sidebar'],
         ]]], self::ask('/api/panels', ['query' => ['locale' => 'zh-CN']]));
         $this->assertSame('Things', self::ask('/api/panels', ['query' => ['locale' => 'fr']])['body']['panels'][0]['title'], 'English when there is none in the language');
         $this->assertSame('Things', self::ask('/api/panels')['body']['panels'][0]['title'], 'English without a locale');
@@ -151,6 +151,25 @@ final class WebPanelsTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
         new WebPanel('ok', [], static fn (): array => []);
+    }
+
+    public function testAPanelCanAskForTheHeaderWithAShortName(): void
+    {
+        (new ExtensionApi(sys_get_temp_dir(), 'probe.php', 'probe'))->registerWebPanel(
+            'probe.top',
+            ['en' => 'Probe Accounts', 'zh-CN' => '探针账号'],
+            static fn (): array => [],
+            placement: 'header',
+            label: ['en' => 'Accounts', 'zh-CN' => '账号'],
+        );
+
+        $listed = self::ask('/api/panels', ['query' => ['locale' => 'zh-CN']])['body']['panels'][0];
+        $this->assertSame(['header', '账号', '探针账号'], [$listed['placement'], $listed['label'], $listed['title']]);
+        $this->assertSame('Accounts', ExtensionApi::webPanel('probe.top')?->labelFor('fr'));
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("no placement 'footer'");
+        new WebPanel('probe.bad', 'Bad', static fn (): array => [], placement: 'footer');
     }
 
     public function testTheSameIdAgainReplacesThePanelAndForgettingClearsThem(): void

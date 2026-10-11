@@ -31,6 +31,9 @@ export function formatSessionFilename(name, fallback = "(in-memory)") {
   return `${head}…${tail}${ext}`;
 }
 
+/** The open modals, the top one last: only it answers Escape and Enter. */
+const modalStack = [];
+
 /**
  * Unified, reusable Modal Dialog system matching the Accounts popup design.
  * Perfect for mobile touch, centering, keyboard Esc/Enter and backdrop closing.
@@ -80,6 +83,7 @@ export function openModal({
     if (closed) return;
     closed = true;
     window.removeEventListener("keydown", onKeyDown);
+    modalStack.splice(modalStack.indexOf(backdrop), 1);
     backdrop.remove();
   };
 
@@ -108,6 +112,8 @@ export function openModal({
   };
 
   const onKeyDown = (e) => {
+    // A modal opened over this one — a confirmation over a panel — takes the keys first.
+    if (modalStack[modalStack.length - 1] !== backdrop) return;
     if (e.key === "Escape") {
       e.preventDefault();
       cancel();
@@ -120,6 +126,7 @@ export function openModal({
     }
   };
   window.addEventListener("keydown", onKeyDown);
+  modalStack.push(backdrop);
 
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) cancel();

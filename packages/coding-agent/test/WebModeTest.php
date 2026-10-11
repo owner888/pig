@@ -640,7 +640,7 @@ final class WebModeTest extends TestCase
                 $http = new HttpClient();
                 $get = fn (string $path): array => json_decode($http->send(new Request('GET', "http://127.0.0.1:{$port}{$path}"))->body->all(), true);
 
-                $this->assertSame([['id' => 'probe.panel', 'title' => '探针', 'icon' => '', 'commands' => ['probe']]], $get('/api/panels?locale=zh-CN')['panels']);
+                $this->assertSame([['id' => 'probe.panel', 'title' => '探针', 'label' => '探针', 'icon' => '', 'commands' => ['probe'], 'placement' => 'sidebar']], $get('/api/panels?locale=zh-CN')['panels']);
                 $this->assertSame([['type' => 'text', 'text' => 'zh-CN:main']], $get('/api/panels/probe.panel?locale=zh-CN')['blocks']);
                 $this->assertSame([['type' => 'text', 'text' => 'en:slow']], $get('/api/panels/probe.panel?locale=en&section=slow')['blocks']);
 

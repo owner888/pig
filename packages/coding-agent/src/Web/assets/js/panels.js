@@ -1,7 +1,8 @@
 /**
  * The extensions' panels (`ExtensionApi::registerWebPanel()`): an entry each in the sidebar's
- * Extensions group, and a window drawn from the blocks the extension's `render` returns — see
- * `WebPanel` for them. Nothing of the extension runs here: it describes, the page draws, in the
+ * Extensions group or a button in the header — the extension's `placement`, unless the person moved
+ * it (`placementOf()`, kept in this browser) — and a window drawn from the blocks the extension's
+ * `render` returns — see `WebPanel` for them. The header's 🧩 button lists them all, to open or move. Nothing of the extension runs here: it describes, the page draws, in the
  * page's own components and theme.
  *
  * `blocksToHtml()` is the drawing and needs no page, so it can be run under Node.
@@ -82,6 +83,33 @@ export function panelForCommand(panels, text) {
   return panels.find((p) => Array.isArray(p.commands) && p.commands.includes(name)) ?? null;
 }
 
+const PLACEMENT_KEY = "pig_panel_placement";
+const PLACES = new Set(["sidebar", "header"]);
+
+/**
+ * Where a panel goes: the person's choice for it, else the extension's `placement`, else the
+ * sidebar. `overrides` is `{id: "sidebar"|"header"}`.
+ */
+export function placementOf(panel, overrides) {
+  const chosen = overrides?.[panel.id];
+  if (PLACES.has(chosen)) return chosen;
+  return PLACES.has(panel.placement) ? panel.placement : "sidebar";
+}
+
+/** The person's moves, from this browser; none when storage is unavailable or holds nonsense. */
+function readOverrides() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PLACEMENT_KEY) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeOverrides(overrides) {
+  try { localStorage.setItem(PLACEMENT_KEY, JSON.stringify(overrides)); } catch {}
+}
+
 // ---- the page ----------------------------------------------------------------------------
 
 /**
@@ -91,8 +119,11 @@ export function panelForCommand(panels, text) {
  */
 export function createPanels({ openModal, t, locale, onChanged = () => {}, onError = () => {} }) {
   let panels = [];
+  let overrides = readOverrides();
   const group = document.getElementById("sidebar-panels");
   const list = document.getElementById("sidebar-panels-list");
+  const header = document.getElementById("header-panels");
+  const listButtons = [document.getElementById("panels-btn"), document.getElementById("more-panels-btn")];
 
   async function load() {
     try {
@@ -101,17 +132,79 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
     } catch {
       panels = [];
     }
-    if (list) {
-      list.innerHTML = panels.map((p) => `
-        <button class="sidebar-nav-item" data-panel="${escapeText(p.id)}" title="${escapeText(p.title)}">
-          <span class="sidebar-nav-icon">${escapeText(p.icon || "▣")}</span>
-          <span>${escapeText(p.title)}</span>
-        </button>`).join("");
-      list.querySelectorAll("[data-panel]").forEach((el) => el.addEventListener("click", () => open(el.dataset.panel)));
-    }
-    if (group) group.hidden = panels.length === 0;
+    draw();
     return panels;
   }
+
+  /** Each panel in its place: the sidebar's Extensions group, or a button in the header. */
+  function draw() {
+    const at = (where) => panels.filter((p) => placementOf(p, overrides) === where);
+    const icon = (p) => escapeText(p.icon || "▣");
+    if (list) {
+      list.innerHTML = at("sidebar").map((p) => `
+        <button class="sidebar-nav-item" data-panel="${escapeText(p.id)}" title="${escapeText(p.title)}">
+          <span class="sidebar-nav-icon">${icon(p)}</span>
+          <span>${escapeText(p.title)}</span>
+        </button>`).join("");
+    }
+    if (group) group.hidden = at("sidebar").length === 0;
+    if (header) {
+      header.innerHTML = at("header").map((p) => `
+        <button class="toggle-sidebar-btn header-btn desktop-only-btn" data-panel="${escapeText(p.id)}" title="${escapeText(p.title)}">${icon(p)} ${escapeText(p.label || p.title)}</button>`).join("");
+    }
+    for (const el of [list, header]) {
+      el?.querySelectorAll("[data-panel]").forEach((b) => b.addEventListener("click", () => open(b.dataset.panel)));
+    }
+    for (const button of listButtons) if (button) button.hidden = panels.length === 0;
+  }
+
+  /** Put a panel in the header or the sidebar, for this browser. */
+  function move(id, where) {
+    overrides = { ...overrides, [id]: where };
+    writeOverrides(overrides);
+    draw();
+  }
+
+  /** Every panel, wherever it is: open it, or move it to the other place. */
+  function openList() {
+    const rows = () => panels.map((p) => {
+      const there = placementOf(p, overrides);
+      const other = there === "header" ? "sidebar" : "header";
+      return `
+        <div class="panel-list-row">
+          <span class="sidebar-nav-icon">${escapeText(p.icon || "▣")}</span>
+          <span class="panel-item-main"><span class="panel-item-title">${escapeText(p.title)}</span>
+            <span class="panel-item-detail">${escapeText(t(there === "header" ? "panel_in_header" : "panel_in_sidebar"))}</span></span>
+          <button class="mini-btn" data-move="${escapeText(p.id)}" data-to="${other}">${escapeText(t(other === "header" ? "panel_move_header" : "panel_move_sidebar"))}</button>
+          <button class="mini-btn" data-open="${escapeText(p.id)}">${escapeText(t("panel_open"))}</button>
+        </div>`;
+    }).join("");
+
+    openModal({
+      title: t("panels_title"),
+      hideFooter: true,
+      width: "480px",
+      bodyHtml: `<div class="panel-list-body">${rows()}</div>`,
+      onOpen: (modalEl, close) => {
+        const body = modalEl.querySelector(".panel-list-body");
+        body.addEventListener("click", (e) => {
+          const moving = e.target.closest("[data-move]");
+          if (moving) {
+            move(moving.dataset.move, moving.dataset.to);
+            body.innerHTML = rows();
+            return;
+          }
+          const opening = e.target.closest("[data-open]");
+          if (opening) {
+            close();
+            open(opening.dataset.open);
+          }
+        });
+      },
+    });
+  }
+
+  for (const button of listButtons) button?.addEventListener("click", openList);
 
   function open(id) {
     const panel = panels.find((p) => p.id === id);
@@ -145,8 +238,20 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
       }
     };
 
-    const run = async (button) => {
-      if (button.dataset.confirm && !confirm(button.dataset.confirm)) return;
+    const run = (button) => {
+      if (!button.dataset.confirm) return send(button);
+      // The page's own dialog over the panel, not the browser's.
+      openModal({
+        title: panel.title,
+        bodyHtml: `<div class="panel-text">${escapeText(button.dataset.confirm)}</div>`,
+        confirmText: t("confirm"),
+        cancelText: t("cancel"),
+        isDanger: button.classList.contains("danger"),
+        onConfirm: async () => { send(button); return true; },
+      });
+    };
+
+    const send = async (button) => {
       let args = {};
       try { args = JSON.parse(button.dataset.args || "{}"); } catch {}
       button.disabled = true;
@@ -187,6 +292,7 @@ export function createPanels({ openModal, t, locale, onChanged = () => {}, onErr
   return {
     load,
     open,
+    openList,
     /** Open the panel `text` is the command of, and say whether there was one. */
     openForCommand(text) {
       const panel = panelForCommand(panels, text);

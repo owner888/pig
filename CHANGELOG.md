@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.19] - 2026-10-11
+
+### Added
+
+- **A Web UI panel can live in the header** (`registerWebPanel(..., placement: 'header', label: …)`), and the person decides: the header's new 🧩 Extensions button (and the mobile menu) lists every extension panel, to open it or move it between the header and the sidebar; the choice is kept in the browser.
+
+### Changed
+
+- **The Antigravity accounts panel is back in the header** as "🔑 Accounts", where it was before it moved into the extension.
+- **A panel button that asks first uses the page's own dialog** instead of the browser's `confirm()`; with a dialog over a panel, Escape closes only the dialog.
+
 ## [0.6.18] - 2026-10-11
 
 ### Added

@@ -460,7 +460,8 @@ final class ExtensionApi extends HookApi
 
     /**
      * Put a panel in `pig web`: an entry in the sidebar's Extensions group that opens a window the
-     * page draws from the blocks `$render` returns — see `WebPanel` for the blocks and the actions.
+     * page draws from the blocks `$render` returns — see `WebPanel` for the blocks and the actions —
+     * or, with `placement: 'header'`, a button in the page's header instead.
      *
      * pig's own, with no upstream counterpart. A panel is described rather than scripted, so it
      * looks like the rest of the page, follows its theme, and runs nothing of the extension in the
@@ -470,6 +471,8 @@ final class ExtensionApi extends HookApi
      * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
      * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}): ?string)|null $action
      * @param list<string> $commands slash commands that open it in the page, without the slash
+     * @param 'sidebar'|'header' $placement where the page puts it by default; the person can move it
+     * @param string|array<string, string>|null $label a short name for the header button
      */
     public function registerWebPanel(
         string $id,
@@ -478,8 +481,10 @@ final class ExtensionApi extends HookApi
         ?Closure $action = null,
         string $icon = '',
         array $commands = [],
+        string $placement = 'sidebar',
+        string|array|null $label = null,
     ): void {
-        self::$webPanels[$id] = new WebPanel($id, $title, $render, $action, $icon, array_values($commands));
+        self::$webPanels[$id] = new WebPanel($id, $title, $render, $action, $icon, array_values($commands), $placement, $label);
     }
 
     /** @return list<WebPanel> in the order they were registered */

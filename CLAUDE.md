@@ -4280,14 +4280,21 @@ an extension that wants a place in the page has a panel (next section). Regressi
 
 ### An extension's panel in the page
 
-`ExtensionApi::registerWebPanel(id, title, render, action, icon, commands)` gives an extension an
-entry in the sidebar's Extensions group (hidden while there is none) and a window. The developer
+`ExtensionApi::registerWebPanel(id, title, render, action, icon, commands, placement, label)` gives an
+extension an entry in the sidebar's Extensions group (hidden while there is none), or with
+`placement: 'header'` a header button named by `label`, and a window. Where it goes is the
+extension's default; the header's 🧩 button lists every panel to open it or move it to the other
+place, which the developer wanted the person to decide — the move is kept in the browser
+(`pig_panel_placement`) and wins over the default. Antigravity's accounts panel defaults to the
+header as "🔑 账号", where the page's own button was. The developer
 chose described panels over extension JavaScript: `render` returns blocks (`WebPanel` lists them —
 heading, text, list of items with buttons, meter, card, actions, lazy) and `panels.js` draws them in
 the page's own components and theme, so a panel cannot read other tabs, the WebSocket or the
 credentials endpoints, and the page's internals are not an API. Every string is text; the page's
 locale is in the request and the extension answers in it. A button is an action: `action(name, args,
-request)` returns null or why it failed, and the panel is drawn again either way. A `lazy` block is
+request)` returns null or why it failed, and the panel is drawn again either way; a button with a
+`confirm` question asks it in the page's own modal first (`openModal`, which now lets only the top
+modal of a stack answer Escape and Enter). A `lazy` block is
 `render` asked again with its `section`, for what needs a network call (the quota). `commands` open
 the panel from the prompt (`/accounts`) and join the `/` list.
 

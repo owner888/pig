@@ -69,6 +69,9 @@
       <div class="header-actions">
         <button id="theme-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换主题 / Switch Theme">🎨 Dark</button>
         <button id="lang-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="语言与语言包设置 / Language Settings">🌐 语言</button>
+        <!-- The extensions' panels placed in the header (panels.js), and the list of them all -->
+        <span id="header-panels" class="header-panels"></span>
+        <button id="panels-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" hidden data-i18n-attr="title:panels_title">🧩&nbsp;<span data-i18n="sidebar_extensions">Extensions</span></button>
         <button id="nodes-btn" class="toggle-sidebar-btn header-btn desktop-only-btn ctrl-btn nodes-btn" data-i18n-attr="title:nodes_title" title="SSH 节点工作台 / SSH Nodes Workbench">
           <svg class="nodes-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -109,6 +112,10 @@
             <div class="more-dropdown-item" id="more-lang-btn">
               <span class="more-item-icon">🌐</span>
               <span class="more-item-text" data-i18n="menu_lang">Language</span>
+            </div>
+            <div class="more-dropdown-item" id="more-panels-btn" hidden>
+              <span class="more-item-icon">🧩</span>
+              <span class="more-item-text" data-i18n="sidebar_extensions">Extensions</span>
             </div>
           </div>
         </div>
