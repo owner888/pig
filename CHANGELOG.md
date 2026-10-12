@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.33] - 2026-10-12
+
+### Changed
+
+- Web UI: the "Load more" button in the All sessions window says how many are left — `加载更多（剩余 N 条）` / `Load more (N left)`, the total less what is already shown.
+
 ## [0.6.32] - 2026-10-12
 
 ### Fixed

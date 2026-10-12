@@ -2316,7 +2316,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             if (q === "" && offset < data.total) {
               const more = document.createElement("button");
               more.className = "sidebar-view-all";
-              more.textContent = t("load_more");
+              more.textContent = t("load_more", { count: data.total - offset });
               more.addEventListener("click", () => load(true));
               results.appendChild(more);
             }
