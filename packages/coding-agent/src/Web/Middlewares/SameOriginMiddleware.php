@@ -14,15 +14,22 @@ use Pig\CodingAgent\Web\Middleware;
  * another site's page (one that knows the server is on 127.0.0.1:8088) is refused here, before it
  * can reach a terminal or an agent. A request with no `Origin` is no browser's cross-site one
  * (a navigation, `curl`), and goes on to the login.
+ *
+ * `Sec-Fetch-Site` decides first, when the browser sent one. It is the browser's own verdict, which
+ * no page can set, and it is right where `Origin` can be wrong: an extension that rewrites
+ * `Origin` — seen in the wild as `http://127.0.0.1` with the port gone, on a stylesheet that
+ * carries no `Origin` at all without it — turned the login page's own `theme.css` into a 403.
+ * `same-origin` and `none` (a navigation somebody typed) go on; `same-site` and `cross-site` are
+ * refused, and `same-site` is the one that matters here, because another port on 127.0.0.1 is the
+ * same site and not the same origin. Without the header — an older browser, `curl` — `Origin` is
+ * compared with `Host` as before.
  */
 final class SameOriginMiddleware implements Middleware
 {
     #[\Override]
     public function handle(array $req, Connection $conn, Closure $next): void
     {
-        $origin = $req['headers']['origin'] ?? null;
-
-        if ($origin !== null && !self::sameHost($origin, $req['headers']['host'] ?? '')) {
+        if (!self::allowed($req['headers'])) {
             $conn->sendResponse(403, ['Content-Type' => 'application/json'], (string) json_encode([
                 'ok' => false,
                 'error' => 'Requests from another site are refused.',
@@ -32,6 +39,23 @@ final class SameOriginMiddleware implements Middleware
         }
 
         $next();
+    }
+
+    /**
+     * Whether a request with these headers is the page's own.
+     *
+     * @param array<string, string> $headers lower-cased names
+     */
+    public static function allowed(array $headers): bool
+    {
+        $site = strtolower(trim($headers['sec-fetch-site'] ?? ''));
+        if ($site !== '') {
+            return $site === 'same-origin' || $site === 'none';
+        }
+
+        $origin = $headers['origin'] ?? null;
+
+        return $origin === null || self::sameHost($origin, $headers['host'] ?? '');
     }
 
     /**

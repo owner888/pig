@@ -13569,3 +13569,22 @@ sidebar would cover or squeeze the chat). `sidebarFollowsWidth()` runs at `boot(
 `matchMedia` change, so only crossing the width moves it; a toggle in between stays. It is called
 from `boot()` and not where it is defined, because `refreshSidebar()` reads `let sidebarSeq`
 further down the file and calling it earlier is a temporal-dead-zone `ReferenceError`.
+
+### An extension rewrote `Origin` and the login page's own stylesheet was refused
+
+**Symptom**: `/web` opened an unstyled login page; `theme.css`, `style.css`, `login.js` and
+`favicon.svg` were 403 with `Requests from another site are refused.`
+
+**Cause**: a browser extension set `Origin: http://127.0.0.1` — port gone — on every request,
+including a stylesheet Chrome sends with no `Origin` at all (`Sec-Fetch-Mode: no-cors`,
+`Sec-Fetch-Site: same-origin`). `SameOriginMiddleware` compared that `Origin` with
+`Host: 127.0.0.1:8088` and refused it. Not an install problem: the same page was fine in a browser
+without the extension.
+
+**Rule**: `SameOriginMiddleware::allowed()` asks `Sec-Fetch-Site` first — the browser's verdict, which
+a page cannot set: `same-origin` and `none` pass, `same-site` and `cross-site` are refused (another
+port on 127.0.0.1 is same-site and cross-origin). Only without the header does it compare `Origin`
+with `Host`. Debug a 403 there from the request headers, not the response.
+
+Regression tests: `SameOriginMiddlewareTest`, and the two `theme.css` requests in
+`WebModeTest::testNothingButTheLoginPageWithoutLoggingIn`.

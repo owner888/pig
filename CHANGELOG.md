@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.31] - 2026-10-12
+
+### Fixed
+
+- Web UI: the login page loaded unstyled in a browser whose extension rewrites the `Origin` header — `theme.css`, `style.css`, `login.js` and the favicon came back 403 because `Origin: http://127.0.0.1` (port gone) did not match `Host`. The same-origin check now believes the browser's own `Sec-Fetch-Site` when it is sent (`same-origin` and `none` pass; `same-site` and `cross-site` are refused, so another port on 127.0.0.1 is still kept out), and compares `Origin` with `Host` only when it is not.
+
 ## [0.6.30] - 2026-10-12
 
 ### Fixed

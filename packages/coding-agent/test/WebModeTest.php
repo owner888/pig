@@ -773,6 +773,9 @@ final class WebModeTest extends TestCase
             $this->assertSame(200, $http->send(new Request('GET', "{$url}/login"))->status);
             $this->assertSame(200, $http->send(new Request('GET', "{$url}/assets/js/login.js"))->status, 'what the login page needs');
             $this->assertSame(401, $http->send(new Request('GET', "{$url}/assets/js/app.js"))->status, 'but not the rest');
+            // An extension that rewrites Origin, port gone, on a stylesheet Chrome marks same-origin.
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/theme.css", ['Origin' => 'http://127.0.0.1', 'Sec-Fetch-Site' => 'same-origin']))->status);
+            $this->assertSame(403, $http->send(new Request('GET', "{$url}/theme.css", ['Origin' => "http://127.0.0.1:{$port}", 'Sec-Fetch-Site' => 'cross-site']))->status);
             $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models"))->status);
             $this->assertSame(['loggedIn' => false, 'setup' => true], json_decode($http->send(new Request('GET', "{$url}/api/login/state"))->body->all(), true));
             $this->assertStringContainsString('401', $this->wsStatus($port), 'no conversation, no terminal');
