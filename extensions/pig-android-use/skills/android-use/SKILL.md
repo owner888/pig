@@ -1,11 +1,13 @@
 ---
 name: android-use
-description: Drive a real or emulated Android phone over ADB, in pure PHP. Start a new task with android_ready to get the device channel and the current screen; supports taps, swipes, Chinese text input, launching apps by package and a screenshot when the view needs checking.
+description: Drive a real or emulated Android phone over ADB, in pure PHP. Last resort after the command line — when adb from bash can do it (start an activity, change a setting, push/pull/install), do that; use these screen tools only when the person asks for them or adb cannot do the job. Start a new task with android_ready to get the device channel and the current screen; supports taps, swipes, Chinese text input, launching apps by package and a screenshot when the view needs checking.
 ---
 
 # Doing a task on an Android phone
 
 The native `android_*` tools drive an Android phone or tablet.
+
+**Try adb first.** Tapping the screen is a last resort. What `adb` can do from `bash` stays off the screen: open an app or a page with `adb shell am start`, type or press keys with `adb shell input`, change settings with `adb shell settings`, install or copy files with `adb install` / `adb push` / `adb pull`, read state with `adb shell dumpsys`. Use `android_*` only when the person asks for it, or when the task needs eyes on the screen (an app's own UI with no adb route).
 
 Settle what the person wants delivered and when it is done. Treat an action that returned normally as done and move on; do not spend a separate call looking at the screen to prove each tap, swipe or keystroke worked. When the next step needs to see the screen, set `observe="screenshot"` on the action itself.
 

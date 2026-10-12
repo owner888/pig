@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.39] - 2026-10-12
+
+### Changed
+
+- Android use: tapping the screen is a last resort too — the `android-use` skill and `android_ready` now say to use adb from bash first (`am start`, `input`, `settings`, `install`/`push`/`pull`), and the screen tools only when the person asks for them or adb cannot do the job.
+
 ## [0.6.38] - 2026-10-12
 
 ### Changed

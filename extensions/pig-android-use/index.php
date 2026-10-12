@@ -185,6 +185,10 @@ return static function (ExtensionApi $pi): void {
         name: 'android_ready',
         label: 'Android Ready Check',
         description: 'Check if an Android device is connected, wake it up, and return initial viewport dimensions and screenshot.',
+        // Same rule as computer use: the screen is the last resort, after the command line.
+        promptGuidelines: [
+            'Tapping the phone screen is a last resort. When adb from bash can do it (adb shell am start, input, settings, pm, dumpsys; adb push/pull/install), do that first; use the android_* screen tools only when the person asks for them or adb cannot do the job.',
+        ],
         parameters: [
             'type' => 'object',
             'properties' => [
