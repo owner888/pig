@@ -146,8 +146,10 @@ final class Run
         // Periodically check if the primary process has finished; once it exits, drain
         // remaining output and resolve without waiting for orphaned background grandchildren.
         $pollTimer = null;
-        $pollProcess = function () use (&$pollProcess, &$pollTimer): void {
-            $pollTimer = Loop::get()->delay(0.1, function () use (&$pollProcess): void {
+        $drainTimer = null;
+        $finalStatus = null;
+        $pollProcess = function () use (&$pollProcess, &$pollTimer, &$drainTimer, &$finalStatus): void {
+            $pollTimer = Loop::get()->delay(0.1, function () use (&$pollProcess, &$drainTimer, &$finalStatus): void {
                 if (!is_resource($this->process)) {
                     return;
                 }
@@ -155,7 +157,8 @@ final class Run
                 $status = proc_get_status($this->process);
 
                 if ($status['running'] !== true) {
-                    Loop::get()->delay(0.05, function (): void {
+                    $finalStatus = $status;
+                    $drainTimer = Loop::get()->delay(0.05, function (): void {
                         if ($this->finished !== null && !$this->finished->future->isComplete()) {
                             foreach ([1, 2] as $fd) {
                                 if (isset($this->pipes[$fd]) && is_resource($this->pipes[$fd])) {
@@ -176,11 +179,22 @@ final class Run
 
         try {
             $this->finished?->future->await();
+
+            if ($pollTimer !== null) {
+                Loop::get()->cancel($pollTimer);
+                $pollTimer = null;
+            }
+
+            if ($drainTimer !== null) {
+                Loop::get()->cancel($drainTimer);
+                $drainTimer = null;
+            }
+
             // The pipes closing is not the command exiting, and the code is a fact about the
             // process — see `Process::awaitFinish()`, which is also what keeps that wait from
             // being a freeze. Inside the try, so the timer and the signal above still reach a
             // command that shut its own output and carried on.
-            $this->exit = Process::awaitFinish($this->process);
+            $this->exit = Process::awaitFinish($this->process, $finalStatus);
             $this->process = null;
         } finally {
             if ($timer !== null) {
@@ -189,6 +203,10 @@ final class Run
 
             if ($pollTimer !== null) {
                 Loop::get()->cancel($pollTimer);
+            }
+
+            if ($drainTimer !== null) {
+                Loop::get()->cancel($drainTimer);
             }
 
             if ($listener !== null) {

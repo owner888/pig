@@ -140,14 +140,15 @@ final class Process
      * underneath would cut a command short on a rule nobody asked for.
      *
      * @param resource|null $process
+     * @param array<string, mixed>|null $status the first status that reported it gone, if already read
      */
-    public static function awaitFinish(mixed $process): int
+    public static function awaitFinish(mixed $process, ?array $status = null): int
     {
         if (!is_resource($process)) {
-            return 0;
+            return $status !== null ? self::codeOf($status) : 0;
         }
 
-        while (true) {
+        while ($status === null || $status['running'] === true) {
             $status = proc_get_status($process);
 
             if ($status['running'] !== true) {

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.34] - 2026-10-12
+
+### Fixed
+
+- Shell execution: fixed a race condition between `Run::wait()`'s background process poller and `Process::awaitFinish()`. When a command terminated via signal right as the 100ms background polling loop queried `proc_get_status()`, the first-read signal status (`signaled: true, termsig: N`) was consumed, causing `awaitFinish()`'s subsequent query to erroneously report `Command exited with code -1`. `Run` now immediately cancels background process polling upon pipe completion and passes captured exit statuses directly to `awaitFinish()`.
+
 ## [0.6.33] - 2026-10-12
 
 ### Changed
