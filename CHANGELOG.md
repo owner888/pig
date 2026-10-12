@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.40] - 2026-10-12
+
+### Fixed
+
+- Web: switching tabs no longer pauses on a long conversation. A background tab's chat is hidden with `visibility` instead of `display: none`, so it keeps its layout, and messages off screen are skipped with `content-visibility: auto`. The phone layout's tighter chat padding applies again (its rule named `#chat-scroll`, which no longer exists).
+
 ## [0.6.39] - 2026-10-12
 
 ### Changed
