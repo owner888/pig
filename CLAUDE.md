@@ -13534,3 +13534,31 @@ scrolled left to close an old tab must not be thrown back. A vertical wheel over
 it sideways. On a touch screen (`hover: none`) every tab shows its ×.
 
 Verified in headless Chromium (see the CHANGELOG entry); no PHPUnit case — layout needs a browser.
+
+### A screenshot from the web UI never reached the agent: WebSocket fragments were read as messages
+
+**Symptom**: sending an image from `pig web` ended in `prompt: no answer in 30s`, or the page's
+connection dropped; text-only prompts worked.
+
+**Cause**: Chrome sends a message over about 128 KB as several frames — the first with its opcode
+and FIN unset, then continuation frames (opcode 0), the last with FIN set. `Websocket::decode()`
+ignored FIN and handed each frame on as a message, so the server read three pieces of broken JSON
+and the prompt never reached the child. Measured: a 150 KB prompt arrived as frames of 130,500,
+522 and 21,118 bytes.
+
+**Rule**: `decode()` keeps the message in `TcpConnection::$websocketDataBuffer` (Workerman's name)
+until a frame with FIN arrives; control frames may come between fragments; a continuation with
+nothing to continue, or a new data frame mid-message, closes the connection (RFC 6455 §5.4).
+Unmasking is one string XOR, not a byte loop. A large-message test drives `onReadable()` with
+masked client frames as a browser sends them, not only `decode()` on one frame.
+
+Regression tests: `WebsocketProtocolTest::testAMessageSplitAcrossFramesArrivesWholeAndOnce`,
+`testAContinuationWithNothingToContinueClosesTheConnection`.
+
+### The web sidebar follows the window width
+
+Open at ≥ 1024 px (MacBook, iPad landscape), closed below (phone, iPad portrait, where the
+sidebar would cover or squeeze the chat). `sidebarFollowsWidth()` runs at `boot()` and on the
+`matchMedia` change, so only crossing the width moves it; a toggle in between stays. It is called
+from `boot()` and not where it is defined, because `refreshSidebar()` reads `let sidebarSeq`
+further down the file and calling it earlier is a temporal-dead-zone `ReferenceError`.

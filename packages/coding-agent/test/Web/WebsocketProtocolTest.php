@@ -160,4 +160,72 @@ final class WebsocketProtocolTest extends TestCase
         $conn->close();
         fclose($clientSock);
     }
+
+    /**
+     * Chrome sends a large message as a first frame without FIN and then continuations — a
+     * 150 KB prompt with a screenshot arrived as three frames, and each was handed over as a
+     * message of its own, so the server read broken JSON and the page waited 30 s for an answer.
+     */
+    public function testAMessageSplitAcrossFramesArrivesWholeAndOnce(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $received = [];
+        $conn = new TcpConnection($serverSock, static function ($c, $data) use (&$received): void { $received[] = $data; }, static fn () => null, Websocket::class);
+
+        $message = json_encode(['type' => 'prompt', 'images' => [base64_encode(random_bytes(3000))]]);
+        $first = substr($message, 0, 2000);
+        $middle = substr($message, 2000, 500);
+        $last = substr($message, 2500);
+
+        $bytes = self::clientFrame(Websocket::OPCODE_TEXT, $first, final: false)
+            . self::clientFrame(Websocket::OPCODE_PING, 'x')
+            . self::clientFrame(Websocket::OPCODE_CONTINUATION, $middle, final: false)
+            . self::clientFrame(Websocket::OPCODE_CONTINUATION, $last);
+        fwrite($clientSock, $bytes);
+
+        while ($received === [] && !$conn->isClosed()) {
+            $conn->onReadable();
+        }
+
+        // Compared by length and hash: a failure should not print 150 KB of base64.
+        $this->assertSame([[strlen($message), md5($message)]], array_map(static fn (string $m): array => [strlen($m), md5($m)], $received));
+        $this->assertFalse($conn->isClosed());
+        $this->assertNull($conn->websocketDataBuffer);
+
+        // The next message starts afresh.
+        fwrite($clientSock, self::clientFrame(Websocket::OPCODE_TEXT, 'next'));
+        $conn->onReadable();
+        $this->assertCount(2, $received);
+        $this->assertSame('next', $received[1]);
+
+        $conn->close();
+        fclose($clientSock);
+    }
+
+    public function testAContinuationWithNothingToContinueClosesTheConnection(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($serverSock, static fn () => null, static fn () => null);
+
+        $this->assertNull(Websocket::decode(self::clientFrame(Websocket::OPCODE_CONTINUATION, 'stray'), $conn));
+        $this->assertTrue($conn->isClosed());
+
+        fclose($clientSock);
+    }
+
+    /** A frame as a browser sends it: masked, with the length in whichever form fits. */
+    private static function clientFrame(int $opcode, string $payload, bool $final = true): string
+    {
+        $mask = random_bytes(4);
+        $length = strlen($payload);
+        $head = chr(($final ? 0x80 : 0) | $opcode);
+        $head .= match (true) {
+            $length <= 125 => chr(0x80 | $length),
+            $length <= 65535 => chr(0x80 | 126) . pack('n', $length),
+            default => chr(0x80 | 127) . pack('J', $length),
+        };
+        $masked = $payload ^ substr(str_repeat($mask, intdiv($length, 4) + 1), 0, $length);
+
+        return $head . $mask . $masked;
+    }
 }

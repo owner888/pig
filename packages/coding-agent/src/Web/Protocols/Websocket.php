@@ -105,6 +105,7 @@ final class Websocket implements ProtocolInterface
         $byte1 = ord($buffer[0]);
         $byte2 = ord($buffer[1]);
 
+        $final = ($byte1 & 0x80) !== 0;
         $opcode = $byte1 & 0x0F;
         $hasMask = ($byte2 & 0x80) !== 0;
         $payloadLen = $byte2 & 0x7F;
@@ -128,11 +129,8 @@ final class Websocket implements ProtocolInterface
         $payload = substr($buffer, $offset, $payloadLen);
 
         if ($hasMask && $mask !== '') {
-            $unmasked = '';
-            for ($i = 0; $i < $payloadLen; $i++) {
-                $unmasked .= $payload[$i] ^ $mask[$i % 4];
-            }
-            $payload = $unmasked;
+            // One string XOR rather than a byte at a time: a screenshot is megabytes.
+            $payload ^= substr(str_repeat($mask, intdiv($payloadLen, 4) + 1), 0, $payloadLen);
         }
 
         // Automatic ping/pong keep-alive handling
@@ -155,7 +153,35 @@ final class Websocket implements ProtocolInterface
             return null;
         }
 
-        return $payload;
+        // A browser sends a large message as several frames: the first with its opcode and FIN
+        // unset, then continuations, the last with FIN set. Control frames may come between them
+        // (handled above). Each fragment on its own is not a message — handing them over one by one
+        // gave the page's 6 MB screenshot to the server as three pieces of broken JSON.
+        if ($opcode === self::OPCODE_CONTINUATION) {
+            if ($connection->websocketDataBuffer === null) {
+                $connection->close();
+
+                return null;
+            }
+
+            $connection->websocketDataBuffer .= $payload;
+        } elseif ($connection->websocketDataBuffer !== null) {
+            // A new data frame before the last message finished: RFC 6455 §5.4 says fail.
+            $connection->close();
+
+            return null;
+        } else {
+            $connection->websocketDataBuffer = $payload;
+        }
+
+        if (!$final) {
+            return null;
+        }
+
+        $message = $connection->websocketDataBuffer;
+        $connection->websocketDataBuffer = null;
+
+        return $message;
     }
 
     /**

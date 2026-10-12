@@ -353,6 +353,18 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       });
     }
 
+    // Wide enough for the conversations beside the chat — a MacBook, an iPad held sideways — the
+    // sidebar starts open; a phone or an iPad upright keeps it closed, where it would cover or
+    // squeeze the chat. Crossing the width (turning the iPad, resizing the window) opens or closes
+    // it once; a toggle in between is left alone until the next crossing.
+    const wideScreen = window.matchMedia("(min-width: 1024px)");
+    const sidebarFollowsWidth = () => {
+      sidebar.classList.toggle("collapsed", !wideScreen.matches);
+      toggleSidebar.innerText = wideScreen.matches ? "‹" : "›";
+      refreshSidebar();
+    };
+    wideScreen.addEventListener("change", sidebarFollowsWidth);
+
     // ---- custom dropdown over native <select> ------------------------------------------------
     //
     // A native <select> opens its list wherever the OS decides: macOS anchors it on the *selected*
@@ -2592,6 +2604,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // cold start.
     async function boot() {
       applyI18n();
+      sidebarFollowsWidth();
       loadExtensionLocales();
       loadModels();
       network.connect();

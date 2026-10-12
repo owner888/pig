@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.29] - 2026-10-12
+
+### Added
+
+- The web UI's sidebar starts open on a screen at least 1024 px wide — a MacBook, an iPad held sideways — and closed on a phone or an iPad upright. Turning the iPad or resizing the window across that width opens or closes it; a toggle in between stays as you left it.
+
+### Fixed
+
+- A screenshot (or any message over about 128 KB) sent from the web UI never reached the agent, and the page said `prompt: no answer in 30s` — or the connection dropped. The browser sends a large message as several WebSocket frames, and the server handed each frame on as a whole message, so the agent was given broken pieces. The server now puts the frames back together before reading the message; a 6 MB screenshot reaches the agent in about two seconds.
+
 ## [0.6.28] - 2026-10-12
 
 ### Added

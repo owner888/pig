@@ -23,6 +23,12 @@ class TcpConnection
     protected bool $isClosed = false;
     protected bool $closeWhenDrained = false;
 
+    /**
+     * A WebSocket message whose frames have not all arrived, or null between messages —
+     * Workerman's `websocketDataBuffer`. `Websocket::decode()` keeps it.
+     */
+    public ?string $websocketDataBuffer = null;
+
     /** @var class-string<ProtocolInterface> */
     protected string $protocol = Http::class;
 
