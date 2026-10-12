@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.30] - 2026-10-12
+
+### Fixed
+
+- The WebSocket protocol test for large multi-frame messages deadlocked on systems with small default socket buffers (8 KB on macOS). Writing 70+ KB into a blocking Unix domain socket filled the send buffer and hung waiting for the server to read on the same thread; the test now streams chunks non-blocking and pumps the server in the same loop, preserving full test coverage for 64-bit frame headers (> 65,535 bytes) without hanging.
+
 ## [0.6.29] - 2026-10-12
 
 ### Added

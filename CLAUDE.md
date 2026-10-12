@@ -13552,6 +13552,13 @@ nothing to continue, or a new data frame mid-message, closes the connection (RFC
 Unmasking is one string XOR, not a byte loop. A large-message test drives `onReadable()` with
 masked client frames as a browser sends them, not only `decode()` on one frame.
 
+**Keep the test's first frame over 65,535 bytes.** It was once shrunk to 2 KB frames during a
+release; every frame then fit the 16-bit length form, and breaking the 64-bit branch — the one
+Chrome's 130,500-byte frame takes — left the test green. Smaller is not "the same test, faster".
+Stream the frames non-blocking and pump `onReadable()` in the same loop: Unix domain sockets on
+macOS default to an 8 KB send buffer, so a single blocking `fwrite()` of 70+ KB deadlocks waiting
+for the server on the same thread to read.
+
 Regression tests: `WebsocketProtocolTest::testAMessageSplitAcrossFramesArrivesWholeAndOnce`,
 `testAContinuationWithNothingToContinueClosesTheConnection`.
 

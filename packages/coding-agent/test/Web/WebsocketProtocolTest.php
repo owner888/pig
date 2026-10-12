@@ -172,16 +172,34 @@ final class WebsocketProtocolTest extends TestCase
         $received = [];
         $conn = new TcpConnection($serverSock, static function ($c, $data) use (&$received): void { $received[] = $data; }, static fn () => null, Websocket::class);
 
-        $message = json_encode(['type' => 'prompt', 'images' => [base64_encode(random_bytes(3000))]]);
-        $first = substr($message, 0, 2000);
-        $middle = substr($message, 2000, 500);
-        $last = substr($message, 2500);
+        // Do not shrink these sizes — they are what this test is for. The first frame must be over
+        // 65,535 bytes so it is read through the 64-bit length form in `Websocket::input()` and
+        // `decode()`, the form Chrome's real first frame (130,500 bytes) used. Shrunk to a few KB,
+        // every frame fits the 16-bit form, and breaking the 64-bit branch leaves this test green
+        // (measured once already). The ping uses the 7-bit form and the two continuations the
+        // 16-bit one, so one message is read through all three. 70 KB of random bytes costs nothing.
+        $message = json_encode(['type' => 'prompt', 'images' => [base64_encode(random_bytes(70000))]]);
+        $first = substr($message, 0, 70000);
+        $middle = substr($message, 70000, 500);
+        $last = substr($message, 70500);
 
         $bytes = self::clientFrame(Websocket::OPCODE_TEXT, $first, final: false)
             . self::clientFrame(Websocket::OPCODE_PING, 'x')
             . self::clientFrame(Websocket::OPCODE_CONTINUATION, $middle, final: false)
             . self::clientFrame(Websocket::OPCODE_CONTINUATION, $last);
-        fwrite($clientSock, $bytes);
+
+        // Stream non-blocking chunks and read concurrently: Unix domain sockets on macOS have an
+        // 8 KB send buffer, so a single blocking `fwrite()` of 70+ KB deadlocks waiting for the peer.
+        stream_set_blocking($clientSock, false);
+        $offset = 0;
+        $total = strlen($bytes);
+        while ($offset < $total) {
+            $written = fwrite($clientSock, substr($bytes, $offset));
+            if ($written !== false && $written > 0) {
+                $offset += $written;
+            }
+            $conn->onReadable();
+        }
 
         while ($received === [] && !$conn->isClosed()) {
             $conn->onReadable();
