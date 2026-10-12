@@ -1648,7 +1648,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       openTab(found || new Tab(cwd, sessionFile));
     }
 
+    // The strip scrolls sideways when the tabs do not fit (a swipe, a trackpad, or the wheel — see
+    // below). Redrawing it empties it, which puts it back at the start, so the scroll is carried
+    // over; and when the active tab changes, it is brought into view — only then, because the strip
+    // is redrawn on every turn's start and end, and someone scrolled left to close an old tab
+    // should not be thrown back to the live one.
+    let revealedTab = null;
     function renderTabs() {
+      const scrolled = sessionTabs.scrollLeft;
       sessionTabs.innerHTML = "";
       for (const t of tabs) {
         const el = document.createElement("div");
@@ -1674,7 +1681,32 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       plus.title = t("new_session");
       plus.addEventListener("click", () => startNewSession(active?.cwd));
       sessionTabs.appendChild(plus);
+
+      sessionTabs.scrollLeft = scrolled;
+      if (active !== revealedTab) {
+        revealedTab = active;
+        revealActiveTab(plus.offsetWidth);
+      }
     }
+
+    /** Scroll the strip, and only the strip, until the active tab is clear of its edges and the `+`. */
+    function revealActiveTab(covered) {
+      const el = sessionTabs.querySelector(".session-tab.active");
+      if (!el) return;
+      const left = el.offsetLeft;
+      const right = left + el.offsetWidth;
+      const visible = sessionTabs.clientWidth - covered;
+      if (left < sessionTabs.scrollLeft) sessionTabs.scrollLeft = left;
+      else if (right > sessionTabs.scrollLeft + visible) sessionTabs.scrollLeft = right - visible;
+    }
+
+    // A mouse wheel turns vertically; over the strip that means sideways, or a desktop without a
+    // trackpad has no way to reach the tabs off the edge.
+    sessionTabs.addEventListener("wheel", (e) => {
+      if (sessionTabs.scrollWidth <= sessionTabs.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      sessionTabs.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
 
     /**
      * Closing a tab detaches this browser from its child; the server reaps the child after

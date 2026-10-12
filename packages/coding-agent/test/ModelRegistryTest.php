@@ -21,6 +21,7 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\ModelRegistry;
 use Pig\CodingAgent\Session\UsageEntry;
 use Pig\CodingAgent\UsageCostBreakdown;
+use Pig\Test\WithoutProviderKeys;
 
 /**
  * `ctx.modelRegistry` — upstream's `ModelRegistry` facade over pig's static registry — and the
@@ -28,9 +29,12 @@ use Pig\CodingAgent\UsageCostBreakdown;
  */
 final class ModelRegistryTest extends TestCase
 {
+    use WithoutProviderKeys;
+
     #[\Override]
     protected function setUp(): void
     {
+        $this->forgetProviderKeys();
         Models::forgetRegistered();
         Models::register([new Model('m', 'M', Api::OpenAiCompletions, 'zzreg', 'http://127.0.0.1:1', 1_000, 100)]);
         putenv('ZZREG_KEY');
@@ -40,6 +44,7 @@ final class ModelRegistryTest extends TestCase
     protected function tearDown(): void
     {
         Models::forgetRegistered();
+        $this->restoreProviderKeys();
     }
 
     public function testAnExtensionContextCarriesAModelRegistry(): void

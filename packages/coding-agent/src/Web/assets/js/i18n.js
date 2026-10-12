@@ -291,7 +291,10 @@ import { applyTheme, currentTheme } from "./theme.js";
         "theme_labra": "赛博朋克墨绿 (Labra)",
         "theme_labra_desc": "来自 omarchy-labra 的极简墨绿配洋红粉高光",
         "theme_light": "清新浅白 (Light)",
-        "theme_light_desc": "优雅明亮主题，适合日间采光与高清晰度阅读"
+        "theme_light_desc": "优雅明亮主题，适合日间采光与高清晰度阅读",
+        "theme_dark_short": "暗黑",
+        "theme_labra_short": "墨绿",
+        "theme_light_short": "浅色"
       },
       "en": {
         "workspaces": "Workspaces",
@@ -582,7 +585,10 @@ import { applyTheme, currentTheme } from "./theme.js";
         "theme_labra": "Cyberpunk Olive (Labra)",
         "theme_labra_desc": "Minimalist deep green-black background with vibrant hot pink highlights",
         "theme_light": "Fresh Light (Light)",
-        "theme_light_desc": "Clean and bright theme for daylight and high-contrast reading"
+        "theme_light_desc": "Clean and bright theme for daylight and high-contrast reading",
+        "theme_dark_short": "Dark",
+        "theme_labra_short": "Labra",
+        "theme_light_short": "Light"
       }
     };
 

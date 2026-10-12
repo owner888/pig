@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Web\WebLogin;
+use Pig\Tui\Process;
 use Pig\Tui\Style;
 
 /**
@@ -46,6 +47,23 @@ use Pig\Tui\Style;
  * Standard streams in the daemon go to a log file beside the pid file, not to `/dev/null`:
  * a server that dies at 3am with its last words thrown away is the one failure this class
  * exists to make debuggable. The log is truncated on each `start`, so it is the current run's.
+ *
+ * **`install` / `uninstall` make it a macOS service**, a launchd LaunchAgent at
+ * `~/Library/LaunchAgents/dev.pigagent.web.plist`, so the server is running again when the person
+ * logs in after a restart. Three things decided:
+ *
+ * - **launchd runs `pig --mode web` itself, not `pig web start -d`.** launchd is the
+ *   supervisor: it wants a process that stays in the foreground, and `KeepAlive` restarts it
+ *   when it dies. A double-forked daemon would look to launchd like a job that exited at once.
+ * - **The install is a snapshot of this shell.** launchd starts a job with
+ *   `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, no proxy and `/` as the directory, so the plist
+ *   carries the absolute `php` and `pig`, the PATH (where `fd`, `rg` and `git` are), the proxy
+ *   variables pig reads, the agent directory this command used, and the directory it was typed
+ *   in. Keys exported in the shell are deliberately **not** copied: a plist is a world-readable
+ *   file, and `auth.json` is where a key belongs.
+ * - **While the service is installed, `start`, `stop`, `status` and `restart` ask launchctl.**
+ *   A launchd job has no pid file, and a SIGTERM to it is a crash `KeepAlive` undoes ten
+ *   seconds later; `stop` is `bootout`, which holds until the next login or `start`.
  */
 final class WebDaemon
 {
@@ -55,10 +73,23 @@ final class WebDaemon
     /** How long `stop` waits for SIGTERM before reaching for SIGKILL. */
     private const float STOP_TIMEOUT = 3.0;
 
+    /** The launchd job's label, and the plist's file name. */
+    public const string LAUNCHD_LABEL = 'dev.pigagent.web';
+
+    /** What the service carries over from the shell `install` ran in, when set. */
+    private const array CARRIED_VARIABLES = [
+        'PATH',
+        'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy',
+    ];
+
     /**
      * @param list<string> $argv the arguments after `pig web`
      * @param string $binary the `pig` to re-exec for `-d`; `bin/pig` passes `$argv[0]`
      * @param (callable(list<string>): never)|null $exec stand-in for `pcntl_exec()` in tests
+     * @param (callable(list<string>): array{0: int, 1: string})|null $launchctl stand-in for
+     *        running `launchctl <args>`: the exit code and what it printed
+     * @param string|null $launchAgents where the plist goes; `~/Library/LaunchAgents` when null
+     * @param string|null $platform `PHP_OS_FAMILY` when null; a test says `Darwin`
      */
     private readonly string $binary;
 
@@ -66,6 +97,9 @@ final class WebDaemon
         string $binary,
         private readonly ?string $home = null,
         private readonly mixed $exec = null,
+        private readonly mixed $launchctl = null,
+        private readonly ?string $launchAgents = null,
+        private readonly ?string $platform = null,
     ) {
         // Absolute before anything else happens: the daemon `chdir('/')`s before it execs, and
         // `$argv[0]` is `bin/pig` when pig was started from its checkout — which from `/` names
@@ -86,14 +120,38 @@ final class WebDaemon
             return 0;
         }
 
+        if ($this->isInstalled() && in_array($command, ['start', 'stop', 'status', 'restart'], true)) {
+            return match ($command) {
+                'start' => $this->serviceStart($rest),
+                'stop' => $this->serviceStop(),
+                'status' => $this->serviceStatus(),
+                'restart' => $this->serviceRestart($rest),
+            };
+        }
+
         return match ($command) {
             'start' => $this->start($rest),
             'stop' => $this->stop(),
             'status' => $this->status(),
             'restart' => $this->restart($rest),
             'password' => $this->password(),
+            'install' => $this->install($rest),
+            'uninstall' => $this->uninstall(),
             default => $this->unknown($command),
         };
+    }
+
+    public function plistFile(): string
+    {
+        $directory = $this->launchAgents ?? Config::userHome() . '/Library/LaunchAgents';
+
+        return $directory . '/' . self::LAUNCHD_LABEL . '.plist';
+    }
+
+    /** Installed means the plist is there, on the one platform that reads it. */
+    public function isInstalled(): bool
+    {
+        return $this->isMacos() && is_file($this->plistFile());
     }
 
     public function pidFile(): string
@@ -149,11 +207,7 @@ final class WebDaemon
             return 1;
         }
 
-        // `--cwd` pinned to where `pig web start` was typed, because the daemon `chdir('/')`s
-        // before it execs (a daemon must not hold a directory somebody wants to unmount) and
-        // the session would otherwise belong to `/`. Found live: `cwd: /` in `/api/state`.
-        $cwd = getcwd() ?: '.';
-        $argv = [$this->binary, '--mode', 'web', '--cwd', $cwd, '--web-host', $host, '--web-port', (string) $port];
+        $argv = $this->serverArgv($host, $port);
 
         if (!$daemon) {
             // Foreground: become `pig --mode web`. No pid file, because there is a terminal
@@ -324,6 +378,331 @@ final class WebDaemon
         }
 
         return $this->start($args);
+    }
+
+    // ---- the macOS service ------------------------------------------------------------------
+
+    /** @param list<string> $args */
+    private function install(array $args): int
+    {
+        if (!$this->isMacos()) {
+            fwrite(STDERR, Style::red("Error: `pig web install` makes a macOS launchd service; this is " . ($this->platform ?? PHP_OS_FAMILY) . ". Run `pig web start -d` instead.\n"));
+
+            return 1;
+        }
+
+        [$host, $port, $problem] = self::hostAndPort($args);
+        if ($problem !== null) {
+            fwrite(STDERR, Style::red("Error: {$problem}\n"));
+
+            return 1;
+        }
+
+        if (($pid = $this->runningPid()) !== null) {
+            fwrite(STDERR, Style::yellow("A web UI daemon is already running (pid {$pid}) and would hold the port. `pig web stop` first.\n"));
+
+            return 1;
+        }
+
+        $home = $this->home ?? Config::home();
+        foreach ([$home, dirname($this->plistFile())] as $directory) {
+            if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+                fwrite(STDERR, Style::red("Error: cannot create {$directory}\n"));
+
+                return 1;
+            }
+        }
+
+        // A second install replaces the first: the old job is taken down before its plist is
+        // rewritten, or launchd would keep running what the old file said.
+        if ($this->serviceLoaded()) {
+            $this->launchctl(['bootout', $this->serviceTarget()]);
+        }
+
+        // `--no-browser`, or every login and every restart `KeepAlive` makes opens a browser tab.
+        $cwd = getcwd() ?: '.';
+        if (file_put_contents($this->plistFile(), $this->plist([...$this->serverArgv($host, $port), '--no-browser'], $cwd)) === false) {
+            fwrite(STDERR, Style::red("Error: cannot write {$this->plistFile()}\n"));
+
+            return 1;
+        }
+
+        [$code, $said] = $this->launchctl(['bootstrap', $this->domain(), $this->plistFile()]);
+        if ($code !== 0) {
+            // A plist launchd refused would be loaded again at the next login and refused again
+            // there, with nobody watching; taking it back keeps "installed" meaning "running".
+            unlink($this->plistFile());
+            fwrite(STDERR, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
+
+            return 1;
+        }
+
+        echo Style::green('✔ Web UI installed as a login service') . Style::dim(' at ') . Style::bold("http://{$host}:{$port}") . "\n";
+        echo Style::dim("  plist: {$this->plistFile()}\n  log: {$this->logFile()}\n  directory: {$cwd}\n");
+        echo Style::dim("  It starts when you log in and is restarted if it dies. `pig web uninstall` removes it.\n");
+        self::sayCode(WebLogin::at($home)->setupCode());
+
+        return 0;
+    }
+
+    private function uninstall(): int
+    {
+        if (!$this->isInstalled()) {
+            echo Style::dim("The web UI is not installed as a service.\n");
+
+            return 0;
+        }
+
+        if ($this->serviceLoaded()) {
+            [$code, $said] = $this->launchctl(['bootout', $this->serviceTarget()]);
+            if ($code !== 0) {
+                fwrite(STDERR, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
+
+                return 1;
+            }
+        }
+
+        unlink($this->plistFile());
+        echo Style::green('✔ Web UI service removed') . Style::dim(" ({$this->plistFile()})") . "\n";
+
+        return 0;
+    }
+
+    /** @param list<string> $args */
+    private function serviceStart(array $args): int
+    {
+        if (($refusal = self::optionsTheServiceIgnores($args)) !== null) {
+            fwrite(STDERR, Style::red("Error: {$refusal}\n"));
+
+            return 1;
+        }
+
+        if (!$this->serviceLoaded()) {
+            return $this->bootstrap('started');
+        }
+
+        if (($pid = $this->servicePid()) !== null) {
+            fwrite(STDERR, Style::yellow("The web UI service is already running (pid {$pid}). `pig web restart` restarts it.\n"));
+
+            return 1;
+        }
+
+        return $this->kickstart(false, 'started');
+    }
+
+    private function serviceStop(): int
+    {
+        if (!$this->serviceLoaded()) {
+            echo Style::dim("The web UI is not running.\n");
+
+            return 0;
+        }
+
+        [$code, $said] = $this->launchctl(['bootout', $this->serviceTarget()]);
+        if ($code !== 0) {
+            fwrite(STDERR, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
+
+            return 1;
+        }
+
+        echo Style::green('✔ Web UI service stopped') . "\n";
+        echo Style::dim("  It starts again when you log in, or with `pig web start`; `pig web uninstall` removes it.\n");
+
+        return 0;
+    }
+
+    private function serviceStatus(): int
+    {
+        if (!$this->serviceLoaded()) {
+            echo "pig web: " . Style::dim('installed as a service, not running') . "\n";
+
+            return 3;
+        }
+
+        $pid = $this->servicePid();
+        if ($pid === null) {
+            echo "pig web: " . Style::yellow('service loaded, not running') . Style::dim(" (launchd will retry; log {$this->logFile()})") . "\n";
+
+            return 3;
+        }
+
+        echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}, launchd service, log {$this->logFile()})") . "\n";
+        self::sayCode(WebLogin::at($this->home ?? Config::home())->setupCode());
+
+        return 0;
+    }
+
+    /** @param list<string> $args */
+    private function serviceRestart(array $args): int
+    {
+        if (($refusal = self::optionsTheServiceIgnores($args)) !== null) {
+            fwrite(STDERR, Style::red("Error: {$refusal}\n"));
+
+            return 1;
+        }
+
+        return $this->serviceLoaded() ? $this->kickstart(true, 'restarted') : $this->bootstrap('started');
+    }
+
+    private function bootstrap(string $verb): int
+    {
+        [$code, $said] = $this->launchctl(['bootstrap', $this->domain(), $this->plistFile()]);
+        if ($code !== 0) {
+            fwrite(STDERR, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
+
+            return 1;
+        }
+
+        echo Style::green("✔ Web UI service {$verb}") . Style::dim(" (log {$this->logFile()})") . "\n";
+
+        return 0;
+    }
+
+    private function kickstart(bool $kill, string $verb): int
+    {
+        [$code, $said] = $this->launchctl($kill ? ['kickstart', '-k', $this->serviceTarget()] : ['kickstart', $this->serviceTarget()]);
+        if ($code !== 0) {
+            fwrite(STDERR, Style::red("Error: launchctl kickstart failed ({$code}): " . trim($said) . "\n"));
+
+            return 1;
+        }
+
+        echo Style::green("✔ Web UI service {$verb}") . Style::dim(" (log {$this->logFile()})") . "\n";
+
+        return 0;
+    }
+
+    /**
+     * The host and port are the plist's, so a flag that would change them for one start is
+     * refused by name rather than ignored: the server would come up where it always does.
+     *
+     * @param list<string> $args
+     */
+    private static function optionsTheServiceIgnores(array $args): ?string
+    {
+        foreach ($args as $arg) {
+            if (in_array($arg, ['--port', '-p', '--host'], true) || str_starts_with($arg, '--port=') || str_starts_with($arg, '--host=')) {
+                return 'the service listens where `pig web install` put it; `pig web install --port N --host H` changes that.';
+            }
+        }
+
+        return null;
+    }
+
+    private function serviceLoaded(): bool
+    {
+        return $this->launchctl(['print', $this->serviceTarget()])[0] === 0;
+    }
+
+    /** The job's pid from `launchctl print`, or null when launchd has it loaded and not running. */
+    private function servicePid(): ?int
+    {
+        [$code, $said] = $this->launchctl(['print', $this->serviceTarget()]);
+
+        return $code === 0 && preg_match('/^\s*pid = (\d+)\s*$/m', $said, $m) === 1 ? (int) $m[1] : null;
+    }
+
+    private function domain(): string
+    {
+        $uid = function_exists('posix_getuid') ? posix_getuid() : (int) trim(Process::run(['id', '-u'])[1]);
+
+        return "gui/{$uid}";
+    }
+
+    private function serviceTarget(): string
+    {
+        return $this->domain() . '/' . self::LAUNCHD_LABEL;
+    }
+
+    /**
+     * @param list<string> $args
+     * @return array{0: int, 1: string} the exit code, and standard output and error together
+     */
+    private function launchctl(array $args): array
+    {
+        if ($this->launchctl !== null) {
+            return ($this->launchctl)($args);
+        }
+
+        [$code, $out, $err] = Process::run(['launchctl', ...$args], 15.0);
+
+        return [$code, $out . $err];
+    }
+
+    private function isMacos(): bool
+    {
+        return ($this->platform ?? PHP_OS_FAMILY) === 'Darwin';
+    }
+
+    /**
+     * The LaunchAgent, written out by hand: a plist is XML and the escaping is the whole of it.
+     *
+     * @param list<string> $argv the server's argv, `pig` first; `php` goes in front of it
+     */
+    private function plist(array $argv, string $cwd): string
+    {
+        $string = static fn (string $value): string => '<string>' . htmlspecialchars($value, ENT_XML1 | ENT_QUOTES, 'UTF-8') . '</string>';
+
+        $arguments = implode("\n", array_map(static fn (string $a): string => "        {$string($a)}", [PHP_BINARY, ...$argv]));
+
+        // The home is written whether or not it was set, so the service writes its log and
+        // reads its settings where this command did.
+        $variables = ["        <key>PIG_CODING_AGENT_DIR</key>\n        {$string($this->home ?? Config::home())}"];
+        foreach (self::CARRIED_VARIABLES as $name) {
+            $value = getenv($name);
+            if (is_string($value) && $value !== '') {
+                $variables[] = "        <key>{$name}</key>\n        {$string($value)}";
+            }
+        }
+        $environment = implode("\n", $variables);
+        $log = $string($this->logFile());
+
+        return <<<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            {$string(self::LAUNCHD_LABEL)}
+            <key>ProgramArguments</key>
+            <array>
+        {$arguments}
+            </array>
+            <key>EnvironmentVariables</key>
+            <dict>
+        {$environment}
+            </dict>
+            <key>WorkingDirectory</key>
+            {$string($cwd)}
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <true/>
+            <key>ProcessType</key>
+            <string>Interactive</string>
+            <key>StandardOutPath</key>
+            {$log}
+            <key>StandardErrorPath</key>
+            {$log}
+        </dict>
+        </plist>
+
+        PLIST;
+    }
+
+    /**
+     * `pig --mode web` for this directory, host and port — what a foreground start becomes,
+     * what the daemon execs, and what launchd runs.
+     *
+     * @return list<string>
+     */
+    private function serverArgv(string $host, int $port): array
+    {
+        // `--cwd` pinned to where the command was typed, because the daemon `chdir('/')`s
+        // before it execs (a daemon must not hold a directory somebody wants to unmount) and
+        // launchd starts a job in `/`; the session would otherwise belong to `/`. Found live:
+        // `cwd: /` in `/api/state`.
+        return [$this->binary, '--mode', 'web', '--cwd', getcwd() ?: '.', '--web-host', $host, '--web-port', (string) $port];
     }
 
     private function unknown(string $command): int
@@ -509,9 +888,15 @@ final class WebDaemon
           pig web status                              is it running? (exit 0 yes, 3 no)
           pig web restart [--port N] [--host H]       stop, then start -d
           pig web password                            set or change the web UI's password
+          pig web install [--port N] [--host H]       macOS: a login service (launchd) that starts
+                                                      at login and restarts if it dies
+          pig web uninstall                           remove the login service
 
         Defaults: --host 127.0.0.1 --port 8088. The daemon writes its pid and log under
-        \$PIG_CODING_AGENT_DIR (~/.pig/agent): web.pid and web.log.
+        \$PIG_CODING_AGENT_DIR (~/.pig/agent): web.pid and web.log. While the service is
+        installed, start/stop/status/restart go through launchctl; `install` again changes
+        its port or host. The service gets this shell's PATH and proxy, not its API keys:
+        sign in with /login or keep keys in auth.json.
 
         TXT);
     }

@@ -2879,6 +2879,119 @@ final class AgentSessionTest extends TestCase
         $this->assertSame(['still waiting to be sent'], $session->queued());
     }
 
+    // ---- carrying an interrupted run on ---------------------------------------------------------
+
+    public function testARunThatStoppedAfterTheQuestionIsCarriedOnFromIt(): void
+    {
+        $session = $this->session(['the answer']);
+        $session->agent->replaceMessages([new UserMessage('the question')]);
+        $told = [];
+
+        // Not an arrow function: one captures `$told` by value, and the closure inside would
+        // write to its copy.
+        $outcome = Async::run(static function () use ($session, &$told): string {
+            return $session->continueRun(static function (string $o) use (&$told): void {
+                $told[] = $o;
+            });
+        });
+        self::settle();
+
+        $this->assertSame('continued', $outcome);
+        $this->assertSame(['continued'], $told, 'the caller is told before the turn runs');
+        $this->assertCount(2, $session->messages());
+        $this->assertSame('the answer', self::textOf($session->messages()[1]));
+    }
+
+    public function testAFailedLastTurnIsTakenOffAndTheRunGoesAgainFromTheQuestion(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'here you go']),
+            store: $store,
+            settings: self::quickRetries(['enabled' => false]),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+        $this->assertSame(StopReason::Error, $session->messages()[1]->stopReason, 'the turn failed and nothing retried it');
+
+        $outcome = Async::run(static fn (): string => $session->continueRun());
+        self::settle();
+
+        $this->assertSame('continued', $outcome);
+        $this->assertCount(2, $session->messages());
+        $this->assertSame('here you go', self::textOf($session->messages()[1]));
+
+        $reopened = SessionManager::open($store->path)->messages();
+        $this->assertCount(2, $reopened, 'the failed turn is not shown to the model on a later resume either');
+        $this->assertSame('here you go', self::textOf($reopened[1]));
+    }
+
+    public function testAnAbortedLastTurnIsTakenOffToo(): void
+    {
+        $session = $this->session(['again']);
+        $session->agent->replaceMessages([
+            new UserMessage('the question'),
+            new AssistantMessage([new TextContent('half an ans')], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::Aborted),
+        ]);
+
+        $this->assertSame('continued', Async::run(static fn (): string => $session->continueRun()));
+        self::settle();
+
+        $this->assertCount(2, $session->messages());
+        $this->assertSame('again', self::textOf($session->messages()[1]));
+    }
+
+    public function testAConversationThatEndsOnAnAnswerHadAlreadyFinished(): void
+    {
+        $session = $this->session([]);
+        $session->agent->replaceMessages([
+            new UserMessage('the question'),
+            new AssistantMessage([new TextContent('done')], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::Stop),
+        ]);
+        $told = [];
+
+        $outcome = $session->continueRun(static function (string $o) use (&$told): void {
+            $told[] = $o;
+        });
+
+        $this->assertSame('finished', $outcome);
+        $this->assertSame(['finished'], $told);
+        $this->assertCount(2, $session->messages(), 'nothing is asked of the model');
+    }
+
+    public function testAConversationThatStoppedInsideAToolCallIsNotRunAgain(): void
+    {
+        $session = $this->session([]);
+        $session->agent->replaceMessages([
+            new UserMessage('delete the build'),
+            new AssistantMessage([new ToolCall('c1', 'bash', ['command' => 'rm -rf build'])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse),
+        ]);
+        $told = [];
+
+        $e = $this->assertThrows(RuntimeException::class, static function () use ($session, &$told): void {
+            $session->continueRun(static function (string $o) use (&$told): void {
+                $told[] = $o;
+            });
+        });
+
+        $this->assertStringContainsString('tool call', $e->getMessage());
+        $this->assertSame([], $told, 'a refusal is not reported as a start');
+        $this->assertCount(2, $session->messages());
+    }
+
+    public function testAnEmptyConversationHasNothingToCarryOn(): void
+    {
+        $session = $this->session([]);
+
+        $e = $this->assertThrows(RuntimeException::class, static fn () => $session->continueRun());
+
+        $this->assertStringContainsString('nothing in this session', $e->getMessage());
+    }
+
     /** @param array<string, callable> $handlers */
     private function hooks(array $handlers): HookRunner
     {

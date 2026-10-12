@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.28] - 2026-10-12
+
+### Added
+
+- `pig web install [--port N] [--host H]` and `pig web uninstall` (macOS): the web UI as a launchd login service, so it is running again after the computer restarts. `install` writes `~/Library/LaunchAgents/dev.pigagent.web.plist` — launchd runs `php pig --mode web --no-browser` in the folder `install` was typed in, with that shell's PATH and proxy variables and pig's agent directory, restarts it if it dies, and logs to `web.log` — and loads it. API keys exported in the shell are not copied into the plist; sign in with `/login` or keep them in `auth.json`. While the service is installed, `pig web start`, `stop`, `status` and `restart` (and `/web`) go through `launchctl`: `stop` unloads it until the next login or `start`, and a `--port` or `--host` for one start is refused, since `install` again is what changes them. On other systems `install` says so and `pig web start -d` is what there is.
+- A scheduled run the web daemon was in the middle of when it stopped is carried on when it starts again: its conversation is opened and continued from the last thing in it (`continue` over RPC, `AgentSession::continueRun()`). A last turn that failed or was aborted is dropped and asked again; a conversation that had already answered is a finished run; one that stopped inside a tool call is refused and marked failed rather than running a command twice. A run that never wrote a session file still ends as failed.
+
+### Fixed
+
+- The web UI's copy buttons (a tool card's 📋, a code block's Copy, the terminal drawer's folder badge) did nothing when the page was opened over plain http from another machine — a phone on the LAN, a Tailscale address. The browser has no `navigator.clipboard` outside https and localhost, so the click threw; they now copy through the page's selection there, and show ✗ when the browser refuses.
+- The web UI's theme button said the theme's id (`dark`) in either language. It now says a short name in the page's language — 暗黑 / 浅色 / 墨绿, Dark / Light / Labra — and changes with the language; a theme with no translation keeps its own name.
+- With many conversations open in the web UI, the tab strip squeezed every tab down to an ellipsis with its × hidden, so the earlier ones could not be closed. Tabs now keep their width and the strip scrolls sideways — swipe, trackpad or mouse wheel — with `+` pinned at the right; switching tabs scrolls the active one into view, and on a touch screen every tab shows its ×.
+
 ## [0.6.27] - 2026-10-11
 
 ### Fixed

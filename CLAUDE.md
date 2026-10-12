@@ -4230,7 +4230,8 @@ files redundant and break the first rule of this document. The shell is I/O-boun
 one process is enough; the work happens in N children, which is multi-core for free. If a concrete
 bottleneck ever wants Workerman's multi-worker model, that is the time to argue it with a number.
 
-**Landed 2026-10-04 in four steps**: **① `pig web start|stop|status|restart [-d]`** — the
+**Landed 2026-10-04 in four steps** (with `pig web install|uninstall` since added for macOS — see
+"`pig web install` is a launchd LaunchAgent" below): **① `pig web start|stop|status|restart [-d]`** — the
 subcommand and the daemon (`WebDaemon.php`); **② the session pool** (`SessionPool.php`) and the
 `HttpServer` rewrite to route connections to isolated `pig --mode rpc` child processes with 60s
 idle reaping; **③ the multi-session tab bar in `index.html`** multiplexed over **a single physical WebSocket**
@@ -4384,9 +4385,18 @@ file, so it is the same on every device; a question waiting for an answer keeps 
   cannot fire that home's tasks.
 - A question asked with nobody bound is kept in `ManagedSession::$pendingUi` and replayed on bind;
   an `extension_ui_response` relayed by the page removes it, `agent_settled` clears the rest.
+- **A run a stopped server left going is carried on from its conversation.** `start()` opens the
+  run's session file (`SessionPool::open()`) and sends pig's own `continue` command
+  (`AgentSession::continueRun()`): a last turn that failed or was aborted is dropped (with a
+  `context_edit`, as a retry drops it) and the run goes again; a conversation ending on an answer is
+  `finished` and the run is DONE; one ending on a tool call is **refused**, because the command may
+  have half run and running it again is not the scheduler's call. A run with no session file, or
+  whose task is gone, is an ERROR as before. pi-durable's whole runtime was weighed for this and
+  declined — a second store beside pi's session file for one feature.
 
-Regression tests: `CronExpressionTest`, `ScheduleManagerTest` (both under `test/Web/`) and the two
-scheduled-task cases in `WebModeTest`.
+Regression tests: `CronExpressionTest`, `ScheduleManagerTest` (both under `test/Web/`), the two
+scheduled-task cases in `WebModeTest`, the six `continueRun` cases in `AgentSessionTest` and the
+three `continue` cases in `RpcModeTest`.
 
 #### Setting one up by asking: the `schedule` tool
 
@@ -13463,3 +13473,64 @@ if (is_string($file) && $file !== '') { $this->pool->remember($managed, $file); 
 ```
 
 Regression test: `WebModeTest::testAQuestionAScheduledRunAskedIsAskedAgainOfWhoeverOpensIt`.
+
+### `pig web install` is a launchd LaunchAgent, and the service owns start/stop/status/restart
+
+macOS only; the developer asked for the web UI to come back after a restart. `WebDaemon::install()`
+writes `~/Library/LaunchAgents/dev.pigagent.web.plist` and runs `launchctl bootstrap gui/<uid>`;
+`uninstall` is `bootout` and deleting the plist. Other systems are refused by name.
+
+- **launchd runs `php pig --mode web … --no-browser` (`serverArgv()`), never `pig web start -d`.**
+  launchd is the supervisor and `KeepAlive` restarts a job that exits; a double-forked daemon looks
+  to it like a job that exited at once. `--no-browser` because `--mode web` opens a tab by default,
+  which under launchd is a tab at every login and every restart.
+- **The plist is a snapshot of the installing shell**: absolute `PHP_BINARY` and `pig`, `PATH`,
+  the proxy variables pig reads, `PIG_CODING_AGENT_DIR` (always written, so the log, settings and
+  web password are this command's), and `WorkingDirectory` = the cwd. launchd's own job has
+  `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, no proxy and `/`. **Provider keys are never copied**: a
+  plist is world-readable; keys belong in `auth.json`.
+- **While installed (`isInstalled()`: macOS and the plist exists), `start|stop|status|restart`
+  ask launchctl**, because a launchd job has no pid file and a SIGTERM is a crash `KeepAlive`
+  undoes. `stop` = `bootout` (holds until next login or `start`), `start` = `bootstrap` or
+  `kickstart`, `restart` = `kickstart -k`, `status` reads `pid = N` from `launchctl print`. A
+  `--port`/`--host` for one start is refused; `install` again changes them (it boots the old job
+  out before rewriting the plist). A plist launchd refused is deleted again.
+- **Tests never reach the machine's launchd or LaunchAgents**: every `WebDaemon` in
+  `WebDaemonTest` gets its own LaunchAgents directory and a launchctl stand-in (`Launchd`), the
+  plain helper's throwing if called — otherwise the suite's `stop` test would boot out a service
+  installed on the Mac running it.
+
+Regression tests: the service cases in `WebDaemonTest`.
+
+### A copy button over plain http threw and did nothing
+
+**Symptom**: the 📋 on a tool card (and a code block's Copy, the terminal drawer's folder badge) in
+`pig web` did nothing when the page was opened from another machine — `http://<lan-ip>:8088`, a
+Tailscale address.
+
+**Cause**: `navigator.clipboard` exists only in a secure context (https, localhost). Over plain
+http it is `undefined`, so `navigator.clipboard.writeText()` threw a `TypeError` inside a click
+handler and nothing was shown. The session-file badge already had a fallback; these did not.
+
+**Rule**: copy only through `copyText()` in `assets/js/utils.js` — the clipboard API in a secure
+context, the selection and `execCommand('copy')` elsewhere, a rejection (shown as ✗) when the
+browser refuses both. Read a card's text with `textContent`: a collapsed card's body is not
+rendered.
+
+Regression test: `WebModeTest::testTheCopyButtonsCopyWhereThereIsNoClipboardApi`.
+
+### Many tabs in the web UI squeezed to nothing instead of scrolling
+
+**Symptom**: with a dozen conversations open, every tab in the strip was an ellipsis with its ×
+hidden, and the earlier ones could not be closed.
+
+**Cause**: `.session-tabs` had `overflow-x: auto`, but the tabs were flex items free to shrink
+(`min-width: 0`), so the strip never overflowed — the tabs shrank instead.
+
+**Rule**: tabs are `flex: 0 0 auto` and the strip scrolls; `+` is `position: sticky` at the right.
+`renderTabs()` empties the strip, so it carries `scrollLeft` over and reveals the active tab only
+when the active tab changed — the strip is redrawn at every turn's start and end, and someone who
+scrolled left to close an old tab must not be thrown back. A vertical wheel over the strip scrolls
+it sideways. On a touch screen (`hover: none`) every tab shows its ×.
+
+Verified in headless Chromium (see the CHANGELOG entry); no PHPUnit case — layout needs a browser.

@@ -634,6 +634,40 @@ final class RpcModeTest extends TestCase
         $this->assertFalse(end($lines)['aborted']);
     }
 
+    public function testContinueAnswersContinuedAndTheTurnFollows(): void
+    {
+        $this->start(answers: ['carried on']);
+        $this->session->agent->replaceMessages([new \Pig\Ai\UserMessage('the question')]);
+        $this->send(['id' => 'c1', 'type' => 'continue']);
+        $lines = $this->lines();
+
+        $this->assertSame('response', $lines[0]['type']);
+        $this->assertSame(['outcome' => 'continued'], $lines[0]['data']);
+        $this->assertSame('agent_settled', end($lines)['type']);
+        $messages = $this->session->messages();
+        $this->assertSame('carried on', end($messages)->content[0]->text);
+    }
+
+    public function testContinueOnAnAnsweredConversationSaysFinishedAndRunsNothing(): void
+    {
+        $this->start();
+        $this->session->agent->replaceMessages([new \Pig\Ai\UserMessage('the question'), self::message('done')]);
+        $response = $this->response(['id' => 'c1', 'type' => 'continue']);
+
+        $this->assertTrue($response['success']);
+        $this->assertSame(['outcome' => 'finished'], $response['data']);
+        $this->assertSame([], $this->of('agent_start'));
+    }
+
+    public function testContinueOnAnEmptyConversationIsRefusedWithItsReason(): void
+    {
+        $this->start();
+        $response = $this->response(['id' => 'c1', 'type' => 'continue']);
+
+        $this->assertFalse($response['success']);
+        $this->assertStringContainsString('nothing in this session', $response['error']);
+    }
+
     public function testAPromptWhileBusyIsRefusedOnceAndAStreamingBehaviorQueuesIt(): void
     {
         $this->gate = new \Pig\Async\Deferred();

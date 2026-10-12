@@ -193,6 +193,7 @@ final class ContextFiles
     private static function inDirectory(string $directory): array
     {
         $warnings = [];
+        $seen = [];
 
         foreach (self::NAMES as $name) {
             $path = rtrim($directory, '/') . '/' . $name;
@@ -200,6 +201,13 @@ final class ContextFiles
             if (!is_file($path)) {
                 continue;
             }
+
+            $stat = stat($path);
+            $identity = $stat !== false ? ($stat['dev'] . ':' . $stat['ino']) : $path;
+            if (isset($seen[$identity])) {
+                continue;
+            }
+            $seen[$identity] = true;
 
             $content = is_readable($path) ? file_get_contents($path) : false;
 

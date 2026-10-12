@@ -322,6 +322,25 @@ final class RpcMode
             return;
         }
 
+        // pig's own: carry on a run a process before this one did not finish. Answered as soon as
+        // it is known whether there is a run, as `prompt` is, so the host does not wait it out.
+        if ($type === 'continue') {
+            Async::spawn(function () use ($id): void {
+                $answered = false;
+
+                try {
+                    $this->session->continueRun(function (string $outcome) use (&$answered, $id): void {
+                        $answered = true;
+                        $this->respond($id, 'continue', ['outcome' => $outcome]);
+                    });
+                } catch (Throwable $error) {
+                    $answered ? fwrite($this->err, "continue {$id}: {$error->getMessage()}\n") : $this->refuse($id, 'continue', $error->getMessage());
+                }
+            });
+
+            return;
+        }
+
         Async::spawn(function () use ($command, $id, $type): void {
             try {
                 $data = $this->dispatch($type, $command);

@@ -129,21 +129,40 @@ final class ScheduleManager
             return;
         }
 
-        // Runs this file says are going were going in a server that is not here any more.
+        // Runs this file says are going were going in a server that is not here any more. One whose
+        // conversation was written is carried on from it; one that never wrote anything has nothing
+        // to carry on from, and says so.
+        $resume = [];
+
         foreach ($this->runs as $taskId => $runs) {
             foreach ($runs as $at => $run) {
-                if (in_array($run['status'], [self::RUNNING, self::NEEDS_INPUT], true)) {
-                    $this->runs[$taskId][$at] = [
-                        ...$run,
-                        'status' => self::ERROR,
-                        'error' => 'The server stopped while this was running.',
-                        'finishedAt' => $run['finishedAt'] ?? ($this->now)(),
-                    ];
+                if (!in_array($run['status'], [self::RUNNING, self::NEEDS_INPUT], true)) {
+                    continue;
                 }
+
+                $file = $run['sessionFile'] ?? null;
+
+                if (is_string($file) && is_file($file) && isset($this->tasks[$taskId])) {
+                    $this->runs[$taskId][$at] = [...$run, 'status' => self::RUNNING, 'resumedAt' => ($this->now)()];
+                    $resume[] = [(string) $taskId, (string) $run['id'], $file, (string) ($run['cwd'] ?? $this->tasks[$taskId]->cwd)];
+
+                    continue;
+                }
+
+                $this->runs[$taskId][$at] = [
+                    ...$run,
+                    'status' => self::ERROR,
+                    'error' => 'The server stopped before this run wrote anything to carry on from.',
+                    'finishedAt' => $run['finishedAt'] ?? ($this->now)(),
+                ];
             }
         }
 
         $this->write();
+
+        foreach ($resume as [$taskId, $runId, $file, $cwd]) {
+            Async::spawn(fn () => $this->carryOn($taskId, $runId, $file, $cwd));
+        }
 
         foreach ($this->tasks as $task) {
             $this->arm($task);
@@ -503,6 +522,39 @@ final class ScheduleManager
 
         // The commands below park their fiber until the child answers, and a loop timer is not in one.
         Async::spawn(fn () => $this->launch($task, $runId));
+    }
+
+    /**
+     * Open a run's conversation and carry it on (`AgentSession::continueRun()`). A conversation
+     * that had already finished is a finished run; one stopped inside a tool call is refused by
+     * the child, with its reason, and is not run again.
+     */
+    private function carryOn(string $taskId, string $runId, string $file, string $cwd): void
+    {
+        $entry = ['task' => $taskId, 'run' => $runId];
+
+        try {
+            $managed = $this->pool->open($cwd, $file);
+        } catch (Throwable $e) {
+            $this->updateRun($entry, [
+                'status' => self::ERROR,
+                'error' => 'Could not start the agent to carry the run on: ' . $e->getMessage(),
+                'finishedAt' => ($this->now)(),
+            ]);
+
+            return;
+        }
+
+        $key = spl_object_id($managed);
+        $this->active[$key] = [...$entry, 'error' => null];
+
+        try {
+            if ($managed->client->continueRun() === 'finished') {
+                $this->finish($key, self::DONE, null);
+            }
+        } catch (Throwable $e) {
+            $this->finish($key, self::ERROR, 'Not carried on after the server stopped: ' . $e->getMessage());
+        }
     }
 
     private function launch(ScheduledTask $task, string $runId): void

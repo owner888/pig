@@ -1784,6 +1784,63 @@ final class AgentSession
     }
 
     /**
+     * Carry on a run the process before this one did not finish, from the last thing the session
+     * file holds. pig's own, for the web daemon's scheduled runs; upstream has no counterpart.
+     *
+     * What the file ends on decides it:
+     *
+     * - a user message or a tool result: the model was owed an answer, so it is asked (`continue`);
+     * - a turn that failed or was stopped: dropped as a retry drops it, then the same;
+     * - an answer with no tool calls: the run had finished, and there is nothing to do;
+     * - an answer with tool calls: refused. The calls may have half run, and running a command a
+     *   second time is not something to do on nobody's say-so.
+     *
+     * `$onStarted` is told `continued` or `finished` before the run starts, as `prompt()`'s caller is
+     * told the disposition, so a host does not wait the whole run for its answer.
+     *
+     * @param (Closure(string): void)|null $onStarted
+     * @return string `continued` or `finished`
+     * @throws \RuntimeException when there is nothing to carry on, or it is not safe to
+     */
+    public function continueRun(?Closure $onStarted = null): string
+    {
+        if ($this->isStreaming()) {
+            throw new \RuntimeException('A run is already going.');
+        }
+
+        $messages = $this->agent->state->messages;
+        $last = $messages === [] ? null : $messages[count($messages) - 1];
+
+        if ($last === null) {
+            throw new \RuntimeException('There is nothing in this session to carry on from.');
+        }
+
+        if ($last instanceof AssistantMessage && in_array($last->stopReason, [StopReason::Error, StopReason::Aborted], true)) {
+            $this->dropLastAssistantMessage();
+        } elseif ($last instanceof AssistantMessage) {
+            foreach ($last->content as $block) {
+                if ($block instanceof ToolCall) {
+                    throw new \RuntimeException('It stopped inside a tool call, which may have half run; it is not run again on its own.');
+                }
+            }
+
+            if ($onStarted !== null) {
+                $onStarted('finished');
+            }
+
+            return 'finished';
+        }
+
+        if ($onStarted !== null) {
+            $onStarted('continued');
+        }
+
+        $this->runAgentPrompt(fn () => $this->agent->continue());
+
+        return 'continued';
+    }
+
+    /**
      * The signal for the turn in progress, or null between turns.
      *
      * What a hook's own waiting parks on, so escape cuts it short rather than the person

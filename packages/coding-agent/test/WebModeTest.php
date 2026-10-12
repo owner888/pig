@@ -1228,4 +1228,111 @@ final class WebModeTest extends TestCase
             unlink($file);
         }
     }
+
+    /**
+     * The copy buttons over plain http — a phone on the LAN, a Tailscale address — where
+     * `navigator.clipboard` does not exist and calling it threw, so a click did nothing. And
+     * over https, where the clipboard API is still the one used.
+     */
+    public function testTheCopyButtonsCopyWhereThereIsNoClipboardApi(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the components');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $script = <<<'JS'
+        import assert from "node:assert/strict";
+        const mk = (tag = "div") => ({
+          tagName: tag, className: "", dataset: {}, style: {}, innerHTML: "", innerText: "", textContent: "", value: "",
+          classList: { add() {}, remove() {}, toggle() { return false; }, contains() { return false; } },
+          children: [], appendChild(c) { this.children.push(c); return c; }, removeChild(c) { this.children = this.children.filter((x) => x !== c); },
+          querySelector() { return mk(); }, querySelectorAll() { return []; }, addEventListener() {}, closest() { return null; },
+          setAttribute() {}, select() {}, setSelectionRange() {}, focus() {},
+        });
+        let copied = null;
+        globalThis.document = {
+          createElement: (t) => mk(t), body: mk("body"), getElementById: () => mk(), activeElement: null,
+          execCommand(cmd) { copied = cmd === "copy" ? document.body.children.at(-1)?.value : null; return cmd === "copy"; },
+        };
+        globalThis.window = globalThis; globalThis.localStorage = { getItem: () => null, setItem() {} };
+        globalThis.HTMLElement = class {};
+        globalThis.isSecureContext = false;
+        Object.defineProperty(globalThis, "navigator", { value: {}, configurable: true });
+
+        await import(process.argv[2] + "/components/ToolCard.js");
+        const terminal = mk(); terminal.textContent = "==> Downloading tailscale";
+        const card = { querySelector: (sel) => (sel === ".tool-terminal" ? terminal : null) };
+        const btn = mk("button"); btn.closest = () => card; btn.innerText = "📋";
+
+        window.copyToolOutput(btn);
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(copied, "==> Downloading tailscale", "plain http copies through the selection");
+        assert.equal(btn.innerText, "✓");
+
+        globalThis.isSecureContext = true;
+        let written = null;
+        Object.defineProperty(globalThis, "navigator", { value: { clipboard: { writeText: async (t) => { written = t; } } }, configurable: true });
+        copied = null;
+        const { copyText } = await import(process.argv[2] + "/utils.js");
+        await copyText("over https");
+        assert.equal(written, "over https");
+        assert.equal(copied, null, "the clipboard API where there is one");
+
+        globalThis.isSecureContext = false;
+        document.execCommand = () => false;
+        await assert.rejects(copyText("refused"), /refused to copy/);
+        console.log("copied");
+        JS;
+
+        $file = tempnam(sys_get_temp_dir(), 'pig-copy-') . '.mjs';
+        file_put_contents($file, $script);
+        try {
+            $out = [];
+            $code = 0;
+            exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+            $this->assertSame(0, $code, implode("\n", $out));
+            $this->assertStringContainsString('copied', implode("\n", $out));
+        } finally {
+            unlink($file);
+        }
+    }
+
+    /** The theme button says the theme's short name in the page's language, not its id. */
+    public function testTheThemeButtonIsNamedInThePagesLanguage(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the components');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $file = tempnam(sys_get_temp_dir(), 'pig-theme-') . '.mjs';
+        file_put_contents($file, <<<'JS'
+        const els = {};
+        const mk = () => ({ textContent: "", title: "", style: {}, dataset: {}, classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }, setAttribute() {}, addEventListener() {}, querySelector() { return mk(); }, querySelectorAll() { return []; }, appendChild(c) { return c; } });
+        globalThis.document = { documentElement: mk(), getElementById: (id) => (els[id] ??= mk()), createElement: mk, body: mk(), querySelectorAll: () => [], addEventListener() {} };
+        globalThis.window = globalThis;
+        const store = { pig_web_locale: process.argv[3] };
+        globalThis.localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+        Object.defineProperty(globalThis, "navigator", { value: { language: "en" }, configurable: true });
+        const { applyTheme } = await import(process.argv[2] + "/theme.js");
+        applyTheme("dark"); console.log(els["theme-btn"].textContent);
+        applyTheme("light"); console.log(els["theme-btn"].textContent);
+        applyTheme("solarized"); console.log(els["theme-btn"].textContent);
+        JS);
+
+        try {
+            foreach (['zh-CN' => ['🎨 暗黑', '🎨 浅色'], 'en' => ['🎨 Dark', '🎨 Light']] as $locale => [$dark, $light]) {
+                $out = [];
+                exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' ' . $locale . ' 2>&1', $out, $code);
+                $this->assertSame(0, $code, implode("\n", $out));
+                // A theme i18n has no name for keeps its own.
+                $this->assertSame([$dark, $light, '🎨 solarized'], $out, $locale);
+            }
+        } finally {
+            unlink($file);
+        }
+    }
 }

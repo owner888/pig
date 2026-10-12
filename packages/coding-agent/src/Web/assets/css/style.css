@@ -896,16 +896,23 @@
       display: flex;
       align-items: stretch;
       gap: 2px;
-      padding: 0 8px;
+      /* No right padding: the sticky `+` sits inside it, and a tab scrolling under the gap showed. */
+      padding: 0 0 0 8px;
       background: var(--color-surface);
       border-bottom: 1px solid var(--color-divider);
       overflow-x: auto;
+      overscroll-behavior-x: contain;
       scrollbar-width: none;
       flex-shrink: 0;
       min-height: 34px;
+      /* The offsets `revealActiveTab()` reads are from here. */
+      position: relative;
     }
     .session-tabs::-webkit-scrollbar { display: none; }
     .session-tab {
+      /* Tabs keep their width and the strip scrolls; shrinking them to fit squeezed every tab to an
+         ellipsis with its × hidden, once there were a dozen. */
+      flex: 0 0 auto;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -943,13 +950,23 @@
     .session-tab-close:hover { opacity: 1 !important; background: color-mix(in srgb, var(--color-text-primary) 8%, transparent); color: var(--color-text-primary); }
     .session-tab-new {
       display: flex; align-items: center;
-      padding: 0 10px;
+      flex: 0 0 auto;
+      /* Pinned to the right edge while the tabs scroll under it. */
+      position: sticky;
+      right: 0;
+      background: var(--color-surface);
+      box-shadow: -10px 0 8px -2px var(--color-surface);
+      padding: 0 18px 0 10px;
       color: var(--color-dim);
       cursor: pointer;
       font-size: 16px;
       line-height: 1;
     }
     .session-tab-new:hover { color: var(--color-text-primary); }
+    /* No hover on a touch screen: every tab shows its ×, or only the active one could be closed. */
+    @media (hover: none) {
+      .session-tab .session-tab-close { opacity: .7; }
+    }
 
     /* Top Status/Notification Banner */
     .status-banner {

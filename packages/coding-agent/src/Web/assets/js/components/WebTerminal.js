@@ -1,6 +1,6 @@
 import { network } from "../network.js";
 import { __t } from "../i18n.js";
-import { escapeHtml } from "../utils.js";
+import { escapeHtml, copyText } from "../utils.js";
 import { Terminal } from "../vendor/xterm.mjs";
 import { FitAddon } from "../vendor/addon-fit.mjs";
 import { terminalTheme } from "../theme.js";
@@ -81,11 +81,10 @@ export class WebTerminal {
 
     this.cwdBadge.addEventListener("click", () => {
       const activeCwd = this.getActiveCwd() || this.cwd;
-      navigator.clipboard.writeText(activeCwd).then(() => {
-        const orig = this.cwdBadge.textContent;
+      copyText(activeCwd).then(() => {
         this.cwdBadge.textContent = "✓ " + __t("copied");
         setTimeout(() => this.updateCwdBadge(), 1200);
-      });
+      }, (error) => console.error("Copy failed:", error));
     });
 
     this.element.querySelectorAll(".web-term-quick-btn").forEach((btn) => {

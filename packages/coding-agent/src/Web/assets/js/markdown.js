@@ -1,4 +1,4 @@
-import { escapeHtml } from "./utils.js";
+import { escapeHtml, copyText } from "./utils.js";
 import { t } from "./i18n.js";
 
 /** Check if a line is a Markdown table separator (e.g. |:---|:---:|---:| or --- | ---) */
@@ -204,14 +204,18 @@ export function copyCode(btn) {
   const wrapper = btn.closest(".code-block-wrapper");
   const codeEl = wrapper?.querySelector("code");
   if (!codeEl) return;
-  const text = codeEl.innerText;
-  navigator.clipboard.writeText(text).then(() => {
+  const text = codeEl.textContent;
+  copyText(text).then(() => {
     btn.classList.add("copied");
     btn.innerText = "✓ " + t("copied");
     setTimeout(() => {
       btn.classList.remove("copied");
       btn.innerText = "📋 " + t("copy");
     }, 1500);
+  }, (error) => {
+    console.error("Copy failed:", error);
+    btn.innerText = "✗ " + t("copy");
+    setTimeout(() => { btn.innerText = "📋 " + t("copy"); }, 1500);
   });
 }
 

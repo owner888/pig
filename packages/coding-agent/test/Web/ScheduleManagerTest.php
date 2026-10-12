@@ -71,7 +71,12 @@ final class ScheduleManagerTest extends TestCase
     {
         $manager = null;
         $pool = new SessionPool(
-            spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(cwd: $cwd, binary: self::FAKE, timeout: 5.0),
+            spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(
+                cwd: $cwd,
+                binary: self::FAKE,
+                arguments: $file !== null ? ['--session', $file] : [],
+                timeout: 5.0,
+            ),
             onEvent: static function (ManagedSession $managed, array $event) use (&$manager): void {
                 $manager?->observe($managed, $event);
             },
@@ -523,8 +528,93 @@ final class ScheduleManagerTest extends TestCase
         $manager->start();
 
         self::assertSame(ScheduleManager::ERROR, self::lastRun($manager, 'tx')['status']);
-        self::assertSame('The server stopped while this was running.', self::lastRun($manager, 'tx')['error']);
+        self::assertSame('The server stopped before this run wrote anything to carry on from.', self::lastRun($manager, 'tx')['error']);
         self::assertFalse($manager->list()[0]['running']);
+    }
+
+    /** A run the last server left going, whose conversation reads `$saved`, as the file records it. */
+    private function leftGoing(string $saved, string $status = 'running'): string
+    {
+        $file = $this->dir . '/left-going.jsonl';
+        file_put_contents($file, $saved);
+        file_put_contents($this->dir . '/scheduled-tasks.json', json_encode([
+            'tasks' => [ScheduledTask::fromArray($this->task(['id' => 'tx']))->toArray()],
+            'runs' => ['tx' => [['id' => 'r1', 'trigger' => 'schedule', 'status' => $status, 'startedAt' => 1, 'sessionFile' => $file, 'cwd' => $this->dir]]],
+        ]));
+
+        return $file;
+    }
+
+    public function testARunWhoseConversationWasWrittenIsCarriedOnFromItAfterARestart(): void
+    {
+        Async::run(function (): void {
+            $file = $this->leftGoing("{\"type\":\"session\"}\n");
+            $manager = $this->manager();
+            $manager->start();
+
+            self::assertSame(ScheduleManager::RUNNING, self::lastRun($manager, 'tx')['status']);
+            self::assertArrayHasKey('resumedAt', self::lastRun($manager, 'tx'));
+
+            $this->until(static fn (): bool => (self::lastRun($manager, 'tx')['status'] ?? null) === ScheduleManager::DONE, 'the run to be carried on');
+
+            self::assertNull(self::lastRun($manager, 'tx')['error']);
+            self::assertSame($file, self::lastRun($manager, 'tx')['sessionFile']);
+        });
+    }
+
+    public function testARunParkedOnAQuestionIsCarriedOnToo(): void
+    {
+        Async::run(function (): void {
+            $this->leftGoing("{\"type\":\"session\"}\n", 'needs_input');
+            $manager = $this->manager();
+            $manager->start();
+
+            self::assertSame(ScheduleManager::RUNNING, self::lastRun($manager, 'tx')['status']);
+            $this->until(static fn (): bool => (self::lastRun($manager, 'tx')['status'] ?? null) === ScheduleManager::DONE, 'the run to be carried on');
+            self::assertNull(self::lastRun($manager, 'tx')['error']);
+        });
+    }
+
+    public function testAConversationThatHadAlreadyAnsweredIsAFinishedRun(): void
+    {
+        Async::run(function (): void {
+            $this->leftGoing("FINISHED\n");
+            $manager = $this->manager();
+            $manager->start();
+
+            $this->until(static fn (): bool => (self::lastRun($manager, 'tx')['status'] ?? null) === ScheduleManager::DONE, 'the run to be marked done');
+            self::assertNull(self::lastRun($manager, 'tx')['error']);
+            self::assertFalse($manager->list()[0]['running']);
+        });
+    }
+
+    public function testARunStoppedInsideAToolCallIsAFailureThatSaysWhyAndIsNotRunAgain(): void
+    {
+        Async::run(function (): void {
+            $this->leftGoing("TOOLCALL\n");
+            $manager = $this->manager();
+            $manager->start();
+
+            $this->until(static fn (): bool => (self::lastRun($manager, 'tx')['status'] ?? null) === ScheduleManager::ERROR, 'the run to fail');
+
+            self::assertStringStartsWith('Not carried on after the server stopped: ', self::lastRun($manager, 'tx')['error']);
+            self::assertStringContainsString('tool call', self::lastRun($manager, 'tx')['error']);
+        });
+    }
+
+    public function testARunWhoseTaskIsGoneIsNotCarriedOn(): void
+    {
+        $file = $this->dir . '/left-going.jsonl';
+        file_put_contents($file, "{\"type\":\"session\"}\n");
+        file_put_contents($this->dir . '/scheduled-tasks.json', json_encode([
+            'tasks' => [],
+            'runs' => ['gone' => [['id' => 'r1', 'trigger' => 'schedule', 'status' => 'running', 'startedAt' => 1, 'sessionFile' => $file]]],
+        ]));
+
+        $manager = $this->manager();
+        $manager->start();
+
+        self::assertSame(ScheduleManager::ERROR, $manager->runs('gone')[0]['status']);
     }
 
     public function testAnEntryThatNoLongerReadsIsReportedAndKept(): void

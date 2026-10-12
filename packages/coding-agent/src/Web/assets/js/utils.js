@@ -2,6 +2,40 @@
  * General purpose utilities for pig web UI.
  */
 
+/**
+ * Put `text` on the clipboard. Resolves when it is there, rejects with the reason when it is not.
+ *
+ * `navigator.clipboard` exists only in a secure context — https or localhost. The page opened from
+ * another machine (a phone on the LAN, a Tailscale address) is plain http, so there it is
+ * `undefined` and calling it throws; the selection-and-`copy` command is how a page copies there.
+ */
+export function copyText(text) {
+  if (typeof window !== "undefined" && window.isSecureContext && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  return new Promise((resolve, reject) => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    const focused = document.activeElement;
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, text.length); // iOS Safari ignores select() on its own
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } finally {
+      document.body.removeChild(area);
+      if (focused instanceof HTMLElement) focused.focus();
+    }
+    copied ? resolve() : reject(new Error("The browser refused to copy."));
+  });
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)

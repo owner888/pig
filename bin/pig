@@ -193,7 +193,7 @@ if (isset($options['help'])) {
       config [-l]       switch a package's extensions, skills, prompts and themes on and off
       auth <command>    print credentials or check provider readiness (pig auth --help)
       mcp               add, remove and check MCP servers (pig mcp --help)
-      web               the browser UI as a server: start [-d], stop, status, restart (pig web --help)
+      web               the browser UI as a server: start [-d], stop, status, restart, install (pig web --help)
 
     Options:
       --provider <name> the provider to look --model up in (requires --model)

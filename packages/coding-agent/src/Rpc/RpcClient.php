@@ -569,6 +569,19 @@ final class RpcClient
         return is_array($data['messages'] ?? null) ? array_values($data['messages']) : [];
     }
 
+    /**
+     * Carry on a run an earlier process did not finish (`AgentSession::continueRun()`). pig's own.
+     *
+     * @return string `continued`, or `finished` when the session file ends on a finished answer
+     * @throws \RuntimeException with the child's reason when there is nothing safe to carry on
+     */
+    public function continueRun(): string
+    {
+        $data = $this->send(['type' => 'continue']) ?? [];
+
+        return is_string($data['outcome'] ?? null) ? $data['outcome'] : 'continued';
+    }
+
     /** @return list<array<string, mixed>> `{name, description?, source, sourceInfo}` each */
     public function getCommands(): array
     {

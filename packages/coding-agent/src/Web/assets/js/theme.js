@@ -12,7 +12,9 @@ export let currentTheme = localStorage.getItem("pig_theme");
 function themeText(name, suffix = "") {
   const key = `theme_${name}${suffix}`;
   const text = t(key);
-  return text === key ? (suffix ? "" : name) : text;
+  if (text !== key) return text;
+  // An unknown theme has no description, and is called by its own name everywhere else.
+  return suffix === "_desc" ? "" : name;
 }
 
 /** Whether the page has a theme by that name — the server's list, `system` never among them. */
@@ -39,7 +41,8 @@ export function applyTheme(theme) {
   localStorage.setItem("pig_theme", theme);
   document.documentElement.setAttribute("data-theme", theme);
   const themeBtn = document.getElementById("theme-btn");
-  if (themeBtn) themeBtn.textContent = "🎨 " + theme;
+  // The button gets the short name in the page's language; the long one is the picker's.
+  if (themeBtn) themeBtn.textContent = "🎨 " + themeText(theme, "_short");
   if (changed) for (const listener of appliedListeners) listener(theme);
 }
 

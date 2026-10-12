@@ -1,4 +1,4 @@
-import { escapeHtml } from "../utils.js";
+import { escapeHtml, copyText } from "../utils.js";
 import { t } from "../i18n.js";
 import { renderDiff, renderDiffFromUnified } from "../markdown.js";
 
@@ -248,16 +248,24 @@ if (typeof window !== "undefined") {
     const card = btn.closest(".tool-card");
     if (!card) return;
     const terminal = card.querySelector(".tool-terminal") || card.querySelector(".diff-container");
-    const text = terminal ? terminal.innerText : "";
+    // textContent, not innerText: a collapsed card's body is not rendered, and what innerText
+    // answers for that differs between browsers.
+    const text = terminal ? terminal.textContent : "";
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const orig = btn.innerText;
-      btn.innerText = "✓";
-      btn.style.color = "var(--color-tool-diff-added)";
+    const show = (mark, color) => {
+      btn.innerText = mark;
+      btn.style.color = color;
       setTimeout(() => {
-        btn.innerText = orig;
+        btn.innerText = "📋";
         btn.style.color = "";
       }, 1500);
-    });
+    };
+    copyText(text).then(
+      () => show("✓", "var(--color-tool-diff-added)"),
+      (error) => {
+        console.error("Copy failed:", error);
+        show("✗", "var(--color-error)");
+      },
+    );
   };
 }
