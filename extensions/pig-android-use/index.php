@@ -684,10 +684,10 @@ return static function (ExtensionApi $pi): void {
         <img id="screen" src="/api/android/screen.jpg" alt="Android Screen" />
     </div>
     <div class="bar">
-        <button onclick="refresh()">刷新画面</button>
-        <button id="toggleBtn" onclick="toggleStream()">自动刷新: 开</button>
+        <button onclick="refresh()">Refresh</button>
+        <button id="toggleBtn" onclick="toggleStream()">Auto refresh: on</button>
     </div>
-    <div class="info" id="status">正在通过原生 ADB 读取画面...</div>
+    <div class="info" id="status">Reading the screen over ADB...</div>
     <script>
         let live = true;
         let timer = null;
@@ -697,7 +697,7 @@ return static function (ExtensionApi $pi): void {
         }
         function toggleStream() {
             live = !live;
-            document.getElementById('toggleBtn').innerText = '自动刷新: ' + (live ? '开' : '关');
+            document.getElementById('toggleBtn').innerText = 'Auto refresh: ' + (live ? 'on' : 'off');
             if (live) start(); else clearInterval(timer);
         }
         function start() {

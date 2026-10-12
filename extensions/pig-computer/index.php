@@ -154,6 +154,11 @@ return static function (ExtensionApi $pi): void {
         name: 'computer_ready',
         label: 'Computer Ready Check',
         description: 'Verify desktop control channel, return logical screen dimensions, active frontmost app and initial screen capture.',
+        // Without this the model reached for Chrome to fetch a URL that `curl` in bash downloads in
+        // one call: the desktop is for what only a screen can do, never for fetching.
+        promptGuidelines: [
+            'The computer_* tools are a last resort. Use them only when the person asks for computer use, or when bash and the other tools cannot do the job (a native app with no command line, a page that must be clicked through while signed in). Downloading a file, calling an API, reading a web page or editing files is bash (curl, wget) or fetch_web_page, never the desktop.',
+        ],
         parameters: [
             'type' => 'object',
             'properties' => [
@@ -454,7 +459,7 @@ return static function (ExtensionApi $pi): void {
     $pi->registerTool(new CustomTool(
         name: 'computer_launch_app',
         label: 'Computer Launch App Or URL',
-        description: 'Launch or focus a desktop application (e.g. "Google Chrome", "Slack", "Finder") or open a URL.',
+        description: 'Launch or focus a desktop application (e.g. "Google Chrome", "Slack", "Finder") or open a URL for the person to see. Not for downloading: fetch a URL with bash (curl) instead.',
         parameters: [
             'type' => 'object',
             'properties' => [
@@ -593,9 +598,9 @@ return static function (ExtensionApi $pi): void {
         <img id="screen" src="/api/computer/screen.jpg" alt="Desktop Screen" />
     </div>
     <div class="bar">
-        <button onclick="refresh()">刷新画面</button>
-        <button id="toggleBtn" onclick="toggleStream()">自动刷新: 开</button>
-        <span class="info" id="status">原生 macOS 桌面静音推流</span>
+        <button onclick="refresh()">Refresh</button>
+        <button id="toggleBtn" onclick="toggleStream()">Auto refresh: on</button>
+        <span class="info" id="status">Live macOS desktop</span>
     </div>
     <script>
         let live = true;
@@ -606,7 +611,7 @@ return static function (ExtensionApi $pi): void {
         }
         function toggleStream() {
             live = !live;
-            document.getElementById('toggleBtn').innerText = '自动刷新: ' + (live ? '开' : '关');
+            document.getElementById('toggleBtn').innerText = 'Auto refresh: ' + (live ? 'on' : 'off');
             if (live) start(); else clearInterval(timer);
         }
         function start() {

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.38] - 2026-10-12
+
+### Changed
+
+- Computer use and Android use: the skills (`computer-use`, `android-use`) and the screen viewer pages are in English, like the rest of what pig puts in front of the model.
+
+### Fixed
+
+- Computer use: the model opened Chrome on the desktop to download a file `curl` fetches in one call. The `computer-use` skill and `computer_ready` now call the desktop a last resort: used only when the person asks for computer use or when bash and the other tools cannot do the job; downloads, API calls and reading pages go through `bash` (curl) or `fetch_web_page`.
+
 ## [0.6.37] - 2026-10-12
 
 ### Fixed

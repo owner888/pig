@@ -1,72 +1,60 @@
 ---
 name: android-use
-description: 通过 100% 纯 PHP 原生 ADB 操作真实或模拟器 Android 手机；新任务先通过 android_ready 取得设备通道与当前屏幕画面，支持乐观点击、手势滑动、中文输入、App 快速启动与视觉截图兜底。
+description: Drive a real or emulated Android phone over ADB, in pure PHP. Start a new task with android_ready to get the device channel and the current screen; supports taps, swipes, Chinese text input, launching apps by package and a screenshot when the view needs checking.
 ---
 
-# 用 Android Use 完成手机任务
+# Doing a task on an Android phone
 
-通过原生 `android_*` 工具高效操作 Android 手机或平板设备。
+The native `android_*` tools drive an Android phone or tablet.
 
-先确定用户要交付的结果和完成条件。默认把一次正常返回的动作当作已按计划执行，继续准备下一步；不要为每次点击、滑动或输入专门空调用一次观察来证明成功。下一步需要页面信息时，在动作中直接设置 `observe="screenshot"` 顺带返回新画面。
+Settle what the person wants delivered and when it is done. Treat an action that returned normally as done and move on; do not spend a separate call looking at the screen to prove each tap, swipe or keystroke worked. When the next step needs to see the screen, set `observe="screenshot"` on the action itself.
 
-## 1. 初始化与就绪检查 (READY)
+## 1. Ready check
 
-在开始任何手机任务前，先调用一次：
+Call this once before anything else:
 ```json
 android_ready()
 ```
-- 返回 `ready=true`，并附带当前屏幕前台 App 包名、视口尺寸、`pixel_to_point` 比率以及当前真实屏幕截图。
-- 如果提示无设备连接，提示用户插好 USB 数据线并开启「开发者选项 -> USB 调试」，或通过无线调试配对。
-- 如果设备息屏，`android_ready` 会自动唤醒屏幕。
+- Returns `ready=true` with the foreground app's package, the viewport size, the `pixel_to_point` ratio and a real screenshot.
+- If no device is connected, ask the person to plug in a USB cable and turn on Developer options → USB debugging, or pair over wireless debugging.
+- A screen that is off is woken by `android_ready` itself.
 
-## 2. 视觉定位与坐标点击
+## 2. Tapping by coordinates
 
-- 截图由原生 ADB 截屏并经过智能等比压缩（短边最大 768px），单张截图消耗极低 Token。
-- **坐标换算**：
-  模型在截图中看到的像素坐标 `(px, py)` 可直接传给 `android_tap(x=px, y=py)`，工具内部会自动根据返回的 `pixel_to_point` 比率精确换算回设备的物理分辨率，绝不会点偏。
-- **合并观察**：
-  如果点击后界面会跳转，且下一步需要看新页面，设置 `observe="screenshot"`，在单次回合中同时完成“点击 + 返回新截图”，省去额外的 round-trip。
+- Screenshots come from ADB and are scaled down (short side at most 768px), so each one is cheap.
+- **Coordinates**: pass the pixel `(px, py)` you see in the screenshot straight to `android_tap(x=px, y=py)`; the tool converts it back to the device's resolution with the returned `pixel_to_point` ratio.
+- **Look in the same call**: if a tap changes the page and the next step needs to see it, set `observe="screenshot"` so the tap and the new screenshot come back together.
 
-## 3. 控件树与语义定位 (Android Tree)
+## 3. The view tree
 
-- **原生 App 精准定位**：
-  在原生应用（设置、微信、电商等）中需要读取准确文字、搜索结果列表，或者视觉定位不够清晰时，调用：
-  `android_tree(max_nodes=60)`
-- 返回经过压缩过滤的高价值节点，附带 `type`、`text`、`desc`、`id` 和换算好的 `rect: [x, y, w, h]`，点击中心点即可直接交互。自绘游戏界面无需 dump 树，直接走截图视觉定位。
+- **Exact targets in native apps**: when you need the exact text in a native app (Settings, WeChat, shopping apps), a list of search results, or the screenshot is not clear enough, call `android_tree(max_nodes=60)`.
+- It returns the useful nodes with `type`, `text`, `desc`, `id` and a converted `rect: [x, y, w, h]`; tap the centre to interact. Games that draw their own UI have no tree; use the screenshot.
 
-## 4. 防封拟人化批处理 (Batch)
+## 4. Batches
 
-- **连贯任务合并**：
-  已知的一系列固定操作（如“点击搜索框 -> 输入关键词 -> 点击确认”），使用：
-  `android_batch(steps=[{"op": "tap", "args": {"x": 100, "y": 200}}, {"op": "type_text", "args": {"text": "目标文字"}}], observe="screenshot")`
-- **防封安全机制**：
-  工具内部已内置防风控安全机制，每个点击会自动附加 $\pm 2$ 像素的自然生理抖动，操作之间自动插入 150ms ~ 350ms 的自然随机停顿，可放心使用。
+- **Known sequences**: for a fixed run of steps (tap the search box → type → confirm):
+  `android_batch(steps=[{"op": "tap", "args": {"x": 100, "y": 200}}, {"op": "type_text", "args": {"text": "search text"}}], observe="screenshot")`
+- Each tap gets ±2px of jitter and 150–350ms random pauses are inserted between steps.
 
-## 5. 手势滑动与滚动 (Swipe)
+## 5. Swiping and scrolling
 
-- **按方向滑动**：
-  浏览长列表或新闻时，直接使用：
-  `android_swipe(direction="up")`（向上滑动，浏览下方内容）。
-- **精准拖拽**：
-  需要把某张卡牌、图标或滑块拖动到指定位置时，提供精确起止坐标：
-  `android_swipe(from_x=..., from_y=..., to_x=..., to_y=..., duration_ms=500)`。
+- **By direction**: to move through a long list, `android_swipe(direction="up")` (swipes up to show what is below).
+- **Exact drags**: to drag a card, icon or slider to a place, give both ends: `android_swipe(from_x=..., from_y=..., to_x=..., to_y=..., duration_ms=500)`.
 
-## 6. 中文与文本输入
+## 6. Typing text
 
-- 点击目标输入框后，调用：
-  `android_type_text(text="想要输入的内容")`
-- 支持完整的中文、英文、符号和多行文本（通过 Android 系统剪贴板通道秒速粘贴，无需额外安装第三方输入法）。
+- Tap the field first, then `android_type_text(text="what to type")`.
+- Chinese, English, symbols and multiple lines all work; the text goes through the Android clipboard, so no extra keyboard app is needed.
 
-## 7. 常用按键与 App 启动
+## 7. Buttons and launching apps
 
-- **物理/导航按键**：
-  - 返回上一级：`android_press_button(name="back")`
-  - 返回桌面：`android_press_button(name="home")`
-  - 任务多任务切换：`android_press_button(name="app_switch")`
-- **启动 App**：
-  知道应用包名时直接启动：`android_launch_app(package="com.tencent.mm")`。
+- **Navigation buttons**:
+  - Back: `android_press_button(name="back")`
+  - Home: `android_press_button(name="home")`
+  - Recent apps: `android_press_button(name="app_switch")`
+- **Launch an app** by package: `android_launch_app(package="com.tencent.mm")`.
 
-## 8. 异常与安全接管
+## 8. When to stop and hand over
 
-- **界面遮挡**：截图看到优惠券、活动弹窗或权限提醒时，先定位“X”或“关闭/取消”按钮点掉，再继续主任务。
-- **密码与生物认证**：遇到系统锁屏密码、微信/支付宝支付密码或人脸/指纹认证时，暂停手机操作，向用户明确说明需要手动在手机上输入，等用户完成后再继续。
+- **Something in the way**: a coupon, promotion or permission dialog over the screen — find its "X" or "Close/Cancel" and dismiss it, then carry on.
+- **Passwords and biometrics**: at a lock-screen password, a WeChat/Alipay payment password, or a face/fingerprint check, stop and tell the person to finish it on the phone themselves; continue once they have.

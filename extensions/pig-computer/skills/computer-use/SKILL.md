@@ -1,70 +1,66 @@
 ---
 name: computer-use
-description: 通过 100% 纯 PHP 原生 CoreGraphics 与 AppleScript 操控真实的 macOS 桌面应用与浏览器；新任务先通过 computer_ready 取得桌面通道与当前屏幕画面，支持 Retina 自适应点击、窗口聚焦、中文剪贴板输入、滚轮滚动与快捷键模拟。
+description: Last resort. Use only when the person asks for computer use, or when bash and the other tools cannot do the job (a native app with no command line, a page that must be clicked through while signed in). Downloading a file, calling an API, reading a web page or editing files is bash (curl) or fetch_web_page, never the desktop or a browser on it. When it is needed, start with computer_ready to get the screen.
 ---
 
-# 用 Computer Use 完成电脑桌面与应用任务
+# Doing a task on the Mac desktop with computer use
 
-通过原生 `computer_*` 工具高效操作 Mac 真实桌面系统（包括浏览器、IDE、聊天软件与日常办公应用）。
+The native `computer_*` tools drive the real macOS desktop: browsers, IDEs, chat apps and everyday applications.
 
-先确定用户要交付的结果和完成条件。默认把一次正常返回的动作当作已按计划执行，继续准备下一步；不要为每次点击或输入专门空调用一次观察。下一步需要页面信息时，在动作中直接设置 `observe="screenshot"` 顺带返回新画面。
+**This is a last resort.** Use `computer_*` in two cases only: the person asks for computer use, or `bash` and the other tools cannot do the job (a native app with no command line, a page that must be clicked through while signed in). Anything a command line can do stays off the desktop: download a file with `bash` running `curl -L -o FILE URL`, call an API with `curl`, read a page with `fetch_web_page`. Try the command line first; reach for the screen only when it fails.
 
-## 1. 初始化与就绪检查 (READY)
+Settle what the person wants delivered and when it is done. Treat an action that returned normally as done and move on to the next one; do not spend a separate call looking at the screen after every click or keystroke. When the next step needs to see the screen, set `observe="screenshot"` on the action itself.
 
-在开始任何电脑任务前，先调用一次：
+## 1. Ready check
+
+Call this once before anything else:
 ```json
 computer_ready()
 ```
-- 返回当前主屏幕逻辑尺寸、活动窗口前台 App（如 Chrome、Slack、Finder）、`pixel_to_point` 比率及首张真实屏幕截图。
-- 如果目标 App 未在前台，调用 `computer_launch_app(target="应用名")` 将其激活并置顶。
+- Returns the main screen's logical size, the frontmost app (Chrome, Slack, Finder…), the `pixel_to_point` ratio and a first real screenshot.
+- If the app you need is not in front, bring it forward with `computer_launch_app(target="App Name")`.
 
-## 2. 视觉定位与鼠标点击 (Click)
+## 2. Clicking
 
-- **Retina 坐标自适应**：
-  模型在截图中看到的像素点坐标 `(x, y)` 可直接传给 `computer_click(x=..., y=...)`，工具内部会自动根据返回的 `pixel_to_point` 比率精确还原为系统逻辑点，绝不点偏。
-- **点击类型**：
-  - 单击：`computer_click(x=..., y=..., button="left")`
-  - 双击（打开文件或选词）：`computer_click(x=..., y=..., click_count=2)`
-  - 右键菜单：`computer_click(x=..., y=..., button="right")`
-- **合并观察**：
-  点击如果会触发弹窗或页面切换，带上 `observe="screenshot"`，在单次回合中同时完成“点击 + 观测新画面”。
+- **Retina coordinates**: pass the pixel `(x, y)` you see in the screenshot straight to `computer_click(x=..., y=...)`; the tool converts it to logical points with the returned `pixel_to_point` ratio.
+- **Click kinds**:
+  - Single: `computer_click(x=..., y=..., button="left")`
+  - Double (open a file, select a word): `computer_click(x=..., y=..., click_count=2)`
+  - Context menu: `computer_click(x=..., y=..., button="right")`
+- **Look in the same call**: if a click opens a dialog or changes the page, add `observe="screenshot"` so the click and the new screen come back together.
 
-## 3. 拖拽与滚轮滚动 (Drag & Scroll)
+## 3. Dragging and scrolling
 
-- **窗口拖动或选区**：
-  `computer_drag(from_x=..., from_y=..., to_x=..., to_y=..., duration_ms=400)`
-- **页面平滑滚动**：
-  `computer_scroll(delta_y=15)`（向下滚动浏览内容；向上滚动为负值）。
+- **Move a window or select a region**: `computer_drag(from_x=..., from_y=..., to_x=..., to_y=..., duration_ms=400)`
+- **Scroll a page**: `computer_scroll(delta_y=15)` (positive scrolls down, negative up).
 
-## 4. 中文与文本输入 (Type Text)
+## 4. Typing text
 
-- 点击目标输入框后，调用：
-  `computer_type_text(text="想要输入的内容")`
-- 工具原生集成系统剪贴板通道，支持任意中文、换行和特殊标点符号，零乱码、不丢字。
+- Click the field first, then `computer_type_text(text="what to type")`.
+- Text goes through the system clipboard, so Chinese, line breaks and symbols arrive intact.
 
-## 5. 键盘按键与快捷键 (Press Key)
+## 5. Keys and shortcuts
 
-- **单个特殊键**：
-  `computer_press_key(key="enter")`、`computer_press_key(key="tab")`、`computer_press_key(key="escape")`
-- **组合快捷键**：
-  - 复制：`computer_press_key(key="cmd+c")`
-  - 粘贴：`computer_press_key(key="cmd+v")`
-  - 全选：`computer_press_key(key="cmd+a")`
-  - 保存：`computer_press_key(key="cmd+s")`
-  - 切换应用：`computer_press_key(key="cmd+tab")`
-  - 聚焦搜索：`computer_press_key(key="cmd+space")`
+- **Single keys**: `computer_press_key(key="enter")`, `computer_press_key(key="tab")`, `computer_press_key(key="escape")`
+- **Shortcuts**:
+  - Copy: `computer_press_key(key="cmd+c")`
+  - Paste: `computer_press_key(key="cmd+v")`
+  - Select all: `computer_press_key(key="cmd+a")`
+  - Save: `computer_press_key(key="cmd+s")`
+  - Switch app: `computer_press_key(key="cmd+tab")`
+  - Spotlight: `computer_press_key(key="cmd+space")`
 
-## 6. 批处理 (Batch)
+## 6. Batches
 
-已知的一系列连贯操作（如“点击搜索栏 -> 输入关键词 -> 回车”），使用：
+For a known sequence (click the search box → type → Enter):
 ```json
 computer_batch(
   steps=[
     {"op": "click", "args": {"x": 240, "y": 180}},
-    {"op": "type_text", "args": {"text": "最新财报"}},
+    {"op": "type_text", "args": {"text": "latest earnings report"}},
     {"op": "press_key", "args": {"key": "enter"}}
   ],
   observe="screenshot"
 )
 ```
-工具自动注入防风控拟人微停顿与像素微抖动。
+The tool adds human-like pauses and a pixel of jitter between steps.
