@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.35] - 2026-10-12
+
+### Fixed
+
+- Test suite isolation: added `test/bootstrap.php` to isolate PHPUnit test runs within a temporary `$HOME` directory. Tests that omitted custom home paths or cleared environment variables previously polluted the developer's real `~/.pig/agent` sessions, `nodes.json`, and Trash. The bootstrap provides an isolated environment with a deleting `trash` stand-in, cleans up on shutdown, and preserves downloaded tool binaries.
+
 ## [0.6.34] - 2026-10-12
 
 ### Fixed

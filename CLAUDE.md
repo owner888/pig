@@ -13398,6 +13398,22 @@ after they are added (an image decoding) had no scroll at all.
 **Rule**: no `scroll-behavior` on the chat scroller; only a scroll that moves up sets
 `userScrolledUp`, and each tab's `ResizeObserver` on its blocks follows growth.
 
+### The test suite wrote into the developer's real home
+
+**Symptom**: the web sidebar listed sessions titled "hi" whose folder was `/var/folders/…/T`, and
+test `.jsonl` files turned up in the Trash.
+
+**Cause**: `SessionManager::create($cwd)` names the working directory; the file goes under
+`Config::home()`. Four tests never pointed that home anywhere, and tests that do clear
+`PIG_CODING_AGENT_DIR` in `tearDown()`, so the next one falls back to `$HOME/.pig/agent`. Web tests
+wrote `nodes.json` the same way, and the session-delete tests ran the real `trash`.
+
+**Rule**: `test/bootstrap.php` gives the whole run a throwaway `HOME` (removed at exit), unsets the
+agent-dir variables, puts a deleting `trash` stand-in first on the `PATH` (macOS's `trash` and Finder
+ignore `$HOME`), and appends the real `~/.pig/agent/bin` so downloaded `fd`/`rg` are still found. A
+test still isolates what it asserts on; the bootstrap is the floor under the ones that forget. Check:
+run the suite with `HOME` pointed at an empty directory and find nothing in it afterwards.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
