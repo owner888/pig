@@ -1957,7 +1957,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     function updateThinkingLevels(modelId, targetLevel = null) {
-      const model = availableModels.find(m => m.id === modelId);
+      // By provider *and* id: the same id is often offered by several providers (raccoonx's and
+      // Google's gemini-3.8-flash), and the first match drew another model's levels.
+      const model = availableModels.find(m => m.provider === providerSelect.value && m.id === modelId);
       const levels = model?.thinkingLevels || ["off", "low", "medium", "high"];
       const canReason = model ? (model.reasoning && levels.some(l => l !== "off")) : true;
 

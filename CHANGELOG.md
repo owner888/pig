@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.36] - 2026-10-12
+
+### Fixed
+
+- Web UI: the thinking-level menu drew the levels of another provider's model with the same id — choosing raccoonx's `gemini-3.8-flash` showed Google's five levels, picked `medium`, and the agent then set `off` because raccoonx's model is declared without reasoning. The model is now looked up by provider and id.
+
 ## [0.6.35] - 2026-10-12
 
 ### Fixed
