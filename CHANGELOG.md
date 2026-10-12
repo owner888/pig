@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.37] - 2026-10-12
+
+### Fixed
+
+- Installer: answering "Start pig now?" with Enter did nothing. Piped to `sh`, the script's standard input is the download itself, and pig started on it saw no terminal, went into print mode with nothing to say and exited at once. It is started on the terminal now.
+
 ## [0.6.36] - 2026-10-12
 
 ### Fixed

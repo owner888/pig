@@ -256,7 +256,9 @@ prompt_start_pig() {
   esac
 
   printf '\n'
-  exec "$start_pig_path"
+  # Piped to `sh`, standard input is the rest of this script, and pig started on it is in print
+  # mode (stdin not a terminal) with nothing to say: it exits at once and the Enter looks ignored.
+  exec "$start_pig_path" </dev/tty >/dev/tty 2>/dev/tty
 }
 
 # Piped to `sh`, standard input is the script itself, so a prompt has to come from the terminal

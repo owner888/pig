@@ -86,6 +86,16 @@ final class InstallScriptTest extends TestCase
         $this->assertSame(Version::PACKAGE, self::manifest()['name'] ?? null);
     }
 
+    public function testPigStartedAtTheEndReadsTheTerminalAndNotThePipe(): void
+    {
+        // Piped to `sh`, standard input is the rest of the script. pig started on it is in print
+        // mode (stdin not a terminal) with nothing to say, exits 0 at once, and answering "Start pig
+        // now?" with Enter looked like nothing happened.
+        $this->assertSame(1, preg_match('/^\s*exec "\$start_pig_path"(.*)$/m', self::script(), $found));
+        $this->assertStringContainsString('</dev/tty', $found[1]);
+        $this->assertStringContainsString('>/dev/tty', $found[1]);
+    }
+
     public function testNothingRunsUntilTheLastLine(): void
     {
         // **The whole reason the script is a pile of functions.** Piped to `sh`, a download cut off
