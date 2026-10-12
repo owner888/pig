@@ -50,6 +50,58 @@ final class CustomModelsTest extends TestCase
         putenv('MY_BOX_KEY');
     }
 
+    /**
+     * pi's file and pig's are both read, pig's laid over pi's a provider at a time. It was "pig's,
+     * or pi's when pig has none", and a pig file written for one provider made every provider in
+     * pi's file disappear from pig while pi went on using it.
+     */
+    public function testDiscoverReadsPisFileAndPigsAndPigsWinsAProviderWhole(): void
+    {
+        $pi = $this->directory . '/pi';
+        $pig = $this->directory . '/pig';
+        mkdir($pi);
+        mkdir($pig);
+        $box = static fn (string $id, ?string $key): array => array_filter([
+            'baseUrl' => 'http://box.example/v1', 'api' => 'openai-completions', 'apiKey' => $key,
+            'models' => [['id' => $id]],
+        ]);
+        file_put_contents($pi . '/models.json', (string) json_encode(['providers' => [
+            'gateway' => $box('only-in-pi', 'sk-pi-gateway'),
+            'shared' => $box('pis-model', 'sk-pi-shared'),
+        ]]));
+        file_put_contents($pig . '/models.json', (string) json_encode(['providers' => [
+            'shared' => $box('pigs-model', null),
+            'mine' => $box('only-in-pig', 'sk-pig'),
+        ]]));
+
+        $saved = [];
+        foreach (['PI_CODING_AGENT_DIR' => $pi, 'PIG_CODING_AGENT_DIR' => $pig] as $name => $value) {
+            $saved[$name] = getenv($name);
+            putenv("{$name}={$value}");
+        }
+
+        try {
+            $models = CustomModels::discover();
+        } finally {
+            foreach ($saved as $name => $value) {
+                putenv($value === false ? $name : "{$name}={$value}");
+            }
+            foreach (["{$pi}/models.json", "{$pig}/models.json"] as $file) {
+                unlink($file);
+            }
+            rmdir($pi);
+            rmdir($pig);
+        }
+
+        $this->assertSame([], $models->problems);
+        $this->assertEqualsCanonicalizing(
+            ['gateway/only-in-pi', 'shared/pigs-model', 'mine/only-in-pig'],
+            array_map(static fn ($m): string => "{$m->provider}/{$m->id}", $models->models),
+        );
+        // pig's entry for `shared` says no key, so pi's does not ride along on it.
+        $this->assertSame(['gateway' => 'sk-pi-gateway', 'mine' => 'sk-pig'], $models->keys);
+    }
+
     private function write(string $json): string
     {
         $path = $this->directory . '/models.json';

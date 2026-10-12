@@ -102,23 +102,48 @@ final readonly class CustomModels
     }
 
     /**
-     * Read `~/.pig/agent/models.json`, or pi's if pig has none.
+     * Read pi's `~/.pi/agent/models.json` and then `~/.pig/agent/models.json`, the second laid over
+     * the first a provider at a time.
      *
-     * pi's is a fallback rather than a merge: one file is what upstream has, and somebody who
-     * already told pi about their endpoint should not have to say it twice. Neither file is
-     * ever written — this one is only ever read.
+     * Both, and not "pig's, or pi's when pig has none": somebody who told pi about their endpoint
+     * should not have to say it twice, and the fallback stopped meaning that the day they also
+     * wrote a pig file for something else — every provider in pi's file vanished from pig without
+     * a word, while pi went on using it. A provider named in both is pig's entry **whole**, never a
+     * mix of two files' fields, so what pig does with it is what pig's file says. Neither file is
+     * ever written.
      */
     public static function discover(): self
     {
-        foreach ([Config::home(), Config::piHome()] as $directory) {
-            $path = $directory . '/models.json';
+        $merged = new self([], [], []);
 
-            if (is_file($path)) {
-                return self::load($path);
-            }
+        foreach ([Config::piHome(), Config::home()] as $directory) {
+            $merged = $merged->layeredWith(self::load($directory . '/models.json'));
         }
 
-        return new self([], [], []);
+        return $merged;
+    }
+
+    /**
+     * This file with `$over` laid on top: a provider `$over` names replaces this one's entry for it
+     * — its models, its overrides and its key — and the problems of both are kept.
+     */
+    private function layeredWith(self $over): self
+    {
+        $layers = [...$this->layers, ...$over->layers];
+        $keys = $this->keys;
+
+        // A provider the later file names takes its key from there, or has none; a key from the
+        // earlier file must not ride along on an entry that no longer says it.
+        foreach (array_keys($over->layers) as $provider) {
+            unset($keys[$provider]);
+        }
+
+        $models = [];
+        foreach ($layers as $layer) {
+            $models = [...$models, ...$layer['declared']];
+        }
+
+        return new self($models, [...$keys, ...$over->keys], [...$this->problems, ...$over->problems], $layers);
     }
 
     public static function load(string $path): self

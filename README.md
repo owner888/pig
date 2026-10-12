@@ -335,7 +335,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- |
 | `~/.pig/agent/settings.json` | Global preferences (theme, model, thinking, auto-compact, auto-retry). |
 | `~/.pig/agent/auth.json` | Provider API keys and OAuth tokens (shared with `~/.pi/agent/auth.json`). |
-| `~/.pig/agent/models.json` | Custom OpenAI-compatible endpoints, local models (llama.cpp, vLLM), and overrides for built-in providers (`modelOverrides`). `apiKey` and headers take `$NAME` / `${NAME}` for an environment variable or `!command` for a command's output; anything else, a bare name included, is the literal value. |
+| `~/.pig/agent/models.json` | Read after pi's `~/.pi/agent/models.json`, so providers declared for pi work here too; a provider named in both is taken whole from pig's file. Custom OpenAI-compatible endpoints, local models (llama.cpp, vLLM), and overrides for built-in providers (`modelOverrides`). `apiKey` and headers take `$NAME` / `${NAME}` for an environment variable or `!command` for a command's output; anything else, a bare name included, is the literal value. |
 | `~/.pig/agent/mcp.json` | MCP server configurations (stdio & HTTP). |
 | `~/.pig/agent/trust.json` | Project resource authorization records. |
 | `~/.pig/agent/keybindings.json` | Custom keyboard shortcut mappings. |

@@ -317,7 +317,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- |
 | `~/.pig/agent/settings.json` | 全局偏好设置（主题、默认模型、思考强度、自动压缩、自动重试）。 |
 | `~/.pig/agent/auth.json` | 各提供商的 API Key 与 OAuth Token（与 `~/.pi/agent/auth.json` 互通共享）。 |
-| `~/.pig/agent/models.json` | 自定义 OpenAI 兼容端点或本地模型（llama.cpp、vLLM、Ollama），以及对内置 provider 的覆盖（`modelOverrides`）。`apiKey` 与 headers 用 `$NAME` / `${NAME}` 引用环境变量，用 `!command` 取命令输出；其余写法（包括裸变量名）一律按字面值使用。 |
+| `~/.pig/agent/models.json` | 在 pi 的 `~/.pi/agent/models.json` 之后读取，为 pi 声明的 provider 在这里同样可用；两个文件都有的 provider 整个以 pig 的为准。自定义 OpenAI 兼容端点或本地模型（llama.cpp、vLLM、Ollama），以及对内置 provider 的覆盖（`modelOverrides`）。`apiKey` 与 headers 用 `$NAME` / `${NAME}` 引用环境变量，用 `!command` 取命令输出；其余写法（包括裸变量名）一律按字面值使用。 |
 | `~/.pig/agent/mcp.json` | 标准 MCP 服务配置（stdio 与 HTTP）。 |
 | `~/.pig/agent/trust.json` | 项目资源信任授权记录。 |
 | `~/.pig/agent/keybindings.json` | 快捷键自定义映射表。 |

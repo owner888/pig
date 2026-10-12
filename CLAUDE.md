@@ -2397,9 +2397,11 @@ The other half was already here under other names (`Ai\Models`, `Auth`, `ModelRe
 is exactly how this one stayed invisible long enough to be the fourth thing the left-out table
 got wrong.
 
-`~/.pig/agent/models.json`, or pi's `~/.pi/agent/models.json` when pig has none — a fallback rather
-than a merge, because one file is what upstream has and somebody who already told pi about
-their box should not have to say it twice. Neither is ever written to. `--no-session` reads it
+pi's `~/.pi/agent/models.json` and then `~/.pig/agent/models.json`, pig's laid over pi's a provider at
+a time: a provider named in both is pig's entry whole, its key included (`CustomModels::layeredWith()`).
+It was "pig's, or pi's when pig has none", and the day the developer wrote a pig file for DeepSeek
+every provider in pi's file vanished from pig without a word while pi went on using it — the
+fallback only ever covered somebody with no pig file at all. Neither is ever written to. `--no-session` reads it
 too, as upstream's model runtime does, and `/model` reads it again whenever it opens.
 
 Every key is upstream's, so a file written for pi works here unchanged:
