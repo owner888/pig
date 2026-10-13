@@ -45,7 +45,8 @@ final class KeybindingsTest extends TestCase
         // `\e\r` is not alt+enter: it is Apple Terminal's Shift+Enter, and it goes to the
         // editor as a new line rather than being claimed here.
         $this->assertNull($keys->actionFor("\e\r"), "Apple Terminal's Shift+Enter is nobody's action");
-        $this->assertSame('app.message.followUp', $keys->actionFor(Keys::kitty(13, 2)), 'and as kitty reports it');
+        $this->assertSame('app.message.followUp', $keys->actionFor(Keys::kitty(13, 4)), 'Ctrl+Enter, as kitty reports it');
+        $this->assertNull($keys->actionFor(Keys::kitty(13, 2)), 'Alt+Enter is a new line, like Shift+Enter');
         $this->assertSame('app.message.dequeue', $keys->actionFor("\e[1;3A"));
 
         $custom = new Keybindings(['app.message.followUp' => ['command+enter']]);
@@ -189,7 +190,7 @@ final class KeybindingsTest extends TestCase
         $linux = new Keybindings(platform: 'linux', env: []);
         $this->assertSame(['ctrl+z'], $linux->keysFor('app.suspend'));
         $this->assertSame(['shift+ctrl+p'], $linux->keysFor('app.model.cycleBackward'));
-        $this->assertSame(['command+enter', 'alt+enter'], $linux->keysFor('app.message.followUp'));
+        $this->assertSame(['command+enter', 'ctrl+enter'], $linux->keysFor('app.message.followUp'));
         $this->assertSame(['alt+up'], $linux->keysFor('app.message.dequeue'));
         $this->assertSame(['ctrl+v'], $linux->keysFor('app.clipboard.pasteImage'));
         $this->assertSame(['ctrl+-'], $linux->keysFor('tui.editor.undo'));

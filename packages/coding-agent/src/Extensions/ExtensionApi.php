@@ -461,7 +461,7 @@ final class ExtensionApi extends HookApi
     /**
      * Put a panel in `pig web`: an entry in the sidebar's Extensions group that opens a window the
      * page draws from the blocks `$render` returns — see `WebPanel` for the blocks and the actions —
-     * or, with `placement: 'header'`, a button in the page's header instead.
+     * or, with `placement: 'header'`, an entry in the ⋯ menu of the page's header instead.
      *
      * pig's own, with no upstream counterpart. A panel is described rather than scripted, so it
      * looks like the rest of the page, follows its theme, and runs nothing of the extension in the
@@ -473,7 +473,7 @@ final class ExtensionApi extends HookApi
      *        its last argument asks the person, as `$ctx->ui` does: `confirm()`, `select()`, `input()`…
      * @param list<string> $commands slash commands that open it in the page, without the slash
      * @param 'sidebar'|'header' $placement where the page puts it by default; the person can move it
-     * @param string|array<string, string>|null $label a short name for the header button
+     * @param string|array<string, string>|null $label a short name for the header's ⋯ menu entry
      */
     public function registerWebPanel(
         string $id,

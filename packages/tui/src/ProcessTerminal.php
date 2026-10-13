@@ -266,7 +266,7 @@ final class ProcessTerminal implements Terminal
 
     /**
      * If the terminal (such as macOS Terminal.app) does not report extended keys and sends a bare
-     * "\r" when Shift or Command is held, inspect the local macOS modifier state via CoreGraphics.
+     * "\r" when Shift, Command, Control or Option is held, inspect the local macOS modifier state via CoreGraphics.
      * Matches upstream's `normalizeNativeShiftEnterInput` in `ProcessTerminal.ts`.
      */
     private static function normalizeNativeInput(string $data): string
@@ -307,6 +307,10 @@ final class ProcessTerminal implements Terminal
 
             if (($flags & 0x00100000) !== 0) { // kCGEventFlagMaskCommand
                 return "\x1b[13;9u"; // Command+Enter
+            }
+
+            if (($flags & 0x00040000) !== 0) { // kCGEventFlagMaskControl
+                return "\x1b[13;5u"; // Ctrl+Enter
             }
 
             if (($flags & 0x00080000) !== 0) { // kCGEventFlagMaskAlternate (Option)

@@ -527,8 +527,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     });
 
     promptInput.addEventListener("keydown", (e) => {
-      // Direct send on Enter (matching TUI), Shift+Enter inserts newline
-      const isPlainEnter = e.key === "Enter" && !e.shiftKey;
+      // Enter sends. Shift+Enter and Option/Alt+Enter are left to the textarea, which breaks the
+      // line on both. While a turn runs, Enter steers it and Cmd/Ctrl+Enter queues the message
+      // for after it — the TUI's keys (`app.message.followUp`), where Alt+Enter is a new line too.
+      const isPlainEnter = e.key === "Enter" && !e.shiftKey && !e.altKey;
       const isModifierEnter = e.key === "Enter" && (e.metaKey || e.ctrlKey);
 
       if (isPlainEnter || isModifierEnter) {
@@ -537,7 +539,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
         e.preventDefault();
         hideCommandHud();
-        submitMessage();
+        submitMessage(isModifierEnter);
       } else if (e.key === "Escape" && isRunning) {
         e.preventDefault();
         abortTurn();
@@ -604,7 +606,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       hideCommandHud();
     });
 
-    sendBtn.addEventListener("click", submitMessage);
+    sendBtn.addEventListener("click", () => submitMessage());
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
     newSessionBtn.addEventListener("click", () => startNewSession());
@@ -1066,7 +1068,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       refreshSidebar();
     }
 
-    async function submitMessage() {
+    async function submitMessage(followUp = false) {
       const text = promptInput.value.trim();
       const imgsToSend = [...pendingImages];
 
@@ -1216,15 +1218,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       appendUserMessage(text, imgsToSend);
       setRunningState(true);
 
-      // `steer` while a turn runs, `prompt` otherwise — what the single-session server used to
-      // decide; now the page knows, because it holds the running flag per tab.
+      // Always `prompt`, always with a `streamingBehavior`: the child decides whether a turn is
+      // running at the moment the message arrives, and only then does the behavior count. The
+      // page used to decide from `tab.state.isStreaming`, which is `get_state`'s answer from when
+      // the tab was bound and never follows a turn, so a message sent mid-turn went out as a
+      // plain `prompt` and came back "Agent is already processing".
       const images = imgsToSend.map(img => ({ type: "image", mimeType: img.mimeType, data: img.data }));
       try {
-        if (tab.state?.isStreaming) {
-          await tab.rpc({ type: "steer", message: text });
-        } else {
-          await tab.rpc({ type: "prompt", message: text, images });
-        }
+        await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer" });
       } catch (err) {
         setRunningState(false);
         promptInput.value = text;
@@ -1521,7 +1522,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       langBtn.addEventListener("click", openLangModal);
     }
 
-    // Mobile More Menu dropdown handling
+    // The header's ⋯ menu
     const moreMenuBtn = document.getElementById("more-menu-btn");
     const moreMenuDropdown = document.getElementById("more-menu-dropdown");
     const moreThemeBtn = document.getElementById("more-theme-btn");
@@ -1539,6 +1540,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         toggleMoreMenu();
       });
     }
+    // Whatever was picked — an entry here or an extension's panel (`panels.js`) — the menu closes.
+    moreMenuDropdown?.addEventListener("click", (e) => {
+      if (e.target.closest(".more-dropdown-item")) toggleMoreMenu(false);
+    });
 
     if (moreThemeBtn) {
       moreThemeBtn.addEventListener("click", (e) => {

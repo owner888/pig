@@ -153,7 +153,7 @@ pig
   - **长按 `⌘`（Command）键 ~0.85s**：如同 **Blink Shell / iPadOS** 般在屏幕中央弹出快捷键速查面板（HUD），松开即自动消失，支持 TUI 终端与 Web 界面。
   - 按 **Shift+Enter**：输入框内**换行**（多行自由编写 Prompt 或粘贴代码块，绝不误发）。
   - 空闲时按 **回车（Enter）** 或 **Command+Enter**（`⌘+Enter` / `Ctrl+Enter`）：发送消息（Submit）。
-  - 模型生成期间按 **Command+Enter**（或 **Alt+Enter**）：**排队追问（Follow-up）**（加入后续队列，等本轮完全结束后再自动处理）。
+  - 模型生成期间按 **Command+Enter**（或 **Ctrl+Enter**）：**排队追问（Follow-up）**（加入后续队列，等本轮完全结束后再自动处理）。
   - 模型生成期间按 **回车（Enter）**：**抢占转向（Steer）**（当前工具执行完立刻优先处理你的新指令）。
   - 按 **Alt+Up**：将已排队的待发送内容全部撤回编辑输入框。
   - 按 **Escape**：立即终止当前生成轮次或取消重试等待。

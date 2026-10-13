@@ -170,7 +170,7 @@ pig
   - **Hold `⌘` (Command) for ~0.85s**: Pops up an interactive **Blink Shell / iPadOS style** shortcuts cheat sheet (HUD) in the center of the screen, automatically dismissing when released (supported in both TUI and Web UI).
   - Press **Shift+Enter**: Insert a **newline** in the editor (draft multiline prompts or paste code safely without accidental sending).
   - Press **Enter** or **Command+Enter** (`⌘+Enter` / `Ctrl+Enter`) when idle: Submit message.
-  - Press **Command+Enter** (or **Alt+Enter**) while the model is answering: **Queue a follow-up** for after the turn ends.
+  - Press **Command+Enter** (or **Ctrl+Enter**) while the model is answering: **Queue a follow-up** for after the turn ends.
   - Press **Enter** while the model is answering: **Steer** (interrupts right after current tool).
   - Press **Alt+Up**: Restore all queued messages back to the editor.
   - Press **Escape**: Interrupt the active turn or cancel retries.

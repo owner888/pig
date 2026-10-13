@@ -59,11 +59,13 @@ final class Keybindings extends KeybindingsManager
         'app.session.toggleNamedFilter' => ['defaultKeys' => 'ctrl+n', 'description' => 'Toggle named session filter'],
         'app.editor.external' => ['defaultKeys' => 'ctrl+g', 'description' => 'Open external editor'],
         'app.message.copy' => ['defaultKeys' => 'ctrl+x', 'description' => 'Copy selection or last assistant message'],
-        // Upstream's is `alt+enter` alone. `command+enter` is pig's, kept on purpose: the macOS
-        // modifier fallback in `ProcessTerminal` turns ⌘+Return into `\e[13;9u`, and Apple
-        // Terminal's `\e\r` is Shift+Enter rather than Alt+Enter (see `Keys::isAltEnter()`), so on
-        // that terminal this is the follow-up key there is. Idle, the action sends.
-        'app.message.followUp' => ['defaultKeys' => ['command+enter', 'alt+enter'], 'description' => 'Queue follow-up message'],
+        // Upstream's is `alt+enter`. pig's are `command+enter` and `ctrl+enter`, and Alt+Enter is
+        // a new line like Shift+Enter (the developer's call): in a terminal without the kitty
+        // protocol Option+Return arrives as `\e\r` — Apple Terminal's Shift+Enter — or as a
+        // bare `\r`, so it could never be told apart there, and the web page keeps the same keys.
+        // The macOS modifier fallback in `ProcessTerminal` turns ⌘+Return and ⌃+Return into their
+        // kitty forms for a terminal that sends a bare `\r`. Idle, the action sends.
+        'app.message.followUp' => ['defaultKeys' => ['command+enter', 'ctrl+enter'], 'description' => 'Queue follow-up message'],
         'app.message.dequeue' => ['defaultKeys' => 'alt+up', 'description' => 'Restore queued messages'],
         'app.clipboard.pasteImage' => ['defaultKeys' => 'ctrl+v', 'description' => 'Paste files on macOS, images, or text from clipboard'],
         'app.session.new' => ['defaultKeys' => [], 'description' => 'Start a new session'],

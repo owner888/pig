@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.41] - 2026-10-12
+
+### Changed
+
+- Web: the header has a ⋯ menu on the desktop too, and the extensions' panels live there — a panel placed in the header (such as Accounts) is an entry in it, with the Extensions list beside it — instead of a button each in the bar. On a phone the menu also holds the bar's buttons, as before, and now the header panels as well, which a phone could not reach before. With no panels the desktop shows no ⋯.
+- Web: quiet text stays readable in dark themes such as labra, whose `muted` and `dim` are too dark for text. The header's labelled buttons (theme, language, account, extensions, SSH nodes, terminal) are in the text colour; the folder name, the session file badge, background tabs and the numbers under the prompt use a new `--color-text-subtle`, mixed from the text and the page (6:1 in labra, about the default themes' `muted` elsewhere).
+- Web: the sidebar's group headings (Extensions, Today, Yesterday…) are 12px regular instead of 11px bold, closer to the items under them.
+- Web: the sidebar's icons (New session, Search, Scheduled, extension panels) are the colour of their labels instead of a dimmer grey.
+- Web: the selected conversation in the sidebar is drawn like the "New messages" pill — blue border and text on the raised surface, instead of on a blue-tinted ground that made the text hard to read.
+- Follow-up keys: Cmd+Enter and Ctrl+Enter queue a message for after the turn, in the TUI and the web page alike; Alt/Option+Enter is a new line, like Shift+Enter. A terminal without the kitty keyboard protocol sends Option+Return as Shift+Return's bytes or as a bare Return, so Alt+Enter could never be told apart there. On macOS, Ctrl+Return in such a terminal is read from the modifier state, as Cmd+Return already was.
+
+### Fixed
+
+- Web: a message sent while the agent works no longer fails with "Agent is already processing". The page decided between `steer` and `prompt` from the state it read when the tab opened, which never followed a turn; it now always sends `prompt` with a `streamingBehavior` and lets the agent decide. Enter steers and Cmd/Ctrl+Enter queues a follow-up, as in the TUI, and images sent mid-turn are no longer dropped.
+
 ## [0.6.40] - 2026-10-12
 
 ### Fixed

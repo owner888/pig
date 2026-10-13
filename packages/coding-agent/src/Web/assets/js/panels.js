@@ -1,8 +1,9 @@
 /**
  * The extensions' panels (`ExtensionApi::registerWebPanel()`): an entry each in the sidebar's
- * Extensions group or a button in the header — the extension's `placement`, unless the person moved
+ * Extensions group or in the header's ⋯ menu — the extension's `placement`, unless the person moved
  * it (`placementOf()`, kept in this browser) — and a window drawn from the blocks the extension's
- * `render` returns — see `WebPanel` for them. The header's 🧩 button lists them all, to open or move. Nothing of the extension runs here: it describes, the page draws, in the
+ * `render` returns — see `WebPanel` for them. The ⋯ menu's Extensions entry lists them all, to open
+ * or move. Nothing of the extension runs here: it describes, the page draws, in the
  * page's own components and theme.
  *
  * `blocksToHtml()` is the drawing and needs no page, so it can be run under Node.
@@ -139,7 +140,7 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
     return panels;
   }
 
-  /** Each panel in its place: the sidebar's Extensions group, or a button in the header. */
+  /** Each panel in its place: the sidebar's Extensions group, or an entry in the header's ⋯ menu. */
   function draw() {
     const at = (where) => panels.filter((p) => placementOf(p, overrides) === where);
     const icon = (p) => escapeText(p.icon || "▣");
@@ -153,7 +154,10 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
     if (group) group.hidden = at("sidebar").length === 0;
     if (header) {
       header.innerHTML = at("header").map((p) => `
-        <button class="toggle-sidebar-btn header-btn desktop-only-btn" data-panel="${escapeText(p.id)}" title="${escapeText(p.title)}">${icon(p)} ${escapeText(p.label || p.title)}</button>`).join("");
+        <div class="more-dropdown-item" data-panel="${escapeText(p.id)}" title="${escapeText(p.title)}">
+          <span class="more-item-icon">${icon(p)}</span>
+          <span class="more-item-text">${escapeText(p.label || p.title)}</span>
+        </div>`).join("");
     }
     for (const el of [list, header]) {
       el?.querySelectorAll("[data-panel]").forEach((b) => b.addEventListener("click", () => open(b.dataset.panel)));

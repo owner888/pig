@@ -23,7 +23,7 @@ final class AccountsPanel
 
     public const array TITLE = ['en' => 'Antigravity Accounts', 'zh-CN' => 'Antigravity 账号管理'];
 
-    /** The header button's name, as the page's own button said it. */
+    /** The name of its entry in the header's ⋯ menu. */
     public const array LABEL = ['en' => 'Accounts', 'zh-CN' => '账号'];
 
     private const array STRINGS = [

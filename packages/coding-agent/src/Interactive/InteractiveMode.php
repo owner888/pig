@@ -2106,7 +2106,7 @@ final class InteractiveMode
 
             // Typed while the agent is working: Enter **steers** — delivered after the tool that
             // is running now, which is upstream's `streamingBehavior: "steer"` and what somebody
-            // means by typing "no, the other file" mid-run. Alt+Enter is the follow-up, below.
+            // means by typing "no, the other file" mid-run. Cmd/Ctrl+Enter is the follow-up, below.
             if ($this->session->isStreaming()) {
                 $this->session->steer($text);
                 $this->editor->setText('');
@@ -2122,7 +2122,8 @@ final class InteractiveMode
     }
 
     /**
-     * Alt+Enter: queue what was typed for **after** the turn — upstream's `handleFollowUp()`.
+     * Cmd/Ctrl+Enter (upstream's Alt+Enter): queue what was typed for **after** the turn —
+     * upstream's `handleFollowUp()`.
      *
      * The other half of typing while the agent works. Enter steers, which cuts in after the
      * current tool; this waits until the whole turn is over, for the thing that is not a

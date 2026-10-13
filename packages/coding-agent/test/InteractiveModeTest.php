@@ -95,6 +95,7 @@ final class InteractiveModeTest extends TestCase
     private const string ENTER = "\r";
     /** The kitty form: `\e\r` is Apple Terminal's Shift+Enter and is a new line. */
     private const string ALT_ENTER = "\e[13;3u";
+    private const string CTRL_ENTER = "\e[13;5u";
     private const string CMD_ENTER = "\x1b[13;9u";
     private const string SHIFT_ENTER = "\x1b[13;2u";
     private const string ALT_UP = "\e[1;3A";
@@ -3050,11 +3051,11 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
-    public function testAltEnterWhileTheAgentWorksIsAFollowUpAndNotASteer(): void
+    public function testCtrlEnterWhileTheAgentWorksIsAFollowUpAndNotASteer(): void
     {
         // Upstream's `app.message.followUp`: Enter cuts in after the tool that is running,
-        // Alt+Enter waits for the turn to end. The two queues are kept apart and the screen
-        // labels each by what it will do.
+        // Ctrl+Enter (upstream's Alt+Enter) waits for the turn to end. The two queues are kept
+        // apart and the screen labels each by what it will do.
         $this->start([...array_fill(0, 2, 'done')]);
 
         $held = $this->holdTheAgent();
@@ -3064,7 +3065,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->type('do this next');
-        $this->type(self::ALT_ENTER);
+        $this->type(self::CTRL_ENTER);
 
         $this->assertSame(['steering' => [], 'followUp' => ['do this next']], $this->session->queuedByKind());
         $this->assertStringContainsString('Follow-up: do this next', $this->screen());
@@ -3074,19 +3075,41 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
-    public function testAltEnterFromAnIdlePromptIsEnter(): void
+    public function testCtrlEnterFromAnIdlePromptIsEnter(): void
     {
-        // Nothing to wait behind, so upstream sends it as Enter would — it must not become a
-        // new line in the prompt, which is what the bare editor reads Alt+Enter as.
+        // Nothing to wait behind, so upstream sends it as Enter would.
         $this->start(['done']);
 
         $this->type('hello');
-        $this->type(self::ALT_ENTER);
+        $this->type(self::CTRL_ENTER);
         $this->settle();
 
         $this->assertSame([], $this->session->queued());
         $this->assertStringContainsString('done', $this->screen());
         $this->assertSame('', $this->editorText());
+    }
+
+    public function testAltEnterWhileTheAgentWorksBreaksTheLineAndNeverQueues(): void
+    {
+        // pig's Alt+Enter is Shift+Enter: a terminal without the kitty protocol cannot tell the
+        // two apart, so neither is a follow-up anywhere.
+        $this->start(['done']);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('line 1');
+        $this->type(self::ALT_ENTER);
+        $this->type('line 2');
+
+        $this->assertSame(['steering' => [], 'followUp' => []], $this->session->queuedByKind());
+        $this->assertSame("line 1\nline 2", $this->editorText());
+
+        $held();
+        $this->settle();
     }
 
     public function testCommandEnterWhileTheAgentWorksIsAFollowUp(): void
@@ -3160,7 +3183,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('steer this');
         $this->type(self::ENTER);
         $this->type('and follow with this');
-        $this->type(self::ALT_ENTER);
+        $this->type(self::CTRL_ENTER);
         $this->type('half typed');
         $this->type(self::ALT_UP);
 

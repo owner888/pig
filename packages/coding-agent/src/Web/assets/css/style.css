@@ -9,6 +9,11 @@
       /* A divider between panes: the text colour at low alpha, so it reads on any background without standing out. */
       --color-divider: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
       --color-primary-hover: color-mix(in srgb, var(--color-primary) 85%, var(--color-text-primary));
+      /* Quiet text that still has to be read (the folder, the file badge, background tabs, the
+         numbers under the prompt). Mixed from the text and the page rather than taken from the
+         theme's `muted`, which some themes make too dark to read as text: labra's is 2.9:1, this
+         is 6:1 there and about the same as `muted` in the default themes. */
+      --color-text-subtle: color-mix(in srgb, var(--color-text-primary) 65%, var(--color-background));
       --color-shadow: #000;
       --color-scrim-text: #fff;
       --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -133,8 +138,9 @@
       background: var(--color-hover);
       border-color: transparent;
     }
+    /* The "New messages" pill's look: blue text on a blue-tinted ground read poorly. */
     .drawer-item.active {
-      background: var(--color-selected-bg);
+      background: var(--color-surface-elevated);
       border-color: var(--color-primary);
       color: var(--color-primary);
     }
@@ -270,7 +276,7 @@
       white-space: nowrap;
     }
     .path-cwd {
-      color: var(--color-text-secondary);
+      color: var(--color-text-subtle);
       font-weight: 600;
       flex-shrink: 0;
     }
@@ -287,7 +293,7 @@
       gap: 5px;
       font-family: var(--font-mono);
       font-size: 11px;
-      color: var(--color-dim);
+      color: var(--color-text-subtle);
       background: var(--color-hover);
       border: 1px solid var(--color-border);
       border-radius: 4px;
@@ -302,8 +308,8 @@
     }
     .session-file-badge:hover {
       background: var(--color-hover);
-      border-color: var(--color-dim);
-      color: var(--color-text-secondary);
+      border-color: var(--color-text-subtle);
+      color: var(--color-text-primary);
     }
     .session-file-badge.copied {
       border-color: color-mix(in srgb, var(--color-success) 70%, transparent);
@@ -363,6 +369,9 @@
       font-size: 12px;
       font-weight: 500;
       white-space: nowrap;
+      /* A labelled button is read, not glanced at: a theme's `muted` can be too dark for text
+         (labra's is 2.9:1 on its surface). The border keeps it quieter than the content. */
+      color: var(--color-text-primary);
     }
     .desktop-only-btn {
       display: inline-flex;
@@ -371,9 +380,13 @@
       display: none;
     }
     .desktop-only-btn[hidden], .more-dropdown-item[hidden] { display: none; }
+    /* In the ⋯ menu, what the desktop already has as a button in the bar. */
+    .more-dropdown-item.mobile-only-item { display: none; }
+    /* With no extension panels the desktop's ⋯ menu would open empty, so it is not there. */
+    .more-menu-wrapper:not(:has(.header-panels > *, #more-panels-btn:not([hidden]))) { display: none; }
     .header-panels { display: contents; }
 
-    /* More Options dropdown (Mobile overflow menu) */
+    /* The ⋯ menu */
     .more-menu-wrapper {
       position: relative;
     }
@@ -468,21 +481,15 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--color-text-secondary);
+      /* The item's own colour, so the icon and its label always match (disabled included). */
+      color: inherit;
       flex-shrink: 0;
-      transition: color 0.15s ease;
     }
     .sidebar-nav-icon svg {
       width: 16px;
       height: 16px;
       stroke-width: 2;
       display: block;
-    }
-    .sidebar-nav-item:hover:not(:disabled) .sidebar-nav-icon {
-      color: var(--color-text-primary);
-    }
-    .sidebar-nav-item:disabled .sidebar-nav-icon {
-      opacity: 0.6;
     }
     /* A scheduled run is waiting for an answer */
     .sidebar-nav-dot {
@@ -501,10 +508,12 @@
       margin-right: 5px;
       color: var(--color-dim);
     }
+    /* About the size of the items below (13px), in regular weight and the dim colour: a quiet
+       label rather than a small bold one. */
     .sidebar-group-title {
       padding: 12px 12px 4px;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 400;
       color: var(--color-dim);
     }
     .sidebar-empty {
@@ -920,7 +929,8 @@
       max-width: 220px;
       min-width: 0;
       font-size: 12px;
-      color: var(--color-dim);
+      /* Not `dim`: `dim` is the disabled colour, and a tab in the background is one click away. */
+      color: var(--color-text-subtle);
       border-bottom: 2px solid transparent;
       cursor: pointer;
       user-select: none;
@@ -2229,7 +2239,7 @@
     .dropdown-item.disabled { opacity: 0.4; cursor: default; }
 
     .status-telemetry {
-      color: var(--color-dim);
+      color: var(--color-text-subtle);
     }
 
     /* Input row matching pi-web */
@@ -2338,6 +2348,12 @@
         display: none !important;
       }
       .mobile-only-btn {
+        display: inline-flex !important;
+      }
+      .more-dropdown-item.mobile-only-item {
+        display: flex;
+      }
+      .more-menu-wrapper {
         display: inline-flex !important;
       }
       .path-cwd {

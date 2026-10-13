@@ -26,8 +26,8 @@ use Closure;
  *   again with that `section`: what needs a network call does not hold the rest of the panel up
  *
  * Where it goes: `placement` is the extension's default — `sidebar`, the Extensions group, or
- * `header`, a button in the page's header, named by `label` (a short name; the title when there is
- * none). The person can move a panel to the other place in the page; that choice wins.
+ * `header`, an entry in the ⋯ menu of the page's header, named by `label` (a short name; the title
+ * when there is none). The person can move a panel to the other place in the page; that choice wins.
  *
  * An action is a button: `['label' => …, 'action' => …, 'args' => [...], 'confirm' => …,
  * 'tone' => 'danger', 'title' => …]`. Pressed (and confirmed, when there is a `confirm` question),
@@ -53,7 +53,7 @@ final readonly class WebPanel
      *        null when it worked, else why it did not; a throw is the same as its message
      * @param list<string> $commands slash commands that open the panel in the page (`accounts` for `/accounts`)
      * @param 'sidebar'|'header' $placement where the page puts it unless the person moves it
-     * @param string|array<string, string>|null $label the header button's short name, by locale like the title
+     * @param string|array<string, string>|null $label the ⋯ menu entry's short name, by locale like the title
      */
     public function __construct(
         public string $id,
@@ -84,7 +84,7 @@ final readonly class WebPanel
         return self::inLocale($this->title, $locale);
     }
 
-    /** The header button's name in `$locale`: the label, or the title without one. */
+    /** The ⋯ menu entry's name in `$locale`: the label, or the title without one. */
     public function labelFor(string $locale): string
     {
         return $this->label === null || $this->label === [] ? $this->titleFor($locale) : self::inLocale($this->label, $locale);

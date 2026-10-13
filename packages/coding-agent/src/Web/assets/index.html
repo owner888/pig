@@ -69,9 +69,6 @@
       <div class="header-actions">
         <button id="theme-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" data-i18n-attr="title:theme_settings" title="Theme Settings">🎨 Dark</button>
         <button id="lang-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="语言与语言包设置 / Language Settings">🌐 语言</button>
-        <!-- The extensions' panels placed in the header (panels.js), and the list of them all -->
-        <span id="header-panels" class="header-panels"></span>
-        <button id="panels-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" hidden data-i18n-attr="title:panels_title">🧩&nbsp;<span data-i18n="sidebar_extensions">Extensions</span></button>
         <button id="nodes-btn" class="toggle-sidebar-btn header-btn desktop-only-btn ctrl-btn nodes-btn" data-i18n-attr="title:nodes_title" title="SSH 节点工作台 / SSH Nodes Workbench">
           <svg class="nodes-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -88,7 +85,9 @@
           <span class="terminal-btn-label" data-i18n="terminal">终端</span>
         </button>
 
-        <div class="more-menu-wrapper mobile-only-btn">
+        <!-- The ⋯ menu, on every width: the extensions' header panels (panels.js) and the list of
+             them all; on a phone also what the desktop has as buttons in the bar. -->
+        <div class="more-menu-wrapper">
           <button id="more-menu-btn" class="toggle-sidebar-btn more-btn" data-i18n-attr="title:more_options" title="更多设置 / More Options">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <circle cx="3" cy="8" r="1.5"/>
@@ -97,29 +96,30 @@
             </svg>
           </button>
           <div id="more-menu-dropdown" class="more-dropdown" style="display:none;">
-            <div class="more-dropdown-item" id="more-nodes-btn">
-              <span class="more-item-icon">🖥️</span>
-              <span class="more-item-text" data-i18n="nodes">Nodes</span>
-            </div>
-            <div class="more-dropdown-item" id="more-terminal-btn">
-              <span class="more-item-icon">💻</span>
-              <span class="more-item-text" data-i18n="terminal">Terminal</span>
-            </div>
-            <div class="more-dropdown-item" id="more-theme-btn">
-              <span class="more-item-icon">🎨</span>
-              <span class="more-item-text" data-i18n="menu_theme">Theme</span>
-            </div>
-            <div class="more-dropdown-item" id="more-lang-btn">
-              <span class="more-item-icon">🌐</span>
-              <span class="more-item-text" data-i18n="menu_lang">Language</span>
-            </div>
-            <div class="more-dropdown-item" id="more-logout-btn">
-              <span class="more-item-icon">⏻</span>
-              <span class="more-item-text" data-i18n="logout">Log out</span>
-            </div>
+            <div id="header-panels" class="header-panels"></div>
             <div class="more-dropdown-item" id="more-panels-btn" hidden>
               <span class="more-item-icon">🧩</span>
               <span class="more-item-text" data-i18n="sidebar_extensions">Extensions</span>
+            </div>
+            <div class="more-dropdown-item mobile-only-item" id="more-nodes-btn">
+              <span class="more-item-icon">🖥️</span>
+              <span class="more-item-text" data-i18n="nodes">Nodes</span>
+            </div>
+            <div class="more-dropdown-item mobile-only-item" id="more-terminal-btn">
+              <span class="more-item-icon">💻</span>
+              <span class="more-item-text" data-i18n="terminal">Terminal</span>
+            </div>
+            <div class="more-dropdown-item mobile-only-item" id="more-theme-btn">
+              <span class="more-item-icon">🎨</span>
+              <span class="more-item-text" data-i18n="menu_theme">Theme</span>
+            </div>
+            <div class="more-dropdown-item mobile-only-item" id="more-lang-btn">
+              <span class="more-item-icon">🌐</span>
+              <span class="more-item-text" data-i18n="menu_lang">Language</span>
+            </div>
+            <div class="more-dropdown-item mobile-only-item" id="more-logout-btn">
+              <span class="more-item-icon">⏻</span>
+              <span class="more-item-text" data-i18n="logout">Log out</span>
             </div>
           </div>
         </div>
