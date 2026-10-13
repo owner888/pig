@@ -1606,6 +1606,24 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     });
 
+    // Enter with nothing focused goes to the prompt, as in Telegram: after reading, clicking in the
+    // conversation or switching tabs, the next Enter puts the cursor back where typing happens.
+    // Only a bare Enter, and only when it has no other job — a focused button, link, field or
+    // `<summary>` keeps it, and so does anything open over the page (a dialog, the ⌘ HUD, an
+    // image, the terminal, a menu).
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.defaultPrevented || e.isComposing || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, select, button, a[href], summary, [contenteditable], [role='button'], [tabindex]")) return;
+      const shown = (selector) => [...document.querySelectorAll(selector)].some((el) => el.getClientRects().length > 0);
+      if (shown(".modal-backdrop, .hud-backdrop, .image-lightbox-overlay, .web-terminal-drawer.visible, .session-dropdown-menu")) return;
+      if (moreMenuDropdown && moreMenuDropdown.style.display !== "none") return;
+      e.preventDefault();
+      promptInput.focus();
+      const end = promptInput.value.length;
+      promptInput.setSelectionRange(end, end);
+    });
+
     // ---- session tabs -------------------------------------------------------------------
     //
     // ---- the tab bar -----------------------------------------------------------------------

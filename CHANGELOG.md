@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.49] - 2026-10-13
+
+### Added
+
+- Web: Enter with nothing focused puts the cursor in the prompt, as in Telegram — after reading, clicking in the conversation or switching tabs, the next Enter takes you back to typing. A focused button, link or field keeps its Enter, and nothing happens while a dialog, menu, image or the terminal is open.
+
 ## [0.6.48] - 2026-10-13
 
 ### Fixed
