@@ -162,6 +162,13 @@ final class RpcUi implements HookUi
         $this->tell(['method' => 'notify', 'message' => $message, 'notifyType' => $level]);
     }
 
+    /** Fire and forget, as `notify`: a host that does not know the method lets it go by. */
+    #[\Override]
+    public function systemNotify(string $title, string $body = ''): void
+    {
+        $this->tell(['method' => 'systemNotify', 'title' => $title, 'body' => $body]);
+    }
+
     #[\Override]
     public function setStatus(string $key, ?string $text): void
     {

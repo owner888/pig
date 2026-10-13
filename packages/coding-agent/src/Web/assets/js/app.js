@@ -14,6 +14,7 @@ import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
+import { primeAttention, notifyAway } from "./attention.js";
 import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
@@ -1072,6 +1073,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     async function submitMessage(followUp = false) {
+      // A keystroke or a click: the moment a page may unlock sound and ask about notifications.
+      primeAttention();
       const text = promptInput.value.trim();
       const imgsToSend = [...pendingImages];
 
@@ -1422,6 +1425,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     function onHookUiRequest(req) {
+      // An extension's `$ctx->ui->systemNotify()`: for someone looking elsewhere (`attention.js`).
+      if (req.method === "systemNotify") {
+        const tab = T();
+        notifyAway({ title: req.title || "pig", body: req.body || "", onOpen: tab ? () => openTab(tab) : null });
+        return;
+      }
       if (req.method === "notify") {
         const tab = T();
         if (tab && !tab.messagesLoaded) tab.earlyNotices.push(req); else drawNotify(req);

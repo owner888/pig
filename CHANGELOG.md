@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.51] - 2026-10-13
+
+### Added
+
+- Extensions: `$ctx->ui->systemNotify($title, $body)` tells the person outside the window, and pig picks how. In the terminal, a desktop notification (`osascript`, `notify-send`), or over SSH the terminal's own (OSC 777, shown by Ghostty, iTerm2 and WezTerm) and a bell — the notifier starts without being waited for. Behind `pig web`, the page's: when you are looking elsewhere (another window, another app, a background tab) its title gains `(n) ✓`, its icon a green dot, a short chime plays, all cleared when you come back, and where the browser allows it (`localhost` or https, and you said yes when asked, on your first message) a system notification that a click brings the conversation back from — over plain `http://` on a LAN address browsers offer none. A host over `--mode rpc` gets `extension_ui_request {method: "systemNotify", title, body}`; print, json and mcp modes have nowhere to send it. pig's own, as `registerWebPanel()`; pi's extensions have no such call.
+- `examples/extensions/system-notify.php`: copy it to `~/.pig/agent/extensions/` to be told when a piece of work is done — once, when the turn settles, through `systemNotify()`, so the same file works in the terminal and the page.
+
 ## [0.6.50] - 2026-10-13
 
 ### Fixed

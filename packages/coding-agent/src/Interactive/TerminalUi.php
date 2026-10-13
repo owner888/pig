@@ -409,6 +409,64 @@ final class TerminalUi implements HookUi
         $this->tui->requestRender();
     }
 
+    /**
+     * A desktop notification from this machine — `osascript` on macOS, `notify-send` where there is
+     * one — or, over SSH or with neither, the terminal's own (OSC 777, which Ghostty, iTerm2 and
+     * WezTerm turn into one) and a bell. Over SSH a notifier would show it on the server.
+     *
+     * The notifier is started through `sh -c '… &'`, so it is not waited for: `osascript` takes a
+     * moment, and the screen does not stop for it.
+     */
+    #[\Override]
+    public function systemNotify(string $title, string $body = ''): void
+    {
+        $command = match (true) {
+            getenv('SSH_CONNECTION') !== false || getenv('SSH_TTY') !== false => null,
+            PHP_OS_FAMILY === 'Darwin' => ['osascript', '-e', sprintf(
+                'display notification "%s" with title "%s" sound name "default"',
+                addcslashes($body, '"\\'),
+                addcslashes($title, '"\\'),
+            )],
+            PHP_OS_FAMILY === 'Linux' && self::onPath('notify-send') => ['notify-send', '-a', 'pig', $title, $body],
+            default => null,
+        };
+
+        if ($command !== null) {
+            // A notifier that cannot start warns and answers false; then the terminal says it.
+            set_error_handler(static fn (): bool => true);
+            try {
+                $process = proc_open(
+                    ['/bin/sh', '-c', '"$@" >/dev/null 2>&1 &', 'sh', ...$command],
+                    [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+                    $pipes,
+                );
+            } finally {
+                restore_error_handler();
+            }
+
+            if (is_resource($process)) {
+                proc_close($process);
+
+                return;
+            }
+        }
+
+        // `;` separates OSC 777's fields and a control character would end the sequence early.
+        $clean = static fn (string $text): string => (string) preg_replace('/[\x00-\x1f\x7f;]/', ' ', $text);
+        $this->tui->terminal->write("\033]777;notify;{$clean($title)};{$clean($body)}\007\007");
+    }
+
+    private static function onPath(string $name): bool
+    {
+        foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {
+            if ($dir !== '' && is_executable("{$dir}/{$name}")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     #[\Override]
     public function setTitle(string $title): void
     {

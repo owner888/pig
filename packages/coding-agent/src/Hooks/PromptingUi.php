@@ -100,6 +100,12 @@ final class PromptingUi implements HookUi
     }
 
     #[\Override]
+    public function systemNotify(string $title, string $body = ''): void
+    {
+        $this->ui->systemNotify($title, $body);
+    }
+
+    #[\Override]
     public function setStatus(string $key, ?string $text): void
     {
         $this->ui->setStatus($key, $text);

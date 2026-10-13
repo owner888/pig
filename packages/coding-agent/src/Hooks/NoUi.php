@@ -60,6 +60,11 @@ final readonly class NoUi implements HookUi
     }
 
     #[\Override]
+    public function systemNotify(string $title, string $body = ''): void
+    {
+    }
+
+    #[\Override]
     public function setStatus(string $key, ?string $text): void
     {
     }

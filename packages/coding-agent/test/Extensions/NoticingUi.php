@@ -74,6 +74,12 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
+    public function systemNotify(string $title, string $body = ''): void
+    {
+        $this->notices[] = "[system] {$title}: {$body}";
+    }
+
+    #[\Override]
     public function setStatus(string $key, ?string $text): void
     {
     }

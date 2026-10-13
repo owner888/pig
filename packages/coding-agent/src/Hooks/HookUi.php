@@ -103,6 +103,19 @@ interface HookUi
     public function notify(string $message, string $level = 'info'): void;
 
     /**
+     * Tell the person outside this window — they may be in another app, or away from the terminal
+     * or the page. pig's own, with no upstream counterpart (as `registerWebPanel()`).
+     *
+     * Where it goes is the host's: in the terminal a desktop notification (`osascript`,
+     * `notify-send`), or the terminal's own (OSC 777) over SSH, where a notifier would run on the
+     * wrong machine; behind `pig web` the page's — its title, its icon, a chime, and a browser
+     * notification where the browser allows one; for a host over `--mode rpc` an
+     * `extension_ui_request` with `method: "systemNotify"`. Nowhere to send it (print, json, mcp):
+     * nothing. A notification is not kept anywhere: the transcript is `notify()`'s.
+     */
+    public function systemNotify(string $title, string $body = ''): void;
+
+    /**
      * Keep something on the footer under $key until it is replaced or cleared.
      *
      * For what a notification is wrong for: a count that changes, a watch that is running.

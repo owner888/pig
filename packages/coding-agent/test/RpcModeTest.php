@@ -1499,6 +1499,23 @@ final class RpcModeTest extends TestCase
         $this->assertSame([], $this->lines());
     }
 
+    public function testSystemNotifyIsToldToTheHostAndWaitsForNothing(): void
+    {
+        // pig's own: the page shows it to someone looking elsewhere; another host lets it go by.
+        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
+            $ctx->ui->systemNotify('Done · pig', 'Task finished (3s)');
+
+            return null;
+        }]);
+
+        $this->start(hooks: $hooks);
+        $requests = $this->of('extension_ui_request');
+
+        $this->assertSame('systemNotify', $requests[0]['method']);
+        $this->assertSame('Done · pig', $requests[0]['title']);
+        $this->assertSame('Task finished (3s)', $requests[0]['body']);
+    }
+
     public function testNotifyIsOneWayAndWaitsForNothing(): void
     {
         $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
