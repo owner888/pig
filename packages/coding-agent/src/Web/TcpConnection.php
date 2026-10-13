@@ -17,6 +17,19 @@ use Throwable;
 class TcpConnection
 {
     protected string $readBuffer = '';
+    /**
+     * The most this connection holds for a peer that is not reading — Workerman's
+     * `maxSendBufferSize`, with the other answer to it: past this the connection is closed rather
+     * than data dropped from the middle of a stream.
+     *
+     * A browser tab that stops reading (an iPad tab in the background, a laptop asleep) leaves its
+     * socket open; every event of every turn on that page went on being appended here, and one
+     * conversation's events and `get_messages` answers grew the buffer past PHP's memory limit,
+     * which took the whole web server down with every other tab on it. Closed, the page
+     * reconnects when it reads again and loads the conversation afresh (`network.js`).
+     */
+    public const int MAX_SEND_BUFFER = 32 * 1024 * 1024;
+
     protected string $sendBuffer = '';
     protected ?string $readableWatcher = null;
     protected ?string $writableWatcher = null;
@@ -173,6 +186,12 @@ class TcpConnection
         }
 
         if ($this->sendBuffer !== '') {
+            if (strlen($this->sendBuffer) + strlen($data) > self::MAX_SEND_BUFFER) {
+                $this->close();
+
+                return;
+            }
+
             $this->sendBuffer .= $data;
 
             return;

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.44] - 2026-10-13
+
+### Fixed
+
+- `pig web` no longer dies with "Allowed memory size exhausted" in `TcpConnection::sendRaw()` when a browser tab stops reading (an iPad tab in the background, a laptop asleep). Every event for that tab was appended to its send buffer without limit until PHP's memory ran out, taking the server and every other tab down with it. Past 32 MB waiting the connection is closed instead, and the page reconnects and reloads the conversation when it reads again.
+
 ## [0.6.43] - 2026-10-13
 
 ### Fixed
