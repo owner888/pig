@@ -1012,14 +1012,9 @@
       gap: 12px;
     }
     .chat-scroll[hidden] { display: flex; visibility: hidden; pointer-events: none; }
-    /* A block off screen is not laid out or painted, only held at the size it last had (or
-       the guess, before it was ever on screen), so a long conversation costs about what its
-       visible part does. The tab's ResizeObserver follows a block that grows into its real
-       size at the bottom. */
-    .chat-scroll > * {
-      content-visibility: auto;
-      contain-intrinsic-size: auto 120px;
-    }
+    /* No `content-visibility: auto` on the blocks: it was tried (0.6.40) and drew each one only as
+       it scrolled into view — a bash card's output, a highlighted code block — so scrolling a long
+       conversation stuttered, and the guessed heights moved the page as the real ones arrived. */
 
     .msg-block {
       width: 100%;

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.45] - 2026-10-13
+
+### Changed
+
+- Web: a long conversation opens as fast as a short one. The last 60 or so messages are drawn at once, about 120 more before them while the page is idle, and the rest only as you scroll up — the next part is drawn whenever you come within two screens of the top, before you reach it, so scrolling stays smooth and a conversation nobody scrolls back through does not cost its whole history in the page. Your place is kept as parts arrive. Parts are cut at a user message, so a tool call and its result are drawn together.
+
+### Fixed
+
+- Web: scrolling a long conversation no longer stutters. The messages had `content-visibility: auto` (0.6.40), so each block — a bash card's output, a highlighted code block — was only drawn as it scrolled into view, and its guessed height was corrected as it was. Removed; switching tabs stays fast, which came from keeping a background tab's layout (`visibility` instead of `display: none`).
+
 ## [0.6.44] - 2026-10-13
 
 ### Fixed

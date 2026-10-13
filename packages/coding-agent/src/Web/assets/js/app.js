@@ -92,6 +92,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (top < this.lastScrollTop) this.userScrolledUp = true;
           this.lastScrollTop = top;
           if (this === active) scrollBottomBtn.style.display = this.userScrolledUp ? "flex" : "none";
+          // Coming up on the top of what is drawn: draw the part before it (`backfill()`).
+          if (this.olderMessages && nearTop(this)) backfill(this, 0);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
         const blockResized = new ResizeObserver(() => {
@@ -321,7 +323,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const T = () => renderingTab || active;
     try {
       Object.defineProperties(window, {
-        chatScroll:            { configurable: true, get: () => T()?.scroller || chatArea },
+        // `renderTarget`: where an older part of a long conversation is being drawn, off the page
+        // (`backfill()`); otherwise the tab's scroller.
+        chatScroll:            { configurable: true, get: () => T()?.renderTarget || T()?.scroller || chatArea },
         isRunning:             { configurable: true, get: () => !!T()?.isRunning,            set: (v) => { if (T()) T().isRunning = v; } },
         currentAssistantBlock: { configurable: true, get: () => T()?.currentAssistantBlock ?? null, set: (v) => { if (T()) T().currentAssistantBlock = v; } },
         currentAssistantText:  { configurable: true, get: () => T()?.currentAssistantText ?? "",    set: (v) => { if (T()) T().currentAssistantText = v; } },
@@ -2503,6 +2507,103 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       scrollToBottomIfNeeded();
     }
 
+    /** Draw `msgs` into `chatScroll`, in order. */
+    function drawMessages(msgs) {
+      const tab = T();
+      for (const m of msgs) {
+        if (m.role === "user") {
+          let text = "";
+          let images = [];
+          if (typeof m.content === "string") {
+            text = m.content;
+          } else if (Array.isArray(m.content)) {
+            for (const c of m.content) {
+              if (c.type === "text") text += c.text || "";
+              if (c.type === "image") images.push(c);
+            }
+          }
+          appendUserMessage(text, images);
+        } else if (m.role === "assistant") {
+          if (Array.isArray(m.content)) {
+            for (const c of m.content) {
+              if (c.type === "thinking" && (c.thinking || c.text)) {
+                const tb = new ThinkingBlock(c.thinking || c.text);
+                tb.finish();
+                chatScroll.appendChild(tb.element);
+              } else if (c.type === "tool_call" || c.type === "toolCall") {
+                const card = new ToolCard({
+                  toolCallId: c.id,
+                  toolName: c.name,
+                  arguments: c.arguments,
+                });
+                if (tab) tab.toolCards.set(c.id, card);
+                chatScroll.appendChild(card.element);
+              } else if (c.type === "text" && c.text) {
+                const block = document.createElement("div");
+                block.className = "msg-block msg-assistant prose";
+                block.innerHTML = renderMarkdown(c.text);
+                chatScroll.appendChild(block);
+              }
+            }
+          }
+          if (m.stopReason === "error" && m.errorMessage) {
+            appendErrorMessage(m.errorMessage);
+          } else if (m.stopReason === "aborted" && !m.content?.some(c => c.type === "toolCall")) {
+            appendErrorMessage(t("operation_aborted"));
+          }
+        } else if (m.role === "tool_result" || m.role === "toolResult") {
+          let card = tab?.toolCards?.get(m.toolCallId);
+          if (!card) {
+            card = new ToolCard({
+              toolCallId: m.toolCallId,
+              toolName: m.toolName || "tool",
+              arguments: {},
+            });
+            if (tab) tab.toolCards.set(m.toolCallId, card);
+            chatScroll.appendChild(card.element);
+          }
+          card.finish({
+            result: { content: m.content || [], details: m.details },
+            isError: m.isError,
+          });
+        } else if (m.role === "compactionSummary" || m.role === "branchSummary") {
+          appendSummaryMessage(m);
+        } else if (m.role === "custom") {
+          appendHookMessage(m);
+        } else if (m.role === "bashExecution") {
+          const card = new ToolCard({ toolCallId: `bash-${m.timestamp}`, toolName: "bash", arguments: { command: m.command } });
+          card.finish({
+            result: { content: [{ type: "text", text: m.output }], details: { exitCode: m.exitCode, cancelled: m.cancelled, fullOutputPath: m.fullOutputPath } },
+            isError: !!m.cancelled || (typeof m.exitCode === "number" && m.exitCode !== 0),
+          });
+          chatScroll.appendChild(card.element);
+        }
+      }
+    }
+
+    /**
+     * How much of a conversation is drawn, and when. A long one is drawn from the end: the last
+     * `FIRST_DRAW` messages at once, so it opens as fast as a short one; then about `PREFILL` more
+     * before them while the page is idle; and the rest only as the reader scrolls up — a `BACKFILL`
+     * at a time whenever they come within `NEAR_TOP` screens of the top, so the next part is drawn
+     * before it is reached. Every block is a real one when it comes into view (the stutter
+     * `content-visibility` had, drawing each block as it scrolled in, is not back), and a
+     * conversation nobody scrolls back through does not cost its whole history in the page.
+     * Cuts are made at a user message, so a tool call and its result are always drawn together.
+     */
+    const FIRST_DRAW = 60;
+    const PREFILL = 120;
+    const BACKFILL = 60;
+    const NEAR_TOP = 2;
+
+    /** Where to cut `msgs` so that about `count` messages are after it: at a user message. */
+    function cutBefore(msgs, end, count) {
+      for (let i = Math.max(0, end - count); i > 0; i--) {
+        if (msgs[i].role === "user") return i;
+      }
+      return 0;
+    }
+
     function renderMessages(msgs) {
       {
         const tab = T();
@@ -2510,6 +2611,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (tab) {
           tab.toolCards = tab.toolCards || new Map();
           tab.toolCards.clear();
+          // What was not drawn of the conversation before is not drawn now.
+          tab.olderMessages = null;
         }
 
         if (!Array.isArray(msgs) || msgs.length === 0) {
@@ -2528,77 +2631,55 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           tab.emptyState = null;
         }
 
-        for (const m of msgs) {
-          if (m.role === "user") {
-            let text = "";
-            let images = [];
-            if (typeof m.content === "string") {
-              text = m.content;
-            } else if (Array.isArray(m.content)) {
-              for (const c of m.content) {
-                if (c.type === "text") text += c.text || "";
-                if (c.type === "image") images.push(c);
-              }
-            }
-            appendUserMessage(text, images);
-          } else if (m.role === "assistant") {
-            if (Array.isArray(m.content)) {
-              for (const c of m.content) {
-                if (c.type === "thinking" && (c.thinking || c.text)) {
-                  const tb = new ThinkingBlock(c.thinking || c.text);
-                  tb.finish();
-                  chatScroll.appendChild(tb.element);
-                } else if (c.type === "tool_call" || c.type === "toolCall") {
-                  const card = new ToolCard({
-                    toolCallId: c.id,
-                    toolName: c.name,
-                    arguments: c.arguments,
-                  });
-                  if (tab) tab.toolCards.set(c.id, card);
-                  chatScroll.appendChild(card.element);
-                } else if (c.type === "text" && c.text) {
-                  const block = document.createElement("div");
-                  block.className = "msg-block msg-assistant prose";
-                  block.innerHTML = renderMarkdown(c.text);
-                  chatScroll.appendChild(block);
-                }
-              }
-            }
-            if (m.stopReason === "error" && m.errorMessage) {
-              appendErrorMessage(m.errorMessage);
-            } else if (m.stopReason === "aborted" && !m.content?.some(c => c.type === "toolCall")) {
-              appendErrorMessage(t("operation_aborted"));
-            }
-          } else if (m.role === "tool_result" || m.role === "toolResult") {
-            let card = tab?.toolCards?.get(m.toolCallId);
-            if (!card) {
-              card = new ToolCard({
-                toolCallId: m.toolCallId,
-                toolName: m.toolName || "tool",
-                arguments: {},
-              });
-              if (tab) tab.toolCards.set(m.toolCallId, card);
-              chatScroll.appendChild(card.element);
-            }
-            card.finish({
-              result: { content: m.content || [], details: m.details },
-              isError: m.isError,
-            });
-          } else if (m.role === "compactionSummary" || m.role === "branchSummary") {
-            appendSummaryMessage(m);
-          } else if (m.role === "custom") {
-            appendHookMessage(m);
-          } else if (m.role === "bashExecution") {
-            const card = new ToolCard({ toolCallId: `bash-${m.timestamp}`, toolName: "bash", arguments: { command: m.command } });
-            card.finish({
-              result: { content: [{ type: "text", text: m.output }], details: { exitCode: m.exitCode, cancelled: m.cancelled, fullOutputPath: m.fullOutputPath } },
-              isError: !!m.cancelled || (typeof m.exitCode === "number" && m.exitCode !== 0),
-            });
-            chatScroll.appendChild(card.element);
-          }
-        }
+        const cut = tab ? cutBefore(msgs, msgs.length, FIRST_DRAW) : 0;
+        drawMessages(cut > 0 ? msgs.slice(cut) : msgs);
         chatScroll.scrollTop = chatScroll.scrollHeight;
+        if (cut > 0) {
+          tab.olderMessages = { msgs, end: cut };
+          backfill(tab, PREFILL);
+        }
       }
+    }
+
+    /** Whether the reader is within `NEAR_TOP` screens of the top of what is drawn. */
+    function nearTop(tab) {
+      return tab.scroller.scrollTop < tab.scroller.clientHeight * NEAR_TOP;
+    }
+
+    /**
+     * Draw the next part of `tab.olderMessages` before what is on screen, when the page is idle;
+     * and the part after that while `budget` lasts or the reader is near the top. Each part is
+     * drawn into a fragment (`renderTarget`) and put in front in one go; the reader's place is kept
+     * — at the bottom if they were there (the tab's ResizeObserver follows), or on the same line
+     * if they had scrolled up.
+     */
+    function backfill(tab, budget) {
+      const older = tab.olderMessages;
+      if (!older || tab.backfilling) return;
+      tab.backfilling = true;
+      const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 16));
+      idle(() => {
+        tab.backfilling = false;
+        // Drawn afresh since (a reload, a reconnect): this part belongs to what was there before.
+        if (tab.olderMessages !== older || tab.closed) return;
+        const start = cutBefore(older.msgs, older.end, BACKFILL);
+        const scroller = tab.scroller;
+        const fromBottom = scroller.scrollHeight - scroller.scrollTop;
+        const fragment = document.createDocumentFragment();
+        tab.render(() => {
+          tab.renderTarget = fragment;
+          try { drawMessages(older.msgs.slice(start, older.end)); } finally { tab.renderTarget = null; }
+        });
+        scroller.prepend(fragment);
+        scroller.scrollTop = tab.userScrolledUp ? scroller.scrollHeight - fromBottom : scroller.scrollHeight;
+        const left = budget - (older.end - start);
+        older.end = start;
+        if (start === 0) {
+          tab.olderMessages = null;
+          return;
+        }
+        if (left > 0 || nearTop(tab)) backfill(tab, left);
+      }, { timeout: 500 });
     }
 
     // ---- boot ------------------------------------------------------------------------------
