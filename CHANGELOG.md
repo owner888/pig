@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.42] - 2026-10-13
+
+### Changed
+
+- Web: Log out moved into the header's ⋯ menu, out of the top bar where it was easy to press by accident. The ⋯ menu is now always present on desktop, holding Log out alongside the extensions' panels.
+- Web: iPad Safari with a hardware keyboard no longer jumps the prompt up on focus. The floating input bar (under 150px) is allowed to overlap the bottom metadata row instead of shrinking the viewport.
+
 ## [0.6.41] - 2026-10-12
 
 ### Changed

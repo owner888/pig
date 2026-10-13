@@ -1558,7 +1558,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       try { await fetch("/api/logout", { method: "POST" }); } catch {}
       location.replace("/login");
     }
-    document.getElementById("logout-btn")?.addEventListener("click", logOut);
     document.getElementById("more-logout-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       toggleMoreMenu(false);

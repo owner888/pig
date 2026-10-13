@@ -382,8 +382,6 @@
     .desktop-only-btn[hidden], .more-dropdown-item[hidden] { display: none; }
     /* In the ⋯ menu, what the desktop already has as a button in the bar. */
     .more-dropdown-item.mobile-only-item { display: none; }
-    /* With no extension panels the desktop's ⋯ menu would open empty, so it is not there. */
-    .more-menu-wrapper:not(:has(.header-panels > *, #more-panels-btn:not([hidden]))) { display: none; }
     .header-panels { display: contents; }
 
     /* The ⋯ menu */
@@ -2352,9 +2350,6 @@
       }
       .more-dropdown-item.mobile-only-item {
         display: flex;
-      }
-      .more-menu-wrapper {
-        display: inline-flex !important;
       }
       .path-cwd {
         font-size: 12px;

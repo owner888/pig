@@ -85,8 +85,9 @@
           <span class="terminal-btn-label" data-i18n="terminal">终端</span>
         </button>
 
-        <!-- The ⋯ menu, on every width: the extensions' header panels (panels.js) and the list of
-             them all; on a phone also what the desktop has as buttons in the bar. -->
+        <!-- The ⋯ menu, on every width: the extensions' header panels (panels.js), the list of
+             them all and Log out (out of the bar, where it was one slip away); on a phone also what
+             the desktop has as buttons in the bar. -->
         <div class="more-menu-wrapper">
           <button id="more-menu-btn" class="toggle-sidebar-btn more-btn" data-i18n-attr="title:more_options" title="更多设置 / More Options">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -117,14 +118,13 @@
               <span class="more-item-icon">🌐</span>
               <span class="more-item-text" data-i18n="menu_lang">Language</span>
             </div>
-            <div class="more-dropdown-item mobile-only-item" id="more-logout-btn">
+            <div class="more-dropdown-item" id="more-logout-btn">
               <span class="more-item-icon">⏻</span>
               <span class="more-item-text" data-i18n="logout">Log out</span>
             </div>
           </div>
         </div>
 
-        <button id="logout-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" data-i18n-attr="title:logout" title="Log out">⏻</button>
         <button id="toggle-sidebar" class="toggle-sidebar-btn" data-i18n-attr="title:toggle_sidebar">‹</button>
       </div>
     </div>
@@ -135,18 +135,6 @@
     <button id="scroll-bottom-btn" class="scroll-bottom-pill" style="display:none;" data-i18n="scroll_bottom" data-i18n-attr="title:scroll_bottom">↓ New messages</button>
 
     <div class="bottom-panel">
-      <!-- Selectors & Telemetry Row matching pi-web 3-level cascade -->
-      <div class="controls-row">
-        <div class="selectors-group">
-          <!-- The folder a new conversation starts in, changeable until its first message -->
-          <button id="cwd-chip" class="select-pill cwd-chip" hidden></button>
-          <select id="provider-select" class="select-pill" data-i18n-attr="title:provider"></select>
-          <select id="model-select" class="select-pill" data-i18n-attr="title:model"></select>
-          <select id="thinking-select" class="select-pill" data-i18n-attr="title:thinking_level"></select>
-        </div>
-        <div id="telemetry-stats" class="status-telemetry">↑0 ↓0 $0.00 0%/1.0M</div>
-      </div>
-
       <!-- An extension's widgets, above and below the prompt (`setWidget`) -->
       <div id="hook-widgets-above" class="hook-widgets" hidden></div>
 
@@ -163,6 +151,20 @@
       </div>
 
       <div id="hook-widgets-below" class="hook-widgets" hidden></div>
+
+      <!-- The selectors and the numbers, under the prompt as Claude has them, and last: on an iPad
+           with a keyboard, the system's floating input bar covers the bottom of the screen, and
+           what it covers is this row, not the prompt (viewport.js). -->
+      <div class="controls-row">
+        <div class="selectors-group">
+          <!-- The folder a new conversation starts in, changeable until its first message -->
+          <button id="cwd-chip" class="select-pill cwd-chip" hidden></button>
+          <select id="provider-select" class="select-pill" data-i18n-attr="title:provider"></select>
+          <select id="model-select" class="select-pill" data-i18n-attr="title:model"></select>
+          <select id="thinking-select" class="select-pill" data-i18n-attr="title:thinking_level"></select>
+        </div>
+        <div id="telemetry-stats" class="status-telemetry">↑0 ↓0 $0.00 0%/1.0M</div>
+      </div>
     </div>
   </main>
 
