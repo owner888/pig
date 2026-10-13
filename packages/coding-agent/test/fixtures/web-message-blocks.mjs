@@ -145,4 +145,10 @@ bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCo
 assert.match(bash.queryFooter?.textContent || bash.element.querySelector('.tool-details-footer').textContent, /exit 3|\(exit 3\)/);
 assert.match(bash.element.querySelector('.tool-details-footer').textContent, /Full output: \/tmp\/full.txt/);
 
+// A name with underscores is a name: `_` emphasises only at a word's edge, and nothing inside a
+// code span is markup.
+assert.equal(renderMarkdown('php set_error_handler 和 go defer 的区别'), '<p>php set_error_handler 和 go defer 的区别</p>');
+assert.equal(renderMarkdown('`set_error_handler` and `a*b*c`'), '<p><code>set_error_handler</code> and <code>a*b*c</code></p>');
+assert.equal(renderMarkdown('_italic_ and __bold__'), '<p><em>italic</em> and <strong>bold</strong></p>');
+
 console.log('Web message blocks: passed');

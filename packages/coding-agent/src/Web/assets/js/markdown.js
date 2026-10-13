@@ -6,15 +6,22 @@ function isTableSeparator(line) {
   return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line);
 }
 
-/** Render inline Markdown elements: code, bold, italic, strikethrough, safe links */
+/**
+ * Render inline Markdown elements: code, bold, italic, strikethrough, safe links.
+ *
+ * Code spans are taken out first and put back last, so nothing inside one is read as markup —
+ * `set_error_handler` stays as typed. And `_` only emphasises at a word's edge, as CommonMark
+ * has it: `set_error_handler` outside code is a name, not "set", an italic "error", and "handler".
+ */
 function renderInline(escapedStr) {
   if (!escapedStr) return "";
-  return String(escapedStr)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
+  const spans = [];
+  const html = String(escapedStr)
+    .replace(/`([^`]+)`/g, (m, code) => `\u0000${spans.push(`<code>${code}</code>`) - 1}\u0000`)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+    .replace(/(^|[^\p{L}\p{N}_])__(?=\S)([^_]+?)(?<=\S)__(?![\p{L}\p{N}_])/gu, "$1<strong>$2</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/_([^_]+)_/g, "<em>$1</em>")
+    .replace(/(^|[^\p{L}\p{N}_])_(?=\S)([^_]+?)(?<=\S)_(?![\p{L}\p{N}_])/gu, "$1<em>$2</em>")
     .replace(/~~([^~]+)~~/g, "<del>$1</del>")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, txt, url) => {
       const u = url.trim();
@@ -24,6 +31,7 @@ function renderInline(escapedStr) {
       }
       return txt;
     });
+  return html.replace(/\u0000(\d+)\u0000/g, (m, i) => spans[Number(i)]);
 }
 
 /** Parse lines forming a Markdown table into an HTML table with column alignment */

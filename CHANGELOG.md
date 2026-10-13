@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.46] - 2026-10-13
+
+### Fixed
+
+- Web: underscores in names survive Markdown — `set_error_handler` was drawn as "set", an italic "error" and "handler", underscores gone, even inside a code span. `_` now emphasises only at a word's edge, as CommonMark has it, and code spans are left alone.
+
 ## [0.6.45] - 2026-10-13
 
 ### Changed
