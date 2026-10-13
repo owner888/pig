@@ -34,6 +34,24 @@ final class TcpConnectionTest extends TestCase
         fclose($peer);
     }
 
+    public function testAnythingThePeerSendsCountsAsAliveAPongIncluded(): void
+    {
+        // What `HttpServer::armHeartbeat()` closes a silent socket on.
+        [$peer, $server] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($server, static fn () => null, static fn () => null);
+        (new \ReflectionProperty(TcpConnection::class, 'lastReadAt'))->setValue($conn, microtime(true) - 120);
+
+        $this->assertGreaterThan(100, $conn->silentFor());
+
+        fwrite($peer, 'GET');
+        $conn->onReadable();
+
+        $this->assertLessThan(5, $conn->silentFor(), 'a byte from the peer is a sign of life');
+
+        $conn->close();
+        fclose($peer);
+    }
+
     public function testOneMessageLargerThanTheLimitStillGoesOut(): void
     {
         // The limit is on what piles up behind a peer, not on a message: a long conversation's

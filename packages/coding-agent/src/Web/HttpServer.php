@@ -42,14 +42,14 @@ use Throwable;
  * `get_messages`, `set_model` as `rpc_command` lines over its socket, which is pi-web's shape and
  * also means every command a host can send, a browser can.
  *
- * **The socket protocol**, pi-web's, four lines in and four out:
+ * **The socket protocol**, pi-web's, three lines in and three out. Keep-alive is the WebSocket
+ * protocol's own ping and pong (`armHeartbeat()`), which a browser answers by itself:
  *
  * | in | out |
  * |---|---|
  * | `start_session {cwd, sessionFile?}` — bind this socket to a conversation, starting its child if there is none | `rpc_event {event}` — a line from the bound child, verbatim |
  * | `detach_session` | `session_ended {reason}` — the bound child is gone |
  * | `rpc_command {command}` — forwarded whole, id and all, to the bound child | `error {message}` |
- * | `ping` | `pong` |
  *
  * `extension_ui_request` and `extension_ui_response` are not special here any more: the child's `RpcMode`
  * sends the request as an event and reads the response as a command, and both go through the
@@ -92,6 +92,15 @@ final class HttpServer
 
     private ?string $heartbeatTimer = null;
     private const float PING_INTERVAL = 25.0;
+
+    /**
+     * A browser answers every protocol ping with a pong, so a socket silent for two of them is a
+     * peer that is gone or asleep — an iPad with its lid shut, a tab iOS has suspended. TCP would
+     * take many minutes to say so, and until then the session kept the tab bound and its events
+     * piled up behind it. Closed, the page reconnects when it wakes (`network.js`) and loads the
+     * conversation again.
+     */
+    public const float SILENT_LIMIT = 2 * self::PING_INTERVAL + 10.0;
 
     public const FAVICON_SVG = '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">'
         . '<circle cx="50" cy="50" r="44" fill="#F472B6"/>'
@@ -420,9 +429,17 @@ final class HttpServer
             }
 
             foreach ($this->wsClients as $wsClient) {
-                if (!$wsClient->isClosed()) {
-                    Websocket::ping($wsClient);
+                if ($wsClient->isClosed()) {
+                    continue;
                 }
+
+                if ($wsClient->silentFor() > self::SILENT_LIMIT) {
+                    $wsClient->close();
+
+                    continue;
+                }
+
+                Websocket::ping($wsClient);
             }
 
             $this->armHeartbeat();
@@ -991,12 +1008,6 @@ final class HttpServer
         }
 
         $type = (string) ($data['type'] ?? '');
-
-        if ($type === 'ping') {
-            $conn->send(['type' => 'pong']);
-
-            return;
-        }
 
         if ($type === 'start_session') {
             $rawCwd = is_string($data['cwd'] ?? null) && trim($data['cwd']) !== '' ? $data['cwd'] : $this->cwd;

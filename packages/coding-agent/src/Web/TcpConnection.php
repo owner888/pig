@@ -31,6 +31,9 @@ class TcpConnection
     public const int MAX_SEND_BUFFER = 32 * 1024 * 1024;
 
     protected string $sendBuffer = '';
+
+    /** When the peer last sent anything — a pong counts (`HttpServer::armHeartbeat()`). */
+    protected float $lastReadAt;
     protected ?string $readableWatcher = null;
     protected ?string $writableWatcher = null;
     protected bool $isClosed = false;
@@ -61,6 +64,7 @@ class TcpConnection
     ) {
         stream_set_blocking($this->socket, false);
         $this->protocol = $protocol;
+        $this->lastReadAt = microtime(true);
     }
 
     /**
@@ -124,6 +128,7 @@ class TcpConnection
             return;
         }
 
+        $this->lastReadAt = microtime(true);
         $this->readBuffer .= $data;
 
         // Framing state machine loop decoupled by ProtocolInterface::input()
@@ -303,6 +308,12 @@ class TcpConnection
     public function setReadableWatcher(?string $watcher): void
     {
         $this->readableWatcher = $watcher;
+    }
+
+    /** Seconds since the peer last sent anything. */
+    public function silentFor(): float
+    {
+        return microtime(true) - $this->lastReadAt;
     }
 
     public function isClosed(): bool

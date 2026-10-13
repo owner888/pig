@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.47] - 2026-10-13
+
+### Changed
+
+- `pig web` closes a WebSocket that has been silent for two of its pings (about a minute) — an iPad with its lid shut, a tab iOS has suspended. It pinged every 25 seconds but never checked for the pong, so a gone peer stayed bound to its session, with events piling up behind it, until TCP gave up many minutes later. The page reconnects when it wakes and loads the conversation again.
+
+### Removed
+
+- The socket protocol's own `{"type":"ping"}` / `pong` messages. The page never sent them; keep-alive is the WebSocket protocol's ping and pong, which a browser answers by itself.
+
 ## [0.6.46] - 2026-10-13
 
 ### Fixed

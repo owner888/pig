@@ -480,9 +480,9 @@ final class WebModeTest extends TestCase
             $this->assertStringContainsString('/nowhere/pig', end($seen)['message']);
 
             // The server is still answering.
-            $this->wsSend($ws, ['type' => 'ping']);
-            $seen = $this->wsCollect($ws, static fn (array $m) => $m['type'] === 'pong');
-            $this->assertSame('pong', end($seen)['type']);
+            $this->wsSend($ws, ['type' => 'are_you_there']);
+            $seen = $this->wsCollect($ws, static fn (array $m) => str_contains($m['message'] ?? '', 'are_you_there'));
+            $this->assertStringContainsString("unknown message type 'are_you_there'", end($seen)['message']);
 
             fclose($ws);
             $server->stop();

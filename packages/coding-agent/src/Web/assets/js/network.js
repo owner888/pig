@@ -107,7 +107,6 @@ export class SharedNetwork {
       } catch (err) {
         return;
       }
-      if (m.type === "pong") return;
 
       for (const listener of this.messageListeners) {
         try {

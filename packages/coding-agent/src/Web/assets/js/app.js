@@ -168,7 +168,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
       // ---- what the server says ----------------------------------------------------------
       onServerMessage(m) {
-        if (m.type === "pong") return;
         if (m.type === "session_bound") {
           this.bound = true;
           this.ended = false;
