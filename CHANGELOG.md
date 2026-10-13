@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.43] - 2026-10-13
+
+### Fixed
+
+- Web: on an iPad with a hardware keyboard the page no longer twitches when the prompt is focused or while typing. Safari keeps a focused field 40px clear of the floating input bar: closer, it panned the whole page up as the bar came up and back a frame later, and scrolled it on every keystroke. The prompt is now raised by what that takes, measured the first time the bar comes up and kept in this browser, so after that focusing moves nothing. The page also no longer takes the shrunk `innerHeight` Safari reports for a frame as the bar comes up, nor shrinks for the bar's in-between heights; everything short of an on-screen keyboard keeps the full height.
+
 ## [0.6.42] - 2026-10-13
 
 ### Changed

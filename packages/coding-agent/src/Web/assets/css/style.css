@@ -2121,8 +2121,10 @@
     }
 
     /* Bottom Control Bar matching pi-web */
+    /* `--bar-lift`: how far the prompt has to rise to clear an iPad's floating input bar
+       (viewport.js); 0 everywhere else. */
     .bottom-panel {
-      padding: 8px 20px 16px;
+      padding: 8px 20px calc(16px + var(--bar-lift, 0px));
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -2389,7 +2391,7 @@
       }
 
       .bottom-panel {
-        padding: 6px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+        padding: 6px 12px calc(8px + env(safe-area-inset-bottom, 0px) + var(--bar-lift, 0px));
         gap: 8px;
       }
 

@@ -13414,6 +13414,26 @@ ignore `$HOME`), and appends the real `~/.pig/agent/bin` so downloaded `fd`/`rg`
 test still isolates what it asserts on; the bootstrap is the floor under the ones that forget. Check:
 run the suite with `HOME` pointed at an empty directory and find nothing in it afterwards.
 
+### The web page jumped on an iPad with a hardware keyboard
+
+**Symptom**: on iPad Safari with a keyboard attached, focusing the prompt lifted it (later: jolted
+the whole page up and back), and typing shook the page.
+
+**Cause**: the floating input bar is ~68px. `viewport.js` shrank the page to `visualViewport.height`
+for it, which is the lift. With the page at full height instead, Safari still panned: it keeps a
+focused field **40px** clear of what covers the screen, and for one frame as the bar comes up it
+reports `innerHeight` shrunk to the visible height with the visible part panned by the bar
+(`inner=770 vv=770@68`, then `inner=838 vv=770@0`). That pan is not `scrollY`, so `scrollTo` cannot
+undo it and a compensating transform arrives a frame late. Found with a temporary `?vvdebug` overlay
+logging `innerHeight`, `visualViewport` height/offset, `scrollY` and the prompt's bottom per event
+and per frame, then `?lift=N` until it stopped (55 panned, 56 did not: prompt bottom 730, visible 770).
+
+**Rule**: the selectors row sits under the prompt, and under a keyboard's height (`KEYBOARD`, 150)
+the page keeps the screen's height, `max(innerHeight, vv.height + vv.offsetTop)`. The prompt is raised
+(`--bar-lift`) until its bottom is `MARGIN` (40) above the visible bottom, measured the first time
+the bar is up and kept in `localStorage` (`pig_bar_lift`), so only that first focus moves anything.
+Do not lower `MARGIN` or let the lift drop back to 0 on blur.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
