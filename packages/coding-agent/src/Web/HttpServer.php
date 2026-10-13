@@ -434,7 +434,7 @@ final class HttpServer
                 }
 
                 if ($wsClient->silentFor() > self::SILENT_LIMIT) {
-                    $wsClient->close();
+                    $wsClient->close('silent for ' . (int) $wsClient->silentFor() . ' s, no pong');
 
                     continue;
                 }

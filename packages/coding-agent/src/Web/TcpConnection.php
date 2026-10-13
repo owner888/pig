@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Web;
 
 use Closure;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Logger;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\ProtocolInterface;
 use Throwable;
@@ -42,6 +43,22 @@ class TcpConnection
 
     /** When the send buffer last shrank, or was started. */
     protected float $lastDrainAt = 0.0;
+
+    /** The most one `fwrite()` is given, so a big frame goes out a piece at a time. */
+    public const int WRITE_CHUNK = 256 * 1024;
+
+    /**
+     * How long to wait before writing again after the system said it has no buffer for it.
+     *
+     * macOS answers `ENOBUFS` (errno 55) to a write a tunnel interface cannot queue yet — a
+     * Tailscale `utun` above all — which PHP does not count as "try again" the way it counts
+     * `EAGAIN`, so `fwrite()` answered false and the page's socket was closed. With a long
+     * conversation every page load wrote megabytes, so the page reconnected every few seconds,
+     * for good. It is a full queue, not a broken peer: wait a moment and go on.
+     */
+    public const float NO_BUFFER_RETRY = 0.02;
+
+    private ?string $retryTimer = null;
 
     protected string $sendBuffer = '';
 
@@ -155,7 +172,7 @@ class TcpConnection
 
             if ($packageLen === false) {
                 // Protocol error or oversized frame
-                $this->close();
+                $this->close('a frame the protocol could not read');
 
                 return;
             }
@@ -207,8 +224,14 @@ class TcpConnection
             $size = strlen($this->sendBuffer) + strlen($data);
             $stalled = microtime(true) - $this->lastDrainAt > self::STALLED_AFTER;
 
-            if ($size > self::HARD_SEND_BUFFER || ($size > self::MAX_SEND_BUFFER && $stalled)) {
-                $this->close();
+            if ($size > self::HARD_SEND_BUFFER) {
+                $this->close('send buffer past ' . intdiv(self::HARD_SEND_BUFFER, 1024 * 1024) . ' MB');
+
+                return;
+            }
+
+            if ($size > self::MAX_SEND_BUFFER && $stalled) {
+                $this->close('the peer has read nothing for ' . self::STALLED_AFTER . ' s');
 
                 return;
             }
@@ -218,24 +241,59 @@ class TcpConnection
             return;
         }
 
-        set_error_handler(static fn (): bool => true);
-        try {
-            $written = fwrite($this->socket, $data);
-        } finally {
-            restore_error_handler();
-        }
+        $this->sendBuffer = $data;
+        $this->lastDrainAt = microtime(true);
+        $this->flush();
+    }
 
-        if ($written === false) {
-            $this->close();
+    /**
+     * Write what the socket takes now, a chunk at a time; wait for room for the rest, or for the
+     * system to have buffer again (`NO_BUFFER_RETRY`); close on anything else.
+     */
+    private function flush(): void
+    {
+        while ($this->sendBuffer !== '' && !$this->isClosed) {
+            $problem = null;
+            set_error_handler(static function (int $no, string $message) use (&$problem): bool {
+                $problem = $message;
 
-            return;
-        }
+                return true;
+            });
+            try {
+                $written = fwrite($this->socket, substr($this->sendBuffer, 0, self::WRITE_CHUNK));
+            } finally {
+                restore_error_handler();
+            }
 
-        if ($written < strlen($data)) {
-            $this->sendBuffer = substr($data, $written);
+            if ($written === false) {
+                if ($problem !== null && preg_match('/errno=(55|105)\b|No buffer space/i', $problem) === 1) {
+                    $this->disarmWritable();
+                    $this->retryTimer ??= Loop::get()->delay(self::NO_BUFFER_RETRY, function (): void {
+                        $this->retryTimer = null;
+                        $this->flush();
+                    });
+
+                    return;
+                }
+
+                $this->close('write failed' . ($problem !== null ? ": {$problem}" : ''));
+
+                return;
+            }
+
+            if ($written === 0) {
+                $this->armWritable();
+
+                return;
+            }
+
+            $this->sendBuffer = substr($this->sendBuffer, $written);
             $this->lastDrainAt = microtime(true);
-            $this->armWritable();
-        } elseif ($this->closeWhenDrained) {
+        }
+
+        $this->disarmWritable();
+
+        if ($this->sendBuffer === '' && $this->closeWhenDrained) {
             $this->close();
         }
     }
@@ -283,38 +341,7 @@ class TcpConnection
         }
 
         $this->writableWatcher = Loop::get()->onWritable($this->socket, function (): void {
-            if ($this->sendBuffer === '') {
-                $this->disarmWritable();
-
-                return;
-            }
-
-            set_error_handler(static fn (): bool => true);
-            try {
-                $written = fwrite($this->socket, $this->sendBuffer);
-            } finally {
-                restore_error_handler();
-            }
-
-            if ($written === false) {
-                $this->close();
-
-                return;
-            }
-
-            $this->sendBuffer = substr($this->sendBuffer, $written);
-
-            if ($written > 0) {
-                $this->lastDrainAt = microtime(true);
-            }
-
-            if ($this->sendBuffer === '') {
-                $this->disarmWritable();
-
-                if ($this->closeWhenDrained) {
-                    $this->close();
-                }
-            }
+            $this->flush();
         });
     }
 
@@ -342,14 +369,27 @@ class TcpConnection
         return $this->isClosed;
     }
 
-    public function close(): void
+    /**
+     * Close now. `$why`, for a close this side chose, goes to the log: a page that keeps
+     * reconnecting is otherwise a mystery from both ends.
+     */
+    public function close(?string $why = null): void
     {
         if ($this->isClosed) {
             return;
         }
 
+        if ($why !== null) {
+            Logger::warning("[web] closing a connection: {$why}");
+        }
+
         $this->isClosed = true;
         $this->disarmWritable();
+
+        if ($this->retryTimer !== null) {
+            Loop::get()->cancel($this->retryTimer);
+            $this->retryTimer = null;
+        }
 
         if ($this->readableWatcher !== null) {
             Loop::get()->cancel($this->readableWatcher);

@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.54] - 2026-10-13
+
+### Fixed
+
+- `pig web` over a tunnel (Tailscale and other `utun` interfaces on macOS): a page with a long conversation no longer reconnects every few seconds. macOS answers a write it cannot queue yet with `ENOBUFS`, which PHP does not treat as "try again" as it does `EAGAIN`, so the write failed and the page's socket was closed as soon as megabytes went out — and the page asked for them again on reconnect. A full queue is now waited out (20 ms, then write on), and frames go out 256 KB at a time.
+- `pig web` logs why it closed a connection when the choice was its own — write failed (and the system's words), the peer read nothing for 15 s, the send buffer past its limit, no pong for a minute, an unreadable frame — so a page that keeps reconnecting can be explained from the server's log.
+
 ## [0.6.53] - 2026-10-13
 
 ### Fixed
