@@ -2732,6 +2732,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     slashAutocomplete = new SlashAutocomplete({
       inputElement: promptInput,
       anchorElement: document.querySelector(".input-wrapper"),
+      onSubmit: () => submitMessage(),
     });
 
     const webTerminal = new WebTerminal({

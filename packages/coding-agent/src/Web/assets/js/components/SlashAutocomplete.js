@@ -99,12 +99,16 @@ const COMMANDS = [
  *
  * Provides floating auto-completion for slash commands when typing '/'
  * with full keyboard navigation (Up/Down/Enter/Tab/Esc) and fuzzy filtering.
+ *
+ * As the TUI's editor has it: Enter on a command completes it and sends it in one press
+ * (`onSubmit`), Tab and a click only complete it.
  */
 export class SlashAutocomplete {
-  constructor({ inputElement, anchorElement, onSelect }) {
+  constructor({ inputElement, anchorElement, onSelect, onSubmit }) {
     this.input = inputElement;
     this.anchor = anchorElement || inputElement;
     this.onSelect = onSelect;
+    this.onSubmit = onSubmit;
     this.isOpen = false;
     this.selectedIndex = 0;
     this.filteredCommands = [];
@@ -128,7 +132,12 @@ export class SlashAutocomplete {
       this.compositionEndTime = Date.now();
     });
     this.input.addEventListener("input", () => this.handleInput());
-    this.input.addEventListener("keydown", (e) => this.handleKeyDown(e));
+    // On the document, capturing: the list's keys are the list's before the prompt's own keydown
+    // sees them, whichever was added first. On the prompt itself both ran, the page's first —
+    // Enter sent `/di` as typed, and then the list completed it to `/diff`.
+    document.addEventListener("keydown", (e) => {
+      if (e.target === this.input) this.handleKeyDown(e);
+    }, true);
 
     // Close when clicking outside
     document.addEventListener("click", (e) => {
@@ -202,7 +211,7 @@ export class SlashAutocomplete {
     });
     html += '</div>';
 
-    const hintText = isZh ? "↑↓ 选择 · Enter / Tab 确认 · Esc 关闭" : "↑↓ Navigate · Enter / Tab Select · Esc Close";
+    const hintText = isZh ? "↑↓ 选择 · Enter 执行 · Tab 补全 · Esc 关闭" : "↑↓ Navigate · Enter Run · Tab Complete · Esc Close";
     html += `<div class="slash-popup-hint">${escapeHtml(hintText)}</div>`;
 
     this.popup.innerHTML = html;
@@ -239,7 +248,7 @@ export class SlashAutocomplete {
       e.stopPropagation();
       const chosen = this.filteredCommands[this.selectedIndex];
       if (chosen) {
-        this.selectCommand(chosen);
+        this.selectCommand(chosen, e.key === "Enter");
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -260,7 +269,7 @@ export class SlashAutocomplete {
     }
   }
 
-  selectCommand(cmd) {
+  selectCommand(cmd, submit = false) {
     if (!cmd) return;
     const completion = `/${cmd.name} `;
     this.input.value = completion;
@@ -270,6 +279,10 @@ export class SlashAutocomplete {
 
     if (typeof this.onSelect === "function") {
       this.onSelect(cmd);
+    }
+
+    if (submit && typeof this.onSubmit === "function") {
+      this.onSubmit();
     }
   }
 

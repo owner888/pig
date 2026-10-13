@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.48] - 2026-10-13
+
+### Fixed
+
+- Web: picking a command from the `/` list with Enter no longer sends what was typed first — `/di`, then Enter on `/diff`, sent `/di` and left `/diff` in the prompt to be sent again. The list now has its keys before the prompt does, and Enter on a command completes it and sends it in one press, as in the TUI; Tab (or a click) only completes it.
+
 ## [0.6.47] - 2026-10-13
 
 ### Changed
