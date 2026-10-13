@@ -13434,6 +13434,26 @@ the page keeps the screen's height, `max(innerHeight, vv.height + vv.offsetTop)`
 the bar is up and kept in `localStorage` (`pig_bar_lift`), so only that first focus moves anything.
 Do not lower `MARGIN` or let the lift drop back to 0 on blur.
 
+### `pig web` over Tailscale: a long conversation reconnected every few seconds
+
+**Symptom**: a page on another machine (`http://100.x.x.x:8088`) with a long conversation open
+reconnected its WebSocket every ~5 s for good; small conversations were fine. Along the way:
+`get_messages: no answer in 30s`, `Future::await() must be called inside a coroutine`, and once
+`Allowed memory size exhausted` in `TcpConnection::sendRaw()`.
+
+**Cause**: macOS answers a `send()` a tunnel interface (`utun`) cannot queue yet with `ENOBUFS`
+(errno 55). PHP counts only `EAGAIN` as "try again", so `fwrite()` returned false and
+`TcpConnection` closed the socket — whenever megabytes went out, i.e. every load of a long
+conversation, which the page asked for again on reconnect. The other errors were knock-ons: the
+reconnects piled `get_messages` answers up (the OOM), and `RpcClient::relay()` waited for a full
+child pipe outside a fiber (the await error). Three wrong guesses (send-buffer limit, memory,
+payload size) came first; the session file was only 7.7 MB.
+
+**Rule**: in `TcpConnection::flush()`, `ENOBUFS` (55 macOS, 105 Linux) is a full queue — retry
+after `NO_BUFFER_RETRY` — and writes go out `WRITE_CHUNK` at a time. A close the server chooses
+logs its reason (`[web] closing a connection: …`): read that before guessing at a reconnect loop.
+`RpcClient::write()` queues and never awaits.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
