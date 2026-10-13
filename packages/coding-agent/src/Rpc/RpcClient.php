@@ -50,6 +50,12 @@ final class RpcClient
     /** @var array<int, resource> */
     private array $pipes = [];
 
+    /** What is still to go to the child's standard input, in order (`write()`). */
+    private string $outBuffer = '';
+
+    /** The watcher that sends the rest of `$outBuffer` once the pipe has room again. */
+    private ?string $writableWatcher = null;
+
     /** @var array<int, string> loop watcher ids, by pipe */
     private array $watchers = [];
 
@@ -221,6 +227,9 @@ final class RpcClient
         if ($this->process === null) {
             return;
         }
+
+        $this->disarmWritable();
+        $this->outBuffer = '';
 
         if (isset($this->pipes[0]) && is_resource($this->pipes[0])) {
             fclose($this->pipes[0]);
@@ -746,46 +755,80 @@ final class RpcClient
     }
 
     /**
-     * Write to the child's standard input, suspending when the pipe is full.
+     * Write to the child's standard input without waiting: what the pipe takes now goes now, the
+     * rest is queued and sent, in order, as the pipe makes room.
      *
-     * A prompt with an image in it is far past a pipe's atomic write, so this cannot be one
-     * `fwrite`: the loop has to keep running while the child reads what has been sent so far, or the
-     * two ends wait for each other.
+     * It used to suspend the caller until the pipe had room, which needs a fiber, and `relay()` is
+     * called from `pig web`'s socket handler, which is not in one. A child busy writing a long
+     * conversation back (`get_messages`, several of them as a page with many tabs reconnects)
+     * stops reading for a moment, its input pipe fills, and the next command a page relayed threw
+     * `Future::await() must be called inside a coroutine` back at it instead of being sent.
+     * Queued, it also cannot be interleaved with another caller's line, which two fibers each
+     * suspending halfway through a write could do.
      */
     private function write(string $data): void
     {
-        $length = strlen($data);
-        $offset = 0;
+        if (!isset($this->pipes[0]) || !is_resource($this->pipes[0])) {
+            throw new RpcError('write', 'The agent closed its standard input' . $this->trailer());
+        }
 
-        while ($offset < $length) {
+        $this->outBuffer .= $data;
+
+        if ($this->writableWatcher === null && !$this->flush()) {
+            throw new RpcError('write', 'Could not write to the agent' . $this->trailer());
+        }
+    }
+
+    /**
+     * Send as much of `$outBuffer` as the pipe takes; wait for room for the rest. False when the
+     * pipe is broken — the child is gone, which `readOut()` reports when its output ends.
+     */
+    private function flush(): bool
+    {
+        while ($this->outBuffer !== '') {
             if (!isset($this->pipes[0]) || !is_resource($this->pipes[0])) {
-                throw new RpcError('write', 'The agent closed its standard input' . $this->trailer());
+                $this->outBuffer = '';
+                $this->disarmWritable();
+
+                return false;
             }
 
-            $written = fwrite($this->pipes[0], substr($data, $offset));
+            // A child that has died leaves a broken pipe, which warns as well as answering false.
+            set_error_handler(static fn (): bool => true);
+            try {
+                $written = fwrite($this->pipes[0], $this->outBuffer);
+            } finally {
+                restore_error_handler();
+            }
 
             if ($written === false) {
-                throw new RpcError('write', 'Could not write to the agent' . $this->trailer());
+                $this->outBuffer = '';
+                $this->disarmWritable();
+
+                return false;
             }
 
             if ($written === 0) {
-                $deferred = new Deferred();
-                $watcher = Loop::get()->onWritable($this->pipes[0], static function () use ($deferred): void {
-                    if (!$deferred->isComplete()) {
-                        $deferred->complete(null);
-                    }
+                $this->writableWatcher ??= Loop::get()->onWritable($this->pipes[0], function (): void {
+                    $this->flush();
                 });
 
-                try {
-                    $deferred->future->await();
-                } finally {
-                    Loop::get()->cancel($watcher);
-                }
-
-                continue;
+                return true;
             }
 
-            $offset += $written;
+            $this->outBuffer = substr($this->outBuffer, $written);
+        }
+
+        $this->disarmWritable();
+
+        return true;
+    }
+
+    private function disarmWritable(): void
+    {
+        if ($this->writableWatcher !== null) {
+            Loop::get()->cancel($this->writableWatcher);
+            $this->writableWatcher = null;
         }
     }
 
@@ -876,6 +919,8 @@ final class RpcClient
     {
         $pending = $this->pending;
         $this->pending = [];
+        $this->disarmWritable();
+        $this->outBuffer = '';
 
         if (!$this->closed) {
             $this->closed = true;

@@ -18,7 +18,7 @@ class TcpConnection
 {
     protected string $readBuffer = '';
     /**
-     * The most this connection holds for a peer that is not reading — Workerman's
+     * How much this connection holds for a peer that has stopped reading — Workerman's
      * `maxSendBufferSize`, with the other answer to it: past this the connection is closed rather
      * than data dropped from the middle of a stream.
      *
@@ -27,8 +27,21 @@ class TcpConnection
      * conversation's events and `get_messages` answers grew the buffer past PHP's memory limit,
      * which took the whole web server down with every other tab on it. Closed, the page
      * reconnects when it reads again and loads the conversation afresh (`network.js`).
+     *
+     * Only a peer that has stopped: one that is reading but slowly — a long conversation's
+     * `get_messages` for every tab of a page, over a VPN — was closed at 32 MB too, reconnected,
+     * asked for the same again and was closed again, for as long as the page stayed open. So past
+     * this, the connection is closed only when nothing of the buffer has gone for
+     * `STALLED_AFTER` seconds; `HARD_SEND_BUFFER` is the line memory draws whatever the peer does.
      */
     public const int MAX_SEND_BUFFER = 32 * 1024 * 1024;
+
+    public const float STALLED_AFTER = 15.0;
+
+    public const int HARD_SEND_BUFFER = 160 * 1024 * 1024;
+
+    /** When the send buffer last shrank, or was started. */
+    protected float $lastDrainAt = 0.0;
 
     protected string $sendBuffer = '';
 
@@ -191,7 +204,10 @@ class TcpConnection
         }
 
         if ($this->sendBuffer !== '') {
-            if (strlen($this->sendBuffer) + strlen($data) > self::MAX_SEND_BUFFER) {
+            $size = strlen($this->sendBuffer) + strlen($data);
+            $stalled = microtime(true) - $this->lastDrainAt > self::STALLED_AFTER;
+
+            if ($size > self::HARD_SEND_BUFFER || ($size > self::MAX_SEND_BUFFER && $stalled)) {
                 $this->close();
 
                 return;
@@ -217,6 +233,7 @@ class TcpConnection
 
         if ($written < strlen($data)) {
             $this->sendBuffer = substr($data, $written);
+            $this->lastDrainAt = microtime(true);
             $this->armWritable();
         } elseif ($this->closeWhenDrained) {
             $this->close();
@@ -286,6 +303,10 @@ class TcpConnection
             }
 
             $this->sendBuffer = substr($this->sendBuffer, $written);
+
+            if ($written > 0) {
+                $this->lastDrainAt = microtime(true);
+            }
 
             if ($this->sendBuffer === '') {
                 $this->disarmWritable();

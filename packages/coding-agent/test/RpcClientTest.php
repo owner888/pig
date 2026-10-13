@@ -825,6 +825,36 @@ final class RpcClientTest extends TestCase
         unlink($agent);
     }
 
+    public function testARelayOutsideAFiberIsQueuedWhenTheChildIsNotReading(): void
+    {
+        // `pig web` relays a page's command from its socket handler, which is not a fiber. With a
+        // long conversation the child is busy writing `get_messages` back, its input pipe fills,
+        // and `relay()` used to wait for room — `Future::await() must be called inside a
+        // coroutine`, shown on the page, and the command lost. Now the rest waits in a queue.
+        $agent = $this->root . '/slow-reader.php';
+        $seen = $this->root . '/seen';
+        file_put_contents($agent, "<?php\nusleep(300000);\n\$n = 0;\nwhile ((\$line = fgets(STDIN)) !== false) {\n    \$n++;\n    file_put_contents(" . var_export($seen, true) . ", (string) \$n);\n}\n");
+
+        $client = new RpcClient(cwd: $this->cwd, binary: $agent);
+        $client->start();
+
+        // Far past a pipe's buffer, and outside any fiber.
+        $payload = str_repeat('x', 256 * 1024);
+        for ($i = 0; $i < 3; $i++) {
+            $client->relay(['type' => 'prompt', 'id' => "r{$i}", 'message' => $payload]);
+        }
+
+        Async::run(static function () use ($seen, $client): void {
+            $deadline = microtime(true) + 10;
+            while (microtime(true) < $deadline && (!is_file($seen) || file_get_contents($seen) !== '3')) {
+                Async::delay(0.05);
+            }
+            $client->stop(2.0);
+        });
+
+        $this->assertSame('3', file_get_contents($seen), 'all three lines arrived, whole and in order');
+    }
+
     public function testMissingWorkingDirectoryThrowsRpcError(): void
     {
         $nonExistentDir = $this->root . '/no-such-dir-' . bin2hex(random_bytes(4));

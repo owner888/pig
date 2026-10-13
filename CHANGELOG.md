@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.52] - 2026-10-13
+
+### Fixed
+
+- `pig web` with a long conversation open: the page no longer reconnects over and over, and no longer shows `Future::await() must be called inside a coroutine` with `get_messages: no answer in 30s`. Two causes, both met by a page whose tabs each load a large conversation at once. The send buffer's 32 MB limit (0.6.44) closed a peer that was reading, just slowly — over a VPN, say — so the page reconnected, asked for the same again and was closed again; it now closes only a peer that has read nothing for 15 seconds, with 160 MB as the line memory draws regardless. And a command relayed to a session's child while the child was busy writing back waited for its input pipe to have room, which needs a fiber the socket handler does not have; it is now queued and sent, in order, as the pipe drains.
+
 ## [0.6.51] - 2026-10-13
 
 ### Added

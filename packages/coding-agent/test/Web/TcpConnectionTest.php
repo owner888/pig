@@ -20,7 +20,10 @@ final class TcpConnectionTest extends TestCase
         });
 
         $chunk = str_repeat('x', 1024 * 1024);
-        $sent = 0;
+        $conn->sendRaw($chunk);
+        // Nothing has gone for longer than a reading peer ever takes.
+        self::drainedAgo($conn, TcpConnection::STALLED_AFTER + 1);
+        $sent = strlen($chunk);
 
         while (!$conn->isClosed() && $sent < 2 * TcpConnection::MAX_SEND_BUFFER) {
             $conn->sendRaw($chunk);
@@ -32,6 +35,40 @@ final class TcpConnectionTest extends TestCase
         $this->assertLessThanOrEqual(TcpConnection::MAX_SEND_BUFFER + 2 * strlen($chunk), $sent);
 
         fclose($peer);
+    }
+
+    public function testAPeerStillReadingIsNotClosedPastTheSoftLimit(): void
+    {
+        // A long conversation's `get_messages` for every tab of a page, over a slow link: the peer
+        // is reading, just behind. Closed at 32 MB, the page reconnected, asked again and was
+        // closed again, without end.
+        [$peer, $server] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($server, static fn () => null, static fn () => null);
+
+        $chunk = str_repeat('x', 1024 * 1024);
+        $conn->sendRaw($chunk);
+
+        for ($sent = strlen($chunk); $sent < TcpConnection::MAX_SEND_BUFFER + 4 * strlen($chunk); $sent += strlen($chunk)) {
+            $conn->sendRaw($chunk);
+        }
+
+        $this->assertFalse($conn->isClosed(), 'something left the buffer a moment ago');
+
+        // And memory has its own line, reading or not.
+        while (!$conn->isClosed() && $sent < 2 * TcpConnection::HARD_SEND_BUFFER) {
+            $conn->sendRaw($chunk);
+            $sent += strlen($chunk);
+        }
+
+        $this->assertTrue($conn->isClosed());
+        $this->assertLessThanOrEqual(TcpConnection::HARD_SEND_BUFFER + 2 * strlen($chunk), $sent);
+
+        fclose($peer);
+    }
+
+    private static function drainedAgo(TcpConnection $conn, float $seconds): void
+    {
+        (new \ReflectionProperty(TcpConnection::class, 'lastDrainAt'))->setValue($conn, microtime(true) - $seconds);
     }
 
     public function testAnythingThePeerSendsCountsAsAliveAPongIncluded(): void
