@@ -93,10 +93,10 @@ foreach ($files as $file) {
 
     // `@` hides every other thing that could have gone wrong in the same call, and the
     // one it was reached for is always the one you already knew about.
-    if (preg_match('/(?<![\'"\w])@[a-z_]\w*\s*\(/i', (string) preg_replace('/(?s)\/\*.*?\*\/|\/\/[^\n]*|\'[^\']*\'|"[^"]*"/', '', $source), $match) === 1) {
+    foreach (suppressions($source) as [$line, $what]) {
         $failed++;
         echo "\033[31m✗\033[0m " . substr($file, strlen($root) + 1) . "\n";
-        echo "  error suppression: {$match[0]}\n";
+        echo "  error suppression on line {$line}: @{$what}\n";
     }
 
     foreach (undefinedPropertyReads($source) as $name) {
@@ -118,6 +118,42 @@ foreach ($files as $file) {
     }
 }
 
+
+/**
+ * Every `@` in the code, with its line and what it is in front of. Read from PHP's own tokens: a
+ * regex that stripped strings and comments first paired a PowerShell command's nested quotes
+ * wrongly in `SessionList.php`, took `@proc_open` for part of a string, and let it through.
+ * Outside a string or a comment, `@` means one thing in PHP — attributes are `#[` — so every
+ * one is a suppression.
+ *
+ * @return list<array{int, string}>
+ */
+function suppressions(string $source): array
+{
+    $tokens = PhpToken::tokenize($source);
+    $found = [];
+
+    foreach ($tokens as $i => $token) {
+        // The operator is its own one-character token; an `@` inside a string with `{$…}` in it
+        // ("{$user}@{$host}") is string text, which has a token id of its own.
+        if ($token->id !== ord('@')) {
+            continue;
+        }
+
+        $next = '';
+        for ($j = $i + 1; isset($tokens[$j]); $j++) {
+            if (!$tokens[$j]->isIgnorable()) {
+                $next = $tokens[$j]->text;
+
+                break;
+            }
+        }
+
+        $found[] = [$token->line, $next];
+    }
+
+    return $found;
+}
 /**
  * `$name` read inside a closure body where nothing could have given it a value.
  *

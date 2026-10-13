@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.50] - 2026-10-13
+
+### Fixed
+
+- `test/lint.php` finds every `@` error suppression. It looked for them with a regex after stripping strings and comments, and the nested quotes of a PowerShell command in `SessionList.php` paired up wrongly and hid the `@proc_open` below them. It now reads PHP's own tokens. That `@proc_open` (moving a session to the trash) is a `set_error_handler` around the call, as everywhere else.
+
 ## [0.6.49] - 2026-10-13
 
 ### Added

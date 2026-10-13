@@ -264,11 +264,17 @@ final class SessionList implements Component, Focusable, InputHandler
 
     private static function runTrashCommand(array $cmd): bool
     {
-        $proc = @proc_open(
-            $cmd,
-            [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
-            $pipes,
-        );
+        // A trash command that is not there warns and answers false; false is the answer here.
+        set_error_handler(static fn (): bool => true);
+        try {
+            $proc = proc_open(
+                $cmd,
+                [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+                $pipes,
+            );
+        } finally {
+            restore_error_handler();
+        }
 
         if (!is_resource($proc)) {
             return false;
