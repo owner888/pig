@@ -93,8 +93,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (top < this.lastScrollTop) this.userScrolledUp = true;
           this.lastScrollTop = top;
           if (this === active) scrollBottomBtn.style.display = this.userScrolledUp ? "flex" : "none";
-          // Coming up on the top of what is drawn: draw the part before it (`backfill()`).
+          // Coming up on the top of what is drawn: draw the part before it (`backfill()`), asking
+          // the child for it first once what was fetched has all been drawn (`fetchOlder()`).
           if (this.olderMessages && nearTop(this)) backfill(this, 0);
+          else if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
         const blockResized = new ResizeObserver(() => {
@@ -288,8 +290,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       async loadMessages() {
         try {
-          const d = await this.rpc({ type: "get_messages" });
+          // The end of the conversation only (`RpcMode::messagesPage()`): the whole of a long one —
+          // screenshots and all — was hundreds of megabytes, more than the server could pass on.
+          // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
+          // `limit` answers with everything and no `start`, which is drawn as it was.
+          const token = this.remoteToken = {};
+          const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD });
+          if (this.remoteToken !== token) return;
           this.render(() => renderMessages(d.messages || []));
+          this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
           // A `session_start` handler's `notify` arrives before the conversation does, and drawing
           // the conversation clears the chat; the TUI keeps those lines, so they are put back.
           if (!this.messagesLoaded) {
@@ -2619,6 +2628,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
      */
     const FIRST_DRAW = 60;
     const PREFILL = 120;
+    // Asked of the child at a time: the first draw and its prefill, then a few parts more.
+    const FIRST_LOAD = FIRST_DRAW + PREFILL;
+    const FETCH_MORE = 180;
     const BACKFILL = 60;
     const NEAR_TOP = 2;
 
@@ -2702,10 +2714,36 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         older.end = start;
         if (start === 0) {
           tab.olderMessages = null;
+          if (tab.remoteStart > 0 && nearTop(tab)) fetchOlder(tab);
           return;
         }
         if (left > 0 || nearTop(tab)) backfill(tab, left);
       }, { timeout: 500 });
+    }
+
+    /**
+     * Ask the child for the part of the conversation before what has been fetched, and draw it
+     * (`backfill()`). One request at a time per tab; a reload in the meantime (`remoteToken`)
+     * leaves the answer unused.
+     */
+    async function fetchOlder(tab) {
+      if (tab.fetchingOlder || !(tab.remoteStart > 0) || tab.olderMessages) return;
+      tab.fetchingOlder = true;
+      const token = tab.remoteToken;
+      try {
+        const d = await tab.rpc({ type: "get_messages", limit: FETCH_MORE, before: tab.remoteStart });
+        if (tab.remoteToken !== token || tab.closed) return;
+        const msgs = d.messages || [];
+        tab.remoteStart = Number.isInteger(d.start) ? d.start : 0;
+        if (msgs.length > 0) {
+          tab.olderMessages = { msgs, end: msgs.length };
+          backfill(tab, 0);
+        }
+      } catch (err) {
+        // Asked again on the next scroll near the top.
+      } finally {
+        tab.fetchingOlder = false;
+      }
     }
 
     // ---- boot ------------------------------------------------------------------------------

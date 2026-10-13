@@ -604,6 +604,36 @@ final class RpcModeTest extends TestCase
         $this->assertSame('hello', $messages[2]['content'][0]['text']);
     }
 
+    public function testGetMessagesWithALimitAnswersTheEndCutAtAUserMessage(): void
+    {
+        // pig's own: a page asks for the end of a long conversation, then the parts before it.
+        $this->start(answers: ['one', 'two', 'three']);
+        foreach (['a', 'b', 'c'] as $text) {
+            $this->send(['type' => 'prompt', 'message' => $text]);
+        }
+
+        $all = $this->data(['type' => 'get_messages'])['messages'];
+        $this->assertCount(7, $all, 'system, then three user and assistant pairs');
+
+        // One message asked for: the part starts at the user message before it, so the answer
+        // never arrives without its question.
+        $tail = $this->data(['type' => 'get_messages', 'limit' => 1]);
+        $this->assertSame(7, $tail['total']);
+        $this->assertSame(5, $tail['start']);
+        $this->assertSame(['user', 'assistant'], array_column($tail['messages'], 'role'));
+        $this->assertSame('c', $tail['messages'][0]['content'][0]['text']);
+
+        // The part before it, up to `start`.
+        $before = $this->data(['type' => 'get_messages', 'limit' => 2, 'before' => $tail['start']]);
+        $this->assertSame(3, $before['start']);
+        $this->assertSame('b', $before['messages'][0]['content'][0]['text']);
+
+        // And down to the beginning.
+        $first = $this->data(['type' => 'get_messages', 'limit' => 10, 'before' => 3]);
+        $this->assertSame(0, $first['start']);
+        $this->assertSame(['system', 'user', 'assistant'], array_column($first['messages'], 'role'));
+    }
+
     // ---- prompting ---------------------------------------------------------------------
 
     public function testPromptRespondsBeforeTheTurnAndTheEventsFollow(): void

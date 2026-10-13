@@ -10,6 +10,7 @@ use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\JsJson;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -414,7 +415,7 @@ final class RpcMode
             'get_last_assistant_text' => ['text' => $this->session->lastAssistantText()],
             'set_session_name' => $this->setSessionName($command),
 
-            'get_messages' => ['messages' => $this->encoded($this->session->messages())],
+            'get_messages' => $this->messagesPage($command),
 
             'get_commands' => ['commands' => $this->commands()],
 
@@ -1345,6 +1346,45 @@ final class RpcMode
         foreach ($problems as $problem) {
             $this->send(['type' => 'tool_error', 'path' => $problem->path, 'error' => $problem->error]);
         }
+    }
+
+    /**
+     * `get_messages`: every message, as upstream's — or, with `limit`, only the last of them, pig's
+     * own and additive. `limit` asks for about that many, ending before index `before` (the end
+     * when there is none), and the part starts at a user message so a tool call and its result
+     * are never on two sides of the cut; `total` and `start` say where it sits. Indices count the
+     * conversation's messages, so `start` is the next part's `before`.
+     *
+     * A page draws a long conversation from its end (`app.js`); the whole of it in one answer —
+     * screenshots and all, hundreds of megabytes — was more than `pig web` could hold to pass on,
+     * and it died of memory with every tab on it.
+     *
+     * @param array<string, mixed> $command
+     * @return array<string, mixed>
+     */
+    private function messagesPage(array $command): array
+    {
+        $all = $this->session->messages();
+        $limit = $command['limit'] ?? null;
+
+        if (!is_int($limit) || $limit <= 0) {
+            return ['messages' => $this->encoded($all)];
+        }
+
+        $total = count($all);
+        $before = $command['before'] ?? null;
+        $end = is_int($before) ? max(0, min($total, $before)) : $total;
+        $start = max(0, $end - $limit);
+
+        while ($start > 0 && !$all[$start] instanceof UserMessage) {
+            $start--;
+        }
+
+        return [
+            'messages' => $this->encoded(array_slice($all, $start, $end - $start)),
+            'total' => $total,
+            'start' => $start,
+        ];
     }
 
     /**

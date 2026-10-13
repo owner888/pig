@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.53] - 2026-10-13
+
+### Fixed
+
+- `pig web` no longer dies of memory, and the page no longer reconnects over and over, when a very long conversation is open — one with many screenshots from computer or Android use is hundreds of megabytes. The page asked the session for the whole conversation in one `get_messages`, and the server, decoding that line and encoding it again for the page, ran out of memory (`Allowed memory size … exhausted in TcpConnection::sendRaw()`), restarted, and was asked again. The page now asks for the end only — about 180 messages — and for the parts before it as you scroll up.
+
+### Added
+
+- `--mode rpc`: `get_messages` takes an optional `limit`, and `before`, to answer only the end of the conversation, or the part before an index; the part starts at a user message, and the answer says where it sits (`total`, `start`). Without `limit` it answers everything, as upstream's.
+
 ## [0.6.52] - 2026-10-13
 
 ### Fixed
