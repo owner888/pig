@@ -45,6 +45,7 @@ final class AntigravityApiTest extends TestCase
     protected function tearDown(): void
     {
         \Pig\Ai\Extension\ProviderRegistry::forget();
+        \PigAntigravity\Routing::forgetTables();
     }
 
     /** What signing in stores: a token and a Cloud project in one string. */
@@ -153,7 +154,7 @@ final class AntigravityApiTest extends TestCase
 
     public function testAClaudeModelIsLabelledAsOneAndAGeminiIsNot(): void
     {
-        $this->send('claude-sonnet-4-6', 'medium');
+        $this->send('claude-sonnet-5-5', 'medium');
         $labels = $this->server->receivedJson()['request']['labels'];
 
         $this->assertSame('true', $labels['used_claude']);
@@ -362,7 +363,14 @@ final class AntigravityApiTest extends TestCase
     public function testARuntimeModelThatIsNotThereFallsBackToTheOlderOne(): void
     {
         // pi-antigravity's `getFallbackRuntimeModel()`: a 404 on Gemini 3.8 Flash's runtime model
-        // is tried again on 3.7's, under its own enum.
+        // is tried again on 3.7's, under its own enum. Today's catalogue serves neither 3.7 nor
+        // 3.6, so a catalogue that still names them is installed for the chain to have somewhere
+        // to go — which is also how it would come back if the deployment named them again.
+        \PigAntigravity\Routing::useTables(
+            ['gemini-3.8-flash' => ['default' => 'gemini-3.8-flash-low', 'off' => 'gemini-3.8-flash-low', 'levels' => ['medium' => 'gemini-3.8-flash-medium']]],
+            ['gemini-3.7-flash-medium' => 'MODEL_TEST_37_MEDIUM', 'gemini-3.7-flash-low' => 'MODEL_TEST_37_LOW', 'gemini-3.6-flash-low' => 'MODEL_TEST_36_LOW'],
+        );
+
         $url = $this->server->startSequence([
             [self::refusal(404, 'Requested entity was not found.')],
             $this->okPieces([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'from 3.7']]], 'finishReason' => 'STOP']]]]]),
@@ -374,10 +382,27 @@ final class AntigravityApiTest extends TestCase
         $this->assertNull($failure);
         $this->assertSame(2, $this->server->connections());
         $this->assertStringContainsString('"model":"gemini-3.7-flash-medium"', $this->server->received());
-        $this->assertStringContainsString('"model_enum":"' . \PigAntigravity\Routing::enumOf('gemini-3.7-flash-medium') . '"', $this->server->received());
+        $this->assertStringContainsString('"model_enum":"MODEL_TEST_37_MEDIUM"', $this->server->received());
         $this->assertSame('gemini-3.7-flash-low', \PigAntigravity\Routing::fallback('gemini-3.8-flash', null));
         $this->assertSame('gemini-3.6-flash-low', \PigAntigravity\Routing::fallback('gemini-3.7-flash', null));
         $this->assertNull(\PigAntigravity\Routing::fallback('gemini-3.6-flash-low', null));
+    }
+
+    public function testWithNoOlderModelInTheCatalogueA404IsReportedRatherThanRetried(): void
+    {
+        // The shipped tables: 3.7 and 3.6 are gone from the deployment, so they have no enum and
+        // the chain has nowhere to send the request. One attempt, and the 404 is the answer.
+        $this->assertNull(\PigAntigravity\Routing::fallback('gemini-3.8-flash-medium', 'medium'));
+
+        $url = $this->server->startSequence([
+            [self::refusal(404, 'Requested entity was not found.')],
+        ]);
+
+        $failure = $this->drain(new Antigravity(fallback: rtrim($url, '/')), $this->model($url), 'gemini-3.8-flash', 'medium', new Context([new UserMessage('hi')]));
+
+        $this->assertNotNull($failure);
+        $this->assertSame(1, $this->server->connections());
+        $this->assertStringContainsString('"model":"gemini-3.8-flash-medium"', $this->server->received());
     }
 
     public function testEveryStatusIsWordedAsPiAntigravityWordsIt(): void
@@ -506,7 +531,7 @@ final class AntigravityApiTest extends TestCase
             static fn (Model $m): bool => $m->provider === 'antigravity',
         ));
 
-        $this->assertCount(14, $listed);
+        $this->assertCount(11, $listed);
 
         foreach ($listed as $model) {
             $this->assertSame(Api::Extension, $model->api, $model->id);
@@ -521,12 +546,12 @@ final class AntigravityApiTest extends TestCase
 
     public function testAntigravityDoesNotStealAnthropicsOwnId(): void
     {
-        // `claude-sonnet-4-6` is Anthropic's id and Antigravity resells it. A bare one has to
+        // `claude-sonnet-5-5` is Anthropic's id and Antigravity resells it. A bare one has to
         // keep meaning Anthropic's, or somebody with an Antigravity sign-in would find their
         // `--model sonnet` quietly going through Google. This test moved here with the provider;
         // the rule is `Models::RESOLD`'s and did not change.
-        $this->assertNotSame('antigravity', \Pig\Ai\Models::get('claude-sonnet-4-6')?->provider);
-        $this->assertSame('antigravity', \Pig\Ai\Models::find('antigravity', 'claude-sonnet-4-6')?->provider);
+        $this->assertNotSame('antigravity', \Pig\Ai\Models::get('claude-sonnet-5-5')?->provider);
+        $this->assertSame('antigravity', \Pig\Ai\Models::find('antigravity', 'claude-sonnet-5-5')?->provider);
     }
 
     // ---- helpers ---------------------------------------------------------------------------

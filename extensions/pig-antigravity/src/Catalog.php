@@ -383,7 +383,7 @@ final readonly class Catalog
      * opposite of that class's rule and for the reason that separates the two files: a
      * `models.json` is written by a person who can be told to fix it, and this one is written by
      * another program — refusing the model would take it out of `/model` over a field nobody
-     * can edit. The built-in rows report zero for all fourteen anyway, so a bad `cost` here is
+     * can edit. The built-in rows report zero for every one of them anyway, so a bad `cost` here is
      * no worse than not reading the file at all.
      *
      * @param array<mixed> $cost

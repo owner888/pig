@@ -41,11 +41,11 @@ final class AntigravityRoutingTest extends TestCase
         }
     }
 
-    public function testTheCatalogueHasFourteenModels(): void
+    public function testTheCatalogueHasElevenModels(): void
     {
         // Not a fact about the world — a fact about the last regeneration. If this fails, the
         // tables were refreshed and the expectations below are what to read next.
-        $this->assertCount(14, Routing::models());
+        $this->assertCount(11, Routing::models());
     }
 
     /** @return iterable<string, array{string, string|null, string, string}> */
@@ -55,7 +55,8 @@ final class AntigravityRoutingTest extends TestCase
         yield 'and a different one again' => ['gemini-3.8-flash', 'high', 'gemini-3.8-flash-high', 'MODEL_PLACEHOLDER_M318'];
         yield 'off is its own target' => ['gemini-3.8-flash', 'off', 'gemini-3.8-flash-low', 'MODEL_PLACEHOLDER_M320'];
         yield 'null means off' => ['gemini-3.8-flash', null, 'gemini-3.8-flash-low', 'MODEL_PLACEHOLDER_M320'];
-        yield 'xhigh can leave the family entirely' => ['gemini-3.1-pro', 'xhigh', 'gemini-pro-agent', 'MODEL_PLACEHOLDER_M16'];
+        yield 'claude has a model per level' => ['claude-opus-5-5', 'medium', 'claude-opus-5-5-medium', 'MODEL_PLACEHOLDER_M401'];
+        yield 'and xhigh is its high' => ['claude-opus-5-5', 'xhigh', 'claude-opus-5-5-high', 'MODEL_PLACEHOLDER_M402'];
         yield 'and high can too' => ['gemini-3.5-flash', 'high', 'gemini-3-flash-agent', 'MODEL_PLACEHOLDER_M84'];
         yield 'a model with one target for everything' => ['gemini-3-flash', 'medium', 'gemini-3-flash', 'MODEL_PLACEHOLDER_M18'];
         yield 'gpt-oss goes one place whatever is asked' => ['gpt-oss-120b', 'high', 'gpt-oss-120b-medium', 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM'];
@@ -69,11 +70,17 @@ final class AntigravityRoutingTest extends TestCase
 
     public function testAModelThatCannotBeTurnedOffFallsToItsDefaultTarget(): void
     {
-        // `claude-opus-4-6` and `gpt-oss-120b` have no `off` in the catalogue, which is the
-        // catalogue agreeing with its own `thinkingLevelMap` — both say `off` is not available.
-        // Asking anyway is a floor, not a path: the picker will not offer it.
-        $this->assertSame(['claude-opus-4-6-thinking', 'MODEL_PLACEHOLDER_M26'], Routing::resolve('claude-opus-4-6', 'off'));
-        $this->assertSame(['gpt-oss-120b-medium', 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM'], Routing::resolve('gpt-oss-120b', null));
+        // No model in today's catalogue lacks an `off` target, so the shape is installed by hand:
+        // a routing entry with no `off`, as the catalogue writes one for a model that cannot have
+        // thinking turned off. Asking anyway is a floor, not a path: the picker will not offer it.
+        Routing::useTables(['always-thinks' => ['default' => 'gemini-3-flash', 'levels' => ['high' => 'gemini-3.8-flash-high']]]);
+
+        try {
+            $this->assertSame(['gemini-3-flash', 'MODEL_PLACEHOLDER_M18'], Routing::resolve('always-thinks', 'off'));
+            $this->assertSame(['gemini-3-flash', 'MODEL_PLACEHOLDER_M18'], Routing::resolve('always-thinks', null));
+        } finally {
+            Routing::forgetTables();
+        }
     }
 
     public function testALevelTheModelHasNoTargetForFallsToItsDefault(): void

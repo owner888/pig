@@ -709,7 +709,7 @@ final class AntigravityApi implements StreamApi
 
         if ($status === 404) {
             if (preg_match('/Requested entity was not found/i', $msg) === 1) {
-                return 'This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, or another working model.';
+                return 'This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.5-flash, claude-sonnet-5-5, gemini-2.5-pro, or another working model.';
             }
 
             return "Antigravity could not find the requested resource. Next: retry or switch models. Backend said: {$msg}";

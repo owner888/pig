@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.57] - 2026-10-14
+
+### Changed
+
+- Antigravity: the shipped model list is regenerated from the deployment's catalogue. Claude Opus 5.5 and Claude Sonnet 5.5 are new; Gemini 3.7 Flash, Gemini 3.6 Flash, Claude Opus 4.6, Claude Sonnet 4.6 and Gemini 3.1 Pro are gone, because the deployment no longer serves them. Eleven models, down from fourteen.
+- Antigravity: a 404 on Gemini 3.8 Flash is reported instead of being retried on 3.7, which the deployment no longer serves. The fallback chain is upstream's and comes back by itself when a catalogue names 3.7 again.
+
+### Fixed
+
+- `scripts/fetch-antigravity-models.php` works again. It called a settings method that had been renamed, loaded the installed copy of the extension beside the checkout's one, and printed no model rows for the endpoint's own reply. It now groups that reply the way the extension does at refresh, names each model from its id, and prints the six-column rows `Models.php` holds.
+
 ## [0.6.56] - 2026-10-14
 
 ### Changed

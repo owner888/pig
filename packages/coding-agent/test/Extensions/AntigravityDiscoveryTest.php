@@ -105,7 +105,7 @@ final class AntigravityDiscoveryTest extends TestCase
 
         // The fallback's own models stay, with their routing: an account's catalog that omits them
         // still leaves them selectable.
-        $this->assertArrayHasKey('claude-opus-4-6', $catalog['routing']);
+        $this->assertArrayHasKey('claude-opus-5-5', $catalog['routing']);
         $this->assertContains('gemini-3.8-flash', array_column($catalog['models'], 'id'));
     }
 

@@ -76,26 +76,36 @@ $settings = Settings::load(getcwd() ?: '.');
 
 $proxy = Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
 
-if ($proxy === null && $settings->proxyUrl() !== null) {
-    $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+if ($proxy === null && $settings->httpProxy() !== null) {
+    $proxy = Proxy::parse($settings->httpProxy(), $settings->proxyBypass());
 }
 
 if ($saved === null) {
     HttpClient::useProxy($proxy);
 }
 
-// `apiKey()` renews an expired token over the network, so it has to run inside the coroutine
-// too — outside one it works for exactly as long as the stored token is fresh, which is how
-// this script passed every run until the day it did not.
-$body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endpoint, $settings): array {
-    // The provider is the extension's now, so load it: `apiKey()` asks the registry how to turn
-    // the stored credential into a key, and the registry is empty until the extension says.
-    [, $problems] = ExtensionLoader::load(getcwd() ?: '.', cliPaths: [__DIR__ . '/../extensions/pig-antigravity/index.php']);
+// The provider is the extension's now, so load it: `apiKey()` asks the registry how to turn
+// the stored credential into a key, and the registry is empty until the extension says. It is
+// also where `Grouping` lives, which a saved endpoint reply needs as much as a fresh one.
+//
+// This checkout's copy and nothing else (`discover: false`): an installed copy under
+// `~/.pig/agent/extensions` declares the same classes, and the loader refuses the second one.
+Async::run(static function (): void {
+    [, $problems] = ExtensionLoader::load(
+        getcwd() ?: '.',
+        cliPaths: [__DIR__ . '/../extensions/pig-antigravity/index.php'],
+        discover: false,
+    );
 
     foreach ($problems as $problem) {
         fwrite(STDERR, Style::yellow("extension {$problem->toText()}\n"));
     }
+});
 
+// `apiKey()` renews an expired token over the network, so it has to run inside the coroutine
+// too — outside one it works for exactly as long as the stored token is fresh, which is how
+// this script passed every run until the day it did not.
+$body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endpoint, $settings): array {
     $key = Auth::discover(settings: $settings)->apiKey('antigravity');
     $credentials = $key === null ? null : json_decode($key, true);
     $token = is_array($credentials) ? ($credentials['token'] ?? null) : null;
@@ -182,6 +192,32 @@ $models = $find($decoded, 'models') ?? (array_is_list($decoded) ? $decoded : nul
 $routing = $find($decoded, 'routing');
 $enums = $find($decoded, 'modelEnums');
 
+// The endpoint's own reply: `models` is runtime id => info, with no public ids, no routing and
+// the enums inside each entry. That is the input of the extension's `Discovery::discover()`, so
+// it goes through the same `Grouping` the extension runs at refresh — printing the runtime ids
+// as rows would offer models nobody can ask for by name.
+if (is_array($models) && $models !== [] && !array_is_list($models) && $routing === null) {
+    $enums = [];
+
+    foreach ($models as $runtime => $info) {
+        if (is_array($info) && is_string($info['model'] ?? null) && $info['model'] !== '') {
+            $enums[(string) $runtime] = $info['model'];
+        }
+    }
+
+    // The shipped models as templates only — their limits and prices for a public id the reply
+    // still serves — and none of their routing. Given the routing too, `Grouping` keeps a shipped
+    // row's routing as it stands instead of reading the reply's, and appends every shipped model
+    // the deployment no longer serves; both are right for a refresh that must not lose a model,
+    // and wrong for a table that is meant to be what the deployment sells today.
+    $catalog = \PigAntigravity\Grouping::buildAntigravityCatalog(
+        $models,
+        ['models' => \PigAntigravity\Discovery::fallbackCatalog()['models'], 'routing' => []],
+    );
+    $models = $catalog['models'];
+    $routing = $catalog['routing'];
+}
+
 if (!is_array($models) || $models === []) {
     fwrite(STDERR, Style::yellow(
         "Nothing that looks like a model list came back. Run again with --raw to see the shape;\n"
@@ -192,7 +228,7 @@ if (!is_array($models) || $models === []) {
 }
 
 echo '// ', count($models), " models, from {$endpoint}/v1internal:fetchAvailableModels on ", date('Y-m-d'), "\n";
-echo "// [name, context window, max output, reasoning, accepts images]\n";
+echo "// [name, context window, max output, reasoning, accepts images, thinkingLevelMap]\n";
 
 foreach ($models as $model) {
     if (!is_array($model)) {
@@ -208,25 +244,39 @@ foreach ($models as $model) {
     $input = $model['input'] ?? ['text'];
     $images = is_array($input) && in_array('image', $input, true);
 
+    // Named from the public id, not from the reply's `displayName`: the deployment answers the
+    // ids it has retired with the model it now serves in their place, so `gemini-2.5-flash`,
+    // `gemini-2.5-flash-lite` and `gemini-3.1-flash-lite` all came back as "Gemini 3.5 Flash Lite"
+    // — three rows of one name in the picker. The id is the one thing that tells them apart, and
+    // the shipped table has always been named after it.
+    $name = \PigAntigravity\Grouping::humanizePublicId($id) . ' (Antigravity)';
+
+    $levels = [];
+
+    foreach (is_array($model['thinkingLevelMap'] ?? null) ? $model['thinkingLevelMap'] : [] as $level => $value) {
+        $levels[] = "'{$level}' => " . (is_string($value) ? "'{$value}'" : 'null');
+    }
+
     printf(
-        "    '%s' => ['%s', %s, %s, %s, %s],\n",
+        "        '%s' => ['%s', %s, %s, %s, %s, [%s]],\n",
         $id,
         // A single quote in a model's display name would end the string it is being printed
         // into. Nothing in the catalogue has one today, and a generator that breaks the file it
         // writes the first time one appears is not worth the two characters saved.
-        str_replace(["\\", "'"], ["\\\\", "\\'"], (string) ($model['name'] ?? $id)),
+        str_replace(["\\", "'"], ["\\\\", "\\'"], $name),
         number_format((int) ($model['contextWindow'] ?? 0), 0, '.', '_'),
         number_format((int) ($model['maxTokens'] ?? 0), 0, '.', '_'),
         ($model['reasoning'] ?? false) ? 'true' : 'false',
         $images ? 'true' : 'false',
+        implode(', ', $levels),
     );
 }
 
-// ---- the two tables `Antigravity\Routing` carries between its generated markers -------------
+// ---- the two tables `PigAntigravity\Routing` carries between its generated markers -------------
 
 if ($routing === null) {
     echo "\n", Style::yellow(
-        "No `routing` in this payload, so the two tables in `Ai\\Antigravity\\Routing` cannot be\n"
+        "No `routing` in this payload, so the two tables in `PigAntigravity\\Routing` cannot be\n"
         . "regenerated from it. The model rows above are still good.\n",
     );
 

@@ -170,7 +170,7 @@ return function (ExtensionApi $pi): void {
         return null;
     };
 
-    // Resold: `claude-sonnet-4-6` is Anthropic's id, and a bare `--model sonnet` has to keep
+    // Resold: `claude-sonnet-5-5` is Anthropic's id, and a bare `--model sonnet` has to keep
     // meaning Anthropic's — see `Models::RESOLD` in the core for the rule this joins.
     /**
      * pi-antigravity's `refreshModels`, as pi's model registry calls it: the stored catalog, the
