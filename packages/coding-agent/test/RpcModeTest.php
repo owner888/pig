@@ -692,6 +692,23 @@ final class RpcModeTest extends TestCase
         $this->assertFalse(end($lines)['aborted']);
     }
 
+    public function testAPromptSentAgainUnderItsRequestIdIsNotAskedTwice(): void
+    {
+        $this->start(answers: ['hello'], store: true);
+        $this->send(['id' => 'p1', 'type' => 'prompt', 'message' => 'hi', 'requestId' => 'r-1']);
+        $this->assertSame(['disposition' => 'started'], $this->of('response')[0]['data']);
+
+        // The host lost that answer and sends again: one answer was scripted, so a second turn
+        // would run out of them.
+        $this->assertSame(['disposition' => 'duplicate'], $this->data(['type' => 'prompt', 'message' => 'hi', 'requestId' => 'r-1']));
+        $this->assertCount(1, array_filter($this->session->messages(), static fn ($m): bool => $m instanceof \Pig\Ai\UserMessage), 'asked once');
+
+        $this->assertStringContainsString(
+            'non-empty string',
+            $this->response(['type' => 'prompt', 'message' => 'hi', 'requestId' => ''])['error'],
+        );
+    }
+
     public function testContinueAnswersContinuedAndTheTurnFollows(): void
     {
         $this->start(answers: ['carried on']);

@@ -496,6 +496,12 @@ final class RpcMode
 
         try {
             $behavior = isset($command['streamingBehavior']) ? (string) $command['streamingBehavior'] : null;
+            // pig's: a prompt sent again under the same id is answered `duplicate` and not taken twice.
+            $requestId = $command['requestId'] ?? null;
+
+            if ($requestId !== null && (!is_string($requestId) || $requestId === '')) {
+                throw new \RuntimeException("'requestId' must be a non-empty string.");
+            }
 
             $this->session->prompt(
                 self::text($command, 'message'),
@@ -506,6 +512,7 @@ final class RpcMode
                     $accepted = true;
                     $this->respond($id, 'prompt', ['disposition' => $disposition]);
                 },
+                $requestId,
             );
         } catch (Throwable $error) {
             if (!$accepted) {

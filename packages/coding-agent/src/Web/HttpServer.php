@@ -1119,13 +1119,18 @@ final class HttpServer
             $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
             $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : 'default';
             $theme = is_string($data['theme'] ?? null) && $data['theme'] !== '' ? $data['theme'] : null;
+            // The page's own id, the same across its reconnects (pig's): a tab whose conversation is
+            // not saved yet is bound to the same child again rather than a new one, so a prompt sent
+            // again under its `requestId` after a dropped connection reaches the child that took it.
+            // Per connection for a page that sends none.
+            $pageId = is_string($data['pageId'] ?? null) && preg_match('/^[0-9a-f]{32}$/', $data['pageId']) === 1 ? $data['pageId'] : null;
 
             // The child is started inside `bind()`, and starting is a `proc_open` plus two
             // watchers — synchronous, no fiber needed. What *is* needed is a catch: a child that
             // cannot start (no `bin/pig`, a bad `--session` path) is an `error` line for this
             // tab and nothing else, not a server that falls over.
             try {
-                $clientTag = ($this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
+                $clientTag = ($pageId ?? $this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
                 $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme);
             } catch (Throwable $e) {
                 $conn->send(array_filter([

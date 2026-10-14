@@ -363,11 +363,13 @@ final class RpcClient
      *
      * @param list<array<string, mixed>> $images `{type: "image", data, mimeType}` each
      * @param 'steer'|'followUp'|null $streamingBehavior how to queue it while a turn runs
+     * @param string|null $requestId pig's: sent again under the same id, it is answered `duplicate`
+     *        and not taken twice (`AgentSession::prompt()`)
      */
-    public function prompt(string $message, array $images = [], ?string $streamingBehavior = null): string
+    public function prompt(string $message, array $images = [], ?string $streamingBehavior = null, ?string $requestId = null): string
     {
         return $this->disposition($this->send(array_filter(
-            ['type' => 'prompt', 'message' => $message, 'images' => $images === [] ? null : $images, 'streamingBehavior' => $streamingBehavior],
+            ['type' => 'prompt', 'message' => $message, 'images' => $images === [] ? null : $images, 'streamingBehavior' => $streamingBehavior, 'requestId' => $requestId],
             static fn (mixed $v): bool => $v !== null,
         )));
     }

@@ -49,6 +49,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     let tabSeq = 0;
 
+    // 32 hex digits. `crypto.getRandomValues()` rather than `randomUUID()`, which a page served over
+    // plain http to another device does not have.
+    const randomHex = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    // This page load's id, the same across reconnects (`HttpServer`'s `start_session`).
+    const pageId = randomHex();
+
     class Tab {
       constructor(cwd, sessionFile) {
         this.id = "tab-" + (++tabSeq);
@@ -76,6 +82,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.currentThinkingBox = null;
         this.userScrolledUp = false;
         this.toolCards = new Map();
+        this.unsent = null;             // {text, requestId} of a prompt whose answer was lost (see sendPrompt)
         this.bashCards = new Map();   // rpc id -> ToolCard for a `!command`
         this.bashRunning = false;     // a `!command` is in flight (Stop sends abort_bash)
         this._emptyState = null;
@@ -132,6 +139,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           tabId: this.id,
           cwd: this.cwd,
           sessionFile: this.sessionFile || undefined,
+          // So a reconnect finds this tab's child again even before its conversation is saved.
+          pageId,
           // The page's theme, so a child started for this tab draws its extensions' colours in it
           // from the first line — `session_start` included.
           theme: currentTheme || undefined,
@@ -209,7 +218,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           const p = this.pending.get(evt.id);
           if (p) {
             this.pending.delete(evt.id); clearTimeout(p.timer);
-            if (evt.success) p.resolve(evt.data ?? null); else p.reject(new Error(evt.error || `${evt.command} refused`));
+            if (evt.success) p.resolve(evt.data ?? null);
+            else p.reject(Object.assign(new Error(evt.error || `${evt.command} refused`), { refused: true }));
           } else if (!evt.success) {
             // An asynchronous failure (e.g. prompt threw in child process) or mismatched ID:
             // render the error banner so failures never disappear in silence.
@@ -1325,14 +1335,24 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       // the tab was bound and never follows a turn, so a message sent mid-turn went out as a
       // plain `prompt` and came back "Agent is already processing".
       const images = imgsToSend.map(img => ({ type: "image", mimeType: img.mimeType, data: img.data }));
+      let requestId = null;
       try {
         // Drawn by what the child did with it, as the TUI does: a message that started a turn is
         // the conversation now; a queued one waits above the input as `Steering:`/`Follow-up:`
         // and joins the conversation when it is delivered (`message_start` in `onEvent()`).
         // The answer comes before the turn's first event, so the bubble is still in order.
-        const { disposition } = await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer" });
-        if (disposition !== "queued") tab.render(() => appendUserMessage(text, imgsToSend));
+        //
+        // `requestId` (pig's): a prompt whose answer never came — the connection dropped, the child
+        // went away — may or may not have been taken, so sending the same text again sends the same
+        // id, and a child that already took it answers `duplicate` rather than asking twice.
+        requestId = tab.unsent?.text === text ? tab.unsent.requestId : randomHex();
+        tab.unsent = null;
+        const { disposition } = await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer", requestId });
+        if (disposition === "duplicate") tab.refreshState();
+        else if (disposition !== "queued") tab.render(() => appendUserMessage(text, imgsToSend));
       } catch (err) {
+        // Refused by the child: nothing was taken, so the next send is a new request.
+        if (!err.refused && requestId !== null) tab.unsent = { text, requestId };
         setRunningState(false);
         promptInput.value = text;
         pendingImages = imgsToSend;

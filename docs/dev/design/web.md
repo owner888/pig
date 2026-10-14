@@ -113,6 +113,14 @@ Two things the page has to do that the terminal does not:
   answers: no themes, `setTheme()` refused. Not saved to `settings.json`: the page keeps its own
   choice (`localStorage`), the terminal its own. A theme only the child has (a custom theme in
   its project or from an extension) is one the page cannot show, so the page ignores it.
+- **A prompt whose answer was lost is sent again under the same `requestId`**, and the child answers
+  `duplicate` rather than asking twice (`AgentSession::prompt()`, [rpc.md](rpc.md)). The page keeps
+  `{text, requestId}` in `tab.unsent` when the answer never came — the connection dropped, the child
+  went away — and reuses the id when the same text is sent; a refusal from the child (`err.refused`)
+  took nothing, so the next send is a new request. For that to reach the child that took it,
+  `start_session` carries `pageId`, one per page load: a tab whose conversation is not saved yet was
+  keyed by the connection, so a reconnect started a new child — and a new conversation — while the
+  old one went on answering where nobody could see it.
 
 What `RpcUi` does not send — a terminal `Component` (`custom()`, headers, footers, the editor, message
 and tool renderers), the working indicator, shortcuts — the page cannot draw either;

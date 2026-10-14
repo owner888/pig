@@ -156,6 +156,9 @@ final class AgentSession
     /** Upstream's `_cacheWarmer`; null until a mode with a next request turns it on. */
     private ?CacheWarmer $cacheWarmer = null;
 
+    /** @var array<string, true> `prompt()`'s request ids taken, or being taken, by this process */
+    private array $requests = [];
+
     /** What the running tool has printed, beside the session file, for `continueRun()`. */
     private readonly ToolProgress $toolProgress;
 
@@ -1867,6 +1870,59 @@ final class AgentSession
         return 'continued';
     }
 
+    /** The custom entry a prompt's `requestId` is kept in once it is accepted. */
+    public const string REQUEST_ENTRY = 'pig.request';
+
+    /**
+     * `prompt()` under a `requestId`: taken once, `duplicate` after that. In memory from the moment
+     * it arrives, so a second copy that comes while the first is still being taken is a duplicate
+     * too, and written down when it is accepted.
+     *
+     * @param (Closure(string): void)|null $preflightResult
+     * @param Closure(Closure(string): void): void $send
+     */
+    private function promptOnce(string $requestId, ?Closure $preflightResult, Closure $send): void
+    {
+        if (isset($this->requests[$requestId]) || $this->hasStoredRequest($requestId)) {
+            if ($preflightResult !== null) {
+                $preflightResult('duplicate');
+            }
+
+            return;
+        }
+
+        $this->requests[$requestId] = true;
+        $accepted = false;
+
+        try {
+            $send(function (string $disposition) use ($requestId, $preflightResult, &$accepted): void {
+                $accepted = true;
+                $this->store?->appendCustomEntry(self::REQUEST_ENTRY, ['requestId' => $requestId]);
+
+                if ($preflightResult !== null) {
+                    $preflightResult($disposition);
+                }
+            });
+        } finally {
+            // Refused (no model, busy with no `streamingBehavior`): nothing was taken, so the same
+            // id may be sent again.
+            if (!$accepted) {
+                unset($this->requests[$requestId]);
+            }
+        }
+    }
+
+    private function hasStoredRequest(string $requestId): bool
+    {
+        foreach ($this->store?->customEntries(self::REQUEST_ENTRY) ?? [] as $entry) {
+            if (is_array($entry->data) && ($entry->data['requestId'] ?? null) === $requestId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * Whether the conversation stopped in the middle of a run — the process that had it went away
      * after the question, after a tool's result, or inside a tool call. What a screen opening it
@@ -1938,9 +1994,15 @@ final class AgentSession
      * with: a host is told the prompt was accepted without waiting for the turn, and a failure
      * after that is the turn's to report, in its events.
      *
+     * `$requestId` is pig's, from pi-durable's `submit({requestId})`: a prompt sent again under the
+     * id of one this conversation already took is not taken twice, and `$preflightResult` is told
+     * `duplicate` — so a host that lost the answer (the page's connection dropped mid-send) can send
+     * again without asking twice. Kept as a `pig.request` custom entry once the prompt is accepted,
+     * so it holds across a restart; one that was refused is not kept, and can be sent again.
+     *
      * @param list<ImageContent> $images
      * @param 'steer'|'followUp'|null $streamingBehavior
-     * @param (Closure('handled'|'queued'|'started'): void)|null $preflightResult
+     * @param (Closure('handled'|'queued'|'started'|'duplicate'): void)|null $preflightResult
      * @throws AgentError if the agent is already working and no `$streamingBehavior` was given, or
      *                    there is no model
      */
@@ -1950,7 +2012,14 @@ final class AgentSession
         string $source = 'interactive',
         ?string $streamingBehavior = null,
         ?Closure $preflightResult = null,
+        ?string $requestId = null,
     ): void {
+        if ($requestId !== null) {
+            $this->promptOnce($requestId, $preflightResult, fn (Closure $accepted) => $this->prompt($text, $images, $source, $streamingBehavior, $accepted));
+
+            return;
+        }
+
         if ($this->runHookCommand($text)) {
             if ($preflightResult !== null) {
                 $preflightResult('handled');

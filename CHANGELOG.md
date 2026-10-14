@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.70] - 2026-10-14
+
+### Added
+
+- RPC `prompt` takes a `requestId`: sent again under an id the conversation already took, it is answered `{disposition: "duplicate"}` and not asked twice — kept as a `pig.request` custom entry, so it holds across a restart. The Web UI sends one, and when a send's answer is lost (a dropped connection, the agent restarting) and you press send again, it is the same request.
+
+### Fixed
+
+- In the Web UI, a new conversation whose connection dropped before it was saved came back as another new conversation, while the first went on answering where it could not be seen; the page now finds its own conversation again after a reconnect.
+
 ## [0.6.69] - 2026-10-14
 
 ### Added

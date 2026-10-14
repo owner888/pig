@@ -395,6 +395,38 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testAPageThatReconnectsFindsItsUnsavedConversationAgain(): void
+    {
+        $port = 28197;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $pageId = str_repeat('ab', 16);
+            $first = $this->wsConnect($port);
+            $this->wsSend($first, ['type' => 'start_session', 'cwd' => $this->cwd, 'tabId' => 'tab-1', 'pageId' => $pageId]);
+            $this->wsCollect($first, static fn (array $m) => $m['type'] === 'session_bound');
+            fclose($first);
+
+            // The same page on a new connection: the conversation nothing has saved yet is the one
+            // it had, not a new one — so a prompt sent again under its `requestId` lands there.
+            $again = $this->wsConnect($port);
+            $this->wsSend($again, ['type' => 'start_session', 'cwd' => $this->cwd, 'tabId' => 'tab-1', 'pageId' => $pageId]);
+            $this->wsCollect($again, static fn (array $m) => $m['type'] === 'session_bound');
+            $this->assertCount(1, $server->pool()->all());
+
+            // Another page is another conversation.
+            $other = $this->wsConnect($port);
+            $this->wsSend($other, ['type' => 'start_session', 'cwd' => $this->cwd, 'tabId' => 'tab-1', 'pageId' => str_repeat('cd', 16)]);
+            $this->wsCollect($other, static fn (array $m) => $m['type'] === 'session_bound');
+            $this->assertCount(2, $server->pool()->all());
+
+            fclose($again);
+            fclose($other);
+            $server->stop();
+        });
+    }
+
     public function testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen(): void
     {
         $port = 28094;

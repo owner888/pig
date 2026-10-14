@@ -3154,6 +3154,54 @@ final class AgentSessionTest extends TestCase
         }
     }
 
+    public function testAPromptsRequestIdIsTakenOnceEvenAfterTheConversationIsReopened(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+        $told = [];
+        $tell = static function (string $d) use (&$told): void {
+            $told[] = $d;
+        };
+
+        Async::run(static fn () => $session->prompt('hi', preflightResult: $tell, requestId: 'r-1'));
+        self::settle();
+        Async::run(static fn () => $session->prompt('hi', preflightResult: $tell, requestId: 'r-1'));
+
+        $this->assertSame(['started', 'duplicate'], $told);
+        $this->assertCount(2, $session->messages());
+
+        // A new process on the same file: the id is in the file, not only in memory.
+        $reopened = $this->session([], store: SessionManager::open($store->path));
+        Async::run(static fn () => $reopened->prompt('hi', preflightResult: $tell, requestId: 'r-1'));
+        $this->assertSame('duplicate', $told[2]);
+    }
+
+    public function testARefusedPromptsRequestIdCanBeSentAgain(): void
+    {
+        $session = $this->session([], streamFn: self::parksUntilAborted());
+        $told = [];
+
+        Async::run(static function () use ($session, &$told): void {
+            Async::spawn(static fn () => $session->prompt('the first'));
+            Async::delay(0.01);
+
+            // Busy and no `streamingBehavior`: refused, so nothing was taken.
+            try {
+                $session->prompt('hi', requestId: 'r-1');
+                self::fail('a prompt mid-run with no streamingBehavior is refused');
+            } catch (AgentError) {
+            }
+
+            $session->prompt('hi', streamingBehavior: 'followUp', preflightResult: static function (string $d) use (&$told): void {
+                $told[] = $d;
+            }, requestId: 'r-1');
+            $session->abort()->await();
+        });
+        self::settle();
+
+        $this->assertSame(['queued'], $told, 'taken the second time');
+    }
+
     public function testAnEmptyConversationHasNothingToCarryOn(): void
     {
         $session = $this->session([]);
