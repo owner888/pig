@@ -240,8 +240,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // A child someone else started — another browser, a scheduled run — draws in whatever
         // theme it was given; this page's is the one it should draw in now.
         this.tellTheme(currentTheme);
-        // A fresh child, or a reconnect to one: load what it has, then ask what it is.
-        await this.loadMessages();
+        // A fresh child, or a reconnect to one: load what it has, then ask what it is. A tab in
+        // the background loads its conversation when it is opened (`openTab()`): after a reconnect
+        // every tab binds at once, and every history at once is the biggest thing a page asks
+        // the server to send it.
+        if (this === active) await this.loadMessages();
+        else this.needsMessages = true;
         await this.refreshState();
         if (this === active) applyActiveTabToChrome();
       }
@@ -294,6 +298,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           // screenshots and all — was hundreds of megabytes, more than the server could pass on.
           // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
           // `limit` answers with everything and no `start`, which is drawn as it was.
+          this.needsMessages = false;
           const token = this.remoteToken = {};
           const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD });
           if (this.remoteToken !== token) return;
@@ -1677,6 +1682,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       active = tab;
       tab.scroller.hidden = false;
       if (!tab.bound) tab.subscribe();
+      else if (tab.needsMessages) tab.loadMessages();
 
       // Show friendly EmptyState if tab has no messages yet
       if (tab.scroller.children.length === 0 && !tab.emptyState) {

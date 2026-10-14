@@ -13454,6 +13454,16 @@ after `NO_BUFFER_RETRY` — and writes go out `WRITE_CHUNK` at a time. A close t
 logs its reason (`[web] closing a connection: …`): read that before guessing at a reconnect loop.
 `RpcClient::write()` queues and never awaits.
 
+The log then showed the next one: `send buffer past 160 MB`, and an OOM in `RpcClient::flush()`
+copying a 230 MB queue. A running command reported its whole tail (`Run::$onUpdate`, ≤50 KB) on
+every read — megabytes a second for a build log. Updates are at most `Run::UPDATE_EVERY` apart (the
+last always sent), a page that is behind is sent only the newest update per running command
+(`HttpServer::$held`, flushed on `TcpConnection::onDrain()`), background tabs load their history
+when opened, both write queues drain from an offset (a `substr()` of the rest after each small
+write is quadratic), and the limits (8/32 MB to a page, 8 MB to a child) are brakes, not room.
+Any queue that can grow without bound gets a limit and an offset, not a copy — and the producer
+gets slowed or coalesced, not the limit raised.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.55] - 2026-10-14
+
+### Fixed
+
+- `pig web` no longer runs out of memory while a command streams a lot of output — a build log, say — to a page across a slow link. A running command told the screen its output's tail (up to 50 KB) on every read, many times a second, megabytes a second of the same text; the page's send buffer passed its limit again and again (`closing a connection: send buffer past 160 MB` in the log), and the queue to a session that had stopped reading grew until the server died (`Allowed memory size … exhausted` in `RpcClient`). The live output is now updated at most ten times a second, its last state always shown. A page that falls behind is sent only the newest of a running command's updates when it catches up, not every one in between. A page now loads a background tab's conversation when the tab is opened, not every tab's at once after a reconnect. Both write queues — to a page and to a session — drain from an offset instead of copying what is left after every write, which was quadratic and pinned the CPU. With that, the limits are brakes rather than room: a page's queue is closed at 8 MB when it has read nothing for 15 s and at 32 MB regardless (were 32 and 160), and a session's input refuses more past 8 MB queued; one message bigger than a limit still goes out whole when nothing is queued before it.
+
 ## [0.6.54] - 2026-10-13
 
 ### Fixed

@@ -56,6 +56,18 @@ final class RpcClient
     /** The watcher that sends the rest of `$outBuffer` once the pipe has room again. */
     private ?string $writableWatcher = null;
 
+    /** How much of `$outBuffer` has been written already. */
+    private int $outOffset = 0;
+
+    /**
+     * The most queued behind what the child has not read yet. Commands are small — a prompt with
+     * images is the big one, and that goes out whole when nothing is queued before it — so a queue
+     * this deep is a child that has stopped reading, and it is told so rather than taking the
+     * server's memory with it (measured: 230 MB queued, and the copy of it after each 8 KB a pipe
+     * takes is what ran out).
+     */
+    public const int MAX_QUEUED = 8 * 1024 * 1024;
+
     /** @var array<int, string> loop watcher ids, by pipe */
     private array $watchers = [];
 
@@ -230,6 +242,7 @@ final class RpcClient
 
         $this->disarmWritable();
         $this->outBuffer = '';
+        $this->outOffset = 0;
 
         if (isset($this->pipes[0]) && is_resource($this->pipes[0])) {
             fclose($this->pipes[0]);
@@ -772,6 +785,12 @@ final class RpcClient
             throw new RpcError('write', 'The agent closed its standard input' . $this->trailer());
         }
 
+        $queued = strlen($this->outBuffer) - $this->outOffset;
+
+        if ($queued > 0 && $queued + strlen($data) > self::MAX_QUEUED) {
+            throw new RpcError('write', 'The agent is not reading what it is sent' . $this->trailer());
+        }
+
         $this->outBuffer .= $data;
 
         if ($this->writableWatcher === null && !$this->flush()) {
@@ -788,6 +807,7 @@ final class RpcClient
         while ($this->outBuffer !== '') {
             if (!isset($this->pipes[0]) || !is_resource($this->pipes[0])) {
                 $this->outBuffer = '';
+                $this->outOffset = 0;
                 $this->disarmWritable();
 
                 return false;
@@ -796,13 +816,14 @@ final class RpcClient
             // A child that has died leaves a broken pipe, which warns as well as answering false.
             set_error_handler(static fn (): bool => true);
             try {
-                $written = fwrite($this->pipes[0], $this->outBuffer);
+                $written = fwrite($this->pipes[0], substr($this->outBuffer, $this->outOffset, 1024 * 1024));
             } finally {
                 restore_error_handler();
             }
 
             if ($written === false) {
                 $this->outBuffer = '';
+                $this->outOffset = 0;
                 $this->disarmWritable();
 
                 return false;
@@ -816,7 +837,17 @@ final class RpcClient
                 return true;
             }
 
-            $this->outBuffer = substr($this->outBuffer, $written);
+            // From an offset, not a fresh copy of the rest after every write: a pipe takes a few
+            // kilobytes at a time, and copying a big queue after each was quadratic.
+            $this->outOffset += $written;
+
+            if ($this->outOffset >= strlen($this->outBuffer)) {
+                $this->outBuffer = '';
+                $this->outOffset = 0;
+            } elseif ($this->outOffset > 4 * 1024 * 1024) {
+                $this->outBuffer = substr($this->outBuffer, $this->outOffset);
+                $this->outOffset = 0;
+            }
         }
 
         $this->disarmWritable();
@@ -921,6 +952,7 @@ final class RpcClient
         $this->pending = [];
         $this->disarmWritable();
         $this->outBuffer = '';
+        $this->outOffset = 0;
 
         if (!$this->closed) {
             $this->closed = true;

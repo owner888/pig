@@ -855,6 +855,27 @@ final class RpcClientTest extends TestCase
         $this->assertSame('3', file_get_contents($seen), 'all three lines arrived, whole and in order');
     }
 
+    public function testAChildThatNeverReadsIsRefusedPastTheQueueLimitNotTheServersMemory(): void
+    {
+        $agent = $this->root . '/never-reads.php';
+        file_put_contents($agent, "<?php\nsleep(30);\n");
+
+        $client = new RpcClient(cwd: $this->cwd, binary: $agent);
+        $client->start();
+        // One message bigger than the limit still goes, when nothing is queued before it.
+        $client->relay(['type' => 'prompt', 'id' => 'big', 'message' => str_repeat('y', RpcClient::MAX_QUEUED + 1024)]);
+        $payload = str_repeat('x', 1024 * 1024);
+
+        $error = $this->assertThrows(RpcError::class, static function () use ($client, $payload): void {
+            for ($i = 0; $i < 20; $i++) {
+                $client->relay(['type' => 'prompt', 'id' => "r{$i}", 'message' => $payload]);
+            }
+        });
+
+        $this->assertStringContainsString('not reading', $error->getMessage());
+        Async::run(static fn () => $client->stop(0.5));
+    }
+
     public function testMissingWorkingDirectoryThrowsRpcError(): void
     {
         $nonExistentDir = $this->root . '/no-such-dir-' . bin2hex(random_bytes(4));

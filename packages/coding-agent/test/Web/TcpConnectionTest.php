@@ -66,6 +66,35 @@ final class TcpConnectionTest extends TestCase
         fclose($peer);
     }
 
+    public function testAPeerThatCatchesUpIsToldOnce(): void
+    {
+        // What `HttpServer` holds a running command's updates back on, and sends them after.
+        [$peer, $server] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        stream_set_blocking($peer, false);
+        $conn = new TcpConnection($server, static fn () => null, static fn () => null);
+        $drained = 0;
+        $conn->onDrain(static function () use (&$drained): void {
+            $drained++;
+        });
+
+        $conn->sendRaw(str_repeat('z', 4 * 1024 * 1024));
+        $this->assertTrue($conn->hasBacklog());
+        $this->assertSame(0, $drained);
+
+        // The peer reads; each time the socket has room, the rest goes.
+        $flush = new \ReflectionMethod(TcpConnection::class, 'flush');
+        for ($i = 0; $i < 10000 && $conn->hasBacklog(); $i++) {
+            fread($peer, 1024 * 1024);
+            $flush->invoke($conn);
+        }
+
+        $this->assertFalse($conn->hasBacklog());
+        $this->assertSame(1, $drained);
+
+        $conn->close();
+        fclose($peer);
+    }
+
     private static function drainedAgo(TcpConnection $conn, float $seconds): void
     {
         (new \ReflectionProperty(TcpConnection::class, 'lastDrainAt'))->setValue($conn, microtime(true) - $seconds);

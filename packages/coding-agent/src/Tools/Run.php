@@ -32,6 +32,21 @@ final class Run
 
     private const int READ_CHUNK = 65536;
 
+    /**
+     * The least time between two live updates of the output (`$onUpdate`).
+     *
+     * Each one is the whole tail — up to `Truncate::MAX_BYTES` — and a build log arrives in many
+     * small reads a second, so updating on every read sent megabytes a second of the same text:
+     * over `pig web` to a page across a tunnel, more than it could take, and the server's send
+     * buffer for that page passed its limit again and again. Ten a second is live to a reader;
+     * the last one is never lost (`flushUpdate()`), and the result at the end is complete anyway.
+     */
+    private const float UPDATE_EVERY = 0.1;
+
+    private float $lastUpdateAt = 0.0;
+
+    private ?string $updateTimer = null;
+
     public bool $aborted = false;
 
     public bool $timedOut = false;
@@ -343,10 +358,34 @@ final class Run
             $this->buffer = substr($this->buffer, -self::KEEP_BYTES);
         }
 
-        if ($this->onUpdate !== null) {
-            $partial = Truncate::tail($this->buffer);
-            ($this->onUpdate)(new AgentToolResult([new TextContent($partial->content)]));
+        if ($this->onUpdate === null || $this->updateTimer !== null) {
+            return;
         }
+
+        $wait = $this->lastUpdateAt + self::UPDATE_EVERY - microtime(true);
+
+        if ($wait <= 0) {
+            $this->flushUpdate();
+
+            return;
+        }
+
+        $this->updateTimer = Loop::get()->delay($wait, function (): void {
+            $this->updateTimer = null;
+            $this->flushUpdate();
+        });
+    }
+
+    /** Tell the screen the tail as it is now. */
+    private function flushUpdate(): void
+    {
+        if ($this->onUpdate === null) {
+            return;
+        }
+
+        $this->lastUpdateAt = microtime(true);
+        $partial = Truncate::tail($this->buffer);
+        ($this->onUpdate)(new AgentToolResult([new TextContent($partial->content)]));
     }
 
     /**
@@ -423,6 +462,13 @@ final class Run
 
     private function close(): int
     {
+        // An update still waiting goes out now, before the result does.
+        if ($this->updateTimer !== null) {
+            Loop::get()->cancel($this->updateTimer);
+            $this->updateTimer = null;
+            $this->flushUpdate();
+        }
+
         foreach (array_keys($this->watchers) as $fd) {
             $this->closePipe($fd);
         }

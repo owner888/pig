@@ -34,12 +34,21 @@ class TcpConnection
      * asked for the same again and was closed again, for as long as the page stayed open. So past
      * this, the connection is closed only when nothing of the buffer has gone for
      * `STALLED_AFTER` seconds; `HARD_SEND_BUFFER` is the line memory draws whatever the peer does.
+     *
+     * Both are brakes, not working room. What a page is sent at a steady rate is small (a running
+     * command's output is updated ten times a second, and a page that falls behind gets only the
+     * newest of those — `hasBacklog()`, `onDrain()`, `HttpServer::onSessionEvent()`); what is big
+     * is what it asks for — a conversation's history — and a page asks for one tab's at a time.
+     * One message bigger than either limit still goes out whole when nothing is queued before it.
      */
-    public const int MAX_SEND_BUFFER = 32 * 1024 * 1024;
+    public const int MAX_SEND_BUFFER = 8 * 1024 * 1024;
 
     public const float STALLED_AFTER = 15.0;
 
-    public const int HARD_SEND_BUFFER = 160 * 1024 * 1024;
+    public const int HARD_SEND_BUFFER = 32 * 1024 * 1024;
+
+    /** Called each time everything queued has been written (`onDrain()`). */
+    private ?Closure $drainListener = null;
 
     /** When the send buffer last shrank, or was started. */
     protected float $lastDrainAt = 0.0;
@@ -59,6 +68,9 @@ class TcpConnection
     public const float NO_BUFFER_RETRY = 0.02;
 
     private ?string $retryTimer = null;
+
+    /** How much of `$sendBuffer` has been written already. */
+    private int $sendOffset = 0;
 
     protected string $sendBuffer = '';
 
@@ -221,7 +233,7 @@ class TcpConnection
         }
 
         if ($this->sendBuffer !== '') {
-            $size = strlen($this->sendBuffer) + strlen($data);
+            $size = strlen($this->sendBuffer) - $this->sendOffset + strlen($data);
             $stalled = microtime(true) - $this->lastDrainAt > self::STALLED_AFTER;
 
             if ($size > self::HARD_SEND_BUFFER) {
@@ -260,7 +272,7 @@ class TcpConnection
                 return true;
             });
             try {
-                $written = fwrite($this->socket, substr($this->sendBuffer, 0, self::WRITE_CHUNK));
+                $written = fwrite($this->socket, substr($this->sendBuffer, $this->sendOffset, self::WRITE_CHUNK));
             } finally {
                 restore_error_handler();
             }
@@ -287,15 +299,43 @@ class TcpConnection
                 return;
             }
 
-            $this->sendBuffer = substr($this->sendBuffer, $written);
+            // From an offset, not a fresh copy of the rest after every write: with a big buffer
+            // and small writes that copying was quadratic, and pinned the server's CPU.
+            $this->sendOffset += $written;
             $this->lastDrainAt = microtime(true);
+
+            if ($this->sendOffset >= strlen($this->sendBuffer)) {
+                $this->sendBuffer = '';
+                $this->sendOffset = 0;
+            } elseif ($this->sendOffset > self::WRITE_CHUNK * 16) {
+                $this->sendBuffer = substr($this->sendBuffer, $this->sendOffset);
+                $this->sendOffset = 0;
+            }
         }
 
         $this->disarmWritable();
 
         if ($this->sendBuffer === '' && $this->closeWhenDrained) {
             $this->close();
+
+            return;
         }
+
+        if ($this->sendBuffer === '' && $this->drainListener !== null) {
+            ($this->drainListener)($this);
+        }
+    }
+
+    /** Whether something is still waiting to be written: the peer is behind. */
+    public function hasBacklog(): bool
+    {
+        return $this->sendBuffer !== '';
+    }
+
+    /** Run `$listener` each time the queue empties; null stops it. */
+    public function onDrain(?Closure $listener): void
+    {
+        $this->drainListener = $listener;
     }
 
     /**

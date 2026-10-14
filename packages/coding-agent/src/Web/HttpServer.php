@@ -91,6 +91,14 @@ final class HttpServer
     private array $panelUis = [];
 
     private ?string $heartbeatTimer = null;
+
+    /**
+     * Per page connection, the newest `tool_execution_update` of each running command it has not
+     * been sent yet because it was behind, by `tabId|toolCallId`.
+     *
+     * @var array<int, array<string, array<string, mixed>>>
+     */
+    private array $held = [];
     private const float PING_INTERVAL = 25.0;
 
     /**
@@ -372,8 +380,27 @@ final class HttpServer
         $this->pool->shutdown();
     }
 
+    /** What a page that fell behind is sent once it has caught up: the newest of each. */
+    private function flushHeld(int $connectionId): void
+    {
+        $lines = $this->held[$connectionId] ?? [];
+        unset($this->held[$connectionId]);
+        $client = $this->wsClients[$connectionId] ?? null;
+
+        if ($client === null || $client->isClosed()) {
+            return;
+        }
+
+        $client->onDrain(null);
+
+        foreach ($lines as $line) {
+            $client->send($line);
+        }
+    }
+
     private function handleClose(int $connectionId): void
     {
+        unset($this->held[$connectionId]);
         // A panel's action asking a page that has gone is answered as a cancel, and finishes.
         foreach ($this->panelUis[$connectionId] ?? [] as $ui) {
             $ui->withdrawAll();
@@ -1464,6 +1491,8 @@ final class HttpServer
     private function onSessionEvent(ManagedSession $managed, array $event): void
     {
         $base = ($event['type'] ?? null) === 'session_ended' ? $event : ['type' => 'rpc_event', 'event' => $event];
+        $type = $event['type'] ?? null;
+        $toolCallId = is_string($event['toolCallId'] ?? null) ? $event['toolCallId'] : null;
 
         foreach ($managed->clients as $connectionId => $tabIds) {
             $client = $this->wsClients[$connectionId] ?? null;
@@ -1474,6 +1503,22 @@ final class HttpServer
 
             foreach (array_keys($tabIds) as $tabId) {
                 $line = $tabId === 'default' ? $base : [...$base, 'tabId' => $tabId];
+                $key = "{$tabId}|{$toolCallId}";
+
+                // A running command's output is a snapshot each time: a page that is behind gets
+                // the newest when it catches up, not every one in between (`flushHeld()`).
+                if ($type === 'tool_execution_update' && $toolCallId !== null && $client->hasBacklog()) {
+                    $this->held[$connectionId][$key] = $line;
+                    $client->onDrain(fn () => $this->flushHeld($connectionId));
+
+                    continue;
+                }
+
+                // The end says it all; an update held for it would only arrive after it.
+                if ($type === 'tool_execution_end') {
+                    unset($this->held[$connectionId][$key]);
+                }
+
                 $client->send($line);
             }
         }
