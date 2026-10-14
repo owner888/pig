@@ -288,12 +288,40 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           if (s.opening) this.opening = s.opening;
           this.isRunning = !!s.isStreaming;
           this.render(() => setRunningState(this.isRunning));
+          this.showStoppedMidRun();
           saveTabs(); renderTabs();
           if (this === active) applyActiveTabToChrome();
         } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_session_state"), err); }
         // Apart, so a child that cannot list its commands still has its state drawn — and after
         // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
         this.loadCommands();
+      }
+
+      /**
+       * pig's: a conversation a stopped process left mid-run says so under it, with a button that
+       * carries it on (`continue`, `AgentSession::continueRun()`) — the TUI's notice and `/continue`.
+       * Nothing runs on its own. Drawn once both the state and the conversation are in.
+       */
+      showStoppedMidRun() {
+        this.scroller.querySelector(".msg-stopped")?.remove();
+        if (!this.messagesLoaded || !this.state?.isStoppedMidRun || this.isRunning) return;
+        this.render(() => {
+          const block = document.createElement("div");
+          block.className = "msg-block msg-warning msg-stopped";
+          block.innerHTML = `${escapeHtml(t("stopped_mid_run"))} <button class="modal-btn primary">${escapeHtml(t("continue_run"))}</button>`;
+          block.querySelector("button").addEventListener("click", async () => {
+            block.remove();
+            this.state.isStoppedMidRun = false;
+            try {
+              const { outcome } = await this.rpc({ type: "continue" });
+              if (outcome === "finished") this.render(() => appendNoticeMessage(t("continue_finished")));
+            } catch (err) {
+              this.render(() => appendErrorMessage(err.message || t("send_failed")));
+            }
+          });
+          chatScroll.appendChild(block);
+          scrollToBottomIfNeeded();
+        });
       }
 
       async loadMessages() {
@@ -315,6 +343,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             this.render(() => this.earlyNotices.forEach(drawNotify));
             this.earlyNotices = [];
           }
+          this.showStoppedMidRun();
         } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_conversation"), err); }
       }
 
@@ -897,6 +926,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       } else if (evt.type === "agent_start" || evt.type === "turn_start") {
         setRunningState(true);
+        // A run started — by the button or anyone else — so it is not stopped any more.
+        if (tab?.state) tab.state.isStoppedMidRun = false;
+        tab?.scroller.querySelector(".msg-stopped")?.remove();
       } else if (evt.type === "agent_end" || evt.type === "turn_end") {
         setRunningState(false);
         if (currentThinkingBox?.finish) {
@@ -951,9 +983,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantBlock = null;
         currentAssistantText = "";
         tab.toolCards = tab.toolCards || new Map();
-        const card = new ToolCard({ ...evt, arguments: evt.args });
-        tab.toolCards.set(evt.toolCallId, card);
-        chatScroll.appendChild(card.element);
+        // A call a stopped run left without a result was drawn with the conversation; carrying the
+        // run on (`continue`) answers it in that card rather than in a second one.
+        if (!tab.toolCards.get(evt.toolCallId)?.element.isConnected) {
+          const card = new ToolCard({ ...evt, arguments: evt.args });
+          tab.toolCards.set(evt.toolCallId, card);
+          chatScroll.appendChild(card.element);
+        }
         scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
         const card = tab?.toolCards?.get(evt.toolCallId);

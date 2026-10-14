@@ -507,6 +507,7 @@ final class RpcModeTest extends TestCase
         $this->assertSame('one-at-a-time', $state['steeringMode'], 'the defaults a host can read back');
         $this->assertSame('one-at-a-time', $state['followUpMode']);
         $this->assertFalse($state['isBashRunning']);
+        $this->assertFalse($state['isStoppedMidRun'], 'what the page offers to continue');
         $this->assertSame(0, $state['messageCount']);
         $this->assertStringEndsWith('.jsonl', $state['sessionFile']);
         // Under a physical model there is nothing routed; the key is there so a host can read it

@@ -596,6 +596,8 @@ final class RpcMode
             'contextTokens' => $this->session->contextTokens(),
             'autoRetryEnabled' => $this->settings?->retryEnabled() ?? true,
             'isRetrying' => $this->session->isRetrying(),
+            // A conversation a stopped process left mid-run, which the page offers to `continue`.
+            'isStoppedMidRun' => $this->session->isStoppedMidRun(),
             // Under a virtual model, where the latest response actually went — what the TUI's
             // footer draws after the arrow. Null under a physical selection.
             'routedModel' => ($routed = $this->session->routedModel()) === null ? null : [

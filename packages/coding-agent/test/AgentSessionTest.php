@@ -3134,6 +3134,26 @@ final class AgentSessionTest extends TestCase
         $this->assertFileDoesNotExist($sidecar);
     }
 
+    public function testAConversationStoppedMidRunIsOneAProcessLostNotOneSomebodyStopped(): void
+    {
+        $session = $this->session([]);
+        $answer = static fn (StopReason $reason, array $content = [new TextContent('x')]): AssistantMessage => new AssistantMessage($content, Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), $reason);
+        $asked = $answer(StopReason::ToolUse, [new ToolCall('c1', 'bash', ['command' => 'make'])]);
+
+        foreach ([
+            'empty' => [[], false],
+            'after the question' => [[new UserMessage('q')], true],
+            'inside a tool call' => [[new UserMessage('q'), $asked], true],
+            'after a tool result' => [[new UserMessage('q'), $asked, new ToolResultMessage('c1', 'bash', [new TextContent('ok')], false)], true],
+            'answered' => [[new UserMessage('q'), $answer(StopReason::Stop)], false],
+            'stopped with escape' => [[new UserMessage('q'), $answer(StopReason::Aborted)], false],
+            'failed' => [[new UserMessage('q'), $answer(StopReason::Error)], false],
+        ] as $case => [$messages, $expected]) {
+            $session->agent->replaceMessages($messages);
+            $this->assertSame($expected, $session->isStoppedMidRun(), $case);
+        }
+    }
+
     public function testAnEmptyConversationHasNothingToCarryOn(): void
     {
         $session = $this->session([]);

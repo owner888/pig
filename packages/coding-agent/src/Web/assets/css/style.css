@@ -1057,6 +1057,11 @@
       font-size: 13px;
     }
 
+    /* pig's: the TUI's "stopped in the middle of a run" line, with its `/continue` as a button. */
+    .msg-stopped .modal-btn {
+      margin-left: 8px;
+    }
+
     /* `notify(…, "warning")`: the TUI's `Warning:` line. */
     .msg-warning {
       background: var(--color-surface);

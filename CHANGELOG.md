@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.69] - 2026-10-14
+
+### Added
+
+- `/continue` carries on a run that stopped when pig did. A conversation opened mid-run — with `-c`, `--resume` or `/resume` — says so under the transcript (`This conversation stopped in the middle of a run. /continue carries it on.`), and nothing runs until you ask. The Web UI shows the same line with a Continue button; `get_state` reports it as `isStoppedMidRun`.
+
+### Fixed
+
+- A tool call carried on after a stop is answered in the row the transcript already drew, in the terminal and the Web UI, instead of a second row while the first one kept saying it was running.
+
 ## [0.6.68] - 2026-10-14
 
 ### Changed

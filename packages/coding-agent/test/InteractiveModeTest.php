@@ -1426,7 +1426,34 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('the first question', $screen);
         $this->assertStringContainsString('the first answer', $screen);
+        $this->assertStringNotContainsString('stopped in the middle of a run', $screen, 'a run that finished is not offered again');
         $this->assertCount(2, self::said($this->session->messages()));
+    }
+
+    public function testAConversationThatStoppedMidRunSaysSoAndContinueCarriesItOn(): void
+    {
+        $store = SessionManager::create($this->cwd);
+        $store->append(new UserMessage('build it'));
+        $store->append(self::wants('bash', ['command' => 'make']));
+
+        $this->start(['it may have half run; checking'], store: true, resume: $store->path);
+
+        $this->assertStringContainsString('This conversation stopped in the middle of a run. /continue carries it on.', $this->screenText());
+        $this->assertCount(2, $this->session->messages(), 'nothing runs on its own');
+
+        $this->type('/continue');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('it may have half run; checking', $this->screen());
+        $this->assertSame('Tool bash was interrupted and may have partially run', $this->session->messages()[2]->content[0]->text);
+        $this->assertSame(1, substr_count($this->screenText(), '$ make'), 'answered in the row the conversation drew, not a second one');
+
+        $this->type('/continue');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('The last run had finished; there is nothing to carry on.', $this->screenText());
     }
 
     /**

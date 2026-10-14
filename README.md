@@ -182,6 +182,7 @@ pig
   - `/tree`: Visualize conversation branches as an interactive tree and jump between forks.
   - `/fork`: Pick one of your messages and fork the conversation up to before it into a new session file, with that message back in the prompt; `/clone` copies the conversation as it stands into a new file. The new file names the old one as its `parentSession`.
   - `/compact`: Manually trigger conversation summarization.
+  - `/continue`: Carry on a run that stopped when pig did (crashed, killed, the machine slept). A conversation opened mid-run says so under it and nothing runs until you ask; a tool call it stopped in is run again only if the tool only reads, otherwise the model is told it was interrupted, with what it had printed. The Web UI shows the same line with a Continue button.
   - `/export [file.html|file.jsonl]`: Export the session as a standalone offline HTML document with syntax highlighting, or the current branch as a session file.
   - `/import <file.jsonl>`: Copy a session file into this project and resume it. `/share`: Upload the HTML export as a secret GitHub gist (needs `gh`).
   - `/scoped-models`: Choose which models `Ctrl+P` cycles through, and save the choice as `enabledModels`.

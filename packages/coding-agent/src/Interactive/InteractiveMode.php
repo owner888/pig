@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Closure;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
+use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentStartEvent;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
@@ -607,6 +608,7 @@ final class InteractiveMode
         $this->listenToSession();
 
         $this->replay();
+        $this->sayIfStoppedMidRun();
 
         // After the replay, so an upgrade note sits under the conversation it is about rather
         // than above it. `bin/pig` is what decides there is one: it knows the version, holds the
@@ -771,8 +773,12 @@ final class InteractiveMode
         }
 
         // Nothing is left pending: every tool in a saved conversation has already run,
-        // and one still showing as running would never stop.
-        $this->tools = [];
+        // and one still showing as running would never stop — except the calls a stopped run
+        // left without a result, which `/continue` answers into the rows drawn here.
+        $unanswered = AgentLoop::unansweredToolCalls($this->session->messages());
+        $this->tools = $unanswered === null
+            ? []
+            : array_intersect_key($tools, array_flip(array_map(static fn (ToolCall $call): string => $call->id, $unanswered[1])));
 
         // Upstream's `registerEntryRenderer`: if a hook or extension registered a custom
         // renderer for `CustomEntry` entries stored in the session tree, render them into the chat.
@@ -2335,6 +2341,39 @@ final class InteractiveMode
     }
 
     /**
+     * A conversation opened mid-run says so, and how to carry it on — nothing runs on its own
+     * (`AgentSession::isStoppedMidRun()`). pig's own.
+     */
+    private function sayIfStoppedMidRun(): void
+    {
+        if ($this->session->isStoppedMidRun()) {
+            $this->sayWarning('This conversation stopped in the middle of a run. /continue carries it on.');
+        }
+    }
+
+    /** `/continue`: `AgentSession::continueRun()`, in a fiber of its own as `send()` is. pig's own. */
+    private function continueStoppedRun(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        $this->viewport?->transcript->scrollToEnd();
+
+        Async::spawn(function (): void {
+            try {
+                if ($this->session->continueRun() === 'finished') {
+                    $this->say('The last run had finished; there is nothing to carry on.');
+                }
+            } catch (Throwable $error) {
+                $this->sayError($error->getMessage());
+            }
+        });
+    }
+
+    /**
      * Summarise the older half of the conversation, with something on screen while it runs.
      *
      * Called straight from `/compact` and from `send()` when the window is nearly full.
@@ -2405,6 +2444,7 @@ final class InteractiveMode
         ['share', 'Share session as a secret GitHub gist'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
+        ['continue', 'Carry on a run that stopped when pig did'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['fork', 'Fork the conversation into a new session file from one of your messages'],
         ['clone', 'Copy this conversation into a new session file and carry on there'],
@@ -2505,6 +2545,7 @@ final class InteractiveMode
             'import' => $this->importSession(trim(substr($text, strlen($name) + 1))),
             'share' => $this->shareSession(),
             'resume' => $this->showSessions(),
+            'continue' => $this->continueStoppedRun(),
             'tree' => $this->showTree(),
             'fork' => $this->showForkPoints(),
             'clone' => $this->cloneSession(),
@@ -5681,6 +5722,8 @@ final class InteractiveMode
             // surprising answer becomes a puzzle.
             $this->sayThemed(static fn (): string => Themes::theme()->fg('muted', "This conversation was on {$now} — switched back to it."));
         }
+
+        $this->sayIfStoppedMidRun();
 
         if ($switch->replacement === null) {
             $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);

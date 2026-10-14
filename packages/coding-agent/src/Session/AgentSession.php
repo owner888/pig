@@ -1868,6 +1868,29 @@ final class AgentSession
     }
 
     /**
+     * Whether the conversation stopped in the middle of a run — the process that had it went away
+     * after the question, after a tool's result, or inside a tool call. What a screen opening it
+     * says, so the person can `/continue` it (`continueRun()`); nothing is run on its own, because
+     * a conversation opened a month later is not one to start running commands in. pig's own.
+     *
+     * Narrower than what `continueRun()` will carry on: a turn that failed or was stopped with escape
+     * is the end of a run somebody saw, not one a process lost, so it does not count.
+     */
+    public function isStoppedMidRun(): bool
+    {
+        if ($this->isStreaming()) {
+            return false;
+        }
+
+        $messages = $this->agent->state->messages;
+        $last = $messages === [] ? null : $messages[count($messages) - 1];
+
+        return $last instanceof UserMessage
+            || $last instanceof ToolResultMessage
+            || AgentLoop::unansweredToolCalls($messages) !== null;
+    }
+
+    /**
      * The signal for the turn in progress, or null between turns.
      *
      * What a hook's own waiting parks on, so escape cuts it short rather than the person

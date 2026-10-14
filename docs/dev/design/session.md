@@ -762,9 +762,21 @@ the intent record pi-durable writes, and nothing new is stored.
   its caller's business and are not kept. Read only when its `toolCallId` is the interrupted call's;
   deleting the session from the picker or the page deletes it too.
 
+**Opening one is not running it.** `AgentSession::isStoppedMidRun()` — the last message is the
+question or a tool result, or a call has no result — is narrower than what `continueRun()` carries
+on: a turn that failed or was stopped with escape ended where somebody saw it end. The TUI says
+`This conversation stopped in the middle of a run. /continue carries it on.` after the replay at
+startup and after `/resume`; the page reads `isStoppedMidRun` from `get_state` (pig's field) and
+draws the same line with a Continue button that sends `continue`. Nothing runs on its own, because a
+conversation opened a month later is not one to start running commands in. The replay keeps the rows
+of the unanswered calls (`InteractiveMode::$tools`, the page's `toolCards`), so the resumed call is
+answered in the row already drawn rather than in a second one.
+
 Regression tests: the six `Resume*`/`AnInterruptedCall*`/`WhatTheInterruptedCall*` cases in
 `AgentLoopTest`, `ToolProgressTest`, the four `continueRun` cases about tool calls in `AgentSessionTest`
-and `SessionPickerTest::testAToolsKeptOutputGoesWithItsSession`.
+`SessionPickerTest::testAToolsKeptOutputGoesWithItsSession`,
+`AgentSessionTest::testAConversationStoppedMidRunIsOneAProcessLostNotOneSomebodyStopped` and
+`InteractiveModeTest::testAConversationThatStoppedMidRunSaysSoAndContinueCarriesItOn`.
 
 ## Finding the one you want
 
