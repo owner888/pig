@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.58] - 2026-10-14
+
+### Changed
+
+- Model registry regenerated from models.dev: Gemini 4 Argon across Google, Vertex, Copilot, OpenRouter, Vercel and OpenCode; Claude 5.5 and GPT-6/5.6 rows now come from the catalogue instead of being hand-written; retired OpenRouter and Vercel Qwen 3 models are gone.
+
 ## [0.6.57] - 2026-10-14
 
 ### Changed
