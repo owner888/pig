@@ -238,6 +238,52 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testTheKeyPanelStoresAndRemovesAKeyAndTheModelsFollow(): void
+    {
+        $port = 28143;
+        $file = $this->home . '/auth.json';
+        $server = $this->server($port, Auth::discover($file));
+
+        Async::run(function () use ($server, $port, $file) {
+            $server->start();
+            $http = new HttpClient(2.0);
+            $get = fn (string $path): array => json_decode($http->follow(new Request('GET', "http://127.0.0.1:{$port}{$path}"))->body->all(), true);
+            $post = fn (string $path, array $body) => $http->follow(new Request('POST', "http://127.0.0.1:{$port}{$path}", ['content-type' => 'application/json'], (string) json_encode($body)));
+            $row = static fn (array $providers, string $id): ?array => array_values(array_filter($providers, static fn (array $p): bool => $p['id'] === $id))[0] ?? null;
+
+            // Nothing anywhere: no model, which is what makes the page open the panel by itself.
+            $this->assertSame([], $get('/api/models'));
+            $providers = $get('/api/keys')['providers'];
+            $this->assertSame(['id' => 'openai', 'env' => ['OPENAI_API_KEY'], 'state' => 'none'], $row($providers, 'openai'));
+            $this->assertNull($row($providers, 'amazon-bedrock'), 'AWS credentials are not a key to type in');
+
+            $stored = $post('/api/keys/set', ['provider' => 'openai', 'key' => '  sk-test-1  ']);
+            $this->assertSame(200, $stored->status);
+            $answer = $stored->body->all();
+            $this->assertStringNotContainsString('sk-test-1', $answer, 'the key is never sent back');
+            $this->assertSame('stored', $row(json_decode($answer, true)['providers'], 'openai')['state']);
+            $this->assertSame(['type' => 'api_key', 'key' => 'sk-test-1'], json_decode((string) file_get_contents($file), true)['openai']);
+            $this->assertContains('openai', array_column($get('/api/models'), 'provider'));
+
+            $this->assertSame(400, $post('/api/keys/set', ['provider' => 'openai', 'key' => ' '])->status);
+            $this->assertSame(400, $post('/api/keys/set', ['provider' => 'nobody', 'key' => 'k'])->status);
+            $this->assertSame(405, $http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/keys/set"))->status);
+
+            $this->assertSame(200, $post('/api/keys/remove', ['provider' => 'openai'])->status);
+            $this->assertSame([], $get('/api/models'));
+
+            // A subscription signed in from the terminal — written by another process, so read
+            // again — is neither overwritten nor removed from here.
+            file_put_contents($file, (string) json_encode(['anthropic' => ['type' => 'oauth', 'refresh' => 'r', 'access' => 'a', 'expires' => 0]]));
+            $this->assertSame('oauth', $row($get('/api/keys')['providers'], 'anthropic')['state']);
+            $this->assertSame(400, $post('/api/keys/set', ['provider' => 'anthropic', 'key' => 'k'])->status);
+            $this->assertSame(400, $post('/api/keys/remove', ['provider' => 'anthropic'])->status);
+            $this->assertSame('oauth', json_decode((string) file_get_contents($file), true)['anthropic']['type']);
+
+            $server->stop();
+        });
+    }
+
     // ---- WebSocket: bind, relay, fan-out -----------------------------------------------------
 
     public function testACommandBeforeBindingIsRefusedByName(): void

@@ -485,6 +485,15 @@ final class RpcMode
     {
         $accepted = false;
 
+        // `auth.json` again, because under the web page this process is not the only one writing
+        // it: the page's key panel stores a key in the server's process, and a conversation that
+        // was opened before it would otherwise go on answering "no API key" until it was reopened.
+        // An in-memory one (`--no-session`, tests) has no file to read, and reloading it would
+        // only drop what was put in it.
+        if ($this->auth?->path() !== null) {
+            $this->auth->reload();
+        }
+
         try {
             $behavior = isset($command['streamingBehavior']) ? (string) $command['streamingBehavior'] : null;
 

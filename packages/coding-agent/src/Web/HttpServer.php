@@ -685,7 +685,40 @@ final class HttpServer
 
         // 2. Available models list — a fact about this machine's keys, not about any session.
         if ($path === '/api/models') {
+            // Read again: a key stored by the terminal's pig since this one started counts.
+            if ($this->auth->path() !== null) {
+                $this->auth->reload();
+            }
+
             $conn->sendResponse(200, $json, json_encode($this->getModelsPayload()));
+
+            return;
+        }
+
+        // 2.0a API keys: which providers take one and whether each has one, and storing or
+        // removing one — the page's key panel, and the prompt it opens when no model has a key.
+        if ($path === '/api/keys') {
+            if ($this->auth->path() !== null) {
+                $this->auth->reload();
+            }
+
+            $conn->sendResponse(200, $json, (string) json_encode(['providers' => $this->keysPayload()]));
+
+            return;
+        }
+
+        if ($path === '/api/keys/set' || $path === '/api/keys/remove') {
+            if ($req['method'] !== 'POST') {
+                $conn->sendResponse(405, $json, (string) json_encode(['error' => 'POST only']));
+
+                return;
+            }
+
+            $data = json_decode($req['body'] ?: '{}', true);
+            $error = $this->changeKey($path === '/api/keys/set', is_array($data) ? $data : []);
+            $conn->sendResponse($error === null ? 200 : 400, $json, (string) json_encode(
+                $error === null ? ['providers' => $this->keysPayload()] : ['error' => $error],
+            ));
 
             return;
         }
@@ -1666,6 +1699,91 @@ final class HttpServer
     // ---- payloads --------------------------------------------------------------------------
 
     /** @return list<array<string, mixed>> */
+    /**
+     * Every provider a key can be typed in for, and what it has now.
+     *
+     * A provider is on the list when it reads a key from the environment or an extension gave it
+     * an api-key sign-in; Bedrock (AWS credentials), a subscription that only signs in with OAuth
+     * and a provider of nothing but virtual models are not. `state` is where its key comes from —
+     * `stored` in `auth.json`, `oauth` for a subscription signed in from the terminal, `env` for
+     * one of the variables named in `env`, `none` — and the key itself is never sent back.
+     *
+     * @return list<array{id: string, env: list<string>, state: string}>
+     */
+    private function keysPayload(): array
+    {
+        $rows = [];
+
+        foreach (Models::all() as $model) {
+            $id = $model->provider;
+
+            if (isset($rows[$id]) || Models::isVirtualOnlyProvider($id)) {
+                continue;
+            }
+
+            $env = \Pig\Ai\Stream::envApiKeyNames($id);
+
+            if ($env === [] && \Pig\Ai\Extension\ProviderRegistry::apiKeyAuthFor($id) === null) {
+                continue;
+            }
+
+            $kind = $this->auth->kind($id);
+            $rows[$id] = [
+                'id' => $id,
+                'env' => $env,
+                'state' => match (true) {
+                    $kind === 'api_key' => 'stored',
+                    $kind === 'oauth' => 'oauth',
+                    $this->auth->hasKeyFor($id) => 'env',
+                    default => 'none',
+                },
+            ];
+        }
+
+        ksort($rows);
+
+        return array_values($rows);
+    }
+
+    /**
+     * Store or remove one provider's key. Answers what was wrong, or null.
+     *
+     * A subscription signed in with OAuth is left alone either way: storing a key over it would
+     * sign it out, which is `/logout`'s to do and not a text field's.
+     *
+     * @param array<mixed> $data
+     */
+    private function changeKey(bool $set, array $data): ?string
+    {
+        $id = is_string($data['provider'] ?? null) ? $data['provider'] : '';
+
+        if (!in_array($id, array_column($this->keysPayload(), 'id'), true)) {
+            return "No such provider: {$id}";
+        }
+
+        if ($this->auth->kind($id) === 'oauth') {
+            return "{$id} is signed in with a subscription; sign out in the terminal with /logout first.";
+        }
+
+        if (!$set) {
+            if ($this->auth->kind($id) === 'api_key') {
+                $this->auth->remove($id);
+            }
+
+            return null;
+        }
+
+        $key = trim(is_string($data['key'] ?? null) ? $data['key'] : '');
+
+        if ($key === '') {
+            return 'The key is empty.';
+        }
+
+        $this->auth->setApiKey($id, $key);
+
+        return null;
+    }
+
     private function getModelsPayload(): array
     {
         $models = $this->auth->availableModels();

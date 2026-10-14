@@ -2206,6 +2206,14 @@
       scrollbar-color: var(--color-scrollbar-thumb) transparent;
     }
     .dropdown-menu.show { display: block; }
+    .dropdown-menu.floating { position: fixed; bottom: auto; min-width: 0; max-width: none; z-index: 1300; }
+    .select-pill.select-wide {
+      width: 100%;
+      max-width: none;
+      font-size: 13px;
+      padding: 9px 30px 9px 12px;
+      background-position: right 12px center;
+    }
     @keyframes dropdownIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
     .dropdown-item {
       display: flex;

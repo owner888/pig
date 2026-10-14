@@ -149,6 +149,7 @@ final class RpcModeTest extends TestCase
         array $fileCommands = [],
         array $modelScope = [],
         bool $images = false,
+        ?\Pig\CodingAgent\Auth $auth = null,
     ): void {
         $this->answers = $answers;
         [$this->in, $this->peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
@@ -200,6 +201,7 @@ final class RpcModeTest extends TestCase
             $hooks,
             $customTools,
             $settings ?? Settings::inMemory(),
+            auth: $auth,
             in: $this->in,
             out: $this->out,
         );
@@ -721,6 +723,22 @@ final class RpcModeTest extends TestCase
 
         $this->assertFalse($response['success']);
         $this->assertStringContainsString('nothing in this session', $response['error']);
+    }
+
+    public function testAPromptReadsTheCredentialsFileAgain(): void
+    {
+        // The web page's key panel writes `auth.json` from the server's process; a conversation
+        // opened before that has to see the key on its next prompt, not after being reopened.
+        $file = $this->cwd . '/auth.json';
+        $auth = \Pig\CodingAgent\Auth::discover($file);
+        $this->start(answers: ['hello'], auth: $auth);
+        $this->assertFalse($auth->has('openai'));
+
+        file_put_contents($file, (string) json_encode(['openai' => ['type' => 'api_key', 'key' => 'sk-later']]));
+        $this->send(['id' => 'p1', 'type' => 'prompt', 'message' => 'hi']);
+
+        $this->assertTrue($this->of('response')[0]['success']);
+        $this->assertTrue($auth->has('openai'));
     }
 
     public function testAPromptWhileBusyIsRefusedOnceAndAStreamingBehaviorQueuesIt(): void

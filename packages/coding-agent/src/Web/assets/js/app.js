@@ -403,7 +403,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       openDropdown = null;
     }
 
-    function enhanceSelect(select) {
+    // `floating`: the menu opens below the select at a fixed position, for a select inside a
+    // dialog, whose scrolling body would otherwise clip a menu hung off the select.
+    function enhanceSelect(select, { floating = false } = {}) {
       if (isTouchDevice) return;
 
       const wrap = document.createElement("div");
@@ -412,7 +414,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       wrap.appendChild(select);
 
       const menu = document.createElement("div");
-      menu.className = "dropdown-menu";
+      menu.className = "dropdown-menu" + (floating ? " floating" : "");
       menu.setAttribute("role", "listbox");
       wrap.appendChild(menu);
 
@@ -459,6 +461,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (select.disabled) return;
         closeDropdown();
         build();
+        if (floating) {
+          const r = select.getBoundingClientRect();
+          menu.style.top = `${r.bottom + 6}px`;
+          menu.style.left = `${r.left}px`;
+          menu.style.width = `${r.width}px`;
+          menu.style.maxHeight = `${Math.max(120, Math.min(280, window.innerHeight - r.bottom - 18))}px`;
+        }
         menu.classList.add("show");
         wrap.classList.add("open");
         openDropdown = { menu, wrap };
@@ -507,6 +516,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (openDropdown && !openDropdown.wrap.contains(e.target)) closeDropdown();
     });
     window.addEventListener("resize", closeDropdown);
+    // A floating menu stays where it was opened, so scrolling whatever holds the select closes it.
+    window.addEventListener("scroll", (e) => {
+      if (openDropdown?.menu.classList.contains("floating") && !openDropdown.menu.contains(e.target)) closeDropdown();
+    }, true);
 
     enhanceSelect(providerSelect);
     enhanceSelect(modelSelect);
@@ -1580,6 +1593,131 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       });
     }
 
+    // API keys (`/api/keys`): every provider a key can be typed in for, what it has now, and a
+    // field to store or replace one. Opened from the ⋯ menu, and by itself when no model has a key
+    // (`loadModels()`), because then nothing in the page can answer.
+    async function openKeysModal(noModels = false) {
+      let providers;
+      try {
+        providers = (await fetchJson("/api/keys", t("what_keys"))).providers;
+      } catch (err) {
+        pigUnreachable(t("what_keys"), err);
+        return;
+      }
+
+      const stateText = (p) => ({
+        stored: t("key_stored"),
+        oauth: t("key_oauth"),
+        env: t("key_env", { env: p.env.join(", ") }),
+      })[p.state] || t("key_none");
+
+      const post = async (path, body) => {
+        const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        providers = data.providers;
+      };
+
+      openModal({
+        title: t("api_keys"),
+        bodyHtml: `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${noModels ? `<div style="color:var(--color-text-secondary); font-size:13px;">${escapeHtml(t("keys_none_hint"))}</div>` : ""}
+            <select class="select-pill select-wide" id="key-provider"></select>
+            <div id="key-provider-hint" style="color:var(--color-dim); font-size:12px;"></div>
+            <input class="modal-input" id="key-value" type="password" autocomplete="off" placeholder="${escapeHtml(t("key_placeholder"))}">
+            <div id="key-error" style="color:var(--color-error); font-size:12px;" hidden></div>
+            <div class="modal-section">${escapeHtml(t("keys_configured"))}</div>
+            <div id="key-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+          </div>
+        `,
+        confirmText: t("save"),
+        cancelText: t("close"),
+        onOpen: (modalEl) => {
+          const select = modalEl.querySelector("#key-provider");
+          const hint = modalEl.querySelector("#key-provider-hint");
+          const input = modalEl.querySelector("#key-value");
+          const error = modalEl.querySelector("#key-error");
+          const list = modalEl.querySelector("#key-list");
+          const say = (text) => { error.hidden = !text; error.textContent = text || ""; };
+
+          const showHint = () => {
+            const p = providers.find((x) => x.id === select.value);
+            hint.textContent = p ? stateText(p) : "";
+            // A subscription is signed in from the terminal; a key typed here would sign it out.
+            input.disabled = p?.state === "oauth";
+          };
+
+          const render = () => {
+            // What is chosen stays chosen; the first time, the provider picked under the input,
+            // then the first one with a key, then the first.
+            const pick = (id) => (providers.some((p) => p.id === id) ? id : null);
+            const chosen = pick(select.value) ?? pick(providerSelect.value)
+              ?? providers.find((p) => p.state !== "none")?.id ?? providers[0]?.id;
+            select.innerHTML = "";
+            for (const p of providers) {
+              const opt = document.createElement("option");
+              opt.value = p.id;
+              opt.textContent = p.state === "none" ? p.id : `${p.id} (${t("keys_configured")})`;
+              select.appendChild(opt);
+            }
+            if (chosen) select.value = chosen;
+            showHint();
+
+            list.innerHTML = "";
+            const configured = providers.filter((p) => p.state !== "none");
+            if (configured.length === 0) {
+              list.innerHTML = `<div style="color:var(--color-dim); font-size:12px;">${escapeHtml(t("keys_empty"))}</div>`;
+            }
+            for (const p of configured) {
+              const row = document.createElement("div");
+              row.style.cssText = "display:flex; align-items:center; gap:8px; font-size:13px;";
+              row.innerHTML = `<span style="flex:1; min-width:0;">${escapeHtml(p.id)} <span style="color:var(--color-dim); font-size:12px;">${escapeHtml(stateText(p))}</span></span>`;
+              if (p.state === "stored") {
+                const remove = document.createElement("button");
+                remove.className = "mini-btn";
+                remove.textContent = t("delete");
+                remove.addEventListener("click", async () => {
+                  try {
+                    await post("/api/keys/remove", { provider: p.id });
+                    say("");
+                    render();
+                    loadModels();
+                  } catch (err) { say(err.message); }
+                });
+                row.appendChild(remove);
+              }
+              list.appendChild(row);
+            }
+          };
+
+          enhanceSelect(select, { floating: true });
+          select.addEventListener("change", () => { say(""); showHint(); });
+          modalEl._keys = { select, input, say, render };
+          render();
+          input.focus();
+        },
+        onConfirm: async (modalEl) => {
+          const { select, input, say } = modalEl._keys;
+          const key = input.value.trim();
+          if (!key) return true;
+          try {
+            await post("/api/keys/set", { provider: select.value, key });
+          } catch (err) {
+            say(err.message);
+            return false;
+          }
+          await loadModels();
+          return true;
+        },
+      });
+    }
+    document.getElementById("more-keys-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMoreMenu(false);
+      openKeysModal();
+    });
+
     // Logging out (`WebLogin`): the session ends on the server, and the page goes to the login.
     async function logOut() {
       try { await fetch("/api/logout", { method: "POST" }); } catch {}
@@ -1956,10 +2094,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
+    let keysAsked = false;
     async function loadModels() {
       try {
         availableModels = await fetchJson("/api/models", t("what_model_list"));
         populateProviders(availableModels);
+        // No model has a key, so nothing in the page can answer: ask for one, once per page.
+        if (availableModels.length === 0 && !keysAsked) {
+          keysAsked = true;
+          openKeysModal(true);
+        }
       } catch (err) { pigUnreachable(t("what_model_list"), err); }
     }
 

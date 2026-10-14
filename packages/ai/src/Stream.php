@@ -265,23 +265,16 @@ final class Stream
     }
 
     /**
-     * The key for a provider, from the environment.
+     * The environment variables a provider's key is read from, in the order they are asked —
+     * `envApiKey()`'s table, on its own so a host can say *which* variable would do, as the web
+     * page's key panel does. Empty for a provider with no key variable (Bedrock's credentials are
+     * AWS's, not a key).
      *
-     * Upstream: getEnvApiKey(). An OAuth token wins over an API key where both exist. Vertex and
-     * Bedrock can be signed in without a key — Application Default Credentials with a project and a
-     * location, or any of the AWS sources upstream lists — and answer `AMBIENT_AUTH_MARKER` then.
+     * @return list<string>
      */
-    public static function envApiKey(string $provider, ?array $env = null): ?string
+    public static function envApiKeyNames(string $provider): array
     {
-        // Upstream's `withVirtualModels()` gives a provider of nothing but virtual models an
-        // `apiKey` auth whose `resolve()` answers `{auth: {}, source: "virtual"}`: it needs no
-        // credentials, because nothing of it is ever streamed — the request goes to the physical
-        // model it routes to, with that one's key. The marker is how pig says "signed in, no key".
-        if (Models::isVirtualOnlyProvider($provider)) {
-            return self::AMBIENT_AUTH_MARKER;
-        }
-
-        $names = match ($provider) {
+        return match ($provider) {
             'anthropic' => ['ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
             'github-copilot' => ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
             'openai' => ['OPENAI_API_KEY'],
@@ -322,8 +315,26 @@ final class Stream
             'cloudflare-workers-ai', 'cloudflare-ai-gateway' => ['CLOUDFLARE_API_KEY'],
             default => Extension\ProviderRegistry::envKeysFor($provider),
         };
+    }
 
-        foreach ($names as $name) {
+    /**
+     * The key for a provider, from the environment.
+     *
+     * Upstream: getEnvApiKey(). An OAuth token wins over an API key where both exist. Vertex and
+     * Bedrock can be signed in without a key — Application Default Credentials with a project and a
+     * location, or any of the AWS sources upstream lists — and answer `AMBIENT_AUTH_MARKER` then.
+     */
+    public static function envApiKey(string $provider, ?array $env = null): ?string
+    {
+        // Upstream's `withVirtualModels()` gives a provider of nothing but virtual models an
+        // `apiKey` auth whose `resolve()` answers `{auth: {}, source: "virtual"}`: it needs no
+        // credentials, because nothing of it is ever streamed — the request goes to the physical
+        // model it routes to, with that one's key. The marker is how pig says "signed in, no key".
+        if (Models::isVirtualOnlyProvider($provider)) {
+            return self::AMBIENT_AUTH_MARKER;
+        }
+
+        foreach (self::envApiKeyNames($provider) as $name) {
             $value = StreamOptions::providerEnvValue($name, $env);
 
             if ($value !== null) {

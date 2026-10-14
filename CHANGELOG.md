@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.59] - 2026-10-14
+
+### Added
+
+- Web: API keys can be set from the page. ⋯ → API Keys lists every provider that takes a key, shows where each one's key comes from (saved, the environment, or a subscription signed in from the terminal), and stores, replaces or removes a key in `auth.json`. When no model has a key, the page opens it by itself.
+
+### Changed
+
+- `--mode rpc` reads `auth.json` again before each prompt, so a key stored by another process — the web page's key panel, or `/login` in a terminal — is used by a conversation that was already open.
+
 ## [0.6.58] - 2026-10-14
 
 ### Changed
