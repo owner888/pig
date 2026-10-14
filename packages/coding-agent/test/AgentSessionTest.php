@@ -11,9 +11,13 @@ use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\AgentTool;
+use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
+use Pig\Agent\ReplayableTool;
 use Pig\Agent\ThinkingLevel;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -29,6 +33,7 @@ use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
+use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\CodingAgent\Auth;
@@ -38,6 +43,7 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\TranscriptContext;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
@@ -47,6 +53,7 @@ use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Session\ToolProgress;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Prompt\Skill;
@@ -3040,6 +3047,91 @@ final class AgentSessionTest extends TestCase
 
         $reopened = SessionManager::open($store->path)->messages();
         $this->assertCount(4, $reopened, 'the interrupted result is written down like any other');
+    }
+
+    public function testWhatAnInterruptedCallHadPrintedGoesInItsResult(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['the build got halfway'], store: $store);
+        $asked = new AssistantMessage([new ToolCall('c1', 'bash', ['command' => 'make'])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse);
+        $session->agent->replaceMessages([new UserMessage('build it'), $asked]);
+        $store->append(new UserMessage('build it'));
+        $store->append($asked);
+        file_put_contents(ToolProgress::pathOf($store->path), json_encode(['toolCallId' => 'c1', 'output' => "compiling a.c\ncompiling b.c\n"]));
+
+        Async::run(static fn (): string => $session->continueRun());
+        self::settle();
+
+        $result = $session->messages()[2];
+        $this->assertTrue($result->isError);
+        $this->assertSame("compiling a.c\ncompiling b.c\n", $result->content[0]->text);
+        $this->assertSame('Tool bash was interrupted and may have partially run', $result->content[1]->text);
+        $this->assertFileDoesNotExist(ToolProgress::pathOf($store->path), 'gone once the result is written');
+    }
+
+    public function testOutputKeptForAnotherCallIsNotPutInThisOnesResult(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['ok'], store: $store);
+        $asked = new AssistantMessage([new ToolCall('c2', 'bash', ['command' => 'make'])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse);
+        $session->agent->replaceMessages([new UserMessage('build it'), $asked]);
+        $store->append(new UserMessage('build it'));
+        $store->append($asked);
+        file_put_contents(ToolProgress::pathOf($store->path), json_encode(['toolCallId' => 'c1', 'output' => 'an older call']));
+
+        Async::run(static fn (): string => $session->continueRun());
+        self::settle();
+
+        $this->assertCount(1, $session->messages()[2]->content);
+    }
+
+    public function testARunningToolsOutputIsKeptBesideTheSessionUntilItsResultIsWritten(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['read it'], store: $store);
+        $sidecar = ToolProgress::pathOf($store->path);
+        $tool = new class ($sidecar) implements AgentTool, ReplayableTool {
+            public ?string $seen = null;
+
+            public function __construct(private readonly string $sidecar)
+            {
+            }
+
+            public function definition(): Tool
+            {
+                return new Tool('read', 'read a file', ['type' => 'object', 'properties' => []]);
+            }
+
+            public function label(): string
+            {
+                return 'Read';
+            }
+
+            public function replay(): ToolReplay
+            {
+                return ToolReplay::Safe;
+            }
+
+            public function execute(string $toolCallId, array $arguments, ?AbortSignal $signal = null, ?Closure $onUpdate = null): AgentToolResult
+            {
+                $onUpdate?->__invoke(new AgentToolResult([new TextContent('first half')]));
+                $this->seen = is_file($this->sidecar) ? (string) file_get_contents($this->sidecar) : null;
+
+                return new AgentToolResult([new TextContent('first half, second half')]);
+            }
+        };
+        $session->agent->setTools([$tool]);
+        $asked = new AssistantMessage([new ToolCall('c1', 'read', [])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse);
+        $session->agent->replaceMessages([new UserMessage('read it'), $asked]);
+        $store->append(new UserMessage('read it'));
+        $store->append($asked);
+
+        Async::run(static fn (): string => $session->continueRun());
+        self::settle();
+
+        $this->assertSame(['toolCallId' => 'c1', 'output' => 'first half'], json_decode((string) $tool->seen, true), 'written as the tool reported');
+        $this->assertSame('first half, second half', self::textOf($session->messages()[2]), 'a safe call is run again');
+        $this->assertFileDoesNotExist($sidecar);
     }
 
     public function testAnEmptyConversationHasNothingToCarryOn(): void

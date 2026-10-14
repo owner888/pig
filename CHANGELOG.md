@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.68] - 2026-10-14
+
+### Changed
+
+- A tool call a stopped run left half done is answered with what it had printed before the notice that it was interrupted, so the model can see how far a build or a script got. The running tool's output is kept beside the session file as `<session>.running.json` while it runs — the tail a result would show, rewritten at most ten times a second and slower for large output, readable by you alone — and removed when its result is written or the session is deleted.
+
 ## [0.6.67] - 2026-10-14
 
 ### Changed

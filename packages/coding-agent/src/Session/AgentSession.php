@@ -156,6 +156,9 @@ final class AgentSession
     /** Upstream's `_cacheWarmer`; null until a mode with a next request turns it on. */
     private ?CacheWarmer $cacheWarmer = null;
 
+    /** What the running tool has printed, beside the session file, for `continueRun()`. */
+    private readonly ToolProgress $toolProgress;
+
     /** The provider call under the agent's stream function, which a cache refresh replays. */
     private ?Closure $innerStream = null;
 
@@ -289,6 +292,7 @@ final class AgentSession
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
+        $this->toolProgress = new ToolProgress(fn (): ?string => $this->store?->path);
 
         if ($sessionId !== null) {
             SessionManager::assertValidSessionId($sessionId);
@@ -868,6 +872,15 @@ final class AgentSession
         // re-sent complete on every update, and only the last one is the whole of it.
         if ($event instanceof MessageEndEvent) {
             $this->store?->append($event->message);
+
+            if ($event->message instanceof ToolResultMessage) {
+                $this->toolProgress->clear();
+            }
+        }
+
+        // A nested call (codemode's) is part of its caller's output, not a call of the run's own.
+        if ($event instanceof ToolExecutionUpdateEvent && $event->parentToolCallId === null) {
+            $this->toolProgress->update($event->toolCallId, $event->partialResult);
         }
 
         // The nested-call counters are the run's — upstream's `_nestedToolCalls.clear()`.
@@ -1797,8 +1810,9 @@ final class AgentSession
      * - a turn that failed or was stopped: dropped as a retry drops it, then the same;
      * - an answer whose tool calls do not all have a result: the rest are answered
      *   (`Agent::resume()`) and the run goes on. Of those, the call that may have been running is
-     *   run again only if its tool is `ToolReplay::Safe`; any other is answered `interrupted` and the
-     *   model decides, because running a command a second time is not something to do on nobody's say-so;
+     *   run again only if its tool is `ToolReplay::Safe`; any other is answered `interrupted`, after what
+     *   it had printed (`ToolProgress`), and the model decides, because running a command a second
+     *   time is not something to do on nobody's say-so;
      * - an answer with no tool calls: the run had finished, and there is nothing to do.
      *
      * `$onStarted` is told `continued` or `finished` before the run starts, as `prompt()`'s caller is
@@ -1823,12 +1837,17 @@ final class AgentSession
 
         if ($last instanceof AssistantMessage && in_array($last->stopReason, [StopReason::Error, StopReason::Aborted], true)) {
             $this->dropLastAssistantMessage();
-        } elseif (AgentLoop::unansweredToolCalls($messages) !== null) {
+        } elseif (($unanswered = AgentLoop::unansweredToolCalls($messages)) !== null) {
+            $kept = $this->store !== null ? ToolProgress::read($this->store->path) : null;
+            $soFar = $kept !== null && $kept['toolCallId'] === $unanswered[1][0]->id && $kept['output'] !== ''
+                ? new AgentToolResult([new TextContent($kept['output'])])
+                : null;
+
             if ($onStarted !== null) {
                 $onStarted('continued');
             }
 
-            $this->runAgentPrompt(fn () => $this->agent->resume());
+            $this->runAgentPrompt(fn () => $this->agent->resume($soFar));
 
             return 'continued';
         } elseif ($last instanceof AssistantMessage) {

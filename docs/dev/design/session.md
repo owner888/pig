@@ -753,11 +753,18 @@ the intent record pi-durable writes, and nothing new is stored.
 - **The hooks run again**, where pi-durable skips `beforeTool` on recovery: it stores the arguments
   the hooks settled on, pig's file only has what the model sent, so a `tool_call` guard that blocked
   or rewrote the call has to be asked again.
-- Not done: the output a tool had produced before the stop is not kept, so an interrupted `bash`
-  tells the model nothing about how far it got.
+- **What the call had printed comes first in that result** (pi-durable's `fromSlot()`: the output
+  so far, then the notice). pi-durable commits it to its `pi.live` document as the tool reports;
+  pig writes it to `<session>.running.json` beside the session file (`Session\ToolProgress`) — the
+  session file stays pi's — rewritten whole from each `tool_execution_update` at pi-durable's pace
+  (100ms apart at least, held back further by its size at 100KB/s), kept to `Truncate::tail()`, mode
+  0600, and removed when a tool result is written. A nested call's updates (`parentToolCallId`) are
+  its caller's business and are not kept. Read only when its `toolCallId` is the interrupted call's;
+  deleting the session from the picker or the page deletes it too.
 
-Regression tests: the five `Resume*`/`AnInterruptedCall*` cases in `AgentLoopTest` and
-`AgentSessionTest::testACallThatMayHaveHalfRunIsAnsweredInterruptedAndTheRunGoesOn`.
+Regression tests: the six `Resume*`/`AnInterruptedCall*`/`WhatTheInterruptedCall*` cases in
+`AgentLoopTest`, `ToolProgressTest`, the four `continueRun` cases about tool calls in `AgentSessionTest`
+and `SessionPickerTest::testAToolsKeptOutputGoesWithItsSession`.
 
 ## Finding the one you want
 

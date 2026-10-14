@@ -403,8 +403,11 @@ final class Agent
      * Carry on a run a stopped process left inside a turn — `AgentLoop::resume()`, pig's own.
      *
      * Checked here rather than only in the loop, for the reason `continue()` gives.
+     *
+     * @param AgentToolResult|null $soFar what the call that may have half run had printed, for its
+     *        `interrupted` result
      */
-    public function resume(): void
+    public function resume(?AgentToolResult $soFar = null): void
     {
         if ($this->state->isStreaming) {
             throw new AgentError('Agent is already working. Wait for it to finish before resuming.');
@@ -414,7 +417,7 @@ final class Agent
             throw new AgentError('Cannot resume: no tool calls are waiting for a result');
         }
 
-        $this->run(null, resume: true);
+        $this->run(null, resume: true, soFar: $soFar);
     }
 
     /**
@@ -442,7 +445,7 @@ final class Agent
     private bool $skipInitialSteeringPoll = false;
 
     /** @param list<mixed>|null $prompts null continues from the existing context, or resumes it with $resume */
-    private function run(?array $prompts, bool $skipInitialSteeringPoll = false, bool $resume = false): void
+    private function run(?array $prompts, bool $skipInitialSteeringPoll = false, bool $resume = false, ?AgentToolResult $soFar = null): void
     {
         $model = $this->state->model;
 
@@ -474,7 +477,7 @@ final class Agent
         try {
             $stream = match (true) {
                 $prompts !== null => AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->streamFunction, $emit),
-                $resume => AgentLoop::resume($context, $config, $this->controller->signal, $this->streamFunction, $emit),
+                $resume => AgentLoop::resume($context, $config, $this->controller->signal, $this->streamFunction, $emit, $soFar),
                 default => AgentLoop::continue($context, $config, $this->controller->signal, $this->streamFunction, $emit),
             };
 

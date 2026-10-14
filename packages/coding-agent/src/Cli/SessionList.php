@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Closure;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Session\ToolProgress;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
@@ -185,6 +186,13 @@ final class SessionList implements Component, Focusable, InputHandler
     {
         if (!file_exists($path)) {
             return null;
+        }
+
+        // pig's own: a tool's output kept for `continueRun()` goes with its conversation.
+        $running = ToolProgress::pathOf($path);
+
+        if (is_file($running) && !unlink($running)) {
+            return "could not remove {$running}";
         }
 
         if (self::moveToSystemTrash($path)) {

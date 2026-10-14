@@ -408,6 +408,30 @@ final class AgentLoopTest extends TestCase
         $this->assertInstanceOf(AssistantMessage::class, $messages[2]);
     }
 
+    public function testWhatTheInterruptedCallHadPrintedComesBeforeTheNotice(): void
+    {
+        [, $messages] = Async::run(function (): array {
+            $tool = new ScriptedTool('bash', static fn (): AgentToolResult => new AgentToolResult([]));
+            $stream = AgentLoop::resume(
+                new AgentContext([new UserMessage('build it'), $this->wantsTool('bash', ['path' => 'make'])], [$tool]),
+                $this->config([$this->answer('ok')]),
+                null,
+                $this->provider([$this->answer('ok')]),
+                null,
+                new AgentToolResult([new TextContent("compiling a.c\n")]),
+            );
+
+            foreach ($stream as $ignored) {
+            }
+
+            return [null, $stream->result()->await()];
+        });
+
+        $this->assertTrue($messages[0]->isError);
+        $this->assertSame("compiling a.c\n", $messages[0]->content[0]->text);
+        $this->assertSame('Tool bash was interrupted and may have partially run', $messages[0]->content[1]->text);
+    }
+
     public function testResumeAnswersOnlyTheCallsWithNoResultYet(): void
     {
         $tool = new ScriptedTool('read', static fn (array $args): AgentToolResult => new AgentToolResult(

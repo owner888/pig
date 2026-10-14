@@ -150,8 +150,8 @@ final class AgentLoop
      * written when it ends, so of the calls without a result only the first can have been running
      * when the process stopped; it is run again if its tool is `ToolReplay::Safe`, and otherwise
      * answered with pi-durable's `Tool <name> was interrupted and may have partially run` as an
-     * error, for the model to decide about. The calls after it never started and run as they would
-     * have. Their tools are the context's — wrapped by whatever wraps them, hooks included, because
+     * error, for the model to decide about — after `$soFar`, what it had printed, when the host kept
+     * that. The calls after it never started and run as they would have. Their tools are the context's — wrapped by whatever wraps them, hooks included, because
      * what a hook decided the first time was never written down.
      *
      * @param Closure(mixed, \Pig\Ai\TranscriptContext, SimpleStreamOptions): mixed|null $streamFn
@@ -164,6 +164,7 @@ final class AgentLoop
         ?AbortSignal $signal = null,
         ?Closure $streamFn = null,
         ?Closure $emit = null,
+        ?AgentToolResult $soFar = null,
     ): EventStream {
         $unanswered = self::unansweredToolCalls($context->messages);
 
@@ -177,7 +178,7 @@ final class AgentLoop
         $newMessages = [];
         $current = new AgentContext($context->messages, $context->tools);
 
-        Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn, $emit, $message, $toolCalls): void {
+        Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn, $emit, $message, $toolCalls, $soFar): void {
             try {
                 $emit(new AgentStartEvent());
                 $emit(new TurnStartEvent());
@@ -194,6 +195,7 @@ final class AgentLoop
                     $config,
                     $toolCalls,
                     interruptedId: $toolCalls[0]->id,
+                    soFar: $soFar,
                 );
 
                 foreach ($toolResults as $result) {
@@ -644,6 +646,7 @@ final class AgentLoop
      * @param Closure(AgentEvent): void $emit
      * @param list<ToolCall>|null       $toolCalls     the message's calls when null; `resume()` passes those without a result
      * @param string|null               $interruptedId `resume()`'s call that may have half run, run again only if its tool is `Safe`
+     * @param AgentToolResult|null      $soFar         what that call had printed, put ahead of the `interrupted` notice
      * @return array{0: list<ToolResultMessage>, 1: list<mixed>|null}
      */
     private static function executeToolCalls(
@@ -654,6 +657,7 @@ final class AgentLoop
         AgentLoopConfig $config,
         ?array $toolCalls = null,
         ?string $interruptedId = null,
+        ?AgentToolResult $soFar = null,
     ): array {
         $toolCalls ??= $message->toolCalls();
         $results = [];
@@ -663,34 +667,38 @@ final class AgentLoop
             $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
 
             $isError = false;
+            $tool = $context->toolNamed($toolCall->name);
 
             try {
-                $tool = $context->toolNamed($toolCall->name);
-
-                // `resume()`'s call that may have been running when the process stopped.
+                // `resume()`'s call that may have been running when the process stopped: not run again
+                // unless its tool says so, and answered with what it had printed and that it stopped.
                 if ($toolCall->id === $interruptedId && ($tool === null || ToolReplay::of($tool) !== ToolReplay::Safe)) {
-                    throw new AgentError("Tool {$toolCall->name} was interrupted and may have partially run");
+                    $result = new AgentToolResult([
+                        ...($soFar->content ?? []),
+                        new TextContent("Tool {$toolCall->name} was interrupted and may have partially run"),
+                    ], $soFar?->details);
+                    $isError = true;
+                } else {
+                    if ($tool === null) {
+                        throw new AgentError("Tool {$toolCall->name} not found");
+                    }
+
+                    $arguments = ToolArguments::validate($tool->definition(), $toolCall);
+
+                    $result = $tool->execute(
+                        $toolCall->id,
+                        $arguments,
+                        $signal,
+                        static function (AgentToolResult $partial) use ($emit, $toolCall): void {
+                            $emit(new ToolExecutionUpdateEvent(
+                                $toolCall->id,
+                                $toolCall->name,
+                                $toolCall->arguments,
+                                $partial,
+                            ));
+                        },
+                    );
                 }
-
-                if ($tool === null) {
-                    throw new AgentError("Tool {$toolCall->name} not found");
-                }
-
-                $arguments = ToolArguments::validate($tool->definition(), $toolCall);
-
-                $result = $tool->execute(
-                    $toolCall->id,
-                    $arguments,
-                    $signal,
-                    static function (AgentToolResult $partial) use ($emit, $toolCall): void {
-                        $emit(new ToolExecutionUpdateEvent(
-                            $toolCall->id,
-                            $toolCall->name,
-                            $toolCall->arguments,
-                            $partial,
-                        ));
-                    },
-                );
             } catch (Throwable $error) {
                 // A failing tool is something the model can read and work around, not
                 // something that ends the run. An `AgentError` may carry what the UI should

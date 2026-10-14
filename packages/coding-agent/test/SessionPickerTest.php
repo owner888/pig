@@ -141,6 +141,20 @@ final class SessionPickerTest extends TestCase
         rmdir($dir);
     }
 
+    public function testAToolsKeptOutputGoesWithItsSession(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-trash-test-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+        $file = "{$dir}/test.jsonl";
+        file_put_contents($file, 'test');
+        file_put_contents("{$dir}/test.running.json", '{}');
+
+        $this->assertNull(SessionList::deleteSessionFile($file));
+        $this->assertFileDoesNotExist("{$dir}/test.running.json");
+
+        rmdir($dir);
+    }
+
     public function testCtrlPShowsEachSessionsPath(): void
     {
         $list = new SessionList([self::session('/tmp/where/a.jsonl', 'first')]);
