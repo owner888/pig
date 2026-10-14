@@ -66,6 +66,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
         // Stream state, per tab.
         this.isRunning = false;
+        // What is waiting to go in, from `queue_update`, and what has just left that queue and is
+        // about to arrive as a user message — drawn then, and not when it was typed.
+        this.queue = { steering: [], followUp: [] };
+        this.delivering = [];
         this.currentAssistantBlock = null;
         this.currentAssistantText = "";
         this.currentThinkingText = "";
@@ -851,6 +855,33 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
       chatScroll.querySelector(".empty-state-hero")?.remove();
 
+      if (evt.type === "queue_update") {
+        const was = [...tab.queue.steering, ...tab.queue.followUp];
+        tab.queue = { steering: evt.steering || [], followUp: evt.followUp || [] };
+        const now = [...tab.queue.steering, ...tab.queue.followUp];
+        // What left the queue is either about to be delivered or was taken back; `message_start`
+        // tells which, and the turn's end forgets the rest.
+        for (const text of was) {
+          const at = now.indexOf(text);
+          if (at === -1) tab.delivering.push(text); else now.splice(at, 1);
+        }
+        if (tab === active) renderQueue();
+        return;
+      }
+
+      if (evt.type === "message_start" && evt.message?.role === "user") {
+        const content = Array.isArray(evt.message.content) ? evt.message.content : [{ type: "text", text: String(evt.message.content ?? "") }];
+        const text = content.filter((c) => c.type === "text").map((c) => c.text).join("");
+        // By its text, as `AgentSession` takes it off the queue; else the oldest, for a queued
+        // `/template` whose text was expanded on the way in.
+        let at = tab.delivering.indexOf(text);
+        if (at === -1 && tab.delivering.length > 0) at = 0;
+        if (at !== -1) {
+          tab.delivering.splice(at, 1);
+          appendUserMessage(text, content.filter((c) => c.type === "image").map((c) => ({ mimeType: c.mimeType, data: c.data })));
+        }
+      }
+
       if (evt.type === "message_start") {
         if (currentThinkingBox?.finish) {
           currentThinkingBox.finish();
@@ -876,6 +907,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentThinkingText = "";
         currentThinkingBox = null;
         if (evt.type === "agent_end") {
+          if (tab) tab.delivering = [];
           tab?.refreshState();
           refreshSidebar();
         }
@@ -1249,7 +1281,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       }
 
-      appendUserMessage(text, imgsToSend);
       setRunningState(true);
 
       // Always `prompt`, always with a `streamingBehavior`: the child decides whether a turn is
@@ -1259,7 +1290,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       // plain `prompt` and came back "Agent is already processing".
       const images = imgsToSend.map(img => ({ type: "image", mimeType: img.mimeType, data: img.data }));
       try {
-        await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer" });
+        // Drawn by what the child did with it, as the TUI does: a message that started a turn is
+        // the conversation now; a queued one waits above the input as `Steering:`/`Follow-up:`
+        // and joins the conversation when it is delivered (`message_start` in `onEvent()`).
+        // The answer comes before the turn's first event, so the bubble is still in order.
+        const { disposition } = await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer" });
+        if (disposition !== "queued") tab.render(() => appendUserMessage(text, imgsToSend));
       } catch (err) {
         setRunningState(false);
         promptInput.value = text;
@@ -1269,12 +1305,45 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
+    // ---- the queue, above the input — the TUI's `showQueue()` ------------------------------
+    //
+    // Each line says which queue it is in, because the two mean different things: `Steering:`
+    // arrives after the tool that is running, `Follow-up:` after the turn. The way back out is
+    // under them, as in the TUI: everything queued goes back into the input, in front of what
+    // is being typed, and the turn carries on.
+    const queuedBar = document.getElementById("queued-messages");
+
+    function renderQueue() {
+      const q = active?.queue || { steering: [], followUp: [] };
+      const lines = [...q.steering.map((m) => ["Steering", m]), ...q.followUp.map((m) => ["Follow-up", m])];
+      queuedBar.hidden = lines.length === 0;
+      queuedBar.innerHTML = lines.map(([kind, m]) => `<div class="queued-line">${escapeHtml(kind)}: ${escapeHtml(m)}</div>`).join("")
+        + (lines.length ? `<button type="button" class="queued-dequeue">↳ ${escapeHtml(t("queue_dequeue"))}</button>` : "");
+    }
+
+    async function takeQueueBack(tab) {
+      let queued;
+      try { queued = await tab.rpc({ type: "clear_queue" }); } catch (err) { return; }
+      const texts = [...(queued.steering || []), ...(queued.followUp || [])];
+      if (texts.length === 0) return;
+      promptInput.value = [...texts, promptInput.value].filter((x) => x.trim() !== "").join("\n\n");
+      promptInput.dispatchEvent(new Event("input"));
+      promptInput.focus();
+    }
+
+    queuedBar.addEventListener("click", (e) => {
+      if (e.target.closest(".queued-dequeue") && active) takeQueueBack(active);
+    });
+
     async function abortTurn() {
       // Stop means "stop whatever this tab is doing": a `!command` has no agent turn to abort.
       if (active?.bashRunning) {
         try { await active.rpc({ type: "abort_bash" }); } catch (err) {}
         return;
       }
+      // As the TUI's Escape: what was queued comes back into the input instead of going with
+      // the turn it was waiting for.
+      if (active) await takeQueueBack(active);
       try { await active?.rpc({ type: "abort" }); } catch (err) {}
     }
 
@@ -2042,6 +2111,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         sessionTitleDisplay.innerText = cleanName ? ` • ${cleanName}` : "";
       }
       updateSessionFileBadge(cur);
+      renderQueue();
       markScheduledSeen();
       // The sidebar row of the conversation on screen follows the tab, without a refetch.
       sidebarList.querySelectorAll(".session-item").forEach((el) => {

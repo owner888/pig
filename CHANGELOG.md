@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.61] - 2026-10-14
+
+### Changed
+
+- Web: a message sent while the agent is working waits above the input as `Steering: …` or `Follow-up: …`, as in the TUI, and joins the conversation when it is delivered rather than when it was typed. "↳ Edit queued messages" puts everything queued back into the input without stopping the turn, and Stop does the same before it stops.
+
 ## [0.6.60] - 2026-10-14
 
 ### Fixed

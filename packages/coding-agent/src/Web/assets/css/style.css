@@ -2081,6 +2081,11 @@
     }
 
     /* Pending images bar above input */
+    .queued-messages { padding: 0 4px 6px; font-size: 12px; color: var(--color-dim); }
+    .queued-messages[hidden] { display: none; }
+    .queued-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queued-dequeue { background: none; border: none; padding: 2px 0 0; color: var(--color-dim); font: inherit; cursor: pointer; }
+    .queued-dequeue:hover { color: var(--color-text-primary); }
     .pending-images-bar {
       display: flex;
       flex-wrap: wrap;
