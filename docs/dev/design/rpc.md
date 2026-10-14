@@ -1,6 +1,6 @@
 # Design: The other modes
 
-`--mode rpc`, print and JSON mode, `--mode mcp`. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+`--mode rpc`, print and JSON mode, `--mode mcp`. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [`--mode mcp`: pig as an MCP server, and why it is one tool over HTTP](#--mode-mcp-pig-as-an-mcp-server-and-why-it-is-one-tool-over-http)
 - [RPC mode — the second way in](#rpc-mode--the-second-way-in)

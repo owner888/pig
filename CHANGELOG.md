@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.64] - 2026-10-14
+
+### Changed
+
+- The repository's agent instructions are `AGENTS.md` now rather than `CLAUDE.md`: pig and pi read either, and Claude Code reads `AGENTS.md` when there is no `CLAUDE.md`. The comments that named the file, and the headers of `docs/dev/`, say so.
+
 ## [0.6.63] - 2026-10-14
 
 ### Changed

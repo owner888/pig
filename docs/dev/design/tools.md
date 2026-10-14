@@ -1,6 +1,6 @@
 # Design: Tools and the CLI
 
-Built-in tools, subprocesses, command-line flags, directories and configuration. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Built-in tools, subprocesses, command-line flags, directories and configuration. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A tool result's `details` is pi's shape, under pi's names](#a-tool-results-details-is-pis-shape-under-pis-names)
 - [`pig-ai`, the second entry point](#pig-ai-the-second-entry-point)

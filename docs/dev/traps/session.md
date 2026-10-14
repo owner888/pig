@@ -1,6 +1,6 @@
 # Known traps: Sessions
 
-The session file, compaction, branches, resuming, the system prompt, retries. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The session file, compaction, branches, resuming, the system prompt, retries. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [`--continue` opened the conversation you were not working on](#--continue-opened-the-conversation-you-were-not-working-on)
 - [A handover carried the files it was supposed to be summarising](#a-handover-carried-the-files-it-was-supposed-to-be-summarising)

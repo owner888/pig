@@ -33,7 +33,7 @@ This is the rule that decided the built-in tool set: four by default, as upstrea
 ### The developer's name does not appear in this repository
 
 Every file here goes to git, so **the developer is "the developer"** — never a name, in source
-comments, docblocks, test fixtures, `CLAUDE.md` or either README. A test that needs a home directory
+comments, docblocks, test fixtures, `AGENTS.md`, `docs/dev/` or either README. A test that needs a home directory
 uses `/Users/dev/...`, a fixture that needs a tenant header uses `acme`, an example address is
 `dev@example`. This was found the hard way: the name had reached six files, including a docblock in
 `CustomModels` and a row in the table below, because a fixture written from a real path is the

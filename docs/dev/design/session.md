@@ -1,6 +1,6 @@
 # Design: Sessions
 
-The session file, compaction, branches, resuming, the system prompt, retries. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The session file, compaction, branches, resuming, the system prompt, retries. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A replayed summary had no end the model could find](#a-replayed-summary-had-no-end-the-model-could-find)
 - [The session file is pi's file](#the-session-file-is-pis-file)

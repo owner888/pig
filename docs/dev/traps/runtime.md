@@ -1,6 +1,6 @@
 # Known traps: PHP and the async runtime
 
-Fiber, Loop, Future, sockets, and where PHP is not JavaScript. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Fiber, Loop, Future, sockets, and where PHP is not JavaScript. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [`stream_socket_enable_crypto()` returns `0`, not just `true`/`false`](#stream_socket_enable_crypto-returns-0-not-just-truefalse)
 - [`getenv()` answers `''` for a variable exported without a value, and `!== false` calls that present](#getenv-answers--for-a-variable-exported-without-a-value-and--false-calls-that-present)

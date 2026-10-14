@@ -946,7 +946,7 @@ final class CodingAgentSessionTest extends TestCase
 
         // `grep`, `find` and `ls` are ported and reachable by name; they are off by default
         // because upstream's default is four and because a model with seven tools spends more of
-        // every turn choosing between them. See the rule at the top of CLAUDE.md.
+        // every turn choosing between them. See the rule at the top of AGENTS.md.
         $this->assertSame(ToolSet::CODING, $names);
     }
 

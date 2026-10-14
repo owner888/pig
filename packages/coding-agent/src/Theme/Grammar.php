@@ -13,7 +13,7 @@ namespace Pig\CodingAgent\Theme;
  * which words are keywords, what a number looks like — is a list.
  *
  * Upstream gets this from `cli-highlight`, which wraps highlight.js and its ~200
- * grammars. That is a dependency this project does not take (see CLAUDE.md), and the
+ * grammars. That is a dependency this project does not take (see AGENTS.md), and the
  * developer asked for a small one written here instead. The trade is honest: fewer
  * languages, and within a language a handful of things coloured slightly wrong that
  * highlight.js would get right. Colour is cosmetic — a mistake costs nothing but looks.

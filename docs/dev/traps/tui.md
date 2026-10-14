@@ -1,6 +1,6 @@
 # Known traps: The terminal UI
 
-Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs](#a-run-of-emoji-measured-as-one-pcre2-1042s-x-joins-adjacent-pictographs)
 - [`str_pad()` counts bytes, so every column it lines up is ASCII-only](#str_pad-counts-bytes-so-every-column-it-lines-up-is-ascii-only)

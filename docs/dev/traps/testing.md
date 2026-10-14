@@ -1,6 +1,6 @@
 # Known traps: Testing and releasing
 
-The test suite, mutation sweeps, live provider tests, packaging. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The test suite, mutation sweeps, live provider tests, packaging. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [Every run of the test suite opened the developer's browser on Anthropic's authorize page](#every-run-of-the-test-suite-opened-the-developers-browser-on-anthropics-authorize-page)
 - [`TransformMessages` measured properly, and the divergence pig is proud of had no test](#transformmessages-measured-properly-and-the-divergence-pig-is-proud-of-had-no-test)

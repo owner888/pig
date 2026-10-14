@@ -1,6 +1,6 @@
 # Known traps: pig web
 
-The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A failed LLM send in Web mode showed no error at all (the error was swallowed)](#a-failed-llm-send-in-web-mode-showed-no-error-at-all-the-error-was-swallowed)
 - [Web history replay must not have a second, narrower set of wire rules](#web-history-replay-must-not-have-a-second-narrower-set-of-wire-rules)

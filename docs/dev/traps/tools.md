@@ -1,6 +1,6 @@
 # Known traps: Tools and the CLI
 
-Built-in tools, subprocesses, command-line flags, directories and configuration. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Built-in tools, subprocesses, command-line flags, directories and configuration. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [An edit was approved with nothing on screen but a path](#an-edit-was-approved-with-nothing-on-screen-but-a-path)
 - [`pig @notes.txt` on a latin-1 file was a dead session, and the reason is a platform difference](#pig-notestxt-on-a-latin-1-file-was-a-dead-session-and-the-reason-is-a-platform-difference)

@@ -1,6 +1,6 @@
 # Design: Testing and releasing
 
-The test suite, mutation sweeps, live provider tests, packaging. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The test suite, mutation sweeps, live provider tests, packaging. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [`packages/agent`'s test suite, read as a specification](#packagesagents-test-suite-read-as-a-specification)
 - [`coding-agent`'s session-manager tests, read the same way](#coding-agents-session-manager-tests-read-the-same-way)

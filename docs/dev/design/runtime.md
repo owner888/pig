@@ -1,6 +1,6 @@
 # Design: PHP and the async runtime
 
-Fiber, Loop, Future, sockets, and where PHP is not JavaScript. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Fiber, Loop, Future, sockets, and where PHP is not JavaScript. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [Porting the unions](#porting-the-unions)
 

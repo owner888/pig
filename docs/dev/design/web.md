@@ -1,6 +1,6 @@
 # Design: pig web
 
-The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [Three ways in](#three-ways-in)
 - [The web mode's process model: pi-web's shell over `pig --mode rpc`, not a mirror of the TUI](#the-web-modes-process-model-pi-webs-shell-over-pig---mode-rpc-not-a-mirror-of-the-tui)

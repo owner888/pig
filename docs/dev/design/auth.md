@@ -1,6 +1,6 @@
 # Design: Signing in
 
-OAuth flows, API keys, `auth.json`. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+OAuth flows, API keys, `auth.json`. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)
 - [The device flow](#the-device-flow)

@@ -1,6 +1,6 @@
 # Known traps: The other modes
 
-`--mode rpc`, print and JSON mode, `--mode mcp`. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+`--mode rpc`, print and JSON mode, `--mode mcp`. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [`-p` handed a custom tool a context with no session in it](#-p-handed-a-custom-tool-a-context-with-no-session-in-it)
 - [RPC's session switch and new-session skipped the three checks the terminal's have](#rpcs-session-switch-and-new-session-skipped-the-three-checks-the-terminals-have)

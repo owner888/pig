@@ -1,6 +1,6 @@
 # Known traps: Providers
 
-Each provider API, the model registry, thinking levels, usage, overflow. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Each provider API, the model registry, thinking levels, usage, overflow. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [DeepSeek accepted the field and ignored it, so every request to it was unbounded](#deepseek-accepted-the-field-and-ignored-it-so-every-request-to-it-was-unbounded)
 - [1,633 mutations over the five providers, and an option none of them sent](#1633-mutations-over-the-five-providers-and-an-option-none-of-them-sent)

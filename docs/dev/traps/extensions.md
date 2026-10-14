@@ -1,6 +1,6 @@
 # Known traps: Extensions
 
-Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensions. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensions. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A hook's message was the one long thing in the transcript ctrl+o could not fold](#a-hooks-message-was-the-one-long-thing-in-the-transcript-ctrlo-could-not-fold)
 - [The Antigravity extension read the stored token raw, and it lasts an hour](#the-antigravity-extension-read-the-stored-token-raw-and-it-lasts-an-hour)

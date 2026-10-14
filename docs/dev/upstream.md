@@ -1,6 +1,6 @@
 # The upstream anchor
 
-The anchor commit, and where it does not build or disagrees with itself. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+The anchor commit, and where it does not build or disagrees with itself. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [The anchor commit does not compile](#the-anchor-commit-does-not-compile)
 - [Things taken from upstream HEAD on purpose](#things-taken-from-upstream-head-on-purpose)

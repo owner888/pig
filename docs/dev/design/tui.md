@@ -1,6 +1,6 @@
 # Design: The terminal UI
 
-Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [The settings upstream had and pig did not](#the-settings-upstream-had-and-pig-did-not)
 - [`/settings`, and why its list is shorter than upstream's](#settings-and-why-its-list-is-shorter-than-upstreams)

@@ -1,6 +1,6 @@
 # Known traps: Signing in
 
-OAuth flows, API keys, `auth.json`. Moved out of `CLAUDE.md` as written — "this file" in the entries below means `CLAUDE.md`, where they were first written. The index is generated from the headings below.
+OAuth flows, API keys, `auth.json`. Moved out of `AGENTS.md` (then `CLAUDE.md`) as written — "this file" in the entries below means that file, where they were first written. The index is generated from the headings below.
 
 - [A browser opens a connection it never uses, and closing it under its watcher killed the sign-in](#a-browser-opens-a-connection-it-never-uses-and-closing-it-under-its-watcher-killed-the-sign-in)
 - [`parse_url()` is not `new URL()`, and a typed domain went through with a space in it](#parse_url-is-not-new-url-and-a-typed-domain-went-through-with-a-space-in-it)
