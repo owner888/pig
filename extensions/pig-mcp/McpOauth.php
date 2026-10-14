@@ -226,8 +226,11 @@ final class McpOauth
         $fetch = Discovery::fetcher($fetch);
 
         // A lock file per server, as upstream keeps one: refreshing one server does not wait on
-        // another's. Named by a hash of the key, which holds a URL.
-        $lock = dirname($this->path) . '/mcp-auth-refresh-' . substr(hash('sha256', self::keys($name, $serverUrl)['key']), 0, 16) . '.lock';
+        // another's. Named by a hash of the key, which holds a URL; `.flock`, since upstream's
+        // `.lock` of the same name is a directory (`FileLock::pathFor()`).
+        $base = dirname($this->path) . '/mcp-auth-refresh-' . substr(hash('sha256', self::keys($name, $serverUrl)['key']), 0, 16);
+        FileLock::clearLegacy($base);
+        $lock = FileLock::pathFor($base);
         $withRefreshLock = static fn (Closure $fn): mixed => FileLock::hold($lock, $fn);
 
         return new class ($serverUrl, $store, $settings, $onChallenge, $fetch, $withRefreshLock) implements AuthProvider {

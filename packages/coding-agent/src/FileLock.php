@@ -31,6 +31,40 @@ use RuntimeException;
  */
 final class FileLock
 {
+    /**
+     * The lock file for $file: `<file>.flock`.
+     *
+     * Not `<file>.lock`, which is what this used to take. That name is `proper-lockfile`'s, and to
+     * it the lock is a *directory*: pi `mkdir`s `auth.json.lock` to write `auth.json`, finds a
+     * plain file there, takes it for a stale lock, and `rmdir` fails with ENOTDIR — on every start,
+     * as "models.json error: Availability refresh: ENOTDIR". pig shares pi's `auth.json`
+     * (`Auth::discover()`) and its MCP token store, so the two names met in `~/.pi/agent`.
+     */
+    public static function pathFor(string $file): string
+    {
+        return $file . '.flock';
+    }
+
+    /**
+     * Remove the `<file>.lock` an older pig left as a plain file (`pathFor()`), so pi can lock
+     * $file again. A directory there is pi's own lock and is left alone.
+     */
+    public static function clearLegacy(string $file): void
+    {
+        $legacy = $file . '.lock';
+
+        // Gone already, or not ours to remove: either way pi reports it, as before.
+        if (is_file($legacy) && !is_link($legacy) && is_writable(dirname($legacy))) {
+            set_error_handler(static fn (): bool => true);
+
+            try {
+                unlink($legacy);
+            } finally {
+                restore_error_handler();
+            }
+        }
+    }
+
     /** How long to wait for another holder before giving up — upstream's `REFRESH_LOCK_WAIT_MS`. */
     public const float WAIT = 25.0;
 

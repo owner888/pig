@@ -83,4 +83,15 @@ final class ExtensionDiscoveryTest extends TestCase
 
         $this->assertSame(['custom-hook.php'], $labels);
     }
+
+    public function testBuiltInsAreNotListed(): void
+    {
+        // Upstream's built-ins are `hidden`: they load, and [Extensions] does not name them.
+        $mcp = \Pig\CodingAgent\Extensions\BuiltinExtensions::pathOf('mcp');
+        $this->assertNotNull($mcp);
+
+        $labels = ExtensionDiscovery::discover($this->cwd, [$mcp, '/path/to/custom-hook.php']);
+
+        $this->assertSame(['custom-hook.php'], $labels);
+    }
 }

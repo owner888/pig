@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.66] - 2026-10-14
+
+### Changed
+
+- The startup header is upstream's as its terminals without the logo draw it: the pixel pig is gone, the first line reads `Pig vX` with the wordmark in pink, and the key hints below it have the key dim and what it does muted.
+- `[Extensions]` no longer names the built-ins (`pig-codemode`, `pig-llama`, `pig-mcp`, `pig-schedule`, `pig-tool-search`) — upstream marks its built-ins `hidden` — and `[Tools]` names only tools loaded from tool folders, not the tools an extension registered, as upstream lists no tools at all.
+
+### Fixed
+
+- pi failed every start with `models.json error: Availability refresh: ENOTDIR: not a directory, rmdir '~/.pi/agent/auth.json.lock'` once pig had renewed a token: pig took its `flock()` on a plain file named `auth.json.lock` in pi's folder, which is the name `proper-lockfile` gives its lock *directory*. pig's lock is `auth.json.flock` now (and `mcp-auth-refresh-<hash>.flock` for MCP tokens), and a `.lock` file an older pig left is removed when pig starts; a `.lock` directory, pi's own, is left alone.
+
 ## [0.6.65] - 2026-10-14
 
 ### Changed

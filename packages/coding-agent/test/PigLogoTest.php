@@ -7,33 +7,19 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Interactive\PigLogo;
 use Pig\Tui\Ansi;
-use Pig\Tui\Width;
 
 final class PigLogoTest extends TestCase
 {
-    public function testReturnsTwoLines(): void
+    public function testTheWordmarkReadsPig(): void
     {
-        $lines = PigLogo::lines();
-
-        $this->assertCount(2, $lines);
-        $this->assertNotEmpty($lines[0]);
-        $this->assertNotEmpty($lines[1]);
+        $this->assertSame('Pig', Ansi::strip(PigLogo::wordmark()));
     }
 
-    public function testBothLinesAreExactlyFourColumnsWide(): void
+    public function testEachLetterHasItsOwnColourAndTheColourEnds(): void
     {
-        [$top, $bottom] = PigLogo::lines();
+        $wordmark = PigLogo::wordmark();
 
-        // 4 cells wide in the terminal
-        $this->assertSame(4, Width::visible($top));
-        $this->assertSame(4, Width::visible($bottom));
-    }
-
-    public function testLogoUsesHalfBlocks(): void
-    {
-        [$top, $bottom] = PigLogo::lines();
-
-        $this->assertStringContainsString('▀', $top);
-        $this->assertStringContainsString('▀', $bottom);
+        $this->assertSame(3, substr_count($wordmark, "\x1b[0m"));
+        $this->assertStringEndsWith("g\x1b[0m", $wordmark);
     }
 }

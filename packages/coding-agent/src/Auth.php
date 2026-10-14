@@ -78,6 +78,10 @@ final class Auth
         private readonly ?string $path,
         private readonly ?Settings $settings = null,
     ) {
+        if ($path !== null) {
+            FileLock::clearLegacy($path);
+        }
+
         $this->reload();
     }
 
@@ -783,7 +787,7 @@ final class Auth
         }
 
         try {
-            return FileLock::hold($this->path . '.lock', $renew);
+            return FileLock::hold(FileLock::pathFor($this->path), $renew);
         } catch (OauthError $problem) {
             throw $problem;
         } catch (Throwable $problem) {

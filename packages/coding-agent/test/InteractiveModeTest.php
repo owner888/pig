@@ -827,7 +827,7 @@ final class InteractiveModeTest extends TestCase
 
         $dark = Themes::theme();
         $this->assertStringContainsString($dark->getFgAnsi('dim'), $line('Session name set: before the switch'));
-        $this->assertStringContainsString($dark->getFgAnsi('accent'), $line('pig v'));
+        $this->assertStringContainsString($dark->getFgAnsi('dim'), $line('Pig v'));
 
         $this->type('/theme light');
         $this->type(self::ENTER);
@@ -838,9 +838,9 @@ final class InteractiveModeTest extends TestCase
         $said = $line('Session name set: before the switch');
         $this->assertStringContainsString($light->getFgAnsi('dim'), $said);
         $this->assertStringNotContainsString($dark->getFgAnsi('dim'), $said);
-        $banner = $line('pig v');
-        $this->assertStringContainsString($light->getFgAnsi('accent'), $banner);
-        $this->assertStringNotContainsString($dark->getFgAnsi('accent'), $banner);
+        $banner = $line('Pig v');
+        $this->assertStringContainsString($light->getFgAnsi('dim'), $banner);
+        $this->assertStringNotContainsString($dark->getFgAnsi('dim'), $banner);
         $this->assertSame($before, array_slice($chat->children(), 0, count($before)), 'the same components, recoloured');
     }
 
@@ -879,7 +879,7 @@ final class InteractiveModeTest extends TestCase
 
         // A column of thirteen keys was taller than most of the conversations it sat
         // above, so the list moved behind ctrl+o.
-        $this->assertStringContainsString('pig v0.0.0', $screen);
+        $this->assertStringContainsString('Pig v0.0.0', $screen);
         $this->assertStringContainsString('escape interrupt · ctrl+c/ctrl+d clear/exit', $screen);
         $this->assertStringContainsString('Press ctrl+o to show full startup help and loaded resources.', $screen);
         $this->assertStringContainsString('Pig can explain its own features', $screen);
@@ -890,7 +890,7 @@ final class InteractiveModeTest extends TestCase
     {
         $this->start(context: [new ContextFile('/somewhere/AGENTS.md', 'be careful')], settings: Settings::inMemory(['quietStartup' => true]));
 
-        $this->assertStringNotContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringNotContainsString('Pig v0.0.0', $this->screen());
         $this->assertStringNotContainsString('[Context]', $this->screen());
     }
 
@@ -898,7 +898,7 @@ final class InteractiveModeTest extends TestCase
     {
         $this->start(context: [new ContextFile('/somewhere/AGENTS.md', 'be careful')], settings: Settings::inMemory(['quietStartup' => 'header']));
 
-        $this->assertStringContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringContainsString('Pig v0.0.0', $this->screen());
         $this->assertStringContainsString('Press ctrl+o to show full startup help.', $this->screen());
         $this->assertStringNotContainsString('[Context]', $this->screen());
     }
@@ -3022,7 +3022,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertSame([], $this->session->messages());
-        $this->assertStringContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringContainsString('Pig v0.0.0', $this->screen());
     }
 
     // ---- the queue ------------------------------------------------------------------------------
@@ -4067,6 +4067,24 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('[Tools]', $this->screen());
     }
 
+    public function testAnExtensionsToolsAreNotNamedInTheBanner(): void
+    {
+        // Upstream lists no tools at all: they belong to the extension that registered them, and
+        // a built-in's — codemode, web search — are not even named. [Tools] is for tool folders.
+        $this->start(customTools: $this->tools('wc'));
+        $extension = new \Pig\CodingAgent\Extensions\LoadedExtension(
+            'wc/index.php',
+            'wc/index.php',
+            'wc',
+            new \Pig\CodingAgent\Extensions\ExtensionApi(sys_get_temp_dir(), 'wc/index.php', 'wc'),
+        );
+        (new \ReflectionProperty($this->mode, 'extensions'))->setValue($this->mode, [$extension]);
+        (new \ReflectionMethod($this->mode, 'showLoadedResources'))->invoke($this->mode, true);
+        $this->settle();
+
+        $this->assertStringNotContainsString('[Tools]', $this->screen());
+    }
+
     /**
      * The model calling a tool somebody wrote, drawn and answered like any other.
      *
@@ -4786,7 +4804,7 @@ final class InteractiveModeTest extends TestCase
         // is the manifest rather than the string this session was started as — so the banner
         // said one number and the notice said another three lines below it, about the very
         // comparison the block exists to make.
-        $this->assertStringContainsString('pig v0.0.0', $this->screen());
+        $this->assertStringContainsString('Pig v0.0.0', $this->screen());
 
         $this->mode->sayNewVersion('9.9.9');
 

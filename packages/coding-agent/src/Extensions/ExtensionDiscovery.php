@@ -55,7 +55,8 @@ final class ExtensionDiscovery
                 $path = $dir . '/' . $entry;
 
                 // Not loaded either: a copy of a built-in (`BuiltinExtensions::isStaleCopy()`).
-                if (BuiltinExtensions::isStaleCopy($path)) {
+                // Nor listed, the built-in itself: upstream's are `hidden`.
+                if (BuiltinExtensions::isStaleCopy($path) || BuiltinExtensions::nameOf($path) !== null) {
                     continue;
                 }
 
@@ -74,6 +75,10 @@ final class ExtensionDiscovery
         }
 
         foreach ($extraPaths as $extra) {
+            if (BuiltinExtensions::nameOf($extra) !== null) {
+                continue;
+            }
+
             $base = basename($extra);
             if ($base === 'index.php') {
                 $labels[] = basename(dirname($extra));

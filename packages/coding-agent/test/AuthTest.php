@@ -574,9 +574,27 @@ final class AuthTest extends TestCase
 
         $this->assertSame('sk-renewed', $key);
         $this->assertSame(1, $refreshed);
-        $this->assertFileExists($this->home . '/auth.json.lock');
-        $this->assertSame(0o600, fileperms($this->home . '/auth.json.lock') & 0o777);
+        $this->assertFileExists($this->home . '/auth.json.flock');
+        $this->assertSame(0o600, fileperms($this->home . '/auth.json.flock') & 0o777);
+        // pi's `proper-lockfile` makes `auth.json.lock` a directory; a file there breaks pi.
+        $this->assertFileDoesNotExist($this->home . '/auth.json.lock');
         $this->assertStringContainsString('sk-renewed', (string) file_get_contents($this->home . '/auth.json'));
+    }
+
+    public function testALockFileAnOlderPigLeftIsRemovedAndPisOwnIsNot(): void
+    {
+        // An older pig left `auth.json.lock` as a plain file; pi then failed every start with
+        // "ENOTDIR: not a directory, rmdir '…/auth.json.lock'".
+        $this->given('{}');
+        file_put_contents($this->home . '/auth.json.lock', '');
+        $this->auth();
+        $this->assertFileDoesNotExist($this->home . '/auth.json.lock');
+
+        // A directory there is pi holding its lock right now.
+        mkdir($this->home . '/auth.json.lock');
+        $this->auth();
+        $this->assertDirectoryExists($this->home . '/auth.json.lock');
+        rmdir($this->home . '/auth.json.lock');
     }
 
     /** A flow whose refresh counts itself and answers a token that will last. */
@@ -622,7 +640,7 @@ final class AuthTest extends TestCase
     }
 
     /**
-     * Another pig mid-renewal: holds `auth.json.lock`, writes $contents into the file after
+     * Another pig mid-renewal: holds `auth.json.flock`, writes $contents into the file after
      * $seconds, and lets go. Ready before this returns.
      *
      * @return resource
@@ -631,7 +649,7 @@ final class AuthTest extends TestCase
     {
         $script = sprintf(
             '$h = fopen(%s, "c"); flock($h, LOCK_EX); echo "held\n"; usleep(%d); file_put_contents(%s, %s); flock($h, LOCK_UN);',
-            var_export($file . '.lock', true),
+            var_export($file . '.flock', true),
             (int) ($seconds * 1_000_000),
             var_export($file, true),
             var_export($contents, true),

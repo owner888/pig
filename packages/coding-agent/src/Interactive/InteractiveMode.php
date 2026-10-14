@@ -1126,8 +1126,10 @@ final class InteractiveMode
     }
 
     /**
-     * The three lines at the top, and the full list behind ctrl+o. Upstream's `BuiltInHeader` text;
-     * what was loaded is drawn under it by `showLoadedResources()`, one section each.
+     * The lines at the top, and the full list behind ctrl+o. Upstream's `BuiltInHeader` text as
+     * its terminals without the logo get it: "Pig vX", then the key hints, each key dim and what it
+     * does muted (upstream's `keyHint()`). What was loaded is drawn under it by
+     * `showLoadedResources()`, one section each.
      *
      * One line of keys rather than a column of thirteen, which is what upstream settled
      * on: the list was taller than most of the conversations it sat above. The rest is
@@ -1135,14 +1137,14 @@ final class InteractiveMode
      */
     private function builtInHeaderText(bool $expanded): string
     {
-        [$topLogo, $bottomLogo] = PigLogo::lines();
-
-        $versionStr = Style::bold(Themes::theme()->fg('accent', 'pig')) . Themes::theme()->fg('dim', " v{$this->version}");
-        $summaryStr = Themes::theme()->fg('muted', implode(' · ', self::SUMMARY));
+        $theme = Themes::theme();
+        $summaryStr = implode($theme->fg('muted', ' · '), array_map(
+            static fn (array $hint): string => $theme->fg('dim', $hint[0]) . $theme->fg('muted', " {$hint[1]}"),
+            self::SUMMARY,
+        ));
 
         $lines = [
-            "{$topLogo} {$versionStr}",
-            "{$bottomLogo}",
+            PigLogo::wordmark() . ' ' . $theme->fg('dim', "v{$this->version}"),
             $summaryStr,
         ];
 
@@ -1224,9 +1226,11 @@ final class InteractiveMode
             }
 
             // pig's own: custom tools are loaded from their own folders, which upstream has no
-            // equivalent of — its tools come from extensions.
-            if ($this->customTools !== null && !$this->customTools->isEmpty()) {
-                $toolNames = $this->customTools->names();
+            // equivalent of — its tools come from extensions. Only those: an extension's tools are
+            // the extension's, named under [Extensions] (or not at all, for a built-in), as
+            // upstream lists no tools.
+            $toolNames = $this->toolsFromToolFolders();
+            if ($toolNames !== []) {
                 $addLoadedSection('Tools', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $toolNames)));
             }
         }
@@ -1286,7 +1290,30 @@ final class InteractiveMode
     }
 
     /**
-     * Labels of loaded hooks and extensions from standard locations.
+     * The custom tools that came from a tool folder rather than from an extension.
+     *
+     * @return list<string>
+     */
+    private function toolsFromToolFolders(): array
+    {
+        $fromExtensions = [];
+        foreach ($this->extensions as $ext) {
+            $fromExtensions[$ext->resolved] = true;
+        }
+
+        $names = [];
+        foreach ($this->customTools?->loaded() ?? [] as $one) {
+            if (!isset($fromExtensions[$one->resolvedPath])) {
+                $names[] = $one->tool->name;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Labels of loaded hooks and extensions from standard locations — not the built-ins, which
+     * upstream marks `hidden` and leaves out of [Extensions] (`BuiltinExtensions`).
      *
      * @return list<string>
      */
@@ -1317,13 +1344,13 @@ final class InteractiveMode
         return $path;
     }
 
-    /** The keys worth knowing before the first prompt, on one line. */
+    /** The keys worth knowing before the first prompt, on one line: key, then what it does. */
     private const array SUMMARY = [
-        'escape interrupt',
-        'ctrl+c/ctrl+d clear/exit',
-        '/ commands',
-        '! bash',
-        'ctrl+o more',
+        ['escape', 'interrupt'],
+        ['ctrl+c/ctrl+d', 'clear/exit'],
+        ['/', 'commands'],
+        ['!', 'bash'],
+        ['ctrl+o', 'more'],
     ];
 
     /** @var array<string, string> */
