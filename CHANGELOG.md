@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.65] - 2026-10-14
+
+### Changed
+
+- `AGENTS.md` carries a hard rule at its top — it stays under 200 lines, everything else goes into `docs/dev/` — and `AgentsFileTest` fails the suite when it does not.
+
 ## [0.6.64] - 2026-10-14
 
 ### Changed

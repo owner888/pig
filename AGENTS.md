@@ -3,6 +3,12 @@
 A file-by-file port of [earendil-works/pi](https://github.com/earendil-works/pi): agent core,
 unified LLM API, terminal UI, coding agent CLI. Zero runtime dependencies beyond PHP itself.
 
+## This file stays under 200 lines (hard rule)
+
+All of it goes into every request, so `AGENTS.md` holds what every task needs and an index to
+`docs/dev/`; a trap, a design note or a decision goes there, never here. `AgentsFileTest` fails
+the suite once this file passes 200 lines.
+
 ## This file is written in English
 
 Every rule, trap entry, table and heading in this file and under `docs/dev/` is English — not because of the reader's
