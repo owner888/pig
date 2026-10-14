@@ -178,7 +178,7 @@ final class McpServersSection
      * `a.localeCompare(b)` for a server name, which `McpConfig` restricts to `[A-Za-z0-9_-]`: the
      * root collation's order over those characters — `_`, then `-`, then the digits, then the
      * letters without regard to case — and, between names equal that way, lower case first.
-     * Written out rather than through `ext-intl`, which pig does not require (see CLAUDE.md).
+     * Written out rather than through `ext-intl`, which pig does not require (see docs/dev/decisions.md).
      */
     private static function localeCompare(string $a, string $b): int
     {

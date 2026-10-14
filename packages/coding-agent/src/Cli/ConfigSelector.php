@@ -33,7 +33,7 @@ use Pig\Tui\Width;
  *
  * Package resources and upstream's built-in extensions are here; `PackageManager::resolve()`
  * resolves only packages (the loaders own the top-level `extensions` / `skills` settings and the
- * auto-discovered directories — see `CLAUDE.md`), so the one top-level kind is the built-ins
+ * auto-discovered directories — see `docs/dev/decisions.md`), so the one top-level kind is the built-ins
  * (`BuiltinExtensions::resources()`), switched by `+builtin:<name>` / `-builtin:<name>` in the
  * `extensions` setting as upstream's `toggleTopLevelResource()` does.
  */

@@ -14,7 +14,7 @@ namespace Pig\CodingAgent\Tools;
  * and `details` is written to the session file — which is pi's file. pig used shorter names for
  * three of them (`by`, `lastPartial`, `firstTooBig`) and left `maxLines`/`maxBytes` out, so pi
  * opening a conversation pig had written found a truncation record it could not read and drew no
- * warning for it. See the rename table in CLAUDE.md.
+ * warning for it. See the rename table in docs/dev/design/tools.md.
  *
  * `maxLines` and `maxBytes` are what *this* call was given rather than the constants: `ls`,
  * `find` and `grep` pass `PHP_INT_MAX` for the line limit, since the entry, result and match

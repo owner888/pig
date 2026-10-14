@@ -656,7 +656,7 @@ final class CodingAgent
             // the provider and model on the last assistant message — but **the thinking level has
             // no such fallback**, so a conversation had on `--thinking high` came back on `off`
             // after `--continue`, quietly, and on a reasoning model that changes the answers. See
-            // CLAUDE.md.
+            // docs/dev/traps/session.md.
             //
             // It costs no file for a session nobody had: `append()` holds everything before the
             // first assistant message in memory and flushes it in front once the conversation is

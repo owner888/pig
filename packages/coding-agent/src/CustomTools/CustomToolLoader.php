@@ -20,7 +20,7 @@ use Throwable;
  * Everything true of `Hooks\HookLoader` is true here, because it is the same mechanism:
  * `require` in this process, catchable `ParseError` for a syntax mistake, `realpath()`
  * deduplication so one file reached twice is one tool, output captured so a stray `echo`
- * cannot land on the screen the UI is about to draw. See that class, and CLAUDE.md, for
+ * cannot land on the screen the UI is about to draw. See that class, and docs/dev/design/extensions.md, for
  * what running user code in-process costs.
  *
  * What upstream's loader has that this does not is `jiti` with pig's own packages aliased

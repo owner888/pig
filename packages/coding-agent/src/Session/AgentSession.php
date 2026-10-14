@@ -135,7 +135,7 @@ use Throwable;
  * queue into `steer()` and `followUp()` and did not update this file, which still calls
  * `agent.queueMessage()`, `clearMessageQueue()` and `getQueueMode()` — none of which
  * exist any more. So there is no literal thing to port here, and this is written against
- * the split API that `Pig\Agent\Agent` actually has. See CLAUDE.md.
+ * the split API that `Pig\Agent\Agent` actually has. See docs/dev/upstream.md.
  */
 final class AgentSession
 {
@@ -256,6 +256,9 @@ final class AgentSession
      * retry is made, cleared by the next message somebody says and by an answer that did not fail.
      */
     private bool $overflowRecoveryAttempted = false;
+
+    /** The overflow `promptTooLarge()` was last said for, so a prompt sent after it does not say it twice. */
+    private ?AssistantMessage $promptTooLargeSaidFor = null;
 
     /** The id of this session while nothing writes it down — upstream's in-memory `SessionManager`'s. */
     private string $memoryId;
@@ -1590,7 +1593,7 @@ final class AgentSession
      * its completions and `/model <pattern>` all need — and the first draft had this rule twice,
      * once here and once in the terminal, so the mutation check found a scope that could be
      * ignored in `cycleModel()` with only the RPC test noticing. Two answers to one question is
-     * the shape every other entry in `CLAUDE.md`'s traps has.
+     * the shape every other entry in `docs/dev/traps/` has.
      *
      * The full list is a parameter because `Auth` lives with the modes, and it is deliberately
      * not reached from here: `Auth::apiKey()` renews an expiring token on the way past, and a
@@ -3632,6 +3635,22 @@ final class AgentSession
         // Cases 1 and 2. Only for the model that produced the message: an overflow on a smaller
         // model is not a reason to compact for the larger one somebody has since switched to.
         if ($messageModel !== null && Overflow::happened($message, $messageModel->contextWindow)) {
+            // pig's own, before either: a system prompt that is past the window on its own — a
+            // project's context files grown beyond a smaller model — leaves a summary nothing to
+            // make room in, and upstream's way round compacts, retries, overflows again and ends on
+            // "recovery failed", with the provider's 400 the only clue. Said once, plainly.
+            $tooLarge = $this->promptTooLarge($messageModel);
+
+            if ($tooLarge !== null) {
+                if ($this->promptTooLargeSaidFor !== $message) {
+                    $this->promptTooLargeSaidFor = $message;
+                    $this->announce(new CompactionEndEvent('overflow', null, false, false, $tooLarge));
+                    $this->hooks?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $tooLarge, willRetry: false, fromExtension: false));
+                }
+
+                return false;
+            }
+
             if ($message->stopReason === StopReason::Stop) {
                 return $this->runAutoCompaction('overflow', willRetry: false);
             }
@@ -3658,6 +3677,47 @@ final class AgentSession
         }
 
         return false;
+    }
+
+    /**
+     * Why compacting cannot help, when the system prompt alone does not fit $model's window — with
+     * the project's context files by size, since they are what grows — or null when it fits.
+     */
+    private function promptTooLarge(Model $model): ?string
+    {
+        $tokens = Compaction::estimateTokens(new SystemMessage($this->systemPrompt()));
+
+        if ($model->contextWindow <= 0 || $tokens < $model->contextWindow) {
+            return null;
+        }
+
+        // `ContextFiles` writes each file under a `## <path>` heading; a file's own `##` headings
+        // are not paths, so only an absolute one starts a file.
+        $files = [];
+        $context = $this->loadout?->systemPromptSections()['project_context'] ?? null;
+
+        if (is_string($context) && preg_match_all('~^## ((?:/|[A-Za-z]:[\\\\/]).*)$~m', $context, $found, PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($found[0] as $i => [, $at]) {
+                $end = $found[0][$i + 1][1] ?? strlen($context);
+                $files[$found[1][$i][0]] = Compaction::estimateTokens(new SystemMessage(substr($context, $at, $end - $at)));
+            }
+
+            arsort($files);
+        }
+
+        $largest = array_map(
+            static fn (string $path, int $size): string => sprintf('%s (~%s tokens)', $path, number_format($size)),
+            array_keys(array_slice($files, 0, 3, true)),
+            array_slice($files, 0, 3, true),
+        );
+
+        return sprintf(
+            'The system prompt alone is about %s tokens, more than the %s-token context window of %s, so compacting the conversation cannot make room.%s Start pig with --no-context-files (-nc) to leave the project\'s context files out, or make them shorter.',
+            number_format($tokens),
+            number_format($model->contextWindow),
+            $model->id,
+            $largest === [] ? '' : ' Most of it is the project\'s context: ' . implode(', ', $largest) . '.',
+        );
     }
 
     /**
@@ -4115,7 +4175,7 @@ final class AgentSession
         // One controller for both doors, so `isCompacting()` and `abortCompaction()` answer for a
         // summarisation whoever started it. A signal the caller brought is *forwarded* into it
         // rather than carried alongside: what goes downstream then has one `aborted()` to ask, and
-        // pig has no combinator for two — see the note on `Future` in CLAUDE.md.
+        // pig has no combinator for two — see the note on `Future` in docs/dev/decisions.md.
         $this->compacting = new AbortController();
 
         if ($signal?->aborted() === true) {

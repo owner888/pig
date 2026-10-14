@@ -48,7 +48,7 @@ use Pig\Tui\TUI;
  * - While focused it puts `TUI::CURSOR_MARKER` at the cursor, so an input method composes at the box being typed into.
  *
  * Home and End do what Ctrl+A and Ctrl+E do, which **upstream has in `editor.ts` and not here** —
- * a rule present in one of two siblings, the commonest shape in `CLAUDE.md`'s traps, on upstream's
+ * a rule present in one of two siblings, the commonest shape in `docs/dev/traps/`, on upstream's
  * side of the line. Both of pig's editors answer to both.
  */
 final class Input implements Component, Focusable, InputHandler, MouseHandler

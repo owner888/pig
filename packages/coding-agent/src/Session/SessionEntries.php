@@ -25,7 +25,7 @@ use Pig\Ai\Utils\MessageJson;
  * the line, `entryId` and `parent`, an integer timestamp — which is worse than a different
  * version number, because pi would have agreed about the version and then found no `type` on
  * any line. Nothing ever ran on it, so there is no reader for it: see the decision in
- * CLAUDE.md. **This file speaks pi's format and no other.**
+ * docs/dev/design/session.md. **This file speaks pi's format and no other.**
  */
 final class SessionEntries
 {

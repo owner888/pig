@@ -756,7 +756,7 @@ final class OauthTest extends TestCase
             OauthError::class,
             fn (): mixed => $this->onTheLoop(fn (): ?Credentials => $this->copilot($url)->login(
                 // `???` rather than something with a space in it, which `parse_url()` hands back
-                // as a host where upstream's `new URL()` throws — see the entry in CLAUDE.md.
+                // as a host where upstream's `new URL()` throws — see the entry in docs/dev/traps/auth.md.
                 static fn (): string => '???',
                 static fn (): null => null,
             )),

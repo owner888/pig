@@ -311,7 +311,7 @@ final class Compaction
             // Upstream measures `.summary` alone, which is a little short of what it sends.
             //
             // `BranchSummary` was missing from this list, and a summary of an abandoned branch is
-            // long — a 3,900-character one estimated as **zero tokens**. See CLAUDE.md.
+            // long — a 3,900-character one estimated as **zero tokens**. See docs/dev/traps/session.md.
             $message instanceof CompactionSummary => strlen($message->toText()),
             $message instanceof BranchSummary => strlen($message->toText()),
             $message instanceof HookMessage => strlen($message->toText()),
@@ -1547,7 +1547,7 @@ final class Compaction
      * An image counts as `CHARS_PER_IMAGE` rather than as nothing. Counting it as nothing is what
      * made a conversation of screenshots impossible to compact: twelve turns of images asked to be
      * cut down to 2,000 tokens dropped **nothing at all**, because the walk back never reached the
-     * budget — so compaction ran, paid for a summarisation, and freed no context. See CLAUDE.md.
+     * budget — so compaction ran, paid for a summarisation, and freed no context. See docs/dev/traps/session.md.
      *
      * @param list<mixed> $content
      */

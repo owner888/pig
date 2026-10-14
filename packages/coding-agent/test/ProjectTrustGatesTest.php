@@ -15,7 +15,7 @@ use Pig\CodingAgent\Settings;
 /**
  * One rule, every loader: an untrusted project's `.pig/` is not read, and the person's own
  * `~/.pig/agent/` always is. One case per loader, because a gate on four of five is the shape
- * CLAUDE.md's traps keep finding, and a single assertion over all five cannot say which is open.
+ * the traps in docs/dev/traps/ keep finding, and a single assertion over all five cannot say which is open.
  */
 final class ProjectTrustGatesTest extends TestCase
 {

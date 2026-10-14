@@ -1113,7 +1113,7 @@ final class GoogleTest extends TestCase
     {
         // Measured, not read: one request per model and level against the public endpoint on
         // 2026-10-01 — every 3.x id in the table accepts `thinkingLevel` LOW/MEDIUM/HIGH, and the
-        // old `3-pro`/`3-flash` check matched exactly one of them. See CLAUDE.md, "Gemini 3.x on
+        // old `3-pro`/`3-flash` check matched exactly one of them. See docs/dev/traps/providers.md, "Gemini 3.x on
         // the public endpoint". A model this check misses is one that is asked for `thinkingBudget:
         // -1` and ignores the level entirely, which is what every 3.x model but one did.
         $budgeted = [];
@@ -1360,7 +1360,7 @@ final class GoogleTest extends TestCase
     {
         // Three options that the mutation sweep found nothing following to the wire here, while
         // the Code Assist provider — the sibling that shares `GoogleShared` — had all three
-        // pinned. The first shape from `CLAUDE.md`'s index, on a request body.
+        // pinned. The first shape from the index in `docs/dev/traps/README.md`, on a request body.
         $this->send(
             new Context([new UserMessage('hi')]),
             $this->model(reasoning: true),

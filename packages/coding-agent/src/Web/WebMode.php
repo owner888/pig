@@ -12,7 +12,7 @@ use Pig\Tui\Style;
 
 /**
  * Web UI mode (`--mode web`): the shell process that serves the page and runs one
- * `pig --mode rpc` child per conversation. See `HttpServer` for the shape and CLAUDE.md
+ * `pig --mode rpc` child per conversation. See `HttpServer` for the shape and docs/dev/design/web.md
  * ("Three ways in") for why it is this shape.
  *
  * This mode holds **no** `AgentSession` of its own any more — it used to, and every tab in the

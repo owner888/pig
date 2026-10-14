@@ -1625,7 +1625,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         // rule out again — "starts with a slash and has no space" — which made
         // `shouldCompleteFiles()` a public method with no caller but its own tests, and left Tab
         // after `/model ` going to the filesystem while typing there offered models. The trap in
-        // CLAUDE.md about a line starting with `/` is this same predicate; that entry gave it one
+        // docs/dev/traps/tui.md about a line starting with `/` is this same predicate; that entry gave it one
         // home and this is the reader that never started using it.
         if (!$this->provider->shouldCompleteFiles($this->lines, $this->cursorLine, $this->cursorCol)) {
             $this->openSuggestions();

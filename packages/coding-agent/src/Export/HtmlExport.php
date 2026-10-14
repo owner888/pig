@@ -531,7 +531,7 @@ final class HtmlExport
      *
      * `Highlight` paints `syntaxOperator` and `syntaxPunctuation` as plain text — it has no
      * category for either — so neither has a class here, which is the same shortfall stated in
-     * CLAUDE.md about the terminal.
+     * docs/dev/traps/tui.md about the terminal.
      */
     private const array SYNTAX = [
         'comment' => 'syntaxComment',

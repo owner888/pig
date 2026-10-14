@@ -22,7 +22,7 @@ namespace Pig\CodingAgent;
  * the version in `composer.json` decides which entries are new here and is what Packagist is asked
  * about. This paragraph said the file did not exist for as long as it did not, which is how the one
  * test of `/changelog` came to be pinning that absence rather than the command — see the entry in
- * `CLAUDE.md`. The empty answer is still a real one: it is what somebody who deleted theirs gets.
+ * `docs/dev/traps/testing.md`. The empty answer is still a real one: it is what somebody who deleted theirs gets.
  */
 final readonly class Changelog
 {

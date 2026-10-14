@@ -269,7 +269,7 @@ final class Discovery
      * daily/sandbox-only models appear alongside production catalog entries."
      *
      * One endpoint after another where upstream asks them all at once (`Promise.all`): pig has no
-     * combinator for that (see CLAUDE.md on `Future`), and the merge is in endpoint order either way.
+     * combinator for that (see docs/dev/decisions.md on `Future`), and the merge is in endpoint order either way.
      *
      * @param list<string>|null $endpoints the hosts to ask; `endpointCandidates()` when null
      * @return array{endpoint: string, status: int, data: array{models: array<string, mixed>, defaultAgentModelId?: string, defaultAgentModel?: string}}

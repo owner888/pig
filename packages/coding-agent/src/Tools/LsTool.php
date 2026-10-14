@@ -129,7 +129,7 @@ final class LsTool implements AgentTool
 
         // Upstream's keys, because `details` ends up in the session file and that file is pi's:
         // `entryLimitReached` is the limit that was hit, which is what pi's own tool view reads.
-        // `notice` is pig's and has no counterpart there — see CLAUDE.md.
+        // `notice` is pig's and has no counterpart there — see docs/dev/design/tools.md.
         return new AgentToolResult(
             [new TextContent($output)],
             $notice === null ? null : array_filter(

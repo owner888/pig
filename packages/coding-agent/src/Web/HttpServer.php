@@ -29,7 +29,7 @@ use Throwable;
  * `pig --mode rpc` child per conversation behind it, in a `SessionPool`.
  *
  * pi-web's `server.js`, as `HttpServer` was always meant to become. Until step ② of the process
- * model (CLAUDE.md, "Three ways in") this class held **one** `AgentSession` and every tab in the
+ * model (docs/dev/design/web.md, "Three ways in") this class held **one** `AgentSession` and every tab in the
  * page was a `switchTo()` on it — so the TUI sharing that session moved with the browser, a turn
  * in flight on tab A was aborted by opening tab B, and two browsers on two conversations pulled
  * one process back and forth. Now a tab is a child process, and the server relays.

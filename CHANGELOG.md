@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.63] - 2026-10-14
+
+### Changed
+
+- `CLAUDE.md` is down from 13,658 lines (about 280k tokens, sent with every request in this repository) to 145. The rest moved, unedited, to `docs/dev/`: `decisions.md`, `upstream.md`, and per area `design/<area>.md` and `traps/<area>.md`, which `CLAUDE.md` indexes. Source comments that pointed at `CLAUDE.md` point at the file the entry is in now.
+- A context overflow whose system prompt alone is past the model's window — a project's context files grown beyond a smaller model — is no longer compacted and retried, which could not help. pig says so instead: how large the prompt is, the model's window, the largest context files by size, and that `--no-context-files` (`-nc`) leaves them out.
+
 ## [0.6.62] - 2026-10-14
 
 ### Fixed

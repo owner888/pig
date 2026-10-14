@@ -1678,7 +1678,7 @@ final class AnthropicTest extends TestCase
 
         // **Asserted on the raw body, because the decode cannot tell them apart**: PHP has one
         // array type, so `json_decode(assoc: true)` turns both `{}` and `[]` into the same value
-        // — which is the third shape from `CLAUDE.md`'s index, and the reason a test that only
+        // — which is the third shape from the index in `docs/dev/traps/README.md`, and the reason a test that only
         // read `receivedJson()` would have passed either way.
         $this->assertStringContainsString('"input":{}', $this->server->received());
         $this->assertStringNotContainsString('"input":[]', $this->server->received());

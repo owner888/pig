@@ -144,7 +144,7 @@ final class Overflow
         // reading as the list of what somebody had measured rather than as the list of what the
         // branch covers. *Its code is provider-agnostic exactly as this is*; only its prose is
         // narrow. This comment used to say upstream carried the branch for z.ai alone, which is
-        // the fourth shape from CLAUDE.md's index — a claim about a repository that a grep
+        // the fourth shape from the index in docs/dev/traps/README.md — a claim about a repository that a grep
         // refutes — pointed at upstream for once.
         if ($contextWindow !== null && $contextWindow > 0 && $message->stopReason === StopReason::Stop) {
             if ($message->usage->input + $message->usage->cacheRead > $contextWindow) {

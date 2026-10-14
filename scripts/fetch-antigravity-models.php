@@ -14,7 +14,7 @@ declare(strict_types=1);
  *
  * `ANTIGRAVITY_MODELS` is hand-written because models.dev does not carry a subscription
  * deployment's catalogue and upstream deleted its Antigravity support altogether — see the
- * CLAUDE.md entry. Hand-written does not have to mean invented, and this is where the rows come
+ * entry in docs/dev/design/extensions.md. Hand-written does not have to mean invented, and this is where the rows come
  * from.
  *
  * **Two constants here are the developer's working values rather than pig's**, because pig's

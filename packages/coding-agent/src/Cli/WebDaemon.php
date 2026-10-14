@@ -13,7 +13,7 @@ use Pig\Tui\Style;
  * `pig web start|stop|status|restart [-d] [--port N] [--host H]` — the web UI as a daemon — and
  * `pig web password`, the password the page is behind (`Web\WebLogin`).
  *
- * Step ① of the web mode's new process model (the entry in CLAUDE.md under "Three ways in"):
+ * Step ① of the web mode's new process model (the entry in docs/dev/design/web.md under "Three ways in"):
  * the subcommand and the daemon, over `--mode web` exactly as it stands. The session pool and
  * the per-tab children are steps ② and ③ and change what runs *inside* the daemon, not this.
  *

@@ -772,7 +772,7 @@ final class SessionManager
      * point of `goTo()`: nothing is deleted when a conversation goes back, so the entries that were
      * left behind are still here with their parents intact — and until this existed, `branch()` was
      * the only way to see any of them, which meant an abandoned branch could not be named and so
-     * could not be gone back to. The docblock below promised it could. See CLAUDE.md.
+     * could not be gone back to. The docblock below promised it could. See docs/dev/traps/session.md.
      *
      * Upstream's `getTree()`, including the two cases it guards: an entry whose parent is itself is
      * a root, and an entry whose parent is not in the file is an **orphan treated as a root** rather
@@ -1761,7 +1761,7 @@ final class SessionManager
         foreach ($entries as $id => $entry) {
             // Cast, because PHP turns an array key that looks like an integer into one:
             // an id is eight hex characters and about one in forty is all digits, so
-            // `"12345678"` comes back out of this loop as `12345678`. See CLAUDE.md.
+            // `"12345678"` comes back out of this loop as `12345678`. See docs/dev/traps/runtime.md.
             $encoded = SessionEntries::encode($entry['message'], (string) $id, $entry['parent']);
 
             if ($encoded !== null) {

@@ -13,7 +13,7 @@ use Pig\CodingAgent\Rpc\RpcClient;
  * One `pig --mode rpc` child per conversation, shared by the browsers looking at it.
  *
  * pi-web's `rpcSessions`, `createManagedSession()` and `cleanupIfIdle()` from `server.js`, as a
- * class. This is step ② of the web mode's process model (CLAUDE.md, "Three ways in"): the thing
+ * class. This is step ② of the web mode's process model (docs/dev/design/web.md, "Three ways in"): the thing
  * that lets two tabs run two turns at once, because each tab is a process and not a `switchTo()`
  * on the one session `HttpServer` used to hold.
  *

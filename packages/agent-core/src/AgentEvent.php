@@ -7,7 +7,7 @@ namespace Pig\Agent;
 /**
  * Something the UI should react to.
  *
- * A marker interface rather than a union — see CLAUDE.md. Ten arms come from the agent loop,
+ * A marker interface rather than a union — see docs/dev/design/runtime.md. Ten arms come from the agent loop,
  * and they are the shape of a run:
  *
  *     AgentStartEvent

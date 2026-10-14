@@ -730,7 +730,7 @@ final class InteractiveModeTest extends TestCase
         // `requestRender(true)` empties what the screen is believed to hold, and the renderer
         // reads an empty `previousLines` as "first frame ever" — so it writes every line with no
         // clear, starting from wherever the cursor is, which is the bottom of the frame already
-        // there. That is the trap in CLAUDE.md about the forced render, and `/theme` is the third
+        // there. That is the trap in docs/dev/traps/tui.md about the forced render, and `/theme` is the third
         // caller to make it: nothing overwrote this screen, so there is a previous frame to diff
         // against and a plain render rewrites only the lines whose colours changed.
         $this->start();

@@ -2209,6 +2209,56 @@ final class AgentSessionTest extends TestCase
         );
     }
 
+    public function testASystemPromptPastTheWindowIsSaidPlainlyInsteadOfCompacted(): void
+    {
+        // A project whose context files outgrew a smaller model: the prompt alone is past the
+        // window, so a summary has nothing to make room in. Said once per overflow, with the way
+        // out, and the provider is not asked for a summary that could not help.
+        $calls = 0;
+        $turns = $this->flaky([
+            ['error' => 'prompt is too long: 2100 tokens > 1000 maximum'],
+            ['error' => 'prompt is too long: 2110 tokens > 1000 maximum'],
+        ]);
+        $session = $this->session(
+            [],
+            model: new Model('test-model', 'Small', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 1_000, 100),
+            streamFn: static function (mixed ...$arguments) use ($turns, &$calls): AssistantMessageEventStream {
+                $calls++;
+                usleep(2000);
+
+                return $turns(...$arguments);
+            },
+            settings: self::quickRetries(),
+        );
+        $this->current->state->messages = [new \Pig\Ai\SystemMessage(str_repeat('x', 8_000))];
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            if ($event instanceof CompactionStartEvent || $event instanceof CompactionEndEvent) {
+                $seen[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('one');
+            $session->prompt('two');
+        });
+        self::settle();
+
+        $this->assertSame(2, $calls, 'one request per prompt, and no summary');
+        $this->assertCount(2, $seen, 'one refusal per overflow, not one more for the prompt sent after it');
+
+        foreach ($seen as $event) {
+            $this->assertInstanceOf(CompactionEndEvent::class, $event);
+            $this->assertNull($event->result);
+            $this->assertFalse($event->willRetry);
+            $this->assertSame(
+                'The system prompt alone is about 2,000 tokens, more than the 1,000-token context window of test-model, so compacting the conversation cannot make room. Start pig with --no-context-files (-nc) to leave the project\'s context files out, or make them shorter.',
+                $event->errorMessage,
+            );
+        }
+    }
+
     public function testSwitchingModelIsWrittenDown(): void
     {
         $store = SessionManager::create(sys_get_temp_dir());

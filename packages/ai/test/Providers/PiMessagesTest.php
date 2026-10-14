@@ -30,7 +30,7 @@ use Pig\Async\Loop;
  *
  * **The request body is compared as JSON, with one difference allowed**: upstream sends a user
  * message's content as the caller gave it — a bare string stays one — and pig's `UserMessage`
- * always holds blocks (CLAUDE.md, "Porting the unions"), so a string in the recording is read as one
+ * always holds blocks (docs/dev/design/runtime.md, "Porting the unions"), so a string in the recording is read as one
  * text block. Nulls are dropped on both sides, since pig writes `errorMessage: null`.
  */
 final class PiMessagesTest extends TestCase

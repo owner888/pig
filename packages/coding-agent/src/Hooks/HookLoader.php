@@ -38,7 +38,7 @@ use Throwable;
  * there (`Error`) — so a broken hook is a complaint at startup, not a crash. That trade
  * was chosen deliberately over running hooks as separate commands, which would have
  * bought isolation and timeouts and cost hooks the ability to hand back an object. See
- * CLAUDE.md.
+ * docs/dev/design/extensions.md.
  */
 final class HookLoader
 {

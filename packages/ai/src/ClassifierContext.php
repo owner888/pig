@@ -11,7 +11,7 @@ use stdClass;
  * questions, by id.
  *
  * The questions are a closed union of three arms, so they are a real union type here (see
- * "Porting the unions" in CLAUDE.md), held in an array keyed by the question's id.
+ * "Porting the unions" in docs/dev/design/runtime.md), held in an array keyed by the question's id.
  *
  * `state` is a JSON object: an array decoded with objects as arrays, or a `stdClass` where an empty
  * object has to stay `{}` on the wire — an empty PHP array is sent as `{}` at the top level.

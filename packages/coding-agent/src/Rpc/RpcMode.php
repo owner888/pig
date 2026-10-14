@@ -1187,7 +1187,7 @@ final class RpcMode
      * queue. Over RPC none of that happened: a hook that refused to leave a conversation
      * worked for a person and was ignored for a host, and a switch during a turn left that
      * turn writing into the conversation it had just left. They live in
-     * `AgentSession::switchTo()` now, which is what makes them true for both. See CLAUDE.md.
+     * `AgentSession::switchTo()` now, which is what makes them true for both. See docs/dev/traps/rpc.md.
      *
      * @param array<string, mixed> $command
      */

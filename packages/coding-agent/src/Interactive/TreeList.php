@@ -1026,7 +1026,7 @@ final class TreeList implements Component, InputHandler
      * 0x80–0x9f, the C1 controls, which is right in a language that walks UTF-16 code units and
      * wrong in one that walks bytes: 0x80–0xbf is where every UTF-8 continuation byte lives, so
      * that range would make 一 (`e4 b8 80`), 、and 退 untypeable — the search box would silently
-     * ignore them. The third shape from CLAUDE.md's index, on a comparison rather than on a length.
+     * ignore them. The third shape from the index in docs/dev/traps/README.md, on a comparison rather than on a length.
      */
     private static function hasControlCharacters(string $data): bool
     {

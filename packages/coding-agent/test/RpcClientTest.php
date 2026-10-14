@@ -623,7 +623,7 @@ final class RpcClientTest extends TestCase
 
         // Through the real binary, because `bin/pig` is where the flag is split on commas and
         // handed to `session()` — a mutation removing that pass-through broke nothing at all until
-        // this case existed, which is the wired-at-one-end shape from `CLAUDE.md`'s index.
+        // this case existed, which is the wired-at-one-end shape from the index in `docs/dev/traps/README.md`.
         $this->assertSame('zzp-plain', $opened['model']['id'], 'the first of the scope');
         $this->assertSame('zzp-alpha', $next['model']['id'] ?? null);
         $this->assertSame('high', $next['thinkingLevel'] ?? null, 'and the level that entry named');

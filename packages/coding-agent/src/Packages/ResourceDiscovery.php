@@ -20,7 +20,7 @@ namespace Pig\CodingAgent\Packages;
  * `.ignore` and `.fdignore` on the way down, with the `ignore` package; pig does not, on purpose:
  * a git-installed package is a clone and holds no gitignored file to hide, and a local-path
  * package with its author's drafts in it names what to leave out with the manifest's `!`
- * patterns. See CLAUDE.md.
+ * patterns. See docs/dev/decisions.md.
  */
 final class ResourceDiscovery
 {

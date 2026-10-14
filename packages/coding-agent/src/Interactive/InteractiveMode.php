@@ -3202,7 +3202,7 @@ final class InteractiveMode
      *
      * Upstream's `/debug`, on upstream's key, and the reason to port it rather than leave it is
      * that **pig already has every other end of it**: `TuiBase::frame()` is the dump `checkWidth()`
-     * writes when a line is too wide, and every width bug in CLAUDE.md was found by reading
+     * writes when a line is too wide, and every width bug in docs/dev/traps/tui.md was found by reading
      * exactly that — from outside the repository, with a probe written for the occasion, because
      * from inside a real session there was no way to ask.
      *

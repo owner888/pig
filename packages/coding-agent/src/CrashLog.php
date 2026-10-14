@@ -19,7 +19,7 @@ use Throwable;
  *
  * Two kinds here, where upstream has one. `fatal_error` is what `bin/pig`'s uncaught-exception
  * handler writes on the way out. `loop_error` is a throw the event loop's handler caught — a
- * render that died, a callback that threw — which pig *survives* (CLAUDE.md, the entry on
+ * render that died, a callback that threw — which pig *survives* (docs/dev/traps/runtime.md, the entry on
  * `Loop::setErrorHandler`) and draws as a red line. It is recorded all the same, because a thing
  * the loop had to catch is a pig bug by definition, and the person who sees the red line is
  * exactly who `/bug` is for.

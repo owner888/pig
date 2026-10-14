@@ -22,7 +22,7 @@ use Pig\Ai\ProviderError;
  * **The tables are generated, not transcribed.** `scripts/fetch-antigravity-models.php` prints
  * them from the deployment's own catalogue, which is the only authority there is — models.dev
  * does not carry a subscription deployment's catalogue and upstream deleted its Antigravity
- * support altogether. See the CLAUDE.md entry.
+ * support altogether. See docs/dev/design/extensions.md.
  *
  * Only the runtime ids reachable through routing are kept. The catalogue also enumerates the
  * Antigravity IDE's own models — tab completion, its chat surfaces, image generation, the
