@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.60] - 2026-10-14
+
+### Fixed
+
+- `auth.json` is written to a file beside it and renamed into place, so another pig reading it — every web conversation does before each prompt — never finds it half-written. Reading it in that moment emptied every credential in the reader, and the reader's next save could write that back over the file. A symlinked `auth.json` is written where it points and stays a link.
+
 ## [0.6.59] - 2026-10-14
 
 ### Added

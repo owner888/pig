@@ -304,6 +304,35 @@ final class AuthTest extends TestCase
         $this->assertSame('0700', substr(sprintf('%o', fileperms($this->home)), -4));
     }
 
+    public function testASaveReplacesTheFileWholeAndLeavesNothingBeside(): void
+    {
+        // Every `--mode rpc` child reads the file again before each prompt, so a save must never
+        // leave a moment in which the file is empty: it is written beside and renamed over.
+        $auth = $this->auth();
+        $auth->setApiKey('groq', 'gsk-1');
+        $before = fileinode($this->home . '/auth.json');
+        $auth->setApiKey('openai', 'sk-1');
+
+        $this->assertNotSame($before, fileinode($this->home . '/auth.json'), 'a new file, renamed into place');
+        $this->assertSame('0600', substr(sprintf('%o', fileperms($this->home . '/auth.json')), -4));
+        $this->assertSame(['auth.json'], array_values(array_diff(scandir($this->home) ?: [], ['.', '..'])));
+        $this->assertSame(['groq', 'openai'], (new Auth($this->home . '/auth.json'))->providers());
+    }
+
+    public function testASymlinkedFileIsWrittenWhereItPointsAndStaysALink(): void
+    {
+        // Somebody keeping `auth.json` with their dotfiles: the rename goes to the real file.
+        mkdir($this->home . '/dotfiles', 0o700, true);
+        $real = $this->home . '/dotfiles/auth.json';
+        file_put_contents($real, '{}');
+        symlink($real, $this->home . '/auth.json');
+
+        $this->auth()->setApiKey('groq', 'gsk-1');
+
+        $this->assertTrue(is_link($this->home . '/auth.json'));
+        $this->assertSame('gsk-1', json_decode((string) file_get_contents($real), true)['groq']['key']);
+    }
+
     public function testForgettingAProviderLeavesTheOthers(): void
     {
         $auth = $this->auth();

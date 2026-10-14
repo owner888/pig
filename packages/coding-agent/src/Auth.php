@@ -817,14 +817,33 @@ final class Auth
             throw new OauthError('Could not encode the credentials.');
         }
 
-        // Narrowed before there is anything in it to read. Writing first and fixing the mode
-        // afterwards — which is upstream's order — leaves the file world-readable for as long
+        // Written beside the file and renamed over it, so another process reading it — every
+        // `--mode rpc` child reads it again before each prompt — finds the old file or the new one
+        // and never the truncated one `file_put_contents()` leaves for a moment. Reading that
+        // emptied every credential in the reader, and its next save wrote the emptiness back.
+        //
+        // Through a symlink to where it points, or the rename would replace the link with a file.
+        // `tempnam()` makes the file 0600 before there is anything in it to read; writing first
+        // and fixing the mode afterwards — upstream's order — leaves it world-readable for as long
         // as the two calls take, and that is long enough.
-        if (!is_file($this->path) && (!touch($this->path) || !chmod($this->path, 0o600))) {
-            throw new OauthError("Could not create {$this->path} to save credentials in.");
+        $target = is_link($this->path) ? (realpath($this->path) ?: $this->path) : $this->path;
+        $temporary = tempnam(dirname($target), basename($target) . '.');
+
+        // `tempnam()` falls back to the system's directory when it cannot write in this one, and
+        // a rename from there is a copy, not the swap this is for.
+        if ($temporary === false || realpath(dirname($temporary)) !== realpath(dirname($target))) {
+            if (is_string($temporary) && is_file($temporary)) {
+                unlink($temporary);
+            }
+
+            throw new OauthError('Could not create a file in ' . dirname($target) . ' to save credentials in.');
         }
 
-        if (file_put_contents($this->path, $json . "\n") === false) {
+        if (!chmod($temporary, 0o600) || file_put_contents($temporary, $json . "\n") === false || !rename($temporary, $target)) {
+            if (is_file($temporary)) {
+                unlink($temporary);
+            }
+
             throw new OauthError("Could not write {$this->path}.");
         }
     }
