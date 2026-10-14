@@ -3013,24 +3013,33 @@ final class AgentSessionTest extends TestCase
         $this->assertCount(2, $session->messages(), 'nothing is asked of the model');
     }
 
-    public function testAConversationThatStoppedInsideAToolCallIsNotRunAgain(): void
+    public function testACallThatMayHaveHalfRunIsAnsweredInterruptedAndTheRunGoesOn(): void
     {
-        $session = $this->session([]);
-        $session->agent->replaceMessages([
-            new UserMessage('delete the build'),
-            new AssistantMessage([new ToolCall('c1', 'bash', ['command' => 'rm -rf build'])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse),
-        ]);
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['it may not have finished; checking'], store: $store);
+        $asked = new AssistantMessage([new ToolCall('c1', 'bash', ['command' => 'rm -rf build'])], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::ToolUse);
+        $session->agent->replaceMessages([new UserMessage('delete the build'), $asked]);
+        $store->append(new UserMessage('delete the build'));
+        $store->append($asked);
         $told = [];
 
-        $e = $this->assertThrows(RuntimeException::class, static function () use ($session, &$told): void {
-            $session->continueRun(static function (string $o) use (&$told): void {
+        $outcome = Async::run(static function () use ($session, &$told): string {
+            return $session->continueRun(static function (string $o) use (&$told): void {
                 $told[] = $o;
             });
         });
+        self::settle();
 
-        $this->assertStringContainsString('tool call', $e->getMessage());
-        $this->assertSame([], $told, 'a refusal is not reported as a start');
-        $this->assertCount(2, $session->messages());
+        $this->assertSame('continued', $outcome);
+        $this->assertSame(['continued'], $told);
+        $result = $session->messages()[2];
+        $this->assertInstanceOf(ToolResultMessage::class, $result);
+        $this->assertTrue($result->isError);
+        $this->assertSame('Tool bash was interrupted and may have partially run', self::textOf($result));
+        $this->assertSame('it may not have finished; checking', self::textOf($session->messages()[3]));
+
+        $reopened = SessionManager::open($store->path)->messages();
+        $this->assertCount(4, $reopened, 'the interrupted result is written down like any other');
     }
 
     public function testAnEmptyConversationHasNothingToCarryOn(): void

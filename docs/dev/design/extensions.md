@@ -545,6 +545,10 @@ off unless the run named it (`useNamed()`): an entry of `--tools` matching it by
 the resolved `defaultTools` list with its `+name` modifiers. So `--tools read,codemode`, `--tools
 +codemode` and `"defaultTools": ["+codemode"]` turn it on; there is no `codemode.enabled`.
 
+**`CustomTool::$replay` is pi-durable's `replay`, not upstream coding-agent's** — the default
+`ToolReplay::Unsafe` answers a call a stopped process left half done `interrupted`; `Safe` runs it
+again on `continueRun()` ([session.md](session.md#carrying-on-a-run-that-stopped-inside-a-tool-call)).
+
 **A tool with something to say in the system prompt can say it now.** Upstream's `promptSnippet`
 and `promptGuidelines` were not ported — the paragraph on custom tools above says "the system
 prompt's Available tools list stays the built-ins" — and codemode is the tool that needs them:

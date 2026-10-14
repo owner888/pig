@@ -7,6 +7,8 @@ namespace Pig\CodingAgent\Tools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 
@@ -19,7 +21,7 @@ use Pig\Async\AbortSignal;
  *
  * Outside `HookedTool`, for that order. A decorator for `HookedTool`'s reason.
  */
-final readonly class ResultImagesTool implements AgentTool
+final readonly class ResultImagesTool implements AgentTool, ReplayableTool
 {
     /** @param Closure(list<mixed>): list<mixed> $normalize */
     public function __construct(
@@ -37,6 +39,12 @@ final readonly class ResultImagesTool implements AgentTool
     public function definition(): Tool
     {
         return $this->tool->definition();
+    }
+
+    /** What the tool underneath declares. */
+    public function replay(): ToolReplay
+    {
+        return ToolReplay::of($this->tool);
     }
 
     public function label(): string

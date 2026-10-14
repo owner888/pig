@@ -8,6 +8,8 @@ use Closure;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
@@ -48,7 +50,7 @@ use Pig\Tui\Images\ImageType;
  * `details.notice` is this file's own key and the one case upstream leaves empty — see the
  * note on `notice()`.
  */
-final class ReadTool implements AgentTool
+final class ReadTool implements AgentTool, ReplayableTool
 {
     /**
      * @param bool $autoResizeImages upstream's `autoResizeImages` (`images.autoResize`)
@@ -92,6 +94,13 @@ final class ReadTool implements AgentTool
             // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
             typeBox: true,
         );
+    }
+
+    /** It only reads, so a call a stopped process left half done is run again. */
+    #[\Override]
+    public function replay(): ToolReplay
+    {
+        return ToolReplay::Safe;
     }
 
     #[\Override]

@@ -9,6 +9,7 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
+use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentLoopTurnUpdate;
 use Pig\Agent\AgentStartEvent;
 use Pig\Agent\AgentState;
@@ -1794,16 +1795,18 @@ final class AgentSession
      *
      * - a user message or a tool result: the model was owed an answer, so it is asked (`continue`);
      * - a turn that failed or was stopped: dropped as a retry drops it, then the same;
-     * - an answer with no tool calls: the run had finished, and there is nothing to do;
-     * - an answer with tool calls: refused. The calls may have half run, and running a command a
-     *   second time is not something to do on nobody's say-so.
+     * - an answer whose tool calls do not all have a result: the rest are answered
+     *   (`Agent::resume()`) and the run goes on. Of those, the call that may have been running is
+     *   run again only if its tool is `ToolReplay::Safe`; any other is answered `interrupted` and the
+     *   model decides, because running a command a second time is not something to do on nobody's say-so;
+     * - an answer with no tool calls: the run had finished, and there is nothing to do.
      *
      * `$onStarted` is told `continued` or `finished` before the run starts, as `prompt()`'s caller is
      * told the disposition, so a host does not wait the whole run for its answer.
      *
      * @param (Closure(string): void)|null $onStarted
      * @return string `continued` or `finished`
-     * @throws \RuntimeException when there is nothing to carry on, or it is not safe to
+     * @throws \RuntimeException when there is nothing to carry on
      */
     public function continueRun(?Closure $onStarted = null): string
     {
@@ -1820,13 +1823,15 @@ final class AgentSession
 
         if ($last instanceof AssistantMessage && in_array($last->stopReason, [StopReason::Error, StopReason::Aborted], true)) {
             $this->dropLastAssistantMessage();
-        } elseif ($last instanceof AssistantMessage) {
-            foreach ($last->content as $block) {
-                if ($block instanceof ToolCall) {
-                    throw new \RuntimeException('It stopped inside a tool call, which may have half run; it is not run again on its own.');
-                }
+        } elseif (AgentLoop::unansweredToolCalls($messages) !== null) {
+            if ($onStarted !== null) {
+                $onStarted('continued');
             }
 
+            $this->runAgentPrompt(fn () => $this->agent->resume());
+
+            return 'continued';
+        } elseif ($last instanceof AssistantMessage) {
             if ($onStarted !== null) {
                 $onStarted('finished');
             }

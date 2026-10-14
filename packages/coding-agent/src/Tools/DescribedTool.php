@@ -7,6 +7,8 @@ namespace Pig\CodingAgent\Tools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 
@@ -19,7 +21,7 @@ use Pig\Async\AbortSignal;
  * decorator for `HookedTool`'s reason: PHP has interfaces where upstream spreads the tool
  * into a literal with one field replaced.
  */
-final readonly class DescribedTool implements AgentTool
+final readonly class DescribedTool implements AgentTool, ReplayableTool
 {
     public function __construct(
         private AgentTool $tool,
@@ -45,6 +47,12 @@ final readonly class DescribedTool implements AgentTool
             $definition->typeBox,
             $definition->outputSchema,
         );
+    }
+
+    /** What the tool underneath declares. */
+    public function replay(): ToolReplay
+    {
+        return ToolReplay::of($this->tool);
     }
 
     public function label(): string

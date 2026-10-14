@@ -119,12 +119,12 @@ while (($raw = fgets(STDIN)) !== false) {
         $out(['type' => 'agent_settled', 'aborted' => false]);
     } elseif ($type === 'continue') {
         // What the conversation on disk ends on decides the answer, as `AgentSession::continueRun()`
-        // decides it: a file holding `TOOLCALL` stopped inside a call and is refused, one holding
+        // decides it: a file holding `NOTHING` has nothing to carry on and is refused, one holding
         // `FINISHED` had already answered, anything else is carried on with one more turn.
         $saved = is_file($sessionFile) ? (string) file_get_contents($sessionFile) : '';
-        if (str_contains($saved, 'TOOLCALL')) {
+        if (str_contains($saved, 'NOTHING')) {
             $out(['type' => 'response', 'command' => $type, 'id' => $id, 'success' => false,
-                'error' => 'It stopped inside a tool call, which may have half run; it is not run again on its own.']);
+                'error' => 'There is nothing in this session to carry on from.']);
         } elseif (str_contains($saved, 'FINISHED')) {
             $respond(['outcome' => 'finished']);
         } else {

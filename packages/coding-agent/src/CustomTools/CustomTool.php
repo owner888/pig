@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\CustomTools;
 
 use Closure;
 use InvalidArgumentException;
+use Pig\Agent\ToolReplay;
 
 /**
  * A tool somebody wrote, as they declare it.
@@ -82,6 +83,9 @@ final readonly class CustomTool
      *        tool activates it. False keeps it registered but off the model until something names it
      *        — `--tools`, the `defaultTools` setting (or a `+name` modifier of either), or
      *        `setActiveTools()`. The codemode tool is registered this way (see `ToolLoadout`)
+     * @param ToolReplay $replay pi-durable's `replay`: `Safe` when running a call twice does no more
+     *        than running it once, so a call a stopped process left half done is run again on
+     *        `continueRun()` rather than answered as interrupted
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -98,6 +102,7 @@ final readonly class CustomTool
         public array|false|null $constrainedSampling = null,
         public ?Closure $prepareLoadout = null,
         public bool $defaultActive = true,
+        public ToolReplay $replay = ToolReplay::Unsafe,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

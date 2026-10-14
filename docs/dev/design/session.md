@@ -13,6 +13,7 @@ The session file, compaction, branches, resuming, the system prompt, retries. Mo
 - [A session carries on in its own directory](#a-session-carries-on-in-its-own-directory)
 - [`/bug` read a property the class never had, and nothing could have said so](#bug-read-a-property-the-class-never-had-and-nothing-could-have-said-so)
 - [Picking a failed turn back up](#picking-a-failed-turn-back-up)
+- [Carrying on a run that stopped inside a tool call](#carrying-on-a-run-that-stopped-inside-a-tool-call)
 - [Finding the one you want](#finding-the-one-you-want)
 
 ## A replayed summary had no end the model could find
@@ -726,6 +727,37 @@ Settings are upstream's keys, read as `getRetrySettings()` reads them (`Settings
 session puts on every request (`AgentSession::buildRequestOptions()`, upstream's
 `buildRequestOptions()`), with `httpIdleTimeoutMs` (300000, `disabled` = 2147483647) as the default
 `timeoutMs`.
+
+## Carrying on a run that stopped inside a tool call
+
+`continueRun()` used to refuse a conversation that ended on tool calls, so a scheduled run the daemon
+was in the middle of failed whenever the stop came during a tool — which is most of a run's time.
+pi-durable's answer is a replay policy on each tool (`replay?: "safe" | "unsafe"`, omitted
+`unsafe`): after a restart a `safe` call runs again, any other is answered with an `interrupted`
+error result and the model decides. pig takes the policy, not the runtime: the session file already
+holds the call before the tool runs (the assistant message is written on `message_end`), so it is
+the intent record pi-durable writes, and nothing new is stored.
+
+- **`Pig\Agent\ToolReplay`** (`Safe`/`Unsafe`) and **`ReplayableTool`**, optional as the field is;
+  `read`, `grep`, `find` and `ls` are `Safe`. Each wrapper (`HookedTool`, `DescribedTool`,
+  `ResultImagesTool`, `WrappedCustomTool`) forwards `ToolReplay::of()` of what it wraps, or the
+  declaration is lost one layer down. An extension declares it with `CustomTool(replay: ToolReplay::Safe)`.
+- **`AgentLoop::resume()` / `Agent::resume()`**, pig's own; `continue()` stays upstream's and still
+  refuses an assistant message. `unansweredToolCalls()` is the last assistant message's calls with
+  no result after it — a crash between two tools leaves some answered and some not, and before this
+  `continue()` went ahead and the provider layer answered the rest `No result provided`.
+- **Only the first unanswered call can have been running**: tools run one after another and each
+  result is written when it ends. That one is `Safe` → run again, otherwise (or its tool is gone)
+  `Tool <name> was interrupted and may have partially run`, pi-durable's wording. The calls after it
+  never started and run as they would have.
+- **The hooks run again**, where pi-durable skips `beforeTool` on recovery: it stores the arguments
+  the hooks settled on, pig's file only has what the model sent, so a `tool_call` guard that blocked
+  or rewrote the call has to be asked again.
+- Not done: the output a tool had produced before the stop is not kept, so an interrupted `bash`
+  tells the model nothing about how far it got.
+
+Regression tests: the five `Resume*`/`AnInterruptedCall*` cases in `AgentLoopTest` and
+`AgentSessionTest::testACallThatMayHaveHalfRunIsAnsweredInterruptedAndTheRunGoesOn`.
 
 ## Finding the one you want
 

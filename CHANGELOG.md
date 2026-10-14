@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.67] - 2026-10-14
+
+### Changed
+
+- A run that stopped inside a tool call is carried on rather than refused (`continueRun()`, which the web daemon's scheduled runs use): a call that may have been running is run again if its tool only reads (`read`, `grep`, `find`, `ls`), and otherwise answered `Tool <name> was interrupted and may have partially run` for the model to decide — pi-durable's replay policy. The calls after it, which never started, run as they would have. An extension tool opts in with `CustomTool(replay: ToolReplay::Safe)`.
+
+### Fixed
+
+- A run stopped between two of a turn's tool calls was carried on with the rest answered `No result provided`; they are run now.
+
 ## [0.6.66] - 2026-10-14
 
 ### Changed

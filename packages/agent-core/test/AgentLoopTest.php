@@ -12,6 +12,8 @@ use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentLoopConfig;
 use Pig\Agent\AgentLoopTurnUpdate;
 use Pig\Agent\PrepareNextTurnContext;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Agent\AgentMessage;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
@@ -48,7 +50,7 @@ final class Notice implements AgentMessage
 }
 
 /** A tool whose behaviour each test decides. */
-final class ScriptedTool implements AgentTool
+final class ScriptedTool implements AgentTool, ReplayableTool
 {
     /** @var list<array<string, mixed>> */
     public array $calls = [];
@@ -56,7 +58,13 @@ final class ScriptedTool implements AgentTool
     public function __construct(
         private readonly string $name,
         private readonly Closure $handler,
+        private readonly ToolReplay $replay = ToolReplay::Unsafe,
     ) {
+    }
+
+    public function replay(): ToolReplay
+    {
+        return $this->replay;
     }
 
     public function definition(): Tool
@@ -345,6 +353,107 @@ final class AgentLoopTest extends TestCase
             fn () => AgentLoop::continue(new AgentContext([$this->answer('hi')]), $config),
             'Cannot continue from an assistant message',
         );
+    }
+
+    // ---- resuming a run a stopped process left inside a turn ------------------------------------
+
+    public function testResumeRunsAgainACallWhoseToolIsSafe(): void
+    {
+        $tool = new ScriptedTool('read', static fn (array $args): AgentToolResult => new AgentToolResult(
+            [new TextContent("contents of {$args['path']}")],
+        ), ToolReplay::Safe);
+
+        [$events, $messages] = $this->resumeFrom(
+            [new UserMessage('what is in a.php?'), $this->wantsTool('read', ['path' => '/tmp/a.php'])],
+            [$this->answer('a php file')],
+            [$tool],
+        );
+
+        $this->assertSame([['path' => '/tmp/a.php']], $tool->calls);
+        $this->assertSame([
+            'AgentStartEvent', 'TurnStartEvent',
+            'ToolExecutionStartEvent', 'ToolExecutionEndEvent',
+            'MessageStartEvent', 'MessageEndEvent',                      // the tool result
+            'TurnEndEvent',
+            'TurnStartEvent',
+            'MessageStartEvent', 'MessageEndEvent',                      // the answer
+            'TurnEndEvent',
+            'AgentEndEvent',
+        ], $events);
+        $this->assertCount(2, $messages, 'only the result and the answer are new');
+        $this->assertFalse($messages[0]->isError);
+        $this->assertSame('contents of /tmp/a.php', $messages[0]->content[0]->text);
+        $this->assertSame('a php file', $messages[1]->content[0]->text);
+    }
+
+    public function testResumeAnswersAnUnsafeCallAsInterruptedAndRunsTheOnesThatNeverStarted(): void
+    {
+        $tool = new ScriptedTool('bash', static fn (array $args): AgentToolResult => new AgentToolResult(
+            [new TextContent("ran {$args['path']}")],
+        ));
+
+        [, $messages] = $this->resumeFrom(
+            [new UserMessage('build it'), $this->wantsTools('bash', [['path' => 'first'], ['path' => 'second']])],
+            [$this->answer('the first may have half run')],
+            [$tool],
+        );
+
+        // Tools run one after another, so only the first can have been running when it stopped.
+        $this->assertSame([['path' => 'second']], $tool->calls);
+        $this->assertSame('call_0', $messages[0]->toolCallId);
+        $this->assertTrue($messages[0]->isError);
+        $this->assertSame('Tool bash was interrupted and may have partially run', $messages[0]->content[0]->text);
+        $this->assertSame('call_1', $messages[1]->toolCallId);
+        $this->assertSame('ran second', $messages[1]->content[0]->text);
+        $this->assertInstanceOf(AssistantMessage::class, $messages[2]);
+    }
+
+    public function testResumeAnswersOnlyTheCallsWithNoResultYet(): void
+    {
+        $tool = new ScriptedTool('read', static fn (array $args): AgentToolResult => new AgentToolResult(
+            [new TextContent("contents of {$args['path']}")],
+        ), ToolReplay::Safe);
+        $asked = $this->wantsTools('read', [['path' => 'a'], ['path' => 'b']]);
+
+        [, $messages] = $this->resumeFrom(
+            [new UserMessage('read both'), $asked, new ToolResultMessage('call_0', 'read', [new TextContent('contents of a')], false)],
+            [$this->answer('both read')],
+            [$tool],
+        );
+
+        $this->assertSame([['path' => 'b']], $tool->calls, 'the call with a result is not run again');
+        $this->assertSame('call_1', $messages[0]->toolCallId);
+        // The model is shown both results after the call that asked for them.
+        $sent = $this->seen[0]->messages;
+        $this->assertSame(['call_0', 'call_1'], [$sent[3]->toolCallId, $sent[4]->toolCallId]);
+    }
+
+    public function testAnInterruptedCallToAToolThatIsGoneIsInterruptedRatherThanNotFound(): void
+    {
+        [, $messages] = $this->resumeFrom(
+            [new UserMessage('read it'), $this->wantsTool('read', ['path' => 'a'])],
+            [$this->answer('ok')],
+            [],
+        );
+
+        $this->assertSame('Tool read was interrupted and may have partially run', $messages[0]->content[0]->text);
+    }
+
+    public function testResumeRefusesWhenNoCallIsWaiting(): void
+    {
+        $config = $this->config([]);
+
+        foreach ([
+            [new UserMessage('hi')],
+            [new UserMessage('hi'), $this->answer('hello')],
+            [new UserMessage('hi'), $this->wantsTool('read', ['path' => 'a']), new ToolResultMessage('call_0', 'read', [new TextContent('a')], false)],
+        ] as $messages) {
+            $this->assertThrows(
+                AgentError::class,
+                fn () => AgentLoop::resume(new AgentContext($messages), $config),
+                'no tool calls are waiting for a result',
+            );
+        }
     }
 
     public function testAProviderThatThrowsReachesTheConsumerInsteadOfHangingIt(): void
@@ -696,6 +805,35 @@ final class AgentLoopTest extends TestCase
                     $tools,
                 ),
                 $this->config($turns, $getSteeringMessages, $getFollowUpMessages),
+                null,
+                $this->provider($turns),
+            );
+
+            $events = [];
+
+            foreach ($stream as $event) {
+                $events[] = (new ReflectionClass($event))->getShortName();
+            }
+
+            return [$events, $stream->result()->await()];
+        });
+    }
+
+    /**
+     * @param list<mixed>            $messages the conversation a stopped process left
+     * @param list<AssistantMessage> $turns
+     * @param list<AgentTool>        $tools
+     * @return array{0: list<string>, 1: list<mixed>}
+     */
+    private function resumeFrom(array $messages, array $turns, array $tools): array
+    {
+        return Async::run(function () use ($messages, $turns, $tools): array {
+            $stream = AgentLoop::resume(
+                new AgentContext(
+                    [Transcript::createInitialSystemMessage('be brief', array_map(static fn (AgentTool $tool): Tool => Transcript::toToolDeclaration($tool->definition()), $tools)), ...$messages],
+                    $tools,
+                ),
+                $this->config($turns),
                 null,
                 $this->provider($turns),
             );

@@ -526,8 +526,8 @@ final class ScheduleManager
 
     /**
      * Open a run's conversation and carry it on (`AgentSession::continueRun()`). A conversation
-     * that had already finished is a finished run; one stopped inside a tool call is refused by
-     * the child, with its reason, and is not run again.
+     * that had already finished is a finished run; one the child refuses, with its reason, is an
+     * error and is not run again.
      */
     private function carryOn(string $taskId, string $runId, string $file, string $cwd): void
     {

@@ -232,10 +232,13 @@ file, so it is the same on every device; a question waiting for an answer keeps 
   run's session file (`SessionPool::open()`) and sends pig's own `continue` command
   (`AgentSession::continueRun()`): a last turn that failed or was aborted is dropped (with a
   `context_edit`, as a retry drops it) and the run goes again; a conversation ending on an answer is
-  `finished` and the run is DONE; one ending on a tool call is **refused**, because the command may
-  have half run and running it again is not the scheduler's call. A run with no session file, or
-  whose task is gone, is an ERROR as before. pi-durable's whole runtime was weighed for this and
-  declined — a second store beside pi's session file for one feature.
+  `finished` and the run is DONE; one ending on tool calls without results has them answered and goes
+  on — a call that may have half run is run again only if its tool is replay-safe, otherwise answered
+  `interrupted` for the model to decide ([Carrying on a run that stopped inside a tool
+  call](session.md#carrying-on-a-run-that-stopped-inside-a-tool-call)). A run the child refuses, with
+  no session file, or whose task is gone, is an ERROR as before. pi-durable's whole runtime was weighed
+  for this and declined — a second store beside pi's session file for one feature; its replay policy
+  was taken without it.
 
 Regression tests: `CronExpressionTest`, `ScheduleManagerTest` (both under `test/Web/`), the two
 scheduled-task cases in `WebModeTest`, the six `continueRun` cases in `AgentSessionTest` and the

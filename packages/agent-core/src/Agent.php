@@ -400,6 +400,24 @@ final class Agent
     }
 
     /**
+     * Carry on a run a stopped process left inside a turn — `AgentLoop::resume()`, pig's own.
+     *
+     * Checked here rather than only in the loop, for the reason `continue()` gives.
+     */
+    public function resume(): void
+    {
+        if ($this->state->isStreaming) {
+            throw new AgentError('Agent is already working. Wait for it to finish before resuming.');
+        }
+
+        if (AgentLoop::unansweredToolCalls($this->state->messages) === null) {
+            throw new AgentError('Cannot resume: no tool calls are waiting for a result');
+        }
+
+        $this->run(null, resume: true);
+    }
+
+    /**
      * @param string|object|list<mixed> $input
      * @param list<ImageContent>        $images
      * @return list<mixed>
@@ -423,8 +441,8 @@ final class Agent
      */
     private bool $skipInitialSteeringPoll = false;
 
-    /** @param list<mixed>|null $prompts null continues from the existing context */
-    private function run(?array $prompts, bool $skipInitialSteeringPoll = false): void
+    /** @param list<mixed>|null $prompts null continues from the existing context, or resumes it with $resume */
+    private function run(?array $prompts, bool $skipInitialSteeringPoll = false, bool $resume = false): void
     {
         $model = $this->state->model;
 
@@ -454,9 +472,11 @@ final class Agent
         };
 
         try {
-            $stream = $prompts !== null
-                ? AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->streamFunction, $emit)
-                : AgentLoop::continue($context, $config, $this->controller->signal, $this->streamFunction, $emit);
+            $stream = match (true) {
+                $prompts !== null => AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->streamFunction, $emit),
+                $resume => AgentLoop::resume($context, $config, $this->controller->signal, $this->streamFunction, $emit),
+                default => AgentLoop::continue($context, $config, $this->controller->signal, $this->streamFunction, $emit),
+            };
 
             $stream->result()->await();
 

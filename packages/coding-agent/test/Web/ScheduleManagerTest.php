@@ -588,17 +588,17 @@ final class ScheduleManagerTest extends TestCase
         });
     }
 
-    public function testARunStoppedInsideAToolCallIsAFailureThatSaysWhyAndIsNotRunAgain(): void
+    public function testARunTheChildRefusesIsAFailureThatSaysWhyAndIsNotRunAgain(): void
     {
         Async::run(function (): void {
-            $this->leftGoing("TOOLCALL\n");
+            $this->leftGoing("NOTHING\n");
             $manager = $this->manager();
             $manager->start();
 
             $this->until(static fn (): bool => (self::lastRun($manager, 'tx')['status'] ?? null) === ScheduleManager::ERROR, 'the run to fail');
 
             self::assertStringStartsWith('Not carried on after the server stopped: ', self::lastRun($manager, 'tx')['error']);
-            self::assertStringContainsString('tool call', self::lastRun($manager, 'tx')['error']);
+            self::assertStringContainsString('nothing in this session', self::lastRun($manager, 'tx')['error']);
         });
     }
 

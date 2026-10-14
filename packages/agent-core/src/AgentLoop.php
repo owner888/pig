@@ -143,6 +143,113 @@ final class AgentLoop
     }
 
     /**
+     * Carry on a run a stopped process left inside a turn: answer the last assistant message's
+     * tool calls that have no result yet, then go on as the turn would have.
+     *
+     * pig's own, from pi-durable's tool recovery. Tools run one after another and each result is
+     * written when it ends, so of the calls without a result only the first can have been running
+     * when the process stopped; it is run again if its tool is `ToolReplay::Safe`, and otherwise
+     * answered with pi-durable's `Tool <name> was interrupted and may have partially run` as an
+     * error, for the model to decide about. The calls after it never started and run as they would
+     * have. Their tools are the context's — wrapped by whatever wraps them, hooks included, because
+     * what a hook decided the first time was never written down.
+     *
+     * @param Closure(mixed, \Pig\Ai\TranscriptContext, SimpleStreamOptions): mixed|null $streamFn
+     * @param (Closure(AgentEvent): void)|null $emit
+     * @return EventStream<AgentEvent, list<mixed>>
+     */
+    public static function resume(
+        AgentContext $context,
+        AgentLoopConfig $config,
+        ?AbortSignal $signal = null,
+        ?Closure $streamFn = null,
+        ?Closure $emit = null,
+    ): EventStream {
+        $unanswered = self::unansweredToolCalls($context->messages);
+
+        if ($unanswered === null) {
+            throw new AgentError('Cannot resume: no tool calls are waiting for a result');
+        }
+
+        [$message, $toolCalls] = $unanswered;
+        $stream = self::newStream();
+        $emit = self::emitter($stream, $emit);
+        $newMessages = [];
+        $current = new AgentContext($context->messages, $context->tools);
+
+        Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn, $emit, $message, $toolCalls): void {
+            try {
+                $emit(new AgentStartEvent());
+                $emit(new TurnStartEvent());
+
+                if ($config->getTools !== null) {
+                    $current->tools = ($config->getTools)();
+                }
+
+                [$toolResults, $steering] = self::executeToolCalls(
+                    $current,
+                    $message,
+                    $signal,
+                    $emit,
+                    $config,
+                    $toolCalls,
+                    interruptedId: $toolCalls[0]->id,
+                );
+
+                foreach ($toolResults as $result) {
+                    $current->append($result);
+                    $newMessages[] = $result;
+                }
+
+                $turn = new PrepareNextTurnContext($message, $toolResults, $current, $newMessages);
+                $emit(new TurnEndEvent($message, $toolResults));
+
+                self::run($current, $newMessages, $config, $signal, $emit, $streamFn, $turn, $steering);
+                $stream->end($newMessages);
+            } catch (Throwable $error) {
+                $stream->fail($error);
+            }
+        });
+
+        return $stream;
+    }
+
+    /**
+     * The last assistant message and those of its tool calls with no result after it, or null when
+     * there are none — when the transcript does not end on that message and its results.
+     *
+     * @param list<mixed> $messages
+     * @return array{0: AssistantMessage, 1: non-empty-list<ToolCall>}|null
+     */
+    public static function unansweredToolCalls(array $messages): ?array
+    {
+        $answered = [];
+
+        for ($at = count($messages) - 1; $at >= 0; $at--) {
+            $message = $messages[$at];
+
+            if ($message instanceof ToolResultMessage) {
+                $answered[$message->toolCallId] = true;
+
+                continue;
+            }
+
+            if (!$message instanceof AssistantMessage || $message->stopReason->isFailure()) {
+                return null;
+            }
+
+            $waiting = array_values(array_filter(
+                $message->toolCalls(),
+                static fn (ToolCall $call): bool => !isset($answered[$call->id]),
+            ));
+
+            return $waiting === [] ? null : [$message, $waiting];
+        }
+
+        return null;
+    }
+
+    /**
      * How the loop hands an event on.
      *
      * Without a listener: pushed onto the stream, for whoever iterates it — and the loop does not
@@ -189,6 +296,7 @@ final class AgentLoop
     /**
      * @param list<mixed>               $newMessages
      * @param Closure(AgentEvent): void $emit
+     * @param list<mixed>|null          $resumedSteering what the resumed turn's tools took off the steering queue
      */
     private static function run(
         AgentContext $context,
@@ -197,12 +305,15 @@ final class AgentLoop
         ?AbortSignal $signal,
         Closure $emit,
         ?Closure $streamFn,
+        ?PrepareNextTurnContext $resumedTurn = null,
+        ?array $resumedSteering = null,
     ): void {
-        $firstTurn = true;
+        // A resumed run (`resume()`) has finished a turn already, so what follows is a next turn.
+        $firstTurn = $resumedTurn === null;
         // Upstream's `lastCompletedTurn`: what `prepareNextTurn` is told before every turn but the first.
-        $lastCompletedTurn = null;
+        $lastCompletedTurn = $resumedTurn;
         // Checked before the first call too: the user may have typed while waiting.
-        $pending = self::call($config->getSteeringMessages);
+        $pending = $resumedSteering ?? self::call($config->getSteeringMessages);
 
         // Outer: restarts when a follow-up arrives after the agent would have stopped.
         while (true) {
@@ -531,6 +642,8 @@ final class AgentLoop
      * malformed conversation that the provider will reject on the next turn.
      *
      * @param Closure(AgentEvent): void $emit
+     * @param list<ToolCall>|null       $toolCalls     the message's calls when null; `resume()` passes those without a result
+     * @param string|null               $interruptedId `resume()`'s call that may have half run, run again only if its tool is `Safe`
      * @return array{0: list<ToolResultMessage>, 1: list<mixed>|null}
      */
     private static function executeToolCalls(
@@ -539,8 +652,10 @@ final class AgentLoop
         ?AbortSignal $signal,
         Closure $emit,
         AgentLoopConfig $config,
+        ?array $toolCalls = null,
+        ?string $interruptedId = null,
     ): array {
-        $toolCalls = $message->toolCalls();
+        $toolCalls ??= $message->toolCalls();
         $results = [];
         $steering = null;
 
@@ -551,6 +666,11 @@ final class AgentLoop
 
             try {
                 $tool = $context->toolNamed($toolCall->name);
+
+                // `resume()`'s call that may have been running when the process stopped.
+                if ($toolCall->id === $interruptedId && ($tool === null || ToolReplay::of($tool) !== ToolReplay::Safe)) {
+                    throw new AgentError("Tool {$toolCall->name} was interrupted and may have partially run");
+                }
 
                 if ($tool === null) {
                     throw new AgentError("Tool {$toolCall->name} not found");

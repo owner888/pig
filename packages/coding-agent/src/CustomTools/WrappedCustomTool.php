@@ -7,6 +7,8 @@ namespace Pig\CodingAgent\CustomTools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Hooks\HookContext;
@@ -23,7 +25,7 @@ use Pig\CodingAgent\Hooks\HookContext;
  * progress callback pass through unchanged, so a custom tool and a built-in one are the same
  * thing to the loop — and to the hooks, which wrap this in turn.
  */
-final readonly class WrappedCustomTool implements AgentTool
+final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
 {
     /** @param Closure(): HookContext $context */
     public function __construct(
@@ -65,6 +67,12 @@ final readonly class WrappedCustomTool implements AgentTool
             $this->tool->parameters,
             $this->tool->constrainedSampling,
         );
+    }
+
+    /** What the declaration says — `CustomTool::$replay`. */
+    public function replay(): ToolReplay
+    {
+        return $this->tool->replay;
     }
 
     public function label(): string

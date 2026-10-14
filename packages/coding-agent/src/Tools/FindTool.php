@@ -8,6 +8,8 @@ use Closure;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\ReplayableTool;
+use Pig\Agent\ToolReplay;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
@@ -21,7 +23,7 @@ use Pig\Tui\Process;
  * upstream agent was built against is a source of confusion nobody needs. A machine
  * without it gets an error saying how to install it — see `ExternalTool`.
  */
-final class FindTool implements AgentTool
+final class FindTool implements AgentTool, ReplayableTool
 {
     private const int DEFAULT_LIMIT = 1000;
 
@@ -59,6 +61,13 @@ final class FindTool implements AgentTool
             // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
             typeBox: true,
         );
+    }
+
+    /** It only reads, so a call a stopped process left half done is run again. */
+    #[\Override]
+    public function replay(): ToolReplay
+    {
+        return ToolReplay::Safe;
     }
 
     #[\Override]
