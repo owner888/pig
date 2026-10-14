@@ -208,12 +208,12 @@ export class ToolCard {
     } else if (Array.isArray(result)) {
       for (const item of result) {
         if (item?.type === "text" && item.text) textOutput += item.text;
-        if (item?.type === "image" && item.data) images.push(item);
+        if (item?.type === "image" && (item.data || item.url)) images.push(item);
       }
     } else if (result.content && Array.isArray(result.content)) {
       for (const item of result.content) {
         if (item?.type === "text" && item.text) textOutput += item.text;
-        if (item?.type === "image" && item.data) images.push(item);
+        if (item?.type === "image" && (item.data || item.url)) images.push(item);
       }
     } else if (result.output) {
       textOutput = typeof result.output === "string" ? result.output : JSON.stringify(result.output, null, 2);
@@ -227,7 +227,7 @@ export class ToolCard {
 
     let imagesHtml = "";
     if (images.length > 0) {
-      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data)}" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="${escapeHtml(t("open_full_image"))}">`).join("")}</div>`;
+      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="${escapeHtml(img.url || `data:${img.mimeType || 'image/png'};base64,${img.data}`)}" loading="lazy" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="${escapeHtml(t("open_full_image"))}">`).join("")}</div>`;
     }
 
     if (!this.isError && this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {

@@ -639,6 +639,50 @@ final class HttpServer
             return;
         }
 
+        // 1.4 One image of a conversation's history, by the `ref` its `get_messages` gave
+        // (`RpcMode::imagesAsRefs()`): the page puts this URL in an `<img loading="lazy">`, so a
+        // history of screenshots costs a page only the ones it scrolls to. Asked of the running
+        // child, from a fiber; the same image is the same bytes, so the browser keeps it.
+        if ($path === '/api/session-image') {
+            $query = $req['query'] ?? [];
+            $cwd = is_string($query['cwd'] ?? null) ? $query['cwd'] : '';
+            $file = is_string($query['file'] ?? null) ? $query['file'] : '';
+            $ref = is_string($query['ref'] ?? null) ? $query['ref'] : '';
+            $managed = $cwd !== '' && $file !== '' && $ref !== '' ? $this->pool->find($cwd, $file) : null;
+
+            if ($managed === null) {
+                $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'No such conversation running.');
+
+                return;
+            }
+
+            Async::spawn(static function () use ($conn, $managed, $ref): void {
+                try {
+                    $image = $managed->client->getImage($ref);
+                    $bytes = base64_decode($image['data'], true);
+                } catch (Throwable $e) {
+                    $conn->sendResponse(404, ['Content-Type' => 'text/plain'], $e->getMessage());
+
+                    return;
+                }
+
+                // Raster only: an SVG is a document that can run script, on this page's origin.
+                if ($bytes === false || !in_array($image['mimeType'], ['image/png', 'image/jpeg', 'image/gif', 'image/webp'], true)) {
+                    $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'Not an image.');
+
+                    return;
+                }
+
+                $conn->sendResponse(200, [
+                    'Content-Type' => $image['mimeType'],
+                    'Cache-Control' => 'private, max-age=86400',
+                    'X-Content-Type-Options' => 'nosniff',
+                ], $bytes);
+            });
+
+            return;
+        }
+
         // 2. Available models list — a fact about this machine's keys, not about any session.
         if ($path === '/api/models') {
             $conn->sendResponse(200, $json, json_encode($this->getModelsPayload()));

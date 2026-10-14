@@ -416,6 +416,7 @@ final class RpcMode
             'set_session_name' => $this->setSessionName($command),
 
             'get_messages' => $this->messagesPage($command),
+            'get_image' => $this->image($command),
 
             'get_commands' => ['commands' => $this->commands()],
 
@@ -1367,8 +1368,10 @@ final class RpcMode
         $all = $this->session->messages();
         $limit = $command['limit'] ?? null;
 
+        $refs = ($command['images'] ?? null) === 'refs';
+
         if (!is_int($limit) || $limit <= 0) {
-            return ['messages' => $this->encoded($all)];
+            return ['messages' => $this->encoded($all, $refs ? 0 : null)];
         }
 
         $total = count($all);
@@ -1381,25 +1384,84 @@ final class RpcMode
         }
 
         return [
-            'messages' => $this->encoded(array_slice($all, $start, $end - $start)),
+            'messages' => $this->encoded(array_slice($all, $start, $end - $start), $refs ? $start : null),
             'total' => $total,
             'start' => $start,
         ];
     }
 
     /**
+     * pig's `get_image`: one image `get_messages` gave by `ref` (`images: "refs"`), as
+     * `{mimeType, data}`. `ref` is the message's index and the path to the image inside it,
+     * dotted — `12.content.3`.
+     *
+     * @param array<string, mixed> $command
+     * @return array{mimeType: string, data: string}
+     */
+    private function image(array $command): array
+    {
+        $ref = (string) ($command['ref'] ?? '');
+        $parts = explode('.', $ref);
+        $index = array_shift($parts);
+        $all = $this->session->messages();
+
+        if (!ctype_digit((string) $index) || !isset($all[(int) $index])) {
+            throw new \RuntimeException("No message for the image {$ref}");
+        }
+
+        $node = SessionCodec::encode($all[(int) $index]);
+
+        foreach ($parts as $key) {
+            $node = is_array($node) && array_key_exists($key, $node) ? $node[$key] : null;
+        }
+
+        if (!is_array($node) || ($node['type'] ?? null) !== 'image' || !is_string($node['data'] ?? null)) {
+            throw new \RuntimeException("No image at {$ref}");
+        }
+
+        return ['mimeType' => (string) ($node['mimeType'] ?? 'image/png'), 'data' => $node['data']];
+    }
+
+    /**
+     * Every image in `$node` given as a `ref` — where it is — in place of its data: a page asks for
+     * it when it comes into view (`get_image`, through `pig web`'s `/api/session-image`). A
+     * conversation of screenshots was megabytes for every part of its history a page fetched.
+     *
+     * @param array<array-key, mixed> $node
+     * @return array<array-key, mixed>
+     */
+    private static function imagesAsRefs(array $node, string $at): array
+    {
+        if (($node['type'] ?? null) === 'image' && is_string($node['data'] ?? null)) {
+            unset($node['data']);
+
+            return [...$node, 'ref' => $at];
+        }
+
+        foreach ($node as $key => $value) {
+            if (is_array($value)) {
+                $node[$key] = self::imagesAsRefs($value, "{$at}.{$key}");
+            }
+        }
+
+        return $node;
+    }
+
+    /**
      * @param list<mixed> $messages
+     * @param int|null $refsFrom the index of the first of `$messages` in the conversation, to give
+     *        images as refs (`imagesAsRefs()`); null keeps them inline
      * @return list<array<string, mixed>>
      */
-    private function encoded(array $messages): array
+    private function encoded(array $messages, ?int $refsFrom = null): array
     {
         $out = [];
 
-        foreach ($messages as $message) {
+        foreach ($messages as $i => $message) {
             $one = SessionCodec::encode($message);
 
             if ($one !== null) {
-                $out[] = $one;
+                $out[] = $refsFrom === null ? $one : self::imagesAsRefs($one, (string) ($refsFrom + $i));
             }
         }
 

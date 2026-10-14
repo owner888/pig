@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.56] - 2026-10-14
+
+### Changed
+
+- Web: a conversation's history no longer carries its images. They come by reference and are fetched one at a time as they scroll into view (`<img loading="lazy">` from `/api/session-image`), so a history of screenshots — computer use, Android use — costs a page only its text and the images it shows, instead of megabytes for every part it loads. Images shown live, as a turn runs, are as before.
+
+### Added
+
+- `--mode rpc`: `get_messages` takes `images: "refs"`, to give each image as `{type: "image", mimeType, ref}` without its data, and `get_image {ref}` answers one as `{mimeType, data}`. `ref` is the message's index and the path to the image in it (`12.content.3`). Without it, images are inline as upstream's.
+
 ## [0.6.55] - 2026-10-14
 
 ### Fixed

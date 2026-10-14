@@ -148,6 +148,7 @@ final class RpcModeTest extends TestCase
         ?Settings $settings = null,
         array $fileCommands = [],
         array $modelScope = [],
+        bool $images = false,
     ): void {
         $this->answers = $answers;
         [$this->in, $this->peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
@@ -164,6 +165,7 @@ final class RpcModeTest extends TestCase
             200_000,
             64_000,
             $reasoning,
+            $images ? ['text', 'image'] : ['text'],
         ));
 
         $tools = [...ToolSet::create($this->cwd, ['read']), ...($customTools?->agentTools() ?? [])];
@@ -632,6 +634,29 @@ final class RpcModeTest extends TestCase
         $first = $this->data(['type' => 'get_messages', 'limit' => 10, 'before' => 3]);
         $this->assertSame(0, $first['start']);
         $this->assertSame(['system', 'user', 'assistant'], array_column($first['messages'], 'role'));
+    }
+
+    public function testHistoryImagesComeAsRefsAndOneAtATimeOnRequest(): void
+    {
+        // pig's own: a page draws a history of screenshots fetching each as it comes into view.
+        $this->start(answers: ['seen'], images: true);
+        // A real one: an image that cannot be read is dropped before it reaches the history.
+        $png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+        $this->send(['type' => 'prompt', 'message' => 'look', 'images' => [['type' => 'image', 'data' => $png, 'mimeType' => 'image/png']]]);
+
+        $page = $this->data(['type' => 'get_messages', 'limit' => 10, 'images' => 'refs']);
+        $user = $page['messages'][1];
+        $this->assertSame('user', $user['role']);
+        $image = array_values(array_filter($user['content'], static fn (array $c): bool => $c['type'] === 'image'))[0];
+
+        $this->assertArrayNotHasKey('data', $image, 'no bytes in the history');
+        $this->assertSame('image/png', $image['mimeType']);
+        $this->assertMatchesRegularExpression('/^1\.content\.\d+$/', $image['ref'], 'the message index, then the path inside it');
+
+        // Without `images`, as upstream's: the data inline — and `get_image` answers the same.
+        $inline = $this->data(['type' => 'get_messages'])['messages'][1]['content'];
+        $data = array_values(array_filter(array_column($inline, 'data')))[0];
+        $this->assertSame(['mimeType' => 'image/png', 'data' => $data], $this->data(['type' => 'get_image', 'ref' => $image['ref']]));
     }
 
     // ---- prompting ---------------------------------------------------------------------

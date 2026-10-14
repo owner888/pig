@@ -300,9 +300,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           // `limit` answers with everything and no `start`, which is drawn as it was.
           this.needsMessages = false;
           const token = this.remoteToken = {};
-          const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD });
+          const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD, ...imageRefs(this) });
           if (this.remoteToken !== token) return;
-          this.render(() => renderMessages(d.messages || []));
+          this.render(() => renderMessages(withImageUrls(this, d.messages || [])));
           this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
           // A `session_start` handler's `notify` arrives before the conversation does, and drawing
           // the conversation clears the chat; the TUI keeps those lines, so they are put back.
@@ -775,6 +775,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         for (const img of images) {
           const src = img.url || `data:${img.mimeType};base64,${img.data}`;
           const imgEl = document.createElement("img");
+          imgEl.loading = "lazy";
           imgEl.src = src;
           imgEl.className = "msg-image-thumb";
           imgEl.title = t("open_full_image");
@@ -2540,7 +2541,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       for (const image of (message.content || []).filter(c => c.type === "image")) {
         const img = document.createElement("img");
         img.className = "msg-image-thumb";
-        img.src = `data:${image.mimeType};base64,${image.data}`;
+        img.loading = "lazy";
+        img.src = image.url || `data:${image.mimeType};base64,${image.data}`;
         img.addEventListener("click", () => openImageLightbox(img.src));
         block.appendChild(img);
       }
@@ -2728,6 +2730,31 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     /**
+     * History's images by reference (`RpcMode::imagesAsRefs()`), each fetched from
+     * `/api/session-image` by an `<img loading="lazy">` as it comes into view: a conversation of
+     * screenshots was megabytes for every part of its history the page asked for. Only for a
+     * conversation with a file, which is what the server finds the image's child by.
+     */
+    function imageRefs(tab) {
+      return tab.sessionFile && tab.cwd ? { images: "refs" } : {};
+    }
+
+    /** Give every image `ref` a URL the server answers with the image. */
+    function withImageUrls(tab, messages) {
+      const walk = (node) => {
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (!node || typeof node !== "object") return;
+        if (node.type === "image" && node.ref && !node.data) {
+          node.url = `/api/session-image?${new URLSearchParams({ cwd: tab.cwd, file: tab.sessionFile, ref: node.ref })}`;
+          return;
+        }
+        Object.values(node).forEach(walk);
+      };
+      walk(messages);
+      return messages;
+    }
+
+    /**
      * Ask the child for the part of the conversation before what has been fetched, and draw it
      * (`backfill()`). One request at a time per tab; a reload in the meantime (`remoteToken`)
      * leaves the answer unused.
@@ -2737,9 +2764,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       tab.fetchingOlder = true;
       const token = tab.remoteToken;
       try {
-        const d = await tab.rpc({ type: "get_messages", limit: FETCH_MORE, before: tab.remoteStart });
+        const d = await tab.rpc({ type: "get_messages", limit: FETCH_MORE, before: tab.remoteStart, ...imageRefs(tab) });
         if (tab.remoteToken !== token || tab.closed) return;
-        const msgs = d.messages || [];
+        const msgs = withImageUrls(tab, d.messages || []);
         tab.remoteStart = Number.isInteger(d.start) ? d.start : 0;
         if (msgs.length > 0) {
           tab.olderMessages = { msgs, end: msgs.length };

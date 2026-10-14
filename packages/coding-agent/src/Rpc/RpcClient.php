@@ -604,6 +604,18 @@ final class RpcClient
         return is_string($data['outcome'] ?? null) ? $data['outcome'] : 'continued';
     }
 
+    /**
+     * pig's `get_image`: one image `get_messages` with `images: "refs"` gave by `ref`.
+     *
+     * @return array{mimeType: string, data: string} the data base64, as messages hold it
+     */
+    public function getImage(string $ref): array
+    {
+        $data = $this->send(['type' => 'get_image', 'ref' => $ref]) ?? [];
+
+        return ['mimeType' => (string) ($data['mimeType'] ?? 'image/png'), 'data' => (string) ($data['data'] ?? '')];
+    }
+
     /** @return list<array<string, mixed>> `{name, description?, source, sourceInfo}` each */
     public function getCommands(): array
     {
