@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.62] - 2026-10-14
+
+### Fixed
+
+- An Ollama (MLX) model's "input length (N tokens) exceeds the model's maximum context length (M tokens)" is recognised as a context overflow, so the conversation is compacted and the turn retried instead of stopping on the error. The pattern only knew the form without "tokens" inside the parentheses.
+
 ## [0.6.61] - 2026-10-14
 
 ### Changed

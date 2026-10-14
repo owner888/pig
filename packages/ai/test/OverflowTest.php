@@ -123,6 +123,7 @@ final class OverflowTest extends TestCase
         yield 'Anthropic byte size' => ['413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}'];
         yield 'LiteLLM' => ["Requested token count exceeds the model's maximum context length of 131072 tokens"];
         yield 'OpenAI-compatible' => ["Input length (265330) exceeds model's maximum context length (262144)."];
+        yield 'Ollama MLX, with the unit inside the parentheses' => ['400: {"message":"input length (282201 tokens) exceeds the model\'s maximum context length (262144 tokens)","type":"invalid_request_error","param":null,"code":null}'];
         yield 'Poolside' => ['Input length 300000 exceeds the maximum allowed input length of 262144 tokens.'];
         yield 'Together AI' => ["The input (300000 tokens) is longer than the model's context length (262144 tokens)."];
         yield 'MiniMax' => ['invalid params, context window exceeds limit'];

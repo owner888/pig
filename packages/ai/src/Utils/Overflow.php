@@ -31,6 +31,7 @@ final class Overflow
      * - OpenAI: "Your input exceeds the context window of this model"
      * - OpenAI/LiteLLM: "Requested token count exceeds the model's maximum context length of 131072 tokens"
      * - OpenAI-compatible: "Input length (265330) exceeds model's maximum context length (262144)."
+     * - Ollama (MLX): "input length (282201 tokens) exceeds the model's maximum context length (262144 tokens)"
      * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
      * - xAI: "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
      * - Groq: "Please reduce the length of the messages or completion"
@@ -56,7 +57,10 @@ final class Overflow
         ['/request_too_large/i', 'Anthropic request byte-size overflow (HTTP 413)'],
         ['/input is too long for requested model/i', 'Amazon Bedrock'],
         ['/exceeds the context window/i', 'OpenAI (Completions & Responses API)'],
-        ["/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\\d,]+ tokens?|\\s*\\([\\d,]+\\))/i", 'OpenAI-compatible proxies (LiteLLM)'],
+        // `(?: tokens?)?` inside the parentheses is pig's, for Ollama's MLX runner: "input length (282201
+        // tokens) exceeds the model's maximum context length (262144 tokens)". Upstream's pattern
+        // stops at the digits, so that overflow was an ordinary error, with no compact-and-retry.
+        ["/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\\d,]+ tokens?|\\s*\\([\\d,]+(?: tokens?)?\\))/i", 'OpenAI-compatible proxies (LiteLLM)'],
         ['/input token count.*exceeds the maximum/i', 'Google (Gemini)'],
         ['/maximum prompt length is \d+/i', 'xAI (Grok)'],
         ['/reduce the length of the messages/i', 'Groq'],
