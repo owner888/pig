@@ -97,7 +97,7 @@ export function openThemeModal() {
     `).join("");
 
     return `
-      <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:12px; font-weight:600;">
+      <div style="font-size:var(--text-sm); color:var(--color-text-secondary); margin-bottom:12px; font-weight:600;">
         ${escapeHtml(t("theme_select_label"))}
       </div>
       <div style="display:flex; flex-direction:column; gap:8px;">

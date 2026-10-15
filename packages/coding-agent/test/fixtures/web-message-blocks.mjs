@@ -63,7 +63,8 @@ globalThis.requestAnimationFrame = (f) => f();
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, locales: {} }) });
 
 const { escapeHtml } = await import(`${root}/utils.js`);
-const { t } = await import(`${root}/i18n.js`);
+// The page's own translate button and its rules (`attachTranslate()` in app.js), not a stub.
+const { t, needsTranslation, translateSettings, translateRequest } = await import(`${root}/i18n.js`);
 const { renderMarkdown } = await import(`${root}/markdown.js`);
 const { ToolCard } = await import(`${root}/components/ToolCard.js`);
 const { ThinkingBlock } = await import(`${root}/components/ThinkingBlock.js`);
@@ -89,8 +90,8 @@ const start = app.indexOf('function appendSummaryMessage');
 const end = app.indexOf('    // ---- boot', start);
 assert.notEqual(start, -1);
 assert.notEqual(end, -1);
-const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', `${app.slice(userStart, userEnd)}\n${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages };`);
-const { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage);
+const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', 'needsTranslation', 'translateSettings', 'translateRequest', `${app.slice(userStart, userEnd)}\n${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages };`);
+const { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage, needsTranslation, translateSettings, translateRequest);
 
 renderMessages(fixture.messages);
 const html = chatScroll.children.map((c) => c.innerHTML).join('\n');

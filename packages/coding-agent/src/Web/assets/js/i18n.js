@@ -1043,16 +1043,16 @@ import { applyTheme, currentTheme } from "./theme.js";
       const renderModalBody = () => {
         const doNot = translateSettings.doNotTranslate ?? [currentLocale];
         let html = `
-          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
+          <div style="font-size:var(--text-sm); color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
             ${escapeHtml(t("translate_section"))}
           </div>
           <div id="translate-do-not" class="lang-item-row">
             <span>${escapeHtml(t("translate_do_not"))}</span>
-            <span style="color:var(--color-dim); font-size:12px;">${escapeHtml(doNot.map(languageName).join(", "))} ›</span>
+            <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(doNot.map(languageName).join(", "))} ›</span>
           </div>
           <div id="translate-do-not-list" style="display:none; flex-wrap:wrap; gap:4px 14px; padding:4px 14px 12px;">
             ${translateChoices().map(([code, name]) => `
-              <label style="display:flex; align-items:center; gap:6px; font-size:13px; width:46%; cursor:pointer;">
+              <label style="display:flex; align-items:center; gap:6px; font-size:var(--text-base); width:46%; cursor:pointer;">
                 <input type="checkbox" class="sched-toggle" data-code="${escapeHtml(code)}" ${doNot.includes(code) ? "checked" : ""}>${escapeHtml(name)}
               </label>`).join("")}
           </div>
@@ -1060,10 +1060,10 @@ import { applyTheme, currentTheme } from "./theme.js";
             <span>${escapeHtml(t("translate_entire"))}</span>
             <input type="checkbox" class="sched-toggle" id="translate-entire" ${translateSettings.entireChats ? "checked" : ""}>
           </label>
-          <div style="font-size:11px; color:var(--color-dim); line-height:1.4; margin-bottom:18px;">
+          <div style="font-size:var(--text-xs); color:var(--color-dim); line-height:1.4; margin-bottom:18px;">
             ${escapeHtml(t("translate_hint"))}
           </div>
-          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
+          <div style="font-size:var(--text-sm); color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
             ${escapeHtml(t("lang_select_label"))}
           </div>
           <div id="lang-list-container" style="display:flex; flex-direction:column; gap:6px; margin-bottom:18px;">
@@ -1101,7 +1101,7 @@ import { applyTheme, currentTheme } from "./theme.js";
               <span>${escapeHtml(pack.label || loc)}</span>
               <div style="display:flex; gap:6px; align-items:center;">
                 <span class="lang-badge">${escapeHtml(t("lang_custom_badge"))}</span>
-                <button class="mini-btn danger del-custom-lang" data-del="${escapeHtml(loc)}" title="${escapeHtml(t("delete_custom_lang"))}" style="padding:1px 5px; font-size:11px;">×</button>
+                <button class="mini-btn danger del-custom-lang" data-del="${escapeHtml(loc)}" title="${escapeHtml(t("delete_custom_lang"))}" style="padding:1px 5px; font-size:var(--text-xs);">×</button>
                 ${isActive ? '<span>✓</span>' : ''}
               </div>
             </div>
@@ -1111,15 +1111,15 @@ import { applyTheme, currentTheme } from "./theme.js";
         html += `
           </div>
           <div style="border-top:1px solid var(--color-border); padding-top:14px; display:flex; flex-direction:column; gap:10px;">
-            <div style="font-size:11px; color:var(--color-dim); line-height:1.4;">
+            <div style="font-size:var(--text-xs); color:var(--color-dim); line-height:1.4;">
               ${escapeHtml(t("import_pack_hint"))}
             </div>
             <div style="display:flex; gap:8px;">
               <input type="file" id="lang-pack-input" accept=".json" style="display:none;">
-              <button id="import-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:12px; font-weight:600;">
+              <button id="import-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:var(--text-sm); font-weight:600;">
                 ${escapeHtml(t("import_pack_btn"))}
               </button>
-              <button id="export-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:12px; font-weight:600;">
+              <button id="export-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:var(--text-sm); font-weight:600;">
                 ${escapeHtml(t("export_pack_btn"))}
               </button>
             </div>

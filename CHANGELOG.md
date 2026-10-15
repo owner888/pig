@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.73] - 2026-10-15
+
+### Added
+
+- Size tokens for the web page — text, control heights, corners, spacing, icons (`--text-*`, `--control-*`, `--radius-*`, `--space-*`, `--icon-*` in `style.css`), taken from what the page already used most, with the rules in `docs/dev/design/web-ui.md`. Every font size and corner on the page uses them now — the stylesheet's and the scripts' inline styles alike — and `WebStyleTokensTest` fails on one written in px. The odd sizes in between went to the nearest token (9–10.5px labels to 11px, 12.5px to 12px, ×/+ glyphs to 16px, 10–14px corners to 8 or 12px).
+
+### Changed
+
+- The scheduled-task pages, form and confirmation card are redrawn on those tokens: 13px text, 32px buttons, 6–8px corners, as the rest of the page — they had been drawn larger than anything around them.
+
+### Fixed
+
+- `WebMessageBlocksTest` failed with `needsTranslation is not defined` since messages got a Translate button: the fixture runs the page's own message renderer and now hands it the page's own translation helpers.
+
 ## [0.6.72] - 2026-10-15
 
 ### Added

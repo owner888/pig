@@ -1896,11 +1896,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         title: t("api_keys"),
         bodyHtml: `
           <div style="display:flex; flex-direction:column; gap:10px;">
-            ${noModels ? `<div style="color:var(--color-text-secondary); font-size:13px;">${escapeHtml(t("keys_none_hint"))}</div>` : ""}
+            ${noModels ? `<div style="color:var(--color-text-secondary); font-size:var(--text-base);">${escapeHtml(t("keys_none_hint"))}</div>` : ""}
             <select class="select-pill select-wide" id="key-provider"></select>
-            <div id="key-provider-hint" style="color:var(--color-dim); font-size:12px;"></div>
+            <div id="key-provider-hint" style="color:var(--color-dim); font-size:var(--text-sm);"></div>
             <input class="modal-input" id="key-value" type="password" autocomplete="off" placeholder="${escapeHtml(t("key_placeholder"))}">
-            <div id="key-error" style="color:var(--color-error); font-size:12px;" hidden></div>
+            <div id="key-error" style="color:var(--color-error); font-size:var(--text-sm);" hidden></div>
             <div class="modal-section">${escapeHtml(t("keys_configured"))}</div>
             <div id="key-list" style="display:flex; flex-direction:column; gap:6px;"></div>
           </div>
@@ -1941,12 +1941,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             list.innerHTML = "";
             const configured = providers.filter((p) => p.state !== "none");
             if (configured.length === 0) {
-              list.innerHTML = `<div style="color:var(--color-dim); font-size:12px;">${escapeHtml(t("keys_empty"))}</div>`;
+              list.innerHTML = `<div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("keys_empty"))}</div>`;
             }
             for (const p of configured) {
               const row = document.createElement("div");
-              row.style.cssText = "display:flex; align-items:center; gap:8px; font-size:13px;";
-              row.innerHTML = `<span style="flex:1; min-width:0;">${escapeHtml(p.id)} <span style="color:var(--color-dim); font-size:12px;">${escapeHtml(stateText(p))}</span></span>`;
+              row.style.cssText = "display:flex; align-items:center; gap:8px; font-size:var(--text-base);";
+              row.innerHTML = `<span style="flex:1; min-width:0;">${escapeHtml(p.id)} <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(stateText(p))}</span></span>`;
               if (p.state === "stored") {
                 const remove = document.createElement("button");
                 remove.className = "mini-btn";
@@ -2818,9 +2818,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         title: t("rename_session"),
         bodyHtml: `
           <div style="display:flex; flex-direction:column; gap:10px;">
-            <label style="color:var(--color-text-secondary); font-size:12px;">${escapeHtml(t("rename_label"))}</label>
+            <label style="color:var(--color-text-secondary); font-size:var(--text-sm);">${escapeHtml(t("rename_label"))}</label>
             <input class="modal-input" id="rename-session-input" type="text" value="${escapeHtml(currentCleanName)}" placeholder="${escapeHtml(t("rename_placeholder"))}" autocomplete="off">
-            <div style="color:var(--color-dim); font-size:11px; font-family:var(--font-mono); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(session.filename)}">
+            <div style="color:var(--color-dim); font-size:var(--text-xs); font-family:var(--font-mono); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(session.filename)}">
               ${escapeHtml(t("file_label"))}${escapeHtml(session.filename)}
             </div>
           </div>
@@ -2876,12 +2876,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       openModal({
         title: t("delete_session"),
         bodyHtml: `
-          <div style="line-height:1.6; font-size:13px;">
+          <div style="line-height:1.6; font-size:var(--text-base);">
             ${escapeHtml(t("delete_confirm"))}
-            <div style="margin:12px 0; padding:10px 12px; background:var(--color-hover); border:1px solid var(--color-border); border-radius:6px; font-weight:600; color:var(--color-text-primary); word-break:break-word;">
+            <div style="margin:12px 0; padding:10px 12px; background:var(--color-hover); border:1px solid var(--color-border); border-radius:var(--radius-md); font-weight:600; color:var(--color-text-primary); word-break:break-word;">
               ${escapeHtml(displayName)}
             </div>
-            <div style="color:var(--color-error); font-size:12px;">⚠️ ${escapeHtml(t("delete_hint"))}</div>
+            <div style="color:var(--color-error); font-size:var(--text-sm);">⚠️ ${escapeHtml(t("delete_hint"))}</div>
           </div>
         `,
         confirmText: t("delete"),

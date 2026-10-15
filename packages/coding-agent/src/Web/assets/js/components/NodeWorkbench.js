@@ -590,7 +590,7 @@ export class NodeWorkbench {
           <button class="modal-close-btn" id="sftp-edit-close">✕</button>
         </div>
         <div style="padding:14px;">
-          <textarea class="node-editor-textarea" style="width:100%; height:380px; font-family:var(--font-mono); font-size:12.5px; background:var(--color-background); border:1px solid var(--color-border); color:var(--color-text-primary); padding:10px; border-radius:6px; resize:none;" spellcheck="false">${escapeHtml(text)}</textarea>
+          <textarea class="node-editor-textarea" style="width:100%; height:380px; font-family:var(--font-mono); font-size:var(--text-sm); background:var(--color-background); border:1px solid var(--color-border); color:var(--color-text-primary); padding:10px; border-radius:var(--radius-md); resize:none;" spellcheck="false">${escapeHtml(text)}</textarea>
         </div>
         <div class="modal-footer" style="padding:10px 14px; display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary" id="sftp-edit-cancel">${escapeHtml(t("cancel"))}</button>
@@ -626,9 +626,9 @@ export class NodeWorkbench {
           <div class="modal-title">🔒 ${escapeHtml(t("node_verify_fp"))}</div>
           <button class="modal-close-btn" id="fp-close">✕</button>
         </div>
-        <div style="padding:16px; font-size:13px; line-height:1.6;">
+        <div style="padding:16px; font-size:var(--text-base); line-height:1.6;">
           <p style="color:var(--color-text-secondary); margin-bottom:12px;">${escapeHtml(t("node_fingerprint_prompt"))}</p>
-          <div style="font-family:var(--font-mono); font-size:12px; background:color-mix(in srgb, var(--color-primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); color:var(--color-primary); padding:8px 12px; border-radius:6px; word-break:break-all;">${escapeHtml(fingerprint)}</div>
+          <div style="font-family:var(--font-mono); font-size:var(--text-sm); background:color-mix(in srgb, var(--color-primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); color:var(--color-primary); padding:8px 12px; border-radius:var(--radius-md); word-break:break-all;">${escapeHtml(fingerprint)}</div>
         </div>
         <div class="modal-footer" style="padding:12px 16px; display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary" id="fp-cancel">${escapeHtml(t("cancel"))}</button>
@@ -663,7 +663,7 @@ export class NodeWorkbench {
           <div class="modal-title">${escapeHtml(t(isEdit ? "edit_node" : "add_node"))}</div>
           <button class="modal-close-btn" id="node-form-close">✕</button>
         </div>
-        <div style="padding:16px; display:flex; flex-direction:column; gap:12px; font-size:13px;">
+        <div style="padding:16px; display:flex; flex-direction:column; gap:12px; font-size:var(--text-base);">
           <div style="display:flex; gap:10px;">
             <div style="flex:1;">
               <label style="display:block; margin-bottom:4px; color:var(--color-text-secondary);">${escapeHtml(t("node_name"))}</label>

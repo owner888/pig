@@ -140,7 +140,7 @@ stays under 200 lines, because all of it is in every request.
 | Area | | | Covers |
 |---|---|---|---|
 | tui | [design](docs/dev/design/tui.md) | [traps](docs/dev/traps/tui.md) | the terminal UI: rendering, widths, keys, the editor, themes, fullscreen |
-| web | [design](docs/dev/design/web.md) | [traps](docs/dev/traps/web.md) | `pig web`: the page, the WebSocket, tabs, login, the terminal drawer, the service |
+| web | [design](docs/dev/design/web.md), [UI sizes](docs/dev/design/web-ui.md) | [traps](docs/dev/traps/web.md) | `pig web`: the page, the WebSocket, tabs, login, the terminal drawer, the service; **read the UI sizes before any CSS** |
 | rpc | [design](docs/dev/design/rpc.md) | [traps](docs/dev/traps/rpc.md) | `--mode rpc`, print and JSON mode, `--mode mcp` |
 | providers | [design](docs/dev/design/providers.md) | [traps](docs/dev/traps/providers.md) | each provider API, the model registry, thinking levels, usage, overflow |
 | auth | [design](docs/dev/design/auth.md) | [traps](docs/dev/traps/auth.md) | OAuth flows, API keys, `auth.json` |
