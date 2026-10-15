@@ -687,6 +687,8 @@ final class InteractiveMode
         foreach ($this->session->messages() as $message) {
             if ($message instanceof UserMessage) {
                 $text = self::textOf($message);
+                // Upstream's `populateHistory`: Up brings back what was asked in this session.
+                $this->editor->addToHistory($text);
                 $skillBlock = \Pig\CodingAgent\Prompt\SkillBlock::parse($text);
                 if ($skillBlock !== null) {
                     $expandKey = $this->keybindings->display('app.tools.expand') ?: 'ctrl+o';

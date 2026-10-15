@@ -88,6 +88,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this._emptyState = null;
         this.hook = createHookState();  // what this child's extensions have put on screen
         this.commands = [];             // `get_commands`: extension, prompt template and skill commands
+        this.promptHistory = [];        // prompts sent from this tab, newest first (`rememberPrompt()`)
+        this.historyIndex = -1;         // -1: not browsing; 0: the newest; 1: the one before …
+        this.historyDraft = null;       // what was being typed when browsing began
         this.messagesLoaded = false;    // until the first `get_messages` is drawn, which clears the chat
         this.earlyNotices = [];         // `notify` lines that arrived before that, drawn after it
 
@@ -345,6 +348,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD, ...imageRefs(this) });
           if (this.remoteToken !== token) return;
           this.render(() => renderMessages(withImageUrls(this, d.messages || [])));
+          // The prompts of the conversation, for Up — upstream's `renderInitialMessages()` fills
+          // the editor's history the same way. What was typed since is in it already.
+          this.promptHistory = [];
+          for (const m of d.messages || []) {
+            if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
+          }
           this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
           // A `session_start` handler's `notify` arrives before the conversation does, and drawing
           // the conversation clears the chat; the TUI keeps those lines, so they are put back.
@@ -569,9 +578,60 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     enhanceSelect(thinkingSelect);
 
     // Auto-grow textarea
-    promptInput.addEventListener("input", () => {
+    function resizePrompt() {
       promptInput.style.height = "40px";
       promptInput.style.height = Math.max(40, Math.min(promptInput.scrollHeight, 160)) + "px";
+    }
+
+    // ---- prompt history ------------------------------------------------------------------------
+    // The TUI editor's (upstream `Editor.addToHistory()` / `navigateHistory()`): Up on the first
+    // line — with the box empty, the caret at its start, or already browsing — brings back the
+    // prompts sent before, newest first; Down on the last line goes forward again, and past the
+    // newest returns what was being typed. Per tab, filled from the conversation when it is drawn
+    // (upstream's `populateHistory`) and from every prompt sent: 100 kept, no repeat in a row.
+    const HISTORY_LIMIT = 100;
+
+    function rememberPrompt(tab, text) {
+      tab.historyIndex = -1;
+      tab.historyDraft = null;
+      const trimmed = (text || "").trim();
+      if (!trimmed || tab.promptHistory[0] === trimmed) return;
+      tab.promptHistory.unshift(trimmed);
+      if (tab.promptHistory.length > HISTORY_LIMIT) tab.promptHistory.length = HISTORY_LIMIT;
+    }
+
+    /** -1 is Up, to an older prompt; 1 is Down. Past either end nothing changes. */
+    function browseHistory(tab, direction) {
+      const next = tab.historyIndex - direction;
+      if (tab.promptHistory.length === 0 || next < -1 || next >= tab.promptHistory.length) return;
+      if (tab.historyIndex === -1) tab.historyDraft = promptInput.value;
+      tab.historyIndex = next;
+      promptInput.value = next === -1 ? (tab.historyDraft ?? "") : tab.promptHistory[next];
+      if (next === -1) tab.historyDraft = null;
+      // Upstream's: an older prompt opens at its start, so a second Up goes on back.
+      const at = direction === -1 && next !== -1 ? 0 : promptInput.value.length;
+      promptInput.setSelectionRange(at, at);
+      resizePrompt();
+    }
+
+    /** Whether this Up or Down is the history's rather than the caret's. */
+    function historyKey(tab, key) {
+      const { value, selectionStart: start, selectionEnd: end } = promptInput;
+      if (start !== end) return false;
+      if (key === "ArrowUp") {
+        const onFirstLine = !value.slice(0, start).includes("\n");
+        return onFirstLine && (value === "" || tab.historyIndex > -1 || start === 0);
+      }
+      return tab.historyIndex > -1 && !value.slice(end).includes("\n");
+    }
+
+    promptInput.addEventListener("input", () => {
+      resizePrompt();
+      // Typing into a prompt brought back makes it a new one.
+      if (active) {
+        active.historyIndex = -1;
+        active.historyDraft = null;
+      }
     });
 
     // Return to bottom (whether a tab follows its turn is the tab's own scroll listener)
@@ -617,6 +677,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       } else if (e.key === "Escape" && isRunning) {
         e.preventDefault();
         abortTurn();
+      } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && active && !e.defaultPrevented
+        && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing && !isComposing
+        && historyKey(active, e.key)) {
+        // `defaultPrevented`: the slash command list, open, had the key first.
+        e.preventDefault();
+        browseHistory(active, e.key === "ArrowUp" ? -1 : 1);
       }
       // Note: Shift+Enter naturally inserts a newline into the textarea!
     });
@@ -1193,6 +1259,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       if (!active) return;
       const tab = active;
+      rememberPrompt(tab, text);
 
       // ---- `!command` / `!!command` ---------------------------------------------------------
       // The TUI's two bash doors, over rpc. `!` runs the command and its output joins the

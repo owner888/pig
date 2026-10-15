@@ -1430,6 +1430,24 @@ final class InteractiveModeTest extends TestCase
         $this->assertCount(2, self::said($this->session->messages()));
     }
 
+    public function testUpAfterResumingBringsBackWhatWasAsked(): void
+    {
+        // Upstream's `renderInitialMessages()` fills the editor's history from the session; pig's
+        // history started empty on every resume, so Up had nothing to bring back.
+        $this->start(['the first answer'], store: true);
+        $this->type('the first question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $path = $this->session->store()->path;
+        $this->mode->stop();
+        $this->start(store: true, resume: $path);
+
+        $this->type("\e[A");
+
+        $this->assertSame('the first question', $this->editorText());
+    }
+
     public function testAConversationThatStoppedMidRunSaysSoAndContinueCarriesItOn(): void
     {
         $store = SessionManager::create($this->cwd);

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.71] - 2026-10-15
+
+### Added
+
+- Prompt history in the Web UI, as the TUI has it: Up on the first line of the input (empty, caret at its start, or already browsing) brings back the prompts sent before, newest first, and Down on the last line goes forward again and past the newest returns what was being typed. Per tab, 100 kept, filled from the conversation when the tab loads it.
+
+### Fixed
+
+- Up in the TUI brought back nothing after `--resume`, `/resume` or a session switch: the editor's history was only filled by prompts typed in this run. It is filled from the session's user messages when the conversation is drawn, as upstream's `renderInitialMessages()` does.
+
 ## [0.6.70] - 2026-10-14
 
 ### Added
