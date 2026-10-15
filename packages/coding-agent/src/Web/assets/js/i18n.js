@@ -839,7 +839,17 @@ import { applyTheme, currentTheme } from "./theme.js";
      * reader's own language, which is most of them.
      */
     const SCRIPTS = { han: /\p{Script=Han}/u, kana: /[\p{Script=Hiragana}\p{Script=Katakana}]/u, hangul: /\p{Script=Hangul}/u, cyrillic: /\p{Script=Cyrillic}/u, thai: /\p{Script=Thai}/u, arabic: /\p{Script=Arabic}/u, latin: /\p{Script=Latin}/u };
-    const SCRIPT_OF = { "zh-CN": "han", "zh-TW": "han", ja: "kana", ko: "hangul", ru: "cyrillic", th: "thai", ar: "arabic", en: "latin", fr: "latin", de: "latin", es: "latin", pt: "latin", it: "latin", vi: "latin", id: "latin" };
+    const SCRIPT_OF = { zh: "han", ja: "kana", ko: "hangul", ru: "cyrillic", uk: "cyrillic", th: "thai", ar: "arabic", fa: "arabic", en: "latin", fr: "latin", de: "latin", es: "latin", pt: "latin", it: "latin", vi: "latin", id: "latin", nl: "latin", pl: "latin", tr: "latin" };
+    /** By the code's language subtag, so a language pack's `ja-JP` or `zh-HK` is placed too. */
+    const scriptOf = (code) => SCRIPT_OF[code] ?? SCRIPT_OF[code.split("-")[0].toLowerCase()];
+    /** The languages "Do not translate" offers: the list, then any language pack not already in it. */
+    function translateChoices() {
+      const choices = [...TRANSLATE_LANGUAGES];
+      for (const code of [...Object.keys(extensionLocales), ...Object.keys(customLocales)]) {
+        if (!choices.some(([c]) => c === code)) choices.push([code, languageName(code)]);
+      }
+      return choices;
+    }
     /**
      * Whether `text` is in a language the reader needs translated, as far as its script says —
      * false when most of its letters are in the script of a "Do not translate" language (Japanese
@@ -847,7 +857,7 @@ import { applyTheme, currentTheme } from "./theme.js";
      * model answers `SAME` or not.
      */
     function needsTranslation(text) {
-      const skip = new Set((translateSettings.doNotTranslate ?? [currentLocale]).map((c) => SCRIPT_OF[c]).filter(Boolean));
+      const skip = new Set((translateSettings.doNotTranslate ?? [currentLocale]).map(scriptOf).filter(Boolean));
       if (skip.size === 0) return true;
       const counts = {};
       // Code is not prose: an identifier-heavy Chinese answer is still Chinese.
@@ -1041,9 +1051,9 @@ import { applyTheme, currentTheme } from "./theme.js";
             <span style="color:var(--color-dim); font-size:12px;">${escapeHtml(doNot.map(languageName).join(", "))} ›</span>
           </div>
           <div id="translate-do-not-list" style="display:none; flex-wrap:wrap; gap:4px 14px; padding:4px 14px 12px;">
-            ${TRANSLATE_LANGUAGES.map(([code, name]) => `
+            ${translateChoices().map(([code, name]) => `
               <label style="display:flex; align-items:center; gap:6px; font-size:13px; width:46%; cursor:pointer;">
-                <input type="checkbox" class="sched-toggle" data-code="${code}" ${doNot.includes(code) ? "checked" : ""}>${escapeHtml(name)}
+                <input type="checkbox" class="sched-toggle" data-code="${escapeHtml(code)}" ${doNot.includes(code) ? "checked" : ""}>${escapeHtml(name)}
               </label>`).join("")}
           </div>
           <label class="lang-item-row" style="cursor:pointer;">

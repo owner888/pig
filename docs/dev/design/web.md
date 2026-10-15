@@ -216,8 +216,8 @@ model is the translator: `translate {text, language, doNotTranslate}` (`Session\
 through `Compaction::completeSummarization()` as a bug-report summary goes — no cache writes,
 the session's retry policy, nothing kept in the conversation) answers the translation, or
 `text: null` when the script could not place the answer and it was in one of those languages
-after all. Only the model's prose
-is translated: the person's own messages, tool output and thinking stay as they are.
+after all. Answers and the person's own
+questions are translated; tool output and thinking stay as they are.
 
 ## Scheduled tasks: a timer per task over the session pool
 

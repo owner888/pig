@@ -47,7 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
-- Translate messages in the Web UI, as Telegram has it, under the language settings: a *Translate* button on every answer (and *Show original* back), *Translate entire chats* to press it as each answer arrives, and *Do not translate* for the languages you read — an answer whose script says it is in one gets no button. The session's model is the translator (RPC `translate {text, language, doNotTranslate}`, answered `text: null` for one already in your language); your own messages, tool output and thinking are not translated.
+- Translate messages in the Web UI, as Telegram has it, under the language settings: a *Translate* button on every answer (and *Show original* back), *Translate entire chats* to press it as each answer arrives, and *Do not translate* for the languages you read — an answer whose script says it is in one gets no button. The session's model is the translator (RPC `translate {text, language, doNotTranslate}`, answered `text: null` for one already in your language); questions get the button too; tool output and thinking are not translated.
 
 ### Changed
 

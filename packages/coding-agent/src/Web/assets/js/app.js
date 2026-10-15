@@ -911,6 +911,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         block.appendChild(grid);
       }
 
+      // A question gets the Translate button an answer does; a `/command` is not prose.
+      if (text && !text.startsWith("/")) attachTranslate(block, text, block.querySelector(".msg-user-text"));
+
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
     }
@@ -943,8 +946,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     /**
-     * The "Translate messages" setting on one finished answer: a Translate button under the
-     * text (`target` is the element holding its markdown), which swaps the answer for the
+     * The "Translate messages" setting on one finished answer or question: a Translate button
+     * under the text (`target` is the element holding its markdown), which swaps the text for the
      * model's translation and back; pressed at once when "Translate entire chats" is on. An
      * answer whose script says it is in a "Do not translate" language gets no button; one the
      * script cannot place is asked, and the child answers `text: null` when it was in one.
