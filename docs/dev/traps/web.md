@@ -312,3 +312,18 @@ with `Host`. Debug a 403 there from the request headers, not the response.
 
 Regression tests: `SameOriginMiddlewareTest`, and the two `theme.css` requests in
 `WebModeTest::testNothingButTheLoginPageWithoutLoggingIn`.
+
+## A language pack installed with `pig install` was not in the web page's language list
+
+**Symptom**: `pig install git:…/pig-locale-th` succeeded and `pig list` showed its extension, but
+**⋯ → Language** in the web UI did not offer Thai; `/api/locales` answered `{}`.
+
+**Cause**: the web shell (`HttpServer::start()`) loaded `settings.extensions` and
+`~/.pig/agent/extensions/` only, and `/api/locales` is the shell's endpoint. A package's
+extensions were loaded by the children (`CodingAgent` passes `packageExtensions` to
+`ExtensionLoader::load()`), where `registerLocale()` filled a registry nobody served.
+
+**Rule**: the shell loads what a child loads. Anything an extension registers *for the page*
+(a locale, an HTTP route, a provider for `/api/models`) must come from the shell's own
+`ExtensionLoader::load()` call, so a new way of bringing extensions in goes there too.
+

@@ -13,6 +13,8 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Packages\PackageError;
+use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Rpc\RpcUi;
 use Pig\CodingAgent\Session\SessionManager;
@@ -225,8 +227,24 @@ final class HttpServer
         // The extensions, for what they bring the page: HTTP routes, locales, and the providers
         // `/api/models` lists. The children each load their own for their conversation; this is
         // the shell's copy, for the shell's endpoints. A broken one is a line on standard error
-        // and not a reason the page does not come up.
-        [, $problems] = ExtensionLoader::load($this->cwd, $this->auth->settings()?->extensions() ?? [], auth: $this->auth);
+        // and not a reason the page does not come up — and so is a package that cannot be
+        // resolved, as `bin/pig` treats it. The installed packages' extensions are loaded too, as
+        // a child loads them: a language pack is a package, and `/api/locales` is the shell's.
+        $settings = $this->auth->settings();
+        [, $problems] = ExtensionLoader::load(
+            $this->cwd,
+            $settings?->extensions() ?? [],
+            auth: $this->auth,
+            packageExtensions: function () use ($settings): array {
+                try {
+                    return $settings === null ? [] : (new PackageManager($this->cwd, $settings))->resolve(static fn (): string => 'skip')->enabled('extensions');
+                } catch (PackageError $error) {
+                    fwrite(STDERR, "packages: {$error->getMessage()}\n");
+
+                    return [];
+                }
+            },
+        );
 
         foreach ($problems as $problem) {
             fwrite(STDERR, "extension {$problem->toText()}\n");
