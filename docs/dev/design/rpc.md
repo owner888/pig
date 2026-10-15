@@ -107,8 +107,8 @@ a command carries one, is echoed on its response.
 pig used to have its own dialect (`hook_ui_request`, `get_branch`, `go_to`, `export`,
 `auto_compaction_*`, full-message updates) that no upstream client could talk to; it was replaced
 outright, with no compatibility layer. pig's additions are additive and
-named: extra `get_state` fields a web tab draws, `navigate_tree`, four commands the web shell
-needs from its child (`doctor`, `diff`, `bug`, `export_markdown`), `continue`, and `prompt`'s
+named: extra `get_state` fields a web tab draws, `navigate_tree`, five commands the web shell
+needs from its child (`doctor`, `diff`, `bug`, `export_markdown`, `translate`), `continue`, and `prompt`'s
 `requestId` — pi-durable's: a prompt sent again under an id the conversation already took is answered
 `{disposition: "duplicate"}` and not taken twice. It is kept as a `pig.request` custom entry when the
 prompt is accepted, so it holds across a restart; a refused one is not kept and may be sent again.

@@ -3283,6 +3283,30 @@ final class AgentSession
         );
     }
 
+    /**
+     * One assistant message in the web page's display language — pig's own, for the page's
+     * "Translate messages" setting; `Translation` says how. Routed first as a branch summary is,
+     * with the session's key, stream function and retry policy.
+     *
+     * @param list<string> $doNotTranslate
+     * @return string|null null when the text is already in a language from `$doNotTranslate`
+     * @throws AgentError when there is no model or it failed
+     */
+    public function translate(string $text, string $language, array $doNotTranslate): ?string
+    {
+        $model = $this->directModel($this->model() ?? throw new AgentError('No model to translate with.'), null)->model;
+
+        return Translation::translate(
+            $text,
+            $language,
+            $doNotTranslate,
+            $model,
+            $this->keyFor($model),
+            $this->agent->streamFunction,
+            $this->retrySettings(),
+        );
+    }
+
     // ---- making room -------------------------------------------------------------------
 
     /** What the last completed turn carried, or 0 when nothing has been answered yet. */

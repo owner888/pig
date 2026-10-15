@@ -12,6 +12,78 @@ import { applyTheme, currentTheme } from "./theme.js";
         "search_sessions_placeholder": "搜索会话标题或内容...",
         "scheduled_tasks": "定时任务",
         "scheduled_tasks_title": "定时任务",
+        "sched_card_declined": "已取消",
+        "sched_card_done": "已批准",
+        "sched_card_confirm_btn": "确认",
+        "sched_card_schedule_btn": "安排",
+        "sched_card_truncated": "输入内容过长，未完整显示 — 批准前请仔细检查。",
+        "sched_card_details": "详情",
+        "sched_card_instructions": "指令",
+        "sched_card_your_request": "您的请求",
+        "sched_card_source": "来源",
+        "sched_card_your_computer": "您的电脑",
+        "sched_card_where": "运行位置",
+        "sched_card_schedule": "时间表",
+        "sched_card_task": "任务",
+        "sched_card_run": "pig 想要立即运行一个计划任务",
+        "sched_card_disable": "pig 想要停用一个计划任务",
+        "sched_card_enable": "pig 想要启用一个计划任务",
+        "sched_card_delete": "pig 想要删除一个计划任务",
+        "sched_card_update": "pig 想要修改一个计划任务",
+        "sched_card_create": "pig 想要创建一个计划任务",
+        "sched_and": "；",
+        "sched_create": "创建",
+        "sched_trigger_incomplete": "有一个触发方式还没填完整。",
+        "sched_advanced": "高级设置",
+        "sched_minute_suffix": "分",
+        "sched_minute_prefix": "第",
+        "sched_remove_trigger": "移除这个触发方式",
+        "sched_add_trigger": "添加触发方式",
+        "sched_kind_manual_hint": "只在你点「立即运行」时运行",
+        "sched_kind_once_hint": "在指定的时间运行一次",
+        "sched_kind_cron_hint": "按固定的时间表重复运行",
+        "sched_kind_manual": "仅手动",
+        "sched_kind_once": "单次",
+        "sched_kind_cron": "定时",
+        "sched_trigger": "触发方式",
+        "sched_use_chat_instead": "改用 pig 设置",
+        "sched_edit_title": "编辑定时任务",
+        "sched_new_title": "新建定时任务",
+        "sched_delete_body": "任务和它的运行记录会被删除，运行写下的会话会保留。",
+        "sched_delete_title": "删除定时任务「{name}」？",
+        "sched_task_gone": "这个任务已经不在了。",
+        "sched_banner_ask": "在此任务中，pig 遇到需要批准的操作会暂停，等你确认后再继续。",
+        "sched_banner_auto": "在此任务中，pig 将直接工作，不会暂停等待批准。",
+        "sched_perm_ask_hint": "需要批准时暂停，等你确认。",
+        "sched_perm_auto_hint": "无需询问即可运行。",
+        "sched_perm_ask": "手动",
+        "sched_perm_auto": "自动",
+        "sched_permission": "权限",
+        "sched_repeat": "重复频率",
+        "sched_instructions": "指令",
+        "sched_history": "历史记录",
+        "sched_off": "已停用",
+        "sched_on": "已启用",
+        "sched_yesterday_at": "昨天 {time}",
+        "sched_tomorrow_at": "明天 {time}",
+        "sched_today_at": "今天 {time}",
+        "sched_next_run_label": "下次运行：{when}",
+        "sched_computer_ready": "这台电脑上的 pig web 正在运行，任务会按时执行",
+        "sched_needs_computer": "需要您的电脑",
+        "sched_chat_prompt": "帮我设置一个定时任务。问我它应该做什么、多久运行一次以及在什么时间运行，然后创建它。",
+        "sched_create_manually": "手动设置",
+        "sched_create_with_chat": "与 pig 一起创建",
+        "sched_no_match": "没有符合条件的任务。",
+        "sched_sort_created": "创建时间",
+        "sched_sort_name": "名称",
+        "sched_sort_next": "下次运行",
+        "sched_sort": "排序",
+        "sched_filter_paused": "已停用",
+        "sched_filter_enabled": "已启用",
+        "sched_filter_all": "全部任务",
+        "sched_filter": "筛选",
+        "sched_search_placeholder": "搜索任务",
+        "sched_search": "搜索",
         "sched_intro": "按时间表自动运行的提示词。每个任务有自己的会话，每次运行都接着在里面进行。",
         "sched_open_task_conversation": "打开会话",
         "sched_new": "新建任务",
@@ -33,12 +105,12 @@ import { applyTheme, currentTheme } from "./theme.js";
         "sched_prompt": "提示词",
         "sched_runs": "运行记录",
         "sched_runs_failed": "加载运行记录失败",
-        "sched_no_runs": "还没有运行过。",
+        "sched_no_runs": "暂无运行记录",
         "sched_trigger_manual": "手动",
         "sched_open_conversation": "打开这次运行所在的会话",
         "sched_name": "名称",
-        "sched_name_placeholder": "例如：每日晨报",
-        "sched_prompt_placeholder": "每次运行时发给 pig 的内容",
+        "sched_name_placeholder": "每日简报",
+        "sched_prompt_placeholder": "提供指令，说明您希望如何完成此任务",
         "sched_thinking": "思考强度",
         "sched_default_thinking": "默认",
         "sched_freq_manual": "仅手动",
@@ -297,6 +369,14 @@ import { applyTheme, currentTheme } from "./theme.js";
         "import_error": "导入失败：文件必须是包含有效词条的 JSON 字典对象",
         "delete_custom_lang": "删除此自定义语言包",
         "delete_custom_confirm": "确定删除自定义语言包「{name}」吗？",
+        "translate_section": "翻译消息",
+        "translate_do_not": "不翻译",
+        "translate_entire": "翻译整个对话",
+        "translate_hint": "用当前模型把回答翻译成界面语言；关闭时每条回答下有「翻译」按钮，「不翻译」里的语言原样显示。",
+        "translate_btn": "翻译",
+        "translate_original": "显示原文",
+        "translating": "翻译中…",
+        "translate_same": "已是你的语言",
         "close": "关闭",
         "theme_settings": "界面主题设置",
         "theme_select_label": "选择界面配色方案：",
@@ -320,6 +400,78 @@ import { applyTheme, currentTheme } from "./theme.js";
         "search_sessions_placeholder": "Search titles and contents...",
         "scheduled_tasks": "Scheduled",
         "scheduled_tasks_title": "Scheduled tasks",
+        "sched_card_declined": "Cancelled",
+        "sched_card_done": "Approved",
+        "sched_card_confirm_btn": "Confirm",
+        "sched_card_schedule_btn": "Schedule",
+        "sched_card_truncated": "Input truncated — the full tool arguments are too long to display. Review carefully before approving.",
+        "sched_card_details": "Details",
+        "sched_card_instructions": "Instructions",
+        "sched_card_your_request": "Your request",
+        "sched_card_source": "Source",
+        "sched_card_your_computer": "Your computer",
+        "sched_card_where": "Runs on",
+        "sched_card_schedule": "Schedule",
+        "sched_card_task": "Task",
+        "sched_card_run": "pig wants to run a scheduled task now",
+        "sched_card_disable": "pig wants to disable a scheduled task",
+        "sched_card_enable": "pig wants to enable a scheduled task",
+        "sched_card_delete": "pig wants to delete a scheduled task",
+        "sched_card_update": "pig wants to change a scheduled task",
+        "sched_card_create": "pig wants to create a scheduled task",
+        "sched_and": "; ",
+        "sched_create": "Create",
+        "sched_trigger_incomplete": "A trigger is not filled in yet.",
+        "sched_advanced": "Advanced settings",
+        "sched_minute_suffix": "",
+        "sched_minute_prefix": "at minute",
+        "sched_remove_trigger": "Remove this trigger",
+        "sched_add_trigger": "Add a trigger",
+        "sched_kind_manual_hint": "Runs only when you press Run now",
+        "sched_kind_once_hint": "Runs once at a given time",
+        "sched_kind_cron_hint": "Repeats on a fixed schedule",
+        "sched_kind_manual": "Manual only",
+        "sched_kind_once": "Once",
+        "sched_kind_cron": "Schedule",
+        "sched_trigger": "Trigger",
+        "sched_use_chat_instead": "Set up with pig instead",
+        "sched_edit_title": "Edit scheduled task",
+        "sched_new_title": "New scheduled task",
+        "sched_delete_body": "The task and the record of its runs are removed. Conversations its runs wrote are kept.",
+        "sched_delete_title": "Delete scheduled task “{name}”?",
+        "sched_task_gone": "This task is no longer there.",
+        "sched_banner_ask": "In this task, pig pauses at anything that needs approval and carries on once you answer.",
+        "sched_banner_auto": "In this task, pig works directly and does not pause to wait for approval.",
+        "sched_perm_ask_hint": "Pauses for approval until you answer.",
+        "sched_perm_auto_hint": "Runs without asking.",
+        "sched_perm_ask": "Manual",
+        "sched_perm_auto": "Auto",
+        "sched_permission": "Permissions",
+        "sched_repeat": "Repeats",
+        "sched_instructions": "Instructions",
+        "sched_history": "History",
+        "sched_off": "Disabled",
+        "sched_on": "Enabled",
+        "sched_yesterday_at": "Yesterday {time}",
+        "sched_tomorrow_at": "Tomorrow {time}",
+        "sched_today_at": "Today {time}",
+        "sched_next_run_label": "Next run: {when}",
+        "sched_computer_ready": "pig web is running on this computer; tasks run on time",
+        "sched_needs_computer": "Needs your computer",
+        "sched_chat_prompt": "Help me set up a scheduled task. Ask me what it should do, how often it should run and at what time, then create it.",
+        "sched_create_manually": "Set up manually",
+        "sched_create_with_chat": "Create with pig",
+        "sched_no_match": "No tasks match.",
+        "sched_sort_created": "Date created",
+        "sched_sort_name": "Name",
+        "sched_sort_next": "Next run",
+        "sched_sort": "Sort",
+        "sched_filter_paused": "Disabled",
+        "sched_filter_enabled": "Enabled",
+        "sched_filter_all": "All tasks",
+        "sched_filter": "Filter",
+        "sched_search_placeholder": "Search tasks",
+        "sched_search": "Search",
         "sched_intro": "Prompts that run on a schedule. Each task has a conversation of its own, and every run carries on in it.",
         "sched_open_task_conversation": "Open conversation",
         "sched_new": "New task",
@@ -341,12 +493,12 @@ import { applyTheme, currentTheme } from "./theme.js";
         "sched_prompt": "Prompt",
         "sched_runs": "Runs",
         "sched_runs_failed": "Failed to load the runs",
-        "sched_no_runs": "Not run yet.",
+        "sched_no_runs": "No runs yet",
         "sched_trigger_manual": "manual",
         "sched_open_conversation": "Open the conversation this run is in",
         "sched_name": "Name",
-        "sched_name_placeholder": "e.g. Morning brief",
-        "sched_prompt_placeholder": "What to send pig on every run",
+        "sched_name_placeholder": "Daily brief",
+        "sched_prompt_placeholder": "Give instructions for how this task should be done",
         "sched_thinking": "Thinking",
         "sched_default_thinking": "Default",
         "sched_freq_manual": "Manual only",
@@ -605,6 +757,14 @@ import { applyTheme, currentTheme } from "./theme.js";
         "import_error": "Failed to import: file is not a valid JSON dictionary",
         "delete_custom_lang": "Delete this custom language pack",
         "delete_custom_confirm": "Delete custom language pack '{name}'?",
+        "translate_section": "Translate messages",
+        "translate_do_not": "Do not translate",
+        "translate_entire": "Translate entire chats",
+        "translate_hint": "Answers are translated into the display language by the current model; off, each answer has a Translate button. A language under \"Do not translate\" is shown as it is.",
+        "translate_btn": "Translate",
+        "translate_original": "Show original",
+        "translating": "Translating…",
+        "translate_same": "Already in your language",
         "close": "Close",
         "theme_settings": "Theme Settings",
         "theme_select_label": "Select interface color scheme:",
@@ -651,6 +811,59 @@ import { applyTheme, currentTheme } from "./theme.js";
     let currentLocale = localStorage.getItem("pig_web_locale");
     if (!currentLocale) {
       currentLocale = (navigator.language && navigator.language.startsWith("zh")) ? "zh-CN" : "en";
+    }
+
+    // ---- Translate messages (Telegram's setting) ---------------------------------------------
+    //
+    // The target is the display language; `doNotTranslate` are the languages the reader does not
+    // need translated — the display language unless they chose otherwise. The model decides what
+    // language a message is in (`Translation.php`), so these are names it reads, not codes.
+    const TRANSLATE_LANGUAGES = [
+      ["en", "English"], ["zh-CN", "简体中文"], ["zh-TW", "繁體中文"], ["ja", "日本語"], ["ko", "한국어"],
+      ["fr", "Français"], ["de", "Deutsch"], ["es", "Español"], ["pt", "Português"], ["ru", "Русский"],
+      ["it", "Italiano"], ["vi", "Tiếng Việt"], ["th", "ไทย"], ["id", "Bahasa Indonesia"], ["ar", "العربية"],
+    ];
+    const translateSettings = { entireChats: false, doNotTranslate: null };
+    try { Object.assign(translateSettings, JSON.parse(localStorage.getItem("pig_web_translate") || "{}")); } catch (e) {}
+    function saveTranslateSettings() {
+      localStorage.setItem("pig_web_translate", JSON.stringify(translateSettings));
+    }
+    /** The language's name as the model reads it: the list's, a custom pack's label, else the code. */
+    function languageName(code) {
+      return TRANSLATE_LANGUAGES.find(([c]) => c === code)?.[1] ?? customLocales[code]?.label ?? extensionLocales[code]?.label ?? code;
+    }
+    /**
+     * The script a language is written in, for `needsTranslation()`. Latin covers more than
+     * English, so English text in French clothing is taken for English; a wrong guess there costs
+     * one untranslated message, the right one saves a model call for every message in the
+     * reader's own language, which is most of them.
+     */
+    const SCRIPTS = { han: /\p{Script=Han}/u, kana: /[\p{Script=Hiragana}\p{Script=Katakana}]/u, hangul: /\p{Script=Hangul}/u, cyrillic: /\p{Script=Cyrillic}/u, thai: /\p{Script=Thai}/u, arabic: /\p{Script=Arabic}/u, latin: /\p{Script=Latin}/u };
+    const SCRIPT_OF = { "zh-CN": "han", "zh-TW": "han", ja: "kana", ko: "hangul", ru: "cyrillic", th: "thai", ar: "arabic", en: "latin", fr: "latin", de: "latin", es: "latin", pt: "latin", it: "latin", vi: "latin", id: "latin" };
+    /**
+     * Whether `text` is in a language the reader needs translated, as far as its script says —
+     * false when most of its letters are in the script of a "Do not translate" language (Japanese
+     * is kana over han, since kana are its own). True when the script decides nothing, and the
+     * model answers `SAME` or not.
+     */
+    function needsTranslation(text) {
+      const skip = new Set((translateSettings.doNotTranslate ?? [currentLocale]).map((c) => SCRIPT_OF[c]).filter(Boolean));
+      if (skip.size === 0) return true;
+      const counts = {};
+      // Code is not prose: an identifier-heavy Chinese answer is still Chinese.
+      for (const ch of text.replace(/```[\s\S]*?```|`[^`\n]*`/g, "")) {
+        for (const [script, re] of Object.entries(SCRIPTS)) {
+          if (re.test(ch)) { counts[script] = (counts[script] || 0) + 1; break; }
+        }
+      }
+      if (counts.kana) { counts.kana += counts.han || 0; delete counts.han; }
+      const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      return dominant === undefined || !skip.has(dominant);
+    }
+    /** `{language, doNotTranslate}` for a `translate` command, in the display language of the moment. */
+    function translateRequest() {
+      const codes = translateSettings.doNotTranslate ?? [currentLocale];
+      return { language: languageName(currentLocale), doNotTranslate: codes.map(languageName) };
     }
 
     function __t(key, params = {}) {
@@ -818,7 +1031,28 @@ import { applyTheme, currentTheme } from "./theme.js";
     /** Telegram-style Language & Language Packs Management Modal */
     function openLanguageModal() {
       const renderModalBody = () => {
+        const doNot = translateSettings.doNotTranslate ?? [currentLocale];
         let html = `
+          <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
+            ${escapeHtml(t("translate_section"))}
+          </div>
+          <div id="translate-do-not" class="lang-item-row">
+            <span>${escapeHtml(t("translate_do_not"))}</span>
+            <span style="color:var(--color-dim); font-size:12px;">${escapeHtml(doNot.map(languageName).join(", "))} ›</span>
+          </div>
+          <div id="translate-do-not-list" style="display:none; flex-wrap:wrap; gap:4px 14px; padding:4px 14px 12px;">
+            ${TRANSLATE_LANGUAGES.map(([code, name]) => `
+              <label style="display:flex; align-items:center; gap:6px; font-size:13px; width:46%; cursor:pointer;">
+                <input type="checkbox" class="sched-toggle" data-code="${code}" ${doNot.includes(code) ? "checked" : ""}>${escapeHtml(name)}
+              </label>`).join("")}
+          </div>
+          <label class="lang-item-row" style="cursor:pointer;">
+            <span>${escapeHtml(t("translate_entire"))}</span>
+            <input type="checkbox" class="sched-toggle" id="translate-entire" ${translateSettings.entireChats ? "checked" : ""}>
+          </label>
+          <div style="font-size:11px; color:var(--color-dim); line-height:1.4; margin-bottom:18px;">
+            ${escapeHtml(t("translate_hint"))}
+          </div>
           <div style="font-size:12px; color:var(--color-text-secondary); margin-bottom:10px; font-weight:600;">
             ${escapeHtml(t("lang_select_label"))}
           </div>
@@ -891,7 +1125,25 @@ import { applyTheme, currentTheme } from "./theme.js";
         width: "420px",
         onOpen: (modalEl, closeFn) => {
           const bindEvents = () => {
-            modalEl.querySelectorAll(".lang-item-row").forEach(row => {
+            const doNotRow = modalEl.querySelector("#translate-do-not");
+            const doNotList = modalEl.querySelector("#translate-do-not-list");
+            doNotRow.addEventListener("click", () => {
+              const open = doNotList.style.display === "none";
+              doNotList.style.display = open ? "flex" : "none";
+            });
+            doNotList.querySelectorAll("input[data-code]").forEach(box => {
+              box.addEventListener("change", () => {
+                translateSettings.doNotTranslate = [...doNotList.querySelectorAll("input[data-code]:checked")].map(b => b.dataset.code);
+                saveTranslateSettings();
+                doNotRow.lastElementChild.textContent = translateSettings.doNotTranslate.map(languageName).join(", ") + " ›";
+              });
+            });
+            modalEl.querySelector("#translate-entire").addEventListener("change", (e) => {
+              translateSettings.entireChats = e.target.checked;
+              saveTranslateSettings();
+            });
+
+            modalEl.querySelectorAll(".lang-item-row[data-loc]").forEach(row => {
               row.addEventListener("click", (e) => {
                 if (e.target.closest(".del-custom-lang")) return;
                 const loc = row.dataset.loc;
@@ -943,4 +1195,4 @@ import { applyTheme, currentTheme } from "./theme.js";
       });
     }
 
-export { I18N, currentLocale, t, __t, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLanguageModal as openLangModal, openLanguageModal, customLocales, extensionLocales };
+export { I18N, currentLocale, t, __t, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLanguageModal as openLangModal, openLanguageModal, customLocales, extensionLocales, translateSettings, translateRequest, needsTranslation };

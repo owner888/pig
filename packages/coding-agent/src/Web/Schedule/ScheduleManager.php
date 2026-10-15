@@ -32,9 +32,11 @@ use Throwable;
  *   occurrence, so a week asleep is one run and not a hundred and sixty-eight.
  * - **A run that is still going is not started twice.** The occurrence is written down as
  *   `skipped`, so the log says why nothing happened.
- * - **A hook's question waits for an answer**, as the Claude app waits for approval: the run is
- *   `needs_input`, the page says so, and opening the conversation shows the question
- *   (`ManagedSession::$pendingUi`). Nothing answers it on the person's behalf.
+ * - **A hook's question waits for an answer** in a task whose permission is `ask`, as the Claude
+ *   app waits for approval: the run is `needs_input`, the page says so, and opening the
+ *   conversation shows the question (`ManagedSession::$pendingUi`). A task whose permission is
+ *   `auto` — the person chose it, as the Claude app's form offers — has its confirmations answered
+ *   yes as they come; a question that wants a choice or some text waits in both.
  * - **One server runs the schedule.** `pig web start -d`, `pig --mode web` and `/web` can all be up
  *   at once in one home, and two of them firing the same task is two runs. The first takes a lock on
  *   `scheduled-tasks.lock` and keeps it; the others show the tasks and refuse to change them,
@@ -264,6 +266,25 @@ final class ScheduleManager
     }
 
     /**
+     * Basename of each task's own conversation => the task's id: the sidebar entry that opens the
+     * task's page rather than the conversation, as the Claude app's does.
+     *
+     * @return array<string, string>
+     */
+    public function sessionTaskIds(): array
+    {
+        $map = [];
+
+        foreach ($this->tasks as $task) {
+            if ($task->sessionFile !== null) {
+                $map[basename($task->sessionFile)] = $task->id;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
      * Basename of each task's conversation that has a run nobody has looked at since it finished,
      * => true: the sidebar's dot, as the Claude app puts one on a task whose run has news.
      *
@@ -410,6 +431,12 @@ final class ScheduleManager
 
         if ($type === 'response' && ($event['command'] ?? null) === 'get_state' && is_string($event['data']['sessionFile'] ?? null)) {
             $this->updateRun($entry, ['sessionFile' => $event['data']['sessionFile']]);
+        } elseif ($type === 'extension_ui_request' && ($event['method'] ?? null) === 'confirm' && is_string($event['id'] ?? null)
+            && ($this->tasks[$entry['task']]->permissionMode ?? ScheduledTask::ASK) === ScheduledTask::AUTO) {
+            // The task's permission is "auto": a yes, at once, as the Claude app's run carries on
+            // without stopping for approval. The browsers showing the question see it answered.
+            unset($managed->pendingUi[$event['id']]);
+            $managed->client->relay(['type' => 'extension_ui_response', 'id' => $event['id'], 'confirmed' => true]);
         } elseif ($type === 'extension_ui_request' && in_array($event['method'] ?? null, SessionPool::DIALOGS, true)) {
             $this->updateRun($entry, ['status' => self::NEEDS_INPUT]);
         } elseif ($type === 'agent_end') {
@@ -465,10 +492,7 @@ final class ScheduleManager
 
         if ($next !== null && $next <= ($this->now)()) {
             // The anchor moves to now and not to the occurrence: everything missed since is one run.
-            $task = $task->with(
-                anchorAt: ($this->now)(),
-                enabled: $task->schedule === ScheduledTask::ONCE ? false : $task->enabled,
-            );
+            $task = $task->fired(($this->now)());
             $this->tasks[$id] = $task;
             $this->fire($task, 'schedule');
         }
@@ -730,7 +754,7 @@ final class ScheduleManager
 
     private function refuseAPast(ScheduledTask $task): void
     {
-        if ($task->enabled && $task->schedule === ScheduledTask::ONCE && (int) $task->runAt <= ($this->now)()) {
+        if ($task->enabled && $task->hasPastOnce(($this->now)())) {
             throw new InvalidArgumentException('That time has already passed.');
         }
     }

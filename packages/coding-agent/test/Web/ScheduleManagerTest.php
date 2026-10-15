@@ -199,6 +199,40 @@ final class ScheduleManagerTest extends TestCase
         });
     }
 
+    public function testATaskWithTwoTriggersRunsAtTheEarlierAndKeepsTheOther(): void
+    {
+        // The Claude app's "+" in the form: a task can have more than one trigger.
+        Async::run(function (): void {
+            $manager = $this->manager();
+            $manager->start();
+            $id = $manager->save($this->task([
+                'schedule' => null,
+                'triggers' => [
+                    ['type' => 'cron', 'cron' => '0 9 * * *'],
+                    ['type' => 'once', 'runAt' => self::NINE_AM + 60_000],
+                ],
+            ]))->id;
+
+            self::assertSame(self::NINE_AM + 60_000, $manager->list()[0]['nextRunAt'], 'the sooner of the two');
+
+            $this->now = self::NINE_AM + 60_000;
+            $this->until(static fn (): bool => ($manager->runs($id)[0]['status'] ?? null) === ScheduleManager::DONE, 'the run');
+
+            $task = $manager->list()[0];
+            self::assertSame([['type' => 'cron', 'cron' => '0 9 * * *']], $task['triggers'], 'the once trigger is spent');
+            self::assertTrue($task['enabled'], 'the daily one is still there');
+        });
+    }
+
+    public function testATaskWrittenWithOneScheduleReadsAsOneTriggerAndAsks(): void
+    {
+        $task = \Pig\CodingAgent\Web\Schedule\ScheduledTask::fromArray($this->task());
+
+        self::assertSame([['type' => 'cron', 'cron' => '0 9 * * *']], $task->triggers);
+        self::assertSame(['cron', '0 9 * * *'], [$task->schedule, $task->cron]);
+        self::assertSame('ask', $task->permissionMode, 'as runs always did before there was a choice');
+    }
+
     public function testRunNowLeavesTheScheduleAlone(): void
     {
         Async::run(function (): void {

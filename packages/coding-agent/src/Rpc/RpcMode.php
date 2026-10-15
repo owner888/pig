@@ -435,6 +435,7 @@ final class RpcMode
             'diff' => $this->diff($command),
             'bug' => $this->bug($command),
             'export_markdown' => $this->exportMarkdown($command),
+            'translate' => $this->translate($command),
 
             default => throw new \RuntimeException("Unknown command: {$type}"),
         };
@@ -1295,6 +1296,28 @@ final class RpcMode
             ?? throw new \RuntimeException('This session is not being saved, so there is nothing to export.');
 
         return ['format' => 'md', 'markdown' => \Pig\CodingAgent\Export\MarkdownExport::render($store->messages(), $this->session->cwd())];
+    }
+
+    /**
+     * pig's own, for the web page's "Translate messages" setting: `text` in `language`, or
+     * `text: null` when it is already in one of `doNotTranslate`.
+     *
+     * @param array<string, mixed> $command
+     * @return array{text: string|null}
+     */
+    private function translate(array $command): array
+    {
+        $doNotTranslate = $command['doNotTranslate'] ?? [];
+
+        if (!is_array($doNotTranslate)) {
+            throw new \RuntimeException("'doNotTranslate' must be a list of language names.");
+        }
+
+        return ['text' => $this->session->translate(
+            self::text($command, 'text'),
+            self::text($command, 'language'),
+            array_values(array_filter($doNotTranslate, is_string(...))),
+        )];
     }
 
     /**

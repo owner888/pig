@@ -201,11 +201,29 @@ already open stays until it drops, and the page then goes to `/login`. Tests of 
 build the server with `WebLogin::off()`; regression tests: `WebLoginTest` and
 `WebModeTest::testNothingButTheLoginPageWithoutLoggingIn`.
 
+## Translating answers: Telegram's setting, the session's model as the translator
+
+The language settings carry Telegram's "Translate messages" block — **Do not translate** (the
+languages the reader has; the display language unless they pick others) and **Translate entire
+chats**. Off, every finished answer gets a Translate button that swaps its markdown for the
+translation and back; on, the button is pressed as the answer finishes. Kept in the browser
+(`localStorage` `pig_web_translate`, in `i18n.js` with the locale), since it is the reader's.
+
+The page tells an answer's language by its script (`needsTranslation()`: mostly Han is Chinese,
+kana Japanese, Latin English — the one guess that can be wrong, and the cheap one) and shows no
+button for one in a "Do not translate" language. pig has no translation service, so the child's
+model is the translator: `translate {text, language, doNotTranslate}` (`Session\Translation`,
+through `Compaction::completeSummarization()` as a bug-report summary goes — no cache writes,
+the session's retry policy, nothing kept in the conversation) answers the translation, or
+`text: null` when the script could not place the answer and it was in one of those languages
+after all. Only the model's prose
+is translated: the person's own messages, tool output and thinking stay as they are.
+
 ## Scheduled tasks: a timer per task over the session pool
 
 pig's own, after the Claude app's; upstream has none. The developer asked for it in the web UI and
 the decisions were the developer's: a hook's question during a run **waits** for an answer as the
-Claude app waits for approval, the form offers presets **and** a custom cron, and there is **no
+Claude app waits for approval (in a task whose permission is `ask`; see below), the form offers presets **and** a custom cron, and there is **no
 minute jitter** — a task runs at the minute it says.
 
 `Web\Schedule\ScheduleManager` arms one `Loop::delay()` per task. **A task has one conversation**,
@@ -222,9 +240,32 @@ run carries `seen: false` from its start (a run written before this has none and
 sidebar row of the task's conversation and the Scheduled entry show a dot (`ScheduleManager::unread()`,
 `scheduledUnread` in `/api/sessions/all`), and the page posts `/api/scheduled/seen` when that
 conversation is the active tab of a visible page (`markScheduledSeen()` in `app.js`). Kept in the tasks
-file, so it is the same on every device; a question waiting for an answer keeps its own amber dot. `ScheduledTask` stores the schedule as `manual`, a five-field cron
-(`CronExpression`, hand-written, Vixie semantics: `7` is Sunday, two restricted day fields OR) or
-`once`, in the **browser's** timezone. Tasks and runs are `~/.pig/agent/scheduled-tasks.json`.
+file, so it is the same on every device; a question waiting for an answer keeps its own amber dot. `ScheduledTask` stores **a list of triggers**
+(`$triggers`, the Claude app's "+" in the form), each a five-field cron (`CronExpression`, hand-written,
+Vixie semantics: `7` is Sunday, two restricted day fields OR) or `once`; none is a task that runs only
+when asked. The next run is the soonest of them; a `once` trigger is dropped when it fires, and a
+task left with no trigger by that is switched off. A task written with one `schedule` / `cron` /
+`runAt` (before there could be more) reads as one trigger. All in the **browser's** timezone; the
+page shows each in the viewer's own time. Tasks and runs are `~/.pig/agent/scheduled-tasks.json`.
+
+**Permission, per task** — the Claude app's: `auto` (the default for a new task, as there) answers a
+run's confirmations yes as they come (`ScheduleManager::observe()` relays the
+`extension_ui_response`), so the run does not stop; `ask` leaves them for the person (`needs_input`).
+A question that wants a choice or some text waits in both. A task from before the choice existed is
+`ask`, which is what runs did then.
+
+**The pages** (`ScheduledTasks.js`), laid out as the Claude app lays its own out at the developer's
+request: the list is a page in the main area in place of the conversation (`#page-view`,
+`#main-view.page-mode`) — cards with search, filter and sort, and a "New task" menu of *Create with
+pig* (a new conversation with the Claude app's sentence in the prompt, unsent) and *Set up
+manually*; a task's own conversation in the sidebar opens the **task's page** (history on the left;
+instructions, schedule and permission on the right; Run now and the switch at the top; edit, open
+conversation and delete under "⋯"); the form is a dialog with the permission and the model in a
+bar under the instructions, a row per trigger, and the folder and thinking level under "Advanced".
+A `schedule` call's confirmation is a card in the conversation under the call
+(`scheduleConfirmCard()`, `drawScheduleCard()` in `app.js`): the arguments as sent, then task,
+schedule, where it runs, source and instructions, read from `ScheduleTool::summary()`'s lines; Esc
+cancels, ⌘/Ctrl+Enter schedules.
 
 - **Missed runs happen once.** The next occurrence counts from `anchorAt`; after a run the anchor is
   *now*, not the occurrence, so a week asleep is one run. Saving or switching on resets the anchor.

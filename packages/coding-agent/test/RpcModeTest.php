@@ -592,6 +592,22 @@ final class RpcModeTest extends TestCase
         $this->assertSame('the sky is blue', $this->data(['type' => 'get_last_assistant_text'])['text']);
     }
 
+    public function testTranslateAsksTheModelAndKeepsNothing(): void
+    {
+        $this->start(answers: ['天空是蓝色的']);
+
+        $this->assertSame('天空是蓝色的', $this->data(['type' => 'translate', 'text' => 'the sky is blue', 'language' => '简体中文', 'doNotTranslate' => ['简体中文']])['text']);
+        // A side request, not a turn: the conversation has nothing in it.
+        $this->assertSame(0, $this->data(['type' => 'get_session_stats'])['assistantMessages']);
+    }
+
+    public function testTranslateAnswersNullForTextAlreadyInALanguageTheReaderHas(): void
+    {
+        $this->start(answers: ['SAME']);
+
+        $this->assertNull($this->data(['type' => 'translate', 'text' => 'the sky is blue', 'language' => 'English', 'doNotTranslate' => ['English']])['text']);
+    }
+
     public function testGetMessagesRoundTripsThroughTheSessionCodec(): void
     {
         $this->start(answers: ['hello']);

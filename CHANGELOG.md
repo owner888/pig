@@ -43,6 +43,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.72] - 2026-10-15
+
+### Added
+
+- Translate messages in the Web UI, as Telegram has it, under the language settings: a *Translate* button on every answer (and *Show original* back), *Translate entire chats* to press it as each answer arrives, and *Do not translate* for the languages you read — an answer whose script says it is in one gets no button. The session's model is the translator (RPC `translate {text, language, doNotTranslate}`, answered `text: null` for one already in your language); your own messages, tool output and thinking are not translated.
+
+### Changed
+
+- The web UI's scheduled tasks are laid out as the Claude app's: a page in the main area with the tasks as cards (search, filter, sort) and a *New task* menu — *Create with pig* opens a conversation with the request in the prompt, *Set up manually* opens the form; a task's conversation in the sidebar opens the task's page (history; instructions, schedule and permission; Run now and the on/off switch; edit and delete under "⋯"), with its clock at the end of the row; the form is a dialog with the permission and model in a bar under the instructions, a row per trigger and *Advanced* settings for the folder and thinking level; times are shown in the viewer's timezone.
+- A `schedule` call's confirmation in the web UI is a card in the conversation, under the call — "pig wants to create a scheduled task", the arguments, then task, schedule, where it runs, source and instructions — answered with Cancel (Esc) or Schedule (⌘/Ctrl+Enter), rather than a dialog over the page.
+
+### Added
+
+- A scheduled task can have more than one trigger (the form's "+"); it runs at the soonest, and a one-time trigger is dropped once it fires. `triggers` in `/api/scheduled/save`; a task written with one `schedule` reads as one trigger.
+- A permission per scheduled task: *Auto* answers a run's confirmations yes so it does not stop for approval, *Manual* waits for you. New tasks — from the form or the `schedule` tool (`permission`) — default to *Auto*, as the Claude app's do; tasks saved before stay *Manual*, which is how they ran.
+
 ## [0.6.71] - 2026-10-15
 
 ### Added

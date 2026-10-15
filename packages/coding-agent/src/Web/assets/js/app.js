@@ -4,7 +4,7 @@
 
 import "./viewport.js";
 import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer } from "./utils.js";
-import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales } from "./i18n.js";
+import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales, translateSettings, translateRequest, needsTranslation } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
 import { renderMarkdown, renderDiff, renderDiffFromUnified, copyCode } from "./markdown.js";
@@ -18,7 +18,7 @@ import { primeAttention, notifyAway } from "./attention.js";
 import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
-import { openScheduledTasks, watchScheduledTasks } from "./components/ScheduledTasks.js";
+import { createScheduledPages, watchScheduledTasks, scheduleConfirmCard, SCHEDULE_ICONS } from "./components/ScheduledTasks.js";
 import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     const chatArea = document.getElementById("chat-area");
@@ -48,6 +48,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const themeBtn = document.getElementById("theme-btn");
 
     let tabSeq = 0;
+
+    // The scheduled tasks' pages (`createScheduledPages()`), made at boot, and the task whose page is open.
+    let scheduledPages = null;
+    let openTaskId = null;
 
     // 32 hex digits. `crypto.getRandomValues()` rather than `randomUUID()`, which a page served over
     // plain http to another device does not have.
@@ -938,6 +942,57 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       scrollToBottomIfNeeded();
     }
 
+    /**
+     * The "Translate messages" setting on one finished answer: a Translate button under the
+     * text (`target` is the element holding its markdown), which swaps the answer for the
+     * model's translation and back; pressed at once when "Translate entire chats" is on. An
+     * answer whose script says it is in a "Do not translate" language gets no button; one the
+     * script cannot place is asked, and the child answers `text: null` when it was in one.
+     */
+    function attachTranslate(block, text, target = block) {
+      if (!text.trim() || !needsTranslation(text)) return;
+      const tab = T();
+      const bar = document.createElement("div");
+      bar.className = "msg-translate";
+      const btn = document.createElement("button");
+      btn.className = "mini-btn";
+      btn.dataset.i18n = "translate_btn";
+      btn.textContent = t("translate_btn");
+      bar.appendChild(btn);
+      block.appendChild(bar);
+
+      let translated = null;
+      let showing = false;
+      const show = (markdown) => {
+        target.innerHTML = renderMarkdown(markdown);
+        if (target === block) block.appendChild(bar);
+      };
+      const label = (key) => { btn.dataset.i18n = key; btn.textContent = t(key); };
+
+      btn.addEventListener("click", async () => {
+        if (translated === null) {
+          label("translating");
+          btn.disabled = true;
+          try {
+            const data = await tab.rpc({ type: "translate", text, ...translateRequest() }, 180000);
+            btn.disabled = false;
+            if (data.text === null) { label("translate_same"); btn.disabled = true; return; }
+            translated = data.text;
+          } catch (err) {
+            btn.disabled = false;
+            label("translate_btn");
+            appendErrorMessage(err.message);
+            return;
+          }
+        }
+        showing = !showing;
+        show(showing ? translated : text);
+        label(showing ? "translate_original" : "translate_btn");
+      });
+
+      if (translateSettings.entireChats) btn.click();
+    }
+
     function ensureAssistantBlock() {
       if (!currentAssistantBlock) {
         currentAssistantBlock = document.createElement("div");
@@ -995,6 +1050,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantText = "";
       } else if (evt.type === "message_end") {
         const message = evt.message;
+        if (message?.role === "assistant" && currentAssistantBlock && currentAssistantText.trim()) {
+          attachTranslate(currentAssistantBlock, currentAssistantText, currentAssistantBlock.querySelector(".assistant-prose"));
+        }
         if (message?.role === "custom") appendHookMessage(message);
         if (message?.role === "compactionSummary" || message?.role === "branchSummary") appendSummaryMessage(message);
         if (message?.role === "assistant" && message.stopReason === "aborted" && !message.content?.some(c => c.type === "toolCall")) {
@@ -1551,6 +1609,25 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       return (reply) => network.send({ type: "rpc_command", tabId: tab?.id, command: { type: "extension_ui_response", ...reply } });
     }
 
+    /**
+     * A `schedule` call's confirmation as a card in the conversation, under the call: the Claude
+     * app's "Claude wants to create a scheduled task". False when the question is not one — no
+     * `schedule` call is waiting in the tab it came from — and the dialog is drawn instead.
+     */
+    function drawScheduleCard(req) {
+      const tab = T() || active;
+      if (!tab) return false;
+      const call = [...(tab.toolCards?.values() || [])].reverse().find((c) => c.toolName === "schedule" && !c.isFinished && c.element.isConnected);
+      if (!call) return false;
+      if (tab.scroller.querySelector(`.sc-card[data-req="${CSS.escape(req.id)}"]`)) return true;
+      const send = replyTo(tab);
+      const card = scheduleConfirmCard({ call: { arguments: call.args }, req, answer: (yes) => send({ id: req.id, confirmed: yes }) });
+      card.dataset.req = req.id;
+      call.element.after(card);
+      if (tab === active) scrollToBottomIfNeeded();
+      return true;
+    }
+
     /** Answer the dialog that is open as a cancel, and close it. */
     function cancelHookDialog() {
       if (!hookDialog) return;
@@ -1566,6 +1643,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function openHookDialog(req, reply = null) {
       // The same question arriving again is not a second question.
       if (hookDialog && hookDialog.id === req.id) return;
+      // A `schedule` call asking to go ahead is a card in the conversation, as the Claude app draws it.
+      if (req.method === "confirm" && !reply && drawScheduleCard(req)) return;
       // One at a time, as TerminalUi has it: a second question would take the keys from the first.
       cancelHookDialog();
 
@@ -2008,6 +2087,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /** Make `tab` the one on screen. */
     function openTab(tab) {
+      scheduledPages?.close();
       if (!tabs.includes(tab)) tabs.push(tab);
       if (active && active !== tab) active.scroller.hidden = true;
       active = tab;
@@ -2064,7 +2144,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
         el.appendChild(label);
         el.appendChild(close);
-        el.addEventListener("click", () => { if (!isActive) openTab(t); });
+        el.addEventListener("click", () => { if (!isActive) openTab(t); else scheduledPages?.close(); });
         sessionTabs.appendChild(el);
       }
       const plus = document.createElement("div");
@@ -2574,26 +2654,32 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         toggleSessionDropdown(item, moreBtn, s, label);
       });
 
-      // A conversation a scheduled task started says which, with the sidebar entry's own clock.
+      // A scheduled task's own conversation is the task in the sidebar, as the Claude app lists it:
+      // a clock at the end where the folder would be — a dot on it when a run has news — and a
+      // click opens the task's page rather than the conversation.
       if (s.scheduledTask) {
         const clock = document.createElement("span");
-        clock.className = "drawer-scheduled";
-        clock.title = t("sched_started_by", { name: s.scheduledTask });
-        clock.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
-        label.prepend(clock);
-      }
-
-      item.append(label, folder, moreBtn);
-      // A run has finished there since it was last open: the dot goes once it is (`markScheduledSeen()`).
-      if (s.scheduledUnread) {
-        const dot = document.createElement("span");
-        dot.className = "drawer-unread-dot";
-        dot.title = t("sched_unread");
-        item.insertBefore(dot, folder);
+        clock.className = "drawer-scheduled" + (s.scheduledUnread ? " unread" : "");
+        clock.title = s.scheduledUnread ? t("sched_unread") : t("sched_started_by", { name: s.scheduledTask });
+        clock.innerHTML = SCHEDULE_ICONS.clock;
+        item.classList.add("task-item");
+        if (s.scheduledTaskId) item.dataset.taskId = s.scheduledTaskId;
+        item.classList.toggle("active", !!s.scheduledTaskId && scheduledPages?.isOpen() && openTaskId === s.scheduledTaskId);
+        item.append(label, clock, moreBtn);
+      } else {
+        item.append(label, folder, moreBtn);
       }
       item.addEventListener("click", () => {
         closeSessionDropdown();
         onOpen?.();
+        if (s.scheduledTaskId) {
+          if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
+            sidebar.classList.add("collapsed");
+            toggleSidebar.innerText = "›";
+          }
+          scheduledPages.openTask(s.scheduledTaskId);
+          return;
+        }
         switchSession(s.path, s.filename, s.cwd);
       });
       return item;
@@ -2923,6 +3009,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
                 block.className = "msg-block msg-assistant prose";
                 block.innerHTML = renderMarkdown(c.text);
                 chatScroll.appendChild(block);
+                attachTranslate(block, c.text);
               }
             }
           }
@@ -3183,11 +3270,40 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     });
     window.webTerminal = webTerminal;
 
+    // The scheduled tasks' pages, in the main area in place of the conversation.
+    const pageView = document.getElementById("page-view");
+    const mainView = document.getElementById("main-view");
+    scheduledPages = createScheduledPages({
+      host: pageView,
+      onShow: () => { mainView.classList.add("page-mode"); pageView.hidden = false; },
+      onHide: () => { mainView.classList.remove("page-mode"); pageView.hidden = true; },
+      onOpenConversation: (cwd, sessionFile) => switchSession(null, sessionFile, cwd),
+      // The Claude app's "Create with Claude": a new conversation with its sentence in the prompt, not sent.
+      onCreateWithChat: () => {
+        startNewSession();
+        promptInput.value = t("sched_chat_prompt");
+        resizePrompt();
+        promptInput.focus();
+        promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+      },
+      onPageChange: (taskId) => {
+        openTaskId = taskId;
+        document.getElementById("scheduled-tasks-btn")?.classList.toggle("active", scheduledPages?.isOpen() && taskId === null);
+        sidebarList.querySelectorAll(".session-item").forEach((el) => {
+          el.classList.toggle("active", taskId !== null ? el.dataset.taskId === taskId : (!scheduledPages?.isOpen() && !!active?.sessionPath && el.dataset.sessionPath === active.sessionPath));
+        });
+      },
+    });
+
     // Scheduled tasks: the panel, and the dot beside it — a run waiting for an answer, or else a run
     // that has finished since its conversation was last open, as the Claude app marks one.
     const scheduledDot = document.getElementById("scheduled-tasks-dot");
     document.getElementById("scheduled-tasks-btn")?.addEventListener("click", () => {
-      openScheduledTasks({ onOpenConversation: (cwd, sessionFile) => switchSession(null, sessionFile, cwd) });
+      if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
+        sidebar.classList.add("collapsed");
+        toggleSidebar.innerText = "›";
+      }
+      scheduledPages.openList();
     });
     watchScheduledTasks({ onAttention: (waiting, tasks) => {
       unreadTasks = new Set(tasks.filter((task) => task.unread && task.sessionFile).map((task) => task.sessionFile.split("/").pop()));

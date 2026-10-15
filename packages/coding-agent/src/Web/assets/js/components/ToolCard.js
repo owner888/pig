@@ -16,6 +16,8 @@ const TOOL_CONFIGS = {
   browse_web_page: { icon: "🖥️", defaultOpen: false },
   computer: { icon: "🖱️", defaultOpen: true },
   generate_image: { icon: "🎨", defaultOpen: true },
+  // Its arguments are shown in the confirmation card drawn under it (`scheduleConfirmCard()`).
+  schedule: { icon: "🕒", defaultOpen: false },
 };
 
 /**

@@ -810,6 +810,7 @@ final class HttpServer
             $query = trim((string) ($req['query']['q'] ?? ''));
 
             $scheduled = $this->schedules->sessionTasks();
+            $taskIds = $this->schedules->sessionTaskIds();
             $unread = $this->schedules->unread();
 
             if ($query === '') {
@@ -830,6 +831,7 @@ final class HttpServer
                 // timestamp is when the conversation started.
                 'modified' => filemtime($s->path) * 1000,
                 'scheduledTask' => $scheduled[basename($s->path)] ?? null,
+                'scheduledTaskId' => $taskIds[basename($s->path)] ?? null,
                 'scheduledUnread' => isset($unread[basename($s->path)]),
             ], $sessions);
 

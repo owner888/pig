@@ -1047,6 +1047,37 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testARunOfAnAutoTaskIsNotStoppedByAConfirmation(): void
+    {
+        // The Claude app's "auto" permission: the run works on without waiting for approval.
+        $port = 28198;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $server->schedules()->start();
+            $http = new HttpClient(2.0);
+
+            [, $saved] = $this->post($http, $port, '/api/scheduled/save', ['name' => 'Auto', 'prompt' => 'ask: may I?', 'cwd' => $this->cwd, 'triggers' => [], 'timezone' => 'UTC', 'permissionMode' => 'auto']);
+            $id = $saved['task']['id'];
+            $this->assertSame('auto', $saved['task']['permissionMode']);
+            $this->post($http, $port, '/api/scheduled/run', ['id' => $id]);
+
+            $deadline = microtime(true) + 3.0;
+            $statuses = [];
+            do {
+                Async::delay(0.02);
+                $run = $this->get($http, $port, '/api/scheduled/runs?id=' . $id)['runs'][0] ?? [];
+                $statuses[] = $run['status'] ?? null;
+            } while (($run['status'] ?? null) !== 'done' && microtime(true) < $deadline);
+
+            $this->assertSame('done', $run['status'] ?? null);
+            $this->assertNotContains('needs_input', $statuses);
+
+            $server->stop();
+        });
+    }
+
     public function testTheScheduleToolAsksTheServerThatRunsTheScheduleWithTheLocalToken(): void
     {
         // The `schedule` tool (`builtin:schedule`) from a conversation that is not the server: it

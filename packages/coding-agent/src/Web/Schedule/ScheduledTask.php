@@ -17,12 +17,22 @@ use Pig\Agent\ThinkingLevel;
  * once, and every run is a turn in it: the next run sees what the last one found, as the Claude app's
  * task conversation does. `ScheduleManager` gives it the file; nothing a client sends sets it.
  *
- * Three kinds of `schedule`:
+ * `$triggers` is what runs it, any number of them, as the Claude app's form adds one row per "+":
  *
- * - `manual` — runs only when somebody presses "Run now".
- * - `cron` — a five-field `CronExpression`, in `$timezone`. The page's presets (hourly, daily,
- *   weekdays, weekly) are all written as one.
- * - `once` — `$runAt`, epoch milliseconds; the task is switched off after it has run.
+ * - `{type: cron, cron}` — a five-field `CronExpression`, in `$timezone`. The page's presets
+ *   (hourly, daily, weekdays, weekly) are all written as one.
+ * - `{type: once, runAt}` — epoch milliseconds; dropped once it has fired, and a task left with
+ *   no trigger by that is switched off.
+ *
+ * None at all is a task that runs only when somebody presses "Run now". `$schedule`, `$cron` and
+ * `$runAt` are the first trigger, as a task with one was written before there could be more —
+ * what an older `scheduled-tasks.json` holds, and what `fromArray()` still reads when there is no
+ * `triggers`.
+ *
+ * `$permissionMode` is the Claude app's per-task "permission": `auto` answers yes to a run's
+ * confirmations as they come (`ScheduleManager::observe()`), so the run does not stop to wait;
+ * `ask` leaves every question for the person, as runs always did. A question that wants more than
+ * a yes — a choice, some text — waits in both. A task written before there was a choice is `ask`.
  *
  * `$timezone` is the browser's, recorded when the task is saved: a daemon started from launchd has
  * whatever `date.timezone` PHP was built with, and "every day at 09:00" means the person's 09:00.
@@ -40,14 +50,23 @@ final class ScheduledTask
     public const string CRON = 'cron';
     public const string ONCE = 'once';
 
+    public const string AUTO = 'auto';
+    public const string ASK = 'ask';
+
+    /** The first trigger, as one task with one trigger was written: `MANUAL`, `CRON` or `ONCE`. */
+    public readonly string $schedule;
+
+    public readonly ?string $cron;
+
+    public readonly ?int $runAt;
+
     public function __construct(
         public readonly string $id,
         public readonly string $name,
         public readonly string $prompt,
         public readonly string $cwd,
-        public readonly string $schedule,
-        public readonly ?string $cron,
-        public readonly ?int $runAt,
+        /** @var list<array{type: string, cron?: string, runAt?: int}> */
+        public readonly array $triggers,
         public readonly string $timezone,
         public readonly ?string $model,
         public readonly ?string $thinkingLevel,
@@ -55,7 +74,12 @@ final class ScheduledTask
         public readonly int $createdAt,
         public readonly int $anchorAt,
         public readonly ?string $sessionFile = null,
+        public readonly string $permissionMode = self::ASK,
     ) {
+        $first = $triggers[0] ?? null;
+        $this->schedule = $first['type'] ?? self::MANUAL;
+        $this->cron = $first !== null && $first['type'] === self::CRON ? $first['cron'] : null;
+        $this->runAt = $first !== null && $first['type'] === self::ONCE ? $first['runAt'] : null;
     }
 
     /**
@@ -67,7 +91,6 @@ final class ScheduledTask
         $name = trim(self::string($data, 'name'));
         $prompt = trim(self::string($data, 'prompt'));
         $cwd = rtrim(self::string($data, 'cwd'), '/') ?: '/';
-        $schedule = self::string($data, 'schedule');
         $timezone = self::string($data, 'timezone');
 
         if ($name === '') {
@@ -88,15 +111,12 @@ final class ScheduledTask
             throw new InvalidArgumentException("'{$timezone}' is not a timezone.", 0, $e);
         }
 
-        $cron = null;
-        $runAt = null;
+        $triggers = self::triggers($data);
 
-        match ($schedule) {
-            self::MANUAL => null,
-            self::CRON => $cron = CronExpression::parse(self::string($data, 'cron'))->expression,
-            self::ONCE => $runAt = self::int($data, 'runAt'),
-            default => throw new InvalidArgumentException("'{$schedule}' is not a schedule: manual, cron or once."),
-        };
+        $mode = $data['permissionMode'] ?? self::ASK;
+        if (!in_array($mode, [self::AUTO, self::ASK], true)) {
+            throw new InvalidArgumentException("'" . (is_string($mode) ? $mode : gettype($mode)) . "' is not a permission mode: auto or ask.");
+        }
 
         $model = $data['model'] ?? null;
         if ($model !== null && (!is_string($model) || preg_match('#^[^/\s]+/\S+$#', $model) !== 1)) {
@@ -117,9 +137,7 @@ final class ScheduledTask
             name: $name,
             prompt: $prompt,
             cwd: $cwd,
-            schedule: $schedule,
-            cron: $cron,
-            runAt: $runAt,
+            triggers: $triggers,
             timezone: $timezone,
             model: $model,
             thinkingLevel: $thinking,
@@ -127,7 +145,53 @@ final class ScheduledTask
             createdAt: $createdAt,
             anchorAt: isset($data['anchorAt']) ? self::int($data, 'anchorAt') : $now,
             sessionFile: is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null,
+            permissionMode: $mode,
         );
+    }
+
+    /**
+     * `triggers` as it was sent, or the one trigger `schedule` / `cron` / `runAt` say, as a task was
+     * written before it could have more.
+     *
+     * @param array<string, mixed> $data
+     * @return list<array{type: string, cron?: string, runAt?: int}>
+     */
+    private static function triggers(array $data): array
+    {
+        if (!array_key_exists('triggers', $data) || $data['triggers'] === null) {
+            $schedule = self::string($data, 'schedule');
+
+            return match ($schedule) {
+                self::MANUAL => [],
+                self::CRON => [self::trigger(['type' => self::CRON, 'cron' => $data['cron'] ?? null])],
+                self::ONCE => [self::trigger(['type' => self::ONCE, 'runAt' => $data['runAt'] ?? null])],
+                default => throw new InvalidArgumentException("'{$schedule}' is not a schedule: manual, cron or once."),
+            };
+        }
+
+        if (!is_array($data['triggers']) || !array_is_list($data['triggers'])) {
+            throw new InvalidArgumentException("'triggers' must be a list.");
+        }
+
+        return array_map(
+            static fn (mixed $trigger): array => is_array($trigger) ? self::trigger($trigger) : throw new InvalidArgumentException('A trigger is an object with a type.'),
+            $data['triggers'],
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $trigger
+     * @return array{type: string, cron?: string, runAt?: int}
+     */
+    private static function trigger(array $trigger): array
+    {
+        $type = $trigger['type'] ?? null;
+
+        return match ($type) {
+            self::CRON => ['type' => self::CRON, 'cron' => CronExpression::parse(self::string($trigger, 'cron'))->expression],
+            self::ONCE => ['type' => self::ONCE, 'runAt' => self::int($trigger, 'runAt')],
+            default => throw new InvalidArgumentException("'" . (is_string($type) ? $type : gettype($type)) . "' is not a trigger: cron or once."),
+        };
     }
 
     /** @return array<string, mixed> */
@@ -138,6 +202,7 @@ final class ScheduledTask
             'name' => $this->name,
             'prompt' => $this->prompt,
             'cwd' => $this->cwd,
+            'triggers' => $this->triggers,
             'schedule' => $this->schedule,
             'cron' => $this->cron,
             'runAt' => $this->runAt,
@@ -148,6 +213,7 @@ final class ScheduledTask
             'createdAt' => $this->createdAt,
             'anchorAt' => $this->anchorAt,
             'sessionFile' => $this->sessionFile,
+            'permissionMode' => $this->permissionMode,
         ];
     }
 
@@ -163,13 +229,47 @@ final class ScheduledTask
             return null;
         }
 
-        return match ($this->schedule) {
-            self::ONCE => $this->runAt,
-            self::CRON => (int) CronExpression::parse((string) $this->cron)
-                ->next(self::dateTime($this->anchorAt, $this->timezone))
-                ->format('Uv'),
-            default => null,
-        };
+        $next = null;
+
+        foreach ($this->triggers as $trigger) {
+            $at = $trigger['type'] === self::ONCE
+                ? $trigger['runAt']
+                : (int) CronExpression::parse($trigger['cron'])->next(self::dateTime($this->anchorAt, $this->timezone))->format('Uv');
+            $next = $next === null ? $at : min($next, $at);
+        }
+
+        return $next;
+    }
+
+    /** The `once` triggers whose moment is at or before `$now`, which have fired by then. */
+    public function hasPastOnce(int $now): bool
+    {
+        foreach ($this->triggers as $trigger) {
+            if ($trigger['type'] === self::ONCE && $trigger['runAt'] <= $now) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The task after its occurrence at `$now` fired: the `once` triggers that have passed are
+     * dropped, and a task that had some and has no trigger left is switched off — it has done
+     * what it was set up to do.
+     */
+    public function fired(int $now): self
+    {
+        $left = array_values(array_filter(
+            $this->triggers,
+            static fn (array $trigger): bool => $trigger['type'] !== self::ONCE || $trigger['runAt'] > $now,
+        ));
+        $spent = count($left) !== count($this->triggers);
+
+        return new self(
+            $this->id, $this->name, $this->prompt, $this->cwd, $left, $this->timezone, $this->model, $this->thinkingLevel,
+            $spent && $left === [] ? false : $this->enabled, $this->createdAt, $now, $this->sessionFile, $this->permissionMode,
+        );
     }
 
     /**
@@ -180,9 +280,10 @@ final class ScheduledTask
     public function with(?bool $enabled = null, ?int $anchorAt = null, ?string $sessionFile = null): self
     {
         return new self(
-            $this->id, $this->name, $this->prompt, $this->cwd, $this->schedule, $this->cron, $this->runAt,
+            $this->id, $this->name, $this->prompt, $this->cwd, $this->triggers,
             $this->timezone, $this->model, $this->thinkingLevel,
             $enabled ?? $this->enabled, $this->createdAt, $anchorAt ?? $this->anchorAt, $sessionFile ?? $this->sessionFile,
+            $this->permissionMode,
         );
     }
 

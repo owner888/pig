@@ -27,8 +27,9 @@ use RuntimeException;
  * - **The server that runs the schedule makes the change** (`ScheduleClient`), and without one
  *   there is no change: the tasks only run while `pig web` does.
  * - **A run only reports by default.** The guidelines tell the model to write a run's prompt so it
- *   asks before pulling or editing; a question in a run waits for the person (`needs_input`), as
- *   any hook's does.
+ *   asks before pulling or editing. A question in a run waits for the person (`needs_input`) when
+ *   the task's permission is `ask`; `auto` — the Claude app's default, and this tool's for a new
+ *   task — answers its confirmations yes (`ScheduleManager::observe()`).
  */
 final class ScheduleTool
 {
@@ -77,6 +78,7 @@ final class ScheduleTool
                 'timezone' => ['type' => 'string', 'description' => "IANA timezone the schedule is in, e.g. 'Asia/Singapore'; defaults to this machine's"],
                 'model' => ['type' => 'string', 'description' => 'provider/id for the runs; defaults to pig\'s default model'],
                 'thinking' => ['type' => 'string', 'description' => 'Thinking level for the runs: off, minimal, low, medium, high, xhigh'],
+                'permission' => ['type' => 'string', 'enum' => [ScheduledTask::AUTO, ScheduledTask::ASK], 'description' => "auto (the default for a new task): a run's confirmations are answered yes and it does not stop to wait; ask: a run stops at each one until the user answers"],
             ],
             'required' => ['action'],
         ];
@@ -135,9 +137,9 @@ final class ScheduleTool
     private function save(ScheduleClient $client, array $params, HookContext $ctx, bool $update): AgentToolResult
     {
         $existing = $update ? $this->existing($client, $params) : null;
-        $data = $existing !== null ? array_intersect_key($existing, array_flip(['id', 'name', 'prompt', 'cwd', 'schedule', 'cron', 'runAt', 'timezone', 'model', 'thinkingLevel', 'enabled'])) : [];
+        $data = $existing !== null ? array_intersect_key($existing, array_flip(['id', 'name', 'prompt', 'cwd', 'triggers', 'timezone', 'model', 'thinkingLevel', 'enabled', 'permissionMode'])) : [];
 
-        foreach (['name' => 'name', 'prompt' => 'prompt', 'cwd' => 'cwd', 'timezone' => 'timezone', 'model' => 'model', 'thinking' => 'thinkingLevel'] as $param => $field) {
+        foreach (['name' => 'name', 'prompt' => 'prompt', 'cwd' => 'cwd', 'timezone' => 'timezone', 'model' => 'model', 'thinking' => 'thinkingLevel', 'permission' => 'permissionMode'] as $param => $field) {
             if (isset($params[$param])) {
                 $data[$field] = is_string($params[$param]) ? trim($params[$param]) : $params[$param];
             }
@@ -146,6 +148,8 @@ final class ScheduleTool
         $data['cwd'] = self::folder((string) ($data['cwd'] ?? ''), $ctx->cwd);
         $data['timezone'] ??= $this->timezone !== null ? ($this->timezone)() : self::localTimezone();
         $data['enabled'] ??= true;
+        // The Claude app's default for a new task: it works without stopping for approval.
+        $data['permissionMode'] ??= ScheduledTask::AUTO;
 
         $cron = isset($params['cron']) ? trim((string) $params['cron']) : null;
         $at = isset($params['at']) ? trim((string) $params['at']) : null;
@@ -156,11 +160,11 @@ final class ScheduleTool
         }
 
         if ($cron !== null) {
-            [$data['schedule'], $data['cron'], $data['runAt']] = [ScheduledTask::CRON, $cron, null];
+            $data['triggers'] = [['type' => ScheduledTask::CRON, 'cron' => $cron]];
         } elseif ($at !== null) {
-            [$data['schedule'], $data['cron'], $data['runAt']] = [ScheduledTask::ONCE, null, self::millisAt($at, (string) $data['timezone'])];
-        } elseif ($manual || !isset($data['schedule'])) {
-            [$data['schedule'], $data['cron'], $data['runAt']] = [ScheduledTask::MANUAL, null, null];
+            $data['triggers'] = [['type' => ScheduledTask::ONCE, 'runAt' => self::millisAt($at, (string) $data['timezone'])]];
+        } elseif ($manual || !isset($data['triggers'])) {
+            $data['triggers'] = [];
         }
 
         // Checked here before anybody is asked, so the dialog never shows a task that cannot be saved.
@@ -229,6 +233,7 @@ final class ScheduleTool
             "Folder: {$task->cwd}",
             $task->model !== null ? "Model: {$task->model}" : null,
             $task->thinkingLevel !== null ? "Thinking: {$task->thinkingLevel}" : null,
+            'Permission: ' . ($task->permissionMode === ScheduledTask::AUTO ? 'auto — runs without stopping for approval' : 'ask — stops at each approval until answered'),
             "Prompt:\n{$task->prompt}",
         ]));
     }
@@ -237,11 +242,13 @@ final class ScheduleTool
     private static function when(array $task): string
     {
         $tz = (string) $task['timezone'];
-        $when = match ($task['schedule']) {
-            ScheduledTask::CRON => "cron `{$task['cron']}` ({$tz})",
-            ScheduledTask::ONCE => 'once, ' . self::date((int) $task['runAt'], $tz),
-            default => 'only when asked',
-        };
+        $triggers = is_array($task['triggers'] ?? null) ? $task['triggers'] : [];
+        $when = $triggers === [] ? 'only when asked' : implode('; ', array_map(
+            static fn (array $trigger): string => $trigger['type'] === ScheduledTask::CRON
+                ? "cron `{$trigger['cron']}` ({$tz})"
+                : 'once, ' . self::date((int) $trigger['runAt'], $tz),
+            $triggers,
+        ));
 
         if (($task['enabled'] ?? true) === false) {
             return "{$when} — switched off";
@@ -249,7 +256,7 @@ final class ScheduleTool
 
         $next = $task['nextRunAt'] ?? null;
 
-        return is_int($next) && $task['schedule'] === ScheduledTask::CRON ? "{$when} — next " . self::date($next, $tz) : $when;
+        return is_int($next) && $triggers !== [] ? "{$when} — next " . self::date($next, $tz) : $when;
     }
 
     /** @param list<array<string, mixed>> $tasks */
