@@ -2967,12 +2967,12 @@
 
     /* ---- Scheduled tasks: the pages (ScheduledTasks.js), after the Claude app's ------------------
        Built on the size tokens in :root only (docs/dev/design/web-ui.md). */
-    #main-view.page-mode > #session-tabs,
+    /* A page takes the conversation's place and nothing else: the header and the tab bar stay as
+       they are on every page (docs/dev/design/web-ui.md). */
     #main-view.page-mode > #status-banner,
     #main-view.page-mode > #chat-area,
     #main-view.page-mode > #scroll-bottom-btn,
-    #main-view.page-mode > .bottom-panel,
-    #main-view.page-mode .path-info { display: none !important; }
+    #main-view.page-mode > .bottom-panel { display: none !important; }
     .page-view { flex: 1; min-height: 0; overflow-y: auto; }
     .page-view[hidden] { display: none; }
     .sp { max-width: 1040px; margin: 0 auto; padding: var(--space-5) var(--space-6) var(--space-6); box-sizing: border-box; color: var(--color-text-primary); font-size: var(--text-base); }

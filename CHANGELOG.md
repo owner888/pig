@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.74] - 2026-10-15
+
+### Fixed
+
+- The scheduled-task pages hid the header's left half and the tab bar, so the header's buttons slid to the left and the top of the page changed from one view to the next. A page now takes the conversation's place only; the header and the tab bar are the same on every page, and `docs/dev/design/web-ui.md` says so.
+
 ## [0.6.73] - 2026-10-15
 
 ### Added

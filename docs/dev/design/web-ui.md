@@ -35,6 +35,9 @@ Defined once, at the top of `assets/css/style.css` (`:root`). Colours stay the t
   (primary) button per view; the rest are quiet (`--color-hover` ground or none).
 - **A new size is a new token, added here and in `:root`, with the developer's yes** — not a
   one-off value in a rule.
+- **The frame is the same on every page.** The header (`.top-header`) and the tab bar are never
+  hidden, moved or restyled by a page; a page (`#page-view`, `#main-view.page-mode`) takes the
+  conversation's place — the chat, the banner, the prompt — and nothing else.
 - **Inline SVG icons are sized by CSS** (`width: var(--icon-sm)`), whatever their `width`
   attribute says.
 
