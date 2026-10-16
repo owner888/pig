@@ -583,11 +583,9 @@ final class HookMessagesTest extends TestCase
 
     // ---- how it is drawn -------------------------------------------------------------
 
-    public function testALongHookMessageIsFoldedUntilItIsExpanded(): void
+    public function testALongHookMessageIsShownWhole(): void
     {
-        // What a hook sends is a build failure or a lint report, so this is the common case,
-        // not the edge one — and ctrl+o folded every tool call around it while this one stayed
-        // open for ever, because the expand mechanism was wired to three classes and not four.
+        // Upstream's `CustomMessageComponent` does not fold the default draw.
         $text = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 20)));
         $component = new HookMessageComponent(new HookMessage('build', [new TextContent($text)]));
 
@@ -596,17 +594,9 @@ final class HookMessagesTest extends TestCase
 
         $this->assertStringContainsString(Themes::theme()->getBgAnsi('customMessageBg'), implode('', $collapsedLines));
         $this->assertStringContainsString('[build]', $collapsed);
-        $this->assertStringContainsString('line 5', $collapsed);
-        $this->assertStringNotContainsString('line 6', $collapsed);
-        $this->assertStringContainsString('15 more lines', $collapsed);
-        $this->assertStringContainsString('ctrl+o', $collapsed);
-
-        $component->setExpanded(true);
-        $expanded = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
-
-        $this->assertStringContainsString('line 20', $expanded);
-        $this->assertStringNotContainsString('more lines', $expanded);
-        $this->assertStringNotContainsString('ctrl+o', $expanded);
+        $this->assertStringContainsString('line 20', $collapsed);
+        $this->assertStringNotContainsString('more lines', $collapsed);
+        $this->assertStringNotContainsString('ctrl+o', $collapsed);
     }
 
     public function testAShortHookMessageIsNotFoldedAndSaysNothingAboutCtrlO(): void

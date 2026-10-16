@@ -242,7 +242,7 @@ final class ToolExecutionTest extends TestCase
 
         $this->assertStringContainsString('f20.php', $text);
         $this->assertStringNotContainsString('f21.php', $text);
-        $this->assertStringContainsString('... (10 more lines)', $text);
+        $this->assertStringContainsString('... (10 more lines, ctrl+o to expand)', $text);
     }
 
     public function testExpandingShowsAllOfIt(): void
@@ -261,21 +261,21 @@ final class ToolExecutionTest extends TestCase
     {
         // The tool puts its notice at the *end* of the output, for the model to read last —
         // and the collapsed view keeps the *front* of it, so that one line is exactly the
-        // line that gets cut. Upstream says it twice for this reason: once in the text for
-        // the model, once in the component for the person.
+        // line that gets cut. Upstream's ls says it again from the details, for the person:
+        // `[Truncated: 200 entries limit]`.
         $listing = implode("\n", array_map(static fn (int $i): string => "f{$i}.php", range(1, 30)));
         $notice = '200 entry limit reached. Use limit=400 for more';
 
         $tool = $this->tool('ls', ['path' => '.']);
         $tool->updateResult(new AgentToolResult(
             [new TextContent($listing . "\n\n[{$notice}]")],
-            ['notice' => $notice],
+            ['notice' => $notice, 'entryLimitReached' => 200],
         ));
 
         $text = $this->text($tool);
 
-        $this->assertStringContainsString('... (12 more lines)', $text);
-        $this->assertStringContainsString("[{$notice}]", $text);
+        $this->assertStringContainsString('... (12 more lines, ctrl+o to expand)', $text);
+        $this->assertStringContainsString('[Truncated: 200 entries limit]', $text);
     }
 
     public function testItIsNotSaidTwiceWhenTheWholeOutputIsOnScreen(): void
@@ -304,10 +304,12 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->tool('read', ['path' => '/tmp/big.txt']);
         $tool->updateResult(new AgentToolResult(
             [new TextContent(implode("\n", array_fill(0, 40, 'x')) . "\n\n[{$notice}]")],
-            ['notice' => $notice],
+            ['notice' => $notice, 'truncation' => ['truncated' => true, 'truncatedBy' => 'lines', 'outputLines' => 2000, 'totalLines' => 8431, 'maxLines' => 2000]],
         ));
+        $tool->setExpanded(true);
 
-        $this->assertStringContainsString("[{$notice}]", $this->text($tool));
+        // Upstream's own words, from the details, under the file.
+        $this->assertStringContainsString('[Truncated: showing 2000 of 8431 lines (2000 line limit)]', $this->text($tool));
     }
 
     public function testAToolThatCutNothingAddsNoLine(): void
@@ -338,6 +340,7 @@ final class ToolExecutionTest extends TestCase
     {
         $tool = $this->tool('read', ['path' => 'a.php']);
         $tool->updateResult($this->said("<?php\nreturn 1;\n"));
+        $tool->setExpanded(true);
 
         // dark's syntaxKeyword.
         $this->assertStringContainsString(Themes::theme()->getFgAnsi('syntaxKeyword') . 'return', $this->raw($tool));
@@ -347,6 +350,7 @@ final class ToolExecutionTest extends TestCase
     {
         $tool = $this->tool('read', ['path' => 'notes.txt']);
         $tool->updateResult($this->said("return 1;\n"));
+        $tool->setExpanded(true);
 
         $this->assertStringNotContainsString(Themes::theme()->getFgAnsi('syntaxKeyword'), $this->raw($tool));
         $this->assertStringContainsString('return 1;', $this->text($tool));
@@ -369,21 +373,37 @@ final class ToolExecutionTest extends TestCase
         $content = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 25)));
         $tool = $this->tool('write', ['path' => 'notes.txt', 'content' => $content]);
 
-        $this->assertStringContainsString('... (15 more lines, 25 total)', $this->text($tool));
+        $this->assertStringContainsString('... (15 more lines, 25 total, ctrl+o to expand)', $this->text($tool));
     }
 
-    public function testAReadSaysOnlyHowManyMoreLinesThereAre(): void
+    public function testACollapsedReadIsItsHeadingAlone(): void
     {
-        // Not a total: what a read shows is a window into a file, and the number of lines in
-        // the window is not the number of lines in the file.
+        // Upstream's: the file is a ctrl+o away, not ten lines of it in the transcript.
         $lines = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 25)));
-        $tool = $this->tool('read', ['path' => 'notes.txt']);
+        $tool = $this->tool('read', ['path' => 'notes.txt', 'offset' => 5, 'limit' => 25]);
         $tool->updateResult($this->said($lines));
 
         $text = $this->text($tool);
 
-        $this->assertStringContainsString('... (15 more lines)', $text);
-        $this->assertStringNotContainsString('total', $text);
+        $this->assertStringContainsString('read notes.txt:5-29', $text);
+        $this->assertStringNotContainsString('line 1', $text);
+
+        $tool->setExpanded(true);
+
+        $this->assertStringContainsString('line 25', $this->text($tool));
+    }
+
+    public function testASkillOrAgentsFileIsReadAsOneLine(): void
+    {
+        $skill = $this->tool('read', ['path' => '/tmp/skills/deploy/SKILL.md']);
+        $skill->updateResult($this->said('# Deploy'));
+
+        $this->assertStringContainsString('[skill] deploy (ctrl+o to expand)', $this->text($skill));
+
+        $agents = $this->tool('read', ['path' => '/tmp/AGENTS.md']);
+
+        $this->assertStringContainsString('read resource', $this->text($agents));
+        $this->assertStringContainsString('AGENTS.md (ctrl+o to expand)', $this->text($agents));
     }
 
     public function testAnEditShowsTheDiffTheToolActuallyWrote(): void
@@ -398,7 +418,7 @@ final class ToolExecutionTest extends TestCase
 
         $text = $this->text($tool);
 
-        $this->assertStringContainsString('a.php:2', $text);
+        $this->assertStringNotContainsString('a.php:2', $text);
         $this->assertStringContainsString('-2 old', $text);
         $this->assertStringContainsString('+2 new', $text);
     }
@@ -413,6 +433,48 @@ final class ToolExecutionTest extends TestCase
 
     // ---- bash ----------------------------------------------------------------------------
 
+    public function testBashSaysItsTimeoutAndWhereTheFullOutputIs(): void
+    {
+        $tool = $this->tool('bash', ['command' => 'make', 'timeout' => 30]);
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent("built\n\n[Showing lines 1-1 of 9000. Full output: /tmp/out.log]")],
+            [
+                'truncation' => ['truncated' => true, 'truncatedBy' => 'lines', 'outputLines' => 2000, 'totalLines' => 9000],
+                'fullOutputPath' => '/tmp/out.log',
+            ],
+        ));
+        $text = $this->text($tool);
+
+        // Upstream's: the timeout on the title, the tool's own footer replaced by one warning.
+        $this->assertStringContainsString('$ make (timeout 30s)', $text);
+        $this->assertStringContainsString('[Full output: /tmp/out.log. Truncated: showing 2000 of 9000 lines]', $text);
+        $this->assertSame(1, substr_count($text, '/tmp/out.log'));
+    }
+
+    public function testGrepWritesItsLimitAsUpstreamDoesAndSaysWhatItCut(): void
+    {
+        $tool = $this->tool('grep', ['pattern' => 'todo', 'limit' => 5]);
+        $tool->updateResult(new AgentToolResult([new TextContent("a.php:1: todo")], ['matchLimitReached' => 5, 'linesTruncated' => true]));
+        $text = $this->text($tool);
+
+        $this->assertStringContainsString('grep /todo/ in . limit 5', $text);
+        $this->assertStringContainsString('[Truncated: 5 matches limit, some lines truncated]', $text);
+    }
+
+    public function testAToolWithNoViewShowsItsArgumentsOnALineUntilExpanded(): void
+    {
+        $tool = $this->tool('weather', ['city' => 'Singapore', 'days' => 3]);
+
+        $this->assertStringContainsString('weather city="Singapore" days=3', $this->text($tool));
+
+        $tool->setExpanded(true);
+        $text = $this->text($tool);
+
+        $this->assertStringContainsString('city: Singapore', $text);
+        $this->assertStringContainsString('days: 3', $text);
+    }
+
+
     public function testBashShowsTheCommandAndTheEndOfItsOutput(): void
     {
         $tool = $this->tool('bash', ['command' => 'make test']);
@@ -424,7 +486,7 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('$ make test', $text);
         $this->assertStringContainsString('line 12', $text);
         $this->assertStringNotContainsString('line 1 ', $text);
-        $this->assertStringContainsString('... (7 earlier lines)', $text);
+        $this->assertStringContainsString('... (7 earlier lines, ctrl+o to expand)', $text);
     }
 
     /** @return array<string, array{string}> */
@@ -535,7 +597,7 @@ final class ToolExecutionTest extends TestCase
         // call about to do" while a hook may be asking whether to let it.
         $this->assertStringContainsString('-2 two', $shown);
         $this->assertStringContainsString('+2 TWO', $shown);
-        $this->assertStringContainsString('notes.txt:2', $shown);
+        $this->assertStringContainsString('edit notes.txt', $shown);
         $this->assertSame("one\ntwo\nthree\n", file_get_contents($directory . '/notes.txt'));
     }
 
@@ -655,7 +717,7 @@ final class ToolExecutionTest extends TestCase
         // Upstream's `BASH_PREVIEW_LINES = 5` for a command the model ran. A command the person
         // typed is `BashExecutionComponent` now, with upstream's 20 — see
         // `InteractiveModeTest::testATypedCommandKeepsTwentyLinesAndCountsTheRest`.
-        $this->assertStringContainsString('... (25 earlier lines)', $this->text($model));
+        $this->assertStringContainsString('... (25 earlier lines, ctrl+o to expand)', $this->text($model));
     }
 
     // ---- a tool that draws itself ------------------------------------------------------
@@ -712,7 +774,7 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('the raw text', $shown);
     }
 
-    public function testDrawingOnlyTheResultLeavesTheLabelAsTheHeading(): void
+    public function testDrawingOnlyTheResultLeavesTheCallAsTheHeading(): void
     {
         $tool = $this->custom(
             renderResult: static fn (): Component => new Text('my own result', 0, 0),
@@ -721,7 +783,8 @@ final class ToolExecutionTest extends TestCase
         $tool->updateResult($this->said('raw'), partial: false);
         $shown = $this->text($tool);
 
-        $this->assertStringContainsString('Count lines', $shown);
+        // Upstream's `createCallFallback()`: the name and its arguments.
+        $this->assertStringContainsString('wc path="notes.md"', $shown);
         $this->assertStringContainsString('my own result', $shown);
     }
 
@@ -760,8 +823,8 @@ final class ToolExecutionTest extends TestCase
         $tool->updateResult($this->said('still shown'), partial: false);
         $shown = $this->text($tool);
 
-        // The label, which is what a tool with no renderer would have shown.
-        $this->assertStringContainsString('Count lines', $shown);
+        // The call, which is what a tool with no renderer would have shown.
+        $this->assertStringContainsString('wc path="notes.md"', $shown);
         $this->assertStringContainsString('still shown', $shown);
         $this->assertCount(1, $problems);
         $this->assertStringContainsString('renderCall failed', $problems[0]);
@@ -799,7 +862,7 @@ final class ToolExecutionTest extends TestCase
             },
         );
 
-        $this->assertStringContainsString('Count lines', $this->text($tool));
+        $this->assertStringContainsString('wc path="notes.md"', $this->text($tool));
         $this->assertStringContainsString('returned string, expected a component', $problems[0]);
     }
 
@@ -878,6 +941,8 @@ final class ToolExecutionTest extends TestCase
         // When completed
         $tool->updateResult(new AgentToolResult([new TextContent("637 files linted")]), false, false);
         $this->assertStringContainsString('Took 53.1s', $this->text($tool));
+        // A blank line between the output and `Took`, as upstream's `\nTook …`.
+        $this->assertMatchesRegularExpression('/637 files linted\s*\n\s*\n\s*Took 53\.1s/', $this->text($tool));
 
         // Format duration helper
         $this->assertSame('0.5s', ToolExecutionComponent::formatDuration(0.5));
@@ -893,7 +958,7 @@ final class ToolExecutionTest extends TestCase
         Themes::initTheme('dark');
         $tool = new ToolExecutionComponent('bash', ['command' => 'make']);
         $tool->updateResult(new AgentToolResult([new TextContent("built\nlinked")], ['exitCode' => 3]), true);
-        $tokens = ['toolTitle', 'toolOutput', 'error'];
+        $tokens = ['toolTitle', 'toolOutput'];
         $dark = array_map(static fn (string $token): string => Themes::theme()->getFgAnsi($token), $tokens);
         $darkBg = Themes::theme()->getBgAnsi('toolErrorBg');
         $this->assertStringContainsString($darkBg, implode("\n", $tool->render(self::WIDTH)));

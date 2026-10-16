@@ -126,25 +126,14 @@ final class FooterComponent implements Component
         // the footer it always had. The inline one is already on the top line.
         $own = array_diff_key($this->statuses, [self::INLINE_STATUS => true]);
 
+        // Upstream's: sorted by key, one space between, cut with a dim `...`.
         if ($own !== []) {
-            $lines[] = $this->trim(implode(' · ', $own), $width);
+            ksort($own, SORT_STRING);
+            $line = implode(' ', $own);
+            $lines[] = Width::visible($line) <= $width ? $line : Width::truncate($line, $width, Themes::theme()->fg('dim', '...'));
         }
 
         return $lines;
-    }
-
-    /**
-     * One line's worth, measured **and cut** by what is visible rather than by bytes.
-     *
-     * The measuring was right and the cutting was `substr()`, which is the same mistake this
-     * file's own docblock warns about one method down — and worse here than a crooked column,
-     * because a cut that lands inside a character hands the terminal half of one. Three columns
-     * of a hook's status line in Chinese is nine bytes, and the ninth is the middle of the
-     * fourth character.
-     */
-    private function trim(string $text, int $width): string
-    {
-        return Width::visible($text) <= $width ? $text : Width::truncate(Ansi::strip($text), $width);
     }
 
     // ---- the top line ----------------------------------------------------------------
@@ -176,40 +165,8 @@ final class FooterComponent implements Component
             $path .= " • {$speed}";
         }
 
-        return Width::visible($path) <= $width ? $path : self::elide($path, $width);
-    }
-
-    /**
-     * Cut from the middle: the end of a path says more than its middle does.
-     *
-     * Measured in columns, not bytes or characters — a directory named in Chinese is
-     * two columns per character, and cutting by length overflows the line.
-     */
-    private static function elide(string $path, int $width): string
-    {
-        $half = intdiv($width, 2) - 2;
-
-        if ($half <= 0) {
-            return Width::truncate($path, max(1, $width));
-        }
-
-        $head = Width::truncate($path, $half);
-        $tail = self::lastColumns($path, $half - 1);
-
-        return $head . '...' . $tail;
-    }
-
-    /** The last $columns columns of $text. */
-    private static function lastColumns(string $text, int $columns): string
-    {
-        $characters = mb_str_split($text);
-        $tail = '';
-
-        while ($characters !== [] && Width::visible(end($characters) . $tail) <= $columns) {
-            $tail = array_pop($characters) . $tail;
-        }
-
-        return $tail;
+        // Upstream's: cut at the end, as every other footer line is.
+        return Width::truncate($path, $width);
     }
 
     /**

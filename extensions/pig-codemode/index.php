@@ -1044,30 +1044,41 @@ return static function (ExtensionApi $pi): void {
 
     // ---- drawing --------------------------------------------------------------------------------
 
+    // Upstream's `extensions/codemode/renderer.ts`.
     $codePreviewLines = 10;
     $callPreviewCount = 8;
     $outputPreviewLines = 5;
+    $expandKey = \Pig\CodingAgent\Keybindings::load()->keyText('app.tools.expand');
+    $expandHint = static fn (Theme $theme, int $hidden, string $noun): string => $theme->fg('muted', "... ({$hidden} more {$noun},")
+        . ' ' . $theme->fg('dim', $expandKey) . $theme->fg('muted', ' to expand)');
+    // Cents for larger amounts, two significant digits for the fractions of a cent classifier calls cost.
+    $formatCost = static fn (float $cost): string => '$' . ($cost >= 0.01 ? number_format($cost, 2, '.', '') : sprintf('%.' . max(0, 1 - (int) floor(log10($cost))) . 'f', $cost));
 
-    $renderCall = static function (array $args, Theme $theme) use ($codePreviewLines): Text {
-        $code = $args['code'] ?? null;
-        $text = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
+    $renderCall = static function (array $args, Theme $theme, ?RenderOptions $options = null) use ($codePreviewLines, $expandHint): Text {
+        $code = $args['code'] ?? '';
+        $title = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
 
-        if ($code !== null && !is_string($code)) {
-            $text .= ' ' . $theme->fg('error', '[invalid arg]');
-        } elseif (is_string($code) && trim($code) !== '') {
+        if (!is_string($code)) {
+            return new Text($title . ' ' . $theme->fg('error', '[invalid arg]'), 0, 0);
+        }
+
+        $text = $title;
+
+        if ($code !== '') {
             $lines = Themes::highlightCode(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php');
-            $shown = array_slice($lines, 0, $codePreviewLines);
+            $shown = ($options?->expanded ?? false) ? $lines : array_slice($lines, 0, $codePreviewLines);
             $text .= "\n" . implode("\n", $shown);
 
             if (count($shown) < count($lines)) {
-                $text .= "\n" . $theme->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
+                $text .= "\n" . $expandHint($theme, count($lines) - count($shown), 'lines');
             }
         }
 
         return new Text($text, 0, 0);
     };
 
-    $renderResult = static function (AgentToolResult $result, RenderOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines): Text {
+    $renderResult = static function (AgentToolResult $result, RenderOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines, $expandHint, $expandKey, $formatCost): Text {
+        // Each part with a blank line above it, as upstream's `Spacer(1)` before each.
         $sections = [];
         $calls = is_array($result->details['calls'] ?? null) ? $result->details['calls'] : [];
 
@@ -1082,11 +1093,15 @@ return static function (ExtensionApi $pi): void {
                     'error' => $theme->fg('error', '✗'),
                     default => $theme->fg('muted', '⊘'),
                 };
-                $args = !$options->expanded && strlen($call['args']) > 80 ? substr($call['args'], 0, 77) . '...' : $call['args'];
+                $args = !$options->expanded && mb_strlen($call['args']) > 80 ? mb_substr($call['args'], 0, 77) . '...' : $call['args'];
                 $line = "{$icon} " . $theme->fg('toolTitle', $call['name']) . ($args !== '' ? ' ' . $theme->fg('muted', $args) : '');
 
                 if (isset($call['durationMs'])) {
                     $line .= ' ' . $theme->fg('dim', $call['durationMs'] < 1000 ? round($call['durationMs']) . 'ms' : number_format($call['durationMs'] / 1000, 1) . 's');
+                }
+
+                if (!empty($call['cost'])) {
+                    $line .= ' ' . $theme->fg('dim', $formatCost((float) $call['cost']));
                 }
 
                 if ($options->expanded && isset($call['error'])) {
@@ -1097,7 +1112,15 @@ return static function (ExtensionApi $pi): void {
             }
 
             if (count($shown) < count($calls)) {
-                array_unshift($lines, $theme->fg('muted', '... (' . (count($calls) - count($shown)) . ' earlier calls, ctrl+o to expand)'));
+                array_unshift($lines, $theme->fg('muted', '... (' . (count($calls) - count($shown)) . ' earlier calls,')
+                    . ' ' . $theme->fg('dim', $expandKey) . $theme->fg('muted', ' to expand)'));
+            }
+
+            // Collapsed rows hide earlier calls, so the total covers every call.
+            $priced = array_filter($calls, static fn (array $call): bool => !empty($call['cost']));
+
+            if (count($priced) > 1) {
+                $lines[] = $theme->fg('muted', 'Model calls: ' . $formatCost(array_sum(array_map(static fn (array $call): float => (float) $call['cost'], $priced))));
             }
 
             $sections[] = implode("\n", $lines);
@@ -1120,18 +1143,29 @@ return static function (ExtensionApi $pi): void {
             if ($output !== '') {
                 $lines = explode("\n", str_replace("\t", '    ', $output));
                 $shown = $options->expanded ? $lines : array_slice($lines, 0, $outputPreviewLines);
-                $colour = str_starts_with($output, 'Script error:') ? 'error' : 'toolOutput';
+                $colour = $options->isError ? 'error' : 'toolOutput';
                 $section = implode("\n", array_map(static fn (string $l): string => $theme->fg($colour, $l), $shown));
 
                 if (count($shown) < count($lines)) {
-                    $section .= "\n" . $theme->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
+                    $section .= "\n" . $expandHint($theme, count($lines) - count($shown), 'lines');
+                }
+
+                // The collapsed preview hides the truncation notice at the end, so name the file here.
+                $fullOutputPath = $result->details['fullOutputPath'] ?? null;
+
+                if (!$options->expanded && is_string($fullOutputPath) && $fullOutputPath !== '') {
+                    $section .= "\n" . $theme->fg('muted', "Full output: {$fullOutputPath}");
                 }
 
                 $sections[] = $section;
             }
         }
 
-        return new Text(implode("\n\n", $sections), 0, 0);
+        if ($options->timer !== null) {
+            $sections[] = $theme->fg('muted', $options->timer);
+        }
+
+        return new Text($sections === [] ? '' : "\n" . implode("\n\n", $sections), 0, 0);
     };
 
     // ---- registering ----------------------------------------------------------------------------

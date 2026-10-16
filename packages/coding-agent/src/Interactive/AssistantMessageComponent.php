@@ -192,8 +192,22 @@ final class AssistantMessageComponent extends Container
                 continue;
             }
 
-            if ($block instanceof ThinkingContent && trim($block->thinking) !== '') {
-                $this->thinking(trim($block->thinking), self::hasTextAfter($message, $index));
+            // Upstream's: a run of thinking blocks is one thought, joined by a blank line.
+            if ($block instanceof ThinkingContent && !($message->content[$index - 1] ?? null) instanceof ThinkingContent) {
+                $run = [];
+                $last = $index;
+
+                for ($i = $index; ($message->content[$i] ?? null) instanceof ThinkingContent; $i++) {
+                    $last = $i;
+
+                    if (trim($message->content[$i]->thinking) !== '') {
+                        $run[] = trim($message->content[$i]->thinking);
+                    }
+                }
+
+                if ($run !== []) {
+                    $this->thinking(implode("\n\n", $run), self::hasTextAfter($message, $last));
+                }
             }
         }
 
@@ -249,7 +263,10 @@ final class AssistantMessageComponent extends Container
             $thought->setText($thinking);
         }
 
-        $this->keep('thought-gap', static fn (): Component => new Spacer(1));
+        // Only above something: a thought that ends the message leaves no hole under it.
+        if ($textAfter) {
+            $this->keep('thought-gap', static fn (): Component => new Spacer(1));
+        }
     }
 
     /**
@@ -260,6 +277,19 @@ final class AssistantMessageComponent extends Container
      */
     private function ending(AssistantMessage $message): void
     {
+        // Upstream's: a length stop can land before a tool call is complete, so it is said
+        // whether or not there are tool calls.
+        if ($message->stopReason === StopReason::Length) {
+            $this->keep('length-gap', static fn (): Component => new Spacer(1));
+            $length = $this->keep('length', fn (): Component => new Text('', $this->outputPad, 0));
+
+            if ($length instanceof Text) {
+                $length->setText(Themes::theme()->fg('error', 'Response was truncated before completion.'));
+            }
+
+            return;
+        }
+
         foreach ($message->content as $block) {
             if ($block instanceof ToolCall) {
                 return;
@@ -314,6 +344,10 @@ final class AssistantMessageComponent extends Container
     {
         foreach (array_slice($message->content, $index + 1) as $block) {
             if ($block instanceof TextContent && trim($block->text) !== '') {
+                return true;
+            }
+
+            if ($block instanceof ThinkingContent && trim($block->thinking) !== '') {
                 return true;
             }
         }

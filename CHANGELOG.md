@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.75] - 2026-10-16
+
+### Changed
+
+- The TUI now follows the latest upstream pi rather than a pinned commit (`AGENTS.md`, `docs/dev/upstream.md`), and every place it drew a message or a tool call differently has been brought in line:
+  - **Tool calls**: a collapsed `read` is its heading alone — a skill, an `AGENTS.md`/`CLAUDE.md` or one of pig's own docs as one line (`[skill] deploy (ctrl+o to expand)`, `read resource AGENTS.md`); `edit` no longer appends `:line`; `write` trims trailing blank lines and says `N more lines, T total`; `grep` writes ` limit N`; ls, find and grep add `[Truncated: …]` for the limits they hit; a tool with no view of its own shows `name key=value …` collapsed and a `key: value` line each expanded, its result ten lines under it.
+  - **Hints**: every `... (N more lines, ctrl+o to expand)` / `(N earlier lines, …)` names the expand key, muted with the key dim.
+  - **bash**: ` (timeout 30s)` on the title; the tool's own `[… Full output: …]` footer becomes one warning line, `[Full output: <path>. Truncated: showing X of Y lines]`; the `(exit N)` / cancelled status is gone, since the output already says it; `Took 0.4s` has a blank line above it.
+  - **Pictures**: a blank line above each; when they cannot or should not be drawn, the label is a line of the result's text.
+  - **Messages**: the compaction and branch summary blocks have a bold label, `Compacted from N tokens (ctrl+o to expand)` / `Branch summary (…)`, and expand to the summary under a bold header; a hook's message has a bold label, is not folded, and one a hook draws itself gets a blank line above it; an expanded skill block has no extra blank line under its label; a run of thinking blocks is one thought, with a blank line under it only when something follows; a response cut short by the token limit says `Response was truncated before completion.`
+  - **Status**: the loader says `Working`, with no running timer; footer statuses are sorted by key and joined by a space, and a long path is cut at the end.
+  - **codemode**: expanded shows the whole script; each model call shows its cost and more than one adds `Model calls: $…`; a failed run's output is red; collapsed names the full-output file; `Took 1.2s` under the result.
+- Custom tool renderers: `renderCall` is given a `RenderOptions` as its third argument, and `RenderOptions` carries `isError` and `timer` (`Elapsed 1.2s` / `Took 1.2s`). A `renderResult` body is now drawn straight under the heading, as upstream adds it — a renderer that wants a blank line above draws one.
+
 ## [0.6.74] - 2026-10-15
 
 ### Fixed

@@ -118,7 +118,7 @@ final class MessageComponentsTest extends TestCase
         $lines = (new BranchSummaryComponent($summary))->render(self::WIDTH);
         $text = $this->text($lines);
 
-        $this->assertStringContainsString('[branch summary]', $text);
+        $this->assertStringContainsString('[branch]', $text);
         $this->assertStringContainsString('Branch summar', $text);
         $this->assertStringContainsString('ctrl+o to expand', $text);
         $this->assertBlockBackground($lines, 'customMessageBg');

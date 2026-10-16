@@ -3947,11 +3947,9 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('build', $screen);
     }
 
-    public function testCtrlOOpensALongHookMessageTheWayItOpensEverythingElse(): void
+    public function testALongHookMessageIsDrawnWholeAndCtrlOLeavesItSo(): void
     {
-        // The component folding itself is one end; this is the other, and it is the end that
-        // was missing — the ctrl+o handler named three classes and the fold has to be reached
-        // through it or the component folds for nobody.
+        // Upstream's default draw of a custom message is not folded.
         $api = new HookApi('.', 'test.php');
         $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
         $this->start(answers: ['ok'], hooks: $hooks);
@@ -3963,11 +3961,11 @@ final class InteractiveModeTest extends TestCase
         });
         $this->settle();
 
-        $this->assertStringNotContainsString('detail 20', $this->screen(), 'folded to start with');
+        $this->assertStringContainsString('detail 20', $this->screen());
 
         $this->type("\x0f");
 
-        $this->assertStringContainsString('detail 20', $this->screen(), 'ctrl+o did not reach it');
+        $this->assertStringContainsString('detail 20', $this->screen());
     }
 
     public function testAMessageMarkedNotToDisplayIsNotDrawn(): void
@@ -5155,7 +5153,7 @@ final class InteractiveModeTest extends TestCase
 
         // Which is the honest answer: both are true at once, so both are drawn. Sharing one
         // container meant whichever wrote last was the only one you could see.
-        $this->assertStringContainsString('Working...', $screen);
+        $this->assertStringContainsString('Working', $screen);
         $this->assertStringContainsString('Auto-retry', $screen);
 
         $held();
@@ -5172,13 +5170,13 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         // Upstream's `embedWorkingStatus`: the spinner is worked into the rule above the
-        // prompt (`── ⠋ Working... ───`) rather than drawn on a line of its own above it, so a turn
+        // prompt (`── ⠋ Working ───`) rather than drawn on a line of its own above it, so a turn
         // starting and ending does not grow and shrink the frame by two rows every time.
         $lines = explode("\n", $this->screen());
-        $border = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, 'Working...')));
+        $border = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, 'Working')));
 
         $this->assertCount(1, $border, 'the loader is on exactly one line');
-        $this->assertMatchesRegularExpression('/^\x{2500}\x{2500} \S Working\.\.\.(?: · \d+s)? \x{2500}+$/u', $border[0]);
+        $this->assertMatchesRegularExpression('/^\x{2500}\x{2500} \S Working \x{2500}+$/u', $border[0]);
 
         // And that line *is* the prompt's top rule: the editor row sits right under it and the
         // bottom rule under that, where a loader of its own would have put a blank and a rule
@@ -5189,7 +5187,7 @@ final class InteractiveModeTest extends TestCase
         $held();
         $this->settle();
 
-        $this->assertStringNotContainsString('Working...', $this->screen());
+        $this->assertStringNotContainsString('Working', $this->screen());
     }
 
     public function testTheWorkingLoaderBorderMatchesTheThinkingLevelBorderColor(): void

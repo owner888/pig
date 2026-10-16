@@ -17,6 +17,8 @@ use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Tools\Shell;
+use Pig\CodingAgent\Tools\Truncate;
+use Pig\CodingAgent\Tools\Truncation;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Box;
@@ -59,6 +61,9 @@ final class ToolExecutionComponent extends Container
     private const int LIST_LINES = 20;
 
     private const int MATCH_LINES = 15;
+
+    /** Upstream's `FALLBACK_PREVIEW_LINES`, for a tool with no display of its own. */
+    private const int FALLBACK_LINES = 10;
 
     /**
      * A command says what happened at the end, so only the end is kept.
@@ -140,14 +145,18 @@ final class ToolExecutionComponent extends Container
         int $outputPad = 1,
         /** Upstream's `options.imageWidthCells`: how wide a picture is drawn, in cells. */
         private int $imageWidthCells = 60,
+        /** `keyText("app.tools.expand")`, for the `ctrl+o to expand` hints. */
+        private readonly string $expandKey = 'ctrl+o',
     ) {
         $this->addChild(new Spacer(1));
 
         $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
         $this->body = new Text('', $outputPad, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
+        // Upstream's `formatHint`: `... (N earlier lines, ctrl+o to expand)`.
         $this->bash = new BashOutputComponent(
             $bashLines,
-            fn (int $dropped): string => Themes::theme()->fg('toolOutput', "... ({$dropped} earlier lines)"),
+            fn (int $dropped): string => Themes::theme()->fg('muted', "... ({$dropped} earlier lines,")
+                . ' ' . $this->keyHint('to expand') . Themes::theme()->fg('muted', ')'),
         );
 
         // bash is the one tool whose output has to be cut at render width rather than by
@@ -293,28 +302,18 @@ final class ToolExecutionComponent extends Container
     {
         $this->images->clear();
 
+        // Upstream's: a picture is drawn, a blank line above it, only where the terminal can draw
+        // one and the person wants it; otherwise its label is a line of the text (`output()`).
+        if (!$this->drawsPictures()) {
+            return;
+        }
+
         foreach ($this->result?->content ?? [] as $block) {
             if (!$block instanceof ImageContent) {
                 continue;
             }
 
-            if (!$this->showImages) {
-                // The same label a terminal that cannot draw pictures gets, from the same
-                // function, so turning pictures off and not being able to draw them look
-                // alike — and the result still says an image came back rather than
-                // pretending none did.
-                $this->images->addChild(new Text(
-                    Themes::theme()->fg('toolOutput', TerminalImage::imageFallback(
-                        $block->mimeType,
-                        TerminalImage::getImageDimensions($block->data, $block->mimeType),
-                    )),
-                    1,
-                    0,
-                ));
-
-                continue;
-            }
-
+            $this->images->addChild(new Spacer(1));
             $this->images->addChild(new Image(
                 $block->data,
                 $block->mimeType,
@@ -339,7 +338,7 @@ final class ToolExecutionComponent extends Container
         }
 
         $this->showImages = $show;
-        $this->drawImages();
+        $this->draw();
     }
 
     /** Upstream's `setImageWidthCells()`, for the `/settings` row while a transcript is on screen. */
@@ -353,6 +352,11 @@ final class ToolExecutionComponent extends Container
 
         $this->imageWidthCells = $width;
         $this->drawImages();
+    }
+
+    private function drawsPictures(): bool
+    {
+        return $this->showImages && TerminalImage::getCapabilities()->images !== null;
     }
 
     /** Whether this tool brought at least one renderer of its own. */
@@ -381,14 +385,11 @@ final class ToolExecutionComponent extends Container
         $renderCall = $this->toolRenderers['renderCall'] ?? $this->custom?->renderCall;
         $heading = $renderCall === null ? null : $this->drawnBy(
             'renderCall',
-            fn (): mixed => $renderCall($this->arguments, Themes::theme()),
+            fn (): mixed => $renderCall($this->arguments, Themes::theme(), $this->renderOptions()),
         );
 
-        $this->box->addChild($heading ?? new Text(
-            Themes::theme()->fg('toolTitle', Style::bold($this->custom?->label ?? $this->tool)),
-            0,
-            0,
-        ));
+        // Upstream's `createCallFallback()`: the name and its arguments.
+        $this->box->addChild($heading ?? new Text($this->callWithArgs(), 0, 0));
 
         if ($this->result === null) {
             return;
@@ -399,26 +400,32 @@ final class ToolExecutionComponent extends Container
             'renderResult',
             fn (): mixed => $renderResult(
                 $this->result,
-                new RenderOptions($this->expanded, $this->partial),
+                $this->renderOptions(),
                 Themes::theme(),
             ),
         );
 
+        // Straight under the heading, as upstream adds it: a renderer that wants a gap draws one.
         if ($body !== null) {
-            $this->box->addChild(new Spacer(1));
             $this->box->addChild($body);
 
             return;
         }
 
-        // No renderer for the result, or one that failed: the text it produced, which is
-        // what every other tool without a special case shows.
-        $output = trim($this->output());
+        // No renderer for the result, or one that failed: upstream's `createResultFallback()`.
+        $fallback = $this->resultFallback();
 
-        if ($output !== '') {
-            $this->box->addChild(new Spacer(1));
-            $this->box->addChild(new Text(Themes::theme()->fg('toolOutput', $output), 0, 0));
+        if ($fallback !== '') {
+            $this->box->addChild(new Text($fallback, 0, 0));
         }
+    }
+
+    private function renderOptions(): RenderOptions
+    {
+        $timer = $this->startedAt === null ? null
+            : ($this->partial ? 'Elapsed' : 'Took') . ' ' . self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
+
+        return new RenderOptions($this->expanded, $this->partial, $this->failed, $timer);
     }
 
     /**
@@ -471,10 +478,24 @@ final class ToolExecutionComponent extends Container
     {
         $command = (string) ($this->arguments['command'] ?? '');
         $shown = $command === '' ? Themes::theme()->fg('toolOutput', '...') : $command;
+        $timeout = $this->arguments['timeout'] ?? null;
+        $timeoutSuffix = is_numeric($timeout) && $timeout > 0 ? Themes::theme()->fg('muted', " (timeout {$timeout}s)") : '';
 
-        $this->box->addChild(new Text(Themes::theme()->fg('toolTitle', Style::bold('$ ' . $shown)), 0, 0));
+        $this->box->addChild(new Text(Themes::theme()->fg('toolTitle', Style::bold('$ ' . $shown)) . $timeoutSuffix, 0, 0));
 
         $output = trim($this->output());
+        $details = $this->details();
+        $truncation = self::truncation($details['truncation'] ?? null);
+        $fullOutputPath = is_string($details['fullOutputPath'] ?? null) ? $details['fullOutputPath'] : null;
+
+        // Upstream's: the tool's own `[… Full output: …]` footer goes, since the warning below says it.
+        if (!$this->partial && ($truncation['truncated'] ?? false) && $fullOutputPath !== null && str_ends_with($output, ']')) {
+            $footer = strrpos($output, "\n\n[");
+
+            if ($footer !== false && str_contains(substr($output, $footer), $fullOutputPath)) {
+                $output = rtrim(substr($output, 0, $footer));
+            }
+        }
 
         if ($output !== '') {
             $this->bash->setRows($this->expanded ? PHP_INT_MAX : $this->bashLines);
@@ -487,44 +508,37 @@ final class ToolExecutionComponent extends Container
             $this->box->addChild($this->bash);
         }
 
-        // Outside that, which is where upstream keeps its own status parts: `exit 3` and a command
-        // escape stopped both print nothing at all, and those are exactly the two runs whose status
-        // is the only thing there is to say about them. An early return on empty output is how the
-        // first version of this lost them.
-        $this->drawBashStatus();
+        $this->drawBashStatus($truncation, $fullOutputPath);
     }
 
     /**
-     * What happened to the command, under its output — the status parts `bash-execution.ts`
-     * draws for a typed command, here for the model's `bash` calls, which put `fullOutputPath`
-     * in `details` under pi's own name.
+     * Upstream's warning and timer lines under the output, each with a blank line above it:
+     * `[Full output: <path>. Truncated: showing X of Y lines]`, then `Took 0.4s`.
+     *
+     * @param array<string, mixed>|null $truncation
      */
-    private function drawBashStatus(): void
+    private function drawBashStatus(?array $truncation, ?string $fullOutputPath): void
     {
-        $details = $this->result?->details;
-        $details = is_array($details) ? $details : [];
-        $parts = [];
+        $warnings = [];
 
-        if (($details['cancelled'] ?? false) === true) {
-            $parts[] = Themes::theme()->fg('warning', '(cancelled)');
-        } elseif (is_int($details['exitCode'] ?? null) && $details['exitCode'] !== 0) {
-            $parts[] = Themes::theme()->fg('error', "(exit {$details['exitCode']})");
+        if ($fullOutputPath !== null) {
+            $warnings[] = "Full output: {$fullOutputPath}";
         }
 
-        $path = $details['fullOutputPath'] ?? null;
+        if ($truncation['truncated'] ?? false) {
+            $warnings[] = ($truncation['truncatedBy'] ?? null) === 'lines'
+                ? "Truncated: showing {$truncation['outputLines']} of {$truncation['totalLines']} lines"
+                : "Truncated: {$truncation['outputLines']} lines shown (" . Truncate::size((int) ($truncation['maxBytes'] ?? Truncate::MAX_BYTES)) . ' limit)';
+        }
 
-        if ($path !== null && is_string($path) && ($details['truncation'] ?? null) !== null) {
-            $parts[] = Themes::theme()->fg('warning', "Output truncated. Full output: {$path}");
+        if ($warnings !== []) {
+            $this->box->addChild(new Text("\n" . Themes::theme()->fg('warning', '[' . implode('. ', $warnings) . ']'), 0, 0));
         }
 
         if ($this->startedAt !== null) {
             $label = $this->partial ? 'Elapsed' : 'Took';
             $duration = self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
-            $parts[] = Themes::theme()->fg('muted', "{$label} {$duration}");
-        }
-
-        if ($parts !== []) {
-            $this->box->addChild(new Text(implode("\n", $parts), 0, 0));
+            $this->box->addChild(new Text("\n" . Themes::theme()->fg('muted', "{$label} {$duration}"), 0, 0));
         }
     }
 
@@ -562,57 +576,168 @@ final class ToolExecutionComponent extends Container
         };
     }
 
+    /** Upstream's `COMPACT_RESOURCE_FILE_NAMES`: read as a one-line label until expanded. */
+    private const array COMPACT_RESOURCE_FILES = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD'];
+
     private function read(): string
     {
-        $path = $this->path();
-        $text = $this->heading('read') . ' ' . $this->target($path);
+        $raw = $this->rawPath();
+        $range = self::readRange($this->arguments['offset'] ?? null, $this->arguments['limit'] ?? null);
+        $rangeText = $range === '' ? '' : Themes::theme()->fg('warning', $range);
+        $compact = $this->expanded ? null : $this->compactRead($raw, $rangeText);
+        $text = $compact ?? $this->heading('read') . ' ' . $this->target($this->path()) . $rangeText;
 
-        $offset = $this->arguments['offset'] ?? null;
-        $limit = $this->arguments['limit'] ?? null;
-
-        if ($offset !== null || $limit !== null) {
-            $start = (int) ($offset ?? 1);
-            $end = $limit === null ? '' : '-' . ($start + (int) $limit - 1);
-            $text .= Themes::theme()->fg('warning', ":{$start}{$end}");
+        // Collapsed, a read is its heading alone, as upstream's: the file is a ctrl+o away.
+        if ($this->result === null || (!$this->expanded && !$this->failed)) {
+            return $text;
         }
 
-        return $this->result === null ? $text : $text . "\n\n" . $this->source($this->output(), $path);
+        $output = $this->output();
+        $language = !$this->failed && $raw !== '' ? Highlight::languageFromPath($raw) : null;
+        $lines = self::trimTrailingEmpty($language === null ? explode("\n", $output) : Themes::highlightCode(self::tabs($output), $language));
+        $shown = $this->expanded ? $lines : array_slice($lines, 0, self::FILE_LINES);
+        $remaining = count($lines) - count($shown);
+
+        $text .= "\n\n" . implode("\n", array_map(
+            fn (string $line): string => $language === null ? Themes::theme()->fg('toolOutput', self::tabs($line)) : self::tabs($line),
+            $shown,
+        ));
+
+        if ($remaining > 0) {
+            $text .= $this->moreLines("{$remaining} more lines");
+        }
+
+        $truncation = self::truncation($this->details()['truncation'] ?? null);
+
+        if ($truncation['truncated'] ?? false) {
+            $text .= "\n" . Themes::theme()->fg('warning', match (true) {
+                (bool) ($truncation['firstLineExceedsLimit'] ?? false) => '[First line exceeds ' . Truncate::size((int) ($truncation['maxBytes'] ?? Truncate::MAX_BYTES)) . ' limit]',
+                ($truncation['truncatedBy'] ?? null) === 'lines' => "[Truncated: showing {$truncation['outputLines']} of {$truncation['totalLines']} lines (" . ($truncation['maxLines'] ?? Truncate::MAX_LINES) . ' line limit)]',
+                default => "[Truncated: {$truncation['outputLines']} lines shown (" . Truncate::size((int) ($truncation['maxBytes'] ?? Truncate::MAX_BYTES)) . ' limit)]',
+            });
+        }
+
+        return $text;
+    }
+
+    /**
+     * Upstream's `formatCompactReadCall()`: a skill, one of pig's own docs, or an AGENTS/CLAUDE
+     * file, as one line with the expand key — null for any other file.
+     */
+    private function compactRead(string $raw, string $rangeText): ?string
+    {
+        if ($raw === '') {
+            return null;
+        }
+
+        $absolute = Paths::resolve($raw, $this->cwd ?? (getcwd() ?: '.'));
+        $file = basename($absolute);
+        $hint = Themes::theme()->fg('dim', " ({$this->expandKey} to expand)");
+
+        if ($file === 'SKILL.md') {
+            $label = basename(dirname($absolute)) ?: $file;
+
+            return Themes::theme()->fg('customMessageLabel', "\x1b[1m[skill]\x1b[22m ")
+                . Themes::theme()->fg('customMessageText', $label) . $rangeText . $hint;
+        }
+
+        // Upstream's `getPiDocsClassification()`: the package's README, docs/ and examples/.
+        $root = (string) realpath(dirname(__DIR__, 4));
+        $relative = $root !== '' && str_starts_with($absolute, $root . '/') ? substr($absolute, strlen($root) + 1) : null;
+
+        if ($relative !== null && ($relative === 'README.md' || str_starts_with($relative, 'docs/') || str_starts_with($relative, 'examples/'))) {
+            return Themes::theme()->fg('toolTitle', Style::bold('read docs')) . ' ' . Themes::theme()->fg('accent', $relative) . $rangeText . $hint;
+        }
+
+        if (in_array($file, self::COMPACT_RESOURCE_FILES, true)) {
+            $label = $this->cwd === null ? $absolute : Paths::relative($absolute, $this->cwd);
+
+            return Themes::theme()->fg('toolTitle', Style::bold('read resource')) . ' ' . Themes::theme()->fg('accent', $label) . $rangeText . $hint;
+        }
+
+        return null;
+    }
+
+    /** Upstream's `formatReadLineRange()`: `:start`, `:start-end`, or nothing. */
+    private static function readRange(mixed $offset, mixed $limit): string
+    {
+        if ($offset === null && $limit === null) {
+            return '';
+        }
+
+        $start = $offset === null ? 1 : (is_numeric($offset) ? (int) $offset : null);
+
+        if ($start === null) {
+            return '';
+        }
+
+        if ($limit === null) {
+            return ":{$start}";
+        }
+
+        if (!is_numeric($limit)) {
+            return '';
+        }
+
+        $end = $start + (int) $limit - 1;
+
+        return ":{$start}" . ($end !== 0 ? "-{$end}" : '');
     }
 
     private function write(): string
     {
-        $path = $this->path();
-        $text = $this->heading('write') . ' ' . $this->target($path);
-        $content = (string) ($this->arguments['content'] ?? '');
+        $text = $this->heading('write') . ' ' . $this->target($this->path());
+        $content = $this->arguments['content'] ?? '';
 
-        // Drawn from the arguments, not from the result: the point of showing a write is
-        // seeing what is being written, and by the time it has been written it is too
-        // late to care.
-        return $content === '' ? $text : $text . "\n\n" . $this->source($content, $path, total: true);
+        if (!is_string($content)) {
+            $text .= "\n\n" . Themes::theme()->fg('error', '[invalid content arg - expected string]');
+        } elseif ($content !== '') {
+            // Drawn from the arguments, as upstream's: what is being written is the point.
+            $raw = $this->rawPath();
+            $language = $raw === '' ? null : Highlight::languageFromPath($raw);
+            $display = str_replace("\r", '', $content);
+            $lines = self::trimTrailingEmpty($language === null ? explode("\n", $display) : Themes::highlightCode(self::tabs($display), $language));
+            $total = count($lines);
+            $shown = $this->expanded ? $lines : array_slice($lines, 0, self::FILE_LINES);
+            $remaining = $total - count($shown);
+
+            $text .= "\n\n" . implode("\n", array_map(
+                fn (string $line): string => $language === null ? Themes::theme()->fg('toolOutput', self::tabs($line)) : $line,
+                $shown,
+            ));
+
+            if ($remaining > 0) {
+                $text .= $this->moreLines("{$remaining} more lines, {$total} total");
+            }
+        }
+
+        // Upstream's `formatWriteResult()`: only a failure says anything, in red, under the content.
+        if ($this->failed && $this->result !== null) {
+            $said = $this->output();
+
+            if ($said !== '') {
+                $text .= "\n\n" . Themes::theme()->fg('error', $said);
+            }
+        }
+
+        return $text;
     }
 
     private function edit(): string
     {
-        $path = $this->path();
-        $details = is_array($this->result?->details) ? $this->result->details : [];
-
-        // The result's numbers once there are any, the preview's until then.
-        $line = $details['firstChangedLine'] ?? $this->previewLine;
-
-        $text = $this->heading('edit') . ' ' . $this->target($path)
-            . ($line === null ? '' : Themes::theme()->fg('warning', ":{$line}"));
+        $details = $this->details();
+        $text = $this->heading('edit') . ' ' . $this->target($this->path());
 
         if ($this->failed) {
             $said = $this->output();
 
+            $said = $said === '' ? (string) $this->previewError : $said;
+
             return $said === '' ? $text : $text . "\n\n" . Themes::theme()->fg('error', $said);
         }
 
-        // Once the tool has run, its own diff: it was built from the file it actually wrote,
-        // where the preview was built from the file as it stood a moment before. Upstream
-        // keeps showing the preview even afterwards, which is the same text in every case
-        // but the one where somebody changed the file in between — and there the file on
-        // disk is the honest answer.
+        // The result's diff once there is one — upstream draws it when it differs from the
+        // preview — and the preview's until then.
         $diff = (string) ($details['diff'] ?? $this->previewDiff);
 
         if ($diff === '' && $this->previewError !== null) {
@@ -624,43 +749,106 @@ final class ToolExecutionComponent extends Container
 
     private function find(): string
     {
-        $pattern = (string) ($this->arguments['pattern'] ?? '');
-        $heading = $this->heading('find') . ' ' . Themes::theme()->fg('accent', $pattern)
-            . Themes::theme()->fg('toolOutput', ' in ' . $this->path('.'));
+        $heading = $this->heading('find') . ' ' . Themes::theme()->fg('accent', (string) ($this->arguments['pattern'] ?? ''))
+            . Themes::theme()->fg('toolOutput', ' in ' . $this->path('.'))
+            . $this->limit(' (limit %s)');
+        $details = $this->details();
+        $warnings = array_values(array_filter([
+            ($details['resultLimitReached'] ?? null) ? "{$details['resultLimitReached']} results limit" : null,
+            $this->sizeLimitWarning($details),
+        ]));
 
-        return $this->withOutput($heading . $this->limit(), self::LIST_LINES);
+        return $this->withOutput($heading, self::LIST_LINES, $warnings);
     }
 
     private function grep(): string
     {
-        $pattern = (string) ($this->arguments['pattern'] ?? '');
         $glob = $this->arguments['glob'] ?? null;
-
-        $heading = $this->heading('grep') . ' ' . Themes::theme()->fg('accent', "/{$pattern}/")
+        $heading = $this->heading('grep') . ' ' . Themes::theme()->fg('accent', '/' . (string) ($this->arguments['pattern'] ?? '') . '/')
             . Themes::theme()->fg('toolOutput', ' in ' . $this->path('.'))
-            . ($glob === null ? '' : Themes::theme()->fg('toolOutput', " ({$glob})"));
+            . (is_string($glob) && $glob !== '' ? Themes::theme()->fg('toolOutput', " ({$glob})") : '')
+            . $this->limit(' limit %s');
+        $details = $this->details();
+        $warnings = array_values(array_filter([
+            ($details['matchLimitReached'] ?? null) ? "{$details['matchLimitReached']} matches limit" : null,
+            $this->sizeLimitWarning($details),
+            ($details['linesTruncated'] ?? null) ? 'some lines truncated' : null,
+        ]));
 
-        return $this->withOutput($heading . $this->limit(), self::MATCH_LINES);
+        return $this->withOutput($heading, self::MATCH_LINES, $warnings);
     }
 
     private function listing(string $name, string $path, int $lines): string
     {
-        $heading = $this->heading($name) . ' ' . Themes::theme()->fg('accent', $path);
+        $heading = $this->heading($name) . ' ' . $this->target($path) . $this->limit(' (limit %s)');
+        $details = $this->details();
+        $warnings = array_values(array_filter([
+            ($details['entryLimitReached'] ?? null) ? "{$details['entryLimitReached']} entries limit" : null,
+            $this->sizeLimitWarning($details),
+        ]));
 
-        return $this->withOutput($heading . $this->limit(), $lines);
+        return $this->withOutput($heading, $lines, $warnings);
     }
 
-    /** A tool with no display of its own: its arguments, then whatever it said. */
+    /** Upstream's two fallbacks for a tool with no display of its own: the call, then the result straight under it. */
     private function generic(): string
     {
-        $text = $this->heading($this->tool);
-        $arguments = json_encode($this->arguments, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $text = $this->callWithArgs();
+        $result = $this->result === null ? '' : $this->resultFallback();
 
-        if (is_string($arguments) && $arguments !== '{}') {
-            $text .= "\n\n" . Themes::theme()->fg('toolOutput', $arguments);
+        return $result === '' ? $text : $text . "\n" . $result;
+    }
+
+    /**
+     * Upstream's `formatToolCallWithArgs()`: collapsed, `key=value` pairs on the title line in
+     * muted, cut to 100 characters; expanded, a `key: value` line each below it.
+     */
+    private function callWithArgs(): string
+    {
+        $header = $this->heading($this->tool);
+
+        if ($this->arguments === []) {
+            return $header;
         }
 
-        return $this->withOutput($text, self::LIST_LINES);
+        $json = static fn (mixed $value, int $flags = 0): string => (string) json_encode($value, $flags | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if ($this->expanded) {
+            $lines = [];
+
+            foreach ($this->arguments as $key => $value) {
+                $text = is_string($value) ? $value : $json($value, JSON_PRETTY_PRINT);
+                $lines[] = "  {$key}: " . str_replace("\n", "\n    ", str_replace("\r", '', self::tabs($text)));
+            }
+
+            return $header . "\n" . Themes::theme()->fg('muted', implode("\n", $lines));
+        }
+
+        $pairs = implode(' ', array_map(
+            static fn (string|int $key, mixed $value): string => "{$key}=" . $json($value),
+            array_keys($this->arguments),
+            $this->arguments,
+        ));
+        $preview = mb_strlen($pairs) > 100 ? mb_substr($pairs, 0, 97) . '...' : $pairs;
+
+        return $header . ' ' . Themes::theme()->fg('muted', $preview);
+    }
+
+    /** Upstream's `createResultFallback()`: ten lines of the text, then the hint. */
+    private function resultFallback(): string
+    {
+        $output = $this->output();
+
+        if ($output === '') {
+            return '';
+        }
+
+        $lines = explode("\n", $output);
+        $shown = $this->expanded ? $lines : array_slice($lines, 0, self::FALLBACK_LINES);
+        $remaining = count($lines) - count($shown);
+        $text = implode("\n", array_map(static fn (string $line): string => Themes::theme()->fg('toolOutput', $line), $shown));
+
+        return $remaining > 0 ? $text . $this->moreLines("{$remaining} more lines") : $text;
     }
 
     // ---- the pieces they share --------------------------------------------------------
@@ -678,92 +866,100 @@ final class ToolExecutionComponent extends Container
             : Themes::theme()->fg('accent', $path);
     }
 
-    private function limit(): string
+    /** The `limit` argument as upstream writes it for this tool, or nothing. */
+    private function limit(string $format): string
     {
         $limit = $this->arguments['limit'] ?? null;
 
-        return $limit === null ? '' : Themes::theme()->fg('toolOutput', " (limit {$limit})");
+        return $limit === null ? '' : Themes::theme()->fg('toolOutput', sprintf($format, (string) $limit));
     }
 
-    private function withOutput(string $heading, int $lines): string
+    /**
+     * Upstream's ls / find / grep result: the text trimmed, the first $lines of it, the hint, and
+     * `[Truncated: …]` for what the tool says it left out.
+     *
+     * @param list<string> $warnings
+     */
+    private function withOutput(string $heading, int $lines, array $warnings): string
     {
         if ($this->result === null) {
             return $heading;
         }
 
+        $text = $heading;
         $output = trim($this->output());
 
-        if ($output === '') {
-            return $heading;
+        if ($output !== '') {
+            $all = explode("\n", $output);
+            $shown = $this->expanded ? $all : array_slice($all, 0, $lines);
+            $remaining = count($all) - count($shown);
+            $text .= "\n\n" . implode("\n", array_map(static fn (string $line): string => Themes::theme()->fg('toolOutput', $line), $shown));
+
+            if ($remaining > 0) {
+                $text .= $this->moreLines("{$remaining} more lines");
+            }
         }
 
-        $painted = $this->failed ? static fn (string $text): string => Themes::theme()->fg('error', $text) : static fn (string $text): string => Themes::theme()->fg('toolOutput', $text);
-
-        return $heading . "\n\n" . $this->cut(
-            array_map(static fn (string $line): string => $painted(self::tabs($line)), explode("\n", $output)),
-            $lines,
-        );
-    }
-
-    /** A file's contents, syntax-coloured when the name says what they are. */
-    /**
-     * @param bool $total say how many lines there are altogether, not just how many are left
-     */
-    private function source(string $content, string $path, bool $total = false): string
-    {
-        $language = Highlight::languageFromPath($path);
-
-        $lines = $language === null
-            ? array_map(fn (string $line): string => Themes::theme()->fg('toolOutput', self::tabs($line)), explode("\n", $content))
-            : Themes::highlightCode(self::tabs($content), $language);
-
-        return $this->cut($lines, self::FILE_LINES, $total);
-    }
-
-    /**
-     * @param list<string> $lines
-     */
-    /**
-     * @param list<string> $lines
-     * @param bool         $total upstream's `write` alone says how many lines there are
-     *        altogether, and it is right to: the content is the whole file, so its size is
-     *        what is being decided. A `read` shows a window into a file, where the window's
-     *        own line count is not the file's and saying "25 total" would be a number about
-     *        nothing.
-     */
-    private function cut(array $lines, int $keep, bool $total = false): string
-    {
-        if ($this->expanded || count($lines) <= $keep) {
-            return implode("\n", $lines);
+        if ($warnings !== []) {
+            $text .= ($output === '' ? "\n\n" : "\n") . Themes::theme()->fg('warning', '[Truncated: ' . implode(', ', $warnings) . ']');
         }
 
-        $rest = count($lines) - $keep;
-        $notice = $this->notice();
-        $counted = $total ? "{$rest} more lines, " . count($lines) . ' total' : "{$rest} more lines";
-
-        return implode("\n", array_slice($lines, 0, $keep))
-            . Themes::theme()->fg('toolOutput', "\n... ({$counted})")
-            . ($notice === null ? '' : "\n" . Themes::theme()->fg('warning', "[{$notice}]"));
+        return $text;
     }
 
-    /**
-     * What the tool says it left out, or null.
-     *
-     * **Said twice on purpose, and this is the copy for the person.** A tool that cuts its own
-     * output puts the notice at the end of the text, where the model reads it last — and the
-     * collapsed view keeps the front, so that one line is exactly the line that goes. Upstream
-     * has the same two copies for the same reason.
-     *
-     * Only while the view is cut, which is where upstream and pig part: upstream prints its
-     * warning either way, and since pig shows the tool's own sentence rather than a second
-     * wording of it, an expanded view would carry the same line twice and read as a fault.
-     */
-    private function notice(): ?string
+    /** `50KB limit` when the tool cut its output by size, as upstream's warnings say it. */
+    private function sizeLimitWarning(array $details): ?string
+    {
+        $truncation = self::truncation($details['truncation'] ?? null);
+
+        return ($truncation['truncated'] ?? false)
+            ? Truncate::size((int) ($truncation['maxBytes'] ?? Truncate::MAX_BYTES)) . ' limit'
+            : null;
+    }
+
+    /** Upstream's `... (N more lines, ctrl+o to expand)`, on a line of its own. */
+    private function moreLines(string $counted): string
+    {
+        return Themes::theme()->fg('muted', "\n... ({$counted},") . ' ' . $this->keyHint('to expand') . Themes::theme()->fg('muted', ')');
+    }
+
+    /** Upstream's `keyHint()`: the key dim, the words muted. */
+    private function keyHint(string $description): string
+    {
+        return Themes::theme()->fg('dim', $this->expandKey) . Themes::theme()->fg('muted', " {$description}");
+    }
+
+    /** @return array<string, mixed> */
+    private function details(): array
     {
         $details = $this->result?->details;
-        $notice = is_array($details) ? ($details['notice'] ?? null) : null;
 
-        return is_string($notice) && $notice !== '' ? $notice : null;
+        return is_array($details) ? $details : [];
+    }
+
+    /**
+     * A `Truncation` as an array: the object while the session is live, its JSON once it was read
+     * back from the file.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function truncation(mixed $truncation): ?array
+    {
+        return match (true) {
+            $truncation instanceof Truncation => get_object_vars($truncation),
+            is_array($truncation) => $truncation,
+            default => null,
+        };
+    }
+
+    /** @param list<string> $lines */
+    private static function trimTrailingEmpty(array $lines): array
+    {
+        while ($lines !== [] && end($lines) === '') {
+            array_pop($lines);
+        }
+
+        return $lines;
     }
 
     /**
@@ -780,27 +976,43 @@ final class ToolExecutionComponent extends Container
         }
 
         $parts = [];
+        $labels = [];
 
         foreach ($this->result->content as $block) {
             if ($block instanceof TextContent) {
-                $parts[] = Shell::sanitize($block->text);
+                $parts[] = str_replace("\r", '', Shell::sanitize($block->text));
 
                 continue;
             }
 
-            // An image is drawn below rather than named here; a terminal that cannot
-            // draw it gets a label from `Image` itself, so naming it twice is all this
-            // would add.
+            // Upstream's `getTextOutput()`: a picture that is not drawn is named in the text.
+            if ($block instanceof ImageContent && !$this->drawsPictures()) {
+                $labels[] = TerminalImage::imageFallback($block->mimeType, TerminalImage::getImageDimensions($block->data, $block->mimeType));
+            }
         }
 
-        return implode("\n", $parts);
+        $text = implode("\n", $parts);
+
+        if ($labels !== []) {
+            $text = $text === '' ? implode("\n", $labels) : $text . "\n" . implode("\n", $labels);
+        }
+
+        return $text;
     }
 
+
+    /** The path argument as the model wrote it — `file_path` too, as upstream reads it. */
+    private function rawPath(): string
+    {
+        $path = $this->arguments['file_path'] ?? $this->arguments['path'] ?? '';
+
+        return is_string($path) ? $path : '';
+    }
 
     /** The path argument, shortened to `~` where it is under home. */
     private function path(string $fallback = ''): string
     {
-        $path = (string) ($this->arguments['path'] ?? $fallback);
+        $path = $this->rawPath() ?: $fallback;
 
         if ($path === '') {
             return '';

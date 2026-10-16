@@ -39,16 +39,18 @@ final class BranchSummaryComponent extends Container
         private readonly BranchSummary $summary,
         bool $expanded = false,
         int $outputPad = 1,
+        /** `keyText("app.tools.expand")`, for the collapsed line. */
+        private readonly string $expandKey = 'ctrl+o',
     ) {
         $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->label = new Text('', 0, 0);
         $this->detail = new Text('', 0, 0);
         $this->body = new Markdown(
-            $summary->summary,
+            '',
             0,
             0,
             Themes::getMarkdownTheme(),
-            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('muted', $text)),
+            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('customMessageText', $text)),
         );
 
         $this->addChild(new Spacer(1));
@@ -71,33 +73,36 @@ final class BranchSummaryComponent extends Container
         $this->box->setPaddingX($outputPad);
     }
 
+    /**
+     * Upstream's: the label in bold, then collapsed `Branch summary (ctrl+o to expand)`, or
+     * expanded the summary under a bold header of its own.
+     */
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
-        $this->label->setText(Themes::theme()->fg('customMessageLabel', '[branch summary]'));
-        $this->detail->setText($this->line());
+        $this->label->setText(Themes::theme()->fg('customMessageLabel', "\x1b[1m[branch]\x1b[22m"));
 
         $this->box->clear();
         $this->box->addChild($this->label);
         $this->box->addChild(new Spacer(1));
-        $this->box->addChild($this->detail);
 
         if ($expanded) {
-            $this->box->addChild(new Spacer(1));
+            $this->body->setText("**Branch Summary**\n\n" . $this->summary->summary);
             $this->box->addChild($this->body);
+
+            return;
         }
+
+        $this->detail->setText(
+            Themes::theme()->fg('customMessageText', $this->line() . ' (')
+            . Themes::theme()->fg('dim', $this->expandKey)
+            . Themes::theme()->fg('customMessageText', ' to expand)'),
+        );
+        $this->box->addChild($this->detail);
     }
 
     private function line(): string
     {
-        $line = $this->summary->fromHook
-            ? 'Branch summary provided by a hook'
-            : 'Branch summarised';
-
-        if (!$this->expanded) {
-            $line .= ' (ctrl+o to expand)';
-        }
-
-        return Themes::theme()->fg('muted', $line);
+        return 'Branch summary';
     }
 }

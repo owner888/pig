@@ -191,14 +191,14 @@ final class FooterTest extends TestCase
         $this->assertStringNotContainsString('⚡', Ansi::strip($footer->render(160)[0]));
     }
 
-    public function testATooLongPathIsCutFromTheMiddle(): void
+    public function testATooLongPathIsCutAtTheEnd(): void
     {
-        // The end of a path says more than its middle does.
+        // Upstream's `truncateToWidth(pwd, width, "...")`.
         $footer = new FooterComponent($this->session(), '/' . str_repeat('directory/', 20) . 'here');
         $line = Ansi::strip($footer->render(40)[0]);
 
-        $this->assertStringContainsString('...', $line);
-        $this->assertStringEndsWith('here', $line);
+        $this->assertStringStartsWith('/directory/', $line);
+        $this->assertStringEndsWith('...', $line);
         $this->assertLessThanOrEqual(40, mb_strwidth($line));
     }
 
@@ -501,7 +501,8 @@ final class FooterTest extends TestCase
         $footer->setStatus('watcher', 'watching');
         $footer->setStatus('deploy', 'idle');
 
-        $this->assertSame('watching · idle', array_map(Ansi::strip(...), $footer->render(self::WIDTH))[2]);
+        // Upstream's: sorted by key, a space between.
+        $this->assertSame('idle watching', array_map(Ansi::strip(...), $footer->render(self::WIDTH))[2]);
     }
 
     public function testClearingTheLastStatusTakesTheLineAway(): void

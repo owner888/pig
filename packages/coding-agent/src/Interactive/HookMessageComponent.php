@@ -23,20 +23,13 @@ use Pig\Tui\Container;
  * themselves saying something they never typed. So it is labelled with the hook's own type,
  * in the muted colour, and reads as a note rather than as a turn.
  *
- * Folded to a few lines until ctrl+o, like every other long thing in the transcript. That was
- * missing, and it is the "wired at one end only" shape: `setExpanded()` existed on the tool
- * view and on the two summary components, `InteractiveMode` named those three in its ctrl+o
- * handler, and this one had no such method to be named. What it cost is not cosmetic — what a
- * hook *sends* is a build failure or a lint report, so the long message is the common case, and
- * it sat open for ever while ctrl+o folded every tool call around it.
+ * Upstream's `CustomMessageComponent` default: the type as a bold label, then the whole text as
+ * markdown — not folded, as upstream does not fold it.
  *
- * Ported from upstream's `components/hook-message.ts`.
+ * Ported from upstream's `components/custom-message.ts`.
  */
 final class HookMessageComponent extends Container
 {
-    /** Lines kept while folded. Upstream's number. */
-    private const int PREVIEW_LINES = 5;
-
     private readonly Box $box;
 
     private readonly Text $heading;
@@ -76,39 +69,21 @@ final class HookMessageComponent extends Container
         $this->box->setPaddingX($outputPad);
     }
 
+    /** Kept for ctrl+o, which names every transcript component; the default draw is the same either way. */
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
-        $lines = explode("\n", $this->text);
-        $cut = !$expanded && count($lines) > self::PREVIEW_LINES;
-
-        $this->heading->setText(
-            Themes::theme()->fg('customMessageLabel', "[{$this->message->customType}]")
-            . ($cut ? Themes::theme()->fg('muted', ' (ctrl+o to expand)') : ''),
-        );
+        $this->heading->setText(Themes::theme()->fg('customMessageLabel', "\x1b[1m[{$this->message->customType}]\x1b[22m"));
 
         $this->box->clear();
         $this->box->addChild($this->heading);
-
-        if (trim($this->text) === '') {
-            return;
-        }
-
         $this->box->addChild(new Spacer(1));
-
-        // Cut the *source* before the markdown, as upstream does: a hook's lines reflow into
-        // paragraphs on the way out, so cutting the drawn rows would cut whole paragraphs.
-        $shown = $cut
-            ? implode("\n", array_slice($lines, 0, self::PREVIEW_LINES))
-                . "\n\n... (" . (count($lines) - self::PREVIEW_LINES) . ' more lines)'
-            : $this->text;
-
         $this->box->addChild(new Markdown(
-            $shown,
+            $this->text,
             0,
             0,
             Themes::getMarkdownTheme(),
-            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('muted', $text)),
+            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('customMessageText', $text)),
         ));
     }
 }

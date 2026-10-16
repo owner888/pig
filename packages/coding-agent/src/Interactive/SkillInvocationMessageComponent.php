@@ -69,8 +69,8 @@ final class SkillInvocationMessageComponent extends Container
 
         if ($this->expanded) {
             $label = Themes::theme()->fg('customMessageLabel', Style::bold('[skill]'));
+            // Straight under the label, as upstream's: the bold name is the gap.
             $this->box->addChild(new Text($label, 0, 0));
-            $this->box->addChild(new Spacer(1));
 
             $header = "**{$this->skillBlock->name}**\n\n";
             $this->box->addChild(new Markdown(

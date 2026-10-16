@@ -498,7 +498,7 @@ final class InteractiveMode
             onWorkingMessage: function (?string $message): void {
                 $this->customWorkingMessage = $message;
                 if ($this->working !== null) {
-                    $this->working->setText($message ?? 'Working...');
+                    $this->working->setText($message ?? 'Working');
                     $this->tui->requestRender();
                 }
             },
@@ -509,7 +509,7 @@ final class InteractiveMode
             },
             onWorkingVisible: function (bool $visible): void {
                 if ($visible) {
-                    $this->showLoader($this->customWorkingMessage ?? 'Working...', timer: true);
+                    $this->showLoader($this->customWorkingMessage ?? 'Working');
                 } else {
                     $this->hideLoader();
                 }
@@ -731,14 +731,14 @@ final class InteractiveMode
             }
 
             if ($message instanceof CompactionSummary) {
-                $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad));
+                $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
                 $this->addSummaryCostNotice($message);
 
                 continue;
             }
 
             if ($message instanceof BranchSummary) {
-                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad));
+                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
                 $this->addSummaryCostNotice($message);
 
                 continue;
@@ -2390,7 +2390,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader($this->compactionLabel('manual'), timer: true);
+        $this->showLoader($this->compactionLabel('manual'));
         $this->terminalProgress(true);
 
         $this->compaction = new AbortController();
@@ -2424,7 +2424,7 @@ final class InteractiveMode
 
         // The transcript above is left where it is: it is what was said, and the summary
         // is a note about it, not a replacement for anyone's memory of reading it.
-        $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad));
+        $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
         $this->addSummaryCostNotice($summary);
         $this->footer->invalidate();
         $this->tui->requestRender();
@@ -5005,7 +5005,7 @@ final class InteractiveMode
         $this->say('Went back — anything you say now starts a new branch');
 
         if ($jump->summary !== null) {
-            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad));
+            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
             $this->addSummaryCostNotice($jump->summary);
         }
 
@@ -5136,7 +5136,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader($this->branchSummaryLabel(), timer: true);
+        $this->showLoader($this->branchSummaryLabel());
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -6687,7 +6687,7 @@ final class InteractiveMode
 
     private function onStart(): void
     {
-        $this->showLoader('Working...', timer: true);
+        $this->showLoader('Working');
     }
 
     /**
@@ -6699,9 +6699,9 @@ final class InteractiveMode
      * which grew the frame by two rows at the start of every turn and shrank it at the end; the
      * border is already there. `$status` stays for anything that is not a loader.
      */
-    private function showLoader(string $message, bool $timer = false): Loader
+    private function showLoader(string $message): Loader
     {
-        if ($this->customWorkingMessage !== null && $message === 'Working...') {
+        if ($this->customWorkingMessage !== null && $message === 'Working') {
             $message = $this->customWorkingMessage;
         }
 
@@ -6715,10 +6715,6 @@ final class InteractiveMode
             static fn (string $text): string => Themes::theme()->fg('muted', $text),
             $message,
         );
-
-        if ($timer) {
-            $this->working->withTimer();
-        }
 
         if ($this->workingIndicatorOptions !== null) {
             $this->working->setIndicator($this->workingIndicatorOptions);
@@ -7104,7 +7100,6 @@ final class InteractiveMode
             $this->stopRetryCountdown();
             $this->showLoader(
                 $event->source === 'branchSummary' ? $this->branchSummaryLabel() : $this->compactionLabel($event->reason ?? 'manual'),
-                timer: true,
             );
         }
     }
@@ -7161,7 +7156,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader($this->compactionLabel($reason), timer: true);
+        $this->showLoader($this->compactionLabel($reason));
     }
 
     /**
@@ -7193,7 +7188,7 @@ final class InteractiveMode
         $this->hideLoader();
 
         if ($event->summary !== null) {
-            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad));
+            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
             $this->addSummaryCostNotice($event->summary);
 
             return;
@@ -7236,6 +7231,8 @@ final class InteractiveMode
             }
 
             if ($drawn instanceof Component) {
+                // Upstream's `CustomMessageComponent` puts the blank line above a drawn one too.
+                $this->chat->addChild(new Spacer(1));
                 $this->chat->addChild($drawn);
 
                 return;
@@ -7282,6 +7279,7 @@ final class InteractiveMode
             startedAt: microtime(true),
             outputPad: $this->outputPad,
             imageWidthCells: $this->settings->imageWidthCells(),
+            expandKey: $this->keybindings->keyText('app.tools.expand'),
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);

@@ -45,17 +45,14 @@ uses `/Users/dev/...`, a fixture that needs a tenant header uses `acme`, an exam
 `CustomModels` and a row in the table below, because a fixture written from a real path is the
 easiest thing in the world to paste.
 
-## Upstream anchor
+## Upstream
 
-**Port against commit `d0a4c37` (2026-01-02)** — the snapshot behind the "418 lines" claim
-(`packages/agent/src/agent-loop.ts` was 417 lines + trailing newline there). Do not port
-against upstream HEAD: by 2026-09 that file is 898 lines and `packages/agent/src` is 33k.
+**Port against the latest pi** — upstream `main` (github.com/earendil-works/pi, published as
+`@earendil-works/pi-*`), not a pinned commit. Before porting or "fixing" anything, read the file as
+it is on upstream `main` today; a difference from it is a bug unless `docs/dev/decisions.md` or
+the code's own comment records it as the developer's choice.
 
-Upstream at that commit was still published as `@mariozechner/pi-*`; it is `@earendil-works/pi-*` now.
-
-Reference checkout for diffing lives outside this repo — clone pi and `git checkout d0a4c37`.
-
-Where the anchor does not build, and what was done about it: [docs/dev/upstream.md](docs/dev/upstream.md).
+Where pig cannot follow upstream (PHP, the platform) and what it does instead: [docs/dev/upstream.md](docs/dev/upstream.md).
 
 ## Layout
 
