@@ -64,3 +64,13 @@ computer_batch(
 )
 ```
 The tool adds human-like pauses and a pixel of jitter between steps.
+
+## 7. Fast decision loop with decision models (System 1 / Fast-Loop & Failover)
+
+In desktop automation, avoid frame-by-frame multimodal round-trips for routine choices:
+1. **CLI / AppleScript First**: If a task can be done with `bash`, `curl`, `osascript` (AppleScript) or CLI binaries, keep it off the desktop entirely.
+2. **Decision Model Fast-Loop**: In `codemode`, call `$models->classify()` directly to query lightweight decision models (e.g. Jev, Clef) for immediate branch selection, menu option picking, or state verification.
+3. **Multi-Provider Failover**: Use `$models->getAvailableOfType('classifier')` to discover available models dynamically. On 401 or quota exhaustion, automatically cascade to the next working provider without interrupting execution.
+4. **Batch Execution**: Once targets are identified, dispatch actions in a single `computer_batch` call, capturing a screenshot only at the final checkpoint or when an unexpected condition arises.
+
+

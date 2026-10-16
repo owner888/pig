@@ -60,3 +60,56 @@ android_ready()
 
 - **Something in the way**: a coupon, promotion or permission dialog over the screen — find its "X" or "Close/Cancel" and dismiss it, then carry on.
 - **Passwords and biometrics**: at a lock-screen password, a WeChat/Alipay payment password, or a face/fingerprint check, stop and tell the person to finish it on the phone themselves; continue once they have.
+
+## 9. Fast decision loop with decision models (System 1 / Jev Fast-Loop)
+
+To eliminate the multi-second round-trip delay of streaming screenshots back to the main LLM for every step, use layered execution:
+
+1. **CLI First**: Whenever `adb shell` (`am`, `pm`, `input`, `settings`) can accomplish the goal, never touch the screen.
+2. **Fast Decision Loop**: Inside `codemode`, run a self-contained loop: fetch `android_tree` → pass interactive candidate nodes to a fast decision model (`$models->classify()`) → execute `android_tap`. No intermediate screenshots are sent to the primary model, completing each step in hundreds of milliseconds.
+3. **Multi-Provider Failover**: Use `$models->getAvailableOfType('classifier')` to discover configured providers dynamically. If any provider returns 401 or hits quota limits, cascade seamlessly to the next available decision model (e.g. TypeSafe Jev → OpenRouter → Cloudflare).
+4. **Vision Fallback**: Only fallback to `android_observe(mode="screenshot")` when the view tree yields no interactive candidates, a custom Canvas surface is present, or automated decisions repeatedly fail.
+
+```php
+// Dynamic multi-provider classifier fallback in codemode
+function decideNode($models, $context) {
+    $classifiers = $models->getAvailableOfType('classifier');
+    foreach ($classifiers as $c) {
+        $res = $models->classify($c, $context);
+        if (($res['stopReason'] ?? '') === 'stop') {
+            return $res['answers'];
+        }
+    }
+    return null;
+}
+
+$tree = json_decode($tools->android_tree(['max_nodes' => 30]), true);
+$criteria = [];
+$nodes = [];
+foreach ($tree['nodes'] as $i => $n) {
+    $label = trim(($n['text'] ?? '') . ' ' . ($n['desc'] ?? '') . ' ' . ($n['id'] ?? ''));
+    if ($label !== '' && isset($n['rect'])) {
+        $key = 'node_' . $i;
+        $criteria[$key] = $label;
+        $nodes[$key] = $n;
+    }
+}
+
+$answers = decideNode($models, [
+    'state' => ['instruction' => 'Tap the install button'],
+    'questions' => [
+        'target' => [
+            'type' => 'choice',
+            'instructions' => 'Choose the interactive element that best satisfies the instruction',
+            'criteria' => $criteria,
+        ]
+    ]
+]);
+
+$choice = $answers['target']['choice'] ?? null;
+if ($choice && isset($nodes[$choice])) {
+    [$x, $y, $w, $h] = $nodes[$choice]['rect'];
+    $tools->android_tap(['x' => $x + $w / 2, 'y' => $y + $h / 2]);
+}
+```
+
