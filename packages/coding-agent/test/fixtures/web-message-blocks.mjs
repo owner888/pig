@@ -108,11 +108,11 @@ const userBlocks = chatScroll.children.filter((c) => c.className.includes('msg-u
 assert.ok(userBlocks.some((c) => c.children.some((ch) => /ship it/.test(ch.innerHTML))), 'the words typed after the skill were not shown as the user message');
 assert.doesNotMatch(html, /&lt;skill name=|<skill name=/);
 assert.match(html, /Compacted from 256,653 tokens/);
-assert.match(html, /\[branch summary\]/);
-assert.match(html, /Branch summary provided by a hook/);
+assert.match(html, /\[branch\]/);
+assert.match(html, /Branch summary/);
 assert.match(html, /\[build\]/);
 assert.match(html, /one/);
-assert.match(html, /1 more lines/);
+assert.doesNotMatch(html, /more lines/, 'a hook message is not folded');
 assert.doesNotMatch(html, /do not display/);
 assert.match(html, /\$ exit 3/);
 assert.match(html, /\$ seq 2500/);
@@ -143,7 +143,7 @@ assert.match(write.formatResultBody(), /written contents/);
 
 const bash = new ToolCard({ toolCallId: 'bash1', toolName: 'bash', arguments: { command: 'exit 3' } });
 bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCode: 3, fullOutputPath: '/tmp/full.txt' } }, isError: true });
-assert.match(bash.queryFooter?.textContent || bash.element.querySelector('.tool-details-footer').textContent, /exit 3|\(exit 3\)/);
+assert.doesNotMatch(bash.element.querySelector('.tool-details-footer').textContent, /exit 3/, 'the output already says the exit code');
 assert.match(bash.element.querySelector('.tool-details-footer').textContent, /Full output: \/tmp\/full.txt/);
 
 // A name with underscores is a name: `_` emphasises only at a word's edge, and nothing inside a

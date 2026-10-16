@@ -19,12 +19,12 @@ assert.deepEqual(hooks.widgetsAt(state, 'below'), [{ key: 'colour', lines: ['\x1
 // The sixteen colours are the page's theme tokens, as its terminals' palette is.
 assert.equal(hooks.ansiToHtml(hooks.widgetsAt(state, 'below')[0].lines[0]), '<span style="color:var(--color-error)">red</span> text');
 
-// Statuses: a cleared one goes, the rest are joined as the footer joins them — as text, and
-// coloured, where the theme's own colour is the page theme's token, exactly.
-assert.equal(hooks.statusLine(state), 'mcp: 2 servers · lint ok · ok');
+// Statuses: a cleared one goes, the rest are sorted by key and joined by a space as upstream's
+// footer joins them — as text, and coloured, where the theme's own colour is the page theme's token, exactly.
+assert.equal(hooks.statusLine(state), 'lint ok mcp: 2 servers ok');
 assert.equal(
   hooks.statusHtml(state),
-  `mcp: 2 servers · <span style="color:var(--color-success)">lint ok</span> · <span style="color:${fixture.successRgb}">ok</span>`,
+  `<span style="color:var(--color-success)">lint ok</span> mcp: 2 servers <span style="color:${fixture.successRgb}">ok</span>`,
 );
 assert.equal(state.title, 'pig — building');
 

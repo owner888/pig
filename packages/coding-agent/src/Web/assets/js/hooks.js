@@ -59,12 +59,17 @@ export function widgetsAt(state, placement) {
 
 /** The statuses joined as the footer shows them, as text. */
 export function statusLine(state) {
-  return [...state.statuses.values()].map(stripAnsi).join(" · ");
+  return sortedStatuses(state).map(stripAnsi).join(" ");
 }
 
 /** The statuses joined as the footer shows them, coloured, as HTML. */
 export function statusHtml(state) {
-  return [...state.statuses.values()].map(ansiToHtml).join(" · ");
+  return sortedStatuses(state).map(ansiToHtml).join(" ");
+}
+
+/** Upstream's footer order: by key. */
+function sortedStatuses(state) {
+  return [...state.statuses.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => text);
 }
 
 /**

@@ -1058,7 +1058,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
         if (message?.role === "custom") appendHookMessage(message);
         if (message?.role === "compactionSummary" || message?.role === "branchSummary") appendSummaryMessage(message);
-        if (message?.role === "assistant" && message.stopReason === "aborted" && !message.content?.some(c => c.type === "toolCall")) {
+        // Upstream's: a length stop is said whether or not there were tool calls.
+        if (message?.role === "assistant" && message.stopReason === "length") {
+          appendErrorMessage(t("response_truncated"));
+        } else if (message?.role === "assistant" && message.stopReason === "aborted" && !message.content?.some(c => c.type === "toolCall")) {
           appendErrorMessage(t("operation_aborted"));
         }
       } else if (evt.type === "agent_start" || evt.type === "turn_start") {
@@ -2945,10 +2948,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const block = document.createElement("details");
       block.className = "compaction-box";
       block.dataset.summaryKey = `${message.role}:${message.timestamp}`;
+      // Upstream's `[branch]` / `Branch summary` and `[compaction]` / `Compacted from N tokens`.
       const description = branch
-        ? t(message.fromHook ? "branch_summary_hook" : "branch_summary_done")
+        ? t("branch_summary_done")
         : (message.tokensBefore > 0 ? t("compacted_from", { count: Number(message.tokensBefore).toLocaleString() }) : t("compacted_done"));
-      block.innerHTML = `<summary class="compaction-header"><span class="compaction-title">[${branch ? "branch summary" : "compaction"}]</span><span class="compaction-description">${escapeHtml(description)}</span></summary><div class="compaction-summary-text prose">${renderMarkdown(message.summary || "")}</div>`;
+      block.innerHTML = `<summary class="compaction-header"><span class="compaction-title">[${branch ? "branch" : "compaction"}]</span><span class="compaction-description">${escapeHtml(description)}</span></summary><div class="compaction-summary-text prose">${renderMarkdown(message.summary || "")}</div>`;
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
     }
@@ -2956,14 +2960,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function appendHookMessage(message) {
       if (message.display === false) return;
       const text = textOf(message.content);
-      const lines = text.split("\n");
-      const cut = lines.length > 5;
-      const block = document.createElement(cut ? "details" : "div");
+      // Upstream's `CustomMessageComponent`: the type as a bold label, the whole text, not folded.
+      const block = document.createElement("div");
       block.className = "compaction-box hook-message";
       const label = `<span class="compaction-title">[${escapeHtml(message.customType)}]</span>`;
-      block.innerHTML = cut
-        ? `<summary class="compaction-header">${label}<div class="hook-preview prose">${renderMarkdown(lines.slice(0, 5).join("\n"))}<span class="compaction-description">${escapeHtml(t("more_lines", { count: lines.length - 5 }))}</span></div></summary><div class="compaction-summary-text prose">${renderMarkdown(text)}</div>`
-        : `${label}<div class="compaction-summary-text prose">${renderMarkdown(text)}</div>`;
+      block.innerHTML = `${label}<div class="compaction-summary-text prose">${renderMarkdown(text)}</div>`;
       for (const image of (message.content || []).filter(c => c.type === "image")) {
         const img = document.createElement("img");
         img.className = "msg-image-thumb";
@@ -3016,7 +3017,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               }
             }
           }
-          if (m.stopReason === "error" && m.errorMessage) {
+          if (m.stopReason === "length") {
+            appendErrorMessage(t("response_truncated"));
+          } else if (m.stopReason === "error" && m.errorMessage) {
             appendErrorMessage(m.errorMessage);
           } else if (m.stopReason === "aborted" && !m.content?.some(c => c.type === "toolCall")) {
             appendErrorMessage(t("operation_aborted"));

@@ -1341,6 +1341,69 @@ final class WebModeTest extends TestCase
         }
     }
 
+    /** The tool cards say what the TUI says, which is what upstream says: titles and warning lines. */
+    public function testToolCardTitlesAndWarningsFollowUpstream(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the components');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $script = <<<'JS'
+        import assert from "node:assert/strict";
+        const mk = () => {
+          const parts = {};
+          return {
+            className: "", id: "", dataset: {}, style: {}, innerHTML: "", textContent: "", hidden: false,
+            classList: { add() {}, remove() {}, toggle() { return false; }, contains() { return false; } },
+            appendChild(c) { return c; }, addEventListener() {}, closest() { return null; },
+            querySelector(sel) { return (parts[sel] ??= mk()); },
+          };
+        };
+        globalThis.document = { createElement: () => mk(), body: mk(), getElementById: () => mk() };
+        globalThis.window = globalThis; globalThis.localStorage = { getItem: () => "en", setItem() {} };
+        Object.defineProperty(globalThis, "navigator", { value: { language: "en" }, configurable: true });
+        const { ToolCard } = await import(process.argv[2] + "/components/ToolCard.js");
+        const title = (toolName, args) => new ToolCard({ toolCallId: "t", toolName, arguments: args }).getDisplayTitle();
+
+        assert.equal(title("read", { path: "/x/skills/deploy/SKILL.md" }), "[skill] deploy");
+        assert.equal(title("read", { path: "AGENTS.md" }), "read resource AGENTS.md");
+        assert.equal(title("read", { path: "a.php", offset: 5, limit: 25 }), "read a.php:5-29");
+        assert.equal(title("grep", { pattern: "todo", limit: 5 }), "grep /todo/ in . limit 5");
+        assert.equal(title("find", { pattern: "*.php", limit: 9 }), "find *.php in . (limit 9)");
+        assert.equal(title("ls", { limit: 3 }), "ls . (limit 3)");
+        assert.equal(title("weather", { city: "Singapore", days: 3 }), 'weather city="Singapore" days=3');
+        assert.equal(title("bash", { command: "make", timeout: 30 }), "$ make (timeout 30s)");
+
+        const notes = (toolName, details, text = "x") => {
+          const c = new ToolCard({ toolCallId: "t", toolName, arguments: {} });
+          c.finish({ result: { content: [{ type: "text", text }], details }, isError: false });
+          return c.element.querySelector(".tool-details-footer").textContent;
+        };
+        assert.equal(notes("bash", { exitCode: 2 }), "", "the output already says the exit code");
+        assert.equal(
+          notes("bash", { fullOutputPath: "/tmp/o.log", truncation: { truncated: true, truncatedBy: "lines", outputLines: 2000, totalLines: 9000 } }),
+          "[Full output: /tmp/o.log. Truncated: showing 2000 of 9000 lines]",
+        );
+        assert.equal(notes("grep", { matchLimitReached: 5, linesTruncated: true }), "[Truncated: 5 matches limit, some lines truncated]");
+        assert.equal(notes("ls", { entryLimitReached: 200 }), "[Truncated: 200 entries limit]");
+        console.log("titles ok");
+        JS;
+
+        $file = tempnam(sys_get_temp_dir(), 'pig-tt-') . '.mjs';
+        file_put_contents($file, $script);
+        try {
+            $out = [];
+            $code = 0;
+            exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+            $this->assertSame(0, $code, implode("\n", $out));
+            $this->assertStringContainsString('titles ok', implode("\n", $out));
+        } finally {
+            unlink($file);
+        }
+    }
+
     /**
      * The copy buttons over plain http — a phone on the LAN, a Tailscale address — where
      * `navigator.clipboard` does not exist and calling it threw, so a click did nothing. And

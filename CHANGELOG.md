@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.76] - 2026-10-16
+
+### Changed
+
+- The web page's tool cards, messages and footer now say what the TUI says since 0.6.75, which is what upstream pi says:
+  - **Tool card titles**: `[skill] deploy` and `read resource AGENTS.md` for a skill or an AGENTS/CLAUDE file, `read a.php:5-29` for a range; `grep /x/ in src (glob) limit N`, `find x in . (limit N)`, `ls . (limit N)`; a tool with no title of its own shows `name key=value …`, cut to 100 characters.
+  - **Warning lines** under a card, in the warning colour and visible with the card collapsed: bash's `[Full output: <path>. Truncated: showing X of Y lines]` (the tool's own footer leaves the output), read's `[Truncated: …]`, and ls/find/grep's `[Truncated: 200 entries limit, …]`. The `(exit N)` / cancelled notes are gone — the output already says them.
+  - **write**: no `\r` or trailing blank lines; a failure is shown in red under the content; content that is not a string says `[invalid content arg - expected string]`.
+  - **codemode**: its own card — the script, each nested call with its status, time and cost, `Model calls: $…` when more than one was priced, then the output without the `Script completed` header, red when the run failed.
+  - **Messages**: `[branch]` / `Branch summary`; bold labels on compaction, branch, skill and hook blocks; a hook's message is shown whole rather than folded; a response cut short by the token limit says `Response was truncated before completion.`
+  - **Footer**: the extensions' statuses are sorted by key and joined by a space.
+
 ## [0.6.75] - 2026-10-16
 
 ### Changed

@@ -1316,10 +1316,11 @@
     .tool-body.expanded {
       display: block;
     }
+    /* Upstream's `[Truncated: …]` / `[Full output: …]` lines, in its warning colour. */
     .tool-details-footer {
       padding: 8px 14px;
       border-top: 1px dashed var(--color-divider);
-      color: var(--color-dim);
+      color: var(--color-warning);
       font-size: var(--text-xs);
       white-space: pre-wrap;
     }
@@ -1858,16 +1859,15 @@
       list-style: none;
     }
     .compaction-header::-webkit-details-marker { display: none; }
-    .compaction-title { color: var(--color-primary); }
+    /* Upstream's labels are bold: `[compaction]`, `[branch]`, `[skill]`, a hook's `[type]`. */
+    .compaction-title { color: var(--color-primary); font-weight: 600; }
     .compaction-description {
       display: block;
       margin-top: 8px;
       color: var(--color-text-secondary);
     }
-    .hook-preview { margin-top: 8px; }
     .skill-invocation .skill-location { margin-left: 8px; color: var(--color-text-secondary); font-weight: 400; }
     .skill-invocation .compaction-summary-text { white-space: normal; }
-    .hook-message[open] .hook-preview { display: none; }
     .compaction-summary-text {
       margin-top: 10px;
       padding-top: 10px;
@@ -1884,6 +1884,9 @@
       white-space: pre-wrap;
       word-break: break-all;
     }
+
+    .tool-terminal.tool-error-text { color: var(--color-error); }
+    .tool-terminal + .tool-terminal { margin-top: var(--space-3); }
 
     /* Diff View */
     .diff-container {
