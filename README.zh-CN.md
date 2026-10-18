@@ -35,7 +35,7 @@
 curl -fsSL https://pigagent.dev/install.sh | sh
 ```
 
-该安装脚本会自动检测您的 PHP 版本与必需扩展，通过 Composer 全局安装 `pigagent/pig`，并自动帮您将 Composer 全局 bin 路径加入 `PATH` 环境变量。
+该安装脚本会自动检测您的 PHP 版本（>= 8.3）与必需扩展（macOS 下缺少 PHP 且检测到 Homebrew 时提示一键代安装）；若系统未安装 Composer 将通过官方程序（纯 PHP 方案）自动自举安装；随后通过 Composer 全局安装 `pigagent/pig`，并自动帮您将 Composer 全局 bin 路径加入 `PATH` 环境变量。
 
 ### Composer 全局安装
 

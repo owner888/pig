@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.77] - 2026-10-18
+
+### Added
+
+- **Automatic pure PHP Composer bootstrapping in `install.sh`**: When preflight checks confirm PHP >= 8.3 and its required extensions, the installer automatically checks whether `composer` is available on `PATH`. If missing, it downloads and configures the official Composer binary to a writable directory (`/usr/local/bin`, `~/.local/bin`, or `~/bin`) via pure PHP with automatic fallback, requiring zero manual setup.
+- **macOS Homebrew PHP installation prompt in `install.sh`**: If PHP is missing or below 8.3 on macOS and Homebrew is detected, the installer interactively prompts via `/dev/tty` to execute `brew install php`, automatically configures `PATH`, and continues the preflight check.
+- **Targeted PHP installation guidance for Linux distributions**: Automatically identifies the Linux distro (Ubuntu/Debian, Fedora/RHEL, Arch Linux, Alpine) when PHP is missing or incompatible, printing exact copy-paste installation commands.
+
+### Changed
+
+- **Multi-directory shell PATH configuration in `install.sh`**: When Composer is bootstrapped into a local user directory not yet on `PATH`, the profile prompt batches both the Composer directory and Composer's global bin directory into your shell configuration (`~/.zshrc`, `~/.bashrc`, or `config.fish`).
+- **Updated documentation and guides**: Aligned `README.md`, `README.zh-CN.md`, and the official site documentation (`quickstart.md` in English and Simplified Chinese) with the new automated Composer bootstrap and macOS PHP setup workflows.
+
 ## [0.6.76] - 2026-10-16
 
 ### Changed

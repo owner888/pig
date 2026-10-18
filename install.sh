@@ -7,8 +7,8 @@
 # What this does and, as importantly, what it does not:
 #
 #   - It checks PHP and its extensions BEFORE touching anything, and names every missing one at
-#     once. Without that a missing `ext-pcntl` surfaces half way through a Composer install as a
-#     platform error that does not say what to install.
+#     once. If PHP is missing on macOS with Homebrew, it offers to run `brew install php`.
+#   - It automatically bootstraps and installs Composer via pure PHP if not found on your PATH.
 #   - It runs `composer global require`, which is the one and only way pig is distributed. There is
 #     no phar and no second artifact here on purpose: pig's version comes from the git tag through
 #     Composer, and a second install route would be a second answer to "which version am I running"
@@ -16,8 +16,6 @@
 #   - It fixes the one thing Composer says nothing about: its global bin directory is not on
 #     anybody's PATH. This is why the installer exists at all; `composer global require` on its own
 #     ends in `command not found`.
-#   - It installs nothing else. If PHP is missing it says so and stops, rather than reaching for a
-#     package manager on your behalf.
 #
 # Every function is defined before the last line calls one. A truncated download therefore defines
 # some functions and does nothing at all, instead of performing half an install — which is the whole
@@ -32,8 +30,13 @@ PIG_MIN_PHP="8.3"
 PIG_EXTENSIONS="json mbstring openssl pcntl pcre"
 readonly PIG_PACKAGE PIG_CMD PIG_MIN_PHP_ID PIG_MIN_PHP PIG_EXTENSIONS
 
+INITIAL_PATH="${PATH:-}"
+INSTALLED_COMPOSER_DIR=""
+
 pig_installer_main() {
   set -eu
+
+  INITIAL_PATH="${PATH:-}"
 
   printf '\n  \033[1mpig\033[0m \033[2m— pi, ported to PHP\033[0m\n\n'
 
@@ -50,10 +53,12 @@ pig_installer_main() {
     "$bin_dir/$PIG_CMD" update --extensions >/dev/null 2>&1 || true
   fi
 
-  if installed_pig_is_first_on_path "$bin_dir"; then
+  missing_paths=$(collect_missing_path_dirs "$bin_dir")
+
+  if installed_pig_is_first_on_path "$bin_dir" && [ -z "$missing_paths" ]; then
     printf '\npig %s is installed. Run it with: %s\n' "$(installed_version "$bin_dir")" "$PIG_CMD"
   else
-    print_not_on_path_message "$bin_dir"
+    print_not_on_path_message "$bin_dir" "$missing_paths"
   fi
 
   printf '\nSet a key with ANTHROPIC_API_KEY, or run `%s` and use /login.\n' "$PIG_CMD"
@@ -69,28 +74,14 @@ pig_installer_main() {
 run_preflight_checks() {
   status=0
 
-  if command -v php >/dev/null 2>&1; then
-    if ! php -r 'exit(PHP_VERSION_ID >= '"$PIG_MIN_PHP_ID"' ? 0 : 1);' 2>/dev/null; then
-      printf '  error: pig needs PHP %s or newer. Found %s.\n' \
-        "$PIG_MIN_PHP" "$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 'an unknown version')"
-      status=1
-    fi
-
-    missing=$(missing_php_extensions)
-    if [ -n "$missing" ]; then
-      printf '  error: PHP is missing:%s\n' "$missing"
-      printf '         ext-pcntl is the one people are missing; without it the terminal UI\n'
-      printf '         cannot notice a window resize and refuses to start.\n'
-      status=1
-    fi
-  else
-    printf '  error: PHP %s or newer is required, and no php was found on your PATH.\n' "$PIG_MIN_PHP"
+  if ! check_php_runtime; then
     status=1
   fi
 
-  if ! command -v composer >/dev/null 2>&1; then
-    printf '  error: composer is required. See https://getcomposer.org/download/\n'
-    status=1
+  if [ "$status" -eq 0 ]; then
+    if ! ensure_composer_installed; then
+      status=1
+    fi
   fi
 
   if [ "$status" -ne 0 ]; then
@@ -98,6 +89,119 @@ run_preflight_checks() {
   fi
 
   return "$status"
+}
+
+check_php_runtime() {
+  if command -v php >/dev/null 2>&1; then
+    if php -r 'exit(PHP_VERSION_ID >= '"$PIG_MIN_PHP_ID"' ? 0 : 1);' 2>/dev/null; then
+      missing=$(missing_php_extensions)
+      if [ -z "$missing" ]; then
+        return 0
+      fi
+      printf '  error: PHP is missing:%s\n' "$missing"
+      printf '         ext-pcntl is the one people are missing; without it the terminal UI\n'
+      printf '         cannot notice a window resize and refuses to start.\n'
+      return 1
+    else
+      printf '  error: pig needs PHP %s or newer. Found %s.\n' \
+        "$PIG_MIN_PHP" "$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 'an unknown version')"
+    fi
+  else
+    printf '  error: PHP %s or newer is required, and no php was found on your PATH.\n' "$PIG_MIN_PHP"
+  fi
+
+  if offer_install_php_macos; then
+    if command -v php >/dev/null 2>&1 && php -r 'exit(PHP_VERSION_ID >= '"$PIG_MIN_PHP_ID"' ? 0 : 1);' 2>/dev/null; then
+      missing=$(missing_php_extensions)
+      if [ -z "$missing" ]; then
+        return 0
+      fi
+      printf '  error: PHP is missing:%s\n' "$missing"
+      return 1
+    fi
+  else
+    print_php_install_guidance
+  fi
+
+  return 1
+}
+
+offer_install_php_macos() {
+  [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  have_tty || return 1
+
+  exec 3<>/dev/tty
+  printf '\n  Detected Homebrew on macOS. Would you like to run `brew install php` now? [y/N] ' >&3
+  if ! IFS= read -r answer <&3; then
+    answer=
+  fi
+  exec 3>&-
+
+  case "$answer" in
+    y|Y|yes|YES)
+      printf '\n  Installing PHP with Homebrew...\n\n'
+      if brew install php; then
+        for brew_bin in /opt/homebrew/bin /usr/local/bin; do
+          if [ -x "$brew_bin/php" ] && [ -d "$brew_bin" ]; then
+            case ":$PATH:" in
+              *":$brew_bin:"*) ;;
+              *) export PATH="$brew_bin:$PATH" ;;
+            esac
+            break
+          fi
+        done
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
+print_php_install_guidance() {
+  os=$(uname -s 2>/dev/null || echo "Unknown")
+  case "$os" in
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        printf '         Install PHP %s with: brew install php\n' "$PIG_MIN_PHP"
+      else
+        printf '         Install Homebrew (https://brew.sh), then run: brew install php\n'
+      fi
+      ;;
+    Linux)
+      distro=""
+      if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release 2>/dev/null || true
+        distro="${ID:-}"
+      fi
+      case "$distro" in
+        ubuntu|debian)
+          printf '         Install PHP %s on Ubuntu/Debian with:\n' "$PIG_MIN_PHP"
+          printf '           sudo apt update && sudo apt install -y php-cli php-mbstring php-curl\n'
+          ;;
+        fedora|rhel|centos)
+          printf '         Install PHP %s on Fedora/RHEL with:\n' "$PIG_MIN_PHP"
+          printf '           sudo dnf install -y php-cli php-mbstring\n'
+          ;;
+        arch|manjaro)
+          printf '         Install PHP %s on Arch Linux with:\n' "$PIG_MIN_PHP"
+          printf '           sudo pacman -S php\n'
+          ;;
+        alpine)
+          printf '         Install PHP %s on Alpine with:\n' "$PIG_MIN_PHP"
+          printf '           apk add php83 php83-mbstring php83-pcntl php83-openssl php83-curl\n'
+          ;;
+        *)
+          printf '         Install PHP %s or newer from your package manager or https://www.php.net/manual/en/install.php\n' "$PIG_MIN_PHP"
+          ;;
+      esac
+      ;;
+    *)
+      printf '         Install PHP %s or newer from https://www.php.net/manual/en/install.php\n' "$PIG_MIN_PHP"
+      ;;
+  esac
 }
 
 # The extensions pig declares, minus the ones this PHP has. Asked of PHP itself rather than parsed
@@ -112,6 +216,64 @@ missing_php_extensions() {
     }
     echo $missing;
   ' "$PIG_EXTENSIONS" 2>/dev/null
+}
+
+# Ensure Composer is present; if not, automatically bootstrap and install it via pure PHP.
+ensure_composer_installed() {
+  if command -v composer >/dev/null 2>&1; then
+    return 0
+  fi
+
+  printf '  composer is required but not found on your PATH.\n'
+
+  composer_dir="/usr/local/bin"
+  if [ ! -d "$composer_dir" ] || [ ! -w "$composer_dir" ]; then
+    composer_dir="$HOME/.local/bin"
+  fi
+
+  mkdir -p "$composer_dir" 2>/dev/null || true
+  if [ ! -d "$composer_dir" ] || [ ! -w "$composer_dir" ]; then
+    composer_dir="$HOME/bin"
+    mkdir -p "$composer_dir" 2>/dev/null || true
+  fi
+
+  if [ ! -d "$composer_dir" ] || [ ! -w "$composer_dir" ]; then
+    printf '  error: cannot find a writable directory to install Composer.\n'
+    printf '         Please install Composer manually: https://getcomposer.org/download/\n'
+    return 1
+  fi
+
+  printf '  Installing Composer automatically to %s...\n\n' "$composer_dir"
+
+  downloaded=0
+  temp_installer=$(mktemp 2>/dev/null || echo "/tmp/composer-setup-$$.php")
+  if php -r "copy('https://getcomposer.org/installer', '$temp_installer');" 2>/dev/null; then
+    if php "$temp_installer" --quiet --install-dir="$composer_dir" --filename=composer 2>/dev/null; then
+      downloaded=1
+    fi
+    rm -f "$temp_installer"
+  fi
+
+  # Fallback: direct download of composer.phar if installer failed
+  if [ "$downloaded" -eq 0 ]; then
+    if php -r "copy('https://getcomposer.org/composer.phar', '$composer_dir/composer');" 2>/dev/null; then
+      downloaded=1
+    fi
+  fi
+
+  if [ "$downloaded" -eq 1 ]; then
+    chmod +x "$composer_dir/composer" 2>/dev/null || true
+    export PATH="$composer_dir:$PATH"
+    if command -v composer >/dev/null 2>&1; then
+      INSTALLED_COMPOSER_DIR="$composer_dir"
+      printf '  Composer installed successfully.\n\n'
+      return 0
+    fi
+  fi
+
+  printf '  error: automatic Composer installation failed.\n'
+  printf '         Please install Composer manually: https://getcomposer.org/download/\n'
+  return 1
 }
 
 # ---- the install itself -----------------------------------------------------------------
@@ -146,10 +308,29 @@ installed_pig_is_first_on_path() {
   [ "$active" = "$bin_dir/$PIG_CMD" ]
 }
 
+collect_missing_path_dirs() {
+  bin_dir="$1"
+  result=""
+  for d in "$bin_dir" "${INSTALLED_COMPOSER_DIR:-}"; do
+    [ -n "$d" ] || continue
+    case ":${INITIAL_PATH:-$PATH}:" in
+      *":$d:"*) ;;
+      *)
+        case " $result " in
+          *" $d "*) ;;
+          *) result="${result:+$result:}$d" ;;
+        esac
+        ;;
+    esac
+  done
+  printf '%s' "$result"
+}
+
 # ---- the PATH, which is the reason this script exists -----------------------------------
 
 print_not_on_path_message() {
   bin_dir="$1"
+  missing_paths="${2:-$1}"
 
   printf '\npig is installed, but your shell cannot see it yet.\n'
 
@@ -165,28 +346,28 @@ print_not_on_path_message() {
     printf 'Your shell currently resolves %s to: %s\n' "$PIG_CMD" "$active"
   fi
 
-  prompt_add_path_to_profile "$bin_dir" || true
+  prompt_add_path_to_profile "$missing_paths" || true
 
-  printf '\nRestart your shell, or run:\n\n  %s\n\n' "$(path_update_command "$bin_dir")"
+  printf '\nRestart your shell, or run:\n\n  %s\n\n' "$(path_update_command "$missing_paths")"
   printf 'Then run: %s\n' "$PIG_CMD"
 }
 
 # Asked rather than done. This writes to a file the person did not ask us to touch, and a `curl | sh`
 # that silently edits a shell profile is exactly the reason some people refuse `curl | sh`.
 prompt_add_path_to_profile() {
-  bin_dir="$1"
+  dirs="$1"
   have_tty || return 1
 
   config_file=$(shell_config_file)
-  command=$(path_update_command "$bin_dir")
+  command=$(path_update_command "$dirs")
 
   if config_file_mentions_path "$config_file" "$command"; then
-    printf 'A PATH entry for %s is already in %s.\n' "$bin_dir" "$config_file"
+    printf 'A PATH entry for %s is already in %s.\n' "$dirs" "$config_file"
     return 0
   fi
 
   exec 3<>/dev/tty
-  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$bin_dir" "$config_file" >&3
+  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$dirs" "$config_file" >&3
   if ! IFS= read -r answer <&3; then
     answer=
   fi
@@ -219,10 +400,22 @@ shell_config_file() {
 }
 
 path_update_command() {
-  bin_dir="$1"
+  dirs="$1"
   case "$(basename "${SHELL:-sh}")" in
-    fish) printf 'fish_add_path "%s"' "$bin_dir" ;;
-    *) printf 'export PATH="%s:$PATH"' "$bin_dir" ;;
+    fish)
+      cmd=""
+      old_ifs=$IFS
+      IFS=:
+      for d in $dirs; do
+        [ -n "$d" ] || continue
+        cmd="${cmd:+${cmd} && }fish_add_path \"$d\""
+      done
+      IFS=$old_ifs
+      printf '%s' "$cmd"
+      ;;
+    *)
+      printf 'export PATH="%s:$PATH"' "$dirs"
+      ;;
   esac
 }
 

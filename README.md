@@ -35,7 +35,7 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
 curl -fsSL https://pigagent.dev/install.sh | sh
 ```
 
-The installer verifies your PHP version and required extensions, installs `pigagent/pig` globally via Composer, and ensures Composer's global bin directory is in your `PATH`.
+The installer verifies your PHP version (>= 8.3) and required extensions (prompting to install PHP via Homebrew on macOS if missing), automatically bootstraps and installs Composer via pure PHP if not found on your PATH, installs `pigagent/pig` globally via Composer, and ensures Composer's global bin directory is in your `PATH`.
 
 ### Composer Global Install
 
