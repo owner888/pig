@@ -24,6 +24,9 @@ final class SameOriginMiddlewareTest extends TestCase
         yield 'another site, whatever Origin claims' => [
             ['host' => $host, 'origin' => "http://{$host}", 'sec-fetch-site' => 'cross-site'], false,
         ];
+        yield 'a navigation from an external app' => [
+            ['host' => $host, 'sec-fetch-site' => 'cross-site', 'sec-fetch-mode' => 'navigate'], true,
+        ];
         // Another port on 127.0.0.1 is the same site and not the same origin.
         yield 'another port on this machine' => [
             ['host' => $host, 'origin' => 'http://127.0.0.1:3000', 'sec-fetch-site' => 'same-site'], false,

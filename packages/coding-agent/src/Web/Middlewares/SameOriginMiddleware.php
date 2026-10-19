@@ -29,7 +29,7 @@ final class SameOriginMiddleware implements Middleware
     #[\Override]
     public function handle(array $req, Connection $conn, Closure $next): void
     {
-        if (!self::allowed($req['headers'])) {
+        if (!self::allowed($req['headers'], $req['method'] ?? 'GET')) {
             $conn->sendResponse(403, ['Content-Type' => 'application/json'], (string) json_encode([
                 'ok' => false,
                 'error' => 'Requests from another site are refused.',
@@ -46,11 +46,23 @@ final class SameOriginMiddleware implements Middleware
      *
      * @param array<string, string> $headers lower-cased names
      */
-    public static function allowed(array $headers): bool
+    public static function allowed(array $headers, string $method = 'GET'): bool
     {
         $site = strtolower(trim($headers['sec-fetch-site'] ?? ''));
         if ($site !== '') {
-            return $site === 'same-origin' || $site === 'none';
+            if ($site === 'same-origin' || $site === 'none') {
+                return true;
+            }
+
+            // Top-level browser document navigation (e.g. clicking a link in Termux, Telegram, or
+            // launching the browser via Android Intent) is safe for GET/HEAD requests under W3C Fetch
+            // Metadata specification.
+            $mode = strtolower(trim($headers['sec-fetch-mode'] ?? ''));
+            if ($mode === 'navigate' && ($method === 'GET' || $method === 'HEAD')) {
+                return true;
+            }
+
+            return false;
         }
 
         $origin = $headers['origin'] ?? null;

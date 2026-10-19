@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.93] - 2026-10-18
+
+### Fixed
+
+- **Top-level document navigation in Web UI `SameOriginMiddleware`**: Permitted top-level GET/HEAD document navigations (`Sec-Fetch-Mode: navigate`) when launching the Web UI from external apps (e.g. Telegram, Termux, Android Intent launchers), preventing false-positive 403 `Requests from another site are refused` errors on mobile browsers.
+
 ## [0.6.92] - 2026-10-18
 
 ### Fixed
