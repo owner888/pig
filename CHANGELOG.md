@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.79] - 2026-10-18
+
+### Fixed
+
+- **Termux PATH configuration and default shell profile in `install.sh`**: Fixed an issue where Android Termux defaulted to writing PATH exports to `~/.profile` when `~/.bashrc` did not yet exist, leaving Termux's interactive non-login bash shells unable to find `pig`. The installer now reliably detects Termux environments (`TERMUX_VERSION`, `/data/data/com.termux`, `$PREFIX`) and routes shell profile updates directly to `~/.bashrc`.
+- **Immediate session sourcing in `install.sh`**: Automatically sources the target shell configuration file (`. "$config_file"`) and exports PATH variables immediately upon appending, making binaries visible to the current installer process and prompting users with the exact `source <profile>` command for their current terminal window.
+
 ## [0.6.78] - 2026-10-18
 
 ### New Features

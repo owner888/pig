@@ -328,6 +328,11 @@ collect_missing_path_dirs() {
 
 # ---- the PATH, which is the reason this script exists -----------------------------------
 
+is_termux() {
+  [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ] || case "${PREFIX:-}" in *com.termux*) return 0 ;; esac
+  return 1
+}
+
 print_not_on_path_message() {
   bin_dir="$1"
   missing_paths="${2:-$1}"
@@ -346,9 +351,11 @@ print_not_on_path_message() {
     printf 'Your shell currently resolves %s to: %s\n' "$PIG_CMD" "$active"
   fi
 
-  prompt_add_path_to_profile "$missing_paths" || true
+  target_dirs="${missing_paths:-$bin_dir}"
+  prompt_add_path_to_profile "$target_dirs" || true
 
-  printf '\nRestart your shell, or run:\n\n  %s\n\n' "$(path_update_command "$missing_paths")"
+  config_file=$(shell_config_file)
+  printf '\nTo activate the new PATH in your current terminal session, run:\n\n  source %s\n\n' "$config_file"
   printf 'Then run: %s\n' "$PIG_CMD"
 }
 
@@ -363,6 +370,9 @@ prompt_add_path_to_profile() {
 
   if config_file_mentions_path "$config_file" "$command"; then
     printf 'A PATH entry for %s is already in %s.\n' "$dirs" "$config_file"
+    # shellcheck disable=SC1090
+    . "$config_file" 2>/dev/null || true
+    export PATH="$dirs:$PATH"
     return 0
   fi
 
@@ -382,10 +392,27 @@ prompt_add_path_to_profile() {
   touch "$config_file"
   printf '\n# pig\n%s\n' "$command" >> "$config_file"
   printf 'Added it to %s.\n' "$config_file"
+
+  # Source the configuration file immediately and export to current PATH
+  # shellcheck disable=SC1090
+  . "$config_file" 2>/dev/null || true
+  export PATH="$dirs:$PATH"
+  printf 'Sourced %s for the current installer session.\n' "$config_file"
 }
 
 shell_config_file() {
-  case "$(basename "${SHELL:-sh}")" in
+  shell_name=$(basename "${SHELL:-sh}")
+
+  if is_termux; then
+    case "$shell_name" in
+      fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
+      zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
+      *) printf '%s/.bashrc' "$HOME" ;;
+    esac
+    return
+  fi
+
+  case "$shell_name" in
     fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
     zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
     bash)
