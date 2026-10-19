@@ -71,6 +71,8 @@ final class Future
             $fiber->resume($result);
         });
 
+        Loop::get()->noteSuspend();
+
         return Fiber::suspend();
     }
 

@@ -606,6 +606,18 @@ final class InteractiveMode
         // Suppress raw console log outputs in TUI to prevent screen corruption; logs continue writing to file
         Logger::setConsoleOutput(false);
 
+        // `PIG_STALL_LOG=1`: every moment the loop is held — nothing drawn, no key read — for 0.3s
+        // or more goes to the log, with where it was held (docs/dev/decisions.md).
+        if (getenv('PIG_STALL_LOG') === '1') {
+            Loop::get()->watchStalls(static function (float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt): void {
+                Logger::warning(sprintf('Event loop held for %dms', (int) round($seconds * 1000)), [
+                    'callback' => $callback,
+                    'resumedFrom' => $resumedFrom,
+                    'suspendedAt' => $suspendedAt,
+                ]);
+            });
+        }
+
         $this->layout();
         $this->bindKeys();
         $this->bindEditor();

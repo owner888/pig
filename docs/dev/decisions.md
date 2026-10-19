@@ -202,6 +202,9 @@ kept, as none was for `~/.pig` → `~/.pig/agent`.
 - **New, upstream's**: `PIG_PACKAGE_DIR` (`Config::packageDir()`, where `CHANGELOG.md` is),
   `PIG_TUI_ESC_TIMEOUT` (ms a lone ESC waits; 100 over SSH, else 10), `PIG_SKIP_VERSION_CHECK`,
   `PIG_SHARE_VIEWER_URL`. `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
+- **New, pig's own**: `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
+  (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, and where the coroutine it
+  resumed had suspended before and after, which brackets the slow code.
 - **Set, not read**: `PIG_CODING_AGENT=true` and `AI_AGENT=pig` for every child, and the
   `PIG_SESSION_*` / `PIG_PROVIDER` / `PIG_MODEL` / `PIG_REASONING_LEVEL` a shell command is given
   (see the shell tools above). The last three share names with the dropped config variables; they

@@ -42,6 +42,18 @@ final class Loop
     /** @var Closure(Throwable): void|null */
     private ?Closure $onError = null;
 
+    /** @var Closure(float, string, ?string, ?string): void|null `watchStalls()`'s reporter */
+    private ?Closure $onStall = null;
+
+    private float $stallThreshold = 0.3;
+
+    /** Where a coroutine last suspended, and the time before — `noteSuspend()`, while stalls are watched. */
+    private ?string $lastSuspend = null;
+
+    private ?string $previousSuspend = null;
+
+    private int $suspends = 0;
+
     public static function get(): self
     {
         return self::$instance ??= new self();
@@ -192,6 +204,61 @@ final class Loop
     }
 
     /**
+     * Report every callback that keeps the loop for longer than `$threshold` seconds — the
+     * moments nothing is drawn and no key is read. pig's own, for `PIG_STALL_LOG`: the reporter is
+     * given how long it took, where the callback was written, and — when it resumed a coroutine —
+     * where that coroutine had suspended before (the slow code starts there) and where it
+     * suspended after (it ends there). Null stops watching.
+     *
+     * @param Closure(float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt): void|null $report
+     */
+    public function watchStalls(?Closure $report, float $threshold = 0.3): void
+    {
+        $this->onStall = $report;
+        $this->stallThreshold = $threshold;
+        $this->lastSuspend = null;
+        $this->previousSuspend = null;
+    }
+
+    /** @internal `Future::await()` says where a coroutine suspends, when stalls are watched. */
+    public function noteSuspend(): void
+    {
+        if ($this->onStall === null) {
+            return;
+        }
+
+        $this->suspends++;
+        $this->previousSuspend = $this->lastSuspend;
+        $this->lastSuspend = self::where(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12));
+    }
+
+    /**
+     * The first frames outside this package, `file:line` joined by ` < `.
+     *
+     * @param list<array<string, mixed>> $trace
+     */
+    private static function where(array $trace): string
+    {
+        $frames = [];
+
+        foreach ($trace as $frame) {
+            $file = (string) ($frame['file'] ?? '');
+
+            if ($file === '' || str_starts_with($file, __DIR__)) {
+                continue;
+            }
+
+            $frames[] = basename($file) . ':' . ($frame['line'] ?? '?');
+
+            if (count($frames) === 4) {
+                break;
+            }
+        }
+
+        return implode(' < ', $frames);
+    }
+
+    /**
      * Run one callback, and hand a throw to the error handler rather than out of the loop.
      *
      * Every callback the loop invokes goes through here — deferred, readable, writable, timer —
@@ -200,6 +267,42 @@ final class Loop
      * one place and absent in its sibling*.
      */
     private function safely(Closure $callback, mixed ...$arguments): void
+    {
+        if ($this->onStall !== null) {
+            $this->timed($callback, $arguments);
+
+            return;
+        }
+
+        $this->dispatch($callback, $arguments);
+    }
+
+    /** @param list<mixed> $arguments */
+    private function timed(Closure $callback, array $arguments): void
+    {
+        $before = $this->suspends;
+        $started = hrtime(true);
+
+        try {
+            $this->dispatch($callback, $arguments);
+        } finally {
+            $seconds = (hrtime(true) - $started) / 1e9;
+
+            if ($this->onStall !== null && $seconds >= $this->stallThreshold) {
+                $reflection = new \ReflectionFunction($callback);
+                $resumed = $this->suspends !== $before;
+                ($this->onStall)(
+                    $seconds,
+                    basename((string) $reflection->getFileName()) . ':' . $reflection->getStartLine(),
+                    $resumed ? $this->previousSuspend : null,
+                    $resumed ? $this->lastSuspend : null,
+                );
+            }
+        }
+    }
+
+    /** @param list<mixed> $arguments */
+    private function dispatch(Closure $callback, array $arguments): void
     {
         if ($this->onError === null) {
             $callback(...$arguments);

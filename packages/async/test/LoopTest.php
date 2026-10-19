@@ -337,4 +337,31 @@ final class LoopTest extends TestCase
         // Generous by three orders of magnitude against the 134ms a spin costs.
         $this->assertLessThan(50_000, $cpu, 'the wait burned CPU, so it was a spin and not a sleep');
     }
+
+    public function testAStallIsReportedWithWhereTheCoroutineWasHeld(): void
+    {
+        $stalls = [];
+        Loop::get()->watchStalls(static function (float $seconds, string $callback, ?string $from, ?string $at) use (&$stalls): void {
+            $stalls[] = [$seconds, $callback, $from, $at];
+        }, 0.1);
+
+        try {
+            \Pig\Async\Async::run(static function (): void {
+                \Pig\Async\Async::delay(0.01);
+                usleep(150_000); // the slow code, between two suspensions
+                \Pig\Async\Async::delay(0.01);
+                usleep(10_000); // quick: not reported
+                \Pig\Async\Async::delay(0.01);
+            });
+        } finally {
+            Loop::get()->watchStalls(null);
+        }
+
+        $this->assertCount(1, $stalls);
+        [$seconds, , $from, $at] = $stalls[0];
+        $this->assertGreaterThanOrEqual(0.15, $seconds);
+        $this->assertStringContainsString('LoopTest.php:', (string) $from);
+        $this->assertStringContainsString('LoopTest.php:', (string) $at);
+        $this->assertNotSame($from, $at);
+    }
 }

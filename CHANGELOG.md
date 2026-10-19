@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.94] - 2026-10-18
+
+### Added
+
+- `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more — nothing drawn, no key read — to `~/.pig/agent/logs/pig-<date>.log`: how long, which callback, and where the coroutine it resumed had suspended before and after. For tracking down an occasional pause, such as a message that takes a second to appear after Enter.
+
 ## [0.6.93] - 2026-10-18
 
 ### Fixed
