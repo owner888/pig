@@ -48,6 +48,9 @@ pig_installer_main() {
 
   bin_dir=$(composer_bin_dir)
 
+  # Try linking pig into an existing directory on PATH for instant availability
+  link_pig_to_path "$bin_dir" || true
+
   # Sync bundled extensions (pig-antigravity, pig-web-search, pig-computer, etc.) to user directory
   if [ -n "$bin_dir" ] && [ -x "$bin_dir/$PIG_CMD" ]; then
     "$bin_dir/$PIG_CMD" update --extensions >/dev/null 2>&1 || true
@@ -289,7 +292,67 @@ install_pig_package() {
 }
 
 composer_bin_dir() {
-  composer global config bin-dir --absolute 2>/dev/null | tail -n 1
+  dir=""
+  if command -v composer >/dev/null 2>&1; then
+    dir=$(composer global config bin-dir --absolute 2>/dev/null | tail -n 1 || true)
+  fi
+
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    printf '%s' "$dir"
+    return 0
+  fi
+
+  for candidate in \
+    "${COMPOSER_HOME:-}/vendor/bin" \
+    "$HOME/.config/composer/vendor/bin" \
+    "$HOME/.composer/vendor/bin"
+  do
+    if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s' "$dir"
+}
+
+# Attempt to link pig directly into an existing directory on PATH so it works immediately
+# without requiring shell restarts or manual sourcing.
+link_pig_to_path() {
+  bin_dir="$1"
+  [ -n "$bin_dir" ] || return 1
+  [ -x "$bin_dir/$PIG_CMD" ] || return 1
+
+  # Termux environment: $PREFIX/bin is always in PATH and writable by user
+  if is_termux && [ -n "${PREFIX:-}" ] && [ -d "$PREFIX/bin" ] && [ -w "$PREFIX/bin" ]; then
+    ln -sf "$bin_dir/$PIG_CMD" "$PREFIX/bin/$PIG_CMD" 2>/dev/null || true
+    if [ -x "$PREFIX/bin/$PIG_CMD" ]; then
+      printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$PREFIX/bin" "$PIG_CMD"
+      return 0
+    fi
+  fi
+
+  # Standard POSIX: search current PATH for writable user/system bin directories
+  old_ifs=$IFS
+  IFS=:
+  for dir in $PATH; do
+    [ -n "$dir" ] || continue
+    case "$dir" in
+      /usr/local/bin|/opt/homebrew/bin|"$HOME/.local/bin"|"$HOME/bin")
+        if [ -d "$dir" ] && [ -w "$dir" ] && [ "$dir" != "$bin_dir" ]; then
+          ln -sf "$bin_dir/$PIG_CMD" "$dir/$PIG_CMD" 2>/dev/null || true
+          if [ -x "$dir/$PIG_CMD" ]; then
+            IFS=$old_ifs
+            printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$dir" "$PIG_CMD"
+            return 0
+          fi
+        fi
+        ;;
+    esac
+  done
+  IFS=$old_ifs
+
+  return 1
 }
 
 installed_version() {
@@ -365,19 +428,28 @@ prompt_add_path_to_profile() {
   dirs="$1"
   have_tty || return 1
 
-  config_file=$(shell_config_file)
+  target_files=$(target_profile_files)
+  primary_file=$(printf '%s' "$target_files" | awk '{print $1}')
   command=$(path_update_command "$dirs")
 
-  if config_file_mentions_path "$config_file" "$command"; then
-    printf 'A PATH entry for %s is already in %s.\n' "$dirs" "$config_file"
+  already_added=1
+  for config_file in $target_files; do
+    if ! config_file_mentions_path "$config_file" "$command"; then
+      already_added=0
+      break
+    fi
+  done
+
+  if [ "$already_added" -eq 1 ]; then
+    printf 'A PATH entry for %s is already in %s.\n' "$dirs" "$primary_file"
     # shellcheck disable=SC1090
-    . "$config_file" 2>/dev/null || true
+    . "$primary_file" 2>/dev/null || true
     export PATH="$dirs:$PATH"
     return 0
   fi
 
   exec 3<>/dev/tty
-  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$dirs" "$config_file" >&3
+  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$dirs" "$primary_file" >&3
   if ! IFS= read -r answer <&3; then
     answer=
   fi
@@ -388,26 +460,35 @@ prompt_add_path_to_profile() {
     *) ;;
   esac
 
-  mkdir -p "${config_file%/*}"
-  touch "$config_file"
-  printf '\n# pig\n%s\n' "$command" >> "$config_file"
-  printf 'Added it to %s.\n' "$config_file"
+  for config_file in $target_files; do
+    if ! config_file_mentions_path "$config_file" "$command"; then
+      mkdir -p "${config_file%/*}"
+      touch "$config_file"
+      printf '\n# pig & composer global bin\n%s\n' "$command" >> "$config_file"
+      printf 'Added it to %s.\n' "$config_file"
+    fi
+    # shellcheck disable=SC1090
+    . "$config_file" 2>/dev/null || true
+  done
 
-  # Source the configuration file immediately and export to current PATH
-  # shellcheck disable=SC1090
-  . "$config_file" 2>/dev/null || true
   export PATH="$dirs:$PATH"
-  printf 'Sourced %s for the current installer session.\n' "$config_file"
+  printf 'Sourced %s for the current installer session.\n' "$primary_file"
 }
 
-shell_config_file() {
+target_profile_files() {
   shell_name=$(basename "${SHELL:-sh}")
 
   if is_termux; then
     case "$shell_name" in
       fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
       zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
-      *) printf '%s/.bashrc' "$HOME" ;;
+      *)
+        files="$HOME/.bashrc"
+        if [ -f "$HOME/.profile" ]; then
+          files="$files $HOME/.profile"
+        fi
+        printf '%s' "$files"
+        ;;
     esac
     return
   fi
@@ -416,14 +497,26 @@ shell_config_file() {
     fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
     zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
     bash)
+      files="$HOME/.bashrc"
+      if [ -f "$HOME/.profile" ]; then
+        files="$files $HOME/.profile"
+      elif [ -f "$HOME/.bash_profile" ]; then
+        files="$files $HOME/.bash_profile"
+      fi
+      printf '%s' "$files"
+      ;;
+    *)
       if [ -f "$HOME/.bashrc" ]; then
-        printf '%s/.bashrc' "$HOME"
+        printf '%s/.bashrc %s/.profile' "$HOME" "$HOME"
       else
         printf '%s/.profile' "$HOME"
       fi
       ;;
-    *) printf '%s/.profile' "$HOME" ;;
   esac
+}
+
+shell_config_file() {
+  target_profile_files | awk '{print $1}'
 }
 
 path_update_command() {

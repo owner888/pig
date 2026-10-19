@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.81] - 2026-10-18
+
+### Fixed
+
+- **Instant PATH symlinking and dual profile targeting in `install.sh`**:
+  - Automatically symlinks `pig` directly into writable directories already on `PATH` (such as `$PREFIX/bin` in Termux, `/usr/local/bin`, or `~/.local/bin`), enabling immediate `pig` command execution out of the box.
+  - For bash environments, profile updates now dual-target both `~/.bashrc` (for interactive non-login terminal windows) and `~/.profile` (for login sessions), properly tagging `# pig & composer global bin` so both `composer` and `pig` are always available.
+  - Added robust directory fallback in `composer_bin_dir` across `~/.config/composer/vendor/bin` and `~/.composer/vendor/bin`.
+
 ## [0.6.80] - 2026-10-18
 
 ### Changed
