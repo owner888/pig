@@ -26,6 +26,7 @@ use Pig\Ai\BuiltinProviders;
 use Pig\Ai\Extension\ApiKeyAuth;
 use Pig\Ai\Extension\EnvApiKeyAuth;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\Request;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\StopReason;
@@ -5530,8 +5531,8 @@ final class InteractiveMode
 
         try {
             $client = new HttpClient(10.0);
-            $response = $client->request('GET', $url, $headers);
-            $body = $response->body();
+            $response = $client->follow(new Request('GET', $url, $headers));
+            $body = $response->body->all();
         } catch (Throwable) {
             return [];
         }

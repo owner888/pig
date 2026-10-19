@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.89] - 2026-10-18
+
+### Fixed
+
+- **Endpoint model discovery in `/login` custom provider setup wizard**: Corrected the internal HTTP client invocation to `HttpClient::follow(new Request(...))` when probing `$baseUrl/models`, fixing an issue where model discovery silently fell back to a default model.
+
 ## [0.6.88] - 2026-10-18
 
 ### New Features
