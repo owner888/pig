@@ -1692,14 +1692,15 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame([], $this->session->messages());
     }
 
-    public function testWithNothingSavedResumeSaysSo(): void
+    public function testWithNothingSavedHereResumeStillOpensAndOffersEveryProject(): void
     {
         $this->start(store: true);
 
         $this->type('/resume');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('No earlier sessions here yet', $this->screen());
+        // Upstream's: the list opens, says so, and Tab is how another project's session is reached.
+        $this->assertStringContainsString('No sessions in current folder. Press Tab to view all.', $this->screen());
     }
 
     // ---- running a command yourself -----------------------------------------------------

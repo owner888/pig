@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.95] - 2026-10-18
+
+### Fixed
+
+- `/resume` opens the session list even when this folder has no sessions yet, as pi's does — it says "No sessions in current folder. Press Tab to view all." and Tab shows every project's, so a session from another folder can be resumed (pig switches to its folder). It used to stop at "No earlier sessions here yet."
+
 ## [0.6.94] - 2026-10-18
 
 ### Added

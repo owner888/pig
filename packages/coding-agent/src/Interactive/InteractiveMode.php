@@ -3583,10 +3583,11 @@ final class InteractiveMode
     }
 
     /**
-     * Offer the earlier conversations in this directory.
+     * Offer the earlier conversations — this directory's first, Tab for every project's.
      *
-     * In this directory only: a session is about a project, and a list mixing three
-     * projects together is a list nobody reads.
+     * Opened even when this directory has none, as upstream's `showSessionSelector()` is: the list
+     * then says "No sessions in current folder. Press Tab to view all." and Tab is how a session
+     * from another project is resumed, which an early "nothing here" left no way to reach.
      */
     private function showSessions(): void
     {
@@ -3597,12 +3598,6 @@ final class InteractiveMode
         }
 
         $sessions = SessionManager::listFor($this->cwd);
-
-        if ($sessions === []) {
-            $this->say('No earlier sessions here yet.');
-
-            return;
-        }
 
         // The same component `--resume` draws before the screen exists, search box and all —
         // upstream's `showSessionSelector()`: Tab for every project's sessions, sorting, the named
