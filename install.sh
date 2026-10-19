@@ -528,6 +528,8 @@ shell_config_file() {
     zsh)
       if [ -f "${ZDOTDIR:-$HOME}/.zshrc" ]; then
         printf '%s/.zshrc' "${ZDOTDIR:-$HOME}"
+      elif [ -f "${ZDOTDIR:-$HOME}/.zprofile" ]; then
+        printf '%s/.zprofile' "${ZDOTDIR:-$HOME}"
       else
         printf '%s/.profile' "$HOME"
       fi
@@ -544,9 +546,14 @@ shell_config_file() {
 
 path_update_command() {
   bin_dir="$1"
+  display_dir="$bin_dir"
+  if [ -n "${HOME:-}" ] && case "$bin_dir" in "$HOME"/*) true;; *) false;; esac; then
+    display_dir="\$HOME${bin_dir#"$HOME"}"
+  fi
+
   case "$(basename "${SHELL:-sh}")" in
-    fish) printf 'fish_add_path "%s"' "$bin_dir" ;;
-    *) printf 'export PATH="%s:$PATH"' "$bin_dir" ;;
+    fish) printf 'fish_add_path "%s"' "$display_dir" ;;
+    *) printf 'export PATH="%s:$PATH"' "$display_dir" ;;
   esac
 }
 
@@ -556,7 +563,16 @@ config_file_mentions_path() {
   target="$2"
 
   [ -f "$config_file" ] || return 1
-  grep -Fq "$target" "$config_file"
+  if grep -Fq "$target" "$config_file"; then
+    return 0
+  fi
+  if [ -n "${HOME:-}" ] && case "$target" in "$HOME"/*) true;; *) false;; esac; then
+    rel_path="\$HOME${target#"$HOME"}"
+    if grep -Fq "$rel_path" "$config_file"; then
+      return 0
+    fi
+  fi
+  return 1
 }
 
 # The installer runs as a child process and cannot change the calling shell's

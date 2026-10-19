@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.85] - 2026-10-18
+
+### Changed
+
+- **Clean `$HOME`-relative PATH export and `~/.zprofile` detection in `install.sh`**:
+  - Automatically formats the appended PATH export using portable `$HOME` variables (e.g. `export PATH="$HOME/.composer/vendor/bin:$PATH"` or `$HOME/.config/composer/vendor/bin`) instead of hardcoded absolute paths, matching standard user profile style.
+  - Added native detection for `~/.zprofile` under zsh shells.
+  - Enhanced duplicate path checking to recognize both absolute and `$HOME`-prefixed lines.
+
 ## [0.6.84] - 2026-10-18
 
 ### Fixed
