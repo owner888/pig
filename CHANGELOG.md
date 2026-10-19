@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.86] - 2026-10-18
+
+### Fixed
+
+- **Guaranteed profile persistence in `install.sh`**:
+  - Always ensures that `pig` (and bootstrapped Composer if applicable) is permanently appended to the user's shell profile (`.profile` or `.zprofile`), even when symlinking into an existing system bin directory succeeds.
+  - Automatically creates `.profile` if none exists, appends clean `$HOME`-relative export lines with dedicated labels (`# pig` and `# composer`), and immediately sources the file for the current session.
+
 ## [0.6.85] - 2026-10-18
 
 ### Changed

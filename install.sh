@@ -51,12 +51,23 @@ pig_installer_main() {
   # Try linking pig into an existing directory on PATH for instant availability
   link_pig_to_path "$bin_dir" || true
 
+  # Ensure the directory is permanently added to the user's shell profile (.profile)
+  config_file=$(shell_config_file)
+  if ! config_file_mentions_path "$config_file" "$bin_dir"; then
+    prompt_add_path_to_profile "$bin_dir" "pig" || true
+  fi
+
+  # If composer was bootstrapped into a custom user directory not on PATH, append it too
+  if [ -n "${INSTALLED_COMPOSER_DIR:-}" ] && [ "$INSTALLED_COMPOSER_DIR" != "$bin_dir" ]; then
+    if ! config_file_mentions_path "$config_file" "$INSTALLED_COMPOSER_DIR"; then
+      prompt_add_path_to_profile "$INSTALLED_COMPOSER_DIR" "composer" || true
+    fi
+  fi
+
   # Sync bundled extensions (pig-antigravity, pig-web-search, pig-computer, etc.) to user directory
   if [ -n "$bin_dir" ] && [ -x "$bin_dir/$PIG_CMD" ]; then
     "$bin_dir/$PIG_CMD" update --extensions >/dev/null 2>&1 || true
   fi
-
-  missing_paths=$(collect_missing_path_dirs "$bin_dir")
 
   if installed_pig_is_first_on_path "$bin_dir"; then
     printf '\npig %s is installed. Run it with: %s\n' "$(installed_version "$bin_dir")" "$PIG_CMD"
@@ -483,6 +494,7 @@ print_not_on_path_message() {
 # shell profile without modifying or merging with any pre-existing lines.
 prompt_add_path_to_profile() {
   bin_dir="$1"
+  label="${2:-pig}"
   [ -n "$bin_dir" ] || return 0
   have_tty || return 1
 
@@ -498,7 +510,7 @@ prompt_add_path_to_profile() {
   fi
 
   exec 3<>/dev/tty
-  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$bin_dir" "$config_file" >&3
+  printf '\nAdd %s (%s) to your PATH in %s? [Y/n] ' "$label" "$bin_dir" "$config_file" >&3
   if ! IFS= read -r answer <&3; then
     answer=
   fi
@@ -511,8 +523,8 @@ prompt_add_path_to_profile() {
 
   mkdir -p "${config_file%/*}"
   touch "$config_file"
-  printf '\n# pig\n%s\n' "$command" >> "$config_file"
-  printf 'Added pig to PATH in %s.\n' "$config_file"
+  printf '\n# %s\n%s\n' "$label" "$command" >> "$config_file"
+  printf 'Added %s to PATH in %s.\n' "$label" "$config_file"
 
   # Source the configuration file immediately and export to current PATH
   # shellcheck disable=SC1090
