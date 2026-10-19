@@ -795,6 +795,24 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             return;
         }
 
+        // Upstream's `handleClipboardPaste()`: copied files first, by their own paths — Finder's, or
+        // Telegram's photo — one a line, or quoted and on one line in a `!` command; with a space
+        // either side where the path would otherwise run into a word.
+        $paths = $this->clipboard->filePaths();
+
+        if ($paths !== null && !array_filter($paths, static fn (string $path): bool => preg_match('/\p{Cc}/u', $path) === 1)) {
+            $line = $this->lines[$this->cursorLine];
+            $bash = str_starts_with(ltrim($this->text()), '!');
+            $joined = $bash ? implode(' ', array_map(self::quoteIfNeeded(...), $paths)) : implode("\n", $paths);
+            $before = $this->cursorCol > 0 ? mb_substr(substr($line, 0, $this->cursorCol), -1) : '';
+            $after = mb_substr(substr($line, $this->cursorCol), 0, 1);
+            $leading = $before !== '' && !preg_match('/\s/u', $before) ? ' ' : '';
+            $trailing = $after !== '' && !preg_match('/\s/u', $after) ? ' ' : '';
+            $this->insertAtCursor($leading . $joined . $trailing);
+
+            return;
+        }
+
         $image = $this->clipboard->image();
 
         if ($image !== null) {
@@ -816,6 +834,14 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         if ($text !== null && $text !== '') {
             $this->paste($text);
         }
+    }
+
+    /** Upstream's `quoteIfNeeded()`: anything but `[a-zA-Z0-9_\-./~:@]`, or nothing, goes in single quotes. */
+    private static function quoteIfNeeded(string $value): string
+    {
+        return $value !== '' && preg_match('#[^a-zA-Z0-9_\-./~:@]#', $value) !== 1
+            ? $value
+            : "'" . str_replace("'", "'\\''", $value) . "'";
     }
 
     /**

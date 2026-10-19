@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.91] - 2026-10-18
+
+### Fixed
+
+- **Seamless session model switching after custom provider discovery**: Automatically updates the active session's model scope when new custom models are discovered and saved to `models.json`, ensuring the session immediately switches to the discovered model without requiring manual picker navigation.
+- **File path paste on Ctrl+V**: Pastes a copied file by its own path before looking for a picture, matching upstream pi: photos copied from Telegram or files copied in Finder/file managers land directly in the prompt as file paths.
+
 ## [0.6.90] - 2026-10-18
 
 ### Changed

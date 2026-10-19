@@ -18,7 +18,8 @@ final class FakeClipboard implements Clipboard
     /** Set false to stand in for a machine with no way to copy. */
     public bool $writable = true;
 
-    public function __construct(private ?string $text = null, private ?ClipboardImage $image = null)
+    /** @param list<string>|null $filePaths */
+    public function __construct(private ?string $text = null, private ?ClipboardImage $image = null, private ?array $filePaths = null)
     {
     }
 
@@ -46,5 +47,11 @@ final class FakeClipboard implements Clipboard
         $this->imageReads++;
 
         return $this->image;
+    }
+
+    #[\Override]
+    public function filePaths(): ?array
+    {
+        return $this->filePaths;
     }
 }

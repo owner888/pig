@@ -38,10 +38,11 @@ final class ClipboardTest extends TestCase
         }
     }
 
-    private function editor(?string $text = null, ?ClipboardImage $image = null): array
+    /** @param list<string>|null $files */
+    private function editor(?string $text = null, ?ClipboardImage $image = null, ?array $files = null): array
     {
         $editor = new Editor();
-        $clipboard = new FakeClipboard($text, $image);
+        $clipboard = new FakeClipboard($text, $image, $files);
         $editor->setClipboard($clipboard);
 
         return [$editor, $clipboard];
@@ -271,6 +272,43 @@ final class ClipboardTest extends TestCase
 
         preg_match('#/\S+\.png#', $editor->text(), $match);
         unlink($match[0]);
+    }
+
+    public function testCopiedFilesArePastedByTheirOwnPathsBeforeAnyPicture(): void
+    {
+        // Telegram puts a photo on the clipboard as the file it saved, as Finder does a copied
+        // file: upstream's `handleClipboardPaste()` pastes those paths, ahead of the picture.
+        $photo = '/var/folders/mk/T/telegram-cloud-photo-size-1-509-y.jpg';
+        [$editor, $clipboard] = $this->editor(text: 'ignored', image: new ClipboardImage('B', 'image/png'), files: [$photo, '/tmp/b.png']);
+
+        $editor->pasteFromClipboard();
+
+        $this->assertSame("{$photo}\n/tmp/b.png", $editor->text());
+        $this->assertSame(0, $clipboard->imageReads);
+    }
+
+    public function testAPastedPathIsKeptApartFromTheWordsAroundIt(): void
+    {
+        [$editor] = $this->editor(files: ['/tmp/a.jpg']);
+        $editor->setText('lookplease');
+
+        for ($index = 0; $index < 6; $index++) {
+            $editor->handleInput("\x1b[D");
+        }
+
+        $editor->pasteFromClipboard();
+
+        $this->assertSame('look /tmp/a.jpg please', $editor->text());
+    }
+
+    public function testInABangCommandPathsAreQuotedOnOneLine(): void
+    {
+        [$editor] = $this->editor(files: ['/tmp/a b.jpg', '/tmp/c.png']);
+        $editor->setText('!open ');
+
+        $editor->pasteFromClipboard();
+
+        $this->assertSame("!open '/tmp/a b.jpg' /tmp/c.png", $editor->text());
     }
 
     public function testWithNoPictureCtrlVPastesTheText(): void

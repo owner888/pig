@@ -100,6 +100,41 @@ final class SystemClipboard implements Clipboard
         return false;
     }
 
+    /**
+     * Upstream's `readClipboardFilePaths()`, which asks its native clipboard for file URLs. On macOS
+     * that is the general pasteboard's `NSURL`s, file URLs only, read here through JavaScript for
+     * Automation — what Finder puts there when a file is copied, and what Telegram puts there for a
+     * photo. Nothing elsewhere: upstream's native module is the only reader it has for them.
+     */
+    #[\Override]
+    public function filePaths(): ?array
+    {
+        if ($this->platform() !== 'darwin' || Env::isSet('TERMUX_VERSION')) {
+            return null;
+        }
+
+        $output = Process::capture(['osascript', '-l', 'JavaScript', '-e', self::FILE_PATHS_SCRIPT]);
+
+        if ($output === null) {
+            return null;
+        }
+
+        $paths = array_values(array_filter(explode("\n", rtrim($output, "\n")), static fn (string $path): bool => $path !== ''));
+
+        return $paths === [] ? null : $paths;
+    }
+
+    /** The pasteboard's file URLs, one path a line. */
+    private const string FILE_PATHS_SCRIPT = <<<'JS'
+        ObjC.import('AppKit');
+        var pb = $.NSPasteboard.generalPasteboard;
+        var options = $.NSDictionary.dictionaryWithObjectForKey($.NSNumber.numberWithBool(true), $.NSPasteboardURLReadingFileURLsOnlyKey);
+        var urls = pb.readObjectsForClassesOptions($.NSArray.arrayWithObject($.NSURL), options);
+        var paths = [];
+        if (urls) { for (var i = 0; i < urls.count; i++) { paths.push(ObjC.unwrap(urls.objectAtIndex(i).path)); } }
+        paths.join('\n');
+        JS;
+
     #[\Override]
     public function image(): ?ClipboardImage
     {

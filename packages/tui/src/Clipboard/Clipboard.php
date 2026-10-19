@@ -19,6 +19,15 @@ interface Clipboard
     public function image(): ?ClipboardImage;
 
     /**
+     * The files a file manager copied — Finder's, or Telegram's photo, which it puts on the
+     * clipboard as the file it saved — by path; null when there are none. Upstream's
+     * `readClipboardFilePaths()`.
+     *
+     * @return list<string>|null
+     */
+    public function filePaths(): ?array;
+
+    /**
      * Put text on the clipboard.
      *
      * Returns false rather than throwing when there is no way to: a machine without

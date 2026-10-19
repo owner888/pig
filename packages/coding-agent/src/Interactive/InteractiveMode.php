@@ -5369,6 +5369,15 @@ final class InteractiveMode
             : (BuiltinProviders::apiKeyAuth($option->id) ?? (BuiltinProviders::has($option->id) ? null : new EnvApiKeyAuth("{$option->name} API key", Stream::envApiKeyNames($option->id))));
 
         if ($apiKeyAuth !== null) {
+            // If it is a custom provider that has NO models defined yet, launch the setup wizard to discover them
+            $hasModels = !empty(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === $option->id));
+
+            if (!BuiltinProviders::has($option->id) && !($option->sign instanceof ExtensionProvider) && !$hasModels) {
+                $this->setupCustomProvider($option->id);
+
+                return;
+            }
+
             $this->signInWithApiKey($option->id, $option->name, $apiKeyAuth, $onBack);
 
             return;
@@ -5442,9 +5451,17 @@ final class InteractiveMode
                 $baseUrl = rtrim($baseUrl, '/');
 
                 // Step 2: API key
+                $existingKey = $this->auth?->apiKey($targetId);
+                $keyPrompt = $existingKey !== null && $existingKey !== ''
+                    ? "Enter {$displayName} API key (leave blank to keep current key)"
+                    : "Enter {$displayName} API key (leave blank if none)";
+                $keyPlaceholder = $existingKey !== null && $existingKey !== ''
+                    ? 'current key stored'
+                    : 'sk-...';
+
                 $apiKey = $this->ui->input(
-                    "Enter {$displayName} API key (leave blank if none)",
-                    'sk-...',
+                    $keyPrompt,
+                    $keyPlaceholder,
                     $controller->signal,
                 );
 
@@ -5455,6 +5472,9 @@ final class InteractiveMode
                 }
 
                 $apiKey = trim($apiKey);
+                if ($apiKey === '' && $existingKey !== null && $existingKey !== '') {
+                    $apiKey = $existingKey;
+                }
 
                 // Step 3: Fetch models from $baseUrl/models
                 $this->say("Discovering models from {$baseUrl}/models...");
@@ -5490,6 +5510,16 @@ final class InteractiveMode
                 $count = count($modelList);
                 $firstModel = $modelList[0]['id'];
                 $this->say("✓ Added {$displayName} with {$count} model" . ($count === 1 ? '' : 's') . " to models.json.");
+
+                // If the session has a narrowed modelScope, ensure the new model is included
+                $scope = $this->session->modelScope();
+                if ($scope !== []) {
+                    $foundNewModel = Models::find($targetId, $firstModel);
+                    if ($foundNewModel !== null) {
+                        $scope[] = new ModelChoice($foundNewModel);
+                        $this->session->setModelScope($scope);
+                    }
+                }
 
                 // Automatically switch to the first model
                 $this->pickModel("{$targetId}/{$firstModel}");
