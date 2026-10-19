@@ -19,6 +19,7 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
+use Pig\Ai\Utils\Oauth\Radius;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
 use Throwable;
@@ -588,6 +589,7 @@ final class Auth
                 Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
                 Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
                 Provider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
+                Provider::Radius => (new Radius())->login($onAuth, $onProgress, $signal, $onSelect),
             };
             $id = $provider->value;
         }
@@ -602,7 +604,7 @@ final class Auth
     }
 
     /**
-     * Every sign-in on offer: the built-in three, then whatever the loaded extensions brought.
+     * Every sign-in on offer: the built-in four, then whatever the loaded extensions brought.
      *
      * @return list<Provider|OauthFlow>
      */

@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.78] - 2026-10-18
+
+### New Features
+
+- `/login` signs in the way pi's does: it asks **Sign in with an account**, **Sign in with an API key**, or **Sign in with Radius**, then lists the providers for that kind in a searchable list with each one's status (`✓ configured`, `✓ env: OPENAI_API_KEY`, `• not configured`).
+  - **API keys for every built-in provider** — Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter, Groq, Mistral, xAI, Moonshot, Z.AI, MiniMax, Qwen, Xiaomi and the rest — prompted for and kept in `auth.json`, beside the extensions' api-key sign-ins. Amazon Bedrock, Google Vertex AI and the Cloudflare providers say they are configured from the environment.
+  - **Radius**: the Radius gateway's OAuth sign-in, by browser (loopback on `127.0.0.1:1456`) or device code.
+  - With no model chosen yet, a sign-in switches to the provider's default model (upstream's `defaultModelPerProvider`) and says which.
+  - `/login <provider>` starts that provider's sign-in; a cancelled sign-in goes back to the list it was chosen from.
+- `/logout` lists what `/login` stored — sign-ins and API keys — and says `Logged out of <name>` or `Removed stored API key for <name>`.
+
 ## [0.6.77] - 2026-10-18
 
 ### Added

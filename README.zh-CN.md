@@ -339,18 +339,21 @@ Logger::timeEnd('benchmark');
 
 **图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。`--skill`、`--prompt-template` 和 `--theme` 为本次运行加载一个文件或目录（都可重复，`-e` 现在也可以，且 `-ne` 下 `-e` 仍会加载）；启动用的主题是 `--use-theme <name>`，`--no-themes` 除内置主题和 `--theme` 指定的之外不找任何主题。不加载 `~/.pig/agent/tools` 和 `.pig/tools` 里的工具文件现在是 `--no-tool-files`。同样来自 pi 的还有：`--provider`、`--system-prompt`、`--append-system-prompt`、`--tui-mode regular|fullscreen`、`--verbose`、`--offline`（启动时不联网，等同 `PIG_OFFLINE=1`）和 `--update-check`。`bash` 命令能通过 `PIG_SESSION_ID`、`PIG_SESSION_FILE`、`PIG_PROVIDER`、`PIG_MODEL` 和 `PIG_REASONING_LEVEL` 得知当前会话；在 Windows 上可以用 `--tools` 或 `defaultTools` 打开 `powershell` 工具。pig 会告诉 OpenRouter、NVIDIA 和 Cloudflare 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
 
-### 订阅账号登录
+### 登录
 
-在 pig 里输入 `/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`。四个提供商，流程均与 pi 一致：
+`/login` 先问用哪种方式，与 pi 一致：**Sign in with an account**（账号）、**Sign in with an API key**（API Key）或 **Sign in with Radius**。API Key 列表包含所有内置提供商（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter、Groq、Moonshot、Z.AI……）和扩展注册的提供商，可搜索，每一行标出是否已配置及来源（`✓ env: OPENAI_API_KEY`、`✓ configured`）；Key 保存在 `auth.json`。`/login <provider>` 直接进入该提供商。尚未选择模型时，登录后自动切到该提供商的默认模型。Amazon Bedrock、Google Vertex AI 和 Cloudflare 两个提供商只从环境变量配置。
+
+账号登录——`/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`——流程均与 pi 一致：
 
 | 提供商 | 方式 | 说明 |
 | :--- | :--- | :--- |
 | **Anthropic（Claude Pro/Max）** | **浏览器**（默认）：pig 监听 `http://localhost:53692/callback`，打开 `claude.ai`，授权码自动回传。同时保留一个粘贴框——浏览器在另一台机器上时，把最终跳转的 URL 粘贴进去即可。**复制代码**（无头机器）：浏览器停在 Anthropic 自己的页面上，显示 `code#state`，复制粘贴。 | 令牌以 Claude Code 的身份发出——`claude-cli` User-Agent、两个 beta 头、工具名按 `Read`/`Bash`/`Edit`/`Write` 拼写——因为 Anthropic 就是把它签发给 Claude Code 的。53692 端口已在 Anthropic 注册，不可更改。 |
 | **GitHub Copilot** | 设备码：pig 显示一个代码，你到 `github.com/login/device` 输入，pig 轮询直到通过。Enterprise 提示处留空即 `github.com`。 | 登录后自动为账号开通 Claude 与 Grok 系列模型。 |
 | **OpenAI（ChatGPT Plus/Pro）** | **浏览器**（默认）：pig 监听 `http://localhost:1455/auth/callback`（设置了 `PIG_OAUTH_CALLBACK_HOST` 时监听该地址），打开 `auth.openai.com`，授权码自动回传；同时保留粘贴框，可粘贴跳转 URL 或授权码。1455 端口被占用时（Codex CLI 也用它），只靠粘贴框完成登录。**设备码**（无头机器）：pig 显示一个代码，你到 `auth.openai.com/codex/device` 输入，pig 轮询直到通过。 | 只用于 `openai-codex` 模型——ChatGPT 的 Codex 后端，账号 id 从令牌里读出。 |
+| **Radius** | **浏览器**（默认）：pig 监听 `http://127.0.0.1:1456/oauth/callback`，打开网关的授权页。**设备码**：在另一台设备上输入代码，pig 轮询直到通过。 | 使用 Radius 网关的公开模型列表；上游登录后还会拉取账号自己的模型列表，pig 暂未实现。 |
 | **Antigravity**（扩展） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在 `pig-antigravity` 加载时出现——它是扩展的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
 
-令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 可忘记某个登录。
+令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 删除已保存的登录或 API Key，环境变量和 `models.json` 不受影响。
 
 ---
 

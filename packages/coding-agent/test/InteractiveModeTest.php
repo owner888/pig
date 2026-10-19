@@ -4267,25 +4267,77 @@ final class InteractiveModeTest extends TestCase
 
     private const string DOWN = "\e[B";
 
-    public function testSlashLoginListsEveryProvider(): void
+    public function testSlashLoginAsksHowThenListsTheProviders(): void
     {
         $this->start(auth: Auth::inMemory());
 
         $this->type('/login');
         $this->type(self::ENTER);
 
+        // Upstream's `showLoginAuthTypeSelector()`: the two kinds, and Radius with its status.
         $screen = $this->screen();
+        $this->assertStringContainsString('Select authentication method:', $screen);
+        $this->assertStringContainsString('Sign in with an account', $screen);
+        $this->assertStringContainsString('Sign in with an API key', $screen);
+        $this->assertStringContainsString('Sign in with Radius • not configured', $screen);
 
-        // The two built-in flows, none greyed and none carrying a label. There were four until
-        // Gemini CLI went the way upstream's did and Antigravity became an extension's; the list
-        // is `Auth::signIns()` — `Oauth\Provider`'s cases plus what the extensions registered.
-        $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
-        $this->assertStringContainsString('GitHub Copilot', $screen);
+        $this->type(self::ENTER);
+
+        // The account sign-ins: `Auth::signIns()`, by upstream's provider names, sorted.
+        $screen = $this->screen();
+        $this->assertStringContainsString('Select provider to configure:', $screen);
+        $this->assertMatchesRegularExpression('/Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex \(legacy\).*Radius/s', $screen);
         $this->assertStringNotContainsString('Antigravity', $screen);
-        $this->assertStringNotContainsString('Google Cloud Code Assist', $screen);
-        $this->assertStringNotContainsString('not ported yet', $screen);
-        // pi 1.0's label for a provider with no credential, rather than nothing or "unconfigured".
-        $this->assertStringContainsString('not configured', $screen);
+
+        // Escape goes back to the kinds, as upstream's does.
+        $this->type(self::ESCAPE);
+        $this->assertStringContainsString('Select authentication method:', $this->screen());
+    }
+
+    public function testSignInWithAnApiKeyListsTheBuiltInProvidersAndKeepsTheKey(): void
+    {
+        putenv('PIG_OFFLINE=1');
+        putenv('DEEPSEEK_API_KEY');
+
+        try {
+            $auth = Auth::inMemory();
+            $this->start(auth: $auth);
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+
+            $screen = $this->screen();
+            $this->assertStringContainsString('Select provider to configure:', $screen);
+            $this->assertStringContainsString('Amazon Bedrock', $screen);
+
+            // Searched, as upstream's list is.
+            $this->type('deepseek');
+            $this->assertStringContainsString('DeepSeek • not configured', $this->screen());
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertStringContainsString('Enter DeepSeek API key', $this->screen());
+            $this->type('sk-deep');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertSame('sk-deep', $auth->apiKey('deepseek'));
+            $this->assertStringContainsString('Saved API key for DeepSeek', $this->screenText());
+
+            // `/logout` offers the stored key, and only what is stored.
+            $this->type('/logout');
+            $this->type(self::ENTER);
+            $this->assertStringContainsString('DeepSeek ✓ configured', $this->screen());
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertNull($auth->apiKeyCredential('deepseek'));
+            $this->assertStringContainsString('Removed stored API key for DeepSeek. Environment variables and models.json config are unchanged.', $this->screenText());
+        } finally {
+            putenv('PIG_OFFLINE');
+        }
     }
 
     public function testAnExtensionsSignInIsARowInSlashLoginLikeAnyOther(): void
@@ -4337,19 +4389,17 @@ final class InteractiveModeTest extends TestCase
 
             $this->type('/login');
             $this->type(self::ENTER);
+            $this->type(self::ENTER);
 
-            $screen = $this->screen();
-            $this->assertStringContainsString('Probe Sign-in', $screen);
+            $this->assertStringContainsString('Probe Sign-in', $this->screen());
 
-            // Fourth row: the three built-ins come first.
-            $this->type(self::DOWN);
-            $this->type(self::DOWN);
-            $this->type(self::DOWN);
+            $this->type('probe');
             $this->type(self::ENTER);
             $this->settle();
 
             $this->assertSame(1, $asked, "the extension's flow ran");
-            $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
+            // Cancelled, the list it was chosen from comes back — upstream's `onBack`.
+            $this->assertStringContainsString('Select provider to configure:', $this->screen());
         } finally {
             ProviderRegistry::forget();
         }
@@ -4467,13 +4517,17 @@ final class InteractiveModeTest extends TestCase
 
             $this->type('/login');
             $this->type(self::ENTER);
-            $this->assertMatchesRegularExpression('/Probe Keyed\s+not configured/', $this->screen());
+            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+            $this->type('probe');
+            $this->assertStringContainsString('Probe Keyed • not configured', $this->screen());
+            $this->type(self::ESCAPE);
             $this->type(self::ESCAPE);
 
             $auth->setApiKeyCredential('zzk-probe', new \Pig\Ai\Extension\ApiKeyCredential('sk-x'));
             $this->type('/logout');
             $this->type(self::ENTER);
-            $this->assertMatchesRegularExpression('/Probe Keyed\s+API key configured/', $this->screen());
+            $this->assertStringContainsString('Probe Keyed ✓ configured', $this->screen());
             $this->type(self::ENTER);
             $this->settle();
 
@@ -4491,6 +4545,7 @@ final class InteractiveModeTest extends TestCase
 
         $this->type('/login');
         $this->type(self::ENTER);
+        $this->type(self::ENTER); // an account
         $this->type(self::ENTER); // Anthropic, the first row
         $this->settle();
 
@@ -4515,7 +4570,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ESCAPE);
         $this->settle();
 
-        $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
+        // Upstream's `onBack`: the provider list again.
+        $this->assertStringContainsString('Select provider to configure:', $this->screen());
     }
 
     public function testSlashLoginNeverOpensTheRealBrowserFromATest(): void
@@ -4542,6 +4598,7 @@ final class InteractiveModeTest extends TestCase
 
             $this->type('/login');
             $this->type(self::ENTER);
+            $this->type(self::ENTER); // an account
             $this->type(self::ENTER); // Anthropic
             $this->settle();
             $this->type(self::DOWN);
@@ -4553,9 +4610,12 @@ final class InteractiveModeTest extends TestCase
 
             $this->type(self::ESCAPE);
             $this->settle();
+            $this->type(self::ESCAPE);
+            $this->type(self::ESCAPE);
 
             putenv('PIG_OFFLINE');
             $this->type('/login');
+            $this->type(self::ENTER);
             $this->type(self::ENTER);
             $this->type(self::ENTER);
             $this->settle();
@@ -4617,9 +4677,8 @@ final class InteractiveModeTest extends TestCase
 
             $this->type('/login');
             $this->type(self::ENTER);
-            $this->type(self::DOWN);
-            $this->type(self::DOWN);
-            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+            $this->type('probe');
             $this->type(self::ENTER);
             $this->settle();
 
@@ -4638,7 +4697,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('/logout');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('Nothing is signed in', $this->screen());
+        $this->assertStringContainsString('No stored credentials to remove.', $this->screenText());
     }
 
     public function testSlashLogoutForgetsTheSignIn(): void
@@ -4654,7 +4713,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertFalse($auth->has('anthropic'));
-        $this->assertStringContainsString('Forgot the Anthropic', $this->screen());
+        $this->assertStringContainsString('Logged out of Anthropic', $this->screen());
     }
 
     public function testSlashLogoutOnlyOffersWhatIsActuallySignedIn(): void
@@ -4669,7 +4728,7 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
-        $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
+        $this->assertStringContainsString('Anthropic ✓ configured', $screen);
         // The other three have nothing to forget, so offering them would be three ways of
         // doing nothing.
         $this->assertStringNotContainsString('GitHub Copilot', $screen);

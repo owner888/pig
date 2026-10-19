@@ -22,7 +22,10 @@ use Pig\Agent\ToolExecutionUpdateEvent;
 use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
+use Pig\Ai\BuiltinProviders;
+use Pig\Ai\Extension\ApiKeyAuth;
 use Pig\Ai\Models;
+use Pig\Ai\Stream;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
@@ -2455,8 +2458,8 @@ final class InteractiveMode
         ['diff', 'Show git working tree changes (/diff [--staged])'],
         ['commit', 'Review changes and commit with Conventional Commits message'],
         ['web', 'Browser UI server & daemon (/web [start|stop|status|restart] [port])'],
-        ['login', 'Sign in with a subscription or an account instead of an API key'],
-        ['logout', 'Forget a sign-in'],
+        ['login', 'Configure provider authentication'],
+        ['logout', 'Remove provider authentication'],
         ['theme', 'Switch themes: a picker that previews, or /theme <name>'],
         ['settings', 'Change what is switchable, and see what it is set to'],
         ['changelog', 'What changed, release by release'],
@@ -2556,8 +2559,8 @@ final class InteractiveMode
             'diff' => $this->handleDiffCommand(trim(substr($text, strlen($name) + 1))),
             'commit' => $this->handleCommitCommand(trim(substr($text, strlen($name) + 1))),
             'web' => $this->handleWebCommand(trim(substr($text, strlen($name) + 1))),
-            'login' => $this->showSignIns('login', trim(substr($text, strlen($name) + 1))),
-            'logout' => $this->showSignIns('logout'),
+            'login' => $this->handleLoginCommand(trim(substr($text, strlen($name) + 1))),
+            'logout' => $this->showLogoutSelector(),
             'theme' => $this->handleThemeCommand(trim(substr($text, strlen($name) + 1))),
             'settings' => $this->showSettings(),
             'changelog' => $this->showChangelog(),
@@ -5158,17 +5161,112 @@ final class InteractiveMode
     }
 
     /**
-     * Which subscription to sign in with, or which sign-in to forget.
+     * Upstream's `getLoginProviderOptions(authType)`: a row per way into each provider — its account
+     * sign-in (the built-in `Provider` cases and the extensions' `OauthFlow`s) and its API key (the
+     * built-in providers' and the extensions'), each with how it is configured now — sorted by name.
      *
-     * Upstream's `oauth-selector.ts` has a component of its own for this; here it is the same
-     * `SelectList` in the same place as `/model`, `/resume` and `/tree`, because a fourth
-     * picker that behaves like a fourth picker is worth more than a literal port of a
-     * component that does less.
-     *
-     * A provider pig cannot sign in with is shown greyed and **says why** when it is chosen.
-     * Upstream ignores the key, which reads as the list being broken.
+     * @param 'oauth'|'api_key'|null $authType
+     * @return list<AuthSelectorProvider>
      */
-    private function showSignIns(string $mode, string $providerRef = ''): void
+    private function loginProviderOptions(?string $authType = null): array
+    {
+        $options = [];
+
+        if ($authType !== 'api_key') {
+            foreach (Auth::signIns() as $flow) {
+                $id = $flow instanceof Provider ? $flow->value : $flow->id();
+                $name = $flow instanceof Provider ? BuiltinProviders::name($id) : $flow->label();
+                $options[] = new AuthSelectorProvider($id, $name, 'oauth', $this->authStatus($id), $flow->isSubscription(), $flow, $flow->label());
+            }
+        }
+
+        if ($authType !== 'oauth') {
+            $extensions = [];
+
+            foreach (ProviderRegistry::apiKeyProviders() as $provider) {
+                \assert($provider->apiKeyAuth !== null);
+                $extensions[$provider->id] = true;
+                $options[] = new AuthSelectorProvider(
+                    $provider->id,
+                    $provider->name,
+                    'api_key',
+                    $this->authStatus($provider->id),
+                    Auth::signIn($provider->id)?->isSubscription() ?? false,
+                    $provider,
+                    $provider->apiKeyAuth->name(),
+                );
+            }
+
+            foreach (BuiltinProviders::apiKeyIds() as $id) {
+                if (!isset($extensions[$id])) {
+                    $options[] = new AuthSelectorProvider(
+                        $id,
+                        BuiltinProviders::name($id),
+                        'api_key',
+                        $this->authStatus($id),
+                        Auth::signIn($id)?->isSubscription() ?? false,
+                        $id,
+                        BuiltinProviders::apiKeyAuth($id)?->name() ?? '',
+                    );
+                }
+            }
+        }
+
+        usort($options, static fn (AuthSelectorProvider $a, AuthSelectorProvider $b): int => strcasecmp($a->name, $b->name));
+
+        return $options;
+    }
+
+    /**
+     * Upstream's `getProviderAuthStatus()`: how a provider is configured now — a stored OAuth or API
+     * key credential, or a key from where its api-key sign-in looks (the environment) — or null.
+     *
+     * @return array{type: 'oauth'|'api_key', source: string|null}|null
+     */
+    private function authStatus(string $id): ?array
+    {
+        $kind = $this->auth?->kind($id);
+
+        if ($kind === 'oauth') {
+            return ['type' => 'oauth', 'source' => 'OAuth'];
+        }
+
+        $apiKeyAuth = ProviderRegistry::apiKeyAuthFor($id) ?? BuiltinProviders::apiKeyAuth($id);
+        $source = $apiKeyAuth?->check($this->auth?->apiKeyCredential($id));
+
+        if ($source !== null) {
+            return ['type' => 'api_key', 'source' => $source];
+        }
+
+        if ($kind === 'api_key') {
+            return ['type' => 'api_key', 'source' => 'stored credential'];
+        }
+
+        // A key nothing above knows the source of: `models.json`, or ambient credentials.
+        return $this->auth?->hasKeyFor($id) === true ? ['type' => 'api_key', 'source' => null] : null;
+    }
+
+    /** Upstream's `findLoginProviderOptions(providerRef)`: the rows whose id or name is it, ignoring case. */
+    private function findLoginProviderOptions(string $providerRef): array
+    {
+        $wanted = strtolower(trim($providerRef));
+
+        if ($wanted === '') {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $this->loginProviderOptions(),
+            static fn (AuthSelectorProvider $p): bool => strtolower($p->id) === $wanted || strtolower($p->name) === $wanted,
+        ));
+    }
+
+    /**
+     * Upstream's `handleLoginCommand()`: `/login` asks how; `/login <provider>` starts that provider's
+     * sign-in when one row matches, asks how when its rows are one provider's two, and opens the
+     * provider list searched for it otherwise.
+     */
+    private function handleLoginCommand(string $providerRef = ''): void
     {
         if ($this->auth === null) {
             $this->sayWarning('This session has nowhere to keep a sign-in.');
@@ -5176,113 +5274,265 @@ final class InteractiveMode
             return;
         }
 
-        $signingIn = $mode === 'login';
-        $items = [];
-        $providers = [];
-
-        // Upstream's `findLoginProviderOptions(providerRef)`: `/login <provider>` starts that
-        // provider's sign-in when exactly one matches its id or its name, ignoring case.
-        if ($signingIn && $providerRef !== '') {
-            $wanted = strtolower($providerRef);
-            $matches = [];
-
-            foreach ([...Auth::signIns(), ...ProviderRegistry::apiKeyProviders()] as $provider) {
-                [$id, $name] = match (true) {
-                    $provider instanceof Provider => [$provider->value, $provider->label()],
-                    $provider instanceof ExtensionProvider => [$provider->id, $provider->name],
-                    default => [$provider->id(), $provider->label()],
-                };
-
-                if (strtolower($id) === $wanted || strtolower($name) === $wanted) {
-                    $matches[] = $provider;
-                }
-            }
-
-            if (count($matches) === 1) {
-                $matches[0] instanceof ExtensionProvider ? $this->signInWithApiKey($matches[0]) : $this->signIn($matches[0]);
-
-                return;
-            }
-        }
-
-        // The built-in two and then whatever the loaded extensions brought — an extension's
-        // `OauthFlow` is a row here like any other, which is the whole point of the registry.
-        foreach (Auth::signIns() as $provider) {
-            $id = $provider instanceof Provider ? $provider->value : $provider->id();
-            $available = !$provider instanceof Provider || $provider->available();
-            $signedIn = $this->auth->kind($id) === 'oauth';
-
-            if (!$signingIn && !$signedIn) {
-                continue;
-            }
-
-            $providers[] = $provider;
-            // Upstream's `oauth-selector.ts` wording: a sign-in that is there is "configured", one
-            // that is not is "not configured", and the kind is "subscription" only for a provider
-            // whose sign-in is backed by one (upstream's Radius is not).
-            $kind = $provider->isSubscription() ? 'subscription' : 'account';
-            $items[] = new SelectItem(
-                (string) (count($providers) - 1),
-                $available ? $provider->label() : Themes::theme()->fg('dim', $provider->label()),
-                $signedIn ? "{$kind} configured" : ($available ? 'not configured' : 'not ported yet'),
-            );
-        }
-
-        // An extension provider's api-key sign-in — upstream's `authType: "api_key"` rows, with the
-        // status `formatAuthSelectorProviderStatus()` gives one: configured from the stored
-        // credential, or from the environment variable `check()` names.
-        foreach (ProviderRegistry::apiKeyProviders() as $provider) {
-            \assert($provider->apiKeyAuth !== null);
-            $stored = $this->auth->kind($provider->id) === 'api_key';
-
-            if (!$signingIn && !$stored) {
-                continue;
-            }
-
-            $source = $provider->apiKeyAuth->check($this->auth->apiKeyCredential($provider->id));
-            $providers[] = $provider;
-            $items[] = new SelectItem(
-                (string) (count($providers) - 1),
-                $provider->name,
-                match (true) {
-                    $source === null => 'not configured',
-                    $stored => 'API key configured',
-                    default => preg_match('/^[A-Z][A-Z0-9_]*(?:, [A-Z][A-Z0-9_]*)*$/', $source) === 1 ? "env: {$source}" : $source,
-                },
-            );
-        }
-
-        if ($items === []) {
-            $this->say('Nothing is signed in. /login first.');
+        if ($providerRef === '') {
+            $this->showLoginAuthTypeSelector();
 
             return;
         }
 
-        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
-        $picker->setSelectHandler(function (SelectItem $item) use ($providers, $signingIn): void {
-            $this->closePicker();
-            $provider = $providers[(int) $item->value];
+        $matches = $this->findLoginProviderOptions($providerRef);
 
-            if ($provider instanceof ExtensionProvider) {
-                $signingIn ? $this->signInWithApiKey($provider) : $this->signOutApiKey($provider);
+        if (count($matches) === 1) {
+            $this->startProviderLogin($matches[0]);
+
+            return;
+        }
+
+        if (count($matches) > 1 && count(array_unique(array_map(static fn (AuthSelectorProvider $p): string => $p->id, $matches))) === 1) {
+            $this->showLoginAuthTypeSelector($matches);
+
+            return;
+        }
+
+        $this->showLoginProviderSelector(null, $providerRef);
+    }
+
+    /**
+     * Upstream's `startProviderLogin()`: an account's sign-in, an API key's, or — for a provider whose
+     * key pig reads from the environment only — what to set. `$onBack` reopens where it was started
+     * from when the sign-in is cancelled.
+     */
+    private function startProviderLogin(AuthSelectorProvider $option, ?Closure $onBack = null): void
+    {
+        if ($option->authType === 'oauth') {
+            \assert($option->sign instanceof Provider || $option->sign instanceof OauthFlow);
+            $this->signIn($option->sign, $onBack);
+
+            return;
+        }
+
+        $apiKeyAuth = $option->sign instanceof ExtensionProvider ? $option->sign->apiKeyAuth : BuiltinProviders::apiKeyAuth($option->id);
+
+        if ($apiKeyAuth !== null) {
+            $this->signInWithApiKey($option->id, $option->name, $apiKeyAuth, $onBack);
+
+            return;
+        }
+
+        // Upstream's `showAmbientAuthDialog()`.
+        $env = Stream::envApiKeyNames($option->id);
+        $this->say("{$option->name} is configured outside pig." . ($env === [] ? '' : ' Set ' . implode(' or ', $env) . '.'));
+        $onBack?->__invoke();
+    }
+
+    /**
+     * Upstream's `showLoginAuthTypeSelector()`: "Sign in with an account", "Sign in with an API key",
+     * and — at the top level only — "Sign in with Radius" with its status. For one provider's rows it
+     * is that provider's ways in, and with only one of them it starts that one.
+     *
+     * @param list<AuthSelectorProvider>|null $providerOptions
+     */
+    private function showLoginAuthTypeSelector(?array $providerOptions = null): void
+    {
+        $radius = null;
+
+        if ($providerOptions === null) {
+            foreach ($this->loginProviderOptions('oauth') as $option) {
+                if ($option->id === Provider::Radius->value) {
+                    $radius = $option;
+                }
+            }
+        }
+
+        $accountLabel = 'Sign in with an account';
+        $apiKeyLabel = 'Sign in with an API key';
+        $radiusLabel = $radius === null ? null : "Sign in with {$radius->name}" . OAuthSelectorComponent::statusLabel($radius);
+        $types = $providerOptions === null
+            ? ['oauth' => true, 'api_key' => true]
+            : array_fill_keys(array_map(static fn (AuthSelectorProvider $p): string => $p->authType, $providerOptions), true);
+        $labels = [];
+
+        if (isset($types['oauth'])) {
+            $labels[] = $accountLabel;
+        }
+
+        if (isset($types['api_key'])) {
+            $labels[] = $apiKeyLabel;
+        }
+
+        if ($radiusLabel !== null) {
+            $labels[] = $radiusLabel;
+        }
+
+        if ($labels === []) {
+            $this->say('No login methods available.');
+
+            return;
+        }
+
+        if ($providerOptions !== null && count($labels) === 1) {
+            $this->startProviderLogin($providerOptions[0]);
+
+            return;
+        }
+
+        $title = $providerOptions !== null
+            ? "Select authentication method for {$providerOptions[0]->name}:"
+            : 'Select authentication method:';
+        $back = fn () => $this->showLoginAuthTypeSelector($providerOptions);
+
+        $this->showListPicker($title, $labels, function (string $picked) use ($radius, $radiusLabel, $accountLabel, $providerOptions, $back): void {
+            if ($radius !== null && $picked === $radiusLabel) {
+                $this->startProviderLogin($radius, $back);
 
                 return;
             }
 
-            $signingIn ? $this->signIn($provider) : $this->signOut($provider);
+            $authType = $picked === $accountLabel ? 'oauth' : 'api_key';
+
+            if ($providerOptions !== null) {
+                foreach ($providerOptions as $option) {
+                    if ($option->authType === $authType) {
+                        $this->startProviderLogin($option, $back);
+
+                        return;
+                    }
+                }
+
+                return;
+            }
+
+            $this->showLoginProviderSelector($authType);
+        });
+    }
+
+    /**
+     * Upstream's `showLoginProviderSelector()`: the providers for one kind of sign-in (or both), in the
+     * searchable list; Escape goes back to the kinds when it came from them.
+     *
+     * @param 'oauth'|'api_key'|null $authType
+     */
+    private function showLoginProviderSelector(?string $authType = null, string $initialSearchInput = ''): void
+    {
+        $options = $this->loginProviderOptions($authType);
+
+        if ($options === []) {
+            $this->say(match ($authType) {
+                'oauth' => 'No account providers available.',
+                'api_key' => 'No API key providers available.',
+                default => 'No login providers available.',
+            });
+
+            return;
+        }
+
+        $selector = new OAuthSelectorComponent(
+            'login',
+            $options,
+            function (AuthSelectorProvider $option) use ($authType, $initialSearchInput): void {
+                $this->closePicker();
+                $this->startProviderLogin($option, fn () => $this->showLoginProviderSelector($authType, $initialSearchInput));
+            },
+            function () use ($authType): void {
+                $this->closePicker();
+
+                if ($authType !== null) {
+                    $this->showLoginAuthTypeSelector();
+                }
+            },
+            $initialSearchInput,
+        );
+
+        $this->showOverlay($selector);
+    }
+
+    /**
+     * Upstream's `showOAuthSelector("logout")`: the credentials `/login` stored, and only those —
+     * environment variables and `models.json` are not something it can take away.
+     */
+    private function showLogoutSelector(): void
+    {
+        if ($this->auth === null) {
+            $this->sayWarning('This session has nowhere to keep a sign-in.');
+
+            return;
+        }
+
+        $options = [];
+
+        foreach ($this->auth->providers() as $id) {
+            $kind = $this->auth->kind($id);
+
+            if ($kind !== 'oauth' && $kind !== 'api_key') {
+                continue;
+            }
+
+            $flow = Auth::signIn($id);
+            $name = ProviderRegistry::get($id)?->name ?? (BuiltinProviders::has($id) ? BuiltinProviders::name($id) : ($flow instanceof OauthFlow ? $flow->label() : $id));
+            $options[] = new AuthSelectorProvider($id, $name, $kind, ['type' => $kind, 'source' => 'stored credential'], $flow?->isSubscription() ?? false);
+        }
+
+        usort($options, static fn (AuthSelectorProvider $a, AuthSelectorProvider $b): int => strcasecmp($a->name, $b->name));
+
+        if ($options === []) {
+            $this->say('No stored credentials to remove. /logout only removes credentials saved by /login; environment variables and models.json config are unchanged.');
+
+            return;
+        }
+
+        $selector = new OAuthSelectorComponent(
+            'logout',
+            $options,
+            function (AuthSelectorProvider $option): void {
+                $this->closePicker();
+
+                try {
+                    $this->auth?->remove($option->id);
+                    $this->footer->invalidate();
+                    $this->say($option->authType === 'oauth'
+                        ? "Logged out of {$option->name}"
+                        : "Removed stored API key for {$option->name}. Environment variables and models.json config are unchanged.");
+                } catch (Throwable $problem) {
+                    $this->sayError("Logout failed: {$problem->getMessage()}");
+                }
+            },
+            $this->closePicker(...),
+        );
+
+        $this->showOverlay($selector);
+    }
+
+    /**
+     * A plain list in the overlay with a title over it — upstream's `ExtensionSelectorComponent` as
+     * `/login` uses it.
+     *
+     * @param list<string> $labels
+     * @param Closure(string): void $onPick
+     */
+    private function showListPicker(string $title, array $labels, Closure $onPick): void
+    {
+        $picker = new SelectList(array_map(static fn (string $label): SelectItem => new SelectItem($label), $labels), 8, Themes::getSelectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item) use ($onPick): void {
+            $this->closePicker();
+            $onPick($item->value);
         });
         $picker->setCancelHandler($this->closePicker(...));
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg(
-            'muted',
-            $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
-        ), 1, 0));
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('accent', Style::bold($title)), 1, 0));
         $this->overlay->addChild($picker);
         $this->overlay->addChild(new Spacer(1));
 
         $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    private function showOverlay(Component $component): void
+    {
+        $this->overlay->clear();
+        $this->overlay->addChild($component);
+        $this->tui->setFocus($component);
         $this->tui->requestRender();
     }
 
@@ -5293,7 +5543,7 @@ final class InteractiveMode
      * inside the loop's own input callback — suspending there suspends the loop that has to
      * deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
      */
-    private function signIn(Provider|OauthFlow $provider): void
+    private function signIn(Provider|OauthFlow $provider, ?Closure $onBack = null): void
     {
         if ($provider instanceof Provider && !$provider->available()) {
             $this->sayWarning("{$provider->label()} is not ported yet — pig cannot finish that sign-in.");
@@ -5301,7 +5551,7 @@ final class InteractiveMode
             return;
         }
 
-        Async::spawn(function () use ($provider): void {
+        Async::spawn(function () use ($provider, $onBack): void {
             // Escape has to be able to end this: Copilot's flow polls GitHub for up to fifteen
             // minutes, and a fiber waiting that long with nothing able to stop it is a session
             // that has to be killed. `interrupt()` reaches this controller.
@@ -5335,8 +5585,13 @@ final class InteractiveMode
                     $controller->signal,
                     // A choice between named ways in — Anthropic's browser-or-copy-code. The
                     // labels are what the list shows; the id is what comes back.
-                    function (string $title, array $options): ?string {
+                    function (string $title, array $options) use ($provider): ?string {
                         $labels = array_map(static fn (array $option): string => $option[1], $options);
+                        // Upstream's Radius sign-in says what Radius is above its choice.
+                        if ($provider === Provider::Radius) {
+                            $this->say('Radius is a service crafted for Pi by the builders of Pi, Earendil Works');
+                        }
+
                         $picked = $this->ui->select($title, $labels);
 
                         foreach ($options as [$id, $label]) {
@@ -5349,18 +5604,12 @@ final class InteractiveMode
                     },
                 );
 
-                $this->say($credentials === null
-                    ? 'Signing in was cancelled.'
-                    : "Signed in with {$provider->label()}.");
-
-                if ($credentials !== null) {
-                    $this->maybeWarnAboutAnthropicSubscriptionAuth();
-                    $this->refreshAfterSignIn($provider instanceof Provider ? $provider->value : $provider->id(), "Logged in to {$provider->label()}");
-
-                    $currentModel = $this->session->model();
-                    if ($currentModel !== null && $this->auth !== null && !$this->auth->hasKeyFor($currentModel->provider)) {
-                        $this->say("Use /model to switch to a model from {$provider->label()}.");
-                    }
+                if ($credentials === null) {
+                    $onBack === null ? $this->say('Signing in was cancelled.') : $onBack();
+                } else {
+                    $id = $provider instanceof Provider ? $provider->value : $provider->id();
+                    $name = $provider instanceof Provider ? BuiltinProviders::name($id) : $provider->label();
+                    $this->completeProviderAuthentication($id, "Logged in to {$name}");
                 }
             } catch (Throwable $problem) {
                 $this->sayError($problem->getMessage());
@@ -5380,19 +5629,16 @@ final class InteractiveMode
      * llama.cpp's guidance is upstream's `llamaCppPostLoginGuidance()`, said when no model is
      * selected yet.
      */
-    private function signInWithApiKey(ExtensionProvider $provider): void
+    private function signInWithApiKey(string $id, string $name, ApiKeyAuth $apiKeyAuth, ?Closure $onBack = null): void
     {
-        $apiKeyAuth = $provider->apiKeyAuth;
-        \assert($apiKeyAuth !== null);
-
-        Async::spawn(function () use ($provider, $apiKeyAuth): void {
+        Async::spawn(function () use ($id, $name, $apiKeyAuth, $onBack): void {
             $controller = new AbortController();
             $this->signingIn = $controller;
-            $this->programStatus->setBlocked('login', new BlockedStatus('auth', "Log in to {$provider->name}"));
+            $this->programStatus->setBlocked('login', new BlockedStatus('auth', "Log in to {$name}"));
 
             try {
                 $credential = $this->auth?->loginApiKey(
-                    $provider->id,
+                    $id,
                     $apiKeyAuth,
                     fn (string $message, string $placeholder, bool $allowEmpty, ?AbortSignal $closing = null): ?string
                         => $this->ui->input($message, $placeholder, $closing),
@@ -5400,12 +5646,12 @@ final class InteractiveMode
                 );
 
                 if ($credential === null) {
-                    $this->say('Signing in was cancelled.');
+                    $onBack === null ? $this->say('Signing in was cancelled.') : $onBack();
                 } else {
-                    $this->completeProviderAuthentication($provider->id, "Saved API key for {$provider->name}");
+                    $this->completeProviderAuthentication($id, "Saved API key for {$name}");
                 }
             } catch (Throwable $problem) {
-                $this->sayError("Failed to save API key for {$provider->name}: {$problem->getMessage()}");
+                $this->sayError("Failed to save API key for {$name}: {$problem->getMessage()}");
             } finally {
                 $this->signingIn = null;
                 $this->programStatus->setBlocked('login', null);
@@ -5416,21 +5662,68 @@ final class InteractiveMode
     }
 
     /**
-     * Upstream's `completeProviderAuthentication()` for an api-key sign-in, less the default-model
-     * choice pig has no table for: where the credential went, llama.cpp's guidance when no model is
-     * selected yet (upstream's `llamaCppPostLoginGuidance()`), and the provider's catalog refreshed.
+     * Upstream's `completeProviderAuthentication()`: with no model chosen yet, the provider's default
+     * one (`ModelResolver::DEFAULT_MODEL_PER_PROVIDER`, Radius's first when it has no `balanced`) or
+     * why not; where the credential went; llama.cpp's guidance (upstream's
+     * `llamaCppPostLoginGuidance()`); and the provider's catalog refreshed.
      */
     private function completeProviderAuthentication(string $providerId, string $actionLabel): void
     {
-        $this->say("{$actionLabel}. Credentials saved to {$this->auth?->path()}");
+        $this->footer->invalidate();
+        $selected = null;
+        $selectionError = null;
 
-        // Matches LLAMA_PROVIDER_ID in extensions/pig-llama; kept inline, as upstream keeps it, to
-        // avoid coupling interactive mode to the built-in extension.
-        if ($providerId === 'llama.cpp' && $this->session->model() === null) {
-            $loaded = count(array_filter(Models::all(), static fn (Model $model): bool => $model->provider === 'llama.cpp'));
-            $this->sayError($loaded === 0
-                ? "{$actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
-                : "{$actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.");
+        if ($this->session->model() === null) {
+            $providerModels = array_values(array_filter(
+                $this->auth?->availableModels() ?? [],
+                static fn (Model $model): bool => $model->provider === $providerId,
+            ));
+            $defaultId = ModelResolver::DEFAULT_MODEL_PER_PROVIDER[$providerId] ?? null;
+
+            if ($providerId === 'llama.cpp') {
+                // Matches LLAMA_PROVIDER_ID in extensions/pig-llama; kept inline, as upstream keeps it.
+                $selectionError = $providerModels === []
+                    ? "{$actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
+                    : "{$actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.";
+            } elseif ($defaultId === null) {
+                $selectionError = "{$actionLabel}, but no default model is configured for provider \"{$providerId}\". Use /model to select a model.";
+            } elseif ($providerModels === []) {
+                $selectionError = "{$actionLabel}, but no models are available for that provider. Use /model to select a model.";
+            } else {
+                foreach ($providerModels as $model) {
+                    if ($model->id === $defaultId) {
+                        $selected = $model;
+                    }
+                }
+
+                // Radius catalogs vary by account; prefer balanced, then use catalog order.
+                $selected ??= $providerId === 'radius' ? $providerModels[0] : null;
+
+                if ($selected === null) {
+                    $selectionError = "{$actionLabel}, but its default model \"{$defaultId}\" is not available. Use /model to select a model.";
+                } else {
+                    try {
+                        $this->session->setModel($selected, persistAsDefault: true);
+                        $this->paintBorder();
+                    } catch (Throwable $error) {
+                        $selected = null;
+                        $selectionError = "{$actionLabel}, but selecting its default model failed: {$error->getMessage()}. Use /model to select a model.";
+                    }
+                }
+            }
+        }
+
+        if ($selected !== null) {
+            $this->say("{$actionLabel}. Selected {$selected->id}. Credentials saved to {$this->auth?->path()}");
+            $this->maybeWarnAboutAnthropicSubscriptionAuth($selected);
+        } else {
+            $this->say("{$actionLabel}. Credentials saved to {$this->auth?->path()}");
+
+            if ($selectionError !== null) {
+                $this->sayError($selectionError);
+            } else {
+                $this->maybeWarnAboutAnthropicSubscriptionAuth();
+            }
         }
 
         $this->refreshAfterSignIn($providerId, $actionLabel);
@@ -5459,27 +5752,6 @@ final class InteractiveMode
             $this->tui->requestRender();
         });
     }
-
-    private function signOutApiKey(ExtensionProvider $provider): void
-    {
-        try {
-            $this->auth?->remove($provider->id);
-            $this->say("Removed stored API key for {$provider->name}. Environment variables and models.json config are unchanged.");
-        } catch (Throwable $problem) {
-            $this->sayError($problem->getMessage());
-        }
-    }
-
-    private function signOut(Provider|OauthFlow $provider): void
-    {
-        try {
-            $this->auth?->remove($provider instanceof Provider ? $provider->value : $provider->id());
-            $this->say("Forgot the {$provider->label()} sign-in.");
-        } catch (Throwable $problem) {
-            $this->sayError($problem->getMessage());
-        }
-    }
-
 
     /**
      * A URL the terminal can be clicked on, where the terminal allows it.
