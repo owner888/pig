@@ -38,7 +38,7 @@ pig_installer_main() {
 
   INITIAL_PATH="${PATH:-}"
 
-  printf '\n  \033[1mpig\033[0m \033[2m— pi, ported to PHP\033[0m\n\n'
+  printf '\n  \033[1mpig\033[0m \033[2m— PHP Ai Agent\033[0m\n\n'
 
   if ! run_preflight_checks; then
     exit 1

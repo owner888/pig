@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.80] - 2026-10-18
+
+### Changed
+
+- **Installer greeting banner in `install.sh`**: Updated the header tagline to `pig — PHP Ai Agent`.
+
 ## [0.6.79] - 2026-10-18
 
 ### Fixed
