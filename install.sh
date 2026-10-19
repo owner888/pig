@@ -58,10 +58,10 @@ pig_installer_main() {
 
   missing_paths=$(collect_missing_path_dirs "$bin_dir")
 
-  if installed_pig_is_first_on_path "$bin_dir" && [ -z "$missing_paths" ]; then
+  if installed_pig_is_first_on_path "$bin_dir"; then
     printf '\npig %s is installed. Run it with: %s\n' "$(installed_version "$bin_dir")" "$PIG_CMD"
   else
-    print_not_on_path_message "$bin_dir" "$missing_paths"
+    print_not_on_path_message "$bin_dir"
   fi
 
   printf '\nSet a key with ANTHROPIC_API_KEY, or run `%s` and use /login.\n' "$PIG_CMD"
@@ -398,7 +398,6 @@ is_termux() {
 
 print_not_on_path_message() {
   bin_dir="$1"
-  missing_paths="${2:-$1}"
 
   printf '\npig is installed, but your shell cannot see it yet.\n'
 
@@ -414,42 +413,33 @@ print_not_on_path_message() {
     printf 'Your shell currently resolves %s to: %s\n' "$PIG_CMD" "$active"
   fi
 
-  target_dirs="${missing_paths:-$bin_dir}"
-  prompt_add_path_to_profile "$target_dirs" || true
+  prompt_add_path_to_profile "$bin_dir" || true
 
   config_file=$(shell_config_file)
   printf '\nTo activate the new PATH in your current terminal session, run:\n\n  source %s\n\n' "$config_file"
   printf 'Then run: %s\n' "$PIG_CMD"
 }
 
-# Asked rather than done. This writes to a file the person did not ask us to touch, and a `curl | sh`
-# that silently edits a shell profile is exactly the reason some people refuse `curl | sh`.
+# Asked rather than done. Appends an independent export line for pig into the user's existing
+# shell profile without modifying or merging with any pre-existing lines.
 prompt_add_path_to_profile() {
-  dirs="$1"
+  bin_dir="$1"
+  [ -n "$bin_dir" ] || return 0
   have_tty || return 1
 
-  target_files=$(target_profile_files)
-  primary_file=$(printf '%s' "$target_files" | awk '{print $1}')
-  command=$(path_update_command "$dirs")
+  config_file=$(shell_config_file)
+  command=$(path_update_command "$bin_dir")
 
-  already_added=1
-  for config_file in $target_files; do
-    if ! config_file_mentions_path "$config_file" "$command"; then
-      already_added=0
-      break
-    fi
-  done
-
-  if [ "$already_added" -eq 1 ]; then
-    printf 'A PATH entry for %s is already in %s.\n' "$dirs" "$primary_file"
+  if config_file_mentions_path "$config_file" "$bin_dir"; then
+    printf 'A PATH entry for %s is already in %s.\n' "$bin_dir" "$config_file"
     # shellcheck disable=SC1090
-    . "$primary_file" 2>/dev/null || true
-    export PATH="$dirs:$PATH"
+    . "$config_file" 2>/dev/null || true
+    export PATH="$bin_dir:$PATH"
     return 0
   fi
 
   exec 3<>/dev/tty
-  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$dirs" "$primary_file" >&3
+  printf '\nAdd %s to your PATH in %s? [Y/n] ' "$bin_dir" "$config_file" >&3
   if ! IFS= read -r answer <&3; then
     answer=
   fi
@@ -460,54 +450,32 @@ prompt_add_path_to_profile() {
     *) ;;
   esac
 
-  for config_file in $target_files; do
-    if ! config_file_mentions_path "$config_file" "$command"; then
-      mkdir -p "${config_file%/*}"
-      touch "$config_file"
-      printf '\n# pig & composer global bin\n%s\n' "$command" >> "$config_file"
-      printf 'Added it to %s.\n' "$config_file"
-    fi
-    # shellcheck disable=SC1090
-    . "$config_file" 2>/dev/null || true
-  done
+  mkdir -p "${config_file%/*}"
+  touch "$config_file"
+  printf '\n# pig\n%s\n' "$command" >> "$config_file"
+  printf 'Added pig to PATH in %s.\n' "$config_file"
 
-  export PATH="$dirs:$PATH"
-  printf 'Sourced %s for the current installer session.\n' "$primary_file"
+  # Source the configuration file immediately and export to current PATH
+  # shellcheck disable=SC1090
+  . "$config_file" 2>/dev/null || true
+  export PATH="$bin_dir:$PATH"
+  printf 'Sourced %s for the current installer session.\n' "$config_file"
 }
 
-target_profile_files() {
-  shell_name=$(basename "${SHELL:-sh}")
-
-  if is_termux; then
-    case "$shell_name" in
-      fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
-      zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
-      *)
-        files="$HOME/.bashrc"
-        if [ -f "$HOME/.profile" ]; then
-          files="$files $HOME/.profile"
-        fi
-        printf '%s' "$files"
-        ;;
-    esac
-    return
-  fi
-
-  case "$shell_name" in
+# Locates the user's existing shell profile. Never creates an unnecessary .bashrc if .profile exists.
+shell_config_file() {
+  case "$(basename "${SHELL:-sh}")" in
     fish) printf '%s/.config/fish/config.fish' "$HOME" ;;
-    zsh) printf '%s/.zshrc' "${ZDOTDIR:-$HOME}" ;;
-    bash)
-      files="$HOME/.bashrc"
-      if [ -f "$HOME/.profile" ]; then
-        files="$files $HOME/.profile"
-      elif [ -f "$HOME/.bash_profile" ]; then
-        files="$files $HOME/.bash_profile"
+    zsh)
+      if [ -f "${ZDOTDIR:-$HOME}/.zshrc" ]; then
+        printf '%s/.zshrc' "${ZDOTDIR:-$HOME}"
+      else
+        printf '%s/.profile' "$HOME"
       fi
-      printf '%s' "$files"
       ;;
-    *)
+    bash|*)
       if [ -f "$HOME/.bashrc" ]; then
-        printf '%s/.bashrc %s/.profile' "$HOME" "$HOME"
+        printf '%s/.bashrc' "$HOME"
       else
         printf '%s/.profile' "$HOME"
       fi
@@ -515,37 +483,21 @@ target_profile_files() {
   esac
 }
 
-shell_config_file() {
-  target_profile_files | awk '{print $1}'
-}
-
 path_update_command() {
-  dirs="$1"
+  bin_dir="$1"
   case "$(basename "${SHELL:-sh}")" in
-    fish)
-      cmd=""
-      old_ifs=$IFS
-      IFS=:
-      for d in $dirs; do
-        [ -n "$d" ] || continue
-        cmd="${cmd:+${cmd} && }fish_add_path \"$d\""
-      done
-      IFS=$old_ifs
-      printf '%s' "$cmd"
-      ;;
-    *)
-      printf 'export PATH="%s:$PATH"' "$dirs"
-      ;;
+    fish) printf 'fish_add_path "%s"' "$bin_dir" ;;
+    *) printf 'export PATH="%s:$PATH"' "$bin_dir" ;;
   esac
 }
 
-# Whole-line match, so running the installer twice does not append the line twice.
+# Checks if the target path is already mentioned in the configuration file.
 config_file_mentions_path() {
   config_file="$1"
-  command="$2"
+  target="$2"
 
   [ -f "$config_file" ] || return 1
-  grep -Fxq "$command" "$config_file"
+  grep -Fq "$target" "$config_file"
 }
 
 # The installer runs as a child process and cannot change the calling shell's

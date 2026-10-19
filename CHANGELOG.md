@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.82] - 2026-10-18
+
+### Fixed
+
+- **Clean single-line profile targeting in `install.sh`**:
+  - Respects existing `.profile` files and never creates an unnecessary `.bashrc` when one does not already exist.
+  - Appends an independent, cleanly formatted `# pig` export line without touching, modifying, or merging with pre-existing configuration lines.
+  - Automatically sources the modified profile file immediately upon appending.
+
 ## [0.6.81] - 2026-10-18
 
 ### Fixed
