@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.83] - 2026-10-18
+
+### Fixed
+
+- **Persistent command resolution after quitting initial session in `install.sh`**:
+  - Dynamically searches and resolves the concrete `pig` binary across all Composer vendor paths (`~/.config/composer/vendor/bin`, `~/.composer/vendor/bin`, and Android Termux home paths).
+  - Robustly links `pig` directly into default system PATH directories (such as `/data/data/com.termux/files/usr/bin` in Termux, `/usr/local/bin`, or `~/.local/bin`), preventing `No command pig found` after exiting the initial interactive launch (`/quit`).
+  - Enhanced `installed_pig_is_first_on_path` to resolve symlink targets against the installed binary.
+
 ## [0.6.82] - 2026-10-18
 
 ### Fixed

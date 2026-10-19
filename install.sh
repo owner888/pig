@@ -305,7 +305,9 @@ composer_bin_dir() {
   for candidate in \
     "${COMPOSER_HOME:-}/vendor/bin" \
     "$HOME/.config/composer/vendor/bin" \
-    "$HOME/.composer/vendor/bin"
+    "$HOME/.composer/vendor/bin" \
+    "/data/data/com.termux/files/home/.config/composer/vendor/bin" \
+    "/data/data/com.termux/files/home/.composer/vendor/bin"
   do
     if [ -n "$candidate" ] && [ -d "$candidate" ]; then
       printf '%s' "$candidate"
@@ -316,21 +318,41 @@ composer_bin_dir() {
   printf '%s' "$dir"
 }
 
+find_installed_pig_binary() {
+  bin_dir="$1"
+  for candidate in \
+    "${bin_dir:-}/$PIG_CMD" \
+    "${COMPOSER_HOME:-}/vendor/bin/$PIG_CMD" \
+    "$HOME/.config/composer/vendor/bin/$PIG_CMD" \
+    "$HOME/.composer/vendor/bin/$PIG_CMD" \
+    "/data/data/com.termux/files/home/.config/composer/vendor/bin/$PIG_CMD" \
+    "/data/data/com.termux/files/home/.composer/vendor/bin/$PIG_CMD"
+  do
+    if [ -f "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Attempt to link pig directly into an existing directory on PATH so it works immediately
 # without requiring shell restarts or manual sourcing.
 link_pig_to_path() {
   bin_dir="$1"
-  [ -n "$bin_dir" ] || return 1
-  [ -x "$bin_dir/$PIG_CMD" ] || return 1
+  real_pig_path=$(find_installed_pig_binary "$bin_dir") || return 1
+  chmod +x "$real_pig_path" 2>/dev/null || true
 
-  # Termux environment: $PREFIX/bin is always in PATH and writable by user
-  if is_termux && [ -n "${PREFIX:-}" ] && [ -d "$PREFIX/bin" ] && [ -w "$PREFIX/bin" ]; then
-    ln -sf "$bin_dir/$PIG_CMD" "$PREFIX/bin/$PIG_CMD" 2>/dev/null || true
-    if [ -x "$PREFIX/bin/$PIG_CMD" ]; then
-      printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$PREFIX/bin" "$PIG_CMD"
-      return 0
+  # Termux environment: /data/data/com.termux/files/usr/bin is always in PATH and writable by user
+  for termux_dir in "${PREFIX:-}/bin" "/data/data/com.termux/files/usr/bin"; do
+    if [ -n "$termux_dir" ] && [ -d "$termux_dir" ] && [ -w "$termux_dir" ]; then
+      ln -sf "$real_pig_path" "$termux_dir/$PIG_CMD" 2>/dev/null || true
+      if [ -x "$termux_dir/$PIG_CMD" ]; then
+        printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$termux_dir" "$PIG_CMD"
+        return 0
+      fi
     fi
-  fi
+  done
 
   # Standard POSIX: search current PATH for writable user/system bin directories
   old_ifs=$IFS
@@ -339,8 +361,8 @@ link_pig_to_path() {
     [ -n "$dir" ] || continue
     case "$dir" in
       /usr/local/bin|/opt/homebrew/bin|"$HOME/.local/bin"|"$HOME/bin")
-        if [ -d "$dir" ] && [ -w "$dir" ] && [ "$dir" != "$bin_dir" ]; then
-          ln -sf "$bin_dir/$PIG_CMD" "$dir/$PIG_CMD" 2>/dev/null || true
+        if [ -d "$dir" ] && [ -w "$dir" ] && [ "$dir" != "$(dirname "$real_pig_path")" ]; then
+          ln -sf "$real_pig_path" "$dir/$PIG_CMD" 2>/dev/null || true
           if [ -x "$dir/$PIG_CMD" ]; then
             IFS=$old_ifs
             printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$dir" "$PIG_CMD"
@@ -357,18 +379,32 @@ link_pig_to_path() {
 
 installed_version() {
   bin_dir="$1"
-  "$bin_dir/$PIG_CMD" --version 2>/dev/null | awk '{ print $2 }'
+  real_pig=$(find_installed_pig_binary "$bin_dir") || real_pig="$bin_dir/$PIG_CMD"
+  "$real_pig" --version 2>/dev/null | awk '{ print $2 }'
 }
 
 # Not "does `pig` resolve" but "does it resolve to the one just installed". An older copy earlier on
 # the PATH answers the first question and is not what anybody wants to be running.
 installed_pig_is_first_on_path() {
   bin_dir="$1"
-  [ -n "$bin_dir" ] || return 1
-  [ -x "$bin_dir/$PIG_CMD" ] || return 1
-
   active=$(command -v "$PIG_CMD" 2>/dev/null) || return 1
-  [ "$active" = "$bin_dir/$PIG_CMD" ]
+
+  real_pig=$(find_installed_pig_binary "$bin_dir") || real_pig="$bin_dir/$PIG_CMD"
+  [ -n "$real_pig" ] || return 1
+
+  if [ "$active" = "$real_pig" ] || [ "$active" = "$bin_dir/$PIG_CMD" ]; then
+    return 0
+  fi
+
+  if [ -L "$active" ]; then
+    target=$(readlink "$active" 2>/dev/null || true)
+    case "$target" in
+      /*) [ "$target" = "$real_pig" ] && return 0 ;;
+      *) [ "$(cd "$(dirname "$active")" 2>/dev/null && pwd)/$target" = "$real_pig" ] && return 0 ;;
+    esac
+  fi
+
+  return 1
 }
 
 collect_missing_path_dirs() {
@@ -505,7 +541,8 @@ config_file_mentions_path() {
 # first run work seamlessly even when the shell still needs a restart to find pig.
 prompt_start_pig() {
   bin_dir="$1"
-  start_pig_path="$bin_dir/$PIG_CMD"
+  real_pig=$(find_installed_pig_binary "$bin_dir") || real_pig="$bin_dir/$PIG_CMD"
+  start_pig_path="$real_pig"
   [ -n "$start_pig_path" ] && [ -x "$start_pig_path" ] || return 0
   have_tty || return 0
 
