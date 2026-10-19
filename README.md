@@ -359,7 +359,7 @@ Logger::timeEnd('benchmark');
 
 ### Signing in
 
-`/login` asks how, as pi's does: **Sign in with an account**, **Sign in with an API key**, or **Sign in with Radius**. The API-key list is every built-in provider (Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter, Groq, Moonshot, Z.AI, …) and every extension's, searchable, each with whether it is configured and from where (`✓ env: OPENAI_API_KEY`, `✓ configured`); the key is kept in `auth.json`. `/login <provider>` goes straight to that provider. With no model chosen yet, signing in switches to the provider's default model. Amazon Bedrock, Google Vertex AI and the Cloudflare providers are configured from the environment only.
+`/login` asks how, as pi's does: **Sign in with an account**, **Sign in with an API key**, or **Sign in with Radius**. The API-key list is every built-in provider (Anthropic, OpenAI, Gemini, DeepSeek, OpenRouter, Groq, Moonshot, Z.AI, …) and every extension's, searchable, each with whether it is configured and from where (`✓ env: OPENAI_API_KEY`, `✓ configured`); the key is kept in `auth.json`. Custom OpenAI-compatible endpoints can be added on the fly via `/login <name>` or `+ Add custom provider...`, which prompts for the base URL and API key and automatically discovers models. `/login <provider>` goes straight to that provider. With no model chosen yet, signing in switches to the provider's default model. Amazon Bedrock, Google Vertex AI and the Cloudflare providers are configured from the environment only.
 
 The account sign-ins — `/login`, or `pig-ai login <provider>` from a shell with no terminal UI — each the way pi does it:
 

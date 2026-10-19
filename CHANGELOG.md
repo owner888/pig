@@ -43,7 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [0.6.88] - 2026-10-18
+
+### New Features
+
+- **Interactive setup wizard for custom OpenAI-compatible providers in `/login`**:
+  - Running `/login <name>` for any custom or unconfigured provider (or selecting `+ Add custom provider (OpenAI compatible)...` from the API key menu) launches a two-step setup wizard.
+  - Interactively prompts for the endpoint's Base URL and API key directly in the terminal without requiring manual edits to `models.json`.
+  - Automatically queries `GET $baseUrl/models`, populates the model catalog into `~/.pig/agent/models.json`, stores the API key in `auth.json`, reloads custom models, and switches the session to the newly discovered model immediately.
 
 ### Fixed
 

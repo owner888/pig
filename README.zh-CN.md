@@ -341,7 +341,7 @@ Logger::timeEnd('benchmark');
 
 ### 登录
 
-`/login` 先问用哪种方式，与 pi 一致：**Sign in with an account**（账号）、**Sign in with an API key**（API Key）或 **Sign in with Radius**。API Key 列表包含所有内置提供商（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter、Groq、Moonshot、Z.AI……）和扩展注册的提供商，可搜索，每一行标出是否已配置及来源（`✓ env: OPENAI_API_KEY`、`✓ configured`）；Key 保存在 `auth.json`。`/login <provider>` 直接进入该提供商。尚未选择模型时，登录后自动切到该提供商的默认模型。Amazon Bedrock、Google Vertex AI 和 Cloudflare 两个提供商只从环境变量配置。
+`/login` 先问用哪种方式，与 pi 一致：**Sign in with an account**（账号）、**Sign in with an API key**（API Key）或 **Sign in with Radius**。API Key 列表包含所有内置提供商（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter、Groq、Moonshot、Z.AI……）和扩展注册的提供商，可搜索，每一行标出是否已配置及来源（`✓ env: OPENAI_API_KEY`、`✓ configured`）；Key 保存在 `auth.json`。自定义 OpenAI 兼容网关可直接通过 `/login <name>` 或 `+ Add custom provider...` 快速接入，向导会交互式提示录入 Base URL 和 API Key，并自动请求端点拉取模型写入配置。`/login <provider>` 直接进入该提供商。尚未选择模型时，登录后自动切到该提供商的默认模型。Amazon Bedrock、Google Vertex AI 和 Cloudflare 两个提供商只从环境变量配置。
 
 账号登录——`/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`——流程均与 pi 一致：
 

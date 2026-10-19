@@ -4571,6 +4571,43 @@ final class InteractiveModeTest extends TestCase
         }
     }
 
+    public function testSlashLoginUnknownCustomProviderPromptsForUrlAndKeyAndConfiguresModels(): void
+    {
+        $modelsFile = \Pig\CodingAgent\Config::home() . '/models.json';
+        $originalModelsJson = is_file($modelsFile) ? file_get_contents($modelsFile) : null;
+
+        try {
+            $auth = Auth::inMemory();
+            $this->start(auth: $auth);
+
+            $this->type('/login my-mock-gateway');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->assertStringContainsString('Enter My Mock Gateway base URL', $this->screen());
+
+            $this->type('https://api.example.com/v1');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->assertStringContainsString('Enter My Mock Gateway API key', $this->screen());
+
+            $this->type('sk-mock-key');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertSame('sk-mock-key', $auth->apiKey('my-mock-gateway'));
+            $this->assertStringContainsString('Added My Mock Gateway', $this->screen());
+            $this->assertFileExists($modelsFile);
+            $saved = json_decode((string) file_get_contents($modelsFile), true);
+            $this->assertSame('https://api.example.com/v1', $saved['providers']['my-mock-gateway']['baseUrl'] ?? null);
+        } finally {
+            if ($originalModelsJson !== null) {
+                file_put_contents($modelsFile, $originalModelsJson);
+            } else {
+                unlink($modelsFile);
+            }
+        }
+    }
+
     public function testChoosingAnthropicAsksWhichWayInAndCopyCodeShowsAUrlThenAPasteBox(): void
     {
         $this->start(auth: Auth::inMemory());

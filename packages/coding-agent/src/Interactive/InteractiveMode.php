@@ -25,6 +25,7 @@ use Pig\Ai\Model;
 use Pig\Ai\BuiltinProviders;
 use Pig\Ai\Extension\ApiKeyAuth;
 use Pig\Ai\Extension\EnvApiKeyAuth;
+use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\StopReason;
@@ -45,6 +46,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\BugReport;
 use Pig\CodingAgent\CrashLog;
+use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
@@ -5229,9 +5231,28 @@ final class InteractiveMode
                     );
                 }
             }
+
+            $options[] = new AuthSelectorProvider(
+                '+custom',
+                '+ Add custom provider (OpenAI compatible)...',
+                'api_key',
+                null,
+                false,
+                '+custom',
+                'custom provider setup',
+            );
         }
 
-        usort($options, static fn (AuthSelectorProvider $a, AuthSelectorProvider $b): int => strcasecmp($a->name, $b->name));
+        usort($options, static function (AuthSelectorProvider $a, AuthSelectorProvider $b): int {
+            if ($a->id === '+custom') {
+                return -1;
+            }
+            if ($b->id === '+custom') {
+                return 1;
+            }
+
+            return strcasecmp($a->name, $b->name);
+        });
 
         return $options;
     }
@@ -5313,6 +5334,12 @@ final class InteractiveMode
             return;
         }
 
+        if ($matches === []) {
+            $this->setupCustomProvider($providerRef);
+
+            return;
+        }
+
         $this->showLoginProviderSelector(null, $providerRef);
     }
 
@@ -5323,6 +5350,12 @@ final class InteractiveMode
      */
     private function startProviderLogin(AuthSelectorProvider $option, ?Closure $onBack = null): void
     {
+        if ($option->id === '+custom') {
+            $this->setupCustomProvider();
+
+            return;
+        }
+
         if ($option->authType === 'oauth') {
             \assert($option->sign instanceof Provider || $option->sign instanceof OauthFlow);
             $this->signIn($option->sign, $onBack);
@@ -5344,6 +5377,230 @@ final class InteractiveMode
         $env = Stream::envApiKeyNames($option->id);
         $this->say("{$option->name} is configured outside pig." . ($env === [] ? '' : ' Set ' . implode(' or ', $env) . '.'));
         $onBack?->__invoke();
+    }
+
+    /**
+     * Interactive wizard for setting up custom OpenAI-compatible providers: prompts for base URL and
+     * API key, automatically fetches models from $baseUrl/models, and saves to models.json & auth.json.
+     */
+    private function setupCustomProvider(string $providerRef = ''): void
+    {
+        $id = strtolower(trim($providerRef));
+
+        Async::spawn(function () use ($id): void {
+            $controller = new AbortController();
+            $this->signingIn = $controller;
+
+            try {
+                $targetId = $id;
+
+                if ($targetId === '' || $targetId === '+custom') {
+                    $enteredId = $this->ui->input(
+                        'Enter provider ID (e.g. my-gateway)',
+                        'my-gateway',
+                        $controller->signal,
+                    );
+
+                    if ($enteredId === null || trim($enteredId) === '') {
+                        $this->say('Setup cancelled.');
+
+                        return;
+                    }
+
+                    $targetId = strtolower(trim($enteredId));
+                }
+
+                $displayName = ucwords(str_replace(['-', '_'], ' ', $targetId));
+
+                $existingBaseUrl = $this->findExistingCustomBaseUrl($targetId);
+                $urlPrompt = $existingBaseUrl !== null
+                    ? "Enter {$displayName} base URL"
+                    : "Enter {$displayName} base URL (e.g. https://api.example.com/v1)";
+                $urlPlaceholder = $existingBaseUrl ?? 'https://api.example.com/v1';
+
+                // Step 1: Base URL
+                $baseUrl = $this->ui->input($urlPrompt, $urlPlaceholder, $controller->signal);
+
+                if ($baseUrl === null) {
+                    $this->say('Setup cancelled.');
+
+                    return;
+                }
+
+                $baseUrl = trim($baseUrl);
+                if ($baseUrl === '' && $existingBaseUrl !== null) {
+                    $baseUrl = $existingBaseUrl;
+                }
+
+                if ($baseUrl === '') {
+                    $this->sayError('Base URL cannot be empty.');
+
+                    return;
+                }
+
+                $baseUrl = rtrim($baseUrl, '/');
+
+                // Step 2: API key
+                $apiKey = $this->ui->input(
+                    "Enter {$displayName} API key (leave blank if none)",
+                    'sk-...',
+                    $controller->signal,
+                );
+
+                if ($apiKey === null) {
+                    $this->say('Setup cancelled.');
+
+                    return;
+                }
+
+                $apiKey = trim($apiKey);
+
+                // Step 3: Fetch models from $baseUrl/models
+                $this->say("Discovering models from {$baseUrl}/models...");
+                $modelList = $this->fetchOpenAiModels($baseUrl, $apiKey);
+
+                if ($modelList === []) {
+                    $fallbackId = $targetId . '-model';
+                    $this->sayWarning("Could not discover models from /models. Created default model: {$fallbackId}");
+                    $modelList = [[
+                        'id' => $fallbackId,
+                        'name' => $displayName,
+                        'reasoning' => true,
+                        'input' => ['text', 'image'],
+                        'contextWindow' => 128_000,
+                        'maxTokens' => 8192,
+                    ]];
+                } else {
+                    $this->say('Found ' . count($modelList) . " models from endpoint.");
+                }
+
+                // Step 4: Save to ~/.pig/agent/models.json
+                $this->saveCustomProviderToModelsJson($targetId, $displayName, $baseUrl, $modelList);
+
+                // Step 5: Save API key to auth.json if provided
+                if ($apiKey !== '') {
+                    $this->auth?->setApiKey($targetId, $apiKey);
+                }
+
+                // Step 6: Reload custom models
+                $custom = CustomModels::discover();
+                $custom->install($this->auth);
+
+                $count = count($modelList);
+                $firstModel = $modelList[0]['id'];
+                $this->say("✓ Added {$displayName} with {$count} model" . ($count === 1 ? '' : 's') . " to models.json.");
+
+                // Automatically switch to the first model
+                $this->pickModel("{$targetId}/{$firstModel}");
+            } catch (Throwable $e) {
+                $this->sayError("Failed to configure {$displayName}: {$e->getMessage()}");
+            } finally {
+                $this->signingIn = null;
+            }
+        });
+    }
+
+    private function findExistingCustomBaseUrl(string $id): ?string
+    {
+        $file = Config::home() . '/models.json';
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $decoded = json_decode((string) file_get_contents($file), true);
+        if (!is_array($decoded) || !isset($decoded['providers'][$id]['baseUrl'])) {
+            return null;
+        }
+
+        $url = $decoded['providers'][$id]['baseUrl'];
+
+        return is_string($url) ? $url : null;
+    }
+
+    /** @return list<array{id: string, name: string, reasoning: bool, input: list<'text'|'image'>, contextWindow: int, maxTokens: int}> */
+    private function fetchOpenAiModels(string $baseUrl, string $apiKey): array
+    {
+        $url = rtrim($baseUrl, '/') . '/models';
+        $headers = ['Accept' => 'application/json', 'User-Agent' => 'pig'];
+        if ($apiKey !== '') {
+            $headers['Authorization'] = "Bearer {$apiKey}";
+        }
+
+        $body = '';
+
+        try {
+            $client = new HttpClient(10.0);
+            $response = $client->request('GET', $url, $headers);
+            $body = $response->body();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if ($body === '') {
+            return [];
+        }
+
+        $decoded = json_decode($body, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $items = is_array($decoded['data'] ?? null)
+            ? $decoded['data']
+            : (is_array($decoded['models'] ?? null) ? $decoded['models'] : (is_array($decoded) ? $decoded : []));
+
+        $models = [];
+        foreach ($items as $item) {
+            $mid = null;
+            if (is_string($item)) {
+                $mid = trim($item);
+            } elseif (is_array($item)) {
+                $mid = trim((string) ($item['id'] ?? $item['name'] ?? ''));
+            }
+            if ($mid !== null && $mid !== '') {
+                $models[$mid] = [
+                    'id' => $mid,
+                    'name' => $mid,
+                    'reasoning' => true,
+                    'input' => ['text', 'image'],
+                    'contextWindow' => 128_000,
+                    'maxTokens' => 8192,
+                ];
+            }
+        }
+
+        return array_values($models);
+    }
+
+    /** @param list<array<string, mixed>> $models */
+    private function saveCustomProviderToModelsJson(string $id, string $name, string $baseUrl, array $models): void
+    {
+        $dir = Config::home();
+        if (!is_dir($dir)) {
+            mkdir($dir, 0700, true);
+        }
+
+        $file = $dir . '/models.json';
+        $existing = [];
+        if (is_file($file)) {
+            $decoded = json_decode((string) file_get_contents($file), true);
+            if (is_array($decoded)) {
+                $existing = $decoded;
+            }
+        }
+
+        if (!isset($existing['providers']) || !is_array($existing['providers'])) {
+            $existing['providers'] = [];
+        }
+
+        $existing['providers'][$id] = [
+            'name' => $name,
+            'api' => 'openai-completions',
+            'baseUrl' => $baseUrl,
+            'models' => $models,
+        ];
+
+        file_put_contents($file, json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
     }
 
     /**
