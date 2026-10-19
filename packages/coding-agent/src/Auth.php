@@ -166,7 +166,29 @@ final class Auth
 
     public function has(string $provider): bool
     {
-        return isset($this->data[$provider]);
+        return $this->entry($provider) !== null;
+    }
+
+    /**
+     * Looks up an entry by provider name, falling back to case-insensitive match so
+     * "raccoonX", "Raccoonx" and "raccoonx" all resolve seamlessly.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function entry(string $provider): ?array
+    {
+        if (isset($this->data[$provider]) && is_array($this->data[$provider])) {
+            return $this->data[$provider];
+        }
+
+        $wanted = strtolower($provider);
+        foreach ($this->data as $key => $entry) {
+            if (strtolower((string) $key) === $wanted && is_array($entry)) {
+                return $entry;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -204,7 +226,7 @@ final class Auth
             if ($this->storedKey($provider) !== null) {
                 return true;
             }
-        } elseif (isset($this->data[$provider])) {
+        } elseif ($this->entry($provider) !== null) {
             return true;
         }
 
@@ -252,7 +274,7 @@ final class Auth
     /** `api_key`, `oauth`, or null for a provider nothing is stored for. */
     public function kind(string $provider): ?string
     {
-        $type = $this->data[$provider]['type'] ?? null;
+        $type = $this->entry($provider)['type'] ?? null;
 
         return is_string($type) ? $type : null;
     }
@@ -292,7 +314,7 @@ final class Auth
     public function credentials(Provider|string $provider): ?Credentials
     {
         $id = $provider instanceof Provider ? $provider->value : $provider;
-        $entry = $this->data[$id] ?? null;
+        $entry = $this->entry($id);
 
         if ($entry === null || ($entry['type'] ?? null) !== 'oauth') {
             return isset($this->secondStores[$id]) ? ($this->secondStores[$id][0])() : null;
@@ -328,7 +350,7 @@ final class Auth
      */
     public function apiKeyCredential(string $provider): ?ApiKeyCredential
     {
-        $entry = $this->data[$provider] ?? null;
+        $entry = $this->entry($provider);
 
         if ($entry === null || ($entry['type'] ?? null) !== 'api_key') {
             return null;
@@ -354,7 +376,7 @@ final class Auth
      */
     private function storedKey(string $provider): ?string
     {
-        $entry = $this->data[$provider] ?? null;
+        $entry = $this->entry($provider);
         $key = is_array($entry) ? self::text($entry, 'key') : null;
 
         if ($key === null) {
@@ -444,7 +466,12 @@ final class Auth
 
     public function remove(string $provider): void
     {
-        unset($this->data[$provider]);
+        $wanted = strtolower($provider);
+        foreach (array_keys($this->data) as $key) {
+            if (strtolower((string) $key) === $wanted) {
+                unset($this->data[$key]);
+            }
+        }
         $this->save();
     }
 

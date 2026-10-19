@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.92] - 2026-10-18
+
+### Fixed
+
+- **Case-insensitive provider authentication resolution**: Lookups for stored credentials in `auth.json` (such as `kind()`, `hasKeyFor()`, `apiKey()`, and `apiKeyCredential()`) now fall back to case-insensitive matching, ensuring variations like `my-gateway`, `My-Gateway`, or `myGateway` all resolve cleanly without authentication mismatches.
+
 ## [0.6.91] - 2026-10-18
 
 ### Fixed
