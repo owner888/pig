@@ -6,6 +6,7 @@ namespace Pig\Tui\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Tui\AnsiTracker;
+use Pig\Tui\Graphemes;
 use Pig\Tui\TextWrap;
 use Pig\Tui\Width;
 
@@ -198,5 +199,33 @@ final class TextWrapTest extends TestCase
         $lines = TextWrap::wrap('请确认提交commit-id之后查看', 12);
 
         $this->assertSame(['请确认提交', 'commit-id之', '后查看'], $lines);
+    }
+
+    public function testALongNonAsciiLineCostsItsLengthAndNotItsSquare(): void
+    {
+        // Each non-ASCII character used to be found by splitting the whole rest of the line into
+        // graphemes and keeping the first: a 50KB line of scraped Chinese page text in one bash
+        // result held a resize frame for 12.8 seconds. It is a window around the character now.
+        $line = str_repeat('基于 ThinkPHP 的开源网址导航项目，', 1500);
+        $started = microtime(true);
+        $rows = TextWrap::wrap($line, 120);
+        $elapsed = microtime(true) - $started;
+
+        $this->assertSame(str_replace(' ', '', $line), str_replace(' ', '', implode('', $rows)));
+        $this->assertLessThan(2.0, $elapsed, sprintf('Wrapping %d bytes took %.2fs', strlen($line), $elapsed));
+    }
+
+    public function testClustersLongerThanACodepointAreNeverCutByTheWindow(): void
+    {
+        // A family emoji is 25 bytes, a flag 8, a combining accent rides on its letter: each one
+        // is one cluster, whichever side of a wrap it lands on.
+        $text = str_repeat("中\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}é\u{0301}🇯🇵한", 40);
+
+        foreach ([2, 3, 5, 7] as $width) {
+            $rows = TextWrap::wrap($text, $width);
+            $clusters = array_merge(...array_map(Graphemes::split(...), $rows));
+
+            $this->assertSame(Graphemes::split($text), $clusters, "width {$width}");
+        }
     }
 }

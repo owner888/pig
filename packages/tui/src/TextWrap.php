@@ -169,6 +169,28 @@ final class TextWrap
 
     private const string CJK_PATTERN = '/^[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Bopomofo}]\z/u';
 
+    /** The most bytes one grapheme cluster is looked for in; see `clusterAt()`. */
+    private const int CLUSTER_WINDOW = 128;
+
+    /**
+     * The grapheme cluster that starts at byte `$pos`.
+     *
+     * Split from a window, not from the rest of the line. Splitting everything after `$pos` to
+     * keep its first cluster made a line cost n² in its non-ASCII characters — one 50KB line of
+     * scraped Chinese page text in a bash result held a resize frame for 12.8 seconds. The window ends
+     * on a character boundary, and a cluster longer than it (no real one is) comes out in pieces.
+     */
+    private static function clusterAt(string $text, int $pos, int $length): string
+    {
+        $end = min(self::CLUSTER_WINDOW, $length - $pos);
+
+        while ($pos + $end < $length && $end > 1 && (ord($text[$pos + $end]) & 0xC0) === 0x80) {
+            $end--;
+        }
+
+        return Graphemes::split(substr($text, $pos, $end))[0] ?? $text[$pos];
+    }
+
     /**
      * Split into runs of spaces, words, and CJK characters with escape codes attached to what follows.
      *
@@ -218,9 +240,7 @@ final class TextWrap
                 continue;
             }
 
-            $sub = substr($text, $pos);
-            $graphemes = Graphemes::split($sub);
-            $cluster = $graphemes[0] ?? $text[$pos];
+            $cluster = self::clusterAt($text, $pos, $length);
             $pos += strlen($cluster);
 
             if (preg_match(self::CJK_PATTERN, $cluster) === 1) {

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.96] - 2026-10-18
+
+### Fixed
+
+- A long session no longer stops following the window. A bash result with one long line of non-ASCII text (50KB of scraped Chinese page text, here) cost the square of its length to wrap, at every new width: a resize drew nothing for over ten seconds, while a fresh session followed at once. Each character is now found in a small window instead of by splitting the rest of the line.
+
 ## [0.6.95] - 2026-10-18
 
 ### Fixed

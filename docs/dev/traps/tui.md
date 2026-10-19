@@ -2075,3 +2075,29 @@ What the registry made possible, all upstream's: `Editor` undo (`UndoStack`), a 
 **Trap rules**:
 - Key names come only from `Keybindings::keyText()`, never a hand-written `esc`; the countdown stops when the retry ends or is cancelled (`stopRetryCountdown()`).
 - Tests: `InteractiveModeTest::testTheRetryCountdownCountsDownOnceASecond`, `testEscapeStopsTheRetryTheScreenSaysItCanStop`.
+
+## A long resumed session stopped following the window, and a fresh one did not
+
+Reported as "pig no longer follows the window at once; a new pig does". The window was 163 columns
+and the frame stayed at 145 for seconds. `stty size` said 163 the whole time, so the signal and the
+measurement were fine; a pty replay of the reporter's own session said the rest — a resize drew
+nothing for ten seconds, and `PIG_STALL_LOG` put the render timer at `Event loop held for 12800ms`.
+
+A sampled profile of that frame was 98% `Graphemes::split()` under `TextWrap::tokenize()`, from one
+`BashOutputComponent`: a single 50KB line of scraped Chinese page text. `tokenize()` found each
+non-ASCII character by splitting **everything after it** into graphemes and keeping the first, so a
+line cost n² in its non-ASCII characters, and the cache keyed on width is empty at every new width.
+A fresh session had no such line, which is why it looked like something that built up over time.
+
+`clusterAt()` splits a 128-byte window that ends on a character boundary instead: the same frame is
+0.3s, all of it the ordinary cost. A cluster longer than the window would come out in pieces; none
+that a terminal draws is.
+
+**Trap rules**:
+- Never split the rest of a string to take its first grapheme inside a loop over that string; and
+  `preg_match('/\G\X/u', $s, $m, 0, $pos)` is no cure — PCRE checks the whole subject's UTF-8 on
+  every call, so it is n² as well (measured).
+- When a resize is slow, profile a frame of the reporter's real session; the synthetic sessions in
+  the harness had no long non-ASCII line and drew in 110ms.
+- Tests: `TextWrapTest::testALongNonAsciiLineCostsItsLengthAndNotItsSquare` (20s on the old code),
+  `testClustersLongerThanACodepointAreNeverCutByTheWindow`.
