@@ -84,6 +84,16 @@ around* something JavaScript does not have, the port is the PHP call, not the wo
 Copying the arithmetic is not the same as porting the behaviour. Same story as `Graphemes::split()`
 being one `preg_match_all` where upstream needs `Intl.Segmenter` and a package.
 
+## Where pig's TUI differs from upstream on purpose
+
+pig follows upstream `main` (AGENTS.md); these are the developer's choices that a port must keep.
+
+- **The loader shows how long it has been running**: `── ⠏ Working · 16s ──` (`· 1m15s` past a
+  minute) — the turn, `/compact`, an automatic compaction, a branch summary and their retries
+  (`InteractiveMode::showLoader(timer: true)`, `Loader::withTimer()`). Upstream's says `Working` and
+  nothing else. Taken out in 0.6.75 when the TUI was aligned with upstream, and put back at the
+  developer's request.
+
 ## Extensions
 
 `ext-mbstring`, `ext-json`, `ext-openssl` and `ext-pcre` are required and are in every build worth

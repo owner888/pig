@@ -516,7 +516,7 @@ final class InteractiveMode
             },
             onWorkingVisible: function (bool $visible): void {
                 if ($visible) {
-                    $this->showLoader($this->customWorkingMessage ?? 'Working');
+                    $this->showLoader($this->customWorkingMessage ?? 'Working', timer: true);
                 } else {
                     $this->hideLoader();
                 }
@@ -2397,7 +2397,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader($this->compactionLabel('manual'));
+        $this->showLoader($this->compactionLabel('manual'), timer: true);
         $this->terminalProgress(true);
 
         $this->compaction = new AbortController();
@@ -5143,7 +5143,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader($this->branchSummaryLabel());
+        $this->showLoader($this->branchSummaryLabel(), timer: true);
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -7238,7 +7238,7 @@ final class InteractiveMode
 
     private function onStart(): void
     {
-        $this->showLoader('Working');
+        $this->showLoader('Working', timer: true);
     }
 
     /**
@@ -7250,7 +7250,11 @@ final class InteractiveMode
      * which grew the frame by two rows at the start of every turn and shrank it at the end; the
      * border is already there. `$status` stays for anything that is not a loader.
      */
-    private function showLoader(string $message): Loader
+    /**
+     * @param bool $timer the elapsed time after the message, `Working · 16s` — the developer's
+     *        choice, which upstream's loader does not have (docs/dev/decisions.md)
+     */
+    private function showLoader(string $message, bool $timer = false): Loader
     {
         if ($this->customWorkingMessage !== null && $message === 'Working') {
             $message = $this->customWorkingMessage;
@@ -7266,6 +7270,10 @@ final class InteractiveMode
             static fn (string $text): string => Themes::theme()->fg('muted', $text),
             $message,
         );
+
+        if ($timer) {
+            $this->working->withTimer();
+        }
 
         if ($this->workingIndicatorOptions !== null) {
             $this->working->setIndicator($this->workingIndicatorOptions);
@@ -7651,6 +7659,7 @@ final class InteractiveMode
             $this->stopRetryCountdown();
             $this->showLoader(
                 $event->source === 'branchSummary' ? $this->branchSummaryLabel() : $this->compactionLabel($event->reason ?? 'manual'),
+                timer: true,
             );
         }
     }
@@ -7707,7 +7716,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader($this->compactionLabel($reason));
+        $this->showLoader($this->compactionLabel($reason), timer: true);
     }
 
     /**

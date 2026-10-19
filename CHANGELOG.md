@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.90] - 2026-10-18
+
+### Changed
+
+- The `Working` loader shows how long it has been running again (`Working · 16s`), and so do compaction and branch summary — taken out in 0.6.75 to match upstream, back at the developer's request and recorded in `docs/dev/decisions.md` as a deliberate difference.
+
 ## [0.6.89] - 2026-10-18
 
 ### Fixed
