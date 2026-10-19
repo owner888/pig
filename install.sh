@@ -224,19 +224,32 @@ missing_php_extensions() {
 # Ensure Composer is present; if not, automatically bootstrap and install it via pure PHP.
 ensure_composer_installed() {
   if command -v composer >/dev/null 2>&1; then
+    active_composer=$(command -v composer)
+    link_binary_to_path "$active_composer" "composer" >/dev/null 2>&1 || true
     return 0
   fi
 
   printf '  composer is required but not found on your PATH.\n'
 
-  composer_dir="/usr/local/bin"
-  if [ ! -d "$composer_dir" ] || [ ! -w "$composer_dir" ]; then
-    composer_dir="$HOME/.local/bin"
+  composer_dir=""
+  for termux_dir in "${PREFIX:-}/bin" "/data/data/com.termux/files/usr/bin"; do
+    if [ -n "$termux_dir" ] && [ -d "$termux_dir" ] && [ -w "$termux_dir" ]; then
+      composer_dir="$termux_dir"
+      break
+    fi
+  done
+
+  if [ -z "$composer_dir" ]; then
+    for dir in "/usr/local/bin" "$HOME/.local/bin" "$HOME/bin"; do
+      if [ -d "$dir" ] && [ -w "$dir" ]; then
+        composer_dir="$dir"
+        break
+      fi
+    done
   fi
 
-  mkdir -p "$composer_dir" 2>/dev/null || true
-  if [ ! -d "$composer_dir" ] || [ ! -w "$composer_dir" ]; then
-    composer_dir="$HOME/bin"
+  if [ -z "$composer_dir" ]; then
+    composer_dir="$HOME/.local/bin"
     mkdir -p "$composer_dir" 2>/dev/null || true
   fi
 
@@ -266,6 +279,7 @@ ensure_composer_installed() {
 
   if [ "$downloaded" -eq 1 ]; then
     chmod +x "$composer_dir/composer" 2>/dev/null || true
+    link_binary_to_path "$composer_dir/composer" "composer" || true
     export PATH="$composer_dir:$PATH"
     if command -v composer >/dev/null 2>&1; then
       INSTALLED_COMPOSER_DIR="$composer_dir"
@@ -336,36 +350,39 @@ find_installed_pig_binary() {
   return 1
 }
 
-# Attempt to link pig directly into an existing directory on PATH so it works immediately
+# Attempt to link an executable directly into an existing directory on PATH so it works immediately
 # without requiring shell restarts or manual sourcing.
-link_pig_to_path() {
-  bin_dir="$1"
-  real_pig_path=$(find_installed_pig_binary "$bin_dir") || return 1
-  chmod +x "$real_pig_path" 2>/dev/null || true
+link_binary_to_path() {
+  binary_path="$1"
+  cmd_name="$2"
+  [ -n "$binary_path" ] && [ -f "$binary_path" ] || return 1
+  chmod +x "$binary_path" 2>/dev/null || true
 
-  # Termux environment: /data/data/com.termux/files/usr/bin is always in PATH and writable by user
+  # 1. Termux environment: /data/data/com.termux/files/usr/bin is always in PATH and writable by user
   for termux_dir in "${PREFIX:-}/bin" "/data/data/com.termux/files/usr/bin"; do
     if [ -n "$termux_dir" ] && [ -d "$termux_dir" ] && [ -w "$termux_dir" ]; then
-      ln -sf "$real_pig_path" "$termux_dir/$PIG_CMD" 2>/dev/null || true
-      if [ -x "$termux_dir/$PIG_CMD" ]; then
-        printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$termux_dir" "$PIG_CMD"
+      if [ "$binary_path" != "$termux_dir/$cmd_name" ]; then
+        ln -sf "$binary_path" "$termux_dir/$cmd_name" 2>/dev/null || true
+      fi
+      if [ -x "$termux_dir/$cmd_name" ]; then
+        printf '  Linked %s to %s/%s\n' "$cmd_name" "$termux_dir" "$cmd_name"
         return 0
       fi
     fi
   done
 
-  # Standard POSIX: search current PATH for writable user/system bin directories
+  # 2. Standard POSIX: search current PATH for writable user/system bin directories
   old_ifs=$IFS
   IFS=:
   for dir in $PATH; do
     [ -n "$dir" ] || continue
     case "$dir" in
       /usr/local/bin|/opt/homebrew/bin|"$HOME/.local/bin"|"$HOME/bin")
-        if [ -d "$dir" ] && [ -w "$dir" ] && [ "$dir" != "$(dirname "$real_pig_path")" ]; then
-          ln -sf "$real_pig_path" "$dir/$PIG_CMD" 2>/dev/null || true
-          if [ -x "$dir/$PIG_CMD" ]; then
+        if [ -d "$dir" ] && [ -w "$dir" ] && [ "$dir" != "$(dirname "$binary_path")" ]; then
+          ln -sf "$binary_path" "$dir/$cmd_name" 2>/dev/null || true
+          if [ -x "$dir/$cmd_name" ]; then
             IFS=$old_ifs
-            printf '  Linked %s to %s/%s\n' "$PIG_CMD" "$dir" "$PIG_CMD"
+            printf '  Linked %s to %s/%s\n' "$cmd_name" "$dir" "$cmd_name"
             return 0
           fi
         fi
@@ -375,6 +392,12 @@ link_pig_to_path() {
   IFS=$old_ifs
 
   return 1
+}
+
+link_pig_to_path() {
+  bin_dir="$1"
+  real_pig_path=$(find_installed_pig_binary "$bin_dir") || return 1
+  link_binary_to_path "$real_pig_path" "$PIG_CMD"
 }
 
 installed_version() {

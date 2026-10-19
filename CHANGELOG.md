@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.84] - 2026-10-18
+
+### Fixed
+
+- **Unified system bin symlinking for Composer in `install.sh`**:
+  - Automatically prioritizes default system PATH directories (such as `/data/data/com.termux/files/usr/bin` in Termux, or `/usr/local/bin`) when bootstrapping Composer.
+  - Symmetrically links `composer` into the system PATH via a unified `link_binary_to_path` helper, ensuring `which composer` resolves directly and consistently alongside `which pig`.
+
 ## [0.6.83] - 2026-10-18
 
 ### Fixed
