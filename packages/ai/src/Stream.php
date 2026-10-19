@@ -313,8 +313,21 @@ final class Stream
             'xiaomi-token-plan-ams' => ['XIAOMI_TOKEN_PLAN_AMS_API_KEY'],
             'xiaomi-token-plan-sgp' => ['XIAOMI_TOKEN_PLAN_SGP_API_KEY'],
             'cloudflare-workers-ai', 'cloudflare-ai-gateway' => ['CLOUDFLARE_API_KEY'],
-            default => Extension\ProviderRegistry::envKeysFor($provider),
+            default => self::defaultEnvApiKeyNames($provider),
         };
+    }
+
+    /** @return list<string> */
+    private static function defaultEnvApiKeyNames(string $provider): array
+    {
+        $extensionKeys = Extension\ProviderRegistry::envKeysFor($provider);
+        if ($extensionKeys !== []) {
+            return $extensionKeys;
+        }
+
+        $canonical = strtoupper(str_replace(['-', '.', ' '], '_', $provider)) . '_API_KEY';
+
+        return [$canonical];
     }
 
     /**

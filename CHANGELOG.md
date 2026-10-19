@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- A turn no longer stops on `Write failed: Connection closed by peer` and pig's other transport errors (`Read failed`, `Connection closed before the response head was complete`, `TLS handshake with … failed`): they are retried like the `fetch failed` / `other side closed` Node reports for the same thing, which pi retries. Upstream's newer retryable wording is in too (`temporarily unavailable`, `upstream provider returned an error`, `unable to forward upstream`, `HTTP/2 stream failed`, …).
+
+## [0.6.87] - 2026-10-18
+
+### Added
+
+- **Custom provider API key authentication and automatic env variable resolution**:
+  - Custom providers declared in `models.json` are now dynamically discovered by `/login` under "Sign in with an API key", prompting for and storing credentials securely in `auth.json`.
+  - Added automatic fallback to canonical environment variable names (`<PROVIDER>_API_KEY`) for any custom provider declared outside built-ins.
+
+### Fixed
+
+- **Transport-level transient error retries**:
+  - Aligned retryable error patterns with upstream pi, adding socket-level transport disconnect matching (`Connection closed by peer`, `Read failed`, `TLS handshake failed`) and gateway forwarding failure phrases.
+
 ## [0.6.86] - 2026-10-18
 
 ### Fixed

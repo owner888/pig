@@ -24,6 +24,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
 use Pig\Ai\BuiltinProviders;
 use Pig\Ai\Extension\ApiKeyAuth;
+use Pig\Ai\Extension\EnvApiKeyAuth;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\StopReason;
@@ -5199,6 +5200,7 @@ final class InteractiveMode
 
             foreach (BuiltinProviders::apiKeyIds() as $id) {
                 if (!isset($extensions[$id])) {
+                    $extensions[$id] = true;
                     $options[] = new AuthSelectorProvider(
                         $id,
                         BuiltinProviders::name($id),
@@ -5207,6 +5209,23 @@ final class InteractiveMode
                         Auth::signIn($id)?->isSubscription() ?? false,
                         $id,
                         BuiltinProviders::apiKeyAuth($id)?->name() ?? '',
+                    );
+                }
+            }
+
+            foreach (Models::providers() as $id) {
+                if (!isset($extensions[$id]) && Auth::signIn($id) === null) {
+                    $extensions[$id] = true;
+                    $name = BuiltinProviders::has($id) ? BuiltinProviders::name($id) : ucwords(str_replace(['-', '_'], ' ', $id));
+                    $auth = BuiltinProviders::apiKeyAuth($id) ?? new EnvApiKeyAuth("{$name} API key", Stream::envApiKeyNames($id));
+                    $options[] = new AuthSelectorProvider(
+                        $id,
+                        $name,
+                        'api_key',
+                        $this->authStatus($id),
+                        false,
+                        $id,
+                        $auth->name(),
                     );
                 }
             }
@@ -5311,7 +5330,9 @@ final class InteractiveMode
             return;
         }
 
-        $apiKeyAuth = $option->sign instanceof ExtensionProvider ? $option->sign->apiKeyAuth : BuiltinProviders::apiKeyAuth($option->id);
+        $apiKeyAuth = $option->sign instanceof ExtensionProvider
+            ? $option->sign->apiKeyAuth
+            : (BuiltinProviders::apiKeyAuth($option->id) ?? (BuiltinProviders::has($option->id) ? null : new EnvApiKeyAuth("{$option->name} API key", Stream::envApiKeyNames($option->id))));
 
         if ($apiKeyAuth !== null) {
             $this->signInWithApiKey($option->id, $option->name, $apiKeyAuth, $onBack);

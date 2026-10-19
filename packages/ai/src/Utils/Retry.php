@@ -58,6 +58,22 @@ final class Retry
         'quota reached',
     ];
 
+    /**
+     * pig's own transport's words for what Node reports as `fetch failed`, `other side closed`,
+     * `socket hang up` or `terminated` — all retryable upstream. `Pig\Async\Socket` and
+     * `Pig\Ai\Http` say `Write failed: Connection closed by peer`, `Read failed`,
+     * `Connection closed before the response head was complete`, `Cannot connect to <host>` and
+     * `TLS handshake with <host> failed`, which none of upstream's patterns match, so a server
+     * closing the connection under a request stopped the turn where pi retries it.
+     */
+    private const array PIG_TRANSPORT_ERROR_PATTERNS = [
+        'write failed',
+        'read failed',
+        'connection closed',
+        'cannot connect to',
+        'tls handshake with \\S+ failed',
+    ];
+
     /** Upstream's `RETRYABLE_PROVIDER_ERROR_PATTERN` entries. */
     private const array RETRYABLE_PROVIDER_ERROR_PATTERNS = [
         // Generic provider load, HTTP status, and server-side transient failures.
@@ -75,14 +91,24 @@ final class Retry
         '504',
         '520',
         '524',
-        'service.?unavailable',
+        // Also matches "The service is temporarily unavailable" (#10965).
+        'service.?(?:is.?)?(?:temporarily.?)?unavailable',
         'server.?error',
         'internal.?error',
 
         // Wrapper/provider text for transient upstream failures, including OpenRouter
-        // "Provider returned error" responses (#2264).
-        'provider.?returned.?error',
+        // "Provider returned error" responses (#2264) and gateway wording such as
+        // "The upstream provider returned an error" (#10842).
+        'provider.?returned.?(?:an.?)?error',
         'exceeded request buffer limit while retrying upstream',
+        // Gateway failure relaying the upstream response stream, sent as an OpenAI
+        // Responses `response.failed` event without an error code (#10920).
+        'unable to forward upstream',
+        // Other gateway upstream failures relayed as `response.failed` error codes (#10920).
+        'upstream.?request.?failed',
+        'upstream_stream_read_error',
+        'stream was interrupted',
+        'http/?2 stream failed',
 
         // Network, proxy, and fetch transport failures. This includes OpenAI Codex
         // raw-fetch failures such as "upstream connect", "connection refused", and
@@ -93,6 +119,9 @@ final class Retry
         'connection.?lost',
         'other side closed',
         'fetch failed',
+        // node-fetch system errors, e.g. the Google ADC OAuth token refresh used by
+        // google-vertex. The reason is often empty (#10996).
+        'request to \\S+ failed, reason:',
         'getaddrinfo',
         'ENOTFOUND',
         'EAI_AGAIN',
@@ -303,7 +332,10 @@ final class Retry
         }
 
         // A JavaScript string is always text; malformed bytes are read as U+FFFD, as it would hold them.
-        return preg_match(self::pattern(self::RETRYABLE_PROVIDER_ERROR_PATTERNS), JsJson::decodeUtf8($message->errorMessage)) === 1;
+        $errorMessage = JsJson::decodeUtf8($message->errorMessage);
+
+        return preg_match(self::pattern(self::RETRYABLE_PROVIDER_ERROR_PATTERNS), $errorMessage) === 1
+            || preg_match(self::pattern(self::PIG_TRANSPORT_ERROR_PATTERNS), $errorMessage) === 1;
     }
 
     /**

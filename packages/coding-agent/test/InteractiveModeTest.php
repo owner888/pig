@@ -4539,6 +4539,38 @@ final class InteractiveModeTest extends TestCase
         }
     }
 
+    public function testSlashLoginSupportsCustomProviderFromModelsJson(): void
+    {
+        $customModel = new \Pig\Ai\Model(
+            id: 'custom-model',
+            name: 'Custom Model',
+            api: \Pig\Ai\Api::OpenAiCompletions,
+            provider: 'my-custom-gateway',
+            baseUrl: 'https://example.com/v1',
+            contextWindow: 32000,
+            maxTokens: 4096,
+        );
+        \Pig\Ai\Models::useOverlay(static fn (array $table): array => ['my-custom-gateway/custom-model' => $customModel, ...$table]);
+
+        try {
+            $auth = Auth::inMemory();
+            $this->start(auth: $auth);
+
+            $this->type('/login my-custom-gateway');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->assertStringContainsString('My Custom Gateway API key', $this->screen());
+
+            $this->type('sk-custom-secret');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertSame('sk-custom-secret', $auth->apiKey('my-custom-gateway'));
+        } finally {
+            \Pig\Ai\Models::useOverlay(null);
+        }
+    }
+
     public function testChoosingAnthropicAsksWhichWayInAndCopyCodeShowsAUrlThenAPasteBox(): void
     {
         $this->start(auth: Auth::inMemory());

@@ -56,6 +56,17 @@ final class RetryTest extends TestCase
         yield 'grpc' => ['ResourceExhausted: try later'];
         yield 'chatgpt usage unavailable' => ['subscription_sharing_usage_unavailable'];
         yield 'antigravity throttling' => ['Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.'];
+        yield 'temporarily unavailable' => ['The service is temporarily unavailable'];
+        yield 'upstream provider error' => ['The upstream provider returned an error'];
+        yield 'gateway forward' => ['unable to forward upstream response'];
+        yield 'http2 stream' => ['HTTP/2 stream failed'];
+        yield 'node-fetch reason' => ['request to https://oauth2.googleapis.com/token failed, reason: '];
+        // pig's own transport, where Node would have said `fetch failed` or `other side closed`.
+        yield 'peer closed on write' => ['Write failed: Connection closed by peer'];
+        yield 'read failed' => ['Read failed: Connection reset by peer'];
+        yield 'closed before the head' => ['Connection closed before the response head was complete'];
+        yield 'closed mid-body' => ['Connection closed in the middle of a chunked body'];
+        yield 'tls handshake' => ['TLS handshake with api.deepseek.com failed'];
     }
 
     #[DataProvider('retryable')]

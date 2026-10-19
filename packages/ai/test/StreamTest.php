@@ -91,6 +91,12 @@ final class StreamTest extends TestCase
         $this->assertNull(Stream::envApiKey('openai-codex', ['OPENAI_API_KEY' => 'sk']));
     }
 
+    public function testCustomProviderFallsBackToCanonicalEnvApiKeyName(): void
+    {
+        $this->assertSame(['CUSTOM_GATEWAY_API_KEY'], Stream::envApiKeyNames('custom-gateway'));
+        $this->assertSame('sk-custom', Stream::envApiKey('custom-gateway', ['CUSTOM_GATEWAY_API_KEY' => 'sk-custom']));
+    }
+
     public function testBedrockIsSignedInByAnyOfItsAwsSources(): void
     {
         $this->assertNull(Stream::envApiKey('amazon-bedrock', []));
