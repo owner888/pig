@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.97] - 2026-10-18
+
+### Fixed
+
+- `Working` no longer disappears for the rest of a run after a retry. A successful retry is announced at the end of the answer it got — often a tool call — and that took down every loader, so the turn after the tool (the model reading its result) ran with nothing above the prompt and looked stuck. Only the retry countdown is cleared now, and `Working` comes back at every turn's start, as in pi.
+
 ## [0.6.96] - 2026-10-18
 
 ### Fixed

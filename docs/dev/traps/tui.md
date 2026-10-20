@@ -2101,3 +2101,25 @@ that a terminal draws is.
   the harness had no long non-ASCII line and drew in 110ms.
 - Tests: `TextWrapTest::testALongNonAsciiLineCostsItsLengthAndNotItsSquare` (20s on the old code),
   `testClustersLongerThanACodepointAreNeverCutByTheWindow`.
+
+## After a retry, the rest of the run had no `Working`
+
+Reported as "is it stuck halfway through a write? there is no Working". The run was fine and still
+going — the model was reading the tool's result — but nothing above the prompt said so. Two places
+differed from upstream, and a retry put them together:
+
+- **`onRetryEnd()` took down whatever loader was up.** A successful retry is announced at the end of
+  the answer it got (`AgentSession`, upstream's "reset retry counter immediately on successful
+  assistant response"), which is mid-run, with `Working` back up since the attempt's `agent_start`.
+  Upstream's `clearStatusIndicator("retry")` clears only the countdown.
+- **`Working` was shown on `agent_start` only.** Upstream shows it on every `turn_start` when the
+  indicator up is not the working one, so a turn after anything that replaced it gets it back.
+
+`$loaderKind` is upstream's `activeStatusIndicator.kind` (`working`, `retry`, `other`), and
+`$workingVisible` its `workingVisible`, which an extension's `setWorkingVisible(false)` sets.
+
+**Trap rules**:
+- Clear a loader by kind, as upstream does; never "whatever is up" from an event that can arrive
+  mid-run.
+- Test: `InteractiveModeTest::testWorkingIsBackForTheTurnAfterARetriedOneCalledATool` (red on the
+  old code).

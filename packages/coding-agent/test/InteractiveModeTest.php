@@ -3887,6 +3887,36 @@ final class InteractiveModeTest extends TestCase
         self::turnTheLoop();
     }
 
+    public function testWorkingIsBackForTheTurnAfterARetriedOneCalledATool(): void
+    {
+        // A successful retry is announced at the end of the answer it got, and that answer here
+        // is a tool call: the turn after it — the model reading the tool's result — is still the
+        // same run. Taking every loader down at the retry's end left that turn with nothing above
+        // the prompt; upstream clears only the countdown, and shows Working on every turn_start.
+        file_put_contents("{$this->cwd}/notes.txt", "a note\n");
+        $this->start(
+            answers: [self::failed('Anthropic returned 503: overloaded'), self::wants('read', ['path' => 'notes.txt']), 'never asked for'],
+            settings: Settings::inMemory(['retry' => ['baseDelayMs' => 50]]),
+        );
+        $release = $this->holdTheAgent(letThrough: 2);
+
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $until = microtime(true) + 2.0;
+
+        while ($this->held === null && microtime(true) < $until) {
+            self::turnTheLoop(1);
+            usleep(5_000);
+        }
+
+        $this->assertNotNull($this->held, 'the turn after the tool never asked the model');
+        $this->assertStringContainsString('read notes.txt', $this->screen());
+        $this->assertMatchesRegularExpression('/Working(?: · \d+s)?/', $this->screen());
+
+        $release();
+        $this->settle();
+    }
+
     public function testWhatIsTypedDuringARetryJoinsThatPromptAndItSettlesOnce(): void
     {
         // Enter during "Retrying (1/3) in …" used to send a prompt of its own: the session said it

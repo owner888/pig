@@ -254,6 +254,17 @@ final class InteractiveMode
 
     private ?Loader $working = null;
 
+    /**
+     * What `$working` is showing, as upstream's `activeStatusIndicator.kind` says it:
+     * `working`, `retry`, or `other` (compaction, branch summary, a command's own).
+     *
+     * @var 'working'|'retry'|'other'|null
+     */
+    private ?string $loaderKind = null;
+
+    /** Upstream's `workingVisible`: an extension's `setWorkingVisible(false)` keeps it hidden. */
+    private bool $workingVisible = true;
+
     private ?AssistantMessageComponent $streaming = null;
 
     /** @var array<string, ToolExecutionComponent> by tool call id */
@@ -515,10 +526,16 @@ final class InteractiveMode
                 $this->tui->requestRender();
             },
             onWorkingVisible: function (bool $visible): void {
-                if ($visible) {
-                    $this->showLoader($this->customWorkingMessage ?? 'Working', timer: true);
-                } else {
-                    $this->hideLoader();
+                // Upstream's `setWorkingVisible()`: hiding takes down only the working indicator,
+                // and showing puts it back only while a run is going.
+                $this->workingVisible = $visible;
+
+                if (!$visible) {
+                    if ($this->loaderKind === 'working') {
+                        $this->hideLoader();
+                    }
+                } elseif ($this->session->isStreaming() && $this->loaderKind !== 'working') {
+                    $this->showWorking();
                 }
             },
             onHiddenThinkingLabel: function (?string $label): void {
@@ -7247,7 +7264,7 @@ final class InteractiveMode
 
         match (true) {
             $event instanceof AgentStartEvent => $this->onStart(),
-            $event instanceof TurnStartEvent => $this->terminalProgress(true),
+            $event instanceof TurnStartEvent => $this->onTurnStart(),
             $event instanceof MessageStartEvent => $this->onMessageStart($event),
             $event instanceof MessageUpdateEvent => $this->onMessageUpdate($event),
             $event instanceof MessageEndEvent => $this->onMessageEnd($event),
@@ -7275,7 +7292,39 @@ final class InteractiveMode
 
     private function onStart(): void
     {
+        $this->showWorking();
+    }
+
+    /**
+     * Upstream's `turn_start`: the working indicator again, unless it is up already. A retry's
+     * countdown, or its end, takes it down in the middle of a run, and every turn after that —
+     * the model's answer to a tool's result — went on with nothing above the prompt to say so.
+     */
+    private function onTurnStart(): void
+    {
+        $this->terminalProgress(true);
+
+        if (!$this->workingVisible) {
+            if ($this->loaderKind !== null) {
+                $this->hideLoader();
+            }
+
+            return;
+        }
+
+        if ($this->loaderKind !== 'working') {
+            $this->showWorking();
+        }
+    }
+
+    private function showWorking(): void
+    {
+        if (!$this->workingVisible) {
+            return;
+        }
+
         $this->showLoader('Working', timer: true);
+        $this->loaderKind = 'working';
     }
 
     /**
@@ -7318,6 +7367,7 @@ final class InteractiveMode
 
         $this->editor->setWorkingStatus($this->working, fn (string $text): string => $this->borderColour()($text));
         $this->tui->requestRender();
+        $this->loaderKind = 'other';
 
         return $this->working;
     }
@@ -7326,6 +7376,7 @@ final class InteractiveMode
     {
         $this->working?->stop();
         $this->working = null;
+        $this->loaderKind = null;
         $this->editor->setWorkingStatus(null);
         $this->status->clear();
         $this->paintBorder();
@@ -7643,6 +7694,7 @@ final class InteractiveMode
         $message = static fn (int $seconds): string => "Retrying ({$event->attempt}/{$event->maxAttempts}) in {$seconds}s... ({$key} to cancel)";
         $remaining = (int) ceil($event->delaySeconds);
         $loader = $this->showLoader($message($remaining));
+        $this->loaderKind = 'retry';
         $this->stopRetryCountdown();
 
         $tick = function () use (&$tick, &$remaining, $loader, $message): void {
@@ -7722,7 +7774,13 @@ final class InteractiveMode
     private function onRetryEnd(RetryEndEvent $event): void
     {
         $this->stopRetryCountdown();
-        $this->hideLoader();
+
+        // Upstream's `clearStatusIndicator("retry")`: only the countdown. A successful retry is
+        // announced at the end of the answer it got — mid-run, with `Working` back up since the
+        // attempt's start — and taking that down left the rest of the run without it.
+        if ($this->loaderKind === 'retry') {
+            $this->hideLoader();
+        }
 
         if ($event->succeeded) {
             // Nothing said: the answer it retried for is already on screen above this, and
