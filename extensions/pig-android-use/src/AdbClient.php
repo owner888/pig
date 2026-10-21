@@ -15,6 +15,8 @@ final class AdbClient
 {
     private ?string $binary = null;
     private ?string $defaultSerial = null;
+    private ?string $ffmpegPath = null;
+    private bool $ffmpegProbed = false;
 
     public function __construct(?string $binary = null, ?string $defaultSerial = null)
     {
@@ -242,7 +244,12 @@ final class AdbClient
         ];
 
         $pipes = [];
-        $process = proc_open($cmd, $descriptors, $pipes);
+        set_error_handler(static fn (): bool => true);
+        try {
+            $process = proc_open($cmd, $descriptors, $pipes);
+        } finally {
+            restore_error_handler();
+        }
         if (!is_resource($process)) {
             return null;
         }
@@ -301,6 +308,249 @@ final class AdbClient
         }
 
         return null;
+    }
+
+    /**
+     * Locate ffmpeg binary for hardware stream decoding.
+     */
+    public function ffmpegBinary(): ?string
+    {
+        if ($this->ffmpegProbed) {
+            return $this->ffmpegPath;
+        }
+
+        $this->ffmpegProbed = true;
+        $env = getenv('FFMPEG_PATH');
+        if ($env !== false && (string) $env !== '' && file_exists((string) $env) && is_executable((string) $env)) {
+            return $this->ffmpegPath = (string) $env;
+        }
+
+        $candidates = [
+            '/opt/homebrew/bin/ffmpeg',
+            '/usr/local/bin/ffmpeg',
+            '/usr/bin/ffmpeg',
+        ];
+
+        foreach ($candidates as $c) {
+            if (file_exists($c) && is_executable($c)) {
+                return $this->ffmpegPath = $c;
+            }
+        }
+
+        $which = Process::capture(['which', 'ffmpeg']);
+        if ($which !== null && $which !== '') {
+            $candidate = trim($which);
+            if (file_exists($candidate) && is_executable($candidate)) {
+                return $this->ffmpegPath = $candidate;
+            }
+        }
+
+        return $this->ffmpegPath = null;
+    }
+
+    /**
+     * Capture a single frame using Android hardware H.264 encoder (MediaCodec)
+     * piped directly to ffmpeg. Dramatically faster than software screencap.
+     *
+     * @return array{
+     *     path: string,
+     *     mimeType: string,
+     *     width: int,
+     *     height: int,
+     *     raw_width: int,
+     *     raw_height: int,
+     *     pixel_to_point: array{float, float},
+     *     data: string,
+     *     method: string
+     * }|null
+     */
+    public function captureHardwareH264(?string $serial = null): ?array
+    {
+        $ffmpeg = $this->ffmpegBinary();
+        if ($ffmpeg === null) {
+            return null;
+        }
+
+        $size = $this->screenSize($serial);
+        if ($size === null || $size['width'] <= 0 || $size['height'] <= 0) {
+            return null;
+        }
+
+        $rawW = $size['width'];
+        $rawH = $size['height'];
+        $fitted = ScreenCapture::fitDimensions($rawW, $rawH);
+        // H.264 hardware encoders strictly require even dimensions
+        $targetW = max(2, $fitted['width'] & ~1);
+        $targetH = max(2, $fitted['height'] & ~1);
+
+        $adbBin = $this->binary();
+        $targetSerial = $serial ?? $this->defaultSerial;
+
+        $adbArgs = [$adbBin];
+        if ($targetSerial !== null && $targetSerial !== '') {
+            $adbArgs[] = '-s';
+            $adbArgs[] = $targetSerial;
+        }
+        $adbArgs[] = 'exec-out';
+        $adbArgs[] = 'screenrecord';
+        $adbArgs[] = '--output-format=h264';
+        $adbArgs[] = '--size';
+        $adbArgs[] = "{$targetW}x{$targetH}";
+        $adbArgs[] = '--time-limit';
+        $adbArgs[] = '1';
+        $adbArgs[] = '-';
+
+        $adbProc = null;
+        set_error_handler(static fn (): bool => true);
+        try {
+            $adbProc = proc_open($adbArgs, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $adbPipes);
+        } finally {
+            restore_error_handler();
+        }
+        if (!is_resource($adbProc)) {
+            return null;
+        }
+
+        stream_set_blocking($adbPipes[1], false);
+        fclose($adbPipes[0]);
+        fclose($adbPipes[2]);
+
+        $data = '';
+        $start = microtime(true);
+        $lastRead = microtime(true);
+
+        while ((microtime(true) - $start) < 1.2) {
+            $r = [$adbPipes[1]];
+            $w = null;
+            $e = null;
+
+            set_error_handler(static fn (): bool => true);
+            try {
+                $ready = stream_select($r, $w, $e, 0, 15000);
+            } finally {
+                restore_error_handler();
+            }
+
+            if ($ready !== false && $ready > 0) {
+                $chunk = fread($adbPipes[1], 16384);
+                if ($chunk !== false && $chunk !== '') {
+                    $data .= $chunk;
+                    $lastRead = microtime(true);
+                    if (strlen($data) >= 49152) {
+                        break;
+                    }
+                }
+            } elseif (strlen($data) >= 8192 && (microtime(true) - $lastRead) > 0.04) {
+                // Initial keyframe burst completed
+                break;
+            }
+
+            $status = proc_get_status($adbProc);
+            if (!$status['running'] && feof($adbPipes[1])) {
+                break;
+            }
+        }
+
+        proc_terminate($adbProc, 9);
+        fclose($adbPipes[1]);
+        proc_close($adbProc);
+
+        if (strlen($data) < 1024) {
+            return null;
+        }
+
+        $paths = ScreenCapture::createArtifactPath();
+        $jpgPath = $paths['jpg'];
+
+        $ffCmd = [
+            $ffmpeg,
+            '-nostdin',
+            '-y',
+            '-f', 'h264',
+            '-i', '-',
+            '-vframes', '1',
+            '-q:v', (string) ScreenCapture::JPEG_QUALITY,
+            $jpgPath,
+        ];
+
+        $ffProc = null;
+        set_error_handler(static fn (): bool => true);
+        try {
+            $ffProc = proc_open($ffCmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $ffPipes);
+        } finally {
+            restore_error_handler();
+        }
+        if (!is_resource($ffProc)) {
+            return null;
+        }
+
+        fwrite($ffPipes[0], $data);
+        fclose($ffPipes[0]);
+        fclose($ffPipes[1]);
+        fclose($ffPipes[2]);
+        proc_close($ffProc);
+
+        if (!file_exists($jpgPath) || filesize($jpgPath) < 1024) {
+            if (file_exists($jpgPath)) {
+                unlink($jpgPath);
+            }
+            return null;
+        }
+
+        $jpgData = (string) file_get_contents($jpgPath);
+
+        return [
+            'path' => $jpgPath,
+            'mimeType' => 'image/jpeg',
+            'width' => $targetW,
+            'height' => $targetH,
+            'raw_width' => $rawW,
+            'raw_height' => $rawH,
+            'pixel_to_point' => [
+                round($rawW / (float) $targetW, 4),
+                round($rawH / (float) $targetH, 4),
+            ],
+            'data' => $jpgData,
+            'method' => 'hardware_h264',
+        ];
+    }
+
+    /**
+     * Capture screen using hardware H.264 stream when available,
+     * gracefully falling back to standard screencap.
+     *
+     * @return array{
+     *     path: string,
+     *     mimeType: string,
+     *     width: int,
+     *     height: int,
+     *     raw_width: int,
+     *     raw_height: int,
+     *     pixel_to_point: array{float, float},
+     *     data: string,
+     *     method: string
+     * }|null
+     */
+    public function captureScreen(?string $serial = null): ?array
+    {
+        $this->wakeUp($serial);
+
+        // 1. Try hardware accelerated H.264 stream
+        $hw = $this->captureHardwareH264($serial);
+        if ($hw !== null) {
+            return $hw;
+        }
+
+        // 2. Fallback to standard screencap PNG
+        $raw = $this->screencapRaw($serial);
+        if ($raw === null) {
+            return null;
+        }
+
+        $processed = ScreenCapture::process($raw);
+        $processed['method'] = 'screencap_fallback';
+
+        return $processed;
     }
 
     /**
@@ -369,8 +619,9 @@ final class AdbClient
     public function wakeUp(?string $serial = null): void
     {
         if (!$this->isScreenOn($serial)) {
-            // KEYCODE_WAKEUP = 224
-            $this->executeShell('input keyevent 224', $serial);
+            // KEYCODE_WAKEUP = 224 and dismiss keyguard
+            $this->executeShell('input keyevent 224 && wm dismiss-keyguard', $serial);
+            usleep(100000);
         }
     }
 

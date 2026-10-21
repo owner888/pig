@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.98] - 2026-10-21
+
+### Added
+
+- **Hardware H.264 stream capture for `pig-android-use`**: Added MediaCodec hardware-accelerated H.264 video stream frame capture via `screenrecord --output-format=h264` piped directly to local `ffmpeg`. Cuts screenshot capture latency on high-resolution flagship devices (such as 2K 3200x1440 screens) from ~2.3s down to ~0.7s with zero phone CPU compression bottleneck.
+- Added `FFMPEG_PATH` environment variable support and `hardware_accelerated` diagnosis reporting in `/android screenshot` and `android_doctor`.
+
+### Changed
+
+- **Graceful screenshot fallback in `pig-android-use`**: `AdbClient::captureScreen()` automatically probes for hardware acceleration and silently falls back to standard `screencapRaw` + JPEG pipeline if `ffmpeg` is absent or the device does not emit H.264 streams, preserving 100% compatibility.
+- **Screen wake-up and keyguard handling**: `AdbClient::wakeUp()` now dismisses keyguards and settles display flinger layer stack state to prevent `UNASSIGNED_LAYER_STACK` errors during automated screen capture.
+
 ## [0.6.97] - 2026-10-18
 
 ### Fixed

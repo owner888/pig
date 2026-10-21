@@ -74,6 +74,29 @@ final class ScreenCapture
     }
 
     /**
+     * Generate standard artifact output file paths.
+     *
+     * @return array{base: string, jpg: string, png: string}
+     */
+    public static function createArtifactPath(): array
+    {
+        $artifactsDir = Config::home() . '/artifacts';
+        if (!is_dir($artifactsDir)) {
+            mkdir($artifactsDir, 0o700, true);
+        }
+
+        $timestamp = gmdate('Ymd\THis\Z');
+        $hash = bin2hex(random_bytes(4));
+        $baseName = "{$artifactsDir}/android-{$timestamp}-{$hash}";
+
+        return [
+            'base' => $baseName,
+            'jpg' => "{$baseName}.jpg",
+            'png' => "{$baseName}.png",
+        ];
+    }
+
+    /**
      * Process raw screencap bytes into an optimized JPEG with exact coordinate ratios.
      *
      * @return array{
@@ -100,16 +123,9 @@ final class ScreenCapture
         $targetW = $fitted['width'];
         $targetH = $fitted['height'];
 
-        $artifactsDir = Config::home() . '/artifacts';
-        if (!is_dir($artifactsDir)) {
-            mkdir($artifactsDir, 0o700, true);
-        }
-
-        $timestamp = gmdate('Ymd\THis\Z');
-        $hash = substr(md5($rawPng), 0, 8);
-        $baseName = "{$artifactsDir}/android-{$timestamp}-{$hash}";
-        $pngPath = "{$baseName}.png";
-        $jpgPath = "{$baseName}.jpg";
+        $paths = self::createArtifactPath();
+        $pngPath = $paths['png'];
+        $jpgPath = $paths['jpg'];
 
         file_put_contents($pngPath, $rawPng);
 

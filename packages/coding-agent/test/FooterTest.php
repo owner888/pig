@@ -43,7 +43,8 @@ final class FooterTest extends TestCase
     {
         $this->setUpGlobalTheme();
         Loop::reset();
-        $this->cwd = sys_get_temp_dir() . '/pig-footer-' . bin2hex(random_bytes(4));
+        $baseTemp = PHP_OS_FAMILY === 'Darwin' ? '/tmp' : sys_get_temp_dir();
+        $this->cwd = $baseTemp . '/pig-footer-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
     }
 

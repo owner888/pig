@@ -28,13 +28,22 @@ final class AndroidUseExtensionTest extends TestCase
     {
         putenv('PIG_CODING_AGENT_DIR');
         if (is_dir($this->tempHome)) {
-            $files = glob("{$this->tempHome}/*") ?: [];
-            foreach ($files as $f) {
-                if (is_file($f)) {
-                    unlink($f);
+            $deleteRecursive = static function (string $dir) use (&$deleteRecursive): void {
+                $items = scandir($dir) ?: [];
+                foreach ($items as $item) {
+                    if ($item === '.' || $item === '..') {
+                        continue;
+                    }
+                    $path = $dir . '/' . $item;
+                    if (is_dir($path)) {
+                        $deleteRecursive($path);
+                    } else {
+                        unlink($path);
+                    }
                 }
-            }
-            rmdir($this->tempHome);
+                rmdir($dir);
+            };
+            $deleteRecursive($this->tempHome);
         }
         parent::tearDown();
     }
@@ -207,5 +216,36 @@ XML;
         $this->assertSame('tap', $res['results'][0]['op']);
         $this->assertSame('type_text', $res['results'][1]['op']);
         $this->assertSame('press_button', $res['results'][2]['op']);
+    }
+
+    public function testScreenCaptureCreateArtifactPath(): void
+    {
+        $paths = ScreenCapture::createArtifactPath();
+        $this->assertArrayHasKey('base', $paths);
+        $this->assertArrayHasKey('jpg', $paths);
+        $this->assertArrayHasKey('png', $paths);
+        $this->assertStringEndsWith('.jpg', $paths['jpg']);
+        $this->assertStringEndsWith('.png', $paths['png']);
+        $this->assertDirectoryExists(dirname($paths['jpg']));
+    }
+
+    public function testAdbClientFfmpegBinaryProbe(): void
+    {
+        $adb = new AdbClient('/bin/echo');
+        $ffmpeg = $adb->ffmpegBinary();
+        if ($ffmpeg !== null) {
+            $this->assertFileExists($ffmpeg);
+            $this->assertTrue(is_executable($ffmpeg));
+        } else {
+            $this->assertNull($ffmpeg);
+        }
+    }
+
+    public function testAdbClientCaptureScreenFallbackWhenNoDevice(): void
+    {
+        // Dummy adb that fails
+        $adb = new AdbClient('/bin/false');
+        $res = $adb->captureScreen();
+        $this->assertNull($res);
     }
 }

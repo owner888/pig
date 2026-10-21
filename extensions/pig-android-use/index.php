@@ -94,16 +94,16 @@ return static function (ExtensionApi $pi): void {
             }
 
             if ($sub === 'screenshot') {
-                $raw = $adb->screencapRaw();
-                if ($raw === null) {
+                $processed = $adb->captureScreen($param !== '' ? $param : null);
+                if ($processed === null) {
                     $pi->sendMessage("❌ Failed to capture screenshot. Make sure the device is connected, awake and unlocked.");
                     return;
                 }
 
-                $processed = ScreenCapture::process($raw);
                 $lastScale = $processed['pixel_to_point'];
+                $methodTag = ($processed['method'] ?? '') === 'hardware_h264' ? ' (⚡ hardware accelerated)' : '';
                 $pi->sendMessage(
-                    "📸 Screenshot captured: {$processed['width']}x{$processed['height']} " .
+                    "📸 Screenshot captured{$methodTag}: {$processed['width']}x{$processed['height']} " .
                     "(raw {$processed['raw_width']}x{$processed['raw_height']}, " .
                     "ratio {$processed['pixel_to_point'][0]}x{$processed['pixel_to_point'][1]})\n" .
                     "Saved to: {$processed['path']}"
@@ -119,13 +119,11 @@ return static function (ExtensionApi $pi): void {
     // Helper: take observation
     // -------------------------------------------------------------------------
     $observeScreen = static function (?string $serial = null) use ($adb, &$lastScale): array {
-        $adb->wakeUp($serial);
-        $raw = $adb->screencapRaw($serial);
-        if ($raw === null) {
+        $processed = $adb->captureScreen($serial);
+        if ($processed === null) {
             throw new \RuntimeException('Failed to capture screen from Android device via ADB.');
         }
 
-        $processed = ScreenCapture::process($raw);
         $lastScale = $processed['pixel_to_point'];
         $focus = $adb->currentFocus($serial);
 
@@ -168,6 +166,8 @@ return static function (ExtensionApi $pi): void {
                 'adb_available' => $available,
                 'adb_path' => $available ? $adb->binary() : null,
                 'adb_version' => $available ? $adb->version() : null,
+                'ffmpeg_available' => $available ? ($adb->ffmpegBinary() !== null) : false,
+                'hardware_accelerated' => $available ? ($adb->ffmpegBinary() !== null) : false,
                 'devices' => $available ? $adb->devices() : [],
                 'screen_size' => $available ? $adb->screenSize($serial) : null,
                 'foreground' => $available ? $adb->currentFocus($serial) : null,
