@@ -111,6 +111,8 @@ abstract class TuiBase extends Container implements TUI
 
     protected bool $stopped = false;
 
+    private bool $exitRestoreRegistered = false;
+
     /** The width the last frame was drawn for. */
     protected int $previousWidth = 0;
 
@@ -792,6 +794,12 @@ abstract class TuiBase extends Container implements TUI
     public function start(): void
     {
         $this->stopped = false;
+        // Upstream's `process.on("exit", this.exitRestoreHandler)`. A shutdown function cannot be
+        // taken back, so it is registered once and does nothing while stopped.
+        if (!$this->exitRestoreRegistered) {
+            $this->exitRestoreRegistered = true;
+            register_shutdown_function($this->exitRestoreHandler(...));
+        }
         $this->beforeTerminalStart();
         $this->terminal->start(
             function (string $data): void {
@@ -1041,6 +1049,48 @@ abstract class TuiBase extends Container implements TUI
         $this->awaitingCellSize = false;
 
         return $rest;
+    }
+
+    /** Upstream's `getExitRestorePrefix()`: mode resets written before the terminal's own on an exit without stop(). */
+    protected function getExitRestorePrefix(): string
+    {
+        return ($this->terminalColorSchemeNotificationsEnabled ? "\x1b[?2031l" : '') . "\x1b[?25h";
+    }
+
+    /** Upstream's `getExitRestoreSuffix()`: mode resets written after the terminal's own. */
+    protected function getExitRestoreSuffix(): string
+    {
+        return '';
+    }
+
+    /** Whether the exit restore leaves a screen, taking whatever was printed on it along. */
+    protected function exitWipesScreen(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Upstream's `exitRestoreHandler`: the last-resort restore for exits that skip stop() — here a
+     * fatal error (memory exhausted, an uncaught exception) or a bare `exit`. PHP prints a fatal
+     * error before shutdown functions run; on the alternate screen, leaving it wipes the message,
+     * so it is printed again after.
+     */
+    private function exitRestoreHandler(): void
+    {
+        if ($this->stopped) {
+            return;
+        }
+        $this->stopped = true;
+        $reprintError = $this->exitWipesScreen();
+        try {
+            $this->terminal->restoreOnExit($this->getExitRestorePrefix(), $this->getExitRestoreSuffix());
+        } catch (\Throwable) {
+            // Never throw from an exit handler.
+        }
+        $error = $reprintError ? error_get_last() : null;
+        if ($error !== null && ($error['type'] & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR)) !== 0) {
+            fwrite(STDERR, "PHP Fatal error:  {$error['message']} in {$error['file']} on line {$error['line']}\n");
+        }
     }
 
     #[\Override]

@@ -26,6 +26,12 @@ interface Terminal
     /** Hand the terminal back in the state it was found in. */
     public function stop(): void;
 
+    /**
+     * Upstream's `restoreOnExit()`: put the terminal's modes back from a shutdown function when
+     * stop() did not run. Writes `$before`, then this terminal's own mode resets, then `$after`.
+     */
+    public function restoreOnExit(string $before, string $after): void;
+
     public function write(string $data): void;
 
     public function columns(): int;

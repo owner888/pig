@@ -88,6 +88,12 @@ final class FakeTerminal implements Terminal
         $this->onResize = null;
     }
 
+    #[\Override]
+    public function restoreOnExit(string $before, string $after): void
+    {
+        $this->events[] = ['restoreOnExit', $before, $after];
+    }
+
     /** Pretend the user typed. */
     public function type(string $data): void
     {

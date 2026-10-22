@@ -80,6 +80,11 @@ final class VirtualTerminal implements Terminal
         $this->onResize = null;
     }
 
+    #[\Override]
+    public function restoreOnExit(string $before, string $after): void
+    {
+    }
+
     /** Upstream's `sendInput()`. */
     public function sendInput(string $data): void
     {

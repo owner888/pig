@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.6.99] - 2026-10-22
+
+### Fixed
+
+- Fixed fullscreen sessions dying with `Allowed memory size … exhausted` on long transcripts — each frame's layout tree was a reference cycle holding the whole transcript's lines, and hundreds of frames piled up waiting for PHP's cycle collector; a retired frame is now freed at once.
+- Fixed the terminal being left in mouse-reporting, raw and alternate-screen mode (the shell printing `35;31;25M…` on every mouse move) when pig exits without stopping the TUI, e.g. on a fatal error — upstream's exit restore is ported, `stty` is restored too, and a fatal error is printed again after leaving the alternate screen.
+
 ## [0.6.98] - 2026-10-21
 
 ### Added

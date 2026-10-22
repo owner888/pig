@@ -290,6 +290,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
 
         $this->layoutRoot = $component;
+        self::releaseLayout($this->currentLayout);
         $this->currentLayout = null;
         $this->requestRender();
     }
@@ -700,6 +701,30 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     }
 
     #[\Override]
+    protected function getExitRestorePrefix(): string
+    {
+        $prefix = parent::getExitRestorePrefix();
+        if (!$this->altScreenActive) {
+            return $prefix;
+        }
+
+        return self::END_SYNCHRONIZED_OUTPUT . ($this->mouseEnabled ? self::DISABLE_MOUSE : '') . self::ENABLE_AUTOWRAP . $prefix;
+    }
+
+    #[\Override]
+    protected function getExitRestoreSuffix(): string
+    {
+        // Kitty keyboard flags are per screen, so the terminal pops them before the alternate screen is left.
+        return parent::getExitRestoreSuffix() . ($this->altScreenActive ? self::EXIT_ALT_SCREEN . "\x1b[?25h" : '');
+    }
+
+    #[\Override]
+    protected function exitWipesScreen(): bool
+    {
+        return $this->altScreenActive;
+    }
+
+    #[\Override]
     protected function beforeTerminalStop(TuiStopOptions $options): void
     {
         $this->closeSearch();
@@ -841,6 +866,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->previousScreen = [];
         $this->previousWidth = 0;
         $this->previousHeight = 0;
+        self::releaseLayout($this->currentLayout);
         $this->currentLayout = null;
     }
 
@@ -2081,6 +2107,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $root = $this->layoutRoot ?? $this->implicitScrollView;
         $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
         if ($this->refreshSearch($nextLayout)) {
+            self::releaseLayout($nextLayout);
             $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
         }
         $screen = array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines);
@@ -2200,6 +2227,25 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->previousScreen = $frame;
         $this->previousWidth = $width;
         $this->previousHeight = $height;
+        self::releaseLayout($this->currentLayout);
         $this->currentLayout = $nextLayout;
+    }
+
+    /**
+     * Break a retired frame's `parent` ↔ `children` cycles so it is freed when the last reference
+     * goes, not at the next cycle collection. A frame's boxes hold the whole transcript's lines, and
+     * collection is triggered by the count of possible roots — a frame adds a few dozen — so on a
+     * long session hundreds of frames piled up and exhausted `memory_limit`. Not in upstream: V8's
+     * collector has no such trigger. Nothing reads `parent` once the frame is built.
+     */
+    private static function releaseLayout(?LayoutFrame $frame): void
+    {
+        $boxes = $frame === null ? [] : [$frame->root];
+        while (($box = array_pop($boxes)) !== null) {
+            $box->parent = null;
+            foreach ($box->children as $child) {
+                $boxes[] = $child;
+            }
+        }
     }
 }

@@ -2123,3 +2123,24 @@ differed from upstream, and a retry put them together:
   mid-run.
 - Test: `InteractiveModeTest::testWorkingIsBackForTheTurnAfterARetriedOneCalledATool` (red on the
   old code).
+
+## A long fullscreen session died with `Allowed memory size of 536870912 bytes exhausted`
+
+**Symptom**: mid-run, `PHP Fatal error: Allowed memory size … exhausted … in packages/tui/src/Container.php`;
+afterwards the shell printed `35;31;25M…` on every mouse move.
+
+**Root cause**: every alt-screen frame builds a `LayoutBox` tree whose `parent` ↔ `children` links
+are cycles, and its boxes hold the whole transcript's lines. Cycles wait for the collector, which
+is triggered by the count of possible roots — a frame adds a few dozen — so hundreds of frames piled
+up (measured: memory grew with every frame and dropped back on `gc_collect_cycles()`). Then the
+fatal error skipped `stop()`, and pig had no port of upstream's `exitRestoreHandler`, so mouse
+reporting, raw mode and the alternate screen stayed on.
+
+**Trap rules**:
+- An object graph rebuilt per frame must not be left as a cycle; `TuiAltScreen::releaseLayout()`
+  nulls `parent` when a frame is retired (nothing reads it, upstream included).
+- The terminal is restored from a shutdown function (`TuiBase::exitRestoreHandler()` →
+  `Terminal::restoreOnExit()`), which also restores `stty` and prints a fatal error again after
+  leaving the alt screen.
+- Tests: `TuiAltScreenTest::testARetiredFrameIsFreedWithoutWaitingForACycleCollection`,
+  `ExitRestoreTest` (both red on the old code).

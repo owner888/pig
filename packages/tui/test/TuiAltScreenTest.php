@@ -133,6 +133,26 @@ final class TuiAltScreenTest extends TestCase
         return "\x1b]52;c;" . base64_encode($text) . "\x07";
     }
 
+    public function testARetiredFrameIsFreedWithoutWaitingForACycleCollection(): void
+    {
+        // Each frame's boxes point at their parent and hold the transcript's lines; left as cycles,
+        // hundreds of frames waited for the collector and a long session hit `memory_limit`.
+        $terminal = new FakeTerminal(20, 4);
+        $tui = new TuiAltScreen($terminal);
+        $tui->setLayoutRoot(new VStack([
+            new StackEntry(new ScrollView(new Text(self::lines(50), 0, 0), follow: 'end', primary: true), basis: 0, grow: 1, minSize: 1),
+            new StackEntry(new Text('editor', 0, 0), basis: 'auto', minSize: 1),
+        ]));
+        $this->start($tui);
+        gc_collect_cycles();
+
+        for ($frame = 0; $frame < 20; $frame++) {
+            $tui->renderNow();
+        }
+
+        $this->assertSame(0, gc_collect_cycles());
+    }
+
     public function testRendersATerminalHeightViewportAndPreservesManualScrollPosition(): void
     {
         $terminal = new FakeTerminal(20, 4);

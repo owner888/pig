@@ -365,6 +365,26 @@ final class ProcessTerminal implements Terminal
     }
 
     /**
+     * Upstream's `restoreOnExit()`. Unlike Node, PHP leaves the tty raw when it dies, so the
+     * `stty` state saved by start() goes back too.
+     */
+    #[\Override]
+    public function restoreOnExit(string $before, string $after): void
+    {
+        $sequence = $before;
+        if ($this->progressTimer !== null) {
+            $sequence .= self::PROGRESS_CLEAR;
+        }
+        $sequence .= "\x1b[?2004l\x1b[<u" . $after;
+        $this->write($sequence);
+
+        if ($this->savedState !== null) {
+            $this->stty($this->savedState);
+            $this->savedState = null;
+        }
+    }
+
+    /**
      * Write all of it, however many calls that takes.
      *
      * `fwrite()` to a terminal returns short. It has to: the tty has a buffer of a few
