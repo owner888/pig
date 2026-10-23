@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig config` crashing with "Theme not initialized" before drawing anything: it now sets up the theme from settings first, as upstream's `selectConfig()` does.
+
 ## [0.8.0] - 2026-10-23
 
 Upstream pi 1.2: `before_agent_start` for every run, and a session that is busy while a run starts.

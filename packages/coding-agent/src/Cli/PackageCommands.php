@@ -11,6 +11,7 @@ use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Packages\ResolvedPaths;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Tui\ProcessTerminal;
@@ -219,6 +220,14 @@ final class PackageCommands
             return 1;
         }
 
+        // Upstream's `selectConfig()`: "Initialize theme before showing TUI". `pig config` is
+        // dispatched before `bin/pig` sets a theme up, and `ConfigSelector::render()` draws in one.
+        $themeError = Themes::initTheme(Themes::resolveThemeSetting(getenv('PIG_THEME') ?: $settings->theme(), Themes::getTerminalTheme()), true);
+
+        if ($themeError !== null) {
+            fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.") . "\n");
+        }
+
         $terminal = new ProcessTerminal();
         $tui = new TuiMainScreen($terminal);
         $selector = new ConfigSelector(
@@ -243,6 +252,7 @@ final class PackageCommands
         });
 
         $tui->stop();
+        Themes::stopThemeWatcher();
 
         return 0;
     }
