@@ -105,6 +105,43 @@ PHP);
         $this->assertSame('sample_tool', $bundled->api->tools()[0]->name);
     }
 
+    /**
+     * A project that is itself a pig package — the repository of one, opened to work on it — loads
+     * what its manifest names, as installing it would, and not every file in `extensions/`: those
+     * beside the entry are its helpers, and `require`ing one the entry had already
+     * `require_once`d redeclared its class, a fatal error that took pig down at startup.
+     */
+    public function testAProjectThatIsAPackageLoadsTheExtensionsItsManifestNames(): void
+    {
+        $ns = 'PigLoaderHelper' . bin2hex(random_bytes(4));
+        file_put_contents($this->cwd . '/composer.json', json_encode(['name' => 'me/thing', 'extra' => ['pig' => ['extensions' => ['./extensions/entry.php']]]]));
+        file_put_contents($this->cwd . '/extensions/Alpha.php', "<?php\nnamespace {$ns};\nrequire_once __DIR__ . '/Beta.php';\nfinal class Alpha {}\n");
+        file_put_contents($this->cwd . '/extensions/Beta.php', "<?php\nnamespace {$ns};\nfinal class Beta {}\n");
+        file_put_contents($this->cwd . '/extensions/entry.php', "<?php\nrequire_once __DIR__ . '/Alpha.php';\nreturn static function (\\Pig\\CodingAgent\\Extensions\\ExtensionApi \$pi): void {\n    \$pi->registerCommand('entry', static fn () => null, 'the entry');\n};\n");
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: true);
+
+        $this->assertSame([], $errors);
+        $this->assertSame(['entry'], array_map(static fn ($extension): string => $extension->name, $loaded));
+        $this->assertSame([$this->cwd . '/extensions/entry.php'], ExtensionLoader::inProjectFolder($this->cwd));
+    }
+
+    public function testAFileAnotherExtensionAlreadyIncludedIsReportedRatherThanRedeclared(): void
+    {
+        // No manifest, so every file is tried — `Alpha` first, which pulls `Beta` in. `Beta`'s own
+        // turn must not `require` it again: that fatal error is beyond any `catch`.
+        $ns = 'PigLoaderHelper' . bin2hex(random_bytes(4));
+        file_put_contents($this->cwd . '/extensions/Alpha.php', "<?php\nnamespace {$ns};\nrequire_once __DIR__ . '/Beta.php';\nreturn static function (\$pi): void {};\n");
+        file_put_contents($this->cwd . '/extensions/Beta.php', "<?php\nnamespace {$ns};\nfinal class Beta {}\n");
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: true);
+
+        $this->assertSame(['Alpha'], array_map(static fn ($extension): string => $extension->name, $loaded));
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('Beta.php', $errors[0]->path);
+        $this->assertStringContainsString('Extension does not export a valid factory function', $errors[0]->message);
+    }
+
     public function testFaultIsolationCatchesThrowsAndDoesNotCrash(): void
     {
         $broken = $this->homeDir . '/extensions/broken.php';

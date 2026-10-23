@@ -457,16 +457,28 @@ final class PackageManager
      */
     private function manifestFiles(string $root, string $type): array
     {
+        return self::declaredFiles($root, $type) ?? ResourceDiscovery::collect("{$root}/{$type}", $type);
+    }
+
+    /**
+     * The files of one type a package's manifest declares, narrowed by its own override patterns —
+     * or null when the manifest declares none (or there is no manifest), and the conventional
+     * directory is what counts.
+     *
+     * @return list<string>|null
+     */
+    public static function declaredFiles(string $root, string $type): ?array
+    {
         $entries = PackageManifest::read($root)?->of($type);
 
-        if ($entries !== null && $entries !== []) {
-            $all = $this->filesFromManifestEntries($entries, $root, $type);
-            $overrides = array_values(array_filter($entries, PackageFilter::isOverride(...)));
-
-            return $overrides === [] ? $all : PackageFilter::apply($all, $overrides, $root);
+        if ($entries === null || $entries === []) {
+            return null;
         }
 
-        return ResourceDiscovery::collect("{$root}/{$type}", $type);
+        $all = self::filesFromManifestEntries($entries, $root, $type);
+        $overrides = array_values(array_filter($entries, PackageFilter::isOverride(...)));
+
+        return $overrides === [] ? $all : PackageFilter::apply($all, $overrides, $root);
     }
 
     /** @param list<string>|null $entries */
@@ -488,7 +500,7 @@ final class PackageManager
      * @param list<string> $entries
      * @return list<string>
      */
-    private function filesFromManifestEntries(array $entries, string $root, string $type): array
+    private static function filesFromManifestEntries(array $entries, string $root, string $type): array
     {
         $paths = [];
 

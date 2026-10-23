@@ -80,8 +80,9 @@ final class ProjectTrust
             }
         }
 
-        foreach ([...(glob($cwd . '/extensions/*.php') ?: []), ...(glob($cwd . '/extensions/*/index.php') ?: [])] as $path) {
-            $found[] = substr($path, strlen($cwd) + 1);
+        // What the loader would load from there, a package's manifest included.
+        foreach (Extensions\ExtensionLoader::inProjectFolder($cwd) as $path) {
+            $found[] = str_starts_with($path, $cwd . '/') ? substr($path, strlen($cwd) + 1) : $path;
         }
 
         // Upstream's `hasTrustRequiringProjectResources()`: a `.agents/skills` in the working

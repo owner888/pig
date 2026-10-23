@@ -10,6 +10,7 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Hooks\DeclaredSymbols;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookLoader;
+use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
@@ -135,7 +136,7 @@ final class ExtensionLoader
         if ($projectTrusted) {
             $project = [
                 ...self::discover($cwd . '/.pig/extensions'),
-                ...self::discover($cwd . '/extensions'),
+                ...self::inProjectFolder($cwd),
             ];
 
             foreach ($projectConfigured === null ? [] : $projectConfigured() as $path) {
@@ -254,6 +255,20 @@ final class ExtensionLoader
     }
 
     /**
+     * The extensions `<cwd>/extensions` contributes: every file `discover()` finds there — unless the
+     * working directory is a pig package whose manifest names its extensions, and then those, as the
+     * package loads when it is installed. A package keeps its helper classes beside its entry file
+     * (`extensions/FastGrep.php` beside `extensions/fff.php`), and loading each of those as an
+     * extension of its own `require`d files the entry had already `require_once`d.
+     *
+     * @return list<string>
+     */
+    public static function inProjectFolder(string $cwd): array
+    {
+        return PackageManager::declaredFiles($cwd, 'extensions') ?? self::discover($cwd . '/extensions');
+    }
+
+    /**
      * Derive a human-friendly name for an extension.
      */
     public static function nameOf(string $path): string
@@ -295,6 +310,14 @@ final class ExtensionLoader
                 $note = new ExtensionError($path, 'reload', 'declares ' . HookLoader::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
             }
         } else {
+            // Already in this process through another file's `require_once` — a helper beside an
+            // entry file, say. A second `require` would redeclare its classes, which is a fatal
+            // error no `catch` reaches; and it is not a factory either way. Upstream's sentence.
+            // (A file of closures alone can be `require`d again, which is what `/reload` does.)
+            if ($declared !== [] && in_array($resolved, array_map(static fn (string $file): string => realpath($file) ?: $file, get_included_files()), true)) {
+                return [null, new ExtensionError($path, 'load', 'Extension does not export a valid factory function: it was already included by another file, so it is a library and not an extension')];
+            }
+
             $conflict = DeclaredSymbols::conflict($resolved, $declared);
 
             if ($conflict !== null) {

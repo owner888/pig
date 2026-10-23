@@ -53,6 +53,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- Fixed pig crashing at startup with "Cannot redeclare class" in a project whose `extensions/` folder holds an extension's helper files: a project that is a pig package now loads the extensions its manifest names, as installing it would, and a file another extension already included is reported as not an extension instead of being loaded a second time. The trust question lists the same files.
 - Fixed pasting in the shell hanging on Linux after copying in pig and suspending it with Ctrl+Z: the `wl-copy`/`xclip`/`xsel` process that keeps serving the clipboard now runs in its own session (via `setsid`) and is not stopped with pig (upstream #11179).
 - Fixed tool calls in a response cut off at the output limit being run with arguments the salvage parser may have completed wrongly: they are now reported as not executed, and the model is asked to send them again.
 - Fixed a response cut off below the model's output limit ending the turn: the session now compacts and retries once, as it does for a context overflow ("Truncated response recovery failed …" if the retry is cut off too).
