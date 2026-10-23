@@ -45,8 +45,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Changed
+
+- `--model` no longer lets catalog order choose between providers that offer the same model: the provider with credentials is used, then pig's rule that the provider making a model beats one reselling it, and otherwise pig refuses with the candidates and asks for `--provider` or `provider/model`. `--api-key` does not choose a provider. A `provider/id` the provider does not list is used as a custom model id on that provider, with a warning, and a `:suffix` that is not a thinking level stays part of the id (upstream #10160).
+- `--models` and `enabledModels` add a model for each provider that offers it, with a warning naming them; an id containing `[` is matched as an id before being read as a glob.
+- A second extension dialog (`select`, `confirm`, `input`, `editor`, `custom`) opens on top of the one showing instead of being refused; answering it brings the earlier one back (upstream #11166).
+
 ### Fixed
 
+- Fixed pasting in the shell hanging on Linux after copying in pig and suspending it with Ctrl+Z: the `wl-copy`/`xclip`/`xsel` process that keeps serving the clipboard now runs in its own session (via `setsid`) and is not stopped with pig (upstream #11179).
 - Fixed tool calls in a response cut off at the output limit being run with arguments the salvage parser may have completed wrongly: they are now reported as not executed, and the model is asked to send them again.
 - Fixed a response cut off below the model's output limit ending the turn: the session now compacts and retries once, as it does for a context overflow ("Truncated response recovery failed …" if the retry is cut off too).
 - Fixed sessions breaking after that recovery when the truncated tool call had a result: the result was kept without its call and providers rejected every later request (upstream #11227).

@@ -326,22 +326,23 @@ final class CodingAgent
             throw new CodingAgentError("--provider requires --model (for example: --provider {$provider} --model <pattern>)");
         }
 
-        if ($provider !== null) {
-            // Upstream's `resolveCliModel()` with a `cliProvider`: the provider is matched without
-            // regard to case, a `<provider>/` the model repeats is tolerated, and the pattern is
-            // looked for among that provider's models alone.
-            $known = [];
+        if ($model !== null) {
+            // Upstream's `resolveCliModel()`, with `--provider` when one was given. Every model is
+            // looked at, credentials only choose between providers offering the match (#10160),
+            // and a `provider/id` the provider does not list is a custom model id on it.
+            [$choice, $error] = ModelResolver::cli(
+                $provider,
+                $model,
+                $thinking === null ? null : ThinkingLevel::tryFrom($thinking),
+                $apiKey !== null && $apiKey !== '',
+                Models::all(),
+                $auth->hasKeyFor(...),
+            );
 
-            foreach (Models::all() as $candidate) {
-                $known[strtolower($candidate->provider)] = $candidate->provider;
+            if ($choice === null) {
+                throw new CodingAgentError($error ?? "Model \"{$model}\" not found. Use --list-models to see available models.");
             }
-
-            $canonical = $known[strtolower($provider)]
-                ?? throw new CodingAgentError("Unknown provider \"{$provider}\". Use --list-models to see available providers/models.");
-            $pattern = str_starts_with(strtolower($model), strtolower($canonical) . '/') ? substr($model, strlen($canonical) + 1) : $model;
-            $choice = ModelResolver::parse($pattern, array_values(array_filter(Models::all(), static fn ($candidate): bool => $candidate->provider === $canonical)))
-                ?? throw new CodingAgentError("No model matches '{$model}' for provider {$canonical}. Try --list-models for the list.");
-        } elseif ($model === null && $scope !== []) {
+        } elseif ($scope !== []) {
             // The first of the scope is what the session opens on, which is upstream's rule and
             // sits exactly here in the order: below `--model`, which is somebody naming one
             // model, and above the settings. A resumed conversation still wins over both —
@@ -365,12 +366,12 @@ final class CodingAgent
             // default. No environment variable names a model: upstream's `PI_MODEL` / `PI_PROVIDER`
             // are what its bash tool *tells* a command (`SessionEnvironment`), never read back — a
             // pig started from inside another's command would otherwise open on the outer model.
-            $wanted = $model ?? $settings->defaultModel() ?? self::DEFAULT_MODEL;
+            $wanted = $settings->defaultModel() ?? self::DEFAULT_MODEL;
 
             // Provider precedence:
             // 1) Explicit in the model name (e.g. `antigravity/gemini-3.8-flash`)
             // 2) Stored defaultProvider in settings (when using stored defaultModel)
-            $provider = $model === null ? $settings->defaultProvider() : null;
+            $provider = $settings->defaultProvider();
 
             if ($provider !== null && !str_contains($wanted, '/')) {
                 $choice = ModelResolver::parse($provider . '/' . $wanted) ?? ModelResolver::parse($wanted);

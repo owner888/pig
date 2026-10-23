@@ -23,7 +23,6 @@ use Pig\Tui\Container;
 use Pig\Tui\TUI;
 use LogicException;
 use Pig\Tui\TuiError;
-use Throwable;
 
 /**
  * `HookUi`, drawn in the terminal.
@@ -58,23 +57,23 @@ final class TerminalUi implements HookUi
     private array $terminalInputSubscriptions = [];
 
     /**
-     * Set while a dialog of this object's own is in flight.
+     * The dialogs this object has open, the visible one last — upstream's `extensionDialogs`
+     * (#11166): "Dialogs form a stack: a new dialog hides the visible one, and closing the visible
+     * dialog shows the previous one again. Every dialog stays answerable, so no dialog promise is
+     * left pending, and dialogs opened from inside another dialog (for example a confirm from a
+     * custom component) work." pig used to refuse a second one instead, which lost the question.
      *
-     * Not the same question as "is the overlay occupied", which is why both are asked. This
-     * one covers the moment a `custom()` factory is still building its component: nothing is
-     * drawn yet, so the overlay looks free, and a factory that asks something re-entrantly
-     * would park a fiber inside itself.
+     * @var list<array{component: object, nodes: list<object>, blocked: ?BlockedStatus}>
      */
-    private bool $busy = false;
+    private array $dialogs = [];
 
     /**
      * Whether there is room to ask something — and a word about it when there is not.
      *
-     * Two things can be in the way, and they are found two different ways. A dialog of this
-     * object's own shows up in `$busy`. **Anything else holding the focus shows up in the
-     * overlay**, and that is the half that was missing: a picker or `/settings` is in the
-     * same container a dialog goes into, so opening one on top used to clear it — the person
-     * lost the screen they were on, silently, because a tool call happened to reach this.
+     * A dialog of this object's own is no obstacle: the new one goes on top of it (`$dialogs`).
+     * **Anything else in the overlay is**: a picker or `/settings` is in the same container a
+     * dialog goes into, so opening one on top used to clear it — the person lost the screen they
+     * were on, silently, because a tool call happened to reach this.
      *
      * Refusing is what the callers already expect. `confirm()` answers false, which is a
      * deny; `select()`, `input()`, `editor()` and `custom()` answer null, which is what
@@ -84,13 +83,7 @@ final class TerminalUi implements HookUi
      */
     private function canAsk(): bool
     {
-        if ($this->busy) {
-            $this->notify('A question is already waiting for an answer, so that one was not asked.', 'warning');
-
-            return false;
-        }
-
-        if ($this->overlay->children() !== []) {
+        if ($this->dialogs === [] && $this->overlay->children() !== []) {
             $this->notify(
                 'Something is open on screen, so that question was not asked. Close it and it can be asked again.',
                 'warning',
@@ -194,32 +187,26 @@ final class TerminalUi implements HookUi
             return null;
         }
 
-        $this->busy = true;
         $answer = new Deferred();
         $field = new Input();
 
-        $cancel = function () use ($answer): void {
+        $cancel = function () use ($answer, $field): void {
             if (!$answer->isComplete()) {
-                $this->close();
+                $this->close($field);
                 $answer->complete(null);
             }
         };
         [$heading, $stopCountdown] = $this->countdown($title . ($placeholder === '' ? '' : " ({$placeholder})"), $timeout, $cancel);
 
-        $field->setSubmitHandler(function (string $value) use ($answer): void {
-            $this->close();
+        $field->setSubmitHandler(function (string $value) use ($answer, $field): void {
+            $this->close($field);
             $answer->complete($value);
         });
 
         $field->setCancelHandler($cancel);
 
         // Something else answered first: the dialog goes the way escape would take it.
-        $listener = $signal?->onAbort(function () use ($answer): void {
-            if (!$answer->isComplete()) {
-                $this->close();
-                $answer->complete(null);
-            }
-        });
+        $listener = $signal?->onAbort($cancel);
 
         $this->open(
             $heading,
@@ -256,19 +243,18 @@ final class TerminalUi implements HookUi
             return null;
         }
 
-        $this->busy = true;
         $answer = new Deferred();
         $field = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
         $field->setText($prefill);
 
-        $field->setSubmitHandler(function (string $value) use ($answer): void {
-            $this->close();
+        $field->setSubmitHandler(function (string $value) use ($answer, $field): void {
+            $this->close($field);
             $answer->complete($value);
         });
 
         // Actions, not keys: the hook's editor answers to the same bindings as the prompt.
-        $field->on('app.interrupt', function () use ($answer): void {
-            $this->close();
+        $field->on('app.interrupt', function () use ($answer, $field): void {
+            $this->close($field);
             $answer->complete(null);
         });
 
@@ -328,34 +314,34 @@ final class TerminalUi implements HookUi
             return null;
         }
 
-        $this->busy = true;
         $answer = new Deferred();
+        $component = null;
 
-        $done = function (mixed $result = null) use ($answer): void {
+        $done = function (mixed $result = null) use ($answer, &$component): void {
             if ($answer->isComplete()) {
                 return;
             }
 
-            $this->close();
+            // Called before the factory returned, nothing is open yet to close.
+            if ($component !== null) {
+                $this->close($component);
+            }
+
             $answer->complete($result);
         };
 
-        try {
-            $component = $factory($this->tui, $this->theme(), $done);
-        } catch (Throwable $error) {
-            // The dialog never opened, so the turn is not parked — but `busy` was set and
-            // has to come back off, or nothing could ever ask anything again.
-            $this->busy = false;
+        // A throw here leaves nothing behind: nothing is pushed until the component exists.
+        $built = $factory($this->tui, $this->theme(), $done);
 
-            throw $error;
+        if (!$built instanceof Component) {
+            throw new TuiError('A custom dialog must return a component, got ' . get_debug_type($built));
         }
 
-        if (!$component instanceof Component) {
-            $this->busy = false;
-
-            throw new TuiError('A custom dialog must return a component, got ' . get_debug_type($component));
+        if ($answer->isComplete()) {
+            return $answer->future->await();
         }
 
+        $component = $built;
         $this->open('', $component);
 
         return $answer->future->await();
@@ -645,19 +631,18 @@ final class TerminalUi implements HookUi
      */
     private function ask(string $title, SelectList $list, ?BlockedStatus $blocked = null, ?int $timeout = null): ?string
     {
-        $this->busy = true;
         $answer = new Deferred();
 
-        $cancel = function () use ($answer): void {
+        $cancel = function () use ($answer, $list): void {
             if (!$answer->isComplete()) {
-                $this->close();
+                $this->close($list);
                 $answer->complete(null);
             }
         };
         [$heading, $stopCountdown] = $this->countdown($title, $timeout, $cancel);
 
-        $list->setSelectHandler(function (SelectItem $item) use ($answer): void {
-            $this->close();
+        $list->setSelectHandler(function (SelectItem $item) use ($answer, $list): void {
+            $this->close($list);
             $answer->complete($item->value);
         });
 
@@ -740,45 +725,66 @@ final class TerminalUi implements HookUi
     /** @param string|Closure(): string $title a closure for one that changes — a countdown */
     private function open(string|Closure $title, object $component, string $hint = '', ?BlockedStatus $blocked = null): void
     {
-        $this->overlay->clear();
-        $this->overlay->addChild(new Spacer(1));
+        $nodes = [new Spacer(1)];
 
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $this->overlay->addChild(new ThemedText(
+            $nodes[] = new ThemedText(
                 static fn (): string => Themes::theme()->fg('muted', $title instanceof Closure ? $title() : $title),
                 1,
                 0,
-            ));
+            );
         }
 
-        $this->overlay->addChild($component);
+        $nodes[] = $component;
 
         if ($hint !== '') {
-            $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('dim', $hint), 1, 0));
+            $nodes[] = new ThemedText(static fn (): string => Themes::theme()->fg('dim', $hint), 1, 0);
         }
 
-        $this->tui->setFocus($component);
-
-        if ($blocked !== null && $this->onBlocked !== null) {
-            ($this->onBlocked)($blocked);
-        }
-
-        $this->tui->requestRender();
+        // Upstream's `pushExtensionDialog()`: on top of whatever dialog is showing.
+        $this->dialogs[] = ['component' => $component, 'nodes' => $nodes, 'blocked' => $blocked];
+        $this->showTopDialog();
     }
 
-    /** Take the dialog down and hand the keys back to the prompt. */
-    private function close(): void
+    /**
+     * Upstream's `removeExtensionDialog()`: take $component's dialog down — if it was the visible one,
+     * the one under it comes back, or the prompt gets the keys.
+     */
+    private function close(object $component): void
     {
-        $this->busy = false;
+        foreach ($this->dialogs as $index => $dialog) {
+            if ($dialog['component'] !== $component) {
+                continue;
+            }
 
-        if ($this->onBlocked !== null) {
-            ($this->onBlocked)(null);
+            array_splice($this->dialogs, $index, 1);
+
+            if ($index === count($this->dialogs)) {
+                $this->showTopDialog();
+            }
+
+            return;
+        }
+    }
+
+    /** Upstream's `showTopExtensionDialog()`. */
+    private function showTopDialog(): void
+    {
+        $top = $this->dialogs === [] ? null : $this->dialogs[count($this->dialogs) - 1];
+        $this->overlay->clear();
+
+        foreach ($top['nodes'] ?? [] as $node) {
+            $this->overlay->addChild($node);
         }
 
-        $this->overlay->clear();
-        $this->tui->setFocus($this->prompt());
+        $this->tui->setFocus($top['component'] ?? $this->prompt());
+
+        if ($this->onBlocked !== null) {
+            ($this->onBlocked)($top['blocked'] ?? null);
+        }
+
         $this->tui->requestRender();
     }
 

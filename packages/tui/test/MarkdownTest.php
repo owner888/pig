@@ -168,6 +168,23 @@ final class MarkdownTest extends TestCase
 
     // ---- the inline lexer ----------------------------------------------------------
 
+    public function testEmphasisNextToCjkPunctuation(): void
+    {
+        // Upstream's #10154 cases, which marked needed `marked-cjk-friendly` for: CommonMark's
+        // flanking rules refuse a closer between punctuation and a letter. This scanner never had
+        // those rules — a closer only may not follow a space — so they already render; kept here
+        // so a stricter scanner later does not lose them.
+        foreach ([
+            ['**这是测试。**后面', [Strong::class, Text::class]],
+            ['**一句话说清：**一台机器', [Strong::class, Text::class]],
+            ['**要点到此为止。**20 小时', [Strong::class, Text::class]],
+            ['字**「引用」**字', [Text::class, Strong::class, Text::class]],
+            ['*斜体。*后面', [Emphasis::class, Text::class]],
+        ] as [$markdown, $expected]) {
+            $this->assertSame($expected, array_map(static fn (object $token): string => $token::class, Inline::tokenize($markdown)), $markdown);
+        }
+    }
+
     public function testEmphasisAndItsSpellings(): void
     {
         $this->assertInstanceOf(Strong::class, Inline::tokenize('**bold**')[0]);

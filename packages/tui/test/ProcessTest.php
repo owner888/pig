@@ -46,6 +46,28 @@ final class ProcessTest extends TestCase
         $this->assertSame("err\n", $stderr);
     }
 
+    public function testADetachedFeedRunsTheCommandOutsideThisProcessGroup(): void
+    {
+        // Upstream #11179: a clipboard writer that stays behind must not be in pig's process group,
+        // or Ctrl+Z stops it with pig and every paste in the shell hangs.
+        if (PHP_OS_FAMILY === 'Windows' || !function_exists('posix_getpgrp') || trim((string) shell_exec('command -v setsid')) === '') {
+            $this->markTestSkipped('needs setsid and ext-posix');
+        }
+
+        $file = tempnam(sys_get_temp_dir(), 'pig-pgid-');
+        $script = 'cat >/dev/null; ps -o pgid= -p $$ > ' . escapeshellarg($file);
+
+        $this->assertTrue(Process::feed(['sh', '-c', $script], 'copied text', detached: true));
+        $detached = (int) trim((string) file_get_contents($file));
+
+        $this->assertTrue(Process::feed(['sh', '-c', $script], 'copied text'));
+        $attached = (int) trim((string) file_get_contents($file));
+        unlink($file);
+
+        $this->assertSame(posix_getpgrp(), $attached, 'without it the child shares the group');
+        $this->assertNotSame(posix_getpgrp(), $detached);
+    }
+
     public function testAFailingCommandKeepsItsExitCode(): void
     {
         [$exit, , $stderr] = $this->runAsync(['/bin/sh', '-c', 'echo why >&2; exit 3']);

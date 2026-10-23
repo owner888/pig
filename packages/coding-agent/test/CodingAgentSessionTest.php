@@ -318,19 +318,29 @@ final class CodingAgentSessionTest extends TestCase
             fn () => $this->start(['model' => 'gpt-9-ultra']),
         );
 
-        $this->assertStringContainsString("No model matches 'gpt-9-ultra'", $error->getMessage());
+        $this->assertStringContainsString('Model "gpt-9-ultra" not found', $error->getMessage());
         $this->assertStringContainsString('--list-models', $error->getMessage(), 'and where to look');
+    }
+
+    public function testASuffixThatIsNoThinkingLevelStaysPartOfTheId(): void
+    {
+        // Upstream's `thinkingSuffix: "strict"` for `--model`: "Keep an invalid suffix as part of the
+        // id and fail, rather than resolve a different model" — `zzp-alpha:veryhard` is an id nothing
+        // has, not `zzp-alpha` with a level thrown away.
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start(['model' => 'zzp-alpha:veryhard']));
+
+        $this->assertSame('Model "zzp-alpha:veryhard" not found. Use --list-models to see available models.', $error->getMessage());
     }
 
     public function testTheResolversOwnWarningIsAWarningAndNotARefusal(): void
     {
-        // `sonnet:veryhard` names a model and then a thinking level that is not one. The model was
-        // understood, so the run goes on — with a sentence saying what was dropped.
-        $started = $this->start(['model' => 'zzp-alpha:veryhard']);
+        // A `provider/id` the provider does not list is a custom model id on it — understood, so the
+        // run goes on, with a sentence saying so.
+        $started = $this->start(['model' => 'anthropic/zzp-brand-new']);
 
-        $this->assertSame('zzp-alpha', $started->model->id);
-        $this->assertSame(ThinkingLevel::clampedFor($started->model, CodingAgent::DEFAULT_THINKING_LEVEL), $started->thinking);
-        $this->assertStringContainsString('veryhard', $started->warnings[0]);
+        $this->assertSame('zzp-brand-new', $started->model->id);
+        $this->assertSame('anthropic', $started->model->provider);
+        $this->assertSame(['Model "zzp-brand-new" not found for provider "anthropic". Using custom model id.'], $started->warnings);
     }
 
     // ---- how hard to think ---------------------------------------------------------------------
@@ -428,7 +438,7 @@ final class CodingAgentSessionTest extends TestCase
         try {
             $started = $this->start(['models' => ['no-such-model-anywhere']]);
 
-            $this->assertSame(['No model matches "no-such-model-anywhere".'], $started->warnings);
+            $this->assertSame(['No models match pattern "no-such-model-anywhere"'], $started->warnings);
 
             // And with nothing in the scope the ordinary order decides, rather than a session that
             // refuses to start over one typo in a flag that is a preference.

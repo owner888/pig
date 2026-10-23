@@ -584,13 +584,24 @@ final class Process
      * The write is looped and the pipe is closed before waiting: a large clipboard fills
      * the pipe buffer, and a program that has not been told the input ended will not exit.
      *
+     * `$detached` is upstream's `detached: process.platform !== "win32"` for the clipboard writers:
+     * "Detach on POSIX so the daemon leaves pi's process group and Ctrl+Z suspend (SIGTSTP to the
+     * group) does not stop the clipboard owner (#11179)" — `wl-copy`, `xclip` and `xsel` stay
+     * behind to serve the clipboard, and a stopped one hangs every paste in the shell. PHP's
+     * `proc_open()` cannot start a new session itself, so it is `setsid` in front of the command
+     * where there is one (util-linux, which is where these writers live); without it nothing changes.
+     *
      * @param list<string> $command
      * @return bool whether it ran and exited cleanly
      */
-    public static function feed(array $command, string $input, float $timeout = self::DEFAULT_TIMEOUT): bool
+    public static function feed(array $command, string $input, float $timeout = self::DEFAULT_TIMEOUT, bool $detached = false): bool
     {
         if ($command === []) {
             throw new TuiError('Process::feed() needs a command');
+        }
+
+        if ($detached && PHP_OS_FAMILY !== 'Windows' && ($setsid = self::onPath('setsid')) !== null) {
+            $command = [$setsid, ...$command];
         }
 
         // Same reason as run(): a missing program makes proc_open warn, and the value is
@@ -692,6 +703,20 @@ final class Process
      * @param Closure(): void|null $yield   called repeatedly while the program runs
      * @return int the exit code, or STOPPED when it could not be started
      */
+    /** The first executable called $name on `PATH`, or null. */
+    private static function onPath(string $name): ?string
+    {
+        foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {
+            $candidate = rtrim($dir, '/') . '/' . $name;
+
+            if ($dir !== '' && is_file($candidate) && is_executable($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
     public static function interactive(array $command, ?Closure $yield = null): int
     {
         if ($command === []) {

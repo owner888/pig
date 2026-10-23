@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Closure;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
@@ -122,61 +123,86 @@ final class ModelResolver
     }
 
     /**
-     * What `--models sonnet:high,'anthropic/*'` narrows the session to.
+     * What `--models sonnet:high,'anthropic/*'` and `enabledModels` narrow the session to —
+     * upstream's `resolveModelScopeFromModels()`.
      *
-     * Upstream's `resolveModelScope()`. A pattern is a glob when it holds `*`, `?` or `[`, and
-     * anything else goes through `parse()` — so the two spellings of "which model" are one
-     * implementation and `--models sonnet` means what `--model sonnet` means.
-     *
-     * Three things worth knowing:
-     *
-     * - **A glob is matched against `provider/id` and against the bare id**, so `'*sonnet*'`
-     *   works without anybody having to write `'anthropic/*sonnet*'`. Case-insensitively, as
-     *   `minimatch`'s `nocase` there.
-     * - **A thinking level is only stripped off a glob when it is one.** `strrpos` finds the
-     *   last colon, and an id can contain one — OpenRouter's `:exacto` — so a suffix that is
-     *   not a level stays part of the pattern rather than being thrown away. `parse()` handles
-     *   the non-glob case and already has this rule.
-     * - **A pattern that matches nothing is a warning, not a refusal.** One typo in a list of
-     *   four should not stop a session; the other three are still a scope, and the warning
-     *   names the pattern.
+     * "Every model in `models` is usable, so credentials cannot choose between providers offering the
+     * same id. All of them are added, with a warning so the user can pick one with `provider/id`."
+     * A pattern is a glob when it holds `*`, `?` or `[` — unless it is an id as it stands ("Ids such as
+     * `bracketed-model[1m]` are not globs"); a glob is matched against `provider/id` and the bare id,
+     * case-insensitively. Anything else goes through `reference()`. A pattern that matches nothing
+     * is a warning, not a refusal.
      *
      * @param list<string> $patterns already split on commas by whoever read the flag
      * @param list<Model>  $available the models a key actually reaches
-     * @return array{0: list<ModelChoice>, 1: list<string>} the scope in the order given, and
-     *         one warning per pattern that found nothing or was understood differently
+     * @return array{0: list<ModelChoice>, 1: list<string>} the scope in the order given, and the warnings
      */
     public static function scope(array $patterns, array $available): array
     {
         $scope = [];
         $warnings = [];
-
-        foreach ($patterns as $pattern) {
-            $matched = self::glob($pattern, $available);
-
-            if ($matched === null) {
-                $one = self::parse($pattern, $available);
-                $matched = $one === null ? [] : [$one];
+        $everyone = static fn (): bool => true;
+        $add = static function (Model $model, ?ThinkingLevel $thinking) use (&$scope): void {
+            foreach ($scope as $already) {
+                if ($already->model->is($model)) {
+                    return;
+                }
             }
 
-            if ($matched === []) {
-                $warnings[] = "No model matches \"{$pattern}\".";
+            $scope[] = new ModelChoice($model, $thinking ?? ThinkingLevel::Off, explicitThinking: $thinking !== null);
+        };
+        $ambiguous = static function (string $pattern, array $candidates) use (&$warnings): void {
+            $providers = array_values(array_unique(array_map(static fn (Model $model): string => $model->provider, $candidates)));
+            sort($providers);
+            $warnings[] = "Pattern \"{$pattern}\" matches several providers: " . implode(', ', $providers) . '. Use provider/id to choose one.';
+        };
+
+        foreach ($patterns as $pattern) {
+            if (str_contains($pattern, '*') || str_contains($pattern, '?') || str_contains($pattern, '[')) {
+                // Extract optional thinking level suffix (e.g., "provider/*:high")
+                $thinking = self::splitThinkingSuffix($pattern);
+                $glob = $thinking[0] ?? $pattern;
+                $exact = self::reference($glob, $available, $everyone, thinkingSuffix: 'none', fuzzy: false);
+
+                if ($exact->status === ModelReference::RESOLVED && $exact->model !== null) {
+                    $matches = [$exact->model];
+                } elseif ($exact->status === ModelReference::AMBIGUOUS) {
+                    $matches = $exact->candidates;
+                    $ambiguous($pattern, $matches);
+                } else {
+                    $matches = array_values(array_filter($available, static fn (Model $model): bool => fnmatch($glob, "{$model->provider}/{$model->id}", FNM_CASEFOLD)
+                        || fnmatch($glob, $model->id, FNM_CASEFOLD)));
+                }
+
+                if ($matches === []) {
+                    $warnings[] = "No models match pattern \"{$pattern}\"";
+                }
+
+                foreach ($matches as $model) {
+                    $add($model, $thinking[1] ?? null);
+                }
 
                 continue;
             }
 
-            foreach ($matched as $choice) {
-                if ($choice->warning !== null) {
-                    $warnings[] = $choice->warning;
-                }
+            $result = self::reference($pattern, $available, $everyone, thinkingSuffix: 'lenient', fuzzy: true);
 
-                foreach ($scope as $already) {
-                    if ($already->model->is($choice->model)) {
-                        continue 2;
-                    }
-                }
+            if ($result->status === ModelReference::NOT_FOUND) {
+                $warnings[] = "No models match pattern \"{$pattern}\"";
 
-                $scope[] = $choice;
+                continue;
+            }
+
+            if ($result->warning !== null) {
+                $warnings[] = $result->warning;
+            }
+
+            if ($result->status === ModelReference::AMBIGUOUS) {
+                $ambiguous($pattern, $result->candidates);
+            }
+
+            foreach ($result->model !== null ? [$result->model] : $result->candidates as $model) {
+                $add($model, $result->thinking);
             }
         }
 
@@ -184,46 +210,413 @@ final class ModelResolver
     }
 
     /**
-     * Every model a glob pattern matches, or null when the pattern is not a glob.
+     * One model from `--model` (and `--provider`) — upstream's `resolveCliModel()`.
      *
-     * Null rather than an empty list, so the caller can tell "not a glob, try a name" from
-     * "a glob that matched nothing" — which are different answers with different messages.
+     * Every model is looked at, not only those with a key, "so `--api-key` can be used for first-time
+     * setup"; credentials only break ties between providers offering the match, and "an inline key
+     * goes to whichever provider is selected, so stored credentials must not choose it". A
+     * `provider/id` the provider does not list becomes a custom model id on that provider, built
+     * from its default model.
      *
-     * @param list<Model> $available
-     * @return list<ModelChoice>|null
+     * @param list<Model>           $models  every model there is
+     * @param Closure(string): bool $hasAuth whether a provider has credentials configured
+     * @return array{0: ModelChoice|null, 1: string|null} the choice (its warning set when there is
+     *         one), or the error to refuse with
      */
-    private static function glob(string $pattern, array $available): ?array
+    public static function cli(?string $cliProvider, string $cliModel, ?ThinkingLevel $cliThinking, bool $inlineApiKey, array $models, Closure $hasAuth): array
     {
-        if (!str_contains($pattern, '*') && !str_contains($pattern, '?') && !str_contains($pattern, '[')) {
+        if ($models === []) {
+            return [null, 'No models available. Check your installation or add models to models.json.'];
+        }
+
+        $provider = null;
+
+        if ($cliProvider !== null) {
+            foreach ($models as $model) {
+                if (strtolower($model->provider) === strtolower($cliProvider)) {
+                    $provider = $model->provider;
+
+                    break;
+                }
+            }
+
+            if ($provider === null) {
+                return [null, "Unknown provider \"{$cliProvider}\". Use --list-models to see available providers/models."];
+            }
+        }
+
+        $result = self::reference($cliModel, $models, $inlineApiKey ? static fn (): bool => false : $hasAuth, $provider, 'strict', true);
+
+        if ($result->status === ModelReference::RESOLVED && $result->model !== null) {
+            return [new ModelChoice($result->model, $result->thinking ?? ThinkingLevel::Off, $result->warning, explicitThinking: $result->thinking !== null), null];
+        }
+
+        // pig's own last tie-break, after credentials have had their say: of providers offering the
+        // same id, the one that makes the model beats the ones reselling it (`Models::isResold()`) —
+        // `--model gpt-5` is OpenAI's, Copilot's is `github-copilot/gpt-5`. Upstream reports these as
+        // ambiguous; pig keeps its resold rule as the last word, so only a tie it cannot break is reported.
+        if ($result->status === ModelReference::AMBIGUOUS) {
+            $direct = array_values(array_filter($result->candidates, static fn (Model $model): bool => !Models::isResold($model->provider)));
+
+            if ($direct !== [] && count(array_unique(array_map(static fn (Model $model): string => $model->provider, $direct))) === 1) {
+                return [new ModelChoice($direct[0], $result->thinking ?? ThinkingLevel::Off, $result->warning, explicitThinking: $result->thinking !== null), null];
+            }
+        }
+
+        if ($result->status === ModelReference::AMBIGUOUS) {
+            $matches = array_map(static fn (Model $model): string => "{$model->provider}/{$model->id}", $result->candidates);
+            sort($matches);
+            $authHint = match (true) {
+                $inlineApiKey => '--api-key does not choose a provider.',
+                $result->usableCount === 0 => 'No matching provider is authenticated.',
+                default => 'More than one matching provider is authenticated.',
+            };
+
+            return [null, "Model \"{$cliModel}\" is ambiguous across providers: " . implode(', ', $matches) . ". {$authHint} Use --provider or provider/model."];
+        }
+
+        $target = $result->target;
+
+        if ($target === null) {
+            return [null, "Model \"{$cliModel}\" not found. Use --list-models to see available models."];
+        }
+
+        // "Use the thinking level suffix only when --thinking is not explicitly provided; otherwise
+        // it stays part of the custom model id."
+        $modelId = $cliThinking !== null ? $target->modelText : $target->modelId;
+        $fallbackThinking = $cliThinking !== null ? null : $target->thinking;
+        $requested = $cliThinking ?? $fallbackThinking;
+        $model = self::fallbackModel($target->providerModels, $modelId, $requested !== null && $requested !== ThinkingLevel::Off);
+
+        return [new ModelChoice(
+            $model,
+            $fallbackThinking ?? ThinkingLevel::Off,
+            "Model \"{$modelId}\" not found for provider \"{$target->provider}\". Using custom model id.",
+            explicitThinking: $fallbackThinking !== null,
+        ), null];
+    }
+
+    /**
+     * Upstream's `resolveModelReference()`. "Candidates are collected before a provider is chosen, so
+     * catalog order never decides the provider and an ambiguous match is reported instead of falling
+     * through to a weaker one." `$usable` "only breaks ties between providers, so a unique match
+     * resolves even without credentials".
+     *
+     * `$thinkingSuffix`: a trailing `:<suffix>` is only considered when the full text matches no
+     * model, since ids such as OpenRouter's `qwen/qwen3-coder:exacto` contain colons — `none` keeps
+     * it part of the id, `strict` parses a valid level and keeps anything else, `lenient` also drops
+     * an invalid one with a warning.
+     *
+     * @param list<Model>               $models
+     * @param Closure(string): bool     $usable
+     * @param 'none'|'strict'|'lenient' $thinkingSuffix
+     */
+    public static function reference(string $text, array $models, Closure $usable, ?string $provider = null, string $thinkingSuffix = 'lenient', bool $fuzzy = true): ModelReference
+    {
+        $text = trim($text);
+
+        if ($text === '') {
+            return ModelReference::notFound();
+        }
+
+        $constraint = $provider === null ? null : strtolower($provider);
+        $pool = $constraint === null
+            ? array_values($models)
+            : array_values(array_filter($models, static fn (Model $model): bool => strtolower($model->provider) === $constraint));
+        $result = self::resolveText($text, $thinkingSuffix, $fuzzy, $pool, $usable);
+
+        if ($result->status !== ModelReference::NOT_FOUND) {
+            return $result;
+        }
+
+        $split = self::splitProviderPrefix($text, $pool);
+        $anchor = null;
+
+        foreach ($pool as $model) {
+            if ($constraint !== null || ($split !== null && $model->provider === $split[0])) {
+                $anchor = $model;
+
+                break;
+            }
+        }
+
+        if ($anchor === null) {
+            return $result;
+        }
+
+        $modelText = $split[1] ?? $text;
+        $suffix = $thinkingSuffix === 'none' ? null : self::splitThinkingSuffix($modelText);
+        $providerModels = [$anchor];
+
+        foreach ($pool as $model) {
+            if ($model->provider === $anchor->provider && $model !== $anchor) {
+                $providerModels[] = $model;
+            }
+        }
+
+        return ModelReference::notFound(new ModelReferenceTarget($anchor->provider, $providerModels, $modelText, $suffix[0] ?? $modelText, $suffix[1] ?? null));
+    }
+
+    /**
+     * Upstream's `findExactModelReferenceMatch()`: exact `provider/id` or bare id, without thinking
+     * suffixes or fuzzy matching.
+     *
+     * @param list<Model> $models
+     */
+    public static function findExact(string $reference, array $models): ?Model
+    {
+        $result = self::reference($reference, $models, static fn (): bool => true, thinkingSuffix: 'none', fuzzy: false);
+
+        return $result->status === ModelReference::RESOLVED ? $result->model : null;
+    }
+
+    /**
+     * @param 'none'|'strict'|'lenient' $thinkingSuffix
+     * @param list<Model>               $pool
+     * @param Closure(string): bool     $usable
+     */
+    private static function resolveText(string $text, string $thinkingSuffix, bool $fuzzy, array $pool, Closure $usable): ModelReference
+    {
+        $reference = self::selectReference($text, $pool, $fuzzy, $usable);
+
+        if ($reference !== null) {
+            return $reference;
+        }
+
+        if ($fuzzy) {
+            $match = self::selectFuzzy(self::fuzzyMatches($text, $pool), $usable);
+
+            if ($match !== null) {
+                return $match;
+            }
+        }
+
+        if ($thinkingSuffix === 'none') {
+            return ModelReference::notFound();
+        }
+
+        $thinking = self::splitThinkingSuffix($text);
+
+        if ($thinking !== null) {
+            $inner = self::resolveText($thinking[0], $thinkingSuffix, $fuzzy, $pool, $usable);
+
+            // "Only use this thinking level if no warning from inner recursion"
+            return $inner->status === ModelReference::NOT_FOUND ? $inner : $inner->with($inner->warning !== null ? null : $thinking[1], $inner->warning);
+        }
+
+        // "Keep an invalid suffix as part of the id and fail, rather than resolve a different model"
+        $colon = strrpos($text, ':');
+
+        if ($thinkingSuffix === 'strict' || $colon === false) {
+            return ModelReference::notFound();
+        }
+
+        $suffix = substr($text, $colon + 1);
+        $inner = self::resolveText(substr($text, 0, $colon), $thinkingSuffix, $fuzzy, $pool, $usable);
+
+        return $inner->status === ModelReference::NOT_FOUND
+            ? $inner
+            : $inner->with(null, "Invalid thinking level \"{$suffix}\" in pattern \"{$text}\". Using default instead.");
+    }
+
+    /**
+     * Upstream's `selectReference()`: "`provider/rest` is only a hint: the whole text may also be a
+     * model id on another provider, such as gateway id `zai/glm-5`. The named provider wins when
+     * usable, since that is what the syntax usually means; otherwise a sole usable raw match wins,
+     * since the named provider could not serve the request. An unusable named match is still
+     * preferred over unusable raw matches, so `--api-key` can set up the named provider."
+     *
+     * @param list<Model>           $pool
+     * @param Closure(string): bool $usable
+     */
+    private static function selectReference(string $text, array $pool, bool $fuzzy, Closure $usable): ?ModelReference
+    {
+        $lowerText = strtolower($text);
+        $raw = array_values(array_filter($pool, static fn (Model $model): bool => strtolower($model->id) === $lowerText));
+        $split = self::splitProviderPrefix($text, $pool);
+        $named = null;
+
+        if ($split !== null) {
+            $providerModels = array_values(array_filter($pool, static fn (Model $model): bool => $model->provider === $split[0]));
+            $lowerModelText = strtolower($split[1]);
+
+            // "The provider's own literal id (OpenRouter's `openrouter/free`) beats its fuzzy matches"
+            foreach ($providerModels as $model) {
+                if (strtolower($model->id) === $lowerModelText) {
+                    $named = $model;
+
+                    break;
+                }
+            }
+
+            foreach ($named === null ? $raw : [] as $model) {
+                if ($model->provider === $split[0]) {
+                    $named = $model;
+
+                    break;
+                }
+            }
+
+            if ($named === null && $fuzzy) {
+                $named = self::bestFuzzyMatch(self::fuzzyMatches($split[1], $providerModels));
+            }
+        }
+
+        $others = array_values(array_filter($raw, static fn (Model $model): bool => $model !== $named));
+        $candidates = $named !== null ? [$named, ...$others] : $others;
+
+        if ($candidates === []) {
             return null;
         }
 
-        $level = ThinkingLevel::Off;
-        $explicit = false;
-        $colon = strrpos($pattern, ':');
+        if (count(array_unique(array_map(static fn (Model $model): string => $model->provider, $candidates))) === 1) {
+            return ModelReference::resolved($candidates[0]);
+        }
 
-        if ($colon !== false) {
-            $suffix = ThinkingLevel::tryFrom(substr($pattern, $colon + 1));
+        if ($named !== null && $usable($named->provider)) {
+            return ModelReference::resolved($named);
+        }
 
-            if ($suffix !== null) {
-                $level = $suffix;
-                $explicit = true;
-                $pattern = substr($pattern, 0, $colon);
+        $usableOthers = array_values(array_filter($others, static fn (Model $model): bool => $usable($model->provider)));
+
+        if (count($usableOthers) === 1) {
+            return ModelReference::resolved($usableOthers[0]);
+        }
+
+        if ($usableOthers === [] && $named !== null) {
+            return ModelReference::resolved($named);
+        }
+
+        return ModelReference::ambiguous($candidates, count($usableOthers));
+    }
+
+    /**
+     * @param list<Model> $models
+     * @return list<Model>
+     */
+    private static function fuzzyMatches(string $text, array $models): array
+    {
+        $lowerText = strtolower($text);
+
+        return array_values(array_filter($models, static fn (Model $model): bool => str_contains(strtolower($model->id), $lowerText)
+            || str_contains(strtolower($model->name), $lowerText)));
+    }
+
+    /**
+     * @param list<Model>           $matches
+     * @param Closure(string): bool $usable
+     */
+    private static function selectFuzzy(array $matches, Closure $usable): ?ModelReference
+    {
+        if ($matches === []) {
+            return null;
+        }
+
+        $multipleProviders = count(array_unique(array_map(static fn (Model $model): string => $model->provider, $matches))) > 1;
+        $usableMatches = $multipleProviders ? array_values(array_filter($matches, static fn (Model $model): bool => $usable($model->provider))) : [];
+        $pool = $usableMatches !== [] ? $usableMatches : $matches;
+        $best = self::bestFuzzyMatch($pool);
+
+        if ($best === null) {
+            return null;
+        }
+
+        // "The same id on several providers would otherwise be decided by catalog order"
+        $tied = array_values(array_filter($pool, static fn (Model $model): bool => $model->id === $best->id));
+
+        if (count(array_unique(array_map(static fn (Model $model): string => $model->provider, $tied))) === 1) {
+            return ModelReference::resolved($best);
+        }
+
+        return ModelReference::ambiguous($tied, $usableMatches !== [] ? count($tied) : 0);
+    }
+
+    /**
+     * "Prefer aliases (`claude-sonnet-4-5`) over dated versions (`claude-sonnet-4-5-20250929`), then the latest."
+     *
+     * @param list<Model> $matches
+     */
+    private static function bestFuzzyMatch(array $matches): ?Model
+    {
+        $aliases = array_values(array_filter($matches, static fn (Model $model): bool => self::isAlias($model->id)));
+        $pool = $aliases !== [] ? $aliases : $matches;
+        usort($pool, static fn (Model $a, Model $b): int => strcmp($b->id, $a->id));
+
+        return $pool[0] ?? null;
+    }
+
+    /** @return array{0: string, 1: ThinkingLevel}|null the text before the last `:` and the level after it, when it is one */
+    private static function splitThinkingSuffix(string $text): ?array
+    {
+        $colon = strrpos($text, ':');
+        $level = $colon === false ? null : ThinkingLevel::tryFrom(substr($text, $colon + 1));
+
+        return $level === null ? null : [substr($text, 0, (int) $colon), $level];
+    }
+
+    /**
+     * @param list<Model> $models
+     * @return array{0: string, 1: string}|null the provider a `provider/` prefix names, as the models spell it, and the rest
+     */
+    private static function splitProviderPrefix(string $text, array $models): ?array
+    {
+        $slash = strpos($text, '/');
+
+        if ($slash === false) {
+            return null;
+        }
+
+        $prefix = strtolower(trim(substr($text, 0, $slash)));
+        $modelText = trim(substr($text, $slash + 1));
+
+        if ($prefix === '' || $modelText === '') {
+            return null;
+        }
+
+        foreach ($models as $model) {
+            if (strtolower($model->provider) === $prefix) {
+                return [$model->provider, $modelText];
             }
         }
 
-        $matched = [];
+        return null;
+    }
 
-        foreach ($available as $model) {
-            if (
-                fnmatch($pattern, "{$model->provider}/{$model->id}", FNM_CASEFOLD)
-                || fnmatch($pattern, $model->id, FNM_CASEFOLD)
-            ) {
-                $matched[] = new ModelChoice($model, $level, explicitThinking: $explicit);
+    /**
+     * Upstream's `buildFallbackModel()`: a custom id on a provider, shaped like its default model.
+     *
+     * @param non-empty-list<Model> $providerModels
+     */
+    private static function fallbackModel(array $providerModels, string $modelId, bool $reasoning): Model
+    {
+        $defaultId = self::DEFAULT_MODEL_PER_PROVIDER[$providerModels[0]->provider] ?? null;
+        $base = $providerModels[0];
+
+        foreach ($defaultId === null ? [] : $providerModels as $model) {
+            if ($model->id === $defaultId) {
+                $base = $model;
+
+                break;
             }
         }
 
-        return $matched;
+        return new Model(
+            $modelId,
+            $modelId,
+            $base->api,
+            $base->provider,
+            $base->baseUrl,
+            $base->contextWindow,
+            $base->maxTokens,
+            $reasoning || $base->reasoning,
+            $base->input,
+            $base->pricing,
+            $base->headers,
+            $base->compat,
+            $base->thinkingLevelMap,
+            $base->inputLimits,
+            $base->promptCache,
+        );
     }
 
     /**

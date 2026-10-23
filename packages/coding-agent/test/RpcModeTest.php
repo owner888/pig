@@ -1076,7 +1076,9 @@ final class RpcModeTest extends TestCase
     public function testAHostCyclesInsideTheScopeToo(): void
     {
         [$scope, $warnings] = ModelResolver::scope(
-            ['zzp-plain', 'zzp-alpha:high'],
+            // `anthropic/`: Copilot resells `zzp-alpha`, and a scope adds a model for each provider
+            // offering a bare id (upstream #10160).
+            ['zzp-plain', 'anthropic/zzp-alpha:high'],
             Models::all(),
         );
         $this->assertSame([], $warnings);

@@ -78,7 +78,7 @@ final class SystemClipboard implements Clipboard
         $platform = $this->platform();
         // "Direct writes precede OSC 52 so the terminal cannot race the native writer."
         $copied = match ($platform) {
-            'darwin' => Process::feed(['pbcopy'], $text, self::WRITE_TIMEOUT),
+            'darwin' => Process::feed(['pbcopy'], $text, self::WRITE_TIMEOUT, detached: true),
             'windows' => Process::feed(['clip.exe'], $text, self::WRITE_TIMEOUT),
             default => $this->linuxWrite($text),
         };
@@ -124,7 +124,7 @@ final class SystemClipboard implements Clipboard
     {
         // Upstream's `copyToClipboard()` tries `termux-clipboard-set` first when `TERMUX_VERSION` is
         // set, then whatever display tools there are.
-        if (Env::isSet('TERMUX_VERSION') && Process::feed(['termux-clipboard-set'], $text, self::WRITE_TIMEOUT)) {
+        if (Env::isSet('TERMUX_VERSION') && Process::feed(['termux-clipboard-set'], $text, self::WRITE_TIMEOUT, detached: true)) {
             return true;
         }
 
@@ -133,7 +133,9 @@ final class SystemClipboard implements Clipboard
             : [['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input'], ['wl-copy']];
 
         foreach ($commands as $command) {
-            if (Process::feed($command, $text, self::WRITE_TIMEOUT)) {
+            // Detached: the writer that stays behind to own the clipboard must not be stopped with
+            // pig by Ctrl+Z (upstream #11179).
+            if (Process::feed($command, $text, self::WRITE_TIMEOUT, detached: true)) {
                 return true;
             }
         }

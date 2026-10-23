@@ -760,7 +760,7 @@ final class RpcClientTest extends TestCase
         // Upstream sleeps 100ms and checks the exit code, which is a race with a number on it. This
         // has no timing in it at all: the child died, so the wait for a response ends — and the
         // reason is the line the child printed on its way out.
-        $this->assertStringContainsString("No model matches 'no-such-model-anywhere'", $error->getMessage());
+        $this->assertStringContainsString('Model "no-such-model-anywhere" not found', $error->getMessage());
     }
 
     public function testTheReasonSurvivesWhenBothPipesEndInTheSameBreath(): void

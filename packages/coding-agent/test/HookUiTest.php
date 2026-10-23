@@ -696,50 +696,109 @@ final class HookUiTest extends TestCase
         $this->assertFalse($answer, 'the next question works, and was answered no');
     }
 
-    // ---- one at a time -----------------------------------------------------------------
+    // ---- one on top of another (upstream #11166) -----------------------------------------
 
     /**
-     * A second dialog would take focus from the first, leaving the first fiber waiting on
-     * a component nobody can reach — a session that has to be killed.
+     * A second dialog goes on top of the first, and answering it brings the first back. pig used
+     * to refuse the second, which lost the question; upstream's used to replace the first, which
+     * left its promise pending for ever.
      */
-    public function testASecondDialogIsRefusedRatherThanStacked(): void
+    public function testASecondDialogStacksAndTheFirstComesBackWhenItIsAnswered(): void
     {
-        $second = 'not asked yet';
+        $first = 'not answered';
+        $second = 'not answered';
 
-        Async::spawn(function (): void {
-            $this->ui->confirm('First?', '');
+        Async::spawn(function () use (&$first): void {
+            $first = $this->ui->confirm('First?', '');
         });
-
         $this->settle();
 
         Async::spawn(function () use (&$second): void {
             $second = $this->ui->select('Second?', ['a', 'b']);
         });
-
         $this->settle();
 
-        $this->assertNull($second);
+        $this->assertStringContainsString('Second?', $this->screen());
+        $this->assertStringNotContainsString('First?', $this->screen(), 'only the top one shows');
+
+        $this->type("\x1b[B");
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('b', $second);
+        $this->assertSame('not answered', $first);
         $this->assertStringContainsString('First?', $this->screen());
-        $this->assertStringNotContainsString('Second?', $this->screen());
+
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertTrue($first);
+        $this->type('back to the prompt');
+        $this->assertSame('back to the prompt', $this->editor->text());
     }
 
-    public function testASecondConfirmIsRefusedWithItsSafeAnswer(): void
+    public function testAHiddenDialogWhoseSignalAbortsIsTakenOutAndTheVisibleOneStays(): void
     {
-        $second = null;
+        $abort = new \Pig\Async\AbortController();
+        $first = 'not answered';
+        $second = 'not answered';
 
-        Async::spawn(function (): void {
-            $this->ui->input('First?');
+        Async::spawn(function () use (&$first, $abort): void {
+            $first = $this->ui->input('First?', signal: $abort->signal);
         });
-
         $this->settle();
 
         Async::spawn(function () use (&$second): void {
             $second = $this->ui->confirm('Second?', '');
         });
-
         $this->settle();
 
-        $this->assertFalse($second);
+        $abort->abort();
+        $this->settle();
+
+        $this->assertNull($first);
+        $this->assertStringContainsString('Second?', $this->screen());
+
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertTrue($second);
+        $this->assertStringNotContainsString('First?', $this->screen(), 'the aborted one does not come back');
+    }
+
+    public function testAConfirmOpenedOverACustomComponentGivesItBackAfterwards(): void
+    {
+        $custom = 'not done';
+        $confirmed = 'not answered';
+        $finish = null;
+
+        Async::spawn(function () use (&$custom, &$finish): void {
+            $custom = $this->ui->custom(static function (TUI $tui, Theme $theme, callable $done) use (&$finish) {
+                $finish = $done;
+
+                return new Text('custom form');
+            });
+        });
+        $this->settle();
+
+        Async::spawn(function () use (&$confirmed): void {
+            $confirmed = $this->ui->confirm('Discard?', '');
+        });
+        $this->settle();
+
+        $this->assertStringContainsString('Discard?', $this->screen());
+
+        $this->type("\x1b");
+        $this->settle();
+
+        $this->assertFalse($confirmed);
+        $this->assertStringContainsString('custom form', $this->screen());
+
+        $finish('kept');
+        $this->settle();
+
+        $this->assertSame('kept', $custom);
+        $this->assertStringNotContainsString('custom form', $this->screen());
     }
 
     public function testADialogIsRefusedWhileSomethingElseHoldsTheOverlay(): void

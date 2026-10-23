@@ -267,7 +267,7 @@ final class ModelResolverTest extends TestCase
         [$scope, $warnings] = ModelResolver::scope(['anthropic/zzp-*:nonsense'], Models::all());
 
         $this->assertSame([], $scope);
-        $this->assertSame(['No model matches "anthropic/zzp-*:nonsense".'], $warnings);
+        $this->assertSame(['No models match pattern "anthropic/zzp-*:nonsense"'], $warnings);
     }
 
     public function testTheSameModelReachedTwoWaysIsInTheScopeOnce(): void
@@ -285,6 +285,92 @@ final class ModelResolverTest extends TestCase
         // the one that found nothing.
         $this->assertCount(1, $scope);
         $this->assertSame('zzp-plain', $scope[0]->model->id);
-        $this->assertSame(['No model matches "no-such-model-anywhere".'], $warnings);
+        $this->assertSame(['No models match pattern "no-such-model-anywhere"'], $warnings);
+    }
+
+    // ---- one provider selection policy (upstream #10160) ----------------------------------
+
+    public function testCredentialsChooseBetweenProvidersOfferingTheSameId(): void
+    {
+        [$choice] = ModelResolver::cli(null, 'zzp-shared', null, false, Models::all(), static fn (string $provider): bool => $provider === 'github-copilot');
+
+        $this->assertSame('github-copilot', $choice?->model->provider, 'the only one with a key, reseller or not');
+    }
+
+    public function testWithNoCredentialsToDecideTheResoldRuleStillDoes(): void
+    {
+        [$choice, $error] = ModelResolver::cli(null, 'zzp-shared', null, false, Models::all(), static fn (): bool => false);
+
+        $this->assertNull($error);
+        $this->assertSame('openai', $choice?->model->provider);
+    }
+
+    public function testATieNothingBreaksIsReportedRatherThanDecidedByCatalogOrder(): void
+    {
+        $models = [self::model('alpha', 'same'), self::model('beta', 'same')];
+
+        [$choice, $error] = ModelResolver::cli(null, 'same', null, false, $models, static fn (): bool => false);
+        $this->assertNull($choice);
+        $this->assertSame('Model "same" is ambiguous across providers: alpha/same, beta/same. No matching provider is authenticated. Use --provider or provider/model.', $error);
+
+        [, $error] = ModelResolver::cli(null, 'same', null, false, $models, static fn (): bool => true);
+        $this->assertStringContainsString('More than one matching provider is authenticated.', (string) $error);
+
+        // "An inline key goes to whichever provider is selected, so stored credentials must not choose it"
+        [, $error] = ModelResolver::cli(null, 'same', null, true, $models, static fn (string $provider): bool => $provider === 'alpha');
+        $this->assertStringContainsString('--api-key does not choose a provider.', (string) $error);
+
+        [$choice] = ModelResolver::cli('beta', 'same', null, false, $models, static fn (): bool => false);
+        $this->assertSame('beta', $choice?->model->provider, '--provider settles it');
+    }
+
+    public function testAProviderPrefixIsAHintAGatewaysRawIdCanAnswer(): void
+    {
+        // Upstream's `selectReference()`: `alpha/glm` is alpha's `glm`, or a gateway's raw id `alpha/glm`.
+        $models = [self::model('alpha', 'glm'), self::model('gw', 'alpha/glm')];
+
+        $this->assertSame('alpha', ModelResolver::reference('alpha/glm', $models, static fn (string $p): bool => $p === 'alpha')->model?->provider);
+        $this->assertSame('gw', ModelResolver::reference('alpha/glm', $models, static fn (string $p): bool => $p === 'gw')->model?->provider);
+        $this->assertSame('alpha', ModelResolver::reference('alpha/glm', $models, static fn (): bool => false)->model?->provider, 'so --api-key can set alpha up');
+    }
+
+    public function testAnIdTheNamedProviderDoesNotListIsACustomModelIdOnIt(): void
+    {
+        [$choice, $error] = ModelResolver::cli(null, 'alpha/brand-new:high', null, false, [self::model('alpha', 'glm')], static fn (): bool => true);
+
+        $this->assertNull($error);
+        $this->assertSame('brand-new', $choice?->model->id);
+        $this->assertSame('alpha', $choice?->model->provider);
+        $this->assertTrue($choice?->model->reasoning, 'a level was asked for');
+        $this->assertSame(ThinkingLevel::High, $choice?->thinking);
+        $this->assertSame('Model "brand-new" not found for provider "alpha". Using custom model id.', $choice?->warning);
+
+        [$choice] = ModelResolver::cli(null, 'alpha/brand-new:high', ThinkingLevel::Low, false, [self::model('alpha', 'glm')], static fn (): bool => true);
+        $this->assertSame('brand-new:high', $choice?->model->id, 'with --thinking the suffix stays part of the id');
+
+        [$choice, $error] = ModelResolver::cli(null, 'nowhere-at-all', null, false, [self::model('alpha', 'glm')], static fn (): bool => true);
+        $this->assertNull($choice);
+        $this->assertSame('Model "nowhere-at-all" not found. Use --list-models to see available models.', $error);
+    }
+
+    public function testAScopePatternSeveralProvidersOfferAddsEachWithAWarning(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(['same'], [self::model('beta', 'same'), self::model('alpha', 'same')]);
+
+        $this->assertSame(['beta', 'alpha'], array_map(static fn ($choice): string => $choice->model->provider, $scope));
+        $this->assertSame(['Pattern "same" matches several providers: alpha, beta. Use provider/id to choose one.'], $warnings);
+    }
+
+    public function testAnIdWithBracketsIsNotAGlob(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(['model[1m]'], [self::model('alpha', 'model[1m]'), self::model('alpha', 'model1')]);
+
+        $this->assertSame(['model[1m]'], array_map(static fn ($choice): string => $choice->model->id, $scope));
+        $this->assertSame([], $warnings);
+    }
+
+    private static function model(string $provider, string $id): \Pig\Ai\Model
+    {
+        return new \Pig\Ai\Model($id, $id, \Pig\Ai\Api::OpenAiCompletions, $provider, 'http://127.0.0.1:1', 100_000, 8_000);
     }
 }

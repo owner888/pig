@@ -9,6 +9,7 @@ use Pig\Ai\Models;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\ModelReference;
 use Pig\CodingAgent\ModelResolver;
 use Pig\Tui\Style;
 use Throwable;
@@ -355,9 +356,8 @@ final class AuthCommand
                     continue;
                 }
 
-                $choice = ModelResolver::parse((string) $cliModel, self::modelsOf($provider));
-
-                if ($choice !== null && $choice->warning === null) {
+                // Upstream's `resolveModelReference()` per provider: a match there, not a custom id.
+                if (ModelResolver::reference((string) $cliModel, Models::all(), static fn (): bool => true, $provider, 'strict', true)->status === ModelReference::RESOLVED) {
                     $providers[] = $provider;
                 }
             }
@@ -443,31 +443,19 @@ final class AuthCommand
 
     /**
      * Upstream's `resolveCliModel()` as these commands use it: within `$provider` when one is
-     * given (a repeated `<provider>/` tolerated), else anywhere.
+     * given, else anywhere, credentials breaking a tie between providers.
      *
      * @throws AuthCommandError
      */
     private function resolveModel(?string $provider, string $model): Model
     {
-        $pattern = $model;
-
-        if ($provider !== null && str_starts_with(strtolower($model), strtolower($provider) . '/')) {
-            $pattern = substr($model, strlen($provider) + 1);
-        }
-
-        $choice = ModelResolver::parse($pattern, $provider === null ? null : self::modelsOf($provider));
+        [$choice, $error] = ModelResolver::cli($provider, $model, null, false, Models::all(), $this->auth->hasKeyFor(...));
 
         if ($choice === null) {
-            throw new AuthCommandError("Unable to resolve model \"{$model}\"");
+            throw new AuthCommandError($error ?? "Unable to resolve model \"{$model}\"");
         }
 
         return $choice->model;
-    }
-
-    /** @return list<Model> */
-    private static function modelsOf(string $provider): array
-    {
-        return array_values(array_filter(Models::all(), static fn (Model $model): bool => $model->provider === $provider));
     }
 
     /**
