@@ -333,8 +333,9 @@ final class GenerateModelsTest extends TestCase
         );
         self::assertStringContainsString("'qwen-alibaba' => ['Qwen Alibaba', Api::OpenAiCompletions, 262_144, 65_536, false, false, 0.4, 1.2, 0.0, 0.0, 'cacheControlFormat' => 'anthropic'],", $output);
         self::assertStringContainsString('opencode/gpt-5.3-codex-spark is listed and not offered', $output);
-        // OpenCode Go's MiniMax M2.7 "don't accept Anthropic SDK auth".
-        self::assertStringContainsString("'minimax-m2.7' => ['MiniMax M2.7', Api::OpenAiCompletions,", $output);
+        // OpenCode Go's MiniMax M2.7 on the Messages API its npm package says: "openai-completions
+        // now returns ModelProtocolUnsupported".
+        self::assertStringContainsString("'minimax-m2.7' => ['MiniMax M2.7', Api::AnthropicMessages,", $output);
     }
 
     public function testKimiAndMoonshotRowsArePricedAndNamedAsUpstreamWritesThem(): void
@@ -500,7 +501,7 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString("        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text'], 0.0, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("        'vercel-ai-gateway/typesafe/jev' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],", $output);
-        self::assertStringContainsString("        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/zen/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString("        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.24, 0.0, 0.0, 0.0],", $output);
         // A listed model whose output is not decisions is not a classifier.
         self::assertStringNotContainsString("'openrouter/vendor/chatty'", $output);

@@ -327,8 +327,8 @@ final class SystemOneTest extends TestCase
     {
         foreach ([
             ['vercel-ai-gateway', 'typesafe-ai/jev', 'https://ai-gateway.vercel.sh/typesafe/v1'],
-            ['opencode', 'jev-1.13', 'https://opencode.ai/zen/v1'],
-            ['opencode', 'jev-1.13-free', 'https://opencode.ai/zen/v1'],
+            ['opencode', 'jev-1.13', 'https://opencode.ai/inference/v1'],
+            ['opencode', 'jev-1.13-free', 'https://opencode.ai/inference/v1'],
         ] as [$provider, $id, $baseUrl]) {
             $jev = Models::findOfType(ModelType::Classifier, $provider, $id);
             $this->assertInstanceOf(ClassifierModel::class, $jev, "{$provider}/{$id}");

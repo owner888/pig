@@ -981,8 +981,8 @@ final class Models
         'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.09, 0.0, 0.0, 0.0],
         'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
         'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
-        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/zen/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/zen/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
         'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text', 'image'], 0.021, 0.0, 0.0, 0.0],
         'openrouter/cloudflare/clef-omni' => ['Cloudflare: Clef Omni', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.15, 0.0, 0.0, 0.0],
@@ -1186,8 +1186,9 @@ final class Models
             'openai-completions' => 'https://api.fireworks.ai/inference/v1',
         ]],
         'huggingface' => [self::HUGGINGFACE_MODELS, ['openai-completions' => 'https://router.huggingface.co/v1']],
-        // "Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages"
-        'kimi-coding' => [self::KIMI_CODING_MODELS, ['anthropic-messages' => 'https://api.kimi.com/coding']],
+        // "Kimi Coding uses Chat Completions, the same protocol as the official Kimi Code client"
+        // (upstream #10720) — a `models.json` override of this base URL must include `/v1`.
+        'kimi-coding' => [self::KIMI_CODING_MODELS, ['openai-completions' => 'https://api.kimi.com/coding/v1']],
         'meta' => [self::META_MODELS, ['openai-responses' => 'https://api.meta.ai/v1']],
         // "MiniMax's Anthropic-compatible API - SDK appends /v1/messages"
         'minimax' => [self::MINIMAX_MODELS, ['anthropic-messages' => 'https://api.minimax.io/anthropic']],
@@ -1195,18 +1196,19 @@ final class Models
         'moonshotai' => [self::MOONSHOTAI_MODELS, ['openai-completions' => 'https://api.moonshot.ai/v1']],
         'moonshotai-cn' => [self::MOONSHOTAI_CN_MODELS, ['openai-completions' => 'https://api.moonshot.cn/v1']],
         'nvidia' => [self::NVIDIA_MODELS, ['openai-completions' => 'https://integrate.api.nvidia.com/v1']],
-        // "Anthropic SDK appends /v1/messages to baseURL"; the other three APIs are under `/v1`.
+        // "Anthropic SDK appends /v1/messages to baseURL"; the other three APIs are under `/v1`. The
+        // `inference` endpoints, not `zen`: "/zen/go has no Gemini route (404)".
         'opencode' => [self::OPENCODE_MODELS, [
-            'anthropic-messages' => 'https://opencode.ai/zen',
-            'google-generative-ai' => 'https://opencode.ai/zen/v1',
-            'openai-completions' => 'https://opencode.ai/zen/v1',
-            'openai-responses' => 'https://opencode.ai/zen/v1',
+            'anthropic-messages' => 'https://opencode.ai/inference',
+            'google-generative-ai' => 'https://opencode.ai/inference/v1',
+            'openai-completions' => 'https://opencode.ai/inference/v1',
+            'openai-responses' => 'https://opencode.ai/inference/v1',
         ]],
         'opencode-go' => [self::OPENCODE_GO_MODELS, [
-            'anthropic-messages' => 'https://opencode.ai/zen/go',
-            'google-generative-ai' => 'https://opencode.ai/zen/go/v1',
-            'openai-completions' => 'https://opencode.ai/zen/go/v1',
-            'openai-responses' => 'https://opencode.ai/zen/go/v1',
+            'anthropic-messages' => 'https://opencode.ai/inference/go',
+            'google-generative-ai' => 'https://opencode.ai/inference/go/v1',
+            'openai-completions' => 'https://opencode.ai/inference/go/v1',
+            'openai-responses' => 'https://opencode.ai/inference/go/v1',
         ]],
         // `buildOpenRouterCatalog()`: `anthropic/…` models (but not `:batch` ones) on the Messages API.
         'openrouter' => [self::OPENROUTER_MODELS, [
@@ -1793,7 +1795,7 @@ final class Models
         'mimo-v2.5-pro' => ['MiMo V2.5 Pro', Api::OpenAiCompletions, 1_048_576, 128_000, true, false, 0.435, 0.87, 0.003625, 0.0],
         'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
         'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.435, 0.87, 0.003625, 0.0],
-        'minimax-m2.7' => ['MiniMax-M2.7', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.375],
+        'minimax-m2.7' => ['MiniMax-M2.7', Api::AnthropicMessages, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.375],
         'minimax-m3' => ['MiniMax-M3', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 0.3, 1.2, 0.06, 0.0, 'tiers' => [[512_000, 0.6, 2.4, 0.12, 0.0]]],
         'muse-spark-1.2-contributor' => ['Muse Spark 1.2 Contributor', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 0.1, 0.2, 0.002, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'muse-spark-1.3-contributor' => ['Muse Spark 1.3 Contributor', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 0.1, 0.2, 0.002, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
@@ -3726,10 +3728,12 @@ final class Models
             'deepseek' => new OpenAiCompat(reasoningContentOnAssistantMessages: true, thinkingFormat: 'deepseek'),
             'fireworks' => self::fireworksCompat($api, $id, $row),
             'huggingface' => new OpenAiCompat(developerRole: false),
-            'kimi-coding' => new AnthropicCompat(
-                forceAdaptiveThinking: true,
-                allowEmptySignature: $id === 'k3' || $id === 'kimi-for-coding' ? true : null,
-            ),
+            // `KIMI_OPENAI_COMPAT`, and `KIMI_K3_OPENAI_COMPAT` for the K3-style models: "Models whose
+            // https://api.kimi.com/coding/v1/models entry reports effort levels and dynamic tool
+            // loading (tools declared in later system messages). Highspeed reports neither and
+            // rejects tool-bearing system messages with a 400." "All models accept system text after
+            // the conversation starts."
+            'kimi-coding' => self::kimiCodingCompat(in_array($id, ['k3', 'k3-256k', 'kimi-for-coding'], true)),
             'meta', 'minimax', 'minimax-cn' => null,
             // `moonshotCompat`, and Kimi K3's: `requiresReasoningContentOnAssistantMessages`, the
             // `openai` format, `supportsReasoningEffort`.
@@ -3897,6 +3901,22 @@ final class Models
             sessionAffinityFormat: $api === Api::OpenAiResponses ? 'openai-nosession' : null,
             supportsLongCacheRetention: $completions && in_array("{$provider}:{$id}", self::OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS, true) ? false : null,
             cacheControlFormat: is_string($row['cacheControlFormat'] ?? null) ? $row['cacheControlFormat'] : null,
+        );
+    }
+
+    /** Upstream's generator compat for a Kimi For Coding model (`createKimiCodingModels()`). */
+    private static function kimiCodingCompat(bool $k3Style): OpenAiCompat
+    {
+        return new OpenAiCompat(
+            store: false,
+            developerRole: false,
+            reasoningEffort: $k3Style,
+            maxTokensField: 'max_tokens',
+            reasoningContentOnAssistantMessages: $k3Style ? true : null,
+            strictMode: false,
+            thinkingFormat: $k3Style ? 'openai' : 'deepseek',
+            supportsMidConvoSystemMessages: true,
+            supportsMidConvoToolAdditions: $k3Style ? true : null,
         );
     }
 
@@ -4215,6 +4235,11 @@ final class Models
         // "Kimi K2.7 Code is always-thinking. Official docs say `thinking: { type: "disabled" }` is
         // rejected, and callers can omit the thinking parameter to use the enabled default."
         if (($provider === 'moonshotai' || $provider === 'moonshotai-cn') && ($id === 'kimi-k2.7-code' || $id === 'kimi-k2.7-code-highspeed')) {
+            $map = [...$map, 'off' => null];
+        }
+
+        // "Kimi Code reports every model as always-thinking." — `{ ...effortLevels, off: null }`.
+        if ($provider === 'kimi-coding') {
             $map = [...$map, 'off' => null];
         }
 

@@ -232,7 +232,7 @@ final class ModelsTest extends TestCase
             $expected = match (true) {
                 // `applyStrictToolCompatMetadata()`: `openai` and Cloudflare's gateway on the Responses API.
                 $model->api === Api::OpenAiResponses => in_array($model->provider, ['openai', 'cloudflare-ai-gateway'], true),
-                $model->api === Api::OpenAiCompletions => !in_array($model->provider, ['cerebras', 'moonshotai', 'moonshotai-cn', 'together', 'nvidia', 'cloudflare-ai-gateway'], true),
+                $model->api === Api::OpenAiCompletions => !in_array($model->provider, ['cerebras', 'moonshotai', 'moonshotai-cn', 'kimi-coding', 'together', 'nvidia', 'cloudflare-ai-gateway'], true),
                 $model->api === Api::AnthropicMessages => $model->provider === Models::ANTHROPIC,
                 default => false,
             };
@@ -515,11 +515,23 @@ final class ModelsTest extends TestCase
             $this->assertSame(['NVCF-POLL-SECONDS' => '3600'], $model->headers, $model->id);
         }
 
-        // Kimi For Coding thinks adaptively, and K3 and the canonical model replay empty signatures.
+        // Kimi For Coding on Chat Completions at `/coding/v1` (upstream #10720): the K3-style models
+        // take `reasoning_effort`, replay reasoning, and take tools in a later system message;
+        // Highspeed takes system text only. Every one is always-thinking.
         $kimi = Models::find('kimi-coding', 'kimi-for-coding');
         $this->assertNotNull($kimi);
-        $this->assertSame([Api::AnthropicMessages, 'https://api.kimi.com/coding'], [$kimi->api, $kimi->baseUrl]);
-        $this->assertEquals(new AnthropicCompat(forceAdaptiveThinking: true, allowEmptySignature: true), $kimi->compat);
+        $this->assertSame([Api::OpenAiCompletions, 'https://api.kimi.com/coding/v1'], [$kimi->api, $kimi->baseUrl]);
+        $this->assertInstanceOf(OpenAiCompat::class, $kimi->compat);
+        $this->assertSame(
+            [false, false, true, 'max_tokens', true, false, 'openai', true, true],
+            [$kimi->compat->store, $kimi->compat->developerRole, $kimi->compat->reasoningEffort, $kimi->compat->maxTokensField, $kimi->compat->reasoningContentOnAssistantMessages, $kimi->compat->strictMode, $kimi->compat->thinkingFormat, $kimi->compat->supportsMidConvoSystemMessages, $kimi->compat->supportsMidConvoToolAdditions],
+        );
+        $this->assertArrayHasKey('off', $kimi->thinkingLevelMap);
+        $this->assertNull($kimi->thinkingLevelMap['off']);
+        $highspeed = Models::find('kimi-coding', 'kimi-for-coding-highspeed');
+        $this->assertInstanceOf(OpenAiCompat::class, $highspeed?->compat);
+        $this->assertSame(['deepseek', false, true, null], [$highspeed->compat->thinkingFormat, $highspeed->compat->reasoningEffort, $highspeed->compat->supportsMidConvoSystemMessages, $highspeed->compat->supportsMidConvoToolAdditions]);
+        $this->assertSame(['off' => null], $highspeed->thinkingLevelMap);
 
         // OpenRouter's Claudes on its Messages endpoint, the rest on Chat Completions.
         $this->assertSame([Api::AnthropicMessages, 'https://openrouter.ai/api'], [Models::find('openrouter', 'anthropic/claude-opus-4.8')?->api, Models::find('openrouter', 'anthropic/claude-opus-4.8')?->baseUrl]);
@@ -536,9 +548,11 @@ final class ModelsTest extends TestCase
         // transcript additions passed through for the ids that take them.
         $gpt = Models::find('opencode', 'gpt-5.5');
         $this->assertNotNull($gpt);
-        $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/zen/v1'], [$gpt->api, $gpt->baseUrl]);
+        $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/inference/v1'], [$gpt->api, $gpt->baseUrl]);
         $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $gpt->compat);
-        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/zen/go'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
+        // "Use Anthropic Messages for OpenCode Go minimax-m2.7; openai-completions now returns ModelProtocolUnsupported."
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'minimax-m2.7')?->api, Models::find('opencode-go', 'minimax-m2.7')?->baseUrl]);
 
         // Meta's own, on the Responses API.
         $this->assertSame([Api::OpenAiResponses, 'https://api.meta.ai/v1'], [Models::find('meta', 'muse-spark-1.3')?->api, Models::find('meta', 'muse-spark-1.3')?->baseUrl]);

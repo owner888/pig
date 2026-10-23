@@ -118,15 +118,15 @@ const DIRECT = [
     'cloudflare-workers-ai' => ['CLOUDFLARE_WORKERS_AI_MODELS', Api::OpenAiCompletions, Cloudflare::CLOUDFLARE_WORKERS_AI_BASE_URL],
     'fireworks' => ['FIREWORKS_MODELS', Api::AnthropicMessages, 'https://api.fireworks.ai/inference'],
     'huggingface' => ['HUGGINGFACE_MODELS', Api::OpenAiCompletions, 'https://router.huggingface.co/v1'],
-    'kimi-coding' => ['KIMI_CODING_MODELS', Api::AnthropicMessages, 'https://api.kimi.com/coding'],
+    'kimi-coding' => ['KIMI_CODING_MODELS', Api::OpenAiCompletions, 'https://api.kimi.com/coding/v1'],
     'meta' => ['META_MODELS', Api::OpenAiResponses, 'https://api.meta.ai/v1'],
     'minimax' => ['MINIMAX_MODELS', Api::AnthropicMessages, 'https://api.minimax.io/anthropic'],
     'minimax-cn' => ['MINIMAX_CN_MODELS', Api::AnthropicMessages, 'https://api.minimaxi.com/anthropic'],
     'moonshotai' => ['MOONSHOTAI_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.ai/v1'],
     'moonshotai-cn' => ['MOONSHOTAI_CN_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.cn/v1'],
     'nvidia' => ['NVIDIA_MODELS', Api::OpenAiCompletions, 'https://integrate.api.nvidia.com/v1'],
-    'opencode' => ['OPENCODE_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/zen/v1'],
-    'opencode-go' => ['OPENCODE_GO_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/zen/go/v1'],
+    'opencode' => ['OPENCODE_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/v1'],
+    'opencode-go' => ['OPENCODE_GO_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/go/v1'],
     'qwen-token-plan' => ['QWEN_TOKEN_PLAN_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
@@ -477,8 +477,8 @@ const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
  * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float}>
  */
 const HAND_KEPT_CLASSIFIERS = [
-    'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/zen/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/zen/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     // Pricing: https://developers.cloudflare.com/workers-ai/models/clef/ and …/clef-flash/
     'cloudflare-workers-ai/@cf/cloudflare/clef' => ['name' => 'Clef', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.24, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.09, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
@@ -1025,7 +1025,10 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
  */
 function opencodeApi(string $provider, string $id, mixed $npm): Api
 {
-    if ($provider === 'opencode-go' && in_array($id, ['minimax-m2.7', 'qwen3.5-plus', 'qwen3.6-plus'], true)) {
+    // "models.dev reports these models as @ai-sdk/anthropic, but OpenCode Go serves them through the
+    // OpenAI-compatible /v1/chat/completions path." MiniMax M2.7 is no longer one of them: on the
+    // inference endpoint Chat Completions answers `ModelProtocolUnsupported`.
+    if ($provider === 'opencode-go' && in_array($id, ['qwen3.5-plus', 'qwen3.6-plus'], true)) {
         return Api::OpenAiCompletions;
     }
 

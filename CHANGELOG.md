@@ -49,6 +49,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Added Radius uploads to `/share`: signed in to Radius, the session's JSONL goes up as an organization artifact and the share URL is its link. The `sessionShareDestination` setting (also a `/settings` row) chooses `auto` (Radius when signed in, otherwise a GitHub gist; the default), `gist` or `radius` (upstream #10870).
 
+### Changed
+
+- Changed the `kimi-coding` provider to OpenAI Chat Completions at `https://api.kimi.com/coding/v1`, the protocol the official Kimi Code client uses: K3, K3-256K and Kimi For Coding take tools added mid-conversation without losing the prompt cache. A `models.json` override of the `kimi-coding` base URL must now include `/v1` (upstream #10720).
+- Moved OpenCode Zen and OpenCode Go to the `opencode.ai/inference` endpoints, which fixes OpenCode Go's Gemini models (404 on `/zen/go`); OpenCode Go's MiniMax M2.7 now uses the Anthropic Messages API, as Chat Completions answers "Model does not support this protocol".
+
 ## [0.9.1] - 2026-10-23
 
 ### Fixed
