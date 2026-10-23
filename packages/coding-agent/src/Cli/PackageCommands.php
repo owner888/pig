@@ -246,13 +246,18 @@ final class PackageCommands
         $tui->addChild($selector);
         $tui->setFocus($selector);
 
-        Async::run(static function () use ($tui): void {
-            $tui->start();
-            Loop::get()->run();
-        });
-
-        $tui->stop();
-        Themes::stopThemeWatcher();
+        // `finally`: a throw from a render leaves through here, and the crash handler in `bin/pig`
+        // only restores the screen of an interactive mode — without this the terminal stayed raw
+        // and the crash message came out as a staircase.
+        try {
+            Async::run(static function () use ($tui): void {
+                $tui->start();
+                Loop::get()->run();
+            });
+        } finally {
+            $tui->stop();
+            Themes::stopThemeWatcher();
+        }
 
         return 0;
     }

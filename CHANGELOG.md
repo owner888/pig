@@ -48,6 +48,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Fixed
 
 - Fixed `pig config` crashing with "Theme not initialized" before drawing anything: it now sets up the theme from settings first, as upstream's `selectConfig()` does.
+- Fixed a crash inside `pig config` leaving the terminal in raw mode, which printed the crash message as a staircase.
 
 ## [0.8.0] - 2026-10-23
 
