@@ -42,6 +42,14 @@ final class TuiRenderer
         bool $fullscreenCopyOnSelect = true,
         int|string $fullscreenWheelScrollLines = 'auto',
     ): TuiBase {
+        // Both renderers from the start, whichever this one is: the session can switch to the other
+        // later — `/quit` from fullscreen prints the transcript on a `TuiMainScreen` — and PHP
+        // autoloads a class the first time it is named. A pig updated while it ran then got the new
+        // `TuiMainScreen` on top of the `TuiBase` it started with, and crashed on the way out on a
+        // method the old base did not have (`resolveFakeCursors()`).
+        class_exists(TuiMainScreen::class);
+        class_exists(TuiAltScreen::class);
+
         if ($tuiMode !== 'fullscreen') {
             return new TuiMainScreen($terminal, $showHardwareCursor);
         }

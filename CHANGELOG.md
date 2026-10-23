@@ -47,6 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- Fixed `/quit` from fullscreen crashing with "Call to undefined method TuiMainScreen::resolveFakeCursors()" in a pig that was updated while it ran: both renderers are now loaded when the first one is created, so a later switch cannot mix an old base class with a new screen.
 - Fixed pig crashing at startup with "Cannot redeclare" when a package's checkout is the project and the same package is installed: an entry file's declarations now include the helpers it `require`s from `__DIR__`, so a different copy is refused by name and an identical one is treated as the same extension.
 
 ## [0.9.0] - 2026-10-23
