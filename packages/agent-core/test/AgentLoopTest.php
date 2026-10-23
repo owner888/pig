@@ -186,6 +186,30 @@ final class AgentLoopTest extends TestCase
         $this->assertNull($notFound->durationMs);
     }
 
+    public function testToolCallsInAResponseCutOffAtTheOutputLimitAreFailedNotRun(): void
+    {
+        // Upstream's `failToolCallsFromTruncatedMessage()` (#6285): the salvage parser can turn
+        // truncated arguments into ones that validate and are silently incomplete — a `write` with
+        // half the file — so none of the calls runs, and the model is told to send them again.
+        $tool = new ScriptedTool('write', static fn (): AgentToolResult => new AgentToolResult([new TextContent('written')]));
+        $truncated = $this->assistant([new ToolCall('call_0', 'write', ['path' => '/tmp/a', 'content' => 'half']), new ToolCall('call_1', 'write', ['path' => '/tmp/b'])], StopReason::Length);
+
+        [$events, $messages] = $this->drive([$truncated, $this->answer('sending them again')], [new UserMessage('write both')], tools: [$tool]);
+
+        $this->assertSame([], $tool->calls, 'neither call ran');
+        $this->assertCount(2, array_keys($events, 'ToolExecutionStartEvent', true));
+        $this->assertCount(2, array_keys($events, 'ToolExecutionEndEvent', true));
+
+        foreach ([2 => 'call_0', 3 => 'call_1'] as $at => $id) {
+            $this->assertInstanceOf(ToolResultMessage::class, $messages[$at]);
+            $this->assertSame($id, $messages[$at]->toolCallId);
+            $this->assertTrue($messages[$at]->isError);
+            $this->assertSame('Tool call "write" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.', $messages[$at]->content[0]->text);
+        }
+
+        $this->assertSame('sending them again', $messages[4]->content[0]->text, 'and the run went on');
+    }
+
     public function testAToolThatThrowsBecomesSomethingTheModelCanRead(): void
     {
         $tool = new ScriptedTool('read', static fn (): AgentToolResult => throw new RuntimeException('no such file'));

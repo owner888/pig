@@ -1934,6 +1934,62 @@ final class AgentSessionTest extends TestCase
         $this->assertFalse($seen[1]->fromExtension);
     }
 
+    /**
+     * Upstream's #11227: recovering from a response cut off at the output limit omitted the
+     * truncated tool call but kept the result that answered it, and every later request was
+     * rejected for a result with no call. Here the session was resumed with the attempt and its
+     * result as the last two messages, which is the pre-prompt path.
+     */
+    public function testRecoveringFromAResumedLengthStopOmitsTheTruncatedCallAndItsResult(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-11227-' . bin2hex(random_bytes(3));
+        $store = SessionManager::create($dir);
+        $now = (int) (microtime(true) * 1000);
+        $truncated = new AssistantMessage(
+            [new ToolCall('call_truncated', 'bash', ['command' => 'echo'])],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(input: 100, output: 16, totalTokens: 116),
+            StopReason::Length,
+            timestamp: $now - 500,
+        );
+
+        foreach ([
+            new UserMessage('check status', timestamp: $now - 1000),
+            $truncated,
+            new ToolResultMessage('call_truncated', 'bash', [new TextContent('Not executed: output token limit reached.')], true, timestamp: $now - 400),
+        ] as $message) {
+            $store->append($message);
+        }
+
+        $requests = [];
+        $session = $this->session(
+            [],
+            streamFn: function (Model $model, TranscriptContext $context) use (&$requests): AssistantMessageEventStream {
+                $requests[] = $context->messages;
+
+                return $this->replay('done');
+            },
+            store: $store,
+            hooks: $this->hooks(['session_before_compact' => static fn (SessionBeforeCompactEvent $event) => new SessionBeforeCompactResult(
+                compaction: new \Pig\CodingAgent\Session\CompactionResult('summary', $event->preparation->firstKeptEntryId, $event->preparation->tokensBefore),
+            )]),
+        );
+        $session->restore($store->messages());
+
+        Async::run(static fn () => $session->prompt('continue'));
+        self::settle();
+
+        $reopened = SessionManager::open($store->path)->messages();
+        unlink($store->path);
+
+        $this->assertCount(1, $requests);
+        $this->assertSame([], array_values(array_filter($requests[0], static fn (mixed $m): bool => $m instanceof ToolResultMessage)), 'no result without its call');
+        $this->assertSame([], array_values(array_filter($requests[0], static fn (mixed $m): bool => $m instanceof AssistantMessage && $m->stopReason === StopReason::Length)));
+        $this->assertSame([], array_values(array_filter($reopened, static fn (mixed $m): bool => $m instanceof ToolResultMessage)), 'and a resume does not bring it back');
+    }
+
     public function testAFailedCompactionIsReportedInUpstreamsWords(): void
     {
         $failed = [];

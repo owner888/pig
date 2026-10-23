@@ -168,6 +168,17 @@ final class Overflow
     }
 
     /**
+     * Upstream's `isRecoverableLength()`: "Check whether a length stop ended below the caller or
+     * model's intended output limit. Such responses may be caused by context pressure or
+     * provider-side truncation, so callers can make one bounded compact-and-retry attempt.
+     * `desiredMaxOutput` must be the original limit before any context-based clamping."
+     */
+    public static function isRecoverableLength(AssistantMessage $message, int $desiredMaxOutput): bool
+    {
+        return $message->stopReason === StopReason::Length && $desiredMaxOutput > 0 && $message->usage->output < $desiredMaxOutput;
+    }
+
+    /**
      * Who each pattern was written for.
      *
      * For a test that wants to prove the table is annotated, and for anyone adding a provider:

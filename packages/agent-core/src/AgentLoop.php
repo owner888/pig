@@ -12,6 +12,7 @@ use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
+use Pig\Ai\StopReason;
 use Pig\Ai\Stream;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
@@ -403,13 +404,18 @@ final class AgentLoop
                 $toolResults = [];
 
                 if ($hasMoreToolCalls) {
-                    [$toolResults, $steeringAfterTools] = self::executeToolCalls(
-                        $context,
-                        $message,
-                        $signal,
-                        $emit,
-                        $config,
-                    );
+                    // Upstream's: "A "length" stop means the output was cut off by the token limit, so
+                    // every tool call in the message may carry truncated arguments. Fail them all
+                    // instead of executing potentially borked calls."
+                    [$toolResults, $steeringAfterTools] = $message->stopReason === StopReason::Length
+                        ? [self::failToolCallsFromTruncatedMessage($toolCalls, $emit), null]
+                        : self::executeToolCalls(
+                            $context,
+                            $message,
+                            $signal,
+                            $emit,
+                            $config,
+                        );
 
                     foreach ($toolResults as $result) {
                         $context->append($result);
@@ -746,6 +752,29 @@ final class AgentLoop
         }
 
         return [$results, $steering];
+    }
+
+    /**
+     * Upstream's `failToolCallsFromTruncatedMessage()`: "Streamed tool-call arguments are finalized
+     * with a best-effort JSON salvage parser, so a truncated message can yield tool calls whose
+     * arguments parse and validate but are silently incomplete. None of them are safe to execute;
+     * report each as an error so the model can re-issue them."
+     *
+     * @param list<ToolCall>            $toolCalls
+     * @param Closure(AgentEvent): void $emit
+     * @return list<ToolResultMessage>
+     */
+    private static function failToolCallsFromTruncatedMessage(array $toolCalls, Closure $emit): array
+    {
+        return array_map(static fn (ToolCall $toolCall): ToolResultMessage => self::toolResult(
+            $toolCall,
+            new AgentToolResult([new TextContent(
+                "Tool call \"{$toolCall->name}\" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+            )]),
+            true,
+            $emit,
+            announce: true,
+        ), $toolCalls);
     }
 
     /** @param Closure(AgentEvent): void $emit */

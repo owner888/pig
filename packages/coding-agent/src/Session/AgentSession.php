@@ -3907,8 +3907,8 @@ final class AgentSession
      * upstream's order:
      *
      * 1. **Overflow with retry** — a context-overflow error (or a length stop): the failed turn is
-     *    taken off the conversation (`dropLastAssistantMessage()`, upstream's
-     *    `_omitRecoveryAttempt()`), the session compacted, and the turn sent again.
+     *    taken off the conversation with the tool results that answered it (`omitRecoveryAttempt()`),
+     *    the session compacted, and the turn sent again.
      * 2. **Overflow without retry** — a response that completed but used more than the window:
      *    compacted, and the response kept, since a completed answer cannot be continued.
      * 3. **The threshold** — the context the message reports (or, for a failed or usage-less one,
@@ -3947,12 +3947,20 @@ final class AgentSession
 
         // Cases 1 and 2. Only for the model that produced the message: an overflow on a smaller
         // model is not a reason to compact for the larger one somebody has since switched to.
-        if ($messageModel !== null && Overflow::happened($message, $messageModel->contextWindow)) {
+        // Upstream's `recoverableLength` too: "A length stop is recoverable when output ended below
+        // the model's original desired limit" — while the attempt is still in the context, since an
+        // omitted one has already been recovered from.
+        $contextOverflow = $messageModel !== null && Overflow::happened($message, $messageModel->contextWindow);
+        $recoverableLength = $messageModel !== null
+            && in_array($message, $this->agent->state->messages, true)
+            && Overflow::isRecoverableLength($message, $messageModel->maxTokens);
+
+        if ($contextOverflow || $recoverableLength) {
             // pig's own, before either: a system prompt that is past the window on its own — a
             // project's context files grown beyond a smaller model — leaves a summary nothing to
             // make room in, and upstream's way round compacts, retries, overflows again and ends on
             // "recovery failed", with the provider's 400 the only clue. Said once, plainly.
-            $tooLarge = $this->promptTooLarge($messageModel);
+            $tooLarge = $contextOverflow ? $this->promptTooLarge($messageModel) : null;
 
             if ($tooLarge !== null) {
                 if ($this->promptTooLargeSaidFor !== $message) {
@@ -3971,7 +3979,9 @@ final class AgentSession
             // Upstream's guard: the retry after a summary overflowed again, so a second summary
             // would only go round once more. Said as a `compaction_end` with nothing started.
             if ($this->overflowRecoveryAttempted) {
-                $errorMessage = 'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.';
+                $errorMessage = $contextOverflow
+                    ? 'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.'
+                    : 'Truncated response recovery failed after one compact-and-retry attempt.';
                 $this->announce(new CompactionEndEvent('overflow', null, false, false, $errorMessage));
                 $this->hooks?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $errorMessage, willRetry: false, fromExtension: false));
 
@@ -3979,7 +3989,7 @@ final class AgentSession
             }
 
             $this->overflowRecoveryAttempted = true;
-            $this->dropLastAssistantMessage();
+            $this->omitRecoveryAttempt($message);
 
             return $this->runAutoCompaction('overflow', willRetry: true);
         }
@@ -4144,6 +4154,55 @@ final class AgentSession
         if ($entryId !== null) {
             $this->store?->appendContextEdit($entryId, null);
             $this->announceAppendedEntry();
+        }
+    }
+
+    /**
+     * Upstream's `_omitRecoveryAttempt()`: take a failed attempt off the agent's state **with the
+     * tool results that answered its calls**, and write a context edit for each. "An unpaired result
+     * fails the next request (#11227)": a length stop's truncated tool call still ran — and failed —
+     * so its result follows it, and the attempt is not always the last message. Before the run the
+     * attempt comes from `prepareRun()`'s look back for the last assistant message, which may be
+     * followed by its results; leaving those behind made every later request a 400.
+     */
+    private function omitRecoveryAttempt(AssistantMessage $message): void
+    {
+        $messages = $this->agent->state->messages;
+        $index = array_search($message, $messages, true);
+
+        if ($index === false) {
+            return;
+        }
+
+        $toolCallIds = [];
+
+        foreach ($message->content as $block) {
+            if ($block instanceof ToolCall) {
+                $toolCallIds[$block->id] = true;
+            }
+        }
+
+        $targets = [$index => $message];
+
+        for ($i = $index + 1, $n = count($messages); $i < $n; $i++) {
+            if ($messages[$i] instanceof AssistantMessage) {
+                break;
+            }
+
+            if ($messages[$i] instanceof ToolResultMessage && isset($toolCallIds[$messages[$i]->toolCallId])) {
+                $targets[$i] = $messages[$i];
+            }
+        }
+
+        $this->agent->replaceMessages(array_values(array_diff_key($messages, $targets)));
+
+        foreach ($targets as $target) {
+            $entryId = $this->store?->entryOf($target);
+
+            if ($entryId !== null) {
+                $this->store?->appendContextEdit($entryId, null);
+                $this->announceAppendedEntry();
+            }
         }
     }
 
