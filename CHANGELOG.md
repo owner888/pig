@@ -43,7 +43,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [0.9.0] - 2026-10-23
+
+Upstream pi 1.2–1.4, second batch: one provider selection policy for `--model`, stacked extension dialogs, truncated-response recovery.
 
 ### Changed
 
