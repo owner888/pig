@@ -3170,13 +3170,16 @@ final class InteractiveMode
     }
 
     /**
-     * `/share`: the session as a secret GitHub gist, and a link to view it — upstream's
-     * `shareSession()` on its gist road (see `SessionShare` for the Radius one pig has not got).
+     * `/share` — upstream's `shareSession()`: "Share the current session through Radius, falling
+     * back to a private gist", as `sessionShareDestination` says (`auto`, the default, tries
+     * Radius first when it is signed in; `gist` goes straight to the gist; `radius` only uploads
+     * there).
      *
-     * `gh` has to be installed and signed in; the HTML export goes into a temporary directory,
-     * `gh gist create --public=false` uploads it, and the answer is the viewer URL
-     * (`PIG_SHARE_VIEWER_URL`, `#<gist id>`) and the gist's own. Escape stops the upload, under the
-     * same spinner `/compact` uses.
+     * The Radius road posts the branch's JSONL export, with the trailing entry a viewer reads
+     * (`SessionShare::trailingEntries()`), and answers the artifact's URL. The gist road needs `gh`
+     * installed and signed in: the HTML export goes into a temporary directory, `gh gist create
+     * --public=false` uploads it, and the answer is the viewer URL (`PIG_SHARE_VIEWER_URL`,
+     * `#<gist id>`) and the gist's own. Escape stops either upload, under the spinner `/compact` uses.
      */
     private function shareSession(): void
     {
@@ -3188,6 +3191,80 @@ final class InteractiveMode
             return;
         }
 
+        Async::spawn(function () use ($store): void {
+            try {
+                $jsonl = $store->serializeBranch(fn (?string $parent, string $timestamp): array => SessionShare::trailingEntries($this->session, $parent, $timestamp));
+            } catch (Throwable $error) {
+                $this->sayError('Failed to export session: ' . $error->getMessage());
+
+                return;
+            }
+
+            $destination = $this->settings->sessionShareDestination();
+
+            if ($destination !== 'gist') {
+                if ($this->shareViaRadius($jsonl)) {
+                    return;
+                }
+
+                if ($destination === 'radius') {
+                    $this->sayError("Radius authentication is not configured. Run '/login radius' first.");
+
+                    return;
+                }
+            }
+
+            $this->shareViaGist($store);
+        });
+    }
+
+    /**
+     * Upstream's `tryShareViaRadius()`: false when there is no Radius sign-in to upload with, so
+     * the caller can fall back; true once an upload was tried, whatever came of it.
+     */
+    private function shareViaRadius(string $jsonl): bool
+    {
+        try {
+            $token = $this->auth?->hasKeyFor('radius') === true ? $this->auth->apiKey('radius') : null;
+        } catch (Throwable) {
+            $token = null;
+        }
+
+        if ($token === null || $token === '') {
+            return false;
+        }
+
+        $controller = new AbortController();
+        $this->compaction = $controller;
+        $this->showLoader('Uploading to Radius...');
+
+        try {
+            $url = SessionShare::uploadToRadius($jsonl, $token, signal: $controller->signal);
+            $failure = null;
+        } catch (Throwable $error) {
+            $url = null;
+            $failure = $error->getMessage();
+        } finally {
+            $this->compaction = null;
+            $this->hideLoader();
+        }
+
+        if ($controller->signal->aborted()) {
+            $this->say('Share cancelled');
+        } elseif ($url !== null) {
+            $this->say("Share URL: {$url}");
+        } else {
+            $this->sayError((string) $failure);
+        }
+
+        $this->tui->requestRender();
+
+        return true;
+    }
+
+    /** Upstream's gist road: `gh` signed in, the HTML export as a secret gist. */
+    private function shareViaGist(SessionManager $store): void
+    {
         $gh = SessionList::onPath('gh');
 
         if ($gh === null) {
@@ -3196,83 +3273,81 @@ final class InteractiveMode
             return;
         }
 
-        Async::spawn(function () use ($store, $gh): void {
-            [$authCode] = Process::runAsync([$gh, 'auth', 'status'], 30.0);
+        [$authCode] = Process::runAsync([$gh, 'auth', 'status'], 30.0);
 
-            if ($authCode !== 0) {
-                $this->sayError("GitHub CLI is not logged in. Run 'gh auth login' first.");
+        if ($authCode !== 0) {
+            $this->sayError("GitHub CLI is not logged in. Run 'gh auth login' first.");
+
+            return;
+        }
+
+        $directory = sys_get_temp_dir() . '/pig-share-' . bin2hex(random_bytes(6));
+
+        if (!mkdir($directory, 0o700)) {
+            $this->sayError("Failed to export session: could not create {$directory}");
+
+            return;
+        }
+
+        $html = "{$directory}/session.html";
+
+        try {
+            try {
+                HtmlExport::write($store, $html);
+            } catch (Throwable $error) {
+                $this->sayError('Failed to export session: ' . $error->getMessage());
 
                 return;
             }
 
-            $directory = sys_get_temp_dir() . '/pig-share-' . bin2hex(random_bytes(6));
-
-            if (!mkdir($directory, 0o700)) {
-                $this->sayError("Failed to export session: could not create {$directory}");
-
-                return;
-            }
-
-            $html = "{$directory}/session.html";
+            $controller = new AbortController();
+            $this->compaction = $controller;
+            $this->showLoader('Creating gist...');
 
             try {
-                try {
-                    HtmlExport::write($store, $html);
-                } catch (Throwable $error) {
-                    $this->sayError('Failed to export session: ' . $error->getMessage());
-
-                    return;
-                }
-
-                $controller = new AbortController();
-                $this->compaction = $controller;
-                $this->showLoader('Creating gist...');
-
-                try {
-                    [$code, $stdout, $stderr] = Process::runAsync(
-                        [$gh, 'gist', 'create', '--public=false', $html],
-                        300.0,
-                        signal: $controller->signal,
-                    );
-                } finally {
-                    $this->compaction = null;
-                    $this->hideLoader();
-                }
-
-                if ($controller->signal->aborted()) {
-                    $this->say('Share cancelled');
-
-                    return;
-                }
-
-                if ($code !== 0) {
-                    $this->sayError('Failed to create gist: ' . (trim($stderr) !== '' ? trim($stderr) : 'Unknown error'));
-
-                    return;
-                }
-
-                $gistUrl = trim($stdout);
-                $parts = explode('/', $gistUrl);
-                $gistId = end($parts);
-
-                if ($gistId === false || $gistId === '') {
-                    $this->sayError('Failed to parse gist ID from gh output');
-
-                    return;
-                }
-
-                $viewer = SessionShare::viewerUrl($gistId);
-                $this->say("Share URL: {$viewer}\nGist: {$gistUrl}");
+                [$code, $stdout, $stderr] = Process::runAsync(
+                    [$gh, 'gist', 'create', '--public=false', $html],
+                    300.0,
+                    signal: $controller->signal,
+                );
             } finally {
-                // Upstream's `rmSync(tempDir, { force: true })`: the file may never have been written.
-                if (is_file($html)) {
-                    unlink($html);
-                }
-
-                rmdir($directory);
-                $this->tui->requestRender();
+                $this->compaction = null;
+                $this->hideLoader();
             }
-        });
+
+            if ($controller->signal->aborted()) {
+                $this->say('Share cancelled');
+
+                return;
+            }
+
+            if ($code !== 0) {
+                $this->sayError('Failed to create gist: ' . (trim($stderr) !== '' ? trim($stderr) : 'Unknown error'));
+
+                return;
+            }
+
+            $gistUrl = trim($stdout);
+            $parts = explode('/', $gistUrl);
+            $gistId = end($parts);
+
+            if ($gistId === false || $gistId === '') {
+                $this->sayError('Failed to parse gist ID from gh output');
+
+                return;
+            }
+
+            $viewer = SessionShare::viewerUrl($gistId);
+            $this->say("Share URL: {$viewer}\nGist: {$gistUrl}");
+        } finally {
+            // Upstream's `rmSync(tempDir, { force: true })`: the file may never have been written.
+            if (is_file($html)) {
+                unlink($html);
+            }
+
+            rmdir($directory);
+            $this->tui->requestRender();
+        }
     }
 
     private function exportPrDescription(string $customPath): void
@@ -6768,6 +6843,13 @@ final class InteractiveMode
             values: Settings::TRANSPORTS,
         );
         $rows[] = new SettingItem(
+            'shareDestination',
+            'Session share destination',
+            $this->settings->sessionShareDestination(),
+            'Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)',
+            values: Settings::SESSION_SHARE_DESTINATIONS,
+        );
+        $rows[] = new SettingItem(
             'autoCompact',
             'Auto-compact',
             $this->settings->compactionEnabled() ? 'on' : 'off',
@@ -7122,6 +7204,7 @@ final class InteractiveMode
             'installTelemetry' => $this->settings->setInstallTelemetry($value === 'true'),
             'mermaid' => $this->useMermaidRenderingMode($value),
             'transport' => $this->settings->setTransport(in_array($value, Settings::TRANSPORTS, true) ? $value : 'auto'),
+            'shareDestination' => $this->settings->setSessionShareDestination(in_array($value, Settings::SESSION_SHARE_DESTINATIONS, true) ? $value : 'auto'),
             'editorPaddingX' => $this->useEditorPaddingX((int) $value),
             'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),

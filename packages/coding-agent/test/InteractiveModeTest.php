@@ -5060,8 +5060,8 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('Theme', $screen);
         $this->assertStringContainsString('dark', $screen);
+        $this->assertStringContainsString('Session share destination', $screen);
         $this->assertStringContainsString('Auto-compact', $screen);
-        $this->assertStringContainsString('Auto-retry', $screen);
         $this->assertStringContainsString('esc when done', $screen);
     }
 
@@ -5313,7 +5313,7 @@ final class InteractiveModeTest extends TestCase
         // Which is the honest answer: both are true at once, so both are drawn. Sharing one
         // container meant whichever wrote last was the only one you could see.
         $this->assertStringContainsString('Working', $screen);
-        $this->assertStringContainsString('Auto-retry', $screen);
+        $this->assertStringContainsString('Auto-compact', $screen);
 
         $held();
         $this->settle();
@@ -5875,6 +5875,17 @@ final class InteractiveModeTest extends TestCase
             putenv("PATH={$path}");
             putenv('PIG_SHARE_VIEWER_URL');
         }
+    }
+
+    public function testShareToRadiusWithoutASignInSaysHowToGetOne(): void
+    {
+        // Upstream's `sessionShareDestination: "radius"`: no gist to fall back on.
+        $this->start(['the answer'], store: true, settings: Settings::inMemory(['sessionShareDestination' => 'radius']));
+        $this->type('/share');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString("Radius authentication is not configured. Run '/login radius' first.", $this->screenText());
     }
 
     public function testShareWithoutGhSaysWhereToGetIt(): void

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added Radius uploads to `/share`: signed in to Radius, the session's JSONL goes up as an organization artifact and the share URL is its link. The `sessionShareDestination` setting (also a `/settings` row) chooses `auto` (Radius when signed in, otherwise a GitHub gist; the default), `gist` or `radius` (upstream #10870).
+
 ## [0.9.1] - 2026-10-23
 
 ### Fixed

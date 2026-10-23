@@ -167,7 +167,7 @@ pig
   - `/compact`：手动触发会话上下文智能压缩摘要。
   - `/continue`：接着跑一次因 pig 停掉（崩溃、被杀、机器休眠）而中断的运行。打开一个中途停掉的会话时，会话下方会提示这一点，你不说就什么都不执行；停在中途的工具调用只有只读工具会重跑，其他的连同已经输出的内容告诉模型「被中断」。Web 界面显示同样的提示和一个「继续」按钮。
   - `/export [file.html|file.jsonl]`：将当前会话导出为离线单文件 HTML（自带语法高亮与折叠），或把当前分支导出为会话文件。
-  - `/import <file.jsonl>`：把会话文件复制进当前项目并恢复它。`/share`：把 HTML 导出上传为 GitHub 私密 gist（需要 `gh`）。
+  - `/import <file.jsonl>`：把会话文件复制进当前项目并恢复它。`/share`：已登录 Radius（`/login radius`）时上传到 Radius，否则把 HTML 导出上传为 GitHub 私密 gist（需要 `gh`）；`sessionShareDestination`（`auto`、`gist`、`radius`，`/settings` 里也有这一项）指定去处。
   - `/scoped-models`：选择 `Ctrl+P` 循环的模型范围，并可保存为 `enabledModels`。
   - `/reload`：不重启进程，热重载所有扩展、Skills、提示模板、主题、快捷键、工具与项目上下文文件（`CLAUDE.md` / `AGENTS.md`）。声明了 PHP 类的扩展在重载后仍运行启动时加载的那个版本（PHP 无法卸载类）；文件已改动时重载会明确提示，重启 `pig` 即可生效。
   - `/doctor`：运行全面系统诊断，排查 PHP 扩展、网络端点、权限与外部工具依赖。

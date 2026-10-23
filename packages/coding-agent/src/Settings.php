@@ -791,6 +791,25 @@ final class Settings
         $this->set('enableInstallTelemetry', $enabled);
     }
 
+    /** Upstream's `SessionShareDestination` values, in the order `/settings` offers them. */
+    public const array SESSION_SHARE_DESTINATIONS = ['auto', 'gist', 'radius'];
+
+    /**
+     * Upstream's `getSessionShareDestination()`: where `/share` uploads — "`auto` uses Radius when
+     * authenticated and otherwise creates a GitHub gist", the default.
+     */
+    public function sessionShareDestination(): string
+    {
+        $value = $this->get('sessionShareDestination');
+
+        return $value === 'gist' || $value === 'radius' ? $value : 'auto';
+    }
+
+    public function setSessionShareDestination(string $destination): void
+    {
+        $this->set('sessionShareDestination', $destination);
+    }
+
     /** Upstream's `Transport` values, in the order `/settings` offers them. */
     public const array TRANSPORTS = ['sse', 'websocket', 'websocket-cached', 'auto'];
 

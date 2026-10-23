@@ -856,4 +856,13 @@ final class SettingsTest extends TestCase
         $this->assertTrue($settings->blockImages());
         $this->assertFalse($settings->imageAutoResize());
     }
+
+    public function testTheShareDestinationIsAutoUnlessGistOrRadius(): void
+    {
+        // Upstream's `getSessionShareDestination()`.
+        $this->assertSame('auto', Settings::inMemory()->sessionShareDestination());
+        $this->assertSame('gist', Settings::inMemory(['sessionShareDestination' => 'gist'])->sessionShareDestination());
+        $this->assertSame('radius', Settings::inMemory(['sessionShareDestination' => 'radius'])->sessionShareDestination());
+        $this->assertSame('auto', Settings::inMemory(['sessionShareDestination' => 'dropbox'])->sessionShareDestination());
+    }
 }

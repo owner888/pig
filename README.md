@@ -184,7 +184,7 @@ pig
   - `/compact`: Manually trigger conversation summarization.
   - `/continue`: Carry on a run that stopped when pig did (crashed, killed, the machine slept). A conversation opened mid-run says so under it and nothing runs until you ask; a tool call it stopped in is run again only if the tool only reads, otherwise the model is told it was interrupted, with what it had printed. The Web UI shows the same line with a Continue button.
   - `/export [file.html|file.jsonl]`: Export the session as a standalone offline HTML document with syntax highlighting, or the current branch as a session file.
-  - `/import <file.jsonl>`: Copy a session file into this project and resume it. `/share`: Upload the HTML export as a secret GitHub gist (needs `gh`).
+  - `/import <file.jsonl>`: Copy a session file into this project and resume it. `/share`: Upload the session to Radius when signed in (`/login radius`), otherwise the HTML export as a secret GitHub gist (needs `gh`); `sessionShareDestination` (`auto`, `gist`, `radius`, also a `/settings` row) picks one.
   - `/scoped-models`: Choose which models `Ctrl+P` cycles through, and save the choice as `enabledModels`.
   - `/reload`: Hot-reload extensions, skills, prompt templates, themes, keybindings, tools, and context files without restarting `pig`. An extension that declares PHP classes keeps running the version loaded at startup (PHP cannot unload a class) and the reload says so when its files changed — restart `pig` to pick that up.
   - `/doctor`: Run system diagnostic checks on PHP extensions, tools, permissions, and network endpoints.
