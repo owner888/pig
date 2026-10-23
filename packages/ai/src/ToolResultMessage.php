@@ -24,6 +24,9 @@ final readonly class ToolResultMessage
      *        command output; never sent to the model
      * @param ?Usage            $usage what the tool itself spent on models while it ran;
      *        "not part of main LLM context accounting", but part of the session's bill
+     * @param ?int              $durationMs milliseconds the tool's execution took, measured with a
+     *        monotonic clock; null for results written before it existed, and for calls that did
+     *        not run
      */
     public function __construct(
         public string $toolCallId,
@@ -33,6 +36,7 @@ final readonly class ToolResultMessage
         public mixed $details = null,
         ?int $timestamp = null,
         public ?Usage $usage = null,
+        public ?int $durationMs = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

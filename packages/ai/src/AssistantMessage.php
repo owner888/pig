@@ -46,7 +46,12 @@ final readonly class AssistantMessage
      *        every response it streams (`AgentLoop::streamAssistantResponse()`). Null outside the
      *        loop (a summary, a provider called directly) and on responses written before it existed
      *
-     * The six after `rawStopReason` follow it for the same reason it is last: they are upstream's
+     * @param int|null              $durationMs upstream's "milliseconds from `timestamp` until the
+     *        response ended, measured with a monotonic clock" — set by `AssistantMessageEventStream`
+     *        on the final message of a response it saw start. Null for messages written before it
+     *        existed and for deferred results fetched later
+     *
+     * The seven after `rawStopReason` follow it for the same reason it is last: they are upstream's
      * optional fields, absent from JSON when null, and appended so no positional call changes.
      */
     public function __construct(
@@ -66,6 +71,7 @@ final readonly class AssistantMessage
         public ?string $providerThinkingLevel = null,
         public ?array $deferred = null,
         public ?string $thinkingLevel = null,
+        public ?int $durationMs = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }
@@ -90,6 +96,31 @@ final readonly class AssistantMessage
             $this->providerThinkingLevel,
             $this->deferred,
             $thinkingLevel,
+            $this->durationMs,
+        );
+    }
+
+    /** This response timed — upstream's `message.durationMs = …` in `AssistantMessageEventStream`. */
+    public function withDurationMs(int $durationMs): self
+    {
+        return new self(
+            $this->content,
+            $this->api,
+            $this->provider,
+            $this->model,
+            $this->usage,
+            $this->stopReason,
+            $this->errorMessage,
+            $this->timestamp,
+            $this->rawStopReason,
+            $this->responseId,
+            $this->responseModel,
+            $this->endTurn,
+            $this->diagnostics,
+            $this->providerThinkingLevel,
+            $this->deferred,
+            $this->thinkingLevel,
+            $durationMs,
         );
     }
 

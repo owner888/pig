@@ -291,6 +291,16 @@ final class AgentSession
         // Upstream's `SessionManager.inMemory(cwd, { id })`: the id of a session that is not written
         // down (`--no-session --session-id`). Ignored while there is a store, whose id is the file's.
         ?string $sessionId = null,
+        // Upstream's `usesDefaultTools`: "Whether the initial tools come from the `defaultTools`
+        // setting. When true, a resumed session replaces them with the loadout its transcript
+        // records, with `defaultToolModifiers` applied." False when `--tools` named the tools or
+        // `--no-tools` / `--no-builtin-tools` cleared them. Upstream's option defaults to false and
+        // `createAgentSession()` works it out; true here, since every session built without
+        // `CodingAgent` — the tests' — starts from the defaults.
+        private readonly bool $usesDefaultTools = true,
+        // Upstream's `defaultToolModifiers`: the `--tools +name`/`-name` entries.
+        /** @var list<string> */
+        private readonly array $defaultToolModifiers = [],
     ) {
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
@@ -623,7 +633,13 @@ final class AgentSession
     public function restore(array $messages): void
     {
         $this->agent->replaceMessages($messages);
-        $this->restoreToolsFromTranscript();
+
+        // Upstream restores the recorded loadout when a session opens — its constructor, which a
+        // switched or forked session goes through too — only when the tools came from the defaults,
+        // and applies `--tools +name`/`-name` on top (#10785).
+        if ($this->usesDefaultTools) {
+            $this->restoreToolsFromTranscript($this->defaultToolModifiers);
+        }
     }
 
     /**
@@ -633,21 +649,52 @@ final class AgentSession
      * declared, but they do not depend on the active set, so the transcript's declarations are the
      * whole loadout." The declared tools that are not registered yet — an MCP server still
      * connecting, a tool `tool_search` had loaded — are pending until they are.
+     *
+     * @param list<string> $modifiers `+name`/`-name` entries applied to the restored loadout
      */
-    private function restoreToolsFromTranscript(): void
+    private function restoreToolsFromTranscript(array $modifiers = []): void
     {
         if ($this->loadout === null) {
             return;
         }
 
         $this->loadout->clearPending();
-        $current = Transcript::getCurrentSystemMessage($this->agent->state->messages);
+        // "All system messages on the branch, including those before a compaction. Compaction
+        // snapshots are derived from these, so replaying them gives the current loadout."
+        $systemMessages = array_values(array_filter(
+            $this->store !== null
+                ? array_map(static fn (SessionEntry $entry): mixed => $entry->message, $this->store->branchEntries())
+                : $this->agent->state->messages,
+            static fn (mixed $message): bool => $message instanceof SystemMessage,
+        ));
 
-        if ($current === null) {
+        // "No recorded loadout: keep the current tools."
+        if ($systemMessages === []) {
             return;
         }
 
-        $this->loadout->restore(array_map(static fn (Tool $tool): string => $tool->name, $current->toolsAdded ?? []));
+        // "Tools the branch ever added or removed. Removed tools stay inactive."
+        $mentioned = [];
+
+        foreach ($systemMessages as $message) {
+            foreach ([...($message->toolsAdded ?? []), ...($message->toolsRemoved ?? [])] as $tool) {
+                $mentioned[$tool->name] = true;
+            }
+        }
+
+        // "Extension tools the branch never mentioned were registered after it recorded its
+        // loadout, so they are activated like newly registered tools. Built-in tools follow
+        // `defaultTools` instead." (#11062)
+        $newTools = array_values(array_filter(
+            $this->loadout->customToolNames(),
+            fn (string $name): bool => !isset($mentioned[$name]) && $this->loadout->isActivatedOnRegistration($name),
+        ));
+
+        // "The recorded loadout plus the new tools, with `--tools +name`/`-name` applied."
+        $this->loadout->restore(Settings::applyToolModifiers(
+            [...array_map(static fn (Tool $tool): string => $tool->name, Transcript::getCurrentTools($systemMessages)), ...$newTools],
+            $modifiers,
+        ));
     }
 
     /**
@@ -1005,7 +1052,7 @@ final class AgentSession
         }
 
         if ($event instanceof ToolExecutionEndEvent) {
-            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError, $event->parentToolCallId));
+            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError, $event->durationMs, $event->parentToolCallId));
 
             return;
         }
@@ -1327,9 +1374,12 @@ final class AgentSession
         $name = $tool->definition()->name;
         $this->onAgentEvent(new ToolExecutionStartEvent($toolCallId, $name, $arguments, $parentToolCallId));
         $isError = false;
+        $startedAt = null;
+        $durationMs = null;
 
         try {
             $arguments = ToolArguments::validate($tool->definition(), new ToolCall($toolCallId, $name, $arguments));
+            $startedAt = hrtime(true);
             $result = $tool->execute(
                 $toolCallId,
                 $arguments,
@@ -1342,7 +1392,9 @@ final class AgentSession
                     $this->onAgentEvent(new ToolExecutionUpdateEvent($toolCallId, $name, $arguments, $partial, $parentToolCallId));
                 },
             );
+            $durationMs = AgentLoop::elapsedMs($startedAt);
         } catch (Throwable $error) {
+            $durationMs = $startedAt === null ? null : AgentLoop::elapsedMs($startedAt);
             $result = $error instanceof AgentError
                 ? new AgentToolResult([new TextContent($error->getMessage())], $error->details, $error->usage, $error->structuredContent)
                 : new AgentToolResult([new TextContent($error->getMessage())]);
@@ -1350,7 +1402,7 @@ final class AgentSession
         }
 
         unset($this->nestedCalls[$toolCallId]);
-        $this->onAgentEvent(new ToolExecutionEndEvent($toolCallId, $name, $result, $isError, $parentToolCallId));
+        $this->onAgentEvent(new ToolExecutionEndEvent($toolCallId, $name, $result, $isError, $durationMs, $parentToolCallId));
 
         return [$result, $isError];
     }
@@ -3168,7 +3220,9 @@ final class AgentSession
             }
         }
 
-        $this->restore($this->store->messages());
+        // Upstream's `navigateTree()`: the branch's loadout, whatever the tools came from at startup.
+        $this->agent->replaceMessages($this->store->messages());
+        $this->restoreToolsFromTranscript();
 
         $this->hooks?->emit(new SessionTreeEvent(
             $this->store->leaf(),

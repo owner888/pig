@@ -162,6 +162,30 @@ final class AgentLoopTest extends TestCase
         $this->assertSame(['bytes' => 120], $result->details);
     }
 
+    public function testAToolResultCarriesHowLongExecuteTookAndACallThatNeverRanHasNone(): void
+    {
+        $tool = new ScriptedTool('read', static function (): AgentToolResult {
+            usleep(20_000);
+
+            return new AgentToolResult([new TextContent('done')]);
+        });
+
+        [, $messages] = $this->drive(
+            [$this->wantsTool('read', ['path' => '/tmp/a']), $this->wantsTool('missing', []), $this->answer('ok')],
+            [new UserMessage('go')],
+            tools: [$tool],
+        );
+
+        $ran = $messages[2];
+        $this->assertInstanceOf(ToolResultMessage::class, $ran);
+        $this->assertGreaterThanOrEqual(15, $ran->durationMs);
+
+        $notFound = $messages[4];
+        $this->assertInstanceOf(ToolResultMessage::class, $notFound);
+        $this->assertTrue($notFound->isError);
+        $this->assertNull($notFound->durationMs);
+    }
+
     public function testAToolThatThrowsBecomesSomethingTheModelCanRead(): void
     {
         $tool = new ScriptedTool('read', static fn (): AgentToolResult => throw new RuntimeException('no such file'));

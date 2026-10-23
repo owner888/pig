@@ -21,6 +21,10 @@ final readonly class ToolCall implements AssistantContent
         public array $arguments,
         public ?string $thoughtSignature = null,
         public ?string $namespace = null,
+        // Upstream's `argumentsError`: "Set when the model's complete arguments text was not a valid
+        // JSON object. `arguments` is then `{}`. Describes the problem and includes the text the
+        // model sent; tool argument validation fails with it." (#10897)
+        public ?string $argumentsError = null,
     ) {
     }
 }

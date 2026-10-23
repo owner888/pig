@@ -262,7 +262,7 @@ class TuiMainScreen extends TuiBase
             return ($targetRow - $viewportTop) - ($hardwareCursorRow - $prevViewportTop);
         };
 
-        $newLines = $this->render($width);
+        $newLines = $this->resolveFakeCursors($this->render($width));
         if ($this->hasOverlayEntries()) {
             $newLines = $this->compositeOverlays($newLines, $width, $height);
         }

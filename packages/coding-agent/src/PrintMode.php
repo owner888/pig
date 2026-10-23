@@ -7,6 +7,7 @@ namespace Pig\CodingAgent;
 use Pig\Agent\AgentEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
+use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -164,7 +165,7 @@ final class PrintMode
      * to strip.
      *
      * @return int 1 when the turn ended in an error or an abort, which is worth a non-zero
-     *             exit rather than a silent empty line
+     *             exit rather than a silent empty line, or was cut off at the output limit
      */
     private function say(): int
     {
@@ -185,6 +186,13 @@ final class PrintMode
             if ($block instanceof TextContent) {
                 fwrite($this->out, $block->text . "\n");
             }
+        }
+
+        // The partial answer is printed, but a script must not take it for a whole one (#10799).
+        if ($last->stopReason === StopReason::Length) {
+            $this->complain('Response was truncated: the model reached its output token limit.');
+
+            return 1;
         }
 
         return 0;

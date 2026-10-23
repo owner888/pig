@@ -32,9 +32,6 @@ final class BranchSummarization
     /** What to leave for the prompt and the answer. Upstream's default. */
     public const int RESERVE_TOKENS = 16_384;
 
-    /** How much of the answer to allow, before the model's own cap. Upstream's `Math.min(4096, model.maxTokens)`. */
-    public const int MAX_TOKENS = 4_096;
-
     /** The window assumed for a model that states none — upstream's `model.contextWindow || 128000`. */
     private const int DEFAULT_CONTEXT_WINDOW = 128_000;
 
@@ -249,8 +246,8 @@ final class BranchSummarization
         $response = Compaction::completeSummarization(
             $model,
             Compaction::buildSummarizationContext("<conversation>\n{$conversationText}\n</conversation>\n\n{$instructions}"),
+            // No output cap of its own: the model's output limit, as upstream's `requestOptions` (#9512).
             new SimpleStreamOptions(
-                maxTokens: $model->maxTokens > 0 ? min(self::MAX_TOKENS, $model->maxTokens) : self::MAX_TOKENS,
                 signal: $signal,
                 apiKey: $apiKey,
                 headers: $headers,

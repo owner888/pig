@@ -1412,6 +1412,7 @@ final class SessionManager
                 $message->providerThinkingLevel,
                 $message->deferred,
                 $message->thinkingLevel,
+                $message->durationMs,
             ),
             $message instanceof ToolResultMessage => new ToolResultMessage(
                 $message->toolCallId,

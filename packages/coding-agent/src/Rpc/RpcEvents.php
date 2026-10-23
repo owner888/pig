@@ -134,6 +134,7 @@ final class RpcEvents
                 'toolName' => $event->toolName,
                 'result' => self::result($event->result),
                 'isError' => $event->isError,
+                ...($event->durationMs === null ? [] : ['durationMs' => $event->durationMs]),
                 ...self::parent($event->parentToolCallId),
             ],
 

@@ -533,6 +533,7 @@ final class FauxProvider implements StreamApi
             $message->providerThinkingLevel,
             $message->deferred,
             $message->thinkingLevel,
+            $message->durationMs,
         );
     }
 }

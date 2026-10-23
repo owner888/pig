@@ -43,6 +43,40 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.7.0] - 2026-10-23
+
+Upstream pi 1.1–1.4, first batch.
+
+### Added
+
+- Added `durationMs` to assistant messages (measured by `AssistantMessageEventStream` from the request's start), to tool result messages and to `tool_execution_end` (hook, RPC and JSON events): how long `execute()` took, on a monotonic clock. Tool rows show the recorded `Took`, also after a session is reloaded.
+- Added `argumentsError` to tool calls: a finished call whose arguments are not a JSON object no longer runs with the fields parsed before the error; validation fails and shows the model the text it sent.
+- Added `PIG_CLIPBOARD_OSC52=1`, and OSC 52 copies for SSH/mosh sessions and headless Linux, so a copy reaches a remote client's clipboard.
+- Added `TuiAltScreen::resetTextSelection()`; a rebuilt transcript drops the old selection.
+- Added Herdr and Rex terminal detection (OSC 8 hyperlinks, Kitty images).
+- Added `FakeCursor::renderFakeCursor()`: `Editor` and `Input` mark their drawn cursor and the renderer draws it, or leaves it out where `showHardwareCursor` puts the terminal cursor.
+- Added constraint tags (`@minimum 1 @maximum 100 @default 20`, …) to codemode tool declarations.
+
+### Changed
+
+- Resumed sessions restore their recorded tools only when the tools came from the defaults, apply `--tools +name/-name` on top, and activate extension tools the branch never mentioned.
+- Compaction and branch summaries use the model's output limit instead of a fixed cap, and no longer include thinking in the summarization request; `/compact <instructions>` also reaches the summary of a split turn.
+- Thinking from a different model is dropped on a model switch instead of being sent as text.
+- OpenAI-compatible streams handle reasoning before content, so a chunk carrying both keeps thinking before the answer.
+- Print mode prints a response cut off at the output limit, warns on stderr and exits 1.
+- `pig mcp list` reports `resources: true` instead of listing every resource.
+- Changed the default GitHub Copilot model to `gpt-6.1-sol`.
+
+### Fixed
+
+- Fixed Anthropic requests failing when the strict tool set exceeds the provider's limits: they are retried once with `prefer` tools non-strict.
+- Fixed automatic retry missing `stream disconnected before completion` and treating digits inside request ids or byte counts as status codes.
+- Fixed any HTTP 413 not counting as context overflow, and whitespace-only tool output being sent as-is to OpenAI and Google providers.
+- Fixed `\u` escapes such as `\usepackage` breaking tool-call argument parsing.
+- Fixed MCP tool calls failing on non-object `structuredContent`, cancelled MCP requests being sent after an OAuth refresh, an unverifiable `iss` being accepted at sign-in, and `mcp.json` with a BOM failing to parse.
+- Fixed `~` in `!pattern`, `+path` and `-path` resource setting entries, a symlinked `AGENTS.md` in a nested worktree being skipped, empty quoted prompt template arguments being dropped, and `@` file completion with regex metacharacters.
+- Fixed the `grep` tool following `RIPGREP_CONFIG_PATH` (`rg --no-config`), codemode joining output in quadratic time, a misplaced `// @options:` line being ignored, and unhandled wheel input under a focused overlay not scrolling the transcript.
+
 ## [0.6.99] - 2026-10-22
 
 ### Fixed

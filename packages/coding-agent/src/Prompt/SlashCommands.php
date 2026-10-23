@@ -178,6 +178,9 @@ final class SlashCommands
     {
         $arguments = [];
         $current = '';
+        // Upstream's `hasToken`: whether a token has started, so a quoted empty string (`""` or
+        // `''`) is kept as an argument and the ones after it keep their positions (#10867).
+        $hasToken = false;
         $quote = null;
 
         foreach (str_split($text) as $character) {
@@ -193,6 +196,7 @@ final class SlashCommands
 
             if ($character === '"' || $character === "'") {
                 $quote = $character;
+                $hasToken = true;
 
                 continue;
             }
@@ -200,18 +204,20 @@ final class SlashCommands
             // Upstream's `/\s/`, for the bytes it can be: a newline separates two arguments as a
             // space does.
             if (in_array($character, [' ', "\t", "\n", "\r", "\v", "\f"], true)) {
-                if ($current !== '') {
+                if ($hasToken) {
                     $arguments[] = $current;
                     $current = '';
+                    $hasToken = false;
                 }
 
                 continue;
             }
 
             $current .= $character;
+            $hasToken = true;
         }
 
-        if ($current !== '') {
+        if ($hasToken) {
             $arguments[] = $current;
         }
 

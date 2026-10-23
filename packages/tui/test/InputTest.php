@@ -7,6 +7,7 @@ namespace Pig\Tui\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Input;
+use Pig\Tui\FakeCursor;
 use Pig\Tui\Width;
 
 final class InputTest extends TestCase
@@ -332,7 +333,7 @@ final class InputTest extends TestCase
 
         // Reverse video, not a real cursor: the terminal's own cursor is hidden, because
         // one cursor that the renderer controls is easier than two that disagree.
-        $this->assertStringContainsString("\x1b[7ma\x1b[27m", $this->input->render(20)[0]);
+        $this->assertStringContainsString(FakeCursor::renderFakeCursor('a'), $this->input->render(20)[0]);
     }
 
     public function testSetValueLeavesTheCursorWhereItWas(): void
@@ -347,7 +348,7 @@ final class InputTest extends TestCase
     {
         $this->given('ab');
 
-        $this->assertStringContainsString("\x1b[7m \x1b[27m", $this->input->render(20)[0]);
+        $this->assertStringContainsString(FakeCursor::renderFakeCursor(' '), $this->input->render(20)[0]);
     }
 
     // ---- the way out -------------------------------------------------------------------

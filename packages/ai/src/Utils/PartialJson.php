@@ -36,6 +36,35 @@ namespace Pig\Ai\Utils;
 final class PartialJson
 {
     /**
+     * Upstream's `parseToolCallArguments()`: the model's complete arguments text of a finished tool
+     * call. "Unlike parseStreamingJson, this never keeps a partially parsed prefix: once the call is
+     * finished, text that is not a valid JSON object means the model sent malformed arguments. In
+     * that case `arguments` is `{}` and `argumentsError` describes the problem, including the text
+     * the model sent, so tool validation can report it back to the model."
+     *
+     * @return array{arguments: array<string, mixed>, argumentsError?: string}
+     */
+    public static function parseToolCallArguments(?string $json): array
+    {
+        if ($json === null || trim($json) === '') {
+            return ['arguments' => []];
+        }
+
+        try {
+            $parsed = JsonRepair::parse($json);
+
+            // A JSON array decodes to a PHP list too: the text says which it was.
+            if (!is_array($parsed) || str_starts_with(ltrim($json), '[')) {
+                throw new \JsonException('Tool arguments must be a JSON object');
+            }
+
+            return ['arguments' => $parsed];
+        } catch (\JsonException $error) {
+            return ['arguments' => [], 'argumentsError' => "{$error->getMessage()}\n\nReceived arguments:\n{$json}"];
+        }
+    }
+
+    /**
      * @return array<string, mixed> the object so far, or [] when nothing can be read yet
      */
     public static function parse(?string $json): array

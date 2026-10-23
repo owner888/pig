@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Components;
 
+use Pig\Tui\FakeCursor;
 use Closure;
 use Pig\Tui\Focusable;
 use Pig\Tui\Chars;
@@ -64,8 +65,6 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
     private readonly Closure $placeholderStyle;
 
     /** Reverse video for the block cursor, and back to normal. */
-    private const string CURSOR_ON = "\x1b[7m";
-    private const string CURSOR_OFF = "\x1b[27m";
 
     private const string PASTE_START = "\x1b[200~";
     private const string PASTE_END = "\x1b[201~";
@@ -566,7 +565,7 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
             $atCursor = Graphemes::split($placeholder)[0] ?? ' ';
             $afterCursor = substr($placeholder, strlen($atCursor));
             $marker = $this->focused ? TUI::CURSOR_MARKER : '';
-            $cursorChar = self::CURSOR_ON . ($this->placeholderStyle)($atCursor) . self::CURSOR_OFF;
+            $cursorChar = FakeCursor::renderFakeCursor(($this->placeholderStyle)($atCursor));
             $textWithCursor = $marker . $cursorChar . ($this->placeholderStyle)($afterCursor);
 
             return [$this->prompt . $textWithCursor . str_repeat(' ', max(0, $available - Width::visible($textWithCursor)))];
@@ -593,7 +592,7 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
                     // covers: half a character is not something a terminal can show.
                     $text .= str_repeat(' ', min($column + $cells, $end) - max($column, $start));
                 } else {
-                    $text .= $isCursor ? $marker . self::CURSOR_ON . $grapheme . self::CURSOR_OFF : $grapheme;
+                    $text .= $isCursor ? $marker . FakeCursor::renderFakeCursor($grapheme) : $grapheme;
                     $drawnCursor = $drawnCursor || $isCursor;
                 }
             }
@@ -604,7 +603,7 @@ final class Input implements Component, Focusable, InputHandler, MouseHandler
         if (!$drawnCursor && $this->cursor >= strlen($this->value)) {
             // The cursor sits past the last character, on the blank cell the scroll
             // window always leaves room for.
-            $text .= $marker . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
+            $text .= $marker . FakeCursor::renderFakeCursor(' ');
         }
 
         $line = $this->prompt . $text;

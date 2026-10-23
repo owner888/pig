@@ -792,7 +792,7 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('c1', $messages[2]['tool_call_id']);
     }
 
-    public function testThinkingFromAnotherProviderBecomesPlainText(): void
+    public function testThinkingFromAnotherProviderIsDropped(): void
     {
         $context = new Context([
             new UserMessage('hi'),
@@ -811,11 +811,10 @@ final class OpenAiCompletionsTest extends TestCase
 
         $assistant = $this->server->receivedJson()['messages'][1];
 
-        // A signed thinking block means nothing to a model that did not sign it, so it
-        // travels as text rather than claiming to be reasoning this model did — untagged, as
-        // upstream sends it, so the model does not learn to mimic the tags.
-        $this->assertStringNotContainsString('<thinking>', (string) json_encode($assistant));
-        $this->assertStringContainsString('deep thoughts', (string) json_encode($assistant));
+        // Thinking from another model is dropped (#10995): as text, the new model read it as part
+        // of its own visible answer.
+        $this->assertSame('the answer', $assistant['content']);
+        $this->assertStringNotContainsString('deep thoughts', (string) json_encode($assistant));
     }
 
     public function testReasoningEffortIsSentOnlyWhenTheModelReasons(): void

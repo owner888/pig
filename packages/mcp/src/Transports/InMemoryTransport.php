@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Mcp\Transports;
 
+use Pig\Async\AbortSignal;
 use Pig\Async\Loop;
 use Pig\Mcp\Protocol\McpConnectionClosedError;
 use Throwable;
@@ -54,7 +55,7 @@ final class InMemoryTransport extends TransportEvents
     }
 
     #[\Override]
-    public function send(array $message): void
+    public function send(array $message, ?AbortSignal $signal = null): void
     {
         if (!$this->started || $this->closed) {
             throw new McpConnectionClosedError();

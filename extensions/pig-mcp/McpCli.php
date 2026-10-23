@@ -525,14 +525,10 @@ final class McpCli
                     $report['toolExposure'] = $overrides;
                 }
 
+                // "Whether the server offers resources. They are not listed: listing every one can
+                // take long." (#10526)
                 if ($connection->hasResources) {
-                    try {
-                        $report['resources'] = count($connection->allResources());
-                        $report['resourceTemplates'] = count($connection->allResourceTemplates());
-                    } catch (\Throwable) {
-                        $report['resources'] = 0;
-                        $report['resourceTemplates'] = 0;
-                    }
+                    $report['resources'] = true;
                 }
 
                 if ($connection->state !== 'connected' && $connection->error !== null) {
@@ -586,7 +582,7 @@ final class McpCli
             }
 
             if (isset($report['resources'])) {
-                ($this->out)("  resources: {$report['resources']}, URI templates: {$report['resourceTemplates']}");
+                ($this->out)('  offers resources');
             }
 
             if (isset($report['error'])) {

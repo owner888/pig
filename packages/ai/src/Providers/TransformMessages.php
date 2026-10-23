@@ -202,25 +202,22 @@ final class TransformMessages
     }
 
     /** Upstream's thinking branch, in its order. Null drops the block. */
-    private static function thinking(ThinkingContent $block, bool $sameModel): ThinkingContent|TextContent|null
+    private static function thinking(ThinkingContent $block, bool $sameModel): ?ThinkingContent
     {
-        // Withheld reasoning is encrypted for the one model that wrote it, and has no text to
-        // pass on — only a placeholder — so anywhere else it is dropped.
-        if ($block->redacted === true) {
-            return $sameModel ? $block : null;
-        }
-
-        // Signed thinking is kept for its own model even with no text: OpenAI's encrypted
-        // reasoning has none, and the signature is what gets replayed.
-        if ($sameModel && $block->thinkingSignature !== null && $block->thinkingSignature !== '') {
-            return $block;
-        }
-
-        if (trim($block->thinking) === '') {
+        // "Thinking from another model is dropped. Signatures and encrypted reasoning are only
+        // valid for the model that produced them, and sending readable thinking as plain text
+        // makes the new model treat it as part of the visible reply." (#10995)
+        if (!$sameModel) {
             return null;
         }
 
-        return $sameModel ? $block : new TextContent($block->thinking);
+        // "Keep redacted and signed blocks even if the thinking text is empty (OpenAI encrypted
+        // reasoning); they are needed for replay."
+        if ($block->redacted === true || ($block->thinkingSignature !== null && $block->thinkingSignature !== '')) {
+            return $block;
+        }
+
+        return trim($block->thinking) === '' ? null : $block;
     }
 
     /**
@@ -248,7 +245,7 @@ final class TransformMessages
             ? $block
             // Upstream spreads the call (`{ ...toolCall, id }`), so everything else on it — its
             // `namespace` included — goes along.
-            : new ToolCall($id, $block->name, $block->arguments, $signature, $block->namespace);
+            : new ToolCall($id, $block->name, $block->arguments, $signature, $block->namespace, $block->argumentsError);
     }
 
     /** @param list<\Pig\Ai\AssistantContent> $content */
@@ -271,6 +268,7 @@ final class TransformMessages
             $message->providerThinkingLevel,
             $message->deferred,
             $message->thinkingLevel,
+            $message->durationMs,
         );
     }
 

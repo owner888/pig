@@ -249,13 +249,13 @@
    "headers": {
     "amz-sdk-request": "attempt=1; max=3",
     "authorization": "AWS4-HMAC-SHA256 Credential=AKID/D/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent",
-    "content-length": "756",
+    "content-length": "728",
     "content-type": "application/json",
     "user-agent": "aws-sdk-js/3.1126.0 ua/2.1 lang/js api/bedrock-runtime#3.1126.0 m/N,E,e",
-    "x-amz-content-sha256": "1bafd9c2ea452a7021b42d7af7704db8c4c548ea5a55acf8f71501a66fd8326b",
+    "x-amz-content-sha256": "1b5e88e5303278f00413ed7967ba45ee05415e26dee2c9601a3ae6c3b3dea51d",
     "x-amz-user-agent": "aws-sdk-js/3.1126.0"
    },
-   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"/9j/anBlZ2RhdGE=\"}}},{\"text\":\"look\"}]},{\"role\":\"assistant\",\"content\":[{\"text\":\"unsigned thought\"},{\"toolUse\":{\"toolUseId\":\"call_abc_def_ghi_\",\"name\":\"read\",\"input\":{\"path\":\"x\"}}},{\"toolUse\":{\"toolUseId\":\"c2\",\"name\":\"noargs\",\"input\":{}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"call_abc_def_ghi_\",\"content\":[{\"text\":\"body\"}],\"status\":\"error\"}},{\"toolResult\":{\"toolUseId\":\"c2\",\"content\":[{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"go on\"}]}],\"system\":[{\"text\":\"sys\"}],\"inferenceConfig\":{\"temperature\":0.2},\"additionalModelRequestFields\":{\"reasoning\":{\"effort\":\"low\"}}}"
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"/9j/anBlZ2RhdGE=\"}}},{\"text\":\"look\"}]},{\"role\":\"assistant\",\"content\":[{\"toolUse\":{\"toolUseId\":\"call_abc_def_ghi_\",\"name\":\"read\",\"input\":{\"path\":\"x\"}}},{\"toolUse\":{\"toolUseId\":\"c2\",\"name\":\"noargs\",\"input\":{}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"call_abc_def_ghi_\",\"content\":[{\"text\":\"body\"}],\"status\":\"error\"}},{\"toolResult\":{\"toolUseId\":\"c2\",\"content\":[{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"go on\"}]}],\"system\":[{\"text\":\"sys\"}],\"inferenceConfig\":{\"temperature\":0.2},\"additionalModelRequestFields\":{\"reasoning\":{\"effort\":\"low\"}}}"
   },
   "attempts": [
    "attempt=1; max=3"

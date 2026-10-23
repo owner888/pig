@@ -176,6 +176,29 @@ final class PartialJsonTest extends TestCase
         return $part === $whole;
     }
 
+    public function testAFinishedCallsMalformedArgumentsAreAnErrorNotAPrefix(): void
+    {
+        // #10897: no longer the fields that parsed before the error.
+        $broken = PartialJson::parseToolCallArguments('{"path": "a.php", "limit": 1O}');
+        $this->assertSame([], $broken['arguments']);
+        $this->assertStringContainsString("Received arguments:\n{\"path\": \"a.php\", \"limit\": 1O}", $broken['argumentsError'] ?? '');
+
+        $list = PartialJson::parseToolCallArguments('[1, 2]');
+        $this->assertSame([], $list['arguments']);
+        $this->assertStringStartsWith('Tool arguments must be a JSON object', $list['argumentsError'] ?? '');
+
+        $this->assertSame(['arguments' => ['path' => 'a.php']], PartialJson::parseToolCallArguments('{"path": "a.php"}'));
+        $this->assertSame(['arguments' => []], PartialJson::parseToolCallArguments(''));
+    }
+
+    public function testAnInvalidUnicodeEscapeIsKeptAsText(): void
+    {
+        // #10868: `\usepackage` used to break the parse and drop the field and everything after it.
+        $parsed = PartialJson::parseToolCallArguments('{"content": "\\usepackage{amsmath}", "path": "a.tex"}');
+        $this->assertArrayNotHasKey('argumentsError', $parsed);
+        $this->assertSame(['content' => '\\usepackage{amsmath}', 'path' => 'a.tex'], $parsed['arguments']);
+    }
+
     private static function digits(int|float $number): string
     {
         return is_float($number) ? rtrim(rtrim(sprintf('%.10F', $number), '0'), '.') : (string) $number;

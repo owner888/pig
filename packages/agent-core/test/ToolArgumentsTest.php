@@ -18,6 +18,17 @@ use Pig\Ai\ToolCall;
  */
 final class ToolArgumentsTest extends TestCase
 {
+    public function testArgumentsThatWereNotAJsonObjectFailWithWhatWasSent(): void
+    {
+        // #10897: upstream's `validateToolCall()` reports `argumentsError` before the schema.
+        $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']]]);
+        $call = new ToolCall('c1', 'read', [], argumentsError: "Unexpected token\n\nReceived arguments:\n{\"path\":");
+
+        $this->expectException(InvalidToolArguments::class);
+        $this->expectExceptionMessage("Invalid arguments for tool \"read\": Unexpected token\n\nReceived arguments:\n{\"path\":");
+        ToolArguments::validate($tool, $call);
+    }
+
     public function testANullForAnOptionalParameterIsDropped(): void
     {
         $this->assertSame(['path' => 'a'], $this->validate(['path' => 'a', 'offset' => null, 'limit' => null]));

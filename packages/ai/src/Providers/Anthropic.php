@@ -8,6 +8,7 @@ use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
+use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -208,19 +209,27 @@ final class Anthropic
                 ? AnthropicFederation::client($this->endpoint($model, $apiKey ?? ''), $federation, $this->http)
                 : null;
 
-            // `buildParams()`, then `onPayload` — whose answer replaces the params, `{...next, stream:
-            // true}`.
-            $params = $this->params($model, $context, $options, $isOAuth);
-            $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+            $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
+            $disablePreferredStrictTools = false;
 
-            if ($nextParams !== null) {
-                $params = (array) $nextParams;
-                $params['stream'] = true;
-            }
+            // Upstream's loop: a request rejected for Anthropic's strict tool limits is sent once
+            // more with the `prefer` tools non-strict (#10409); `require` tools stay strict.
+            for (;;) {
+                $signal?->throwIfAborted();
+                // `buildParams()`, then `onPayload` — whose answer replaces the params, `{...next,
+                // stream: true}`.
+                $hasPreferredStrictTools = false;
+                $params = $this->params($model, $context, $options, $isOAuth, $disablePreferredStrictTools, $hasPreferredStrictTools);
+                $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
 
+                if ($nextParams !== null) {
+                    $params = (array) $nextParams;
+                    $params['stream'] = true;
+                }
+
+                try {
             // `retryProviderRequest(() => client.beta.messages.create(params, {signal, timeout,
             // maxRetries: 0}).asResponse(), {maxRetries, maxRetryDelayMs, signal})`.
-            $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
             $response = ProviderRetry::retryProviderRequest(
                 function () use ($model, $context, $options, $params, $isOAuth, $federationClient, $timeoutMs, $signal): Response {
                     try {
@@ -246,6 +255,23 @@ final class Anthropic
                 $options?->maxRetryDelayMs,
                 $signal,
             );
+
+                    break;
+                } catch (Throwable $error) {
+                    // "Only downgrade a rejected request, never an already-started stream."
+                    if (($signal?->aborted() ?? false) || $disablePreferredStrictTools || !$hasPreferredStrictTools || !self::isStrictToolLimitError($error)) {
+                        throw $error;
+                    }
+
+                    $disablePreferredStrictTools = true;
+                    $builder->addDiagnostic(new AssistantMessageDiagnostic(
+                        'anthropic_strict_tools_fallback',
+                        Timestamp::nowMs(),
+                        new DiagnosticErrorInfo($error->getMessage()),
+                        ['reason' => 'strict_tool_limits_exceeded'],
+                    ));
+                }
+            }
 
             if ($options?->onResponse !== null) {
                 ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], $model);
@@ -552,6 +578,11 @@ final class Anthropic
             return;
         }
 
+        // Upstream's `Object.assign(block, parseToolCallArguments(block.partialJson))` as the call ends.
+        if ($builder->snapshot()->content[$index] instanceof ToolCall) {
+            $builder->finishToolCall($index);
+        }
+
         $snapshot = $builder->snapshot();
         $block = $snapshot->content[$index];
 
@@ -680,7 +711,7 @@ final class Anthropic
      *
      * @return array<string, mixed>
      */
-    private function params(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth): array
+    private function params(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $disablePreferredStrictTools = false, bool &$hasPreferredStrictTools = false): array
     {
         // "Native tool changes keep the request-level tool list fixed and define every later tool
         // by value in a `tool_addition` block, which also expresses same-name redefinitions.
@@ -691,7 +722,7 @@ final class Anthropic
         $nativeToolChanges = ($compat?->supportsMidConvoSystemMessages ?? false)
             && ($compat?->supportsMidConvoToolChanges ?? false)
             && $initialTools !== [];
-        $body = $this->body($model, $context, $options, $isOAuth, $nativeToolChanges);
+        $body = $this->body($model, $context, $options, $isOAuth, $nativeToolChanges, $disablePreferredStrictTools, $hasPreferredStrictTools);
         $betas = $this->betaFeatures($model, $context, $isOAuth, $nativeToolChanges, $options);
 
         if ($betas === []) {
@@ -967,7 +998,11 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function body(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $nativeToolChanges = false): array
+    /**
+     * @param bool $hasPreferredStrictTools set when a `prefer` tool went out strict — upstream's
+     *        `hasPreferredStrictTools`, which decides whether a strict tool limit is worth a retry
+     */
+    private function body(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $nativeToolChanges = false, bool $disablePreferredStrictTools = false, bool &$hasPreferredStrictTools = false): array
     {
         $compat = self::compat($model);
         $midConvoEffort = $compat?->supportsMidConvoEffort === true;
@@ -981,12 +1016,23 @@ final class Anthropic
         $initialSystemText = $initialSystemMessage !== null ? Text::getSystemMessageText($initialSystemMessage) : '';
         $supportsStrictTools = $compat?->strictTools ?? false;
         $supportsEagerToolInputStreaming = $compat?->supportsEagerToolInputStreaming ?? true;
-        $convertToolDefinitions = $nativeToolChanges
-            ? fn (array $tools): array => array_map(
-                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
+        // Upstream's `convertToolDefinitions`: every conversion, the `tool_addition` blocks' too, notes
+        // whether a `prefer` tool went out strict.
+        $convert = function (array $tools) use ($isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools, $disablePreferredStrictTools, &$hasPreferredStrictTools): array {
+            $definitions = array_map(
+                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools, $disablePreferredStrictTools),
                 $tools,
-            )
-            : null;
+            );
+
+            foreach (array_values($tools) as $index => $tool) {
+                if (($definitions[$index]['strict'] ?? null) === true && self::prefersStrict($tool)) {
+                    $hasPreferredStrictTools = true;
+                }
+            }
+
+            return $definitions;
+        };
+        $convertToolDefinitions = $nativeToolChanges ? $convert : null;
         $body = [
             'model' => $model->id,
             'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null, $cacheControl, $initialSystemMessage !== null, $convertToolDefinitions),
@@ -1019,11 +1065,8 @@ final class Anthropic
         // generated catalogue sets on every `anthropic` provider model (`Models` does the same),
         // and `supportsEagerToolInputStreaming ?? true`.
         $toolCacheControl = ($compat?->supportsCacheControlOnTools ?? true) ? $cacheControl : null;
-        $convertTools = function (array $tools) use ($isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools, $toolCacheControl): array {
-            $converted = array_map(
-                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
-                $tools,
-            );
+        $convertTools = function (array $tools) use ($convert, $toolCacheControl): array {
+            $converted = $convert($tools);
 
             // Upstream's `convertTools(…, toolCacheControl)`: the cache breakpoint on the **last**
             // tool, so the tool list is part of the cached prefix — unless the model's compat says
@@ -1166,16 +1209,19 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function tool(Tool $tool, bool $isOAuth, bool $supportsEagerToolInputStreaming, bool $supportsStrictTools): array
+    private function tool(Tool $tool, bool $isOAuth, bool $supportsEagerToolInputStreaming, bool $supportsStrictTools, bool $disablePreferredStrictTools = false): array
     {
         // Upstream's `convertTools()`: a strict tool sends its whole strict schema with the legacy
         // three keys laid over it (`{ ...parameters, ...legacyInputSchema }`) and `strict: true`;
-        // any other tool sends the legacy three alone, as before.
-        $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling(
-            $tool,
-            $supportsStrictTools,
-            self::isStrictUnsupportedKeyword(...),
-        );
+        // any other tool sends the legacy three alone, as before. On the retry after a strict tool
+        // limit (`$disablePreferredStrictTools`) a `prefer` tool goes non-strict.
+        $strict = $disablePreferredStrictTools && self::prefersStrict($tool)
+            ? null
+            : ConstrainedSampling::resolveJsonSchemaStrictSampling(
+                $tool,
+                $supportsStrictTools,
+                self::isStrictUnsupportedKeyword(...),
+            );
         $parameters = ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict);
         $properties = ($parameters['properties'] ?? null) === []
             ? new \stdClass()
@@ -1205,6 +1251,41 @@ final class Anthropic
         $out['input_schema'] = $strict === true ? [...$parameters, ...$legacyInputSchema] : $legacyInputSchema;
 
         return $out;
+    }
+
+    /** A tool whose constrained sampling is `json_schema` with `strict: "prefer"`. */
+    private static function prefersStrict(Tool $tool): bool
+    {
+        $config = $tool->constrainedSampling;
+
+        return is_array($config) && ($config['type'] ?? null) === 'json_schema' && ($config['strict'] ?? null) === 'prefer';
+    }
+
+    /**
+     * Upstream's retry condition after a rejected request: a 400 `invalid_request_error` saying the
+     * strict tool set is past one of Anthropic's limits. The SDK error's `type` is the body's
+     * `error.type`, which the message (`400 {…}`) carries as JSON.
+     */
+    private static function isStrictToolLimitError(Throwable $error): bool
+    {
+        if (!$error instanceof ProviderHttpError || $error->status !== 400) {
+            return false;
+        }
+
+        $message = $error->getMessage();
+        $json = json_decode((string) substr($message, (int) strpos($message, ' ') + 1), true);
+
+        if (!is_array($json) || (($json['error'] ?? null)['type'] ?? null) !== 'invalid_request_error') {
+            return false;
+        }
+
+        foreach (['The compiled grammar is too large', 'Too many strict tools (', 'Schemas contains too many parameters with union types ('] as $limit) {
+            if (str_contains($message, $limit)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

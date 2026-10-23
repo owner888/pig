@@ -19,6 +19,11 @@ namespace Pig\Codemode;
  * The schema walk is upstream's: `$ref` resolved against the root with a cap on expansions,
  * `const` and `enum` as literal unions, `anyOf`/`oneOf` as unions, `allOf` as an intersection
  * (written `A&B`), tuples, additional properties, and property descriptions as comments.
+ *
+ * A property's comment also carries the constraints its type cannot express, as upstream's
+ * `constraintTags()` writes them (`// @minimum 1 @maximum 100 @default 20`). Upstream's first tag,
+ * `@integer`, is left out: TypeScript has only `number`, where the array shape here already says
+ * `int`.
  */
 final class Declarations
 {
@@ -29,6 +34,30 @@ final class Declarations
     private const int MAX_REF_EXPANSIONS = 32;
 
     private const string INDENT = '  ';
+
+    /** Upstream's `TAG_KEYWORDS`, in its order. */
+    private const array TAG_KEYWORDS = [
+        'minimum',
+        'exclusiveMinimum',
+        'maximum',
+        'exclusiveMaximum',
+        'multipleOf',
+        'minLength',
+        'maxLength',
+        'pattern',
+        'format',
+        'minItems',
+        'maxItems',
+    ];
+
+    private const array LOWER_BOUNDS = ['minimum', 'exclusiveMinimum', 'minLength', 'minItems'];
+
+    private const array UPPER_BOUNDS = ['maximum', 'exclusiveMaximum', 'maxLength', 'maxItems'];
+
+    private const int MAX_TAG_CHARS = 80;
+
+    /** Upstream's `LINE_TERMINATORS`: what splits a description into comment lines. */
+    private const string LINE_TERMINATORS = '/[\r\n\x{2028}\x{2029}]/u';
 
     /**
      * @param array{name: string, description?: ?string, inputSchema?: mixed, outputSchema?: mixed} $tool
@@ -52,12 +81,26 @@ final class Declarations
         return trim((string) ($tool['description'] ?? '')) . "\n\ncodemode tool declaration:\n```php\n" . self::signature($tool) . "\n```";
     }
 
+    /**
+     * "A result longer than `maxChars` is rendered again without the constraint tags, and renders
+     * as `unknown` if it is still too long" — `mixed` here.
+     */
     public static function schemaToType(mixed $schema, ?int $maxChars = null): string
     {
-        $context = ['root' => $schema, 'resolving' => [], 'expansions' => 0];
-        $type = self::toType($schema, $context);
+        $render = static function (bool $tags) use ($schema): string {
+            $context = ['root' => $schema, 'resolving' => [], 'expansions' => 0, 'tags' => $tags];
 
-        return $maxChars !== null && strlen($type) > $maxChars ? 'mixed' : $type;
+            return self::toType($schema, $context);
+        };
+        $type = $render(true);
+
+        if ($maxChars === null || strlen($type) <= $maxChars) {
+            return $type;
+        }
+
+        $untagged = $render(false);
+
+        return strlen($untagged) <= $maxChars ? $untagged : 'mixed';
     }
 
     private static function isObject(mixed $value): bool
@@ -258,19 +301,26 @@ final class Declarations
             return 'array{}';
         }
 
-        $described = array_filter($names, static fn (string $n): bool => self::descriptionOf($properties[$n]) !== '');
+        $comments = [];
 
-        if ($described === []) {
+        foreach ($names as $name) {
+            $lines = array_values(array_filter(
+                array_map(trim(...), preg_split(self::LINE_TERMINATORS, self::descriptionOf($properties[$name])) ?: []),
+                static fn (string $line): bool => $line !== '',
+            ));
+            $tags = $context['tags'] ? self::constraintTags($properties[$name]) : '';
+            $comments[] = $tags !== '' ? [...$lines, $tags] : $lines;
+        }
+
+        if (array_filter($comments) === []) {
             return 'array{' . implode(', ', $members) . '}';
         }
 
         $lines = ['array{'];
 
-        foreach ($names as $index => $name) {
-            foreach (preg_split('/\r?\n/', self::descriptionOf($properties[$name])) ?: [] as $line) {
-                if (trim($line) !== '') {
-                    $lines[] = self::INDENT . '// ' . trim($line);
-                }
+        foreach ($comments as $index => $comment) {
+            foreach ($comment as $line) {
+                $lines[] = self::INDENT . '// ' . $line;
             }
 
             $lines[] = self::INDENT . str_replace("\n", "\n" . self::INDENT, $members[$index]) . ',';
@@ -283,6 +333,105 @@ final class Declarations
         $lines[] = '}';
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Upstream's `constraintTags()`: "Constraints of a property that its TypeScript type cannot
+     * express, as JSDoc-style tags: `@integer @minimum 1 @maximum 100 @default 20`. Empty when there
+     * are none." Without `@integer` — see the class comment.
+     */
+    private static function constraintTags(mixed $schema): string
+    {
+        if (!self::isObject($schema)) {
+            return '';
+        }
+
+        $property = $schema;
+        // "Optional fields such as Pydantic's `int | None` keep their constraints in the non-null
+        // branch. The branch's constraints apply together with the property's, so both are read."
+        $variants = is_array($property['anyOf'] ?? null) ? $property['anyOf'] : ($property['oneOf'] ?? null);
+        $nonNull = is_array($variants)
+            ? array_values(array_filter($variants, static fn (mixed $variant): bool => !(is_array($variant) && ($variant['type'] ?? null) === 'null')))
+            : [];
+        $branch = count($nonNull) === 1 ? $nonNull[0] : null;
+        $branches = self::isObject($branch) ? [$property, $branch] : [$property];
+        // "Draft-04 and OpenAPI 3.0 make `minimum`/`maximum` exclusive with a boolean
+        // `exclusiveMinimum`/`exclusiveMaximum`."
+        $schemas = array_map(static function (array $one): array {
+            if (($one['exclusiveMinimum'] ?? null) === true) {
+                $one['exclusiveMinimum'] = $one['minimum'] ?? null;
+                unset($one['minimum']);
+            }
+
+            if (($one['exclusiveMaximum'] ?? null) === true) {
+                $one['exclusiveMaximum'] = $one['maximum'] ?? null;
+                unset($one['maximum']);
+            }
+
+            return $one;
+        }, $branches);
+
+        $tags = [];
+
+        foreach (self::TAG_KEYWORDS as $keyword) {
+            $values = array_map(static fn (array $one): mixed => $one[$keyword] ?? null, $schemas);
+            $lower = in_array($keyword, self::LOWER_BOUNDS, true);
+
+            if ($lower || in_array($keyword, self::UPPER_BOUNDS, true)) {
+                $numbers = array_values(array_filter($values, static fn (mixed $v): bool => is_int($v) || is_float($v)));
+
+                if ($numbers !== []) {
+                    $tags[] = "@{$keyword} " . self::numberText($lower ? max($numbers) : min($numbers));
+                }
+
+                continue;
+            }
+
+            $seen = [];
+
+            foreach ($values as $value) {
+                if (!is_int($value) && !is_float($value) && !is_string($value)) {
+                    continue;
+                }
+
+                $text = is_string($value) ? $value : self::numberText($value);
+
+                if (!isset($seen[$text])) {
+                    $seen[$text] = true;
+                    $tags[] = "@{$keyword} {$text}";
+                }
+            }
+        }
+
+        if (array_filter($schemas, static fn (array $one): bool => ($one['uniqueItems'] ?? null) === true) !== []) {
+            $tags[] = '@uniqueItems';
+        }
+
+        // "Annotations, unlike constraints, come from the property itself."
+        if (array_key_exists('default', $property) && $property['default'] !== null) {
+            $tags[] = '@default ' . json_encode($property['default'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+
+        if (($property['deprecated'] ?? null) === true) {
+            $tags[] = '@deprecated';
+        }
+
+        $tags = array_filter($tags, static fn (string $tag): bool => mb_strlen($tag) <= self::MAX_TAG_CHARS);
+
+        return implode(' ', array_map(
+            static fn (string $tag): string => (string) preg_replace_callback(
+                self::LINE_TERMINATORS,
+                static fn (array $m): string => sprintf('\\u%04x', mb_ord($m[0])),
+                $tag,
+            ),
+            $tags,
+        ));
+    }
+
+    /** A number as JavaScript's `${value}` writes it: `1` for `1.0`. */
+    private static function numberText(int|float $value): string
+    {
+        return is_float($value) && floor($value) === $value && abs($value) < 1e15 ? (string) (int) $value : (string) $value;
     }
 
     private static function propertyKey(string $name): string

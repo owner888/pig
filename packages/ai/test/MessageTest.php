@@ -200,6 +200,24 @@ final class MessageTest extends TestCase
         $this->assertArrayNotHasKey('stack', $encoded['diagnostics'][1]['error']);
     }
 
+    public function testDurationsSurviveTheSessionFileAndAreLeftOutWhenUnknown(): void
+    {
+        $answer = $this->assistant([new TextContent('hi')])->withDurationMs(1234);
+        $result = new ToolResultMessage('call-1', 'bash', [new TextContent('ok')], timestamp: 5, durationMs: 87);
+
+        $encodedAnswer = json_decode((string) json_encode(MessageJson::encode($answer)), true);
+        $encodedResult = json_decode((string) json_encode(MessageJson::encode($result)), true);
+
+        $this->assertSame(1234, $encodedAnswer['durationMs']);
+        // Before `timestamp`, where upstream's `createToolResultMessage()` spreads it.
+        $this->assertSame(['durationMs', 'timestamp'], array_slice(array_keys($encodedResult), -2));
+        $this->assertSame(1234, MessageJson::decode($encodedAnswer)->durationMs);
+        $this->assertSame(87, MessageJson::decode($encodedResult)->durationMs);
+
+        $this->assertArrayNotHasKey('durationMs', MessageJson::encode($this->assistant([new TextContent('hi')])));
+        $this->assertArrayNotHasKey('durationMs', MessageJson::encode(new ToolResultMessage('call-1', 'bash', [])));
+    }
+
     public function testAMessageWithNoneOfTheNewFieldsIsWrittenWithoutTheirKeys(): void
     {
         // Upstream leaves an undefined field out rather than writing a null, so a message that has
@@ -295,10 +313,10 @@ final class MessageTest extends TestCase
         $this->assertTrue($rewritten->endTurn);
         $this->assertSame($message->diagnostics, $rewritten->diagnostics);
         $this->assertSame($message->usage, $rewritten->usage);
-        // The redacted block is gone and the readable one became text.
-        $this->assertCount(2, $rewritten->content);
-        $this->assertInstanceOf(TextContent::class, $rewritten->content[0]);
-        $this->assertStringContainsString('why', $rewritten->content[0]->text);
+        // Both thinking blocks are gone: thinking from another model is dropped, not sent as text (#10995).
+        $this->assertCount(1, $rewritten->content);
+        $this->assertNotInstanceOf(ThinkingContent::class, $rewritten->content[0]);
+        $this->assertStringNotContainsString('why', (string) json_encode(MessageJson::encode($rewritten)));
     }
 
     public function testAnotherModelOfTheSameProviderAndApiGetsNoSignaturesBack(): void
@@ -317,16 +335,13 @@ final class MessageTest extends TestCase
         $rewritten = TransformMessages::apply([$message], $opus)[0];
 
         $this->assertInstanceOf(AssistantMessage::class, $rewritten);
-        $this->assertCount(3, $rewritten->content);
+        $this->assertCount(2, $rewritten->content);
 
-        // The thought becomes plain text, with no `<thinking>` tags for the model to mimic, and
-        // a signed block with no text has nothing left to carry, so it goes.
-        $this->assertEquals(new TextContent('why'), $rewritten->content[0]);
-
-        // Text keeps its words but not its signature; the call keeps everything but its thought
-        // signature.
-        $this->assertEquals(new TextContent('so'), $rewritten->content[1]);
-        $this->assertEquals(new ToolCall('c1', 'read', ['path' => 'a']), $rewritten->content[2]);
+        // Thinking from another model is dropped, signed or not (#10995): sent as text, the new
+        // model took it for part of its own visible answer. Text keeps its words but not its
+        // signature; the call keeps everything but its thought signature.
+        $this->assertEquals(new TextContent('so'), $rewritten->content[0]);
+        $this->assertEquals(new ToolCall('c1', 'read', ['path' => 'a']), $rewritten->content[1]);
     }
 
     public function testTheSameModelGetsItsSignaturesBackAndOnlyLosesThinkingWithNothingInIt(): void

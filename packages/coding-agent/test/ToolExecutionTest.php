@@ -925,6 +925,24 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), $this->raw($tool));
     }
 
+    public function testTookIsTheRecordedDurationAlsoAfterAReload(): void
+    {
+        // Live: the end event's duration wins over the row's own clock.
+        $live = new ToolExecutionComponent('bash', ['command' => 'make'], startedAt: microtime(true) - 53.14);
+        $live->updateResult(new AgentToolResult([new TextContent('built')]), false, false, durationMs: 1200);
+        $this->assertStringContainsString('Took 1.2s', $this->text($live));
+
+        // Reloaded: no start time, and the saved result still says how long it took.
+        $reloaded = new ToolExecutionComponent('bash', ['command' => 'make']);
+        $reloaded->updateResult(new AgentToolResult([new TextContent('built')]), false, false, durationMs: 2500);
+        $this->assertStringContainsString('Took 2.5s', $this->text($reloaded));
+
+        // A result saved before durations were recorded shows no timer at all.
+        $legacy = new ToolExecutionComponent('bash', ['command' => 'make']);
+        $legacy->updateResult(new AgentToolResult([new TextContent('built')]), false, false);
+        $this->assertStringNotContainsString('Took', $this->text($legacy));
+    }
+
     public function testBashShowsElapsedWhileRunningAndTookWhenComplete(): void
     {
         $now = microtime(true);

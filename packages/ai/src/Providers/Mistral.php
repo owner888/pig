@@ -1064,6 +1064,7 @@ final class Mistral
 
         // Every call ends when the stream does, in the order they began — upstream's last loop.
         foreach ($toolBlocksByKey as $index) {
+            $builder->finishToolCall($index);
             $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
         }
     }

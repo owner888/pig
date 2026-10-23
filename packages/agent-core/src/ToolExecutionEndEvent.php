@@ -15,6 +15,8 @@ final readonly class ToolExecutionEndEvent implements AgentEvent
         public string $toolName,
         public AgentToolResult $result,
         public bool $isError,
+        /** Milliseconds `execute()` took, measured with a monotonic clock; null when the tool did not run. */
+        public ?int $durationMs = null,
         public ?string $parentToolCallId = null,
     ) {
     }

@@ -34,6 +34,11 @@ final class ToolArguments
      */
     public static function validate(Tool $tool, ToolCall $call): array
     {
+        // Upstream's `validateToolCall()`: arguments that were not a JSON object fail with what was sent (#10897).
+        if ($call->argumentsError !== null) {
+            throw new InvalidToolArguments("Invalid arguments for tool \"{$call->name}\": {$call->argumentsError}");
+        }
+
         $arguments = self::normalizeOptionalNulls($call->arguments, $tool->parameters);
 
         if (!is_array($arguments)) {

@@ -89,6 +89,8 @@ final class MessageJson
                 'isError' => $message->isError,
                 'details' => self::plain($message->details),
                 ...($message->usage === null ? [] : ['usage' => self::encodeUsage($message->usage)]),
+                // Before `timestamp`, where upstream's `createToolResultMessage()` spreads it.
+                ...($message->durationMs === null ? [] : ['durationMs' => $message->durationMs]),
                 'timestamp' => $message->timestamp,
             ],
             default => null,
@@ -137,6 +139,7 @@ final class MessageJson
                 isset($entry['providerThinkingLevel']) ? (string) $entry['providerThinkingLevel'] : null,
                 is_array($entry['deferred'] ?? null) ? $entry['deferred'] : null,
                 isset($entry['thinkingLevel']) ? (string) $entry['thinkingLevel'] : null,
+                isset($entry['durationMs']) ? (int) $entry['durationMs'] : null,
             ),
             'toolResult' => new ToolResultMessage(
                 (string) ($entry['toolCallId'] ?? ''),
@@ -146,6 +149,7 @@ final class MessageJson
                 $entry['details'] ?? null,
                 $timestamp,
                 is_array($entry['usage'] ?? null) ? self::decodeUsage($entry['usage']) : null,
+                isset($entry['durationMs']) ? (int) $entry['durationMs'] : null,
             ),
             default => null,
         };
@@ -248,7 +252,7 @@ final class MessageJson
 
     /**
      * The optional fields — `rawStopReason`, `responseId`, `responseModel`, `endTurn`,
-     * `diagnostics`, `providerThinkingLevel`, `deferred`, `thinkingLevel` — each one present or not there at all.
+     * `diagnostics`, `providerThinkingLevel`, `deferred`, `thinkingLevel`, `durationMs` — each one present or not there at all.
      *
      * Upstream's fields are optional and `JSON.stringify` drops an undefined one, so a message
      * without them is written without the keys rather than with nulls — the shape a session file
@@ -269,6 +273,7 @@ final class MessageJson
             'providerThinkingLevel' => $message->providerThinkingLevel,
             'deferred' => $message->deferred,
             'thinkingLevel' => $message->thinkingLevel,
+            'durationMs' => $message->durationMs,
         ], static fn (mixed $value): bool => $value !== null);
     }
 
@@ -361,7 +366,8 @@ final class MessageJson
                     'thoughtSignature' => $block->thoughtSignature,
                     // Upstream writes the key only when the call has one (`...(item.namespace !==
                     // undefined ? { namespace } : {})`), so a call without one reads as before.
-                ] + ($block->namespace === null ? [] : ['namespace' => $block->namespace]),
+                ] + ($block->namespace === null ? [] : ['namespace' => $block->namespace])
+                    + ($block->argumentsError === null ? [] : ['argumentsError' => $block->argumentsError]),
                 default => null,
             };
 
@@ -401,6 +407,7 @@ final class MessageJson
                     (array) ($block['arguments'] ?? []),
                     $block['thoughtSignature'] ?? null,
                     is_string($block['namespace'] ?? null) ? $block['namespace'] : null,
+                    is_string($block['argumentsError'] ?? null) ? $block['argumentsError'] : null,
                 ),
                 default => null,
             };

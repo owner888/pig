@@ -107,8 +107,9 @@ final class Azure
     }
 
     /**
-     * Upstream's `lazyStream()` catch: `createSetupErrorMessage(model, error)` — an empty message
-     * with the error's text — pushed as the one error event, and the stream ended.
+     * Upstream's `lazyStream()` catch: `createSetupErrorMessage(model, error, outer.startedAt)` — an
+     * empty message with the error's text, stamped with the request's start — pushed as the one
+     * error event, and the stream ended.
      */
     private static function setupError(Model $model, Throwable $error): AssistantMessageEventStream
     {
@@ -121,6 +122,7 @@ final class Azure
             new Usage(0, 0, 0, 0, 0),
             StopReason::Error,
             $error->getMessage(),
+            $stream->startedAt(),
         );
         $stream->push(new ErrorEvent(StopReason::Error, $message));
         $stream->end();

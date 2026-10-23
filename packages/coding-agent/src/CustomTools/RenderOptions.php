@@ -13,8 +13,10 @@ namespace Pig\CodingAgent\CustomTools;
  *
  * `$isError` and `$timer` are upstream's `context.isError` and `toolTimerText()`: whether the
  * call failed, and `Elapsed 1.2s` / `Took 1.2s` for a tool that shows how long it ran — null
- * when nothing timed it. `renderCall` is given one too, as its third argument, for
- * upstream's `context.expanded`.
+ * when nothing timed it. `$durationMs` is upstream's `context.durationMs`: the milliseconds
+ * the tool's execution took, from the final result — null while it runs, when it did not run,
+ * or for results saved before durations were recorded. `renderCall` is given one too, as its
+ * third argument, for upstream's `context.expanded`.
  */
 final readonly class RenderOptions
 {
@@ -23,6 +25,7 @@ final readonly class RenderOptions
         public bool $partial = false,
         public bool $isError = false,
         public ?string $timer = null,
+        public ?int $durationMs = null,
     ) {
     }
 }

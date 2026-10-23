@@ -953,23 +953,19 @@ final class Compaction
                 continue;
             }
 
+            // Thinking is left out (upstream 1.2): replayed thinking is often not in the live
+            // context, so including it could make the summarization request larger than the
+            // context it summarizes and fail.
             if ($message instanceof AssistantMessage) {
-                $thinking = [];
                 $calls = [];
                 $hasText = false;
 
                 foreach ($message->content as $block) {
-                    if ($block instanceof ThinkingContent) {
-                        $thinking[] = $block->thinking;
-                    } elseif ($block instanceof ToolCall) {
+                    if ($block instanceof ToolCall) {
                         $calls[] = $block->name . '(' . self::arguments($block->arguments) . ')';
                     } elseif ($block instanceof TextContent) {
                         $hasText = true;
                     }
-                }
-
-                if ($thinking !== []) {
-                    $parts[] = '[Assistant thinking]: ' . implode("\n", $thinking);
                 }
 
                 if ($hasText) {
@@ -1205,7 +1201,7 @@ final class Compaction
     public static function generateSummary(
         array $currentMessages,
         Model $model,
-        int $reserveTokens,
+        ?int $reserveTokens,
         ?string $apiKey,
         ?array $headers = null,
         ?AbortSignal $signal = null,
@@ -1241,8 +1237,11 @@ final class Compaction
      *
      * The update prompt when there is a previous summary, "Additional focus" when there are
      * instructions, and the conversation serialised inside `<conversation>` tags so the model
-     * reads it rather than answers it. The output is capped at 80% of `$reserveTokens`, and by the
-     * model's own `maxTokens` when it declares one.
+     * reads it rather than answers it. No output cap of its own: the request gets the model's
+     * output limit, so long reasoning cannot use up a fixed summary budget (#9512).
+     *
+     * @param int|null $reserveTokens unused, as upstream's `_reserveTokens`: "Kept for existing
+     *        callers; summaries use the model's output limit"
      *
      * @param list<mixed> $currentMessages
      * @param array<string, string>|null $headers
@@ -1255,7 +1254,7 @@ final class Compaction
     public static function generateSummaryWithUsage(
         array $currentMessages,
         Model $model,
-        int $reserveTokens,
+        ?int $reserveTokens,
         ?string $apiKey,
         ?array $headers = null,
         ?AbortSignal $signal = null,
@@ -1268,8 +1267,6 @@ final class Compaction
         array $callbacks = [],
         ?string $sessionId = null,
     ): array {
-        $maxTokens = self::capped((int) floor(0.8 * $reserveTokens), $model);
-
         $basePrompt = $previousSummary !== null && $previousSummary !== '' ? self::UPDATE_SUMMARIZATION_PROMPT : self::SUMMARIZATION_PROMPT;
 
         if ($customInstructions !== null && $customInstructions !== '') {
@@ -1289,7 +1286,7 @@ final class Compaction
         $response = self::completeSummarization(
             $model,
             self::buildSummarizationContext($promptText),
-            self::summarizationOptions($model, $maxTokens, $apiKey, $headers, $env, $signal, $thinkingLevel, $sessionId),
+            self::summarizationOptions($model, $apiKey, $headers, $env, $signal, $thinkingLevel, $sessionId),
             $streamFn,
             $retry,
             $callbacks,
@@ -1370,7 +1367,6 @@ final class Compaction
             $turnPrefix = self::generateTurnPrefixSummary(
                 $preparation->turnPrefixMessages,
                 $model,
-                $reserveTokens,
                 $apiKey,
                 $headers,
                 $env,
@@ -1380,6 +1376,7 @@ final class Compaction
                 $retry,
                 $callbacks,
                 $sessionId,
+                $customInstructions,
             );
 
             $summary = "{$historyText}\n\n---\n\n**Turn Context (split turn):**\n\n{$turnPrefix['text']}";
@@ -1417,8 +1414,9 @@ final class Compaction
     }
 
     /**
-     * The beginning of a split turn, summarised — upstream's `generateTurnPrefixSummary()`. Half
-     * the reserve rather than 80%: it is one turn, not a history.
+     * The beginning of a split turn, summarised — upstream's `generateTurnPrefixSummary()`, with the
+     * `/compact` instructions as its "Additional focus" too: when the split turn was all that was new
+     * since the last compaction, this was the only summary and the instructions went nowhere (#11058).
      *
      * @param list<mixed> $messages
      * @param array<string, string>|null $headers
@@ -1430,7 +1428,6 @@ final class Compaction
     private static function generateTurnPrefixSummary(
         array $messages,
         Model $model,
-        int $reserveTokens,
         ?string $apiKey,
         ?array $headers,
         ?array $env,
@@ -1440,15 +1437,19 @@ final class Compaction
         ?array $retry,
         array $callbacks,
         ?string $sessionId,
+        ?string $customInstructions = null,
     ): array {
-        $maxTokens = self::capped((int) floor(0.5 * $reserveTokens), $model);
         $conversationText = self::serializeConversation(CodingAgent::toLlm($messages));
         $promptText = "# Conversation\n{$conversationText}\n\n# Instructions\n" . self::TURN_PREFIX_SUMMARIZATION_PROMPT;
+
+        if ($customInstructions !== null && $customInstructions !== '') {
+            $promptText = "{$promptText}\n\nAdditional focus: {$customInstructions}";
+        }
 
         $response = self::completeSummarization(
             $model,
             self::buildSummarizationContext($promptText),
-            self::summarizationOptions($model, $maxTokens, $apiKey, $headers, $env, $signal, $thinkingLevel, $sessionId),
+            self::summarizationOptions($model, $apiKey, $headers, $env, $signal, $thinkingLevel, $sessionId),
             $streamFn,
             $retry,
             $callbacks,
@@ -1482,7 +1483,6 @@ final class Compaction
      */
     private static function summarizationOptions(
         Model $model,
-        int $maxTokens,
         ?string $apiKey,
         ?array $headers,
         ?array $env,
@@ -1491,7 +1491,6 @@ final class Compaction
         ?string $sessionId,
     ): SimpleStreamOptions {
         return new SimpleStreamOptions(
-            maxTokens: $maxTokens,
             signal: $signal,
             apiKey: $apiKey,
             reasoning: $model->reasoning && $thinkingLevel !== null ? $thinkingLevel->toReasoning() : null,
@@ -1499,12 +1498,6 @@ final class Compaction
             headers: $headers,
             env: $env,
         );
-    }
-
-    /** `Math.min(budget, model.maxTokens > 0 ? model.maxTokens : Infinity)`. */
-    private static function capped(int $budget, Model $model): int
-    {
-        return $model->maxTokens > 0 ? min($budget, $model->maxTokens) : $budget;
     }
 
     private static function hasToolCall(AssistantMessage $response): bool

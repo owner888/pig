@@ -10,6 +10,7 @@ use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\SlashCommand;
 use Pig\Tui\Components\Editor;
+use Pig\Tui\FakeCursor;
 use Pig\Tui\Keybindings;
 use Pig\Tui\KeybindingsManager;
 use Pig\Tui\Width;
@@ -59,7 +60,7 @@ final class EditorTest extends TestCase
 
         $this->assertCount(3, $lines);
         $this->assertSame(str_repeat('─', 10), Ansi::strip($lines[0]));
-        $this->assertStringContainsString("\x1b[7m \x1b[27m", $lines[1]);
+        $this->assertStringContainsString(FakeCursor::renderFakeCursor(' '), $lines[1]);
     }
 
     public function testTypingLandsInTheText(): void
@@ -315,7 +316,7 @@ final class EditorTest extends TestCase
         $this->editor->setText('ab');
         $this->type("\x01");
 
-        $this->assertStringContainsString("\x1b[7ma\x1b[27m", $this->editor->render(20)[1]);
+        $this->assertStringContainsString(FakeCursor::renderFakeCursor('a'), $this->editor->render(20)[1]);
     }
 
     public function testAFullRowPutsTheCursorOnItsLastCharacter(): void
@@ -323,7 +324,7 @@ final class EditorTest extends TestCase
         // No cell is left to add one to, and adding one would wrap the row.
         $this->editor->setText('abcde');
 
-        $this->assertStringContainsString("\x1b[7me\x1b[27m", $this->editor->render(5)[1]);
+        $this->assertStringContainsString(FakeCursor::renderFakeCursor('e'), $this->editor->render(5)[1]);
         $this->assertSame(5, Width::visible($this->editor->render(5)[1]));
     }
 

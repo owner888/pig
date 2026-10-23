@@ -645,7 +645,7 @@ final class Bedrock
             $stream->push(new ThinkingEndEvent($index, $builder->textOf($index), $builder->snapshot()));
         } elseif ($type === 'toolCall') {
             // "Finalize in-place and strip the scratch buffer so replay only carries parsed arguments."
-            $builder->setJson($index, $builder->jsonOf($index));
+            $builder->finishToolCall($index);
             $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
         }
     }

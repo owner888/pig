@@ -232,6 +232,22 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * A finished tool call's arguments, from its complete JSON — upstream's
+     * `Object.assign(block, parseToolCallArguments(json))` where a call ends. Malformed text no
+     * longer keeps the prefix that parsed: the arguments are `{}` and `argumentsError` says why.
+     */
+    public function finishToolCall(int $index, ?string $json = null): void
+    {
+        if ($json !== null) {
+            $this->blocks[$index]['json'] = $json;
+        }
+
+        $parsed = PartialJson::parseToolCallArguments($this->blocks[$index]['json']);
+        $this->blocks[$index]['arguments'] = $parsed['arguments'];
+        $this->blocks[$index]['argumentsError'] = $parsed['argumentsError'] ?? null;
+    }
+
+    /**
      * Seed a tool call's argument JSON without reading it: the arguments stay what they were (`{}`
      * for a call just opened) until the next delta or `setJson()` reparses. Upstream's Responses
      * `createSlot()` does exactly this — `arguments: {}, partialJson: item.arguments || ""`.
@@ -290,6 +306,7 @@ final class AssistantMessageBuilder
             $block['arguments'],
             $block['signature'] === '' ? null : $block['signature'],
             $block['namespace'] ?? null,
+            $block['argumentsError'] ?? null,
         );
     }
 
@@ -468,6 +485,7 @@ final class AssistantMessageBuilder
             'arguments' => [],
             'redacted' => false,
             'namespace' => null,
+            'argumentsError' => null,
         ];
 
         return count($this->blocks) - 1;

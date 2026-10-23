@@ -244,13 +244,13 @@
    "headers": {
     "amz-sdk-request": "attempt=1; max=3",
     "authorization": "AWS4-HMAC-SHA256 Credential=AKID/D/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent",
-    "content-length": "965",
+    "content-length": "937",
     "content-type": "application/json",
     "user-agent": "aws-sdk-js/3.1126.0 ua/2.1 lang/js api/bedrock-runtime#3.1126.0 m/N,E,e",
-    "x-amz-content-sha256": "f80bf85f59ae7b693f3ac15b9a02a157ca9d09cfdc8c5024c2fe79b7144d2e99",
+    "x-amz-content-sha256": "1a1b3fd586fb0b0b255d27e0c1d45d0031f8f0fce86606564af59f0b8475ffb6",
     "x-amz-user-agent": "aws-sdk-js/3.1126.0"
    },
-   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"/9j/anBlZ2RhdGE=\"}}},{\"text\":\"look\"}]},{\"role\":\"assistant\",\"content\":[{\"text\":\"unsigned thought\"},{\"toolUse\":{\"toolUseId\":\"call_abc_def_ghi_\",\"name\":\"read\",\"input\":{\"path\":\"x\"}}},{\"toolUse\":{\"toolUseId\":\"c2\",\"name\":\"noargs\",\"input\":{}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"call_abc_def_ghi_\",\"content\":[{\"text\":\"body\"}],\"status\":\"error\"}},{\"toolResult\":{\"toolUseId\":\"c2\",\"content\":[{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"go on\"}]}],\"system\":[{\"text\":\"sys\"}],\"inferenceConfig\":{},\"toolConfig\":{\"tools\":[{\"toolSpec\":{\"name\":\"read\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},\"description\":\"Read\"}},{\"toolSpec\":{\"name\":\"noargs\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{}}},\"description\":\"No args\"}}]}}"
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"/9j/anBlZ2RhdGE=\"}}},{\"text\":\"look\"}]},{\"role\":\"assistant\",\"content\":[{\"toolUse\":{\"toolUseId\":\"call_abc_def_ghi_\",\"name\":\"read\",\"input\":{\"path\":\"x\"}}},{\"toolUse\":{\"toolUseId\":\"c2\",\"name\":\"noargs\",\"input\":{}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"call_abc_def_ghi_\",\"content\":[{\"text\":\"body\"}],\"status\":\"error\"}},{\"toolResult\":{\"toolUseId\":\"c2\",\"content\":[{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"go on\"}]}],\"system\":[{\"text\":\"sys\"}],\"inferenceConfig\":{},\"toolConfig\":{\"tools\":[{\"toolSpec\":{\"name\":\"read\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},\"description\":\"Read\"}},{\"toolSpec\":{\"name\":\"noargs\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{}}},\"description\":\"No args\"}}]}}"
   },
   "attempts": [
    "attempt=1; max=3"

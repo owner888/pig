@@ -309,12 +309,8 @@ final class OpenAiCompletions
             return $open;
         }
 
-        $text = $delta['content'] ?? null;
-
-        if (is_string($text) && $text !== '') {
-            $open = $this->onText($text, $builder, $stream, $open);
-        }
-
+        // "Handle reasoning before content: some proxies (e.g. LiteLLM) aggregate reasoning and
+        // answer into one delta, and the thinking block must precede the text block." (#10926)
         // Upstream's comment: use the first non-empty reasoning field to avoid duplication —
         // chutes.ai sends the same text in both `reasoning_content` and `reasoning`, and reading
         // every field put it in the thinking block twice.
@@ -331,14 +327,20 @@ final class OpenAiCompletions
             }
         }
 
+        if (is_array($delta['reasoning_details'] ?? null)) {
+            $this->onReasoningDetails($delta['reasoning_details'], $builder, $stream, $replay);
+        }
+
+        $text = $delta['content'] ?? null;
+
+        if (is_string($text) && $text !== '') {
+            $open = $this->onText($text, $builder, $stream, $open);
+        }
+
         foreach ($delta['tool_calls'] ?? [] as $call) {
             if (is_array($call)) {
                 $open = $this->onToolCall($call, $builder, $stream, $open, $grammar);
             }
-        }
-
-        if (is_array($delta['reasoning_details'] ?? null)) {
-            $this->onReasoningDetails($delta['reasoning_details'], $builder, $stream, $replay);
         }
 
         return $open;
@@ -736,6 +738,10 @@ final class OpenAiCompletions
             if ($delta !== null) {
                 $stream->push(new ToolCallDeltaEvent($index, $delta, $builder->snapshot()));
             }
+        }
+
+        if ($kind === 'toolCall') {
+            $builder->finishToolCall($index);
         }
 
         $snapshot = $builder->snapshot();
@@ -1780,13 +1786,13 @@ final class OpenAiCompletions
         }
 
         // Upstream: `hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)"`,
-        // where `hasText` is the *joined* text being non-empty — so a result whose only text block
-        // is "" counts as having none.
+        // where `hasText` is the *joined* text being non-blank — so a result whose only text is "" or
+        // a bare `\r\n` counts as having none, which some providers reject with a 400 (#8720).
         $joined = implode("\n", $text);
 
         $result = [
             'role' => 'tool',
-            'content' => Utf8::sanitize($joined !== '' ? $joined : ($hasImages ? '(see attached image)' : '(no tool output)')),
+            'content' => Utf8::sanitize(trim($joined) !== '' ? $joined : ($hasImages ? '(see attached image)' : '(no tool output)')),
             'tool_call_id' => $message->toolCallId,
         ];
 

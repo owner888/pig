@@ -713,6 +713,11 @@ final class InteractiveMode
      */
     private function replay(): void
     {
+        // "Selection coordinates point into the transcript being replaced (#9311)."
+        if ($this->renderer instanceof TuiAltScreen) {
+            $this->renderer->resetTextSelection();
+        }
+
         $tools = [];
         // Upstream's `renderSessionItems()`: a miss is not written down, unlike a warming refresh,
         // so it is worked out again from the file and drawn after the message that paid for it.
@@ -806,6 +811,7 @@ final class InteractiveMode
                 $tools[$message->toolCallId]->updateResult(
                     new AgentToolResult($message->content, $message->details),
                     $message->isError,
+                    durationMs: $message->durationMs,
                 );
             }
         }
@@ -7657,7 +7663,7 @@ final class InteractiveMode
             return;
         }
 
-        $tool->updateResult($event->result, $event->isError);
+        $tool->updateResult($event->result, $event->isError, durationMs: $event->durationMs);
         unset($this->tools[$event->toolCallId]);
     }
 

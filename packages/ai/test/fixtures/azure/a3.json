@@ -132,7 +132,7 @@
      "x-stainless-package-version": "7.19.0"
     },
     "userAgent": "pi (linux 6.18.44-fc-v80; x64)",
-    "body": "{\"model\":\"dep-52\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"look at a\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"plan\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_pi_1\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Reading\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_pi_1_1\"},{\"type\":\"function_call\",\"id\":\"fc_lxmq3j1alksqn\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"body of a\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"next\"}]}],\"stream\":true,\"store\":false,\"max_output_tokens\":128000}"
+    "body": "{\"model\":\"dep-52\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"look at a\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Reading\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_pi_1\"},{\"type\":\"function_call\",\"id\":\"fc_lxmq3j1alksqn\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"body of a\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"next\"}]}],\"stream\":true,\"store\":false,\"max_output_tokens\":128000}"
    }
   ],
   "events": [

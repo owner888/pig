@@ -81,7 +81,7 @@ final class OverflowTest extends TestCase
         $this->assertTrue(Overflow::happened(self::failed($error)));
     }
 
-    public function testTheBodilessFourHundredsOnlyCountForCerebras(): void
+    public function testTheBodilessFourHundredOnlyCountsForCerebras(): void
     {
         // Upstream's `CEREBRAS_BODYLESS_OVERFLOW_PATTERN`, gated on `message.provider === "cerebras"`.
         // pig used to take any provider's bodiless 400/413/429 for an overflow (and its own
@@ -93,7 +93,16 @@ final class OverflowTest extends TestCase
         $this->assertTrue(Overflow::happened($cerebras('413 status code (no body)')));
         $this->assertFalse(Overflow::happened($cerebras('429 status code (no body)')));
         $this->assertFalse(Overflow::happened(self::failed('400 status code (no body)')));
-        $this->assertFalse(Overflow::happened(self::failed('413 status code (no body)')));
+        // Any HTTP 413 is a request-size overflow, whoever sends it (#11016).
+        $this->assertTrue(Overflow::happened(self::failed('413 status code (no body)')));
+    }
+
+    public function testAnyHttp413IsARequestSizeOverflow(): void
+    {
+        $this->assertTrue(Overflow::happened(self::failed('github-copilot API error (413): {"message":"failed to parse request","code":""}', 'github-copilot')));
+        $this->assertTrue(Overflow::happened(self::failed('413: Payload Too Large')));
+        // A 413 mentioned in a body is not the status.
+        $this->assertFalse(Overflow::happened(self::failed('400 {"error":"expected 413 bytes"}')));
     }
 
     public function testCerebrasBodilessFourHundredThroughARealProvider(): void

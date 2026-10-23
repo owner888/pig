@@ -713,7 +713,7 @@ abstract class TuiBase extends Container implements TUI
         foreach ($visibleEntries as $entry) {
             // Width and maxHeight do not depend on the height, so lay out with 0 first.
             $first = $this->resolveOverlayLayout($entry->options, 0, $termWidth, $termHeight);
-            $overlayLines = $entry->component->render($first['width']);
+            $overlayLines = $this->resolveFakeCursors($entry->component->render($first['width']));
             if ($first['maxHeight'] !== null && count($overlayLines) > $first['maxHeight']) {
                 $overlayLines = array_slice($overlayLines, 0, $first['maxHeight']);
             }
@@ -1309,6 +1309,32 @@ abstract class TuiBase extends Container implements TUI
     public function renderedWidth(): int
     {
         return $this->previousWidth;
+    }
+
+    /**
+     * Upstream's `resolveFakeCursors()`: "Resolve fake cursor markers to reverse video. When the
+     * hardware cursor is shown, a fake cursor directly after CURSOR_MARKER is dropped because the
+     * terminal cursor is drawn there. Fake cursors of components without focus have no
+     * CURSOR_MARKER and stay visible."
+     *
+     * @param list<string> $lines
+     * @return list<string>
+     */
+    protected function resolveFakeCursors(array $lines): array
+    {
+        return array_map(function (string $line): string {
+            if (!str_contains($line, FakeCursor::START)) {
+                return $line;
+            }
+
+            // CURSOR_MARKER + START + text + END. "Truncating the line right after the cursor cell
+            // drops the end."
+            $resolved = $this->showHardwareCursor
+                ? (string) preg_replace('/(' . preg_quote(self::CURSOR_MARKER, '/') . ')' . preg_quote(FakeCursor::START, '/') . '(.*?)(?:' . preg_quote(FakeCursor::END, '/') . '|$)/s', '$1$2', $line, 1)
+                : $line;
+
+            return str_replace([FakeCursor::START, FakeCursor::END], ["\x1b[7m", "\x1b[27m"], $resolved);
+        }, $lines);
     }
 
     /**

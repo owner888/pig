@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Mcp;
 
 use Closure;
+use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
@@ -395,6 +396,8 @@ final class McpClient
             'progressToken' => $progressToken,
             'abortListener' => null,
             'signal' => $signal,
+            // "Aborted when the request settles, so the transport does not dispatch (or retry) it afterwards."
+            'sendController' => new AbortController(),
         ];
 
         if ($signal !== null) {
@@ -412,7 +415,7 @@ final class McpClient
         $this->armTimeout($id);
 
         try {
-            $transport->send($message);
+            $transport->send($message, $entry['sendController']->signal);
         } catch (Throwable $error) {
             $this->cancelPending($id, $error, false);
         }
@@ -654,6 +657,8 @@ final class McpClient
         if ($entry['abortListener'] !== null && $entry['signal'] !== null) {
             $entry['signal']->removeListener($entry['abortListener']);
         }
+
+        $entry['sendController']->abort();
     }
 
     private function handleTransportClose(): void
@@ -839,7 +844,8 @@ final class McpClient
 
     /**
      * `content` is required by the spec, but servers that only return `structuredContent` omit it
-     * (the SDK defaults it too).
+     * (the SDK defaults it too). `structuredContent` may be any JSON value — an array, `null`, a
+     * primitive — as MCP 2026-07-28 allows (#10416).
      *
      * @return array<string, mixed>
      */
@@ -847,10 +853,6 @@ final class McpClient
     {
         if (!JsonRpc::isObject($value) || (array_key_exists('content', $value) && !is_array($value['content']))) {
             throw new McpError(JsonRpc::INVALID_REQUEST, 'Invalid MCP tools/call result');
-        }
-
-        if (array_key_exists('structuredContent', $value) && !JsonRpc::isObject($value['structuredContent'])) {
-            throw new McpError(JsonRpc::INVALID_REQUEST, 'Invalid MCP tools/call structured content');
         }
 
         return array_key_exists('content', $value) ? $value : [...$value, 'content' => []];

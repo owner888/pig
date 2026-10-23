@@ -393,12 +393,13 @@ final class OpenAiResponsesShared
     private static function toolResultOutput(string $joined, array $images, Model $model): string|array
     {
         if ($images === [] || !$model->acceptsImages()) {
-            return Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)'));
+            // `hasText` is the joined text non-blank: whitespace alone is no output (#8720).
+            return Utf8::sanitize(trim($joined) !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)'));
         }
 
         $output = [];
 
-        if ($joined !== '') {
+        if (trim($joined) !== '') {
             $output[] = ['type' => 'input_text', 'text' => Utf8::sanitize($joined)];
         }
 
@@ -1186,7 +1187,7 @@ final class OpenAiResponsesShared
             // Always reparsed: the JSON seeded when the slot opened has not been read yet when no
             // delta followed it.
             $arguments = $item['arguments'] ?? null;
-            $builder->setJson($index, is_string($arguments) && $arguments !== '' ? $arguments : $builder->jsonOf($index));
+            $builder->finishToolCall($index, is_string($arguments) && $arguments !== '' ? $arguments : $builder->jsonOf($index));
 
             // `if (item.namespace !== undefined) slot.block.namespace = item.namespace`, and the call
             // is finished — upstream deletes its scratch buffer here.

@@ -84,13 +84,8 @@ final class Retry
         'model is at capacity',
         'rate.?limit',
         'too many requests',
-        '429',
-        '500',
-        '502',
-        '503',
-        '504',
-        '520',
-        '524',
+        // Status codes must not be part of a longer word or number, e.g. a request id or byte count (#11057).
+        '(?<![a-z0-9])(?:429|500|502|503|504|520|524)(?![a-z0-9])',
         // Also matches "The service is temporarily unavailable" (#10965).
         'service.?(?:is.?)?(?:temporarily.?)?unavailable',
         'server.?error',
@@ -144,6 +139,9 @@ final class Retry
         'stream ended before message_stop',
         'stream ended before a terminal response event',
         'http2 request did not get a response',
+        // Codex CLI mid-stream disconnect, relayed by proxies that wrap the Codex CLI,
+        // e.g. "stream disconnected before completion: stream closed before response.completed" (#11057).
+        'stream disconnected before completion',
         // Node ERR_HTTP2_STREAM_CANCEL: the HTTP/2 session died before the request was
         // sent, e.g. after the Bedrock SDK's 5-minute session timeout (#10379).
         'pending stream has been canceled',
@@ -277,6 +275,7 @@ final class Retry
                     $response->providerThinkingLevel,
                     $response->deferred,
                     $response->thinkingLevel,
+                    $response->durationMs,
                 );
             }
 

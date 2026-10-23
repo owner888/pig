@@ -104,12 +104,15 @@ final class Flow
         if (isset($options['authorizationCode'])) {
             // RFC 9207: never send a code from another authorization server to this one. A
             // response carrying `iss` has to name this server; a server that promised to send
-            // `iss` and did not is not this server either.
+            // `iss` and did not is not this server either. "Without metadata there is no issuer
+            // to compare with, so any `iss` is rejected."
             $iss = $options['iss'] ?? null;
 
-            if ($metadata !== null && ($iss !== null || ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true)) {
-                if ($iss !== $metadata['issuer']) {
-                    throw new OauthIssuerMismatchError((string) $metadata['issuer'], $iss);
+            if ($iss !== null || ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true) {
+                $expected = $metadata === null ? null : (string) $metadata['issuer'];
+
+                if ($iss !== $expected) {
+                    throw new OauthIssuerMismatchError($expected, $iss);
                 }
             }
 

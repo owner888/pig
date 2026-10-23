@@ -925,19 +925,42 @@ return static function (ExtensionApi $pi): void {
         }
 
         // Upstream's `joinAdjacentText()`: adjacent text items become one, each part on its own line.
+        // The separator check looks at the last non-empty part, not the joined text, and the parts
+        // are joined once: rebuilding the growing text on every item is quadratic (#10678).
         $joinAdjacentText = static function (array $items): array {
             $joined = [];
+            $parts = [];
+            $lastPart = '';
+            $flush = static function () use (&$joined, &$parts, &$lastPart): void {
+                if ($parts !== []) {
+                    $joined[] = ['type' => 'text', 'text' => implode('', $parts)];
+                }
+
+                $parts = [];
+                $lastPart = '';
+            };
 
             foreach ($items as $item) {
-                $last = $joined === [] ? null : $joined[count($joined) - 1];
-
-                if ($item['type'] === 'text' && $last !== null && $last['type'] === 'text') {
-                    $separator = $last['text'] === '' || str_ends_with($last['text'], "\n") ? '' : "\n";
-                    $joined[count($joined) - 1] = ['type' => 'text', 'text' => $last['text'] . $separator . $item['text']];
-                } else {
+                if ($item['type'] !== 'text') {
+                    $flush();
                     $joined[] = $item;
+
+                    continue;
+                }
+
+                if ($lastPart !== '' && !str_ends_with($lastPart, "\n")) {
+                    $parts[] = "\n";
+                    $lastPart = "\n";
+                }
+
+                $parts[] = $item['text'];
+
+                if ($item['text'] !== '') {
+                    $lastPart = $item['text'];
                 }
             }
+
+            $flush();
 
             return $joined;
         };

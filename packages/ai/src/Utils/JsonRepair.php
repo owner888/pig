@@ -16,7 +16,9 @@ use JsonException;
  */
 final class JsonRepair
 {
-    private const array VALID_JSON_ESCAPES = ['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'];
+    // Without `u`: a `\u` not followed by four hex digits — `\usepackage` — is kept as literal
+    // text like any other invalid escape, rather than breaking the parse (#10868).
+    private const array VALID_JSON_ESCAPES = ['"', '\\', '/', 'b', 'f', 'n', 'r', 't'];
 
     /**
      * Upstream's `parseJsonWithRepair()`: `JSON.parse`, then the repaired text when it differs, else

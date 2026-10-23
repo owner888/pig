@@ -1233,13 +1233,8 @@ final class AnthropicTest extends TestCase
 
         $body = $this->sendAndCapture(new Context([new UserMessage('hi'), $otherModel, new UserMessage('go on')]));
 
-        // The signed thought beside it is no longer replayed as thinking either: its signature
-        // is Opus's, and upstream keeps signatures only for the model that made them, so it goes
-        // back as plain text with the signature left behind.
-        $this->assertSame(
-            [['type' => 'text', 'text' => 'kept'], ['type' => 'text', 'text' => 'so']],
-            $body['messages'][1]['content'],
-        );
+        // The signed thought beside it goes too: thinking from another model is dropped (#10995).
+        $this->assertSame([['type' => 'text', 'text' => 'so']], $body['messages'][1]['content']);
         $this->assertStringNotContainsString('ENCRYPTED-BLOB', (string) json_encode($body));
         $this->assertStringNotContainsString('"SIG"', (string) json_encode($body));
 
@@ -1447,7 +1442,7 @@ final class AnthropicTest extends TestCase
 
     // ---- a conversation another provider started -------------------------------------------
 
-    public function testAnotherProvidersThinkingGoesBackAsPlainTextRatherThanAsSignedThinking(): void
+    public function testAnotherProvidersThinkingIsDroppedRatherThanSentAsSignedThinking(): void
     {
         // `/model gemini`, then `/model sonnet`. A thought is signed by the model that had it and
         // the signature means nothing here, so Anthropic rejects the request outright — which is
@@ -1462,9 +1457,10 @@ final class AnthropicTest extends TestCase
         $assistant = $body['messages'][1];
 
         $this->assertSame('assistant', $assistant['role']);
-        // Plain text, no `<thinking>` tags: upstream leaves them off so the model does not
-        // learn to write them into its own answers.
-        $this->assertSame(['type' => 'text', 'text' => 'mine'], $assistant['content'][0]);
+        // Dropped (#10995): sent as text, the new model read the old one's reasoning as part of its
+        // own replies.
+        $this->assertSame([['type' => 'text', 'text' => 'so']], $assistant['content']);
+        $this->assertStringNotContainsString('mine', (string) json_encode($body));
         $this->assertStringNotContainsString('GEMINI-SIG', (string) json_encode($body));
     }
 

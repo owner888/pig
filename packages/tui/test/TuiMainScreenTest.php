@@ -7,6 +7,8 @@ namespace Pig\Tui\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\Tui\Component;
+use Pig\Tui\Components\Input;
+use Pig\Tui\FakeCursor;
 use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
 use Pig\Tui\TUI;
@@ -445,6 +447,34 @@ final class TuiMainScreenTest extends TestCase
         $terminal->waitForRender();
         $this->assertTrue($terminal->cursorVisible);
         $tui->stop();
+    }
+
+    public function testTheFakeCursorIsReverseVideoUnlessTheTerminalCursorIsShownThere(): void
+    {
+        $drawn = static function (bool $showHardwareCursor): string {
+            $terminal = new VirtualTerminal(40, 5);
+            $tui = new TuiMainScreen($terminal, $showHardwareCursor);
+            $input = new Input();
+            $input->setValue('abc');
+            $tui->addChild($input);
+            $tui->setFocus($input);
+            $tui->start();
+            $terminal->waitForRender();
+            $tui->stop();
+
+            return $terminal->output();
+        };
+
+        $fake = $drawn(false);
+        // `setValue()` leaves the cursor on the first character.
+        $this->assertStringContainsString("\x1b[7ma\x1b[27m", $fake);
+        $this->assertStringNotContainsString(FakeCursor::START, $fake);
+
+        // The focused component's fake cursor is left out where the terminal cursor is drawn.
+        $hardware = $drawn(true);
+        $this->assertStringNotContainsString("\x1b[7m", $hardware);
+        $this->assertStringNotContainsString(FakeCursor::START, $hardware);
+        $this->assertStringNotContainsString(FakeCursor::END, $hardware);
     }
 
     public function testMovingFocusTellsBothComponents(): void

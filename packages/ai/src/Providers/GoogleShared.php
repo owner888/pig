@@ -787,10 +787,11 @@ final class GoogleShared
             }
         }
 
-        // Upstream's `hasText` is `textResult.length > 0` — the joined text, so a lone empty text
-        // block is no text — and its fallback for nothing at all is "", not a placeholder.
+        // Upstream's `hasText` is `textResult.trim().length > 0` — the joined text, so a lone empty
+        // or whitespace-only text block is no text (#8720) — and its fallback for nothing at all is
+        // "", not a placeholder.
         $joined = implode("\n", $text);
-        $value = $joined !== '' ? Utf8::sanitize($joined) : ($images !== [] ? '(see attached image)' : '');
+        $value = trim($joined) !== '' ? Utf8::sanitize($joined) : ($images !== [] ? '(see attached image)' : '');
 
         // Gemini 3+ takes images inside the response; older Gemini has nowhere to put them and
         // needs a user turn of their own.

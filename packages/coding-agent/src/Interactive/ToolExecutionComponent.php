@@ -115,6 +115,9 @@ final class ToolExecutionComponent extends Container
 
     private ?float $endedAt = null;
 
+    /** Upstream's `result.durationMs`: the recorded execution time of a final result, when it has one. */
+    private ?int $durationMs = null;
+
     /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
      * @param CustomTool|null               $custom    the declaration, when this is a tool
@@ -221,11 +224,13 @@ final class ToolExecutionComponent extends Container
         $this->draw();
     }
 
-    public function updateResult(AgentToolResult $result, bool $failed = false, bool $partial = false): void
+    /** @param int|null $durationMs the execution time of a final result — the end event's, or the saved message's */
+    public function updateResult(AgentToolResult $result, bool $failed = false, bool $partial = false, ?int $durationMs = null): void
     {
         $this->result = $result;
         $this->failed = $failed;
         $this->partial = $partial;
+        $this->durationMs = $partial ? null : $durationMs;
         if (!$partial || $failed) {
             $this->endedAt ??= microtime(true);
         }
@@ -422,10 +427,25 @@ final class ToolExecutionComponent extends Container
 
     private function renderOptions(): RenderOptions
     {
-        $timer = $this->startedAt === null ? null
-            : ($this->partial ? 'Elapsed' : 'Took') . ' ' . self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
+        return new RenderOptions($this->expanded, $this->partial, $this->failed, $this->timerText(), $this->durationMs);
+    }
 
-        return new RenderOptions($this->expanded, $this->partial, $this->failed, $timer);
+    /**
+     * Upstream's `toolTimerText()`: "A final result's recorded duration wins: it is monotonic and
+     * survives reloads. The renderer's own clock is the fallback for live progress and for results
+     * stored without one."
+     */
+    private function timerText(): ?string
+    {
+        if (!$this->partial && $this->durationMs !== null) {
+            return 'Took ' . self::formatDuration($this->durationMs / 1000);
+        }
+
+        if ($this->startedAt === null) {
+            return null;
+        }
+
+        return ($this->partial ? 'Elapsed' : 'Took') . ' ' . self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
     }
 
     /**
@@ -535,10 +555,10 @@ final class ToolExecutionComponent extends Container
             $this->box->addChild(new Text("\n" . Themes::theme()->fg('warning', '[' . implode('. ', $warnings) . ']'), 0, 0));
         }
 
-        if ($this->startedAt !== null) {
-            $label = $this->partial ? 'Elapsed' : 'Took';
-            $duration = self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
-            $this->box->addChild(new Text("\n" . Themes::theme()->fg('muted', "{$label} {$duration}"), 0, 0));
+        $timer = $this->timerText();
+
+        if ($timer !== null) {
+            $this->box->addChild(new Text("\n" . Themes::theme()->fg('muted', $timer), 0, 0));
         }
     }
 

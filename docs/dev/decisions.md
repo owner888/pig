@@ -201,7 +201,8 @@ kept, as none was for `~/.pig` → `~/.pig/agent`.
   (`CodingAgent::session()` lost its `environment:` parameter). `ALL_PROXY` is not read either.
 - **New, upstream's**: `PIG_PACKAGE_DIR` (`Config::packageDir()`, where `CHANGELOG.md` is),
   `PIG_TUI_ESC_TIMEOUT` (ms a lone ESC waits; 100 over SSH, else 10), `PIG_SKIP_VERSION_CHECK`,
-  `PIG_SHARE_VIEWER_URL`. `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
+  `PIG_SHARE_VIEWER_URL`, `PIG_CLIPBOARD_OSC52=1` (a copy also goes to the terminal as OSC 52, for
+  a remote client without SSH markers). `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
 - **New, pig's own**: `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
   (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, and where the coroutine it
   resumed had suspended before and after, which brackets the slow code.

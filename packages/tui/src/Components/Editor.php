@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Components;
 
+use Pig\Tui\FakeCursor;
 use Closure;
 use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
@@ -47,8 +48,6 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     public bool $focused = false;
 
     /** Reverse video for the block cursor, and back to normal. */
-    private const string CURSOR_ON = "\x1b[7m";
-    private const string CURSOR_OFF = "\x1b[27m";
 
     private const string PASTE_START = "\x1b[200~";
     private const string PASTE_END = "\x1b[201~";
@@ -486,9 +485,9 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
         if ($after !== '') {
             // On a character: invert it, which costs no columns.
             $grapheme = Graphemes::split($after)[0];
-            $text = $before . $marker . self::CURSOR_ON . $grapheme . self::CURSOR_OFF . substr($after, strlen($grapheme));
+            $text = $before . $marker . FakeCursor::renderFakeCursor($grapheme) . substr($after, strlen($grapheme));
         } elseif ($visible < $width) {
-            $text = $before . $marker . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
+            $text = $before . $marker . FakeCursor::renderFakeCursor(' ');
             $visible++;
         } else {
             // The row is already full, so there is no cell to add. Invert the last
@@ -497,7 +496,7 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
 
             if ($graphemes !== []) {
                 $last = array_pop($graphemes);
-                $text = implode('', $graphemes) . $marker . self::CURSOR_ON . $last . self::CURSOR_OFF;
+                $text = implode('', $graphemes) . $marker . FakeCursor::renderFakeCursor($last);
             }
         }
 

@@ -32,6 +32,9 @@ final class SystemClipboard implements Clipboard
     /** Copying a long answer is one process launch; five seconds is generous for it. */
     private const float WRITE_TIMEOUT = 5.0;
 
+    /** Upstream's `MAX_OSC52_ENCODED_LENGTH`: the longest base64 an OSC 52 copy carries. */
+    private const int MAX_OSC52_ENCODED_LENGTH = 100_000;
+
     public function __construct(private readonly ?string $platform = null)
     {
     }
@@ -72,11 +75,49 @@ final class SystemClipboard implements Clipboard
     #[\Override]
     public function write(string $text): bool
     {
-        return match ($this->platform()) {
+        $platform = $this->platform();
+        // "Direct writes precede OSC 52 so the terminal cannot race the native writer."
+        $copied = match ($platform) {
             'darwin' => Process::feed(['pbcopy'], $text, self::WRITE_TIMEOUT),
             'windows' => Process::feed(['clip.exe'], $text, self::WRITE_TIMEOUT),
             default => $this->linuxWrite($text),
         };
+
+        // Upstream's `copyToClipboard()`: "OSC 52 cannot be verified, so a desktop session with a
+        // display reports the failure instead. Without a display the terminal is the only clipboard
+        // route (containers, WSL without WSLg), and remote sessions always emit it to reach the
+        // client clipboard."
+        $headless = $platform === 'linux' && !Env::isSet('DISPLAY') && !Env::isSet('WAYLAND_DISPLAY') && !Env::isSet('TERMUX_VERSION');
+
+        if (self::isRemoteSession() || (!$copied && $headless)) {
+            $copied = self::emitOsc52($text) || $copied;
+        }
+
+        return $copied;
+    }
+
+    /**
+     * Upstream's `isRemoteSession()`: "Remote sessions also emit OSC 52 so the client terminal
+     * receives the copy. PI_CLIPBOARD_OSC52=1 covers remote clients that leave no SSH markers, such
+     * as multiplexer attaches or IDE daemons" — `PIG_CLIPBOARD_OSC52=1` here.
+     */
+    private static function isRemoteSession(): bool
+    {
+        return Env::isSet('SSH_CONNECTION') || Env::isSet('SSH_CLIENT') || Env::isSet('MOSH_CONNECTION') || getenv('PIG_CLIPBOARD_OSC52') === '1';
+    }
+
+    /** Upstream's `emitOsc52()`: false, and nothing written, for text past the size limit. */
+    private static function emitOsc52(string $text): bool
+    {
+        $encoded = base64_encode($text);
+
+        if (strlen($encoded) > self::MAX_OSC52_ENCODED_LENGTH) {
+            return false;
+        }
+
+        fwrite(STDOUT, "\x1b]52;c;{$encoded}\x07");
+
+        return true;
     }
 
     private function linuxWrite(string $text): bool

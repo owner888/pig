@@ -291,6 +291,14 @@ final class SlashCommandsTest extends TestCase
         $this->assertSame([], SlashCommands::arguments('   '));
     }
 
+    public function testAnEmptyQuotedArgumentKeepsItsPlace(): void
+    {
+        // #10867: `""` and `''` are arguments, so the ones after them keep their positions.
+        $this->assertSame(['', 'b'], SlashCommands::arguments('"" b'));
+        $this->assertSame(['a', '', 'c'], SlashCommands::arguments("a '' c"));
+        $this->assertSame([''], SlashCommands::arguments('""'));
+    }
+
     public function testAnArgumentThatLooksLikeAPlaceholderIsNotSubstitutedAgain(): void
     {
         $commands = [new FileCommand('echo', 'd', 'Say: $@ and $1', '(user)')];

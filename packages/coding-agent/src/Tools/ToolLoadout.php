@@ -327,6 +327,23 @@ final class ToolLoadout
         $this->setActive($names);
     }
 
+    /** The registered custom tools' names — every registered tool that is not a built-in. @return list<string> */
+    public function customToolNames(): array
+    {
+        return $this->customTools->names();
+    }
+
+    /**
+     * Upstream's `_isActivatedOnRegistration()`: a registered custom tool that was not registered
+     * with `defaultActive: false`. pig has no undeclarable tools, so that is the whole test.
+     */
+    public function isActivatedOnRegistration(string $name): bool
+    {
+        $tool = $this->customTools->find($name);
+
+        return $tool !== null && $tool->defaultActive !== false;
+    }
+
     /** Forget the pending tools. Upstream's `_pendingToolNames.clear()`. */
     public function clearPending(): void
     {

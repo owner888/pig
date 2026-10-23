@@ -210,7 +210,9 @@ final class GrepTool implements AgentTool, ReplayableTool
     {
         // --no-require-git so .gitignore is honoured outside a repository too; without
         // it a search of any plain directory walks straight into vendor and node_modules.
-        $command = [$rg, '--json', '--line-number', '--color=never', '--hidden', '--no-require-git'];
+        // --no-config: a `RIPGREP_CONFIG_PATH` with `--fixed-strings` would silently turn every
+        // regex search into a literal one (#11203).
+        $command = [$rg, '--no-config', '--json', '--line-number', '--color=never', '--hidden', '--no-require-git'];
 
         if (($arguments['ignoreCase'] ?? false) === true) {
             $command[] = '--ignore-case';

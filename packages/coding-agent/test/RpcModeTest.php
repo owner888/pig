@@ -362,7 +362,7 @@ final class RpcModeTest extends TestCase
         $this->assertSame('call-1', $start['parentToolCallId'] ?? null);
 
         $spent = new \Pig\Agent\AgentToolResult([new TextContent('ok')], null, new Usage(10, 2, 0, 0, 12, new \Pig\Ai\Cost(total: 0.003)));
-        $end = RpcEvents::encode(new \Pig\Agent\ToolExecutionEndEvent('call-1/1', 'read', $spent, false, 'call-1'));
+        $end = RpcEvents::encode(new \Pig\Agent\ToolExecutionEndEvent('call-1/1', 'read', $spent, false, parentToolCallId: 'call-1'));
         $this->assertSame('call-1', $end['parentToolCallId'] ?? null);
         $this->assertSame(0.003, $end['result']['usage']['cost']['total'] ?? null);
 

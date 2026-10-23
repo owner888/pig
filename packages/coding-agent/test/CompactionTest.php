@@ -448,7 +448,7 @@ final class CompactionTest extends TestCase
         ));
 
         $this->assertStringContainsString('Additional focus: the parser bug', $request);
-        $this->assertSame(8_000, $options->maxTokens, '80% of the reserve');
+        $this->assertNull($options->maxTokens, "no cap of its own: the model's output limit (#9512)");
         $this->assertSame('none', $options->cacheRetention, 'a one-off summary writes no cache');
         $this->assertNotNull($options->sessionId, 'and gets a routing id of its own');
     }
@@ -487,6 +487,35 @@ final class CompactionTest extends TestCase
         $this->assertNull(Compaction::prepareCompaction([...$path, new SessionEntry('c2', 'u3', new CompactionSummary('newest'))], new CompactionSettings()), 'already compacted');
     }
 
+    public function testTheInstructionsReachTheSummaryOfASplitTurnToo(): void
+    {
+        // The split turn was all that was new: its summary is the only one asked for, and
+        // `/compact <instructions>` used to go nowhere (#11058).
+        $path = self::entries([
+            new UserMessage(str_repeat('q', 400)),
+            self::calling('c1', 'read', ['path' => 'big.php']),
+            new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('r', 4_000))]),
+            self::assistant(str_repeat('s', 4_000)),
+        ]);
+        $preparation = Compaction::prepareCompaction($path, new CompactionSettings(keepRecentTokens: 500));
+
+        $this->assertNotNull($preparation);
+        $this->assertTrue($preparation->isSplitTurn);
+        $this->assertSame([], $preparation->messagesToSummarize);
+
+        $asked = new \ArrayObject();
+        Async::run(static fn () => Compaction::compact(
+            $preparation,
+            self::model(),
+            'key',
+            customInstructions: 'the parser bug',
+            streamFn: self::answering(['the turn so far'], $asked),
+        ));
+
+        $this->assertCount(1, $asked);
+        $this->assertStringContainsString('Additional focus: the parser bug', $asked[0][0]);
+    }
+
     public function testASplitTurnGetsTwoSummariesMerged(): void
     {
         // One turn bigger than the budget: the cut lands on an assistant message inside it, so
@@ -520,8 +549,9 @@ final class CompactionTest extends TestCase
         $this->assertCount(2, $asked);
         $this->assertStringContainsString('## Goal', $asked[0][0]);
         $this->assertStringContainsString('## Original Request', $asked[1][0]);
-        $this->assertSame(8_192, $asked[1][2]->maxTokens, 'half the reserve for the turn prefix');
-        $this->assertSame(13_107, $asked[0][2]->maxTokens, '80% of it for the history');
+        // Neither has a cap of its own: both get the model's output limit (#9512).
+        $this->assertNull($asked[1][2]->maxTokens);
+        $this->assertNull($asked[0][2]->maxTokens);
         $this->assertSame("the history\n\n---\n\n**Turn Context (split turn):**\n\nthe turn so far", $result->summary);
         $this->assertSame('e5', $result->firstKeptEntryId);
         $this->assertSame(['readFiles' => ['big.php'], 'modifiedFiles' => []], $result->details);

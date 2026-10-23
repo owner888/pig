@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Packages;
 
+use Pig\CodingAgent\Settings;
+
 /**
  * The `!glob` / `+path` / `-path` patterns a settings entry or a manifest narrows a list with —
  * upstream's `applyPatterns()`, `applyAutoloadDisabledPatterns()` and the matchers under them.
@@ -136,7 +138,8 @@ final class PackageFilter
     {
         foreach (self::spellings($path, $baseDir) as $candidate) {
             foreach ($patterns as $pattern) {
-                if (Glob::matches($pattern, $candidate)) {
+                // `~` expanded, as upstream's `normalizePath(pattern)`: `!~/skills/pdf` names a path (#10765).
+                if (Glob::matches(Settings::normalizePath($pattern), $candidate)) {
                     return true;
                 }
             }
@@ -155,7 +158,7 @@ final class PackageFilter
         $spellings = self::spellings($path, $baseDir, exact: true);
 
         foreach ($patterns as $pattern) {
-            $normalized = str_starts_with($pattern, './') ? substr($pattern, 2) : $pattern;
+            $normalized = Settings::normalizePath(str_starts_with($pattern, './') ? substr($pattern, 2) : $pattern);
 
             if (in_array($normalized, $spellings, true)) {
                 return true;

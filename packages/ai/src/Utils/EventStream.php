@@ -31,7 +31,8 @@ class EventStream implements IteratorAggregate
     /** @var list<Deferred<T|null>> */
     private array $waiting = [];
 
-    private bool $done = false;
+    /** Protected, as upstream made it, for `AssistantMessageEventStream` to stop timing once closed. */
+    protected bool $done = false;
 
     /** Why the producer stopped, when it stopped by throwing. */
     private ?Throwable $failure = null;

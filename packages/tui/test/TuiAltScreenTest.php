@@ -1447,7 +1447,27 @@ final class TuiAltScreenTest extends TestCase
         $this->assertSame($viewportTop, $tui->viewportTop());
     }
 
-    public function testGivesWheelAndViewportKeysToAFocusedOverlay(): void
+    public function testScrollsTheTranscriptOnWheelInputAFocusedOverlayDoesNotHandle(): void
+    {
+        // #10769: the wheel reaches the transcript, not the focused overlay's `handleInput()`.
+        $terminal = new FakeTerminal(20, 6);
+        $tui = new TuiAltScreen($terminal);
+        $tui->addChild(new Text(self::lines(12), 0, 0));
+        $overlay = new FocusableOverlay(['overlay']);
+        $this->start($tui);
+        $topBefore = $tui->viewportTop();
+        $tui->showOverlay($overlay, new OverlayOptions(width: 10, anchor: 'top-left'));
+        self::settle();
+        $this->assertTrue($overlay->focused);
+
+        $terminal->type("\x1b[<64;3;1M");
+        self::settle();
+
+        $this->assertLessThan($topBefore, $tui->viewportTop());
+        $this->assertSame([], $overlay->inputs);
+    }
+
+    public function testGivesViewportKeysToAFocusedOverlay(): void
     {
         $terminal = new FakeTerminal(20, 6);
         $tui = new TuiAltScreen($terminal);
@@ -1459,8 +1479,7 @@ final class TuiAltScreenTest extends TestCase
         self::settle();
         $this->assertTrue($overlay->focused);
 
-        $wheel = "\x1b[<64;10;3M";
-        $keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF", $wheel];
+        $keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF"];
         foreach ($keys as $key) {
             $terminal->type($key);
         }

@@ -747,10 +747,10 @@ final class GoogleTest extends TestCase
         $this->assertSame(['text' => 'so'], $parts[1]);
     }
 
-    public function testAnotherModelsThoughtGoesBackAsPlainTextWithNoTags(): void
+    public function testAnotherModelsThoughtIsDropped(): void
     {
-        // The other arm: a thought from any other model is ordinary text, untagged — the
-        // signature is meaningless here, and the tags were pig's invention.
+        // The other arm: a thought from any other model is dropped (#10995), and a turn left with
+        // nothing in it is not sent at all.
         $context = new Context([
             new UserMessage('hi'),
             new AssistantMessage(
@@ -766,7 +766,8 @@ final class GoogleTest extends TestCase
 
         $this->send($context);
 
-        $this->assertSame([['text' => 'from another model']], $this->server->receivedJson()['contents'][1]['parts']);
+        $this->assertSame([['text' => 'go on']], $this->server->receivedJson()['contents'][1]['parts']);
+        $this->assertStringNotContainsString('from another model', (string) json_encode($this->server->receivedJson()));
     }
 
     public function testASignedThoughtGoesBackAsAThought(): void

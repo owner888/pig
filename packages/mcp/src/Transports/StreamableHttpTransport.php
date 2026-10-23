@@ -11,10 +11,12 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Http\SseParser;
 use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\Mcp\Protocol\JsonRpc;
+use Pig\Mcp\Protocol\McpAbortError;
 use Pig\Mcp\Protocol\McpConnectionClosedError;
 use RuntimeException;
 use Throwable;
@@ -105,7 +107,7 @@ final class StreamableHttpTransport extends TransportEvents
     }
 
     #[\Override]
-    public function send(array $message): void
+    public function send(array $message, ?AbortSignal $signal = null): void
     {
         if (!$this->started || $this->closed) {
             throw new McpConnectionClosedError();
@@ -120,7 +122,7 @@ final class StreamableHttpTransport extends TransportEvents
         $response = $this->authorizedFetch('POST', [
             'Accept' => 'application/json, text/event-stream',
             'Content-Type' => 'application/json',
-        ], $body);
+        ], $body, $signal);
 
         $this->checkResponse($response);
         $this->captureSession($response);
@@ -200,12 +202,20 @@ final class StreamableHttpTransport extends TransportEvents
      * Fetch with auth headers. A 401 (or a 403 asking for more scope) is handed to the auth
      * provider once, and the request is retried with whatever credentials it left behind.
      *
+     * "`signal` only stops dispatch: getting a token or the authorization recovery can take a
+     * while, and a request its sender gave up on in the meantime must not reach the server. It
+     * does not abort the shared recovery, which other requests may wait for." (#10598)
+     *
      * @param array<string, string> $extra
      */
-    private function authorizedFetch(string $method, array $extra, ?string $body = null): Response
+    private function authorizedFetch(string $method, array $extra, ?string $body = null, ?AbortSignal $signal = null): Response
     {
         for ($attempt = 0; ; $attempt++) {
             [$headers, $token] = $this->requestHeadersWithToken($extra);
+
+            if ($signal?->aborted() === true) {
+                throw new McpAbortError();
+            }
 
             try {
                 $response = $this->client()->send(new Request($method, $this->url, $headers, $body), $this->controller->signal);

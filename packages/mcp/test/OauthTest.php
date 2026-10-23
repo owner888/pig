@@ -255,7 +255,7 @@ final class OauthTest extends TestCase
                     'serverUrl' => $server->url(), 'authorizationCode' => $code,
                 ]));
                 $this->assertNull($error->received);
-                $this->assertStringContainsString('no iss parameter', $error->getMessage());
+                $this->assertStringContainsString('received none', $error->getMessage());
             });
         } finally {
             $server->stop();

@@ -82,7 +82,11 @@ final class ContextFiles
         while (true) {
             [$found, $complaints] = self::inDirectory($directory === '' ? '/' : $directory);
             $warnings = [...$warnings, ...$complaints];
-            $isShadowed = $found !== null && $shadowed !== null && (realpath($found->path) ?: $found->path) === $shadowed;
+            // "Compare the directory's real path, not the file's: a worktree AGENTS.md that symlinks
+            // to the main repo's file resolves to the shadowed path itself." (#10681)
+            $here = $directory === '' ? '/' : $directory;
+            $isShadowed = $found !== null && $shadowed !== null
+                && rtrim(realpath($here) ?: $here, '/') . '/' . basename($found->path) === $shadowed;
 
             if ($found !== null && !$isShadowed && !isset($seen[$found->path])) {
                 // Unshifted, so the walk up comes back out as a walk down.

@@ -64,6 +64,16 @@ final class Source
             throw new SourceError('Expected PHP source text (non-empty). Provide PHP only, optionally with a first line `// @options: {"max_output_tokens": 1000}`.');
         }
 
+        // An `@options` line anywhere but first would otherwise be a comment the script runs past,
+        // its `timeout_ms` silently ignored (#10631).
+        $lines = explode("\n", $input);
+
+        foreach ($lines as $index => $line) {
+            if ($index > 0 && str_starts_with(ltrim($line), self::OPTIONS_PREFIX)) {
+                throw new SourceError('The ' . self::OPTIONS_PREFIX . ' line must be the first line of the input; found one on line ' . ($index + 1));
+            }
+        }
+
         $newline = strpos($input, "\n");
         $firstLine = rtrim($newline === false ? $input : substr($input, 0, $newline), "\r");
         $trimmed = ltrim($firstLine);

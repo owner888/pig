@@ -18,6 +18,9 @@ final readonly class ToolExecutionEndEvent implements HookEvent
         public string $toolName,
         public AgentToolResult $result,
         public bool $isError,
+        /** Milliseconds `execute()` took, measured with a monotonic clock; null when the tool did not run. */
+        public ?int $durationMs = null,
+        /** Set when another tool (for example a codemode script) made this call. */
         public ?string $parentToolCallId = null,
     ) {
     }

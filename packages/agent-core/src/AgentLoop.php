@@ -667,6 +667,10 @@ final class AgentLoop
             $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
 
             $isError = false;
+            // Upstream's `executePreparedToolCall()` times `execute()` alone: a call that never ran
+            // (not found, invalid arguments, a half-run one not replayed) has no duration.
+            $startedAt = null;
+            $durationMs = null;
             $tool = $context->toolNamed($toolCall->name);
 
             try {
@@ -685,6 +689,7 @@ final class AgentLoop
 
                     $arguments = ToolArguments::validate($tool->definition(), $toolCall);
 
+                    $startedAt = hrtime(true);
                     $result = $tool->execute(
                         $toolCall->id,
                         $arguments,
@@ -698,8 +703,10 @@ final class AgentLoop
                             ));
                         },
                     );
+                    $durationMs = self::elapsedMs($startedAt);
                 }
             } catch (Throwable $error) {
+                $durationMs = $startedAt === null ? null : self::elapsedMs($startedAt);
                 // A failing tool is something the model can read and work around, not
                 // something that ends the run. An `AgentError` may carry what the UI should
                 // still be shown of the failure.
@@ -709,9 +716,9 @@ final class AgentLoop
                 $isError = true;
             }
 
-            $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError));
+            $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError, $durationMs));
 
-            $results[] = self::toolResult($toolCall, $result, $isError, $emit);
+            $results[] = self::toolResult($toolCall, $result, $isError, $emit, durationMs: $durationMs);
 
             if ($config->getSteeringMessages === null) {
                 continue;
@@ -748,6 +755,7 @@ final class AgentLoop
         bool $isError,
         Closure $emit,
         bool $announce = false,
+        ?int $durationMs = null,
     ): ToolResultMessage {
         if ($announce) {
             // A skipped call never ran, so its start and end are reported here instead.
@@ -762,12 +770,19 @@ final class AgentLoop
             $isError,
             $result->details,
             usage: $result->usage,
+            durationMs: $durationMs,
         );
 
         $emit(new MessageStartEvent($message));
         $emit(new MessageEndEvent($message));
 
         return $message;
+    }
+
+    /** Whole milliseconds since an `hrtime(true)` reading — upstream's `Math.round(performance.now() - startedAt)`. */
+    public static function elapsedMs(int|float $startedAt): int
+    {
+        return (int) round((hrtime(true) - $startedAt) / 1e6);
     }
 
     /** @return list<mixed> */

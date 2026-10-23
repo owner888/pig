@@ -499,6 +499,8 @@ final class CodingAgent
         // Upstream's `noTools ? [] : (getDefaultTools() ?? DEFAULT_TOOL_NAMES)`.
         $defaultTools = $noTools !== null ? [] : $settings->defaultTools();
         $modifiers = $tools !== null && array_filter($tools, Settings::isToolModifier(...)) !== [] ? $tools : null;
+        // Upstream's `usesDefaultTools: (options.tools === undefined || toolModifiers !== undefined) && !options.noTools`.
+        $usesDefaultTools = ($tools === null || $modifiers !== null) && $noTools === null;
 
         if ($modifiers !== null) {
             $defaultTools = Settings::applyToolModifiers($defaultTools ?? ToolSet::CODING, $modifiers);
@@ -637,6 +639,8 @@ final class CodingAgent
             projectTrusted: $projectTrusted,
             // Upstream's `SessionManager.inMemory(cwd, { id: parsed.sessionId })` for `--no-session`.
             sessionId: $store === null ? $sessionId : null,
+            usesDefaultTools: $usesDefaultTools,
+            defaultToolModifiers: $modifiers ?? [],
         );
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not

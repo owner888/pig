@@ -524,16 +524,26 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
      */
     private function runFd(string $query): array
     {
+        // Upstream's `walkDirectoryWithFd()` arguments.
         $command = [
             (string) $this->fdPath,
             '--base-directory', $this->basePath,
             '--max-results', (string) self::FD_MAX_RESULTS,
             '--type', 'f',
             '--type', 'd',
+            '--follow',
+            '--hidden',
+            '--exclude', '.git',
+            '--exclude', '.git/*',
+            '--exclude', '.git/**',
         ];
 
+        if (str_contains(str_replace('\\', '/', $query), '/')) {
+            $command[] = '--full-path';
+        }
+
         if ($query !== '') {
-            $command[] = $query;
+            $command[] = self::buildFdPathQuery($query);
         }
 
         [$exit, $output] = Process::run($command, self::FD_TIMEOUT);
@@ -555,6 +565,34 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     }
 
     /** Exact name beats a name that starts with it beats a name that contains it. */
+    /**
+     * Upstream's `buildFdPathQuery()`: `fd` reads its pattern as a regex, so the query is escaped —
+     * `[slug]` or `(group)` found nothing before (#10972) — and a query with a `/` matches its
+     * segments against the full path, either separator between them.
+     */
+    private static function buildFdPathQuery(string $query): string
+    {
+        $escape = static fn (string $value): string => (string) preg_replace('/[.*+?^${}()|[\]\\\\]/', '\\\\$0', $value);
+        $normalized = str_replace('\\', '/', $query);
+
+        if (!str_contains($normalized, '/')) {
+            return $escape($normalized);
+        }
+
+        $hasTrailingSeparator = str_ends_with($normalized, '/');
+        $trimmed = trim($normalized, '/');
+
+        if ($trimmed === '') {
+            return $normalized;
+        }
+
+        $separatorPattern = '[\\\\/]';
+        $segments = array_map($escape, array_values(array_filter(explode('/', $trimmed), static fn (string $segment): bool => $segment !== '')));
+        $pattern = implode($separatorPattern, $segments);
+
+        return $hasTrailingSeparator ? $pattern . $separatorPattern : $pattern;
+    }
+
     private static function score(string $path, string $query, bool $isDirectory): int
     {
         $name = mb_strtolower(basename(rtrim($path, '/')), 'UTF-8');

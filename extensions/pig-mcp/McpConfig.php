@@ -73,6 +73,12 @@ final class McpConfig
         return new self(array_values($servers), $errors);
     }
 
+    /** Upstream's `stripBom()`: a leading U+FEFF taken off. */
+    private static function stripBom(string $text): string
+    {
+        return str_starts_with($text, "\u{FEFF}") ? substr($text, 3) : $text;
+    }
+
     /**
      * @param array<string, ServerEntry> $servers
      * @param list<string>               $errors
@@ -91,7 +97,8 @@ final class McpConfig
             return;
         }
 
-        $parsed = json_decode($raw, true);
+        // A BOM, which Windows PowerShell 5.1 adds when it rewrites the file, is not JSON (#11191).
+        $parsed = json_decode(self::stripBom($raw), true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             $errors[] = "{$path}: " . json_last_error_msg();
@@ -235,7 +242,7 @@ final class McpConfig
      */
     private static function edit(string $path, \Closure $edit): void
     {
-        $text = is_file($path) ? (string) file_get_contents($path) : null;
+        $text = is_file($path) ? self::stripBom((string) file_get_contents($path)) : null;
         $parsed = $text === null || trim($text) === '' ? [] : json_decode($text, true);
 
         if (!self::isRecord($parsed) || (array_key_exists('mcpServers', $parsed) && !self::isRecord($parsed['mcpServers']))) {

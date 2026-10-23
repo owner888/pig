@@ -202,7 +202,8 @@ final class UpstreamRecord
     public static function normalize(array $message): array
     {
         $message = self::withoutNulls($message);
-        unset($message['timestamp']);
+        // Both wall-clock readings of the run, which neither side can reproduce.
+        unset($message['timestamp'], $message['durationMs']);
 
         foreach ($message['diagnostics'] ?? [] as $i => $diagnostic) {
             unset($message['diagnostics'][$i]['timestamp'], $message['diagnostics'][$i]['error']['stack'], $message['diagnostics'][$i]['details']['timestampMs']);

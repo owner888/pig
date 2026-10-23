@@ -218,30 +218,16 @@ final class SystemMessageTranscriptTest extends TestCase
             Async::run(static fn () => $session->compact());
 
             $this->assertSame($expected, $this->options[1]->reasoning, ($reasons ? 'reasoning' : 'non-reasoning') . " model at {$level->value}");
-            $this->assertSame((int) floor(0.8 * 16_384), $this->options[1]->maxTokens);
+            // No cap of its own: the request gets the model's output limit (#9512).
+            $this->assertNull($this->options[1]->maxTokens);
         }
-
-        // A model whose own cap is lower wins.
-        $this->options = [];
-        [$session, $store] = $this->session(['one', 'the summary'], maxTokens: 1_000);
-        Async::run(static fn () => $session->prompt('first'));
-
-        foreach (range(1, 4) as $ignored) {
-            // Into the file as well: a compaction cuts the session's branch, as upstream's does.
-            $said = new UserMessage(str_repeat('x', 40_000));
-            $session->agent->appendMessage($said);
-            $store->append($said);
-        }
-
-        Async::run(static fn () => $session->compact());
-        $this->assertSame(1_000, $this->options[1]->maxTokens);
     }
 
-    public function testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens(): void
+    public function testABranchSummaryAsksForNoReasoningAndNoOutputCap(): void
     {
-        // Upstream's `generateBranchSummary()`: `{ apiKey, headers, env, signal, maxTokens }` with
-        // `maxTokens = Math.min(4096, model.maxTokens)` — no reasoning, whatever the session's level.
-        foreach ([[64_000, 4_096], [1_024, 1_024]] as [$modelMax, $expected]) {
+        // Upstream's `generateBranchSummary()`: `{ apiKey, headers, env, signal }` — no reasoning,
+        // whatever the session's level, and the model's output limit (#9512).
+        foreach ([64_000, 1_024] as $modelMax) {
             $this->options = [];
             [$session, $store] = $this->session(['one', 'two', 'the summary'], reasoning: true, maxTokens: $modelMax);
             $session->agent->state->thinkingLevel = ThinkingLevel::High;
@@ -253,7 +239,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
             $this->assertTrue($jump->moved);
             $this->assertNull($this->options[2]->reasoning);
-            $this->assertSame($expected, $this->options[2]->maxTokens);
+            $this->assertNull($this->options[2]->maxTokens);
             $this->assertSame('none', $this->options[2]->cacheRetention);
         }
     }

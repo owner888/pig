@@ -31,7 +31,8 @@ final class AssistantMessageEventStreamTest extends TestCase
         $stream->push(new DoneEvent(StopReason::Stop, $finished));
 
         $this->assertTrue($stream->result()->isComplete());
-        $this->assertSame($finished, $stream->result()->await());
+        // The stream times the response, so the result is the message with `durationMs` set.
+        $this->assertEquals($finished->withDurationMs((int) $stream->result()->await()->durationMs), $stream->result()->await());
     }
 
     public function testAFailureIsAResultNotAnException(): void
@@ -43,7 +44,7 @@ final class AssistantMessageEventStreamTest extends TestCase
 
         $result = $stream->result()->await();
 
-        $this->assertSame($failed, $result);
+        $this->assertEquals($failed->withDurationMs((int) $result->durationMs), $result);
         $this->assertSame(StopReason::Error, $result->stopReason);
         $this->assertSame('upstream returned 529', $result->errorMessage);
     }
@@ -63,7 +64,39 @@ final class AssistantMessageEventStreamTest extends TestCase
         $this->assertSame([StartEvent::class, TextDeltaEvent::class, DoneEvent::class], $types);
     }
 
-    private function message(StopReason $reason, string $text, ?string $errorMessage = null): AssistantMessage
+    public function testTheFinalMessageIsTimedFromTheStreamsStart(): void
+    {
+        $stream = new AssistantMessageEventStream();
+        usleep(20_000);
+        $stream->push(new DoneEvent(StopReason::Stop, $this->message(StopReason::Stop, 'hi')));
+
+        $result = $stream->result()->await();
+
+        $this->assertGreaterThanOrEqual(15, $result->durationMs);
+        $this->assertSame($result, iterator_to_array($stream)[0]->message);
+    }
+
+    public function testAMessageAlreadyTimedOrFromBeforeTheStreamIsLeftAlone(): void
+    {
+        $timed = new AssistantMessageEventStream();
+        $timed->push(new DoneEvent(StopReason::Stop, $this->message(StopReason::Stop, 'hi')->withDurationMs(7)));
+        $this->assertSame(7, $timed->result()->await()->durationMs);
+
+        // A response that started elsewhere — a deferred result fetched later — stays untimed.
+        $forwarded = new AssistantMessageEventStream();
+        $forwarded->push(new DoneEvent(StopReason::Stop, $this->message(StopReason::Stop, 'hi', timestamp: $forwarded->startedAt() - 1000)));
+        $this->assertNull($forwarded->result()->await()->durationMs);
+    }
+
+    public function testEndTimesTheResultItIsGiven(): void
+    {
+        $stream = new AssistantMessageEventStream();
+        $stream->end($this->message(StopReason::Stop, 'hi'));
+
+        $this->assertNotNull($stream->result()->await()->durationMs);
+    }
+
+    private function message(StopReason $reason, string $text, ?string $errorMessage = null, ?int $timestamp = null): AssistantMessage
     {
         return new AssistantMessage(
             $text === '' ? [] : [new TextContent($text)],
@@ -73,6 +106,7 @@ final class AssistantMessageEventStreamTest extends TestCase
             new Usage(),
             $reason,
             $errorMessage,
+            $timestamp,
         );
     }
 }

@@ -276,6 +276,16 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         return $text !== null && $this->copyTextToClipboard($text);
     }
 
+    /**
+     * Drop the text selection and the multi-click state — upstream's `resetTextSelection()`, for a
+     * host about to replace the transcript the selection's coordinates point into (#9311).
+     */
+    public function resetTextSelection(): void
+    {
+        $this->clearTextSelection();
+        $this->lastClick = null;
+    }
+
     /** @return list<string> the last frame, one line per terminal row, as written */
     public function getScreenLines(): array
     {
@@ -763,7 +773,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . self::DISABLE_AUTOWRAP;
             $document = array_map(
                 static fn (string $line): string => str_replace(TUI::CURSOR_MARKER, '', (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line)),
-                $this->render($width),
+                $this->resolveFakeCursors($this->render($width)),
             );
             foreach ($this->applyLineResets($document) as $row => $line) {
                 if (!TerminalImage::isImageLine($line) && Width::visible($line) > $width) {
@@ -1079,9 +1089,8 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
                 return true;
             }
-            if ($this->shouldDeferViewportInputToOverlay()) {
-                return false;
-            }
+            // Wheel events no component handles scroll the transcript, also under a focused
+            // overlay, rather than reaching its `handleInput()` as raw input (#10769).
             $this->routeWheel($wheel['x'], $wheel['y'], $delta);
 
             return true;
@@ -2110,7 +2119,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             self::releaseLayout($nextLayout);
             $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
         }
-        $screen = array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines);
+        $screen = $this->resolveFakeCursors(array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines));
         $screen = $this->applySearchHighlights($screen, $nextLayout);
         $screen = $this->compositeScrollToEndIndicator($screen, $nextLayout, $width);
         $screen = $this->compositeOverlays($screen, $width, $height);
