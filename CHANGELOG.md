@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed pig crashing at startup with "Cannot redeclare" when a package's checkout is the project and the same package is installed: an entry file's declarations now include the helpers it `require`s from `__DIR__`, so a different copy is refused by name and an identical one is treated as the same extension.
+
 ## [0.9.0] - 2026-10-23
 
 Upstream pi 1.2–1.4, second batch: one provider selection policy for `--model`, stacked extension dialogs, truncated-response recovery.

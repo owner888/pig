@@ -173,7 +173,14 @@ final class DeclaredSymbols
     private static function files(string $resolved): array
     {
         if (basename($resolved) !== 'index.php') {
-            return [$resolved];
+            // A single file brings in what it `require`s beside itself: an entry that
+            // `require_once`s its helpers declares nothing of its own, and a second copy of it at
+            // another path — a checkout opened as the project, and the same package installed —
+            // redeclared the helpers' classes, a fatal error no `catch` reaches.
+            $files = [$resolved];
+            self::required($resolved, $files);
+
+            return $files;
         }
 
         $files = [];
@@ -181,6 +188,31 @@ final class DeclaredSymbols
         sort($files);
 
         return $files;
+    }
+
+    /**
+     * The files $file `require`s or `include`s by a literal path from `__DIR__`, and theirs, added
+     * to $files once each. Read from the source, as everything here is; a path built at run time
+     * is not followed.
+     *
+     * @param list<string> $files
+     */
+    private static function required(string $file, array &$files): void
+    {
+        $code = file_get_contents($file);
+
+        if ($code === false || preg_match_all('~\b(?:require|include)(?:_once)?\s*\(?\s*__DIR__\s*\.\s*([\'"])(/[^\'"]+?\.php)\1~', $code, $found) === 0) {
+            return;
+        }
+
+        foreach ($found[2] as $relative) {
+            $path = realpath(dirname($file) . $relative);
+
+            if ($path !== false && is_file($path) && !in_array($path, $files, true)) {
+                $files[] = $path;
+                self::required($path, $files);
+            }
+        }
     }
 
     /** @param list<string> $files */

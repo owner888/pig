@@ -142,6 +142,48 @@ PHP);
         $this->assertStringContainsString('Extension does not export a valid factory function', $errors[0]->message);
     }
 
+    /**
+     * The checkout of a package opened as the project, and the same package installed: two entries
+     * at two paths that each `require_once` their own helper. The second redeclared the first's
+     * class — a fatal error — because the entry itself declares nothing. Its helpers are its
+     * declarations now, so a different copy is refused by name and an identical one is the same
+     * extension.
+     */
+    public function testTwoCopiesOfAnEntryWithHelpersAreToldApartByWhatTheHelpersDeclare(): void
+    {
+        $ns = 'PigLoaderHelper' . bin2hex(random_bytes(4));
+        $write = static function (string $dir, string $version) use ($ns): string {
+            @mkdir($dir, 0755, true);
+            file_put_contents($dir . '/Helper.php', "<?php\nnamespace {$ns};\ninterface Helper {}\n// {$version}\n");
+            file_put_contents($dir . '/entry.php', "<?php\nrequire_once __DIR__ . '/Helper.php';\nreturn static function (\$pi): void {};\n");
+
+            return $dir . '/entry.php';
+        };
+
+        $write($this->cwd . '/extensions', 'checkout');
+        file_put_contents($this->cwd . '/composer.json', json_encode(['name' => 'me/thing', 'extra' => ['pig' => ['extensions' => ['./extensions/entry.php']]]]));
+        $installed = $write($this->tempDir . '/installed', 'installed');
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$installed], home: $this->homeDir, projectTrusted: true);
+
+        $this->assertCount(1, $loaded);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString("{$ns}\\Helper", $errors[0]->message);
+        $this->assertStringContainsString('two different copies of one extension cannot both be loaded', $errors[0]->message);
+
+        // The same files at a third path are the extension already loaded, not a conflict.
+        $same = $this->tempDir . '/same';
+        mkdir($same);
+        copy(dirname($installed) . '/Helper.php', $same . '/Helper.php');
+        // Under another name: two extensions called `entry` would be one by name before content.
+        copy($installed, $same . '/copy.php');
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$installed, $same . '/copy.php'], home: $this->homeDir, projectTrusted: false);
+
+        $this->assertSame([], $errors);
+        $this->assertCount(2, $loaded);
+    }
+
     public function testFaultIsolationCatchesThrowsAndDoesNotCrash(): void
     {
         $broken = $this->homeDir . '/extensions/broken.php';
