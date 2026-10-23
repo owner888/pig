@@ -248,4 +248,18 @@ XML;
         $res = $adb->captureScreen();
         $this->assertNull($res);
     }
+
+    public function testTheSlashCommandAnswersOnScreenAndNotToTheModel(): void
+    {
+        // It used to call `$pi->sendMessage()` with one argument, which needs a custom type and the
+        // content — an ArgumentCountError on every `/android` — and what it says is for the person.
+        $root = dirname(__DIR__, 4);
+        [$loaded] = ExtensionLoader::load($root, cliPaths: [$root . '/extensions/pig-android-use/index.php'], home: $this->tempHome);
+        $ext = array_values(array_filter($loaded, static fn ($e): bool => $e->name === 'pig-android-use'))[0];
+        $ui = new \Pig\CodingAgent\Test\Extensions\NoticingUi();
+
+        ($ext->api->commands()['android']->handler)('bogus', new \Pig\CodingAgent\Hooks\HookContext($this->tempHome, ui: $ui, hasUi: true));
+
+        $this->assertSame(["[warning] Unknown command '/android bogus'."], array_map(static fn (string $n): string => explode('. Available', $n)[0] . '.', $ui->notices));
+    }
 }

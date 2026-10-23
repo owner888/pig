@@ -32,14 +32,14 @@ return static function (ExtensionApi $pi): void {
     $pi->registerCommand(
         name: 'android',
         description: 'Android device controller: /android status | connect <ip:port> | screenshot',
-        handler: static function (string $args, $ctx) use ($adb, $pi, &$lastScale): void {
+        handler: static function (string $args, $ctx) use ($adb, &$lastScale): void {
             $parts = preg_split('/\s+/', trim($args), 2, PREG_SPLIT_NO_EMPTY);
             $sub = strtolower($parts[0] ?? 'status');
             $param = trim($parts[1] ?? '');
 
             if ($sub === 'status' || $sub === '') {
                 if (!$adb->isAvailable()) {
-                    $pi->sendMessage("❌ ADB binary not found. Please install Android platform-tools or set ADB_PATH.");
+                    $ctx->ui->notify("❌ ADB binary not found. Please install Android platform-tools or set ADB_PATH.", 'error');
                     return;
                 }
 
@@ -47,7 +47,7 @@ return static function (ExtensionApi $pi): void {
                 $devices = $adb->devices();
 
                 if ($devices === []) {
-                    $pi->sendMessage("📱 ADB ready ({$ver}), but no Android devices attached.\nConnect your device via USB (enable USB debugging) or run: /android connect <ip:5555>");
+                    $ctx->ui->notify("📱 ADB ready ({$ver}), but no Android devices attached.\nConnect your device via USB (enable USB debugging) or run: /android connect <ip:5555>");
                     return;
                 }
 
@@ -73,36 +73,36 @@ return static function (ExtensionApi $pi): void {
                     $lines[] = "  🎯 Foreground: {$focus['package']}/{$focus['activity']}";
                 }
 
-                $pi->sendMessage(implode("\n", $lines));
+                $ctx->ui->notify(implode("\n", $lines));
                 return;
             }
 
             if ($sub === 'connect') {
                 if ($param === '') {
-                    $pi->sendMessage("Usage: /android connect <ip:port> (e.g. 192.168.1.100:5555)");
+                    $ctx->ui->notify("Usage: /android connect <ip:port> (e.g. 192.168.1.100:5555)");
                     return;
                 }
                 $res = $adb->connect($param);
-                $pi->sendMessage($res['ok'] ? "✅ {$res['message']}" : "❌ {$res['message']}");
+                $ctx->ui->notify($res['ok'] ? "✅ {$res['message']}" : "❌ {$res['message']}", $res['ok'] ? 'info' : 'error');
                 return;
             }
 
             if ($sub === 'disconnect') {
                 $res = $adb->disconnect($param !== '' ? $param : null);
-                $pi->sendMessage($res['ok'] ? "✅ {$res['message']}" : "❌ {$res['message']}");
+                $ctx->ui->notify($res['ok'] ? "✅ {$res['message']}" : "❌ {$res['message']}", $res['ok'] ? 'info' : 'error');
                 return;
             }
 
             if ($sub === 'screenshot') {
                 $processed = $adb->captureScreen($param !== '' ? $param : null);
                 if ($processed === null) {
-                    $pi->sendMessage("❌ Failed to capture screenshot. Make sure the device is connected, awake and unlocked.");
+                    $ctx->ui->notify("❌ Failed to capture screenshot. Make sure the device is connected, awake and unlocked.", 'error');
                     return;
                 }
 
                 $lastScale = $processed['pixel_to_point'];
                 $methodTag = ($processed['method'] ?? '') === 'hardware_h264' ? ' (⚡ hardware accelerated)' : '';
-                $pi->sendMessage(
+                $ctx->ui->notify(
                     "📸 Screenshot captured{$methodTag}: {$processed['width']}x{$processed['height']} " .
                     "(raw {$processed['raw_width']}x{$processed['raw_height']}, " .
                     "ratio {$processed['pixel_to_point'][0]}x{$processed['pixel_to_point'][1]})\n" .
@@ -111,7 +111,7 @@ return static function (ExtensionApi $pi): void {
                 return;
             }
 
-            $pi->sendMessage("Unknown command '/android {$sub}'. Available: /android status | connect <ip:port> | screenshot");
+            $ctx->ui->notify("Unknown command '/android {$sub}'. Available: /android status | connect <ip:port> | screenshot", 'warning');
         }
     );
 

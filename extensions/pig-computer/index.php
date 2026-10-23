@@ -71,14 +71,14 @@ return static function (ExtensionApi $pi): void {
     $pi->registerCommand(
         name: 'computer',
         description: 'Native Mac desktop controller: /computer status | screenshot | app <name>',
-        handler: static function (string $args, $ctx) use ($desktop, $observeScreen, $pi): void {
+        handler: static function (string $args, $ctx) use ($desktop, $observeScreen): void {
             $parts = preg_split('/\s+/', trim($args), 2, PREG_SPLIT_NO_EMPTY);
             $sub = strtolower($parts[0] ?? 'status');
             $param = trim($parts[1] ?? '');
 
             if ($sub === 'status' || $sub === '') {
                 if (!$desktop->isAvailable()) {
-                    $pi->sendMessage("❌ Native desktop automation requires macOS with screencapture and osascript.");
+                    $ctx->ui->notify("❌ Native desktop automation requires macOS with screencapture and osascript.", 'error');
                     return;
                 }
 
@@ -92,13 +92,13 @@ return static function (ExtensionApi $pi): void {
                     '  • Automation Engine: Pure PHP + JXA CoreGraphics',
                 ];
 
-                $pi->sendMessage(implode("\n", $lines));
+                $ctx->ui->notify(implode("\n", $lines));
                 return;
             }
 
             if ($sub === 'screenshot') {
                 $obs = $observeScreen();
-                $pi->sendMessage(
+                $ctx->ui->notify(
                     "📸 Desktop screenshot captured: {$obs['viewport_width']}x{$obs['viewport_height']} " .
                     "(Retina logical {$obs['screen_width']}x{$obs['screen_height']}, " .
                     "ratio {$obs['pixel_to_point'][0]}x{$obs['pixel_to_point'][1]})\n" .
@@ -109,15 +109,15 @@ return static function (ExtensionApi $pi): void {
 
             if ($sub === 'app') {
                 if ($param === '') {
-                    $pi->sendMessage("Usage: /computer app <Application Name> (e.g. /computer app Google Chrome)");
+                    $ctx->ui->notify("Usage: /computer app <Application Name> (e.g. /computer app Google Chrome)");
                     return;
                 }
                 $ok = $desktop->launchAppOrUrl($param);
-                $pi->sendMessage($ok ? "✅ Opened/Focused: {$param}" : "❌ Failed to open: {$param}");
+                $ctx->ui->notify($ok ? "✅ Opened/Focused: {$param}" : "❌ Failed to open: {$param}", $ok ? 'info' : 'error');
                 return;
             }
 
-            $pi->sendMessage("Unknown command '/computer {$sub}'. Available: /computer status | screenshot | app <name>");
+            $ctx->ui->notify("Unknown command '/computer {$sub}'. Available: /computer status | screenshot | app <name>", 'warning');
         }
     );
 
