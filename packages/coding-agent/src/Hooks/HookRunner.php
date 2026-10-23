@@ -140,7 +140,7 @@ final class HookRunner
      * @param Closure(): bool|null    $hasPendingMessages
      * @param Closure(): (AbortSignal|null)|null $signal the turn in progress's
      * @param HookUi|null                     $ui   the terminal's, when there is one
-     * @param Closure(HookMessage, bool): void|null $send `$pi->sendMessage()`
+     * @param Closure(HookMessage, ?bool, ?string): void|null $send `$pi->sendMessage()`: the message, `triggerTurn`, `deliverAs`
      * @param Closure(string, mixed): void|null     $note `$pi->appendEntry()`
      */
     /**
@@ -160,8 +160,8 @@ final class HookRunner
             hasPendingMessages: static fn (): bool => $session->queued() !== [],
             signal: static fn () => $session->signal(),
             ui: $ui,
-            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
-                $session->sendHookMessage($message, $triggerTurn);
+            send: static function (HookMessage $message, ?bool $triggerTurn, ?string $deliverAs) use ($session): void {
+                $session->sendHookMessage($message, $triggerTurn, $deliverAs);
             },
             note: static function (string $customType, mixed $data) use ($session): void {
                 $session->appendHookEntry($customType, $data);
@@ -668,26 +668,28 @@ final class HookRunner
     }
 
     /**
-     * Offer the hooks a word before the prompt goes out.
+     * Upstream's `emitBeforeAgentStart(trigger, systemPromptOptions)`: every handler sees the run's
+     * trigger and the one options object, and what they return is combined — each handler's custom
+     * message in order, and a `systemPrompt` answer applied to the options in turn, so the last
+     * handler's is the one sent.
      *
-     * First note wins. Upstream does the same, and for the same reason: two notes in
-     * front of one prompt is a conversation nobody wrote. A `systemPrompt` answer is not a note:
-     * every one is applied to the options in turn, so the last handler's is the one sent.
-     *
-     * @param list<ImageContent>                          $images
+     * @param array{messageType: 'user', prompt: string, images?: list<ImageContent>}|array{messageType: 'custom', message: HookMessage} $trigger
      * @param SystemPromptOptions|null                    $systemPromptOptions mutated in place; a fresh one when null
      * @param (Closure(SystemPromptOptions): string)|null $renderSystemPrompt  what `$event->systemPrompt()` renders
+     * @return list<HookMessage> the handlers' messages, in order
      */
-    public function emitBeforeAgentStart(string $prompt, array $images = [], ?SystemPromptOptions $systemPromptOptions = null, ?Closure $renderSystemPrompt = null): ?BeforeAgentStartEventResult
+    public function emitBeforeAgentStart(array $trigger, ?SystemPromptOptions $systemPromptOptions = null, ?Closure $renderSystemPrompt = null): array
     {
         // One options object for every handler, as upstream's `currentOptions`: a section one
         // handler adds is there for the next, and a `systemPrompt` answer becomes
         // `forceSystemPrompt`, which later handlers observe.
         $options = $systemPromptOptions ?? new SystemPromptOptions();
         $render = $renderSystemPrompt === null ? null : static fn (): string => $renderSystemPrompt($options);
-        $event = new BeforeAgentStartEvent($prompt, $images, $options, $render);
+        $event = $trigger['messageType'] === 'custom'
+            ? new BeforeAgentStartEvent('custom', null, [], $options, $render, $trigger['message'])
+            : new BeforeAgentStartEvent('user', $trigger['prompt'], $trigger['images'] ?? [], $options, $render);
         $context = $this->context();
-        $first = null;
+        $messages = [];
 
         foreach ($this->hooks as $hook) {
             foreach ($hook->api->handlers('before_agent_start') as $handler) {
@@ -709,17 +711,17 @@ final class HookRunner
                     continue;
                 }
 
-                if ($result->systemPrompt !== null) {
-                    $options->forceSystemPrompt = $result->systemPrompt;
+                if ($result->message !== null) {
+                    $messages[] = $result->message;
                 }
 
-                if ($result->text !== null) {
-                    $first ??= $result;
+                if ($result->systemPrompt !== null) {
+                    $options->forceSystemPrompt = $result->systemPrompt;
                 }
             }
         }
 
-        return $first;
+        return $messages;
     }
 
     /**

@@ -198,9 +198,13 @@ Five things worth keeping straight:
   noting permissions — which happens before that. So the catch-up flushes held-back notes
   along with the held-back messages, interleaved by timestamp, or the file would read
   messages-then-notes and the common case would be lost entirely.
-- **`triggerTurn` is a hook driving the agent.** Idle, it appends and runs; working, the
-  message is queued as a follow-up and the flag is ignored, because a message between a tool
-  call and its result is a request every provider rejects.
+- **`triggerTurn` is a hook driving the agent.** Idle, it starts a run that goes through
+  `before_agent_start` like a prompt does, with `messageType: 'custom'` and the message instead
+  of a prompt. While the session is busy — a run that is still starting counts, its
+  `before_agent_start` handlers included — the message goes into that run: steered by default,
+  or `deliverAs: 'followUp'`. `deliverAs: 'nextTurn'` holds it for the next run, after that
+  run's starting message. Without `triggerTurn` during a run it waits for the end of the turn,
+  because a message between a tool call and its result is a request every provider rejects.
 - **Calling either before a session exists throws.** A hook file is read at startup, before a
   mode has wired anything up, and a message that silently goes nowhere is a hook that appears
   to work.
@@ -215,8 +219,11 @@ A compaction names it — `[Hook build]: …` — rather than folding it in as a
 summary would read "the user said the build is broken" and send the model looking for a
 conversation that did not happen.
 
-`BeforeAgentStartEventResult` still carries text rather than a `HookMessage`: upstream's is one,
-and the part that survives into the conversation is the part that reaches the model.
+`BeforeAgentStartEventResult` carries a `HookMessage`, as upstream's does. Every handler's
+message is kept, in hook order, and goes after the run's starting message. The event is
+upstream's union on `messageType`: `'user'` carries `prompt` and `images`, `'custom'` carries
+the starting `message` and no prompt, so a handler that should act only on what a person typed
+checks `$event->messageType === 'user'`.
 
 **Each mode wires its own UI**, which is upstream's rule too. `InteractiveMode` builds the
 `TerminalUi` and calls `HookRunner::initialize()` and `CustomToolSet::withUi()` itself;

@@ -189,11 +189,27 @@ final class AgentSession
     private array $fallbacksTried = [];
 
     /**
-     * A prompt is in progress, from the top of `runAgentPrompt()` to its `agent_settled`: the runs,
-     * and the retry sleeps, summaries and queued messages between them. Upstream's
-     * `_isAgentRunActive`, and what `isStreaming()` answers.
+     * A prompt is in progress, from the top of `startRun()` — `before_agent_start` included — to its
+     * `agent_settled`: the runs, and the retry sleeps, summaries and queued messages between them.
+     * Upstream's `_isAgentRunActive`, and what `isStreaming()` answers.
      */
     private bool $runActive = false;
+
+    /**
+     * Set while a run is being prepared (`prepareRun()`): busy, with no run in the agent yet.
+     * A prompt sent then without `streamingBehavior` is refused, as upstream's is, rather than
+     * waited out — the run it would wait for is the one waiting on its handler.
+     */
+    private bool $startingRun = false;
+
+    /**
+     * @var list<HookMessage> custom messages sent while a run was in progress without
+     *      `triggerTurn`, appended at the end of the turn — upstream's `_pendingCustomMessages`
+     */
+    private array $pendingHookMessages = [];
+
+    /** @var list<HookMessage> custom messages sent with `deliverAs: 'nextTurn'` — upstream's `_pendingNextTurnMessages` */
+    private array $pendingNextTurnMessages = [];
 
     /** Escape reached the prompt in progress, so its post-run loop stops. Upstream's `_agentRunAbortRequested`. */
     private bool $runAbortRequested = false;
@@ -902,6 +918,12 @@ final class AgentSession
 
     private function onAgentEvent(AgentEvent $event): void
     {
+        // "An abort requested while the run was starting, e.g. during before_agent_start, stops it
+        // here. agent_start is awaited before the first request."
+        if ($event instanceof AgentStartEvent && $this->runAbortRequested) {
+            $this->agent->abort();
+        }
+
         $this->tellHooks($event);
 
         // A queued message leaves the queue *before* the event goes out, so a listener
@@ -957,6 +979,15 @@ final class AgentSession
             $attempts = $this->attempt;
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(true, $attempts));
+        }
+
+        // Upstream: "A turn ends after its assistant message and every tool result has been
+        // appended, so this is the first point in the run where a context-only custom message can
+        // be inserted without landing between a tool call and its result. Flushing after the
+        // extension and listener dispatch above also picks up messages that turn_end handlers
+        // queued."
+        if ($event instanceof TurnEndEvent) {
+            $this->flushPendingHookMessages();
         }
 
         // Nothing is decided here about what comes after the run — retry, summary, the queue.
@@ -2099,7 +2130,7 @@ final class AgentSession
         // the retry was rescuing. pig's own difference: upstream refuses here as it does mid-run.
         // The screen never gets here (it asks `isStreaming()` and queues), so this is for a
         // caller without a queue — RPC's `prompt`, `pig -p` with several messages.
-        if ($this->runActive && !$this->agent->state->isStreaming) {
+        if ($this->runActive && !$this->agent->state->isStreaming && !$this->startingRun) {
             $this->waitForIdle();
         }
 
@@ -2126,9 +2157,69 @@ final class AgentSession
         [$text, $images] = $input;
         $text = $this->expandFileCommand($text);
 
-        // Upstream's `_checkCompaction(lastAssistant, false)` before the prompt is sent: a context
-        // already past the threshold (or an aborted turn that filled it) is compacted first, in
-        // every mode. The prompt is sent below, so nothing is continued from here.
+        // Returns when the prompt has settled — after its retries, its summary and whatever was
+        // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
+        $this->startRun(
+            ['messageType' => 'user', 'prompt' => $text, 'images' => $images],
+            $preflightResult === null ? null : static fn () => $preflightResult('started'),
+        );
+    }
+
+    /**
+     * Start a run from a user or custom message — upstream's `_startRun()`. "The session counts as
+     * busy from here on, so messages sent while before_agent_start handlers run are queued into this
+     * run instead of starting another, and an abort requested meanwhile aborts the run as soon as it
+     * exists" (at `agent_start`, `onAgentEvent()`).
+     *
+     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: HookMessage} $trigger
+     * @param (Closure(): void)|null $onStarted called once the run's messages are prepared, before the first request
+     */
+    private function startRun(array $trigger, ?Closure $onStarted = null): void
+    {
+        $this->runActive = true;
+        $this->runAbortRequested = false;
+        $this->idle ??= new Deferred();
+        $this->startingRun = true;
+
+        try {
+            $messages = $this->prepareRun($trigger);
+        } catch (Throwable $error) {
+            $this->startingRun = false;
+            $this->runActive = false;
+            $this->flushBash();
+            $this->flushPendingHookMessages();
+            $this->resolveIdleWaitIfIdle();
+
+            throw $error;
+        }
+
+        $this->startingRun = false;
+        // "Messages held while the run was starting go before its starting messages, as they would
+        // have while idle. No run exists yet, so they cannot split a tool call from its result."
+        $this->flushBash();
+        $this->flushPendingHookMessages();
+
+        if ($onStarted !== null) {
+            $onStarted();
+        }
+
+        $this->runAgentPrompt(fn () => $this->agent->prompt($messages), resetAbort: false);
+    }
+
+    /**
+     * Prepare a run and return its starting messages — upstream's `_prepareRun()`: "compact first
+     * when needed, emit before_agent_start, apply the run's prompt options and tool loadout, and
+     * build the starting message followed by pending nextTurn messages (consumed here) and handler
+     * messages, with a system patch first when the prompt changed."
+     *
+     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: HookMessage} $trigger
+     * @return list<mixed>
+     */
+    private function prepareRun(array $trigger): array
+    {
+        // Upstream's `_checkCompaction(lastAssistant, false)` before the run: a context already
+        // past the threshold (or an aborted turn that filled it) is compacted first, in every
+        // mode. The starting message is sent below, so nothing is continued from here.
         $lastAssistant = null;
 
         foreach (array_reverse($this->messages()) as $message) {
@@ -2143,44 +2234,37 @@ final class AgentSession
             $this->checkCompaction($lastAssistant, skipAbortedCheck: false);
         }
 
-        // A hook may put a note in front of the prompt. It goes in as its own user
-        // message rather than being pasted onto the front of theirs, so the transcript
-        // still shows what the person actually typed — and it goes in *through* the
-        // prompt rather than onto the state, so the session file records it and a
-        // resumed conversation still has it.
         // The handlers get the prompt options to change — upstream's `systemPromptOptions` — and
         // what they leave is this run's (`$runSystemPromptOptions`).
         $options = new SystemPromptOptions();
-        $note = $this->hooks?->emitBeforeAgentStart($text, $images, $options, $this->renderSystemPrompt(...));
+        $handlerMessages = $this->hooks?->emitBeforeAgentStart($trigger, $options, $this->renderSystemPrompt(...)) ?? [];
 
-        // Upstream's `_normalizePromptImages()`, after the hooks and before the message is built:
-        // every picture fitted inside the model's limits, and what was done to one said after the
-        // text — an image that could not be fitted is left out and the sentence says so.
-        [$images, $hints] = $this->normalizePromptImages($images);
-
-        if ($hints !== []) {
-            $text .= "\n\n" . implode("\n", $hints);
+        if ($trigger['messageType'] === 'custom') {
+            $messages = [$trigger['message']];
+        } else {
+            // Upstream's `_normalizePromptImages()`, after the hooks and before the message is
+            // built: every picture fitted inside the model's limits, and what was done to one said
+            // after the text — an image that could not be fitted is left out and the sentence says so.
+            [$images, $hints] = $this->normalizePromptImages($trigger['images']);
+            $text = $hints !== [] ? $trigger['prompt'] . "\n\n" . implode("\n", $hints) : $trigger['prompt'];
+            $messages = [new UserMessage([new TextContent($text), ...$images])];
         }
 
-        // Held-back `!` commands go in before the prompt, as upstream's `prompt()` flushes them.
-        $this->flushBash();
+        // "Inject any pending nextTurn messages as context alongside the starting message."
+        $messages = [...$messages, ...$this->pendingNextTurnMessages];
+        $this->pendingNextTurnMessages = [];
 
-        // Upstream's `updateMessage`, put in front of the prompt (`messages.unshift(updateMessage)`):
-        // the prompt sections that changed since the transcript last said them, in the transcript
-        // and the session file before what the person typed.
+        // Each handler's message, stamped now, as upstream builds them.
+        foreach ($handlerMessages as $message) {
+            $messages[] = new HookMessage($message->customType, $message->content, $message->display, $message->details);
+        }
+
+        // Upstream's `updateMessage`, put in front (`messages.unshift(updateMessage)`): the prompt
+        // sections that changed since the transcript last said them.
         $update = $this->preparePromptUpdate(null, $options);
         $this->runSystemPromptOptions = $options;
-        $messages = $note?->text === null || trim($note->text) === ''
-            ? [new UserMessage([new TextContent($text), ...$images])]
-            : [new UserMessage($note->text), new UserMessage([new TextContent($text), ...$images])];
 
-        if ($preflightResult !== null) {
-            $preflightResult('started');
-        }
-
-        // Returns when the prompt has settled — after its retries, its summary and whatever was
-        // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
-        $this->runAgentPrompt(fn () => $this->agent->prompt($update !== null ? [$update, ...$messages] : $messages));
+        return $update !== null ? [$update, ...$messages] : $messages;
     }
 
     /**
@@ -2382,82 +2466,111 @@ final class AgentSession
     }
 
     /**
-     * Put a hook's message in the conversation.
+     * Put a hook's message in the conversation — upstream's `sendCustomMessage()`, branch for branch:
      *
-     * Three ways it can go, and the agent's state decides which:
-     *
-     * - **Working**: queued as a follow-up. A message between a tool call and its result is
-     *   a request every provider rejects, so it waits — and `$triggerTurn` is beside the
-     *   point, because a turn is already happening.
-     * - **Idle, and asked to trigger a turn**: appended, then the agent runs from it. This
-     *   is a hook driving the agent, which is the interesting case — a `session_start` hook
-     *   that says "carry on where the last session left off" needs the turn as well as the
-     *   message.
+     * - `deliverAs: 'nextTurn'`: held for the next run, beside its starting message.
+     * - **Working**, and `triggerTurn` not false: steered in, or queued as a follow-up with
+     *   `deliverAs: 'followUp'`.
+     * - **Idle, and asked to trigger a turn**: a run started from it (`startRun()`), through
+     *   `before_agent_start` like a prompt — a `session_start` hook that says "carry on where the
+     *   last session left off" needs the turn as well as the message.
+     * - **Working, `triggerTurn` false**: held until the turn ends — "appending now would put the
+     *   message between an assistant tool call and its result, which providers that validate
+     *   message order reject on replay".
      * - **Idle, not asked**: appended and left there, for the next thing anyone says.
      *
-     * Ported from upstream's `sendHookMessage()`.
+     * @param 'steer'|'followUp'|'nextTurn'|null $deliverAs
      */
-    public function sendHookMessage(HookMessage $message, bool $triggerTurn = false): void
+    public function sendHookMessage(HookMessage $message, ?bool $triggerTurn = null, ?string $deliverAs = null): void
     {
-        // Working — which is the whole prompt, the gaps between its runs included. A message
-        // queued here is carried on by `runAgentPrompt()` when the run it arrived during has
-        // ended, as upstream's post-run loop does on `agent.hasQueuedMessages()`.
-        if ($this->isStreaming()) {
-            // Handed to the agent, which is the whole of what queuing means. This used to add the
-            // text to `$this->followUps` and stop there — this session's own list of what is
-            // waiting, which the agent never reads: the model never saw the message, and the
-            // footer counted it as pending until somebody pressed escape.
-            //
-            // As a follow-up rather than steering: steering interrupts the tools that are
-            // queued behind the current one, and a hook's note is not a change of mind.
-            //
-            // And *not* added to `$this->followUps`, which is upstream's choice too: that list is
-            // what a person typed, it is what `clearQueue()` hands back to the editor, and
-            // handing somebody a hook's sentence to re-send is not putting their text back.
-            $this->agent->followUp($message);
+        if ($deliverAs === 'nextTurn') {
+            $this->pendingNextTurnMessages[] = $message;
 
             return;
         }
 
+        if ($this->isStreaming() && $triggerTurn !== false) {
+            // Handed to the agent, which is the whole of what queuing means — and *not* added to
+            // `$this->followUps`, which is upstream's choice too: that list is what a person typed,
+            // it is what `clearQueue()` hands back to the editor.
+            $deliverAs === 'followUp' ? $this->agent->followUp($message) : $this->agent->steer($message);
+
+            return;
+        }
+
+        // pig's own guard, kept from before: an empty message has nothing to answer, and a run
+        // started from it would send a request with an empty message in it (`toLlm()` drops it).
+        if ($triggerTurn === true && $message->isEmpty()) {
+            $this->appendHookMessage($message);
+
+            return;
+        }
+
+        if ($triggerTurn === true) {
+            // Asked for while the hooks hear `agent_settled`: after them, as upstream defers it —
+            // its own run, with its own settle, once the one settling now has finished settling.
+            if ($this->emittingSettled) {
+                $this->deferredSettledActions[] = fn () => $this->sendHookMessage($message, $triggerTurn, $deliverAs);
+
+                return;
+            }
+
+            // Spawned, because the caller is a hook's handler and `sendMessage()` does not wait for a
+            // turn. Busy from now rather than from when the fiber starts, as upstream's flag is set
+            // before its first `await`: a prompt sent in that tick would race this one into the agent.
+            $this->runActive = true;
+            $this->idle ??= new Deferred();
+
+            Async::spawn(function () use ($message): void {
+                try {
+                    $this->startRun(['messageType' => 'custom', 'message' => $message]);
+                } catch (Throwable $problem) {
+                    // Nobody awaits this fiber, so the hook that asked is told — the same channel
+                    // as a handler that threw. Without hooks there is no one to tell, and the throw
+                    // goes to the spawned future as it is.
+                    if ($this->hooks === null) {
+                        throw $problem;
+                    }
+
+                    $this->hooks->emitError(new HookError('<session>', 'sendMessage', $problem->getMessage()));
+                }
+            });
+
+            return;
+        }
+
+        if ($this->isStreaming()) {
+            $this->pendingHookMessages[] = $message;
+
+            return;
+        }
+
+        $this->appendHookMessage($message);
+    }
+
+    /** Upstream's `_appendCustomMessage()`: into the conversation and the file, and told to the listeners. */
+    private function appendHookMessage(HookMessage $message): void
+    {
         $this->agent->appendMessage($message);
         $this->store?->append($message);
 
         foreach ($this->listeners as $listener) {
             $listener(new MessageEndEvent($message));
         }
+    }
 
-        if (!$triggerTurn || $message->isEmpty()) {
-            return;
+    /**
+     * Upstream's `_flushPendingCustomMessages()`: "Append custom messages queued while the agent was
+     * running. Called once the current turn's tool results are in agent state and session history."
+     */
+    private function flushPendingHookMessages(): void
+    {
+        $pending = $this->pendingHookMessages;
+        $this->pendingHookMessages = [];
+
+        foreach ($pending as $message) {
+            $this->appendHookMessage($message);
         }
-
-        // Asked for while the hooks hear `agent_settled`: after them, as upstream defers it —
-        // its own prompt, with its own settle, once the one settling now has finished settling.
-        if ($this->emittingSettled) {
-            $this->deferredSettledActions[] = fn () => $this->runAgentPrompt(fn () => $this->agent->continue());
-
-            return;
-        }
-
-        // Spawned, because the caller is a hook's handler and `sendMessage()` does not wait for a
-        // turn. Busy from now rather than from when the fiber starts, as upstream's flag is set
-        // before its first `await`: a prompt sent in that tick would race this one into the agent.
-        $this->runActive = true;
-        $this->idle ??= new Deferred();
-
-        Async::spawn(function (): void {
-            try {
-                $this->runAgentPrompt(fn () => $this->agent->continue());
-            } catch (Throwable $problem) {
-                // Nobody awaits this fiber, so the hook that asked is told — the same channel
-                // as a handler that threw. Without hooks there is no one to tell, and the throw
-                // goes to the spawned future as it is.
-                if ($this->hooks === null) {
-                    throw $problem;
-                }
-
-                $this->hooks->emitError(new HookError('<session>', 'sendMessage', $problem->getMessage()));
-            }
-        });
     }
 
     /**
@@ -3440,10 +3553,15 @@ final class AgentSession
      * notification said "task complete" over a screen still saying Working.
      *
      * @param Closure(): void $firstRun `agent->prompt(...)` or `agent->continue()`
+     * @param bool $resetAbort false from `startRun()`, which reset it before `before_agent_start`
+     *        and must keep an abort requested since
      */
-    private function runAgentPrompt(Closure $firstRun): void
+    private function runAgentPrompt(Closure $firstRun, bool $resetAbort = true): void
     {
-        $this->runAbortRequested = false;
+        if ($resetAbort) {
+            $this->runAbortRequested = false;
+        }
+
         // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
         $this->failedResponse = null;
         $this->fallbacksTried = [];
@@ -3486,6 +3604,7 @@ final class AgentSession
             $this->failedResponse = null;
             $this->runSystemPromptOptions = null;
             $this->flushBash();
+            $this->flushPendingHookMessages();
             $this->emitAgentSettled();
         }
     }

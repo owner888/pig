@@ -839,10 +839,10 @@ Four things worth keeping straight:
   one returned, so two hooks can both edit the conversation without knowing about each other.
   A `tool_result` handler is given the tool's own output every time, so a hook can always tell
   the tool from another hook's edit of it.
-- **A hook's note goes in through `prompt()`, not onto the state.** `before_agent_start`
-  returns text that becomes its own user message in front of the prompt — appended to the
-  agent's messages directly it would never reach the session file, and a resumed conversation
-  would be missing the thing that explained it.
+- **A hook's message goes in with the run's starting messages, not onto the state.**
+  `before_agent_start` returns a `HookMessage` that follows the prompt into the run — appended
+  to the agent's messages directly it would never reach the session file, and a resumed
+  conversation would be missing the thing that explained it.
 
 `HookedTool` is `tool-wrapper.ts` as a decorator, because PHP has interfaces where TypeScript
 has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a

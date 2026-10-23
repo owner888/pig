@@ -100,7 +100,7 @@ final class CodemodeExtensionTest extends TestCase
 
         Async::run(static function () use ($started): void {
             $started->hooks->emit(new SessionStartEvent());
-            $started->hooks->emitBeforeAgentStart('hi');
+            $started->hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         return $started;

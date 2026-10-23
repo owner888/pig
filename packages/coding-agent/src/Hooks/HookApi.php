@@ -149,20 +149,30 @@ class HookApi
      * about this repository. `display` decides whether a person sees it too, and `details`
      * is the hook's own metadata, kept in the session file and never sent to the model.
      *
-     * `$triggerTurn` starts a turn if the agent is idle. While it is working the message is
-     * queued as a follow-up instead and the flag is ignored — an extra message between a
-     * tool call and its result is a request every provider rejects.
+     * Upstream's `options: { triggerTurn?, deliverAs? }`. `$deliverAs: 'nextTurn'` holds it for the
+     * next run, beside that run's first message. While the agent is working it is steered in
+     * (`steer`, the default) or queued as a follow-up (`followUp`) — unless `$triggerTurn` is
+     * false, which holds it until the turn ends, since a message between a tool call and its
+     * result is a request every provider rejects. Idle, `$triggerTurn: true` starts a run from
+     * it, through `before_agent_start` as a prompt does; otherwise it is appended for the next
+     * thing anyone says.
      *
      * @param string|list<TextContent|ImageContent> $content
-     * @throws InvalidArgumentException when the type is unusable
+     * @param 'steer'|'followUp'|'nextTurn'|null      $deliverAs
+     * @throws InvalidArgumentException when the type or `$deliverAs` is unusable
      */
     public function sendMessage(
         string $customType,
         string|array $content,
         bool $display = true,
         mixed $details = null,
-        bool $triggerTurn = false,
+        ?bool $triggerTurn = null,
+        ?string $deliverAs = null,
     ): void {
+        if ($deliverAs !== null && !in_array($deliverAs, ['steer', 'followUp', 'nextTurn'], true)) {
+            throw new InvalidArgumentException("No such deliverAs: '{$deliverAs}'. There is steer, followUp and nextTurn.");
+        }
+
         $message = new HookMessage(
             self::customType($customType),
             is_string($content) ? [new TextContent($content)] : array_values($content),
@@ -179,7 +189,7 @@ class HookApi
             );
         }
 
-        ($this->send)($message, $triggerTurn);
+        ($this->send)($message, $triggerTurn, $deliverAs);
     }
 
     /**
@@ -310,7 +320,7 @@ class HookApi
      * other with it. Whichever is not given stays null, which is what `sendMessage()` and
      * `appendEntry()` already have an answer for.
      *
-     * @param Closure(HookMessage, bool): void|null $send
+     * @param Closure(HookMessage, ?bool, ?string): void|null $send
      * @param Closure(string, mixed): void|null     $note
      * @internal called by `HookRunner::initialize()`
      */

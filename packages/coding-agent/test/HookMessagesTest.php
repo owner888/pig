@@ -60,6 +60,9 @@ final class HookMessagesTest extends TestCase
     /** @var list<string> */
     private array $answers = [];
 
+    /** @var list<list<mixed>> What each request sent, in order. */
+    private array $requests = [];
+
     #[\Override]
     protected function setUp(): void
     {
@@ -247,11 +250,10 @@ final class HookMessagesTest extends TestCase
         $hooks = $this->runner($api);
         $this->start($hooks, ['working on it', 'noted']);
 
-        // Which is when a hook sends one: something it is watching happened during a turn. The
-        // message cannot go in mid-turn — a user message between a tool call and its result is a
-        // request every provider rejects — so it is queued, and being queued means the agent has
-        // to have it. It used to go into this session's own list of what is waiting and nowhere
-        // else: the model never saw it, and the footer counted it as pending for ever.
+        // Which is when a hook sends one: something it is watching happened during a turn. It is
+        // steered into the run (upstream's default `deliverAs`), and being queued means the agent
+        // has to have it. It used to go into this session's own list of what is waiting and
+        // nowhere else: the model never saw it, and the footer counted it as pending for ever.
         $this->duringTurn = static function () use ($api): void {
             $api->sendMessage('build', 'the build just broke');
         };
@@ -268,7 +270,7 @@ final class HookMessagesTest extends TestCase
 
         $last = $messages[count($messages) - 1];
         $this->assertInstanceOf(AssistantMessage::class, $last);
-        $this->assertSame('noted', $last->content[0]->text, 'the agent answered it, as a follow-up does');
+        $this->assertSame('noted', $last->content[0]->text, 'the agent answered it');
     }
 
     public function testWithoutTriggeringTheAgentStaysPut(): void
@@ -299,6 +301,151 @@ final class HookMessagesTest extends TestCase
         // Nothing to answer. Running the model on it would be a request with an empty
         // message in it, which is the thing `toLlm()` drops.
         $this->assertCount(1, $this->session->messages());
+    }
+
+    // ---- deliverAs, and a run that is still starting (upstream #10739) ------------------
+
+    public function testANextTurnMessageWaitsForTheNextPrompt(): void
+    {
+        $api = $this->api();
+        $hooks = $this->runner($api);
+        $this->start($hooks, ['ok']);
+
+        $api->sendMessage('git', 'on branch main', deliverAs: 'nextTurn');
+        $this->assertSame([], $this->session->messages(), 'nothing yet');
+
+        Async::run(fn () => $this->session->prompt('what changed'));
+
+        $messages = $this->session->messages();
+        $this->assertInstanceOf(UserMessage::class, $messages[0]);
+        $this->assertInstanceOf(HookMessage::class, $messages[1]);
+        $this->assertSame('on branch main', $messages[1]->toText());
+        $this->assertInstanceOf(AssistantMessage::class, $messages[2]);
+    }
+
+    public function testAnUnknownDeliverAsIsRefused(): void
+    {
+        $api = $this->api();
+        $this->start($this->runner($api), []);
+
+        $this->assertThrows(InvalidArgumentException::class, static fn () => $api->sendMessage('git', 'x', deliverAs: 'later'));
+    }
+
+    public function testAFollowUpIsAnsweredAfterTheTurn(): void
+    {
+        $api = $this->api();
+        $hooks = $this->runner($api);
+        $this->start($hooks, ['working on it', 'noted']);
+        $this->duringTurn = static function () use ($api): void {
+            $api->sendMessage('build', 'the build just broke', deliverAs: 'followUp');
+        };
+
+        Async::run(fn () => $this->session->prompt('hi'));
+        $this->settle();
+
+        $texts = array_map(static fn (mixed $m): string => $m instanceof HookMessage ? $m->toText() : ($m->content[0]->text ?? ''), $this->session->messages());
+        $this->assertSame(['hi', 'working on it', 'the build just broke', 'noted'], $texts);
+    }
+
+    public function testATriggeredRunGoesThroughBeforeAgentStartAsACustomRun(): void
+    {
+        $api = $this->api();
+        $seen = [];
+        $api->on('before_agent_start', static function ($event) use (&$seen): mixed {
+            $seen[] = [$event->messageType, $event->message?->customType];
+
+            return null;
+        });
+        $this->start($this->runner($api), ['ok', 'done']);
+
+        Async::run(fn () => $this->session->prompt('hello'));
+        Async::run(static fn () => $api->sendMessage('task-done', 'background task finished', triggerTurn: true));
+        $this->settle();
+
+        $this->assertSame([['user', null], ['custom', 'task-done']], $seen);
+    }
+
+    public function testAMessageTriggeredWhileTheRunStartsJoinsThatRun(): void
+    {
+        $api = $this->api();
+        $release = new \Pig\Async\Deferred();
+        $started = false;
+        $api->on('before_agent_start', static function ($event) use ($release, &$started): mixed {
+            if ($event->messageType === 'custom' && $event->message->customType === 'first') {
+                $started = true;
+                $release->future->await();
+            }
+
+            return null;
+        });
+        $this->start($this->runner($api), ['handled both']);
+
+        $api->sendMessage('first', 'task one finished', triggerTurn: true);
+        $this->settle(10);
+        $this->assertTrue($started);
+        $this->assertFalse($this->session->isIdle(), 'busy while it starts');
+
+        $api->sendMessage('second', 'task two finished', triggerTurn: true);
+        $release->complete();
+        $this->settle();
+
+        $this->assertCount(1, $this->requests, 'one run, not a second one that fails');
+        $texts = [];
+        foreach ($this->requests[0] as $message) {
+            if ($message instanceof UserMessage && is_array($message->content)) {
+                foreach ($message->content as $part) {
+                    if ($part instanceof TextContent) {
+                        $texts[] = $part->text;
+                    }
+                }
+            }
+        }
+        $this->assertSame(['task one finished', 'task two finished'], $texts);
+    }
+
+    public function testAMessageSentFromBeforeAgentStartIsInTheFirstRequest(): void
+    {
+        $api = $this->api();
+        $api->on('before_agent_start', static function () use ($api): mixed {
+            $api->sendMessage('note', 'context from handler', triggerTurn: false);
+
+            return null;
+        });
+        $this->start($this->runner($api), ['done']);
+
+        Async::run(fn () => $this->session->prompt('hello'));
+
+        $this->assertCount(1, $this->requests);
+        $this->assertStringContainsString('context from handler', json_encode(array_map(static fn (mixed $m): mixed => $m->content, $this->requests[0])));
+    }
+
+    public function testAnAbortWhileTheRunStartsAbortsItOnceItStarts(): void
+    {
+        $api = $this->api();
+        $release = new \Pig\Async\Deferred();
+        $started = false;
+        $api->on('before_agent_start', static function () use ($release, &$started): mixed {
+            $started = true;
+            $release->future->await();
+
+            return null;
+        });
+        $this->start($this->runner($api), ['should not complete']);
+
+        $api->sendMessage('task-done', 'background task finished', triggerTurn: true);
+        $this->settle(10);
+        $this->assertTrue($started);
+
+        $aborted = $this->session->abort();
+        $release->complete();
+        $this->settle();
+        Async::run(static fn () => $aborted->await());
+
+        $messages = $this->session->messages();
+        $last = $messages[count($messages) - 1];
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertSame(StopReason::Aborted, $last->stopReason);
+        $this->assertTrue($this->session->isIdle());
     }
 
     public function testSendingBeforeThereIsASessionSaysSoRatherThanVanishing(): void
@@ -516,7 +663,8 @@ final class HookMessagesTest extends TestCase
     {
         $this->answers = $answers;
 
-        $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
+        // `toLlm()` as a coding agent wires it, so a request shows a hook's message as the model gets it.
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k', convertToLlm: static fn (array $messages): array => CodingAgent::toLlm($messages)));
         $agent->setModel(new Model(
             'claude-test',
             'Test',
@@ -534,8 +682,8 @@ final class HookMessagesTest extends TestCase
         $session = $this->session;
         $hooks->initialize(
             getModel: static fn () => $session->model(),
-            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
-                $session->sendHookMessage($message, $triggerTurn);
+            send: static function (HookMessage $message, ?bool $triggerTurn, ?string $deliverAs) use ($session): void {
+                $session->sendHookMessage($message, $triggerTurn, $deliverAs);
             },
             note: static function (string $customType, mixed $data) use ($session): void {
                 $session->appendHookEntry($customType, $data);
@@ -552,6 +700,19 @@ final class HookMessagesTest extends TestCase
 
         if ($during !== null) {
             $during();
+        }
+
+        $this->requests[] = $context->messages;
+
+        if ($options->signal?->aborted() === true) {
+            $stream = new AssistantMessageEventStream();
+            $aborted = new AssistantMessage([], Api::AnthropicMessages, 'anthropic', 'claude-test', new Usage(), StopReason::Aborted);
+            Async::spawn(static function () use ($stream, $aborted): void {
+                $stream->push(new \Pig\Ai\ErrorEvent(StopReason::Aborted, $aborted));
+                $stream->end();
+            });
+
+            return $stream;
         }
 
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');

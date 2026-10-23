@@ -40,6 +40,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
 use RuntimeException;
@@ -150,26 +151,29 @@ final class HookWiringTest extends TestCase
 
     // ---- before_agent_start ------------------------------------------------------------
 
-    public function testANoteFromAHookGoesInFrontOfThePrompt(): void
+    public function testAHooksMessageFollowsThePrompt(): void
     {
+        // Upstream's `_prepareRun()`: the starting message, then what hooks returned.
         $session = $this->session(['ok'], [
-            'before_agent_start' => static fn () => new BeforeAgentStartEventResult('on branch main'),
+            'before_agent_start' => static fn () => new BeforeAgentStartEventResult(new HookMessage('git', [new TextContent('on branch main')])),
         ]);
 
         Async::run(static fn () => $session->prompt('what changed'));
 
         $messages = $session->messages();
 
-        $this->assertSame('on branch main', $messages[0]->content[0]->text);
-        $this->assertSame('what changed', $messages[1]->content[0]->text);
+        $this->assertInstanceOf(UserMessage::class, $messages[0]);
+        $this->assertSame('what changed', $messages[0]->content[0]->text);
+        $this->assertInstanceOf(HookMessage::class, $messages[1]);
+        $this->assertSame('on branch main', $messages[1]->content[0]->text);
     }
 
-    /** The note is a message like any other, so a resumed session still has it. */
-    public function testTheNoteIsWrittenToTheSessionFile(): void
+    /** The hook's message is a message like any other, so a resumed session still has it. */
+    public function testTheHooksMessageIsWrittenToTheSessionFile(): void
     {
         $store = SessionManager::create(sys_get_temp_dir() . '/pig-hook-note-' . bin2hex(random_bytes(3)));
         $session = $this->session(['ok'], [
-            'before_agent_start' => static fn () => new BeforeAgentStartEventResult('on branch main'),
+            'before_agent_start' => static fn () => new BeforeAgentStartEventResult(new HookMessage('git', [new TextContent('on branch main')])),
         ], $store);
 
         Async::run(static fn () => $session->prompt('what changed'));
@@ -177,30 +181,19 @@ final class HookWiringTest extends TestCase
         $reopened = SessionManager::open($store->path)->messages();
         unlink($store->path);
 
-        $this->assertSame('on branch main', $reopened[0]->content[0]->text);
-        $this->assertSame('what changed', $reopened[1]->content[0]->text);
+        $this->assertSame('what changed', $reopened[0]->content[0]->text);
+        $this->assertSame('on branch main', $reopened[1]->content[0]->text);
     }
 
-    public function testAnEmptyNoteIsNotAMessage(): void
+    public function testImagesStillReachTheModelWhenAHookAddsAMessage(): void
     {
         $session = $this->session(['ok'], [
-            'before_agent_start' => static fn () => new BeforeAgentStartEventResult('   '),
-        ]);
-
-        Async::run(static fn () => $session->prompt('what changed'));
-
-        $this->assertSame('what changed', $session->messages()[0]->content[0]->text);
-    }
-
-    public function testImagesStillReachTheModelWhenAHookAddsANote(): void
-    {
-        $session = $this->session(['ok'], [
-            'before_agent_start' => static fn () => new BeforeAgentStartEventResult('note'),
+            'before_agent_start' => static fn () => new BeforeAgentStartEventResult(new HookMessage('note', [new TextContent('note')])),
         ]);
 
         Async::run(static fn () => $session->prompt('look at this', [new \Pig\Ai\ImageContent(TinyImages::PNG_BASE64, 'image/png')]));
 
-        $this->assertCount(2, $session->messages()[1]->content);
+        $this->assertCount(2, $session->messages()[0]->content);
     }
 
     // ---- context -----------------------------------------------------------------------

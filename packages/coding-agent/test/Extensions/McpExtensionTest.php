@@ -348,7 +348,7 @@ final class McpExtensionTest extends TestCase
         Async::run(function () use ($hooks): void {
             $hooks->emit(new SessionStartEvent());
             // What the first prompt does: wait for the startup connections.
-            $hooks->emitBeforeAgentStart('hi');
+            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $this->assertSame(['mcp__fixture__echo'], $set->names(), 'the connected server\'s tool, under its MCP name');
@@ -416,7 +416,7 @@ final class McpExtensionTest extends TestCase
 
         Async::run(function () use ($hooks): void {
             $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart('hi');
+            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $names = $set->names();
@@ -550,7 +550,7 @@ final class McpExtensionTest extends TestCase
 
         Async::run(function () use ($hooks): void {
             $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart('hi');
+            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
@@ -568,7 +568,7 @@ final class McpExtensionTest extends TestCase
         [, $hooks] = $this->start();
 
         $options = new \Pig\CodingAgent\Prompt\SystemPromptOptions();
-        Async::run(static fn () => $hooks->emitBeforeAgentStart('again', [], $options));
+        Async::run(static fn () => $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'again'], $options));
 
         $this->assertSame([McpServersSection::NAME => "MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__fixture (tool_search): Echoes text."], $options->sections);
 
@@ -1261,7 +1261,7 @@ final class McpExtensionTest extends TestCase
 
         Async::run(function () use ($hooks): void {
             $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart('hi');
+            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         return [$set, $hooks, $ui];

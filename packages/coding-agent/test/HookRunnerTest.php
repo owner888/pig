@@ -35,6 +35,7 @@ use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Hooks\Results\CacheWarmingDecisionEventResult;
 use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
@@ -445,20 +446,23 @@ final class HookRunnerTest extends TestCase
 
     // ---- before_agent_start ------------------------------------------------------------
 
-    public function testTheFirstNoteWins(): void
+    public function testEveryHandlersMessageIsKeptInOrder(): void
     {
+        // Upstream's `emitBeforeAgentStart()` collects each handler's `message`.
         $runner = new HookRunner([
-            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult('first')], 'a.php'),
-            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult('second')], 'b.php'),
+            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult(new HookMessage('a', [new TextContent('first')]))], 'a.php'),
+            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult(new HookMessage('b', [new TextContent('second')]))], 'b.php'),
         ]);
 
-        $this->assertSame('first', $runner->emitBeforeAgentStart('hello')?->text);
+        $messages = $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hello']);
+
+        $this->assertSame(['first', 'second'], array_map(static fn (HookMessage $m): string => $m->toText(), $messages));
     }
 
     public function testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections(): void
     {
-        // Upstream's `emitBeforeAgentStart()`: one options object for every handler, a
-        // `systemPrompt` answer becomes `forceSystemPrompt`, and the note is still the first one.
+        // Upstream's `emitBeforeAgentStart()`: one options object for every handler, and a
+        // `systemPrompt` answer becomes `forceSystemPrompt`.
         $seen = [];
         $runner = new HookRunner([
             $this->hook(['before_agent_start' => static function ($event) {
@@ -469,16 +473,16 @@ final class HookRunnerTest extends TestCase
             $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
                 $seen = [$event->systemPromptOptions->sections, $event->systemPromptOptions->forceSystemPrompt, $event->systemPrompt()];
 
-                return new BeforeAgentStartEventResult('the note');
+                return new BeforeAgentStartEventResult(new HookMessage('note', [new TextContent('the note')]));
             }], 'b.php'),
         ]);
         $options = new SystemPromptOptions();
 
-        $note = $runner->emitBeforeAgentStart('hello', [], $options, static fn (SystemPromptOptions $o): string => $o->forceSystemPrompt ?? 'built');
+        $messages = $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hello'], $options, static fn (SystemPromptOptions $o): string => $o->forceSystemPrompt ?? 'built');
 
         $this->assertSame([['plan_mode' => 'Plan only.'], 'Exact prompt.', 'Exact prompt.'], $seen);
         $this->assertSame('Exact prompt.', $options->forceSystemPrompt);
-        $this->assertSame('the note', $note?->text);
+        $this->assertSame('the note', $messages[0]->toText());
     }
 
     public function testTheHandlerSeesThePrompt(): void
@@ -486,15 +490,32 @@ final class HookRunnerTest extends TestCase
         $seen = null;
         $runner = new HookRunner([
             $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
-                $seen = $event->prompt;
+                $seen = [$event->messageType, $event->prompt, $event->message];
 
                 return null;
             }]),
         ]);
 
-        $runner->emitBeforeAgentStart('fix the tests');
+        $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'fix the tests']);
 
-        $this->assertSame('fix the tests', $seen);
+        $this->assertSame(['user', 'fix the tests', null], $seen);
+    }
+
+    public function testACustomMessageRunCarriesTheMessageAndNoPrompt(): void
+    {
+        // Upstream's `BeforeAgentStartCustomEvent`: a run started by `sendMessage(…, triggerTurn)`.
+        $seen = null;
+        $runner = new HookRunner([
+            $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
+                $seen = [$event->messageType, $event->prompt, $event->message?->toText()];
+
+                return null;
+            }]),
+        ]);
+
+        $runner->emitBeforeAgentStart(['messageType' => 'custom', 'message' => new HookMessage('build', [new TextContent('the build broke')])]);
+
+        $this->assertSame(['custom', null, 'the build broke'], $seen);
     }
 
     // ---- the cancellable ones ----------------------------------------------------------

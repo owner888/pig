@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.8.0] - 2026-10-23
+
+Upstream pi 1.2: `before_agent_start` for every run, and a session that is busy while a run starts.
+
+### Added
+
+- Added `deliverAs` to `$pi->sendMessage()`: `'steer'` (the default while busy), `'followUp'`, or `'nextTurn'`, which holds the message for the next run.
+
+### Changed
+
+- **Breaking:** `BeforeAgentStartEventResult` takes a `HookMessage` instead of text: `new BeforeAgentStartEventResult(new HookMessage('git', [new TextContent('on branch main')]))`. Every handler's message is kept, in hook order, and follows the run's starting message instead of going in front of the prompt.
+- **Breaking:** `before_agent_start` also fires for runs started by `$pi->sendMessage(…, triggerTurn: true)` while idle. `BeforeAgentStartEvent` has `messageType`: `'user'` events carry `prompt` and `images`, `'custom'` events carry the starting `message` and no prompt. Handlers that should act only on prompts must check `$event->messageType === 'user'`.
+- **Breaking:** `HookRunner::emitBeforeAgentStart()` takes the trigger (`['messageType' => 'user', 'prompt' => …, 'images' => …]` or `['messageType' => 'custom', 'message' => …]`) and returns the handlers' messages; the `send` writer given to `HookRunner::initialize()` gets `deliverAs` as a third argument.
+- The session counts as busy while a run starts, `before_agent_start` handlers included: `$ctx->isIdle()` is false, `$pi->sendMessage()` goes into the starting run instead of starting a second one, and an abort requested meanwhile aborts the run once it starts.
+
+### Fixed
+
+- Fixed runs started by `$pi->sendMessage(…, triggerTurn: true)` skipping `before_agent_start`, which lost the prompt sections its handlers add.
+
 ## [0.7.0] - 2026-10-23
 
 Upstream pi 1.1–1.4, first batch.
