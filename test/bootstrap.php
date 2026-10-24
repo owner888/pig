@@ -49,6 +49,10 @@ if (is_string($realHome) && $realHome !== '' && is_dir($realHome . '/.pig/agent/
 }
 $set('PATH', $path);
 
+// No test asks pigagent.dev for a model catalog: a refresh with the network would otherwise fetch
+// every built-in provider's. A test that needs a catalog server starts its own and points this at it.
+$set('PIG_MODEL_CATALOG_URL', 'off');
+
 register_shutdown_function(static function () use ($home): void {
     if (!is_dir($home)) {
         return;

@@ -2491,6 +2491,19 @@ if ($dryRun) {
     exit(0);
 }
 
+// The rows are as of now, which is what a catalog from the catalog server has to be newer than.
+$source = (string) preg_replace(
+    "/(const string GENERATED_AT = ')[^']*(';)/",
+    '${1}' . gmdate('Y-m-d\\TH:i:s\\Z') . '${2}',
+    $source,
+    1,
+    $stamped,
+);
+
+if ($stamped !== 1) {
+    fail('could not find BuiltinCatalog::GENERATED_AT in ' . TABLE);
+}
+
 if (file_put_contents(TABLE, $source) === false) {
     fail('could not write ' . TABLE);
 }

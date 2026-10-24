@@ -21,8 +21,9 @@ use RuntimeException;
  * region's filtering. When the endpoint rejects the key (401/403) or does not exist (404), for
  * example with a proxy configured in models.json, the catalog is returned unchanged."
  *
- * `Pig\CodingAgent\ModelRefresh` asks for the list on each refresh, saves it in the models store
- * and lays it over the catalog (`Models::personalize()`), offline too.
+ * `Pig\CodingAgent\ModelRefresh` asks for the list on each refresh, narrows the catalog with it,
+ * saves the result in the models store and puts it in place of the catalog
+ * (`Models::useProviderCatalog()`), offline too.
  */
 final class OpenRouterUserModels
 {

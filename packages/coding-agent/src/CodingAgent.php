@@ -312,9 +312,10 @@ final class CodingAgent
         // one that cannot be spoken to is a scope ctrl+p walks into and fails on.
         // Upstream's `parsed.models ?? settingsManager.getEnabledModels()`: the setting is the scope
         // for a session nobody typed one for.
-        // OpenRouter's list for the key as last saved, before any model is resolved — "replaces the
-        // OpenRouter catalog, including offline". The network half is the background refresh's.
-        ModelRefresh::refresh($auth, ['openrouter'], allowNetwork: false);
+        // The built-in providers' saved catalogs before any model is resolved: a newer one from the
+        // catalog server over the shipped models, and OpenRouter's list for the key, which "replaces
+        // the OpenRouter catalog, including offline". The network half is the background refresh's.
+        ModelRefresh::refresh($auth, \Pig\Ai\Models::builtinProviders(), allowNetwork: false);
 
         $models ??= $settings->enabledModels();
         [$scope, $scopeWarnings] = $models === null || $models === []

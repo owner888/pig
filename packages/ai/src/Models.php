@@ -22,7 +22,7 @@ namespace Pig\Ai;
  * `scripts/BuiltinCatalog.php`, the generated rows and the rules upstream's generator applies to
  * them; nothing here derives a row any more, so what is in the files is what pig sends.
  *
- * Over the catalogue, in order: a credential's narrowing of a provider (`personalize()`), models
+ * Over the catalogue, in order: a provider's catalog from elsewhere (`useProviderCatalog()`), models
  * declared elsewhere (`register()`), the few allowed to overwrite a built-in (`register(replace:
  * true)`), whole-provider replacements (`replaceProvider()`), `models.json` (`useOverlay()`), and
  * the virtual models (`registerVirtual()`).
@@ -129,12 +129,12 @@ final class Models
     /**
      * Where the built-in catalogue lives: a JSON file per provider in pi's model format (chat,
      * classifier and image entries together, as pi's own `providers/data/<provider>.json`), and
-     * `providers.json`, the providers in the order `all()` lists them. `scripts/build-models.php`
+     * `manifest.json`, the providers in the order `all()` lists them and when the files were generated. `scripts/build-models.php`
      * writes them; nothing here derives a row.
      */
     public const string CATALOGUE_DIR = __DIR__ . '/../data/models';
 
-    /** @var array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>}|null the catalogue, read once */
+    /** @var array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>, 3: int|null, 4: list<string>}|null the catalogue, read once */
     private static ?array $builtins = null;
 
     /**
@@ -221,10 +221,10 @@ final class Models
     private static array $providerReplacements = [];
 
     /**
-     * @var array<string, \Closure(list<Model>): list<Model>> provider => what narrows its built-in chat
-     *      rows to one credential's — see `personalize()`
+     * @var array<string, array{models: list<Model|ClassifierModel|ImageModel>, replace: bool}> a built-in
+     *      provider's catalog from elsewhere — see `useProviderCatalog()`
      */
-    private static array $personalized = [];
+    private static array $catalogs = [];
 
     /** @var list<ImageModel> image models a provider declared elsewhere — see `registerImages()` */
     private static array $registeredImages = [];
@@ -258,24 +258,55 @@ final class Models
     }
 
     /**
-     * Narrow a built-in provider's chat rows to what one credential may use — upstream's
-     * `withPersonalizedCatalog()`, OpenRouter's `GET /models/user` being the one there is (see
-     * `Providers\OpenRouterUserModels`). `$personalize` is given the provider's built-in rows and
-     * answers the ones to keep, with their limits and prices; classifier and image rows are left as
-     * they are. Applied before registrations, replacements and `models.json`, so a `baseUrl` from the
-     * file still lands on the kept rows. Null takes it away.
+     * A built-in provider's catalog from somewhere other than the shipped files — upstream's
+     * `withRemoteCatalog()` and `withPersonalizedCatalog()`, which `Pig\CodingAgent\ModelRefresh`
+     * keeps up to date and saved.
      *
-     * @param (\Closure(list<Model>): list<Model>)|null $personalize
+     * Merged (`$replace` false), the models are laid over the provider's built-in ones by type and id:
+     * a model the files have is replaced where it stands, a new one follows the provider's last —
+     * upstream's `mergeModels()`, a newer catalog from the catalog server. Replacing, they are the
+     * provider's models, every type, in place of the built-in ones — upstream's personalized catalog,
+     * OpenRouter's narrowed to what a key may use. Either way it is the first layer over the files,
+     * under registrations, replacements and `models.json`, so a `baseUrl` from the file still lands.
+     * Null takes it away.
+     *
+     * @param list<Model|ClassifierModel|ImageModel>|null $models
      */
-    public static function personalize(string $provider, ?\Closure $personalize): void
+    public static function useProviderCatalog(string $provider, ?array $models, bool $replace = false): void
     {
-        if ($personalize === null) {
-            unset(self::$personalized[$provider]);
+        if ($models === null) {
+            unset(self::$catalogs[$provider]);
         } else {
-            self::$personalized[$provider] = $personalize;
+            self::$catalogs[$provider] = ['models' => $models, 'replace' => $replace];
         }
 
         self::$models = null;
+        self::$classifiers = null;
+        self::$images = null;
+    }
+
+    /** When the shipped catalogue was generated, in milliseconds — upstream's `getBuiltinModelDataGeneratedAt()`. */
+    public static function builtinGeneratedAt(): ?int
+    {
+        return self::builtins()[3];
+    }
+
+    /** @return list<string> the providers the shipped catalogue has, in its order */
+    public static function builtinProviders(): array
+    {
+        return self::builtins()[4];
+    }
+
+    /**
+     * A provider's shipped models, every type, before anything is laid over them.
+     *
+     * @return list<Model|ClassifierModel|ImageModel>
+     */
+    public static function builtinModelsOf(string $provider): array
+    {
+        [$chat, $classifiers, $images] = self::builtins();
+
+        return array_values(array_filter([...$chat, ...$classifiers, ...$images], static fn (Model|ClassifierModel|ImageModel $model): bool => $model->provider === $provider));
     }
 
     /**
@@ -328,7 +359,7 @@ final class Models
         self::$registeredClassifiers = [];
         self::$registeredImages = [];
         self::$providerReplacements = [];
-        self::$personalized = [];
+        self::$catalogs = [];
         self::$overlay = null;
         self::$models = null;
         self::$classifiers = null;
@@ -610,6 +641,8 @@ final class Models
             $models[$model->provider . '/' . $model->id] = $model;
         }
 
+        $models = self::withCatalogs($models, ClassifierModel::class);
+
         // Last, and only where nothing is already: see `registerClassifiers()`.
         foreach (self::$registeredClassifiers as $model) {
             $models[$model->provider . '/' . $model->id] ??= $model;
@@ -630,6 +663,8 @@ final class Models
         foreach (self::builtins()[2] as $model) {
             $models[$model->provider . '/' . $model->id] = $model;
         }
+
+        $models = self::withCatalogs($models, ImageModel::class);
 
         // Last, and only where nothing is already: see `registerImages()`.
         foreach (self::$registeredImages as $model) {
@@ -655,9 +690,9 @@ final class Models
 
     /**
      * The shipped catalogue, read from `CATALOGUE_DIR`: chat, classifier and image models, each in
-     * `providers.json`'s order and each file's.
+     * the manifest's provider order and each file's; when it was generated; the providers.
      *
-     * @return array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>}
+     * @return array{0: list<Model>, 1: list<ClassifierModel>, 2: list<ImageModel>, 3: int|null, 4: list<string>}
      */
     private static function builtins(): array
     {
@@ -667,8 +702,11 @@ final class Models
 
         $chat = $classifiers = $images = [];
         $read = static fn (string $file): mixed => json_decode((string) file_get_contents(self::CATALOGUE_DIR . '/' . $file), true, flags: JSON_THROW_ON_ERROR);
+        $manifest = $read('manifest.json');
+        $providers = array_values(array_filter(is_array($manifest['providers'] ?? null) ? $manifest['providers'] : [], is_string(...)));
+        $generatedAt = is_string($manifest['generatedAt'] ?? null) ? strtotime($manifest['generatedAt']) : false;
 
-        foreach ($read('providers.json') as $provider) {
+        foreach ($providers as $provider) {
             foreach ($read("{$provider}.json") as $entry) {
                 $model = ModelJson::decode($entry, $provider);
 
@@ -680,7 +718,57 @@ final class Models
             }
         }
 
-        return self::$builtins = [$chat, $classifiers, $images];
+        return self::$builtins = [$chat, $classifiers, $images, $generatedAt === false ? null : $generatedAt * 1000, $providers];
+    }
+
+    /**
+     * `$models` (built-in rows, keyed `provider/id`) with each provider's catalog from elsewhere laid
+     * over the rows of `$type` — see `useProviderCatalog()`.
+     *
+     * @template T of Model|ClassifierModel|ImageModel
+     * @param array<string, T> $models
+     * @param class-string<T> $type
+     * @return array<string, T>
+     */
+    private static function withCatalogs(array $models, string $type): array
+    {
+        foreach (self::$catalogs as $provider => ['models' => $catalog, 'replace' => $replace]) {
+            $mine = [];
+
+            foreach ($catalog as $model) {
+                if ($model::class === $type) {
+                    $mine[$provider . '/' . $model->id] = $model;
+                }
+            }
+
+            $last = null;
+
+            foreach ($models as $key => $model) {
+                if ($model->provider === $provider) {
+                    $last = $key;
+                }
+            }
+
+            $merged = [];
+
+            foreach ($models as $key => $model) {
+                if ($model->provider !== $provider) {
+                    $merged[$key] = $model;
+                } elseif (!$replace) {
+                    $merged[$key] = $mine[$key] ?? $model;
+                    unset($mine[$key]);
+                }
+
+                if ($key === $last) {
+                    $merged = [...$merged, ...$mine];
+                    $mine = [];
+                }
+            }
+
+            $models = [...$merged, ...$mine];
+        }
+
+        return $models;
     }
 
     /** @return array<string, Model> keyed by "provider/id", which is unique by construction */
@@ -696,15 +784,8 @@ final class Models
             $models[$model->provider . '/' . $model->id] = $model;
         }
 
-        // A credential's narrowing of a built-in provider — see `personalize()`.
-        foreach (self::$personalized as $provider => $personalize) {
-            $own = array_filter($models, static fn (Model $model): bool => $model->provider === $provider);
-            $models = array_diff_key($models, $own);
-
-            foreach ($personalize(array_values($own)) as $model) {
-                $models[$model->provider . '/' . $model->id] = $model;
-            }
-        }
+        // A built-in provider's catalog from elsewhere — see `useProviderCatalog()`.
+        $models = self::withCatalogs($models, Model::class);
 
         // Last, and only where nothing is already: see `register()`. A built-in wins.
         foreach (self::$registered as $model) {

@@ -5,12 +5,17 @@ declare(strict_types=1);
 namespace Pig\CodingAgent;
 
 use Pig\Ai\Api;
+use Pig\Ai\ClassifierModel;
 use Pig\Ai\Extension\ApiKeyCredential;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Extension\RefreshModelsContext;
+use Pig\Ai\ImageModel;
+use Pig\Ai\Model;
+use Pig\Ai\ModelJson;
 use Pig\Ai\Models;
 use Pig\Ai\Providers\OpenRouterUserModels;
+use Pig\Ai\RemoteCatalog;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -30,6 +35,10 @@ use Throwable;
  *   aborted and whatever it publishes afterwards is refused.
  * - **The store is pig's `~/.pig/agent/models-store.json`**, in pi's shape, one entry per
  *   provider; with `--no-session` (`Auth::path()` null) nothing is read or written.
+ * - **The built-in providers refresh too**: each one's catalog from the catalog server
+ *   (`Ai\RemoteCatalog`, upstream's `withRemoteCatalog()`) is laid over its shipped models when it
+ *   is newer than them, and OpenRouter's is narrowed to the models the key may use
+ *   (`withPersonalizedCatalog()`). Radius and a provider an extension replaced are left out.
  * - **A failure is the provider's**, kept in the result's `errors` and nowhere else, so one
  *   provider that cannot be reached does not stop the next.
  *
@@ -68,17 +77,13 @@ final class ModelRefresh
             return new ModelRefreshResult(true, $errors);
         }
 
-        // The built-in OpenRouter catalog, narrowed to the key's models (upstream's
-        // `withPersonalizedCatalog(provider, personalizeOpenRouterCatalog)`) — unless an extension
-        // provider of that name took its place.
-        if (($providers === null || in_array('openrouter', $providers, true)) && ProviderRegistry::get('openrouter') === null) {
-            try {
-                self::openRouter($auth, $allowNetwork, $signal);
-            } catch (Throwable $error) {
-                if (!$signal->aborted()) {
-                    $errors['openrouter'] = $error;
-                }
-            }
+        // The built-in providers' catalogs from the catalog server (upstream's `withRemoteCatalog()`),
+        // and OpenRouter's narrowed to the key's models (`withPersonalizedCatalog()`) — each unless
+        // an extension provider of that name took its place.
+        $errors = self::builtinCatalogs($auth, $providers, $allowNetwork, $force, $signal);
+
+        if ($signal->aborted()) {
+            return new ModelRefreshResult(true, $errors);
         }
 
         foreach (ProviderRegistry::all() as $provider) {
@@ -150,19 +155,124 @@ final class ModelRefresh
     }
 
     /**
-     * OpenRouter's two phases: the key's list as last saved, laid over the catalog with no network —
-     * "The combined list is saved and replaces the OpenRouter catalog, including offline" — then,
-     * with a key and the network, `GET /models/user` asked again, at the base URL the catalog's rows
-     * have (a regional endpoint `models.json` set applies its region's filtering). A key the endpoint
-     * rejects, or an endpoint that is not there, leaves the catalog as it is.
+     * The built-in providers named (every one when null) that keep a catalog from elsewhere: all but
+     * Radius, whose models come from the gateway's own configuration, and any an extension provider
+     * replaced. The stored catalogs first, all of them, then the network for each at once.
+     *
+     * @param list<string>|null $providers
+     * @return array<string, Throwable>
      */
-    private static function openRouter(Auth $auth, bool $allowNetwork, AbortSignal $signal): void
+    private static function builtinCatalogs(Auth $auth, ?array $providers, bool $allowNetwork, ?bool $force, AbortSignal $signal): array
+    {
+        $baseUrl = RemoteCatalog::baseUrl();
+        $ids = array_values(array_filter(
+            Models::builtinProviders(),
+            static fn (string $id): bool => $id !== Models::RADIUS
+                && ($providers === null || in_array($id, $providers, true))
+                && ProviderRegistry::get($id) === null,
+        ));
+        $errors = [];
+        $refreshes = [];
+
+        $one = static fn (string $id): mixed => $id === 'openrouter'
+            ? self::openRouter($auth, $baseUrl, $allowNetwork, $signal)
+            : self::remoteCatalog($auth, $id, $baseUrl, $allowNetwork, $force, $signal);
+
+        // With the network, every provider's request at once — from inside a coroutine, which a
+        // caller outside one (a test, a script) is not; without it there is nothing to wait for.
+        $together = $allowNetwork && \Fiber::getCurrent() !== null;
+
+        foreach ($ids as $id) {
+            $refreshes[$id] = $together ? Async::spawn(static fn () => $one($id)) : $id;
+        }
+
+        foreach ($refreshes as $id => $refresh) {
+            try {
+                is_string($refresh) ? $one($refresh) : $refresh->await();
+            } catch (Throwable $error) {
+                if (!$signal->aborted()) {
+                    $errors[$id] = $error;
+                }
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Upstream's `withRemoteCatalog()` refresh: the stored catalog laid over the built-in models when
+     * it is newer than them; then, with the network and a catalog server (`RemoteCatalog::baseUrl()`)
+     * and once the four-hour interval is up (or
+     * `$force`), the catalog server asked — revalidated with the stored `ETag` when a body backs it.
+     * A 304 only moves the check time; a 404 or 501 (no catalog for this provider) is remembered as
+     * one with nothing newer in it; any other failure keeps the stored catalog and its `ETag`, and is
+     * this provider's error.
+     */
+    private static function remoteCatalog(Auth $auth, string $provider, ?string $baseUrl, bool $allowNetwork, ?bool $force, AbortSignal $signal): void
+    {
+        $stored = self::read($auth, $provider);
+        Models::useProviderCatalog($provider, self::newer($provider, $stored));
+
+        if (!$allowNetwork || $baseUrl === null || $signal->aborted()) {
+            return;
+        }
+
+        // An entry without `lastModified` (saved before there was one, or after a failed first
+        // request) is always fetched again: `newer()` ignores it, so waiting would leave nothing laid.
+        if ($force !== true && isset($stored['checkedAt'], $stored['lastModified']) && self::now() - $stored['checkedAt'] < RemoteCatalog::REFRESH_INTERVAL_MS) {
+            return;
+        }
+
+        $etag = $stored !== null && $stored['models'] !== [] ? ($stored['etag'] ?? null) : null;
+        [$response, $body] = RemoteCatalog::request($provider, $baseUrl, $etag, signal: $signal);
+
+        if ($signal->aborted()) {
+            return;
+        }
+
+        $checkedAt = self::now();
+
+        if ($response->status === 304 && $stored !== null) {
+            self::write($auth, $provider, [...$stored, 'checkedAt' => $checkedAt]);
+
+            return;
+        }
+
+        if ($response->status === 404 || $response->status === 501) {
+            $entry = [...($stored ?? ['models' => []]), 'checkedAt' => $checkedAt, 'lastModified' => 0];
+            unset($entry['etag']);
+            self::write($auth, $provider, $entry);
+
+            return;
+        }
+
+        if (!$response->isSuccessful()) {
+            self::write($auth, $provider, [...($stored ?? ['models' => []]), 'checkedAt' => $checkedAt]);
+
+            throw new RuntimeException("Model catalog request failed for {$provider}: {$response->status}");
+        }
+
+        $entry = [...RemoteCatalog::read($provider, $response, $body), 'checkedAt' => $checkedAt];
+        self::write($auth, $provider, $entry);
+        Models::useProviderCatalog($provider, self::newer($provider, $entry));
+    }
+
+    /**
+     * Upstream's `withPersonalizedCatalog(openrouter, personalizeOpenRouterCatalog)`: the saved list
+     * replaces the OpenRouter catalog, offline too ("The combined list is saved and replaces the
+     * OpenRouter catalog, including offline"); then, with a key and the network, the built-in models
+     * and a newer catalog from the catalog server, narrowed by `GET /models/user` to the chat models
+     * the key may use — asked at the base URL the catalog's rows have, so a regional endpoint
+     * `models.json` set applies its region's filtering — and saved. No refresh interval and no
+     * `ETag`. A key the endpoint rejects, or an endpoint that is not there, keeps every model.
+     */
+    private static function openRouter(Auth $auth, ?string $baseUrl, bool $allowNetwork, AbortSignal $signal): void
     {
         $stored = self::read($auth, 'openrouter');
-
-        if ($stored !== null && $stored['models'] !== []) {
-            self::personalizeOpenRouter($stored['models']);
-        }
+        $saved = $stored === null ? [] : RemoteCatalog::models('openrouter', $stored['models']);
+        // An empty list — nothing saved yet, or one saved before the list held models — is the
+        // built-in catalog.
+        Models::useProviderCatalog('openrouter', $saved === [] ? null : $saved, replace: true);
 
         if (!$allowNetwork || $signal->aborted()) {
             return;
@@ -174,30 +284,89 @@ final class ModelRefresh
             return;
         }
 
-        $baseUrl = null;
+        $remote = [];
+
+        if ($baseUrl !== null) {
+            [$response, $body] = RemoteCatalog::request('openrouter', $baseUrl, signal: $signal);
+
+            if ($signal->aborted()) {
+                return;
+            }
+
+            if ($response->status !== 404 && $response->status !== 501) {
+                if (!$response->isSuccessful()) {
+                    throw new RuntimeException("Model catalog request failed for openrouter: {$response->status}");
+                }
+
+                $catalog = RemoteCatalog::read('openrouter', $response, $body);
+
+                if (RemoteCatalog::isNewer($catalog['lastModified'], Models::builtinGeneratedAt())) {
+                    $remote = RemoteCatalog::models('openrouter', $catalog['models']);
+                }
+            }
+        }
+
+        $catalog = self::merged(Models::builtinModelsOf('openrouter'), $remote);
+        $chat = array_values(array_filter($catalog, static fn ($model): bool => $model instanceof Model));
+        $endpoint = null;
 
         foreach (Models::all() as $model) {
             if ($model->provider === 'openrouter' && $model->api === Api::OpenAiCompletions) {
-                $baseUrl = $model->baseUrl;
+                $endpoint = $model->baseUrl;
 
                 break;
             }
         }
 
-        $allowed = OpenRouterUserModels::fetch($key, $baseUrl, signal: $signal);
+        $allowed = OpenRouterUserModels::fetch($key, $endpoint ?? ($chat[0] ?? null)?->baseUrl, signal: $signal);
 
-        if ($allowed === null || $signal->aborted()) {
+        if ($signal->aborted()) {
             return;
         }
 
-        self::write($auth, 'openrouter', ['models' => $allowed, 'checkedAt' => (int) (microtime(true) * 1000)]);
-        self::personalizeOpenRouter($allowed);
+        $personal = $allowed === null
+            ? $catalog
+            : [...OpenRouterUserModels::personalize($chat, $allowed), ...array_filter($catalog, static fn ($model): bool => !$model instanceof Model)];
+        self::write($auth, 'openrouter', ['models' => array_map(ModelJson::encode(...), array_values($personal)), 'checkedAt' => self::now()]);
+        Models::useProviderCatalog('openrouter', array_values($personal), replace: true);
     }
 
-    /** @param list<array<string, mixed>> $allowed */
-    private static function personalizeOpenRouter(array $allowed): void
+    /**
+     * Upstream's `remoteModels()`: a stored catalog's models when it is newer than the built-in data.
+     *
+     * @param array{models: list<array<string, mixed>>, lastModified?: int}|null $entry
+     * @return list<Model|ClassifierModel|ImageModel>|null null for nothing to lay over the built-in models
+     */
+    private static function newer(string $provider, ?array $entry): ?array
     {
-        Models::personalize('openrouter', static fn (array $catalog): array => OpenRouterUserModels::personalize($catalog, $allowed));
+        if ($entry === null || !RemoteCatalog::isNewer($entry['lastModified'] ?? null, Models::builtinGeneratedAt())) {
+            return null;
+        }
+
+        return RemoteCatalog::models($provider, $entry['models']);
+    }
+
+    /**
+     * Upstream's `mergeModels()`: `$dynamic` over `$baseline` by type and id, a new one last.
+     *
+     * @param list<Model|ClassifierModel|ImageModel> $baseline
+     * @param list<Model|ClassifierModel|ImageModel> $dynamic
+     * @return list<Model|ClassifierModel|ImageModel>
+     */
+    private static function merged(array $baseline, array $dynamic): array
+    {
+        $merged = [];
+
+        foreach ([...$baseline, ...$dynamic] as $model) {
+            $merged[$model::class . "\0" . $model->id] = $model;
+        }
+
+        return array_values($merged);
+    }
+
+    private static function now(): int
+    {
+        return (int) (microtime(true) * 1000);
     }
 
     /** Upstream's `resolveRefreshCredential()`, for pig's two kinds of sign-in. */
@@ -258,17 +427,15 @@ final class ModelRefresh
         return $auth->path() === null ? null : Config::home() . '/models-store.json';
     }
 
-    /** @return array{models: list<array<string, mixed>>, checkedAt?: int}|null upstream's `modelsStore.read(providerId)` */
+    /**
+     * Upstream's `modelsStore.read(providerId)`: the entry's models, and when it was checked, when
+     * its catalog was generated and its `ETag` where it has them.
+     *
+     * @return array{models: list<array<string, mixed>>, checkedAt?: int, lastModified?: int, etag?: string}|null
+     */
     public static function read(Auth $auth, string $provider): ?array
     {
-        $path = self::storePath($auth);
-
-        if ($path === null || !is_file($path) || !is_readable($path)) {
-            return null;
-        }
-
-        $decoded = json_decode((string) file_get_contents($path), true);
-        $entry = is_array($decoded) ? ($decoded[$provider] ?? null) : null;
+        $entry = self::store($auth)[$provider] ?? null;
 
         if (!is_array($entry) || !is_array($entry['models'] ?? null)) {
             return null;
@@ -277,6 +444,8 @@ final class ModelRefresh
         return [
             'models' => array_values(array_filter($entry['models'], is_array(...))),
             ...(is_int($entry['checkedAt'] ?? null) ? ['checkedAt' => $entry['checkedAt']] : []),
+            ...(is_int($entry['lastModified'] ?? null) ? ['lastModified' => $entry['lastModified']] : []),
+            ...(is_string($entry['etag'] ?? null) ? ['etag' => $entry['etag']] : []),
         ];
     }
 
@@ -284,7 +453,7 @@ final class ModelRefresh
      * Upstream's `modelsStore.write(providerId, entry)`: this provider's entry replaced, every other
      * provider's kept, written beside and renamed over.
      *
-     * @param array{models: list<array<string, mixed>>, checkedAt: int} $entry
+     * @param array{models: list<array<string, mixed>>, checkedAt: int, lastModified?: int, etag?: string} $entry
      */
     public static function write(Auth $auth, string $provider, array $entry): void
     {
@@ -306,7 +475,12 @@ final class ModelRefresh
             $store = $decoded;
         }
 
-        $store[$provider] = ['models' => $entry['models'], 'checkedAt' => $entry['checkedAt']];
+        $store[$provider] = [
+            'models' => $entry['models'],
+            'checkedAt' => $entry['checkedAt'],
+            ...(isset($entry['lastModified']) ? ['lastModified' => $entry['lastModified']] : []),
+            ...(isset($entry['etag']) ? ['etag' => $entry['etag']] : []),
+        ];
         $directory = dirname($path);
 
         if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
@@ -319,5 +493,45 @@ final class ModelRefresh
         if (file_put_contents($temporary, $json . "\n") === false || !rename($temporary, $path)) {
             throw new RuntimeException("Cannot write {$path}");
         }
+
+        self::$store = null;
+    }
+
+    /** @var array{0: string, 1: array<mixed>}|null the store as last read: which file it was, and what it held */
+    private static ?array $store = null;
+
+    /**
+     * The whole store, decoded once and again only when the file changes — every built-in provider
+     * reads its entry from it on each refresh, and it holds their catalogs.
+     *
+     * @return array<mixed>
+     */
+    private static function store(Auth $auth): array
+    {
+        $path = self::storePath($auth);
+
+        if ($path === null) {
+            return [];
+        }
+
+        clearstatcache(true, $path);
+
+        if (!is_file($path) || !is_readable($path)) {
+            return [];
+        }
+
+        // Every writer renames a new file over it, so a new inode is a new store even within the
+        // second `mtime` counts in.
+        $stat = stat($path);
+        $version = $stat === false ? '' : "{$path}\0{$stat['ino']}\0{$stat['mtime']}\0{$stat['size']}";
+
+        if (self::$store !== null && self::$store[0] === $version) {
+            return self::$store[1];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+        self::$store = [$version, is_array($decoded) ? $decoded : []];
+
+        return self::$store[1];
     }
 }

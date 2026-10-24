@@ -47,6 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added model catalog updates from pigagent.dev: each built-in provider's list (chat, image and classifier models) is fetched at most every four hours, revalidated with its ETag, saved in `models-store.json` for offline use, and laid over the shipped models only when it is newer than them. OpenRouter's per-key list is narrowed from the shipped models plus that catalog. `PIG_MODEL_CATALOG_URL` names another catalog server; `off` turns it off. Radius and providers an extension replaces are left out.
 - Added per-key OpenRouter model lists: with an OpenRouter key, pig lists only the chat models that key may use, with the key's context size, max output and prices (`GET /models/user`, at the base URL `models.json` sets, so guardrails and regional endpoints apply). The list is saved in `models-store.json` and used offline (upstream #10672).
 - Added `reachesTools` to `CustomTool`, so a tool that reaches other tools declares which ones a call may reach (`'all'`, or the words that may name them); `getAllTools()` carries it. The codemode tool reaches the servers a script names, or every one when it searches or enumerates tools; `tool_search` reaches all.
 - Added Kimi Code subscription sign-in for the `kimi-coding` provider: `/login` → Kimi Code (subscription), a device code approved on kimi.com, with token renewal; `KIMI_CODE_OAUTH_HOST` (or `KIMI_OAUTH_HOST`) overrides the authorization host.

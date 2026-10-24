@@ -64,6 +64,13 @@ use Pig\Ai\PricingTier;
  */
 final class BuiltinCatalog
 {
+    /**
+     * When the rows were last generated — the manifest's `generatedAt`, which a catalog from the
+     * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
+     * rewrites it with the rows.
+     */
+    public const string GENERATED_AT = '2026-10-24T00:00:00Z';
+
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
 
@@ -3957,9 +3964,9 @@ final class BuiltinCatalog
     }
 
     /**
-     * The catalogue as its files: `providers.json` (the providers, in the order of the chat
-     * models and then any provider with no chat model) and one `<provider>.json` each, its chat,
-     * classifier and image models in that order.
+     * The catalogue as its files: `manifest.json` (`generatedAt`, and the providers in the order of
+     * the chat models and then any provider with no chat model) and one `<provider>.json` each, its
+     * chat, classifier and image models in that order.
      *
      * @return array<string, string> file name => contents
      */
@@ -3971,7 +3978,7 @@ final class BuiltinCatalog
             $byProvider[$model->provider][] = $model;
         }
 
-        $files = ['providers.json' => json_encode(array_keys($byProvider), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n"];
+        $files = ['manifest.json' => json_encode(['generatedAt' => self::GENERATED_AT, 'providers' => array_keys($byProvider)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n"];
 
         foreach ($byProvider as $provider => $models) {
             $files["{$provider}.json"] = ModelJson::file($models);

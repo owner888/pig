@@ -88,21 +88,21 @@ final class OpenRouterUserModelsTest extends TestCase
         Async::run(static fn (): ?array => OpenRouterUserModels::fetch('k', $base, new HttpClient(5.0)));
     }
 
-    public function testPersonalizingNarrowsTheBuiltInOpenRouterRowsOnly(): void
+    public function testANarrowedCatalogReplacesTheBuiltInOpenRouterRowsOnly(): void
     {
         $before = count(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'openrouter'));
         $this->assertGreaterThan(1, $before);
         $kept = array_values(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'openrouter'))[0];
         $anthropic = count(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'anthropic'));
 
-        Models::personalize('openrouter', static fn (array $catalog): array => OpenRouterUserModels::personalize($catalog, [['id' => $kept->id, 'context_length' => 12_345]]));
+        Models::useProviderCatalog('openrouter', OpenRouterUserModels::personalize([$kept], [['id' => $kept->id, 'context_length' => 12_345]]), replace: true);
 
         $now = array_values(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'openrouter'));
         $this->assertSame([$kept->id], array_map(static fn (Model $m): string => $m->id, $now));
         $this->assertSame(12_345, $now[0]->contextWindow);
         $this->assertSame($anthropic, count(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'anthropic')));
 
-        Models::personalize('openrouter', null);
+        Models::useProviderCatalog('openrouter', null);
         $this->assertSame($before, count(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'openrouter')));
     }
 
