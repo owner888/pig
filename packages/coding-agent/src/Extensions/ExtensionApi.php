@@ -106,9 +106,10 @@ final class ExtensionApi extends HookApi
     }
 
     /**
-     * Every registered tool, active or not, with its description and schema. Upstream's `getAllTools()`.
+     * Every registered tool, active or not, with its description and schema — and `reachesTools`
+     * for one that declares it (`CustomTool::$reachesTools`). Upstream's `getAllTools()`.
      *
-     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, reachesTools?: \Closure(array<string, mixed>): ('all'|list<string>)}>
      */
     public function getAllTools(): array
     {

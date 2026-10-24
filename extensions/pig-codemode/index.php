@@ -1239,6 +1239,7 @@ return static function (ExtensionApi $pi): void {
         constrainedSampling: ['type' => 'grammar', 'variants' => ['openai_lark' => Source::GRAMMAR]],
         prepareLoadout: $prepareLoadout,
         defaultActive: false,
+        reachesTools: static fn (array $input): string|array => CodemodeDescription::scriptReach($input['code'] ?? null),
     );
     $pi->registerTool($tool);
 

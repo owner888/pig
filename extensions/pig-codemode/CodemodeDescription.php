@@ -20,6 +20,35 @@ final class CodemodeDescription
 {
     public const string TOOL_NAME = 'codemode';
 
+    /**
+     * Upstream's `DISCOVERY_GLOBALS`: "Script globals that list or look up tools and namespaces,
+     * which the script may then call by any name" — pig's PHP spellings.
+     */
+    private const string DISCOVERY_GLOBALS = '/\b(search_tools|describe_namespace|describe_tool|ALL_TOOLS)\b/';
+
+    /**
+     * Upstream's `getScriptReach()` — the tools a script may call (`CustomTool::$reachesTools`):
+     * "every tool when it uses a discovery global, else the words of its source", so
+     * `$tools->mcp__docs__search(...)` and `$tools->{'mcp__docs__' . $name}` both name the
+     * `mcp__docs` namespace.
+     *
+     * @return 'all'|list<string>
+     */
+    public static function scriptReach(mixed $code): string|array
+    {
+        if (!is_string($code)) {
+            return [];
+        }
+
+        if (preg_match(self::DISCOVERY_GLOBALS, $code) === 1) {
+            return 'all';
+        }
+
+        preg_match_all('/\w+/', $code, $words);
+
+        return $words[0];
+    }
+
     /** Default for the inline tool catalog, in estimated tokens. */
     public const int DEFAULT_INLINE_BUDGET = 3000;
 

@@ -10,6 +10,7 @@ use Pig\Agent\AgentTool;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\Utils\Text;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\WrappedCustomTool;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
@@ -429,11 +430,17 @@ final class ToolLoadout
         $active = $this->activeNames();
         $tools = [...ToolSet::create($this->cwd, $this->builtIn), ...$this->customTools->agentTools()];
 
-        return array_map(static fn (AgentTool $tool): array => [
-            'name' => $tool->definition()->name,
-            'description' => $tool->definition()->description,
-            'parameters' => $tool->definition()->parameters,
-            'active' => in_array($tool->definition()->name, $active, true),
-        ], $tools);
+        return array_map(static function (AgentTool $tool) use ($active): array {
+            $reaches = $tool instanceof WrappedCustomTool ? $tool->inner()->reachesTools : null;
+
+            return [
+                'name' => $tool->definition()->name,
+                'description' => $tool->definition()->description,
+                'parameters' => $tool->definition()->parameters,
+                'active' => in_array($tool->definition()->name, $active, true),
+                // Upstream's `...(definition.reachesTools ? { reachesTools } : {})`.
+                ...($reaches === null ? [] : ['reachesTools' => $reaches]),
+            ];
+        }, $tools);
     }
 }

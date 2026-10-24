@@ -455,6 +455,42 @@ final class McpExtensionTest extends TestCase
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
 
+    public function testAScriptReachesTheServersItNamesOrEveryOneWhenItSearches(): void
+    {
+        // Upstream's `getScriptReach()` and `reachesServer()`, which decide what a codemode call
+        // waits for in the MCP extension's `tool_call` handler.
+        require_once dirname(__DIR__, 4) . '/extensions/pig-codemode/CodemodeDescription.php';
+        $reach = static fn (mixed $code): string|array => \PigCodemode\CodemodeDescription::scriptReach($code);
+
+        $this->assertSame('all', $reach('return search_tools("echo");'));
+        $this->assertSame('all', $reach('return count(ALL_TOOLS);'));
+        $this->assertTrue(\Pig\CodingAgent\McpServers::reachesServer($reach('return $tools->mcp__fixture__echo(["text" => "x"]);'), 'fixture'));
+        $this->assertTrue(\Pig\CodingAgent\McpServers::reachesServer($reach('return $tools->{"mcp__my_docs__" . $name}();'), 'my-docs'));
+        $this->assertFalse(\Pig\CodingAgent\McpServers::reachesServer($reach('return 1 + 1;'), 'fixture'));
+        $this->assertSame([], $reach(null));
+    }
+
+    public function testTheFirstPromptDoesNotWaitForACodemodeServer(): void
+    {
+        // Upstream's `waitForDirectServers()`: only a server with direct tools holds up the prompt.
+        \Pig\Codemode\Registry::reset();
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'slow' => ['command' => PHP_BINARY, 'args' => ['-r', 'sleep(30);']],
+        ]]));
+
+        [, $hooks] = $this->load();
+        $hooks->initialize(static fn () => null, ui: new NoticingUi());
+        $started = microtime(true);
+
+        Async::run(function () use ($hooks): void {
+            $hooks->emit(new SessionStartEvent());
+            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        });
+
+        $this->assertLessThan(2.0, microtime(true) - $started);
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
     public function testACodemodeExposedToolIsNotOnTheModelButInTheCodemodeRegistry(): void
     {
         \Pig\Codemode\Registry::reset();
@@ -552,6 +588,7 @@ final class McpExtensionTest extends TestCase
             $hooks->emit(new SessionStartEvent());
             $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
+        $this->untilServersSettle();
 
         $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
         $this->assertSame(['read', 'mcp__fixture__echo', 'tool_search'], $session->activeTools());
@@ -1263,8 +1300,34 @@ final class McpExtensionTest extends TestCase
             $hooks->emit(new SessionStartEvent());
             $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
+        $this->untilServersSettle();
 
         return [$set, $hooks, $ui];
+    }
+
+    /**
+     * The first prompt waits only for servers with direct tools (upstream's `waitForDirectServers()`);
+     * a codemode or deferred server is waited for by the call that reaches it. A test that looks at
+     * one waits for it to settle, as that call would.
+     */
+    private function untilServersSettle(float $timeout = 15.0): void
+    {
+        $command = $this->extension->api->commands()['mcp'];
+        $deadline = microtime(true) + $timeout;
+
+        Async::run(static function () use ($command, $deadline): void {
+            do {
+                $ui = new NoticingUi();
+                ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
+                $status = (string) end($ui->notices);
+
+                if (!str_contains($status, 'starting') && !str_contains($status, 'connecting')) {
+                    return;
+                }
+
+                Async::delay(0.05);
+            } while (microtime(true) < $deadline);
+        });
     }
 
     /**

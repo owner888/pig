@@ -96,6 +96,8 @@ return static function (ExtensionApi $pi): void {
             description: ToolSearch::description(array_values($sources)),
             parameters: ToolSearch::parameters(),
             execute: $search,
+            // A search may load any deferred tool.
+            reachesTools: static fn (): string => 'all',
         ));
     };
 

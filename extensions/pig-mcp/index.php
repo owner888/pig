@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Pig\Async\Async;
+use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionApi;
@@ -10,6 +11,7 @@ use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\McpServersChangeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
+use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\McpServers;
@@ -88,6 +90,8 @@ return static function (ExtensionApi $pi): void {
     $registeredConfigs = [];
     /** @var \Pig\Async\Future|null the startup connections, for the first prompt to wait on */
     $pending = null;
+    /** @var array<string, Deferred> server => completed once its startup connection settled, either way */
+    $serverReady = [];
     $waitedForStartup = false;
     $generation = 0;
     $cwd = $pi->cwd();
@@ -515,6 +519,7 @@ return static function (ExtensionApi $pi): void {
         &$overridden,
         &$registeredConfigs,
         &$pending,
+        &$serverReady,
         &$waitedForStartup,
         &$generation,
         $cwd,
@@ -541,17 +546,62 @@ return static function (ExtensionApi $pi): void {
             return;
         }
 
+        // Upstream's `ensureDiscoveryActive()`, from the config "so the tool is active before the
+        // servers connect": codemode for a `codemode` server, `tool_search` for a `deferred` one.
+        // "Only a tool of these names that declares `reachesTools` can reach MCP tools; another
+        // extension's tool of the same name without it is never activated."
+        if ($ctx->session !== null) {
+            $exposures = [];
+
+            foreach ($enabled as $entry) {
+                $exposures += McpServersSection::configuredExposures($entry);
+            }
+
+            $all = $pi->getAllTools();
+            $reaching = static fn (string $name): bool => array_filter($all, static fn (array $tool): bool => $tool['name'] === $name && isset($tool['reachesTools'])) !== [];
+            $active = $pi->getActiveTools();
+            $activate = [];
+
+            if (isset($exposures['codemode']) && $reaching('codemode') && !in_array('codemode', $active, true)) {
+                $activate[] = 'codemode';
+            }
+
+            if (isset($exposures['deferred']) && $reaching('tool_search') && !in_array('tool_search', $active, true)) {
+                $activate[] = 'tool_search';
+            }
+
+            if ($activate !== []) {
+                $pi->setActiveTools([...$active, ...$activate]);
+            }
+        }
+
+        // Upstream's `server.ready`, one per server and made before anything connects, so a call that
+        // arrives first still finds something to wait on.
+        $serverReady = [];
+
+        foreach ($enabled as $entry) {
+            $serverReady[$entry->name] = new Deferred();
+        }
+
+        $ready = $serverReady;
+
         // In the background, so the first frame is drawn before anything connects.
-        $pending = Async::spawn(static function () use ($enabled, $createConnection, &$generation, $current, $ctx, $reportProblems): void {
+        $pending = Async::spawn(static function () use ($enabled, $createConnection, &$generation, $current, $ctx, $reportProblems, $ready): void {
             $started = array_map($createConnection, $enabled);
             $waits = [];
 
             foreach ($started as $connection) {
-                $waits[] = Async::spawn(static function () use ($connection): void {
+                $waits[] = Async::spawn(static function () use ($connection, $ready): void {
                     try {
                         $connection->client();
                     } catch (\Throwable) {
                         // The failure is the connection's state, reported below.
+                    } finally {
+                        $settled = $ready[$connection->name()] ?? null;
+
+                        if ($settled !== null && !$settled->isComplete()) {
+                            $settled->complete(true);
+                        }
                     }
                 });
             }
@@ -568,24 +618,92 @@ return static function (ExtensionApi $pi): void {
         });
     });
 
-    // The first prompt waits for startup connections so their tools are available to it, but
-    // not indefinitely: a slow or hanging server must not hold up the prompt.
-    $waitForStartup = static function (HookContext $ctx) use (&$pending, &$waitedForStartup, $startupWait): void {
+    // Upstream's `waitForDirectServers()`: the first prompt waits for the servers whose tools are
+    // declared to the model, so they are on it, but not indefinitely: a slow or hanging server must
+    // not hold up the prompt. A codemode or tool_search server is waited for by the call that reaches
+    // it (`tool_call` below).
+    $waitForStartup = static function (HookContext $ctx) use (&$pending, &$serverReady, &$entries, &$waitedForStartup, $startupWait): void {
         if ($pending === null || $waitedForStartup) {
             return;
         }
 
         $waitedForStartup = true;
+        $direct = [];
+
+        foreach ($entries as $entry) {
+            if ($entry->isEnabled() && McpServersSection::hasDirectTools($entry) && isset($serverReady[$entry->name])) {
+                $direct[] = $serverReady[$entry->name];
+            }
+        }
+
+        $settled = static fn (): bool => array_filter($direct, static fn (Deferred $ready): bool => !$ready->isComplete()) === [];
+
+        if ($direct === [] || $settled()) {
+            return;
+        }
+
         $deadline = microtime(true) + $startupWait;
 
-        while (!$pending->isComplete() && microtime(true) < $deadline) {
+        while (!$settled() && microtime(true) < $deadline) {
             Async::delay(0.05);
         }
 
-        if (!$pending->isComplete()) {
+        if (!$settled()) {
             $ctx->ui->notify('MCP servers are still connecting; their tools become available once connected.', 'info');
         }
     };
+
+    // "A tool that reaches other tools (`reachesTools`) waits for the servers it may reach, so their
+    // tools are registered before it runs: a codemode script for the servers it names, or for every
+    // server when it searches or enumerates tools, and tool_search for every server. The resource
+    // tools reach every server, so they wait for all of them. Direct MCP calls wait only for their
+    // own server."
+    $pi->on('tool_call', static function (ToolCallEvent $event, HookContext $ctx) use ($pi, &$serverReady, &$entries, &$toolOwners): mixed {
+        $connecting = [];
+
+        foreach ($entries as $entry) {
+            $ready = $serverReady[$entry->name] ?? null;
+
+            if ($entry->isEnabled() && $ready !== null && !$ready->isComplete()) {
+                $connecting[$entry->name] = $ready;
+            }
+        }
+
+        if ($connecting === []) {
+            return null;
+        }
+
+        $tool = null;
+
+        foreach ($pi->getAllTools() as $candidate) {
+            if ($candidate['name'] === $event->toolName) {
+                $tool = $candidate;
+
+                break;
+            }
+        }
+
+        if ($tool === null) {
+            return null;
+        }
+
+        $reach = isset($tool['reachesTools']) ? ($tool['reachesTools'])($event->input) : null;
+
+        if ($reach !== null) {
+            $waiting = array_filter($connecting, static fn (string $server): bool => McpServers::reachesServer($reach, $server), ARRAY_FILTER_USE_KEY);
+        } elseif (in_array($event->toolName, McpResources::NAMES, true)) {
+            $waiting = $connecting;
+        } else {
+            $owner = explode("\0", $toolOwners[$event->toolName] ?? '', 2)[0];
+            $waiting = array_intersect_key($connecting, [$owner => true]);
+        }
+
+        while (array_filter($waiting, static fn (Deferred $ready): bool => !$ready->isComplete()) !== [] && $ctx->signal?->aborted() !== true) {
+            Async::delay(0.05);
+        }
+
+        return null;
+    });
 
     // "Every prompt lists the servers in the `mcp_servers` section as they are when it starts. Pi
     // appends the section to the conversation when it changed, for example after a server connected."

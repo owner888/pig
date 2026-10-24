@@ -24,6 +24,30 @@ final class McpServers
     }
 
     /**
+     * Upstream's `reachesServer()`: "Whether a call that reaches `reach` (see
+     * `ToolDefinition.reachesTools`) needs the server: it reaches every tool, or one of its words
+     * contains the server's namespace."
+     *
+     * @param 'all'|list<string> $reach
+     */
+    public static function reachesServer(string|array $reach, string $server): bool
+    {
+        if ($reach === 'all') {
+            return true;
+        }
+
+        $namespace = self::namespace($server);
+
+        foreach (is_array($reach) ? $reach : [] as $word) {
+            if (is_string($word) && str_contains($word, $namespace)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Validate one server entry of the `mcpServers` shape. The config as given, or an error.
      *
      * @return array<string, mixed>|string

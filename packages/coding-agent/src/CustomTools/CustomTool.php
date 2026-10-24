@@ -86,6 +86,12 @@ final readonly class CustomTool
      * @param ToolReplay $replay pi-durable's `replay`: `Safe` when running a call twice does no more
      *        than running it once, so a call a stopped process left half done is run again on
      *        `continueRun()` rather than answered as interrupted
+     * @param Closure(array<string, mixed>): ('all'|list<string>)|null $reachesTools upstream's
+     *        `ToolDefinition.reachesTools`: "For tools that reach other tools (such as `codemode`,
+     *        which calls them, and `tool_search`, which loads them): which tools a call with `input`
+     *        may reach. `"all"`, or the words of the input that may name them, where a word refers to
+     *        a tool or namespace whose name it contains, so words may over-match." The MCP extension
+     *        waits from its `tool_call` handler for the servers a call may reach
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -103,6 +109,7 @@ final readonly class CustomTool
         public ?Closure $prepareLoadout = null,
         public bool $defaultActive = true,
         public ToolReplay $replay = ToolReplay::Unsafe,
+        public ?Closure $reachesTools = null,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

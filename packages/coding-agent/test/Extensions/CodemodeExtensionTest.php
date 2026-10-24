@@ -214,6 +214,10 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertStringContainsString('- codemode: Run PHP that calls other tools', $prompt, "upstream's promptSnippet, in the Available tools list");
         $this->assertStringContainsString('- Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output', $prompt, "and its guideline");
 
+        // Upstream's `tool_call` wait: a script naming the server's namespace waits for it to connect,
+        // so its tools are there when the script runs. The first prompt did not wait for it.
+        Async::run(static fn () => $started->hooks->emitToolCall(new \Pig\CodingAgent\Hooks\Events\ToolCallEvent('codemode', 'call-1', ['code' => 'return $tools->mcp__fixture__echo(["text" => "hi"]);'])));
+
         // Upstream's tool keeps one description; `prepareLoadout` is what lists the callable tools.
         $codemode = $started->customTools->find('codemode');
         $this->assertStringContainsString('## fixture', (string) self::declared($started, 'codemode'), 'the server is a namespace in the catalog');

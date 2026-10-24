@@ -91,7 +91,7 @@ final class McpServersSection
      *
      * @return array<string, true>
      */
-    private static function configuredExposures(ServerEntry $entry): array
+    public static function configuredExposures(ServerEntry $entry): array
     {
         $overrides = is_array($entry->config['toolExposure'] ?? null) ? array_values($entry->config['toolExposure']) : [];
         $exposures = [];
@@ -102,6 +102,12 @@ final class McpServersSection
         }
 
         return $exposures;
+    }
+
+    /** Upstream's `hasDirectTools()`: "Whether some of the server's tools are declared to the model, so the first prompt waits for them." */
+    public static function hasDirectTools(ServerEntry $entry): bool
+    {
+        return isset(self::configuredExposures($entry)['direct']);
     }
 
     /** "Whether some of the server's tools are reached through codemode or tool_search." */
