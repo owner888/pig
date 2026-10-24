@@ -22,10 +22,11 @@ use stdClass;
  * `pi-messages` model at that `baseUrl` (`getRadiusModelsFromConfig()`). Upstream's generator reads the
  * unauthenticated catalogue this way to write `RADIUS_MODELS`, and pig's does the same.
  *
- * What is not here: `getRadiusCredentialConfig()` / `getRadiusModels()`, which read a catalogue cached
- * on a Radius OAuth credential (`gatewayConfig`), and the provider's `refreshModels()` that asks the
- * gateway again with the account's key and publishes the answer into the models store — pig has no
- * Radius sign-in and no models store.
+ * The account's own catalogue — the same request with its token, since org owners can disable
+ * models — is `ModelRefresh`'s, which saves it in the models store and lets it replace the shipped
+ * rows (upstream's `radiusProvider().refreshModels()`). What is not here: `getRadiusCredentialConfig()`
+ * / `getRadiusModels()`, which import a catalogue an older upstream cached on the OAuth credential
+ * (`gatewayConfig`); pig never cached one there.
  */
 final class RadiusConfig
 {

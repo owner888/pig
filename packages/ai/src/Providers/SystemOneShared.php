@@ -21,6 +21,7 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemOneCompat;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\ErrorBody;
@@ -51,6 +52,18 @@ use Throwable;
  */
 final class SystemOneShared
 {
+    /** "TypeSafe's opt-in header for its experimental image input." */
+    private const array IMAGE_OPT_IN_HEADERS = ['TypeSafe-Danger-Zone-Images' => 'true'];
+
+    /** Upstream's `ASSET_FORMATS`: the image types System One assets take. */
+    private const array ASSET_FORMATS = ['image/png' => 'png', 'image/jpeg' => 'jpeg'];
+
+    /** Upstream's `DATA_URL_TYPES`: the image types Clef's `images` list takes. */
+    private const array DATA_URL_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+    /** "Clef accepts at most this many images per request." */
+    private const int MAX_DATA_URL_IMAGES = 4;
+
     /** "Runs one System One classification over the given transport." */
     public static function classifySystemOne(
         SystemOneTransport $transport,
@@ -67,8 +80,20 @@ final class SystemOneShared
                 throw new ProviderError("Unsupported classifier API: {$model->api->value}");
             }
 
+            $request = self::wireRequest($context);
+            $optionsHeaders = $options?->headers;
+
             if ($context->images !== []) {
-                throw new ProviderError("{$transport->label()} does not support image input");
+                if (!in_array('image', $model->input, true)) {
+                    throw new ProviderError("{$transport->label()} does not support image input for {$model->id}");
+                }
+
+                $detected = $transport->detectCompat($model);
+                self::addImages($transport->label(), $model, $model->compat?->imageInput ?? $detected->imageInput, $context->images, $request);
+
+                if ($model->compat?->sendImageOptInHeader ?? $detected->sendImageOptInHeader) {
+                    $optionsHeaders = [...self::IMAGE_OPT_IN_HEADERS, ...($optionsHeaders ?? [])];
+                }
             }
 
             $apiKey = $options?->apiKey;
@@ -77,14 +102,14 @@ final class SystemOneShared
                 throw new ProviderError("No API key for provider: {$model->provider}");
             }
 
-            $payload = $transport->payload($model, self::wireRequest($context));
+            $payload = $transport->payload($model, $request);
             $transformed = $options?->onPayload !== null ? ($options->onPayload)($payload, $model) : null;
 
             if ($transformed !== null) {
                 $payload = $transformed;
             }
 
-            $headers = self::requestHeaders($model, $apiKey, $options?->headers, $options?->identity);
+            $headers = self::requestHeaders($model, $apiKey, $optionsHeaders, $options?->identity);
             $body = self::encode($payload);
             [$response, $decoded] = ProviderRetry::retryProviderRequest(
                 static fn (): array => self::postJson($http, $transport->url($model), $headers, $body, $options?->signal, $options?->timeoutMs, $transport->label()),
@@ -327,6 +352,65 @@ final class SystemOneShared
         }
 
         return ['state' => $context->stateForJson(), 'questions' => $questions];
+    }
+
+    /**
+     * Upstream's `addImages()`: "Adds the context images to `request` in the service's form."
+     *
+     * - `assets`: TypeSafe's `assets` map, `{"<image-1>": {type: "image", format, data_base64}}`, with
+     *   the names placed before the state: `state: ["<image-1>", state]`. PNG and JPEG only.
+     * - `images`: Clef's `images` list of data URLs, which the model reads before the state. PNG,
+     *   JPEG and WebP, at most four.
+     * - `state-image-urls`: OpenRouter's form, data URL parts placed before the state.
+     *
+     * @param list<\Pig\Ai\ImageContent> $images
+     * @param array<string, mixed> $request
+     */
+    private static function addImages(string $label, ClassifierModel $model, string $input, array $images, array &$request): void
+    {
+        if ($input === SystemOneCompat::IMAGES) {
+            if (count($images) > self::MAX_DATA_URL_IMAGES) {
+                throw new ProviderError("{$label} accepts at most " . self::MAX_DATA_URL_IMAGES . " images for {$model->id}, got " . count($images));
+            }
+
+            $request['images'] = array_map(static function ($image) use ($label, $model): string {
+                if (!in_array($image->mimeType, self::DATA_URL_TYPES, true)) {
+                    throw new ProviderError("{$label} accepts PNG, JPEG, and WebP images for {$model->id}, got {$image->mimeType}");
+                }
+
+                return "data:{$image->mimeType};base64,{$image->data}";
+            }, $images);
+
+            return;
+        }
+
+        if ($input === SystemOneCompat::STATE_IMAGE_URLS) {
+            // "OpenRouter validates the images against the model that serves the request."
+            $parts = array_map(static fn ($image): array => [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:{$image->mimeType};base64,{$image->data}"],
+            ], $images);
+            $request['state'] = [...$parts, $request['state']];
+
+            return;
+        }
+
+        $assets = [];
+
+        foreach (array_values($images) as $index => $image) {
+            $format = self::ASSET_FORMATS[$image->mimeType] ?? null;
+
+            if ($format === null) {
+                throw new ProviderError("{$label} accepts PNG and JPEG images for {$model->id}, got {$image->mimeType}");
+            }
+
+            $assets['<image-' . ($index + 1) . '>'] = ['type' => 'image', 'format' => $format, 'data_base64' => $image->data];
+        }
+
+        $request['assets'] = $assets;
+        // "Every asset must be referenced from the request. The names go before the state, where
+        // Clef also places its images."
+        $request['state'] = [...array_keys($assets), $request['state']];
     }
 
     /**

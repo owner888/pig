@@ -145,7 +145,7 @@ final class ToolExecutionComponent extends Container
         private readonly ?array $toolRenderers = null,
         private ?float $startedAt = null,
         /** Upstream's `options.outputPad`: the blank column either side of the box. */
-        int $outputPad = 1,
+        private int $outputPad = 1,
         /** Upstream's `options.imageWidthCells`: how wide a picture is drawn, in cells. */
         private int $imageWidthCells = 60,
         /** `keyText("app.tools.expand")`, for the `ctrl+o to expand` hints. */
@@ -261,6 +261,7 @@ final class ToolExecutionComponent extends Container
     /** Upstream's `setOutputPad()`: both shells, since either may be the one on screen. */
     public function setOutputPad(int $outputPad): void
     {
+        $this->outputPad = $outputPad;
         $this->box->setPaddingX($outputPad);
         $this->body->setPaddingX($outputPad);
         $this->draw();
@@ -427,7 +428,7 @@ final class ToolExecutionComponent extends Container
 
     private function renderOptions(): RenderOptions
     {
-        return new RenderOptions($this->expanded, $this->partial, $this->failed, $this->timerText(), $this->durationMs);
+        return new RenderOptions($this->expanded, $this->partial, $this->failed, $this->timerText(), $this->durationMs, $this->outputPad);
     }
 
     /**

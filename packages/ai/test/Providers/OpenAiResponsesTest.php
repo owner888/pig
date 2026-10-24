@@ -1368,7 +1368,7 @@ final class OpenAiResponsesTest extends TestCase
         // Upstream's `applyOpenAIGrammarToolCompatMetadata()`: a Responses model of `openai` or
         // `github-copilot` whose id is `gpt-<n>` with n >= 5 — and nothing older.
         $this->assertTrue(\Pig\Ai\Models::find('openai', 'gpt-5')?->compat?->grammarTools);
-        $this->assertTrue(\Pig\Ai\Models::find('github-copilot', 'gpt-5.4')?->compat?->grammarTools);
+        $this->assertTrue(\Pig\Ai\Models::find('github-copilot', 'gpt-6-sol')?->compat?->grammarTools);
         $this->assertNull(\Pig\Ai\Models::find('openai', 'gpt-4.1')?->compat?->grammarTools);
     }
 

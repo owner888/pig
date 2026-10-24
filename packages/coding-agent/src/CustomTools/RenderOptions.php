@@ -17,6 +17,9 @@ namespace Pig\CodingAgent\CustomTools;
  * the tool's execution took, from the final result — null while it runs, when it did not run,
  * or for results saved before durations were recorded. `renderCall` is given one too, as its
  * third argument, for upstream's `context.expanded`.
+ *
+ * `$outputPad` is upstream's `context.outputPad` (#10557): "Horizontal padding configured by the
+ * outputPad setting" — the blank column either side, for a renderer that lays out its own lines.
  */
 final readonly class RenderOptions
 {
@@ -26,6 +29,7 @@ final readonly class RenderOptions
         public bool $isError = false,
         public ?string $timer = null,
         public ?int $durationMs = null,
+        public int $outputPad = 1,
     ) {
     }
 }

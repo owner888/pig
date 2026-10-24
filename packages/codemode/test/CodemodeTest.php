@@ -351,8 +351,8 @@ final class CodemodeTest extends TestCase
         yield 'base64 of something that is no image' => ['"data:image/png;base64,' . base64_encode('hello world, not a picture') . '"', 'not a PNG, JPEG, GIF, or WebP'];
         yield 'an empty string' => ['""', 'image expects a non-empty image URL'];
         yield 'a list' => ['[1, 2]', 'image expects a non-empty image URL'];
-        yield 'a block of another type' => ['["type" => "text", "text" => "x"]', 'image only accepts MCP image blocks, got "text"'];
-        yield 'a block with no data' => ['["type" => "image", "data" => ""]', 'image expected MCP image data'];
+        yield 'a block of another type' => ['["type" => "text", "text" => "x"]', 'image only accepts image blocks, got "text"'];
+        yield 'a block with no data' => ['["type" => "image", "data" => ""]', 'image expected image block data'];
     }
 
     #[DataProvider('imagesThatAreNotOnes')]

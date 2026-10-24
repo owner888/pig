@@ -137,6 +137,11 @@ final class Fuzzy
     /**
      * One token against one text, both already lowercased.
      *
+     * The greedy alignment — each character at its first occurrence after the previous one — can
+     * scatter the token over an earlier, unrelated part of the text ("opus" in `openrouter
+     * openrouter/anthropic/claude-opus` takes o, p, u from "openrouter"), so every contiguous
+     * occurrence is scored too and the best alignment kept (upstream #11220).
+     *
      * @return array{bool, float}
      */
     private static function scoreOf(string $needle, string $haystack): array
@@ -147,14 +152,14 @@ final class Fuzzy
 
         $wanted = mb_str_split($needle, 1, 'UTF-8');
         $characters = mb_str_split($haystack, 1, 'UTF-8');
+        $length = count($wanted);
 
-        if (count($wanted) > count($characters)) {
+        if ($length > count($characters)) {
             return [false, 0.0];
         }
 
-        $score = 0.0;
+        $positions = [];
         $last = -1;
-        $consecutive = 0;
 
         foreach ($wanted as $character) {
             $at = self::indexOf($characters, $character, $last + 1);
@@ -163,6 +168,33 @@ final class Fuzzy
                 return [false, 0.0];
             }
 
+            $positions[] = $at;
+            $last = $at;
+        }
+
+        $score = self::scorePositions($characters, $positions);
+
+        for ($start = self::occurrence($characters, $wanted, 0); $start !== null; $start = self::occurrence($characters, $wanted, $start + 1)) {
+            $score = min($score, self::scorePositions($characters, range($start, $start + $length - 1)));
+        }
+
+        return [true, $needle === $haystack ? $score - self::EXACT_BONUS : $score];
+    }
+
+    /**
+     * Upstream's `scorePositions()`: consecutive characters and word starts earn, gaps and
+     * lateness cost.
+     *
+     * @param list<string> $characters
+     * @param list<int> $positions
+     */
+    private static function scorePositions(array $characters, array $positions): float
+    {
+        $score = 0.0;
+        $last = -1;
+        $consecutive = 0;
+
+        foreach ($positions as $at) {
             if ($last === $at - 1) {
                 $consecutive++;
                 $score -= $consecutive * self::CONSECUTIVE_BONUS;
@@ -189,7 +221,27 @@ final class Fuzzy
             $last = $at;
         }
 
-        return [true, $needle === $haystack ? $score - self::EXACT_BONUS : $score];
+        return $score;
+    }
+
+    /**
+     * Where $wanted next appears whole, at or after $from.
+     *
+     * @param list<string> $characters
+     * @param list<string> $wanted
+     */
+    private static function occurrence(array $characters, array $wanted, int $from): ?int
+    {
+        $length = count($wanted);
+        $last = count($characters) - $length;
+
+        for ($start = $from; $start <= $last; $start++) {
+            if (array_slice($characters, $start, $length) === $wanted) {
+                return $start;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -157,6 +157,31 @@ final class PowerShellToolTest extends ToolTestCase
         $this->assertSame([$config->shell, '-s'], $config->argv('echo hi'));
     }
 
+    public function testTheLegacyWslLauncherIsFoundWhereverWindowsIsInstalled(): void
+    {
+        // Upstream #9501: `%SystemRoot%` names the Windows directory; `C:\Windows` is the guess only
+        // when it is unknown.
+        $env = ['PATH' => 'D:\WinNT\System32', 'SystemRoot' => 'D:\WinNT'];
+        $elsewhere = Shell::resolve(null, 'Windows', $env, static fn (string $p): bool => $p === 'D:\WinNT\System32\bash.exe');
+        $this->assertSame('stdin', $elsewhere->commandTransport);
+
+        // With `SystemRoot` known, `C:\Windows\System32\bash.exe` is some other bash.
+        $other = Shell::resolve(null, 'Windows', ['PATH' => 'C:\Windows\System32', 'SystemRoot' => 'D:\WinNT'], static fn (string $p): bool => $p === 'C:\Windows\System32\bash.exe');
+        $this->assertSame(['-c'], $other->args);
+    }
+
+    public function testPowerShellOutsidePathIsFoundInItsInstallDirectories(): void
+    {
+        // Upstream #9501: "Installation directories may be on any drive and need not be on PATH."
+        $env = ['Path' => 'C:\nothing', 'ProgramFiles' => 'E:\Apps', 'SystemRoot' => 'D:\WinNT'];
+
+        $seven = Shell::powerShellConfig('Windows', $env, static fn (string $p): bool => in_array($p, ['E:\Apps\PowerShell\7\pwsh.exe', 'D:\WinNT\System32\WindowsPowerShell\v1.0\powershell.exe'], true));
+        $this->assertSame('E:\Apps\PowerShell\7\pwsh.exe', $seven->shell);
+
+        $windows = Shell::powerShellConfig('Windows', $env, static fn (string $p): bool => $p === 'D:\WinNT\System32\WindowsPowerShell\v1.0\powershell.exe');
+        $this->assertSame('D:\WinNT\System32\WindowsPowerShell\v1.0\powershell.exe', $windows->shell);
+    }
+
     public function testAStdinShellIsHandedTheCommandOnItsInput(): void
     {
         $tool = new PowerShellTool($this->cwd, shell: new ShellConfig('/bin/sh', ['-s'], 'stdin'));

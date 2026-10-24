@@ -11,6 +11,7 @@ use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\ProviderError;
+use Pig\Ai\SystemOneCompat;
 use Pig\Ai\Utils\JsJson;
 use stdClass;
 
@@ -21,6 +22,10 @@ use stdClass;
  * `{ success, result: { state: "Completed", result: { answers, usage } } }`. Cloudflare-hosted models
  * such as `@cf/cloudflare/clef` return the output directly: `{ success, result: { model, answers,
  * usage } }`."
+ *
+ * "Clef models take images as an `images` list of data URLs. TypeSafe's models take them as System
+ * One `assets`, without TypeSafe's opt-in header. The catalog sets `compat.imageInput`; the model ID
+ * check only covers models without it."
  *
  * The `{CLOUDFLARE_ACCOUNT_ID}` in the base URL is filled in before this is reached
  * (`Cloudflare::resolveCloudflareModel()`, upstream's `cloudflareClassifier()`).
@@ -49,6 +54,12 @@ final class CloudflareWorkersAiSystemOne implements SystemOneTransport
     public function label(): string
     {
         return self::LABEL;
+    }
+
+    #[\Override]
+    public function detectCompat(ClassifierModel $model): SystemOneCompat
+    {
+        return new SystemOneCompat(str_starts_with($model->id, '@cf/cloudflare/clef') ? SystemOneCompat::IMAGES : SystemOneCompat::ASSETS, false);
     }
 
     /** `new URL("run", `${model.baseUrl.replace(/\/+$/u, "")}/`)`. */

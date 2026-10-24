@@ -383,7 +383,8 @@ final class ModelsTest extends TestCase
         // Pinned from upstream's published catalogue (`azure.json`, pi-ai 1.1.0): OpenAI's Responses
         // rows cloned before the metadata — no strict mode, no tool search, no models.dev efforts, no
         // tiers — at Azure's larger window for the ids it names, and no base URL.
-        $this->assertCount(45, self::of(Models::AZURE));
+        // Less the models models.dev has since retired.
+        $this->assertCount(43, self::of(Models::AZURE));
 
         $gpt = Models::find(Models::AZURE, 'gpt-5.5');
         $this->assertNotNull($gpt);
@@ -556,8 +557,8 @@ final class ModelsTest extends TestCase
         $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/inference/v1'], [$gpt->api, $gpt->baseUrl]);
         $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $gpt->compat);
         $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
-        // "Use Anthropic Messages for OpenCode Go minimax-m2.7; openai-completions now returns ModelProtocolUnsupported."
-        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'minimax-m2.7')?->api, Models::find('opencode-go', 'minimax-m2.7')?->baseUrl]);
+        // OpenCode Go no longer lists MiniMax M2.7, whose rule sent it to Anthropic Messages; M3 is there.
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'minimax-m3')?->api, Models::find('opencode-go', 'minimax-m3')?->baseUrl]);
 
         // Meta's own, on the Responses API.
         $this->assertSame([Api::OpenAiResponses, 'https://api.meta.ai/v1'], [Models::find('meta', 'muse-spark-1.3')?->api, Models::find('meta', 'muse-spark-1.3')?->baseUrl]);
@@ -646,7 +647,7 @@ final class ModelsTest extends TestCase
         // bare id is the maker's.
         $this->assertSame('moonshotai', Models::get('kimi-k2.6')?->provider);
         $this->assertSame('zai', Models::get('glm-5.3')?->provider);
-        $this->assertSame('xiaomi', Models::get('mimo-v2.5-pro')?->provider);
+        $this->assertSame('xiaomi', Models::get('mimo-v2.6-pro')?->provider);
         $this->assertSame('minimax', Models::get('MiniMax-M2.7')?->provider);
         $this->assertSame('openai', Models::get('gpt-5.5')?->provider);
         $this->assertSame('anthropic', Models::get('claude-opus-4-8')?->provider);
@@ -860,8 +861,7 @@ final class ModelsTest extends TestCase
             ['openai', 'gpt-6-astra', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             ['openai', 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             ['openai', 'o3', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-            [Models::COPILOT, 'gpt-5-mini', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-            [Models::COPILOT, 'gpt-5.4', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+            [Models::COPILOT, 'gpt-5.6-sol', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'gpt-6.1-sol', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         ] as [$provider, $id, $map]) {
@@ -922,8 +922,8 @@ final class ModelsTest extends TestCase
         // actual max output is 128000."
         $this->assertSame(128_000, Models::find('openai', 'gpt-5-pro')?->maxTokens);
 
-        // The cap is OpenAI's own endpoint only: Copilot resells gpt-5.5 at its own window.
-        $this->assertGreaterThan(272_000, Models::find(Models::COPILOT, 'gpt-5.5')?->contextWindow ?? 0);
+        // The cap is OpenAI's own endpoint only: Copilot resells GPT-6 Sol at its own window.
+        $this->assertGreaterThan(272_000, Models::find(Models::COPILOT, 'gpt-6-sol')?->contextWindow ?? 0);
 
         // And the long-context rate applies to a whole request past the threshold.
         $gpt55 = Models::find('openai', 'gpt-5.5');
@@ -957,7 +957,7 @@ final class ModelsTest extends TestCase
             Models::find('google', 'gemini-2.5-pro')?->inputLimits,
         );
         // A provider with no limits of its own still gets the resize profile.
-        $this->assertSame(['images' => ['resize' => $resize]], Models::find(Models::COPILOT, 'gpt-5.5')?->inputLimits);
+        $this->assertSame(['images' => ['resize' => $resize]], Models::find(Models::COPILOT, 'gpt-6-sol')?->inputLimits);
 
         foreach (Models::all() as $model) {
             if (!$model->acceptsImages()) {
@@ -1238,11 +1238,11 @@ final class ModelsTest extends TestCase
         // Upstream's generator writes models.dev's list prices on Copilot rows. pig used to price
         // them at zero — "a subscription" — so `/session` said $0.00 where pi says what the same
         // tokens are worth, and a Copilot conversation could not be compared with any other.
-        $gpt = Models::find(Models::COPILOT, 'gpt-5.5');
+        $gpt = Models::find(Models::COPILOT, 'gpt-6-sol');
         $this->assertNotNull($gpt);
-        $this->assertSame(5.0, $gpt->pricing->input);
-        $this->assertSame(30.0, $gpt->pricing->output);
-        $this->assertSame(0.5, $gpt->pricing->cacheRead);
+        $this->assertSame(2.0, $gpt->pricing->input);
+        $this->assertSame(10.0, $gpt->pricing->output);
+        $this->assertSame(0.2, $gpt->pricing->cacheRead);
         $this->assertCount(1, $gpt->pricing->tiers);
         $this->assertSame(272_000, $gpt->pricing->tiers[0]->inputTokensAbove);
 
@@ -1256,7 +1256,7 @@ final class ModelsTest extends TestCase
         // `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`: GitHub's 1,000,000 for every id it lists. pig had
         // five of them at models.dev's 1,050,000 — a window past the real one, where compaction
         // fires too late — and the ids not on the list keep the catalogue's figure.
-        foreach (['claude-opus-4.7', 'claude-opus-4.8', 'claude-opus-5', 'claude-sonnet-4.6', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-5.5', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'] as $id) {
+        foreach (['claude-opus-4.8', 'claude-opus-5', 'claude-sonnet-4.6', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-5.5', 'gpt-5.3-codex', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'] as $id) {
             $this->assertSame(1_000_000, Models::find(Models::COPILOT, $id)?->contextWindow, $id);
         }
 

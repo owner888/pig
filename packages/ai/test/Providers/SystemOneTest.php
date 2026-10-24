@@ -12,6 +12,8 @@ use Pig\Ai\ClassifierChoiceAnswer;
 use Pig\Ai\ClassifierChoiceQuestion;
 use Pig\Ai\ClassifierContext;
 use Pig\Ai\ClassifierModel;
+use Pig\Ai\SystemOneCompat;
+use Pig\Ai\ImageContent;
 use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\ClassifierScoreAnswer;
@@ -104,6 +106,72 @@ final class SystemOneTest extends TestCase
         $this->assertEquals(new ClassifierBoolAnswer(0.95), $result->answers['approved']);
         // "Priced from the catalog like chat usage; matches OpenRouter's reported cost."
         $this->assertEqualsWithDelta(0.000012936, $result->usage?->cost->total, 1e-12);
+    }
+
+    public function testTypesafeTakesImagesAsAssetsNamedBeforeTheStateWithItsOptInHeader(): void
+    {
+        // Upstream 7f225f25d: "TypeSafe takes images as `assets`. They are experimental and need the
+        // `TypeSafe-Danger-Zone-Images` opt-in header; without it the API answers 400."
+        $base = $this->serve(static fn (): array => [200, [], json_encode(['answers' => self::wireAnswers()])]);
+        $model = new ClassifierModel('jev-latest', 'Jev', ClassifierApi::TypesafeSystemOne, 'typesafe', $base . '/v1/', 64_000, ['text', 'image']);
+        $context = new ClassifierContext(['text' => 'look'], self::context()->questions, [new ImageContent('cG5n', 'image/png'), new ImageContent('anBn', 'image/jpeg')]);
+
+        $result = self::classify($model, $context, new ClassifierOptions(apiKey: 'secret'));
+
+        $this->assertSame(StopReason::Stop, $result->stopReason, (string) $result->errorMessage);
+        $request = $this->server()->requests[0];
+        $this->assertSame('true', $request['headers']['typesafe-danger-zone-images'] ?? null);
+        $payload = json_decode($request['body'], true);
+        $this->assertSame(['<image-1>', '<image-2>', ['text' => 'look']], $payload['state']);
+        $this->assertSame([
+            '<image-1>' => ['type' => 'image', 'format' => 'png', 'data_base64' => 'cG5n'],
+            '<image-2>' => ['type' => 'image', 'format' => 'jpeg', 'data_base64' => 'anBn'],
+        ], $payload['assets']);
+    }
+
+    public function testOpenRouterTakesImagesAsImageUrlPartsAndAWebpIsRefusedByAssets(): void
+    {
+        $base = $this->serve(static fn (): array => [200, [], json_encode(['answers' => self::wireAnswers()])]);
+        $model = new ClassifierModel('typesafe/jev-1.13', 'Jev', ClassifierApi::TypesafeSystemOne, 'openrouter', $base . '/api/v1', 32_000, ['text', 'image']);
+        $context = new ClassifierContext(['text' => 'look'], self::context()->questions, [new ImageContent('d2VicA==', 'image/webp')]);
+
+        self::classify($model, $context, new ClassifierOptions(apiKey: 'secret'));
+
+        $request = $this->server()->requests[0];
+        // "OpenRouter answers TypeSafe `assets` with 200 but drops the images."
+        $this->assertArrayNotHasKey('typesafe-danger-zone-images', $request['headers']);
+        $payload = json_decode($request['body'], true);
+        $this->assertArrayNotHasKey('assets', $payload);
+        $this->assertSame([['type' => 'image_url', 'image_url' => ['url' => 'data:image/webp;base64,d2VicA==']], ['text' => 'look']], $payload['state']);
+
+        // A model's own compat wins over the detection: assets, which take PNG and JPEG only.
+        $assets = new ClassifierModel('typesafe/jev-1.13', 'Jev', ClassifierApi::TypesafeSystemOne, 'openrouter', $base . '/api/v1', 32_000, ['text', 'image'], compat: new SystemOneCompat(SystemOneCompat::ASSETS));
+        $refused = self::classify($assets, $context, new ClassifierOptions(apiKey: 'secret'));
+        $this->assertSame('System One API accepts PNG and JPEG images for typesafe/jev-1.13, got image/webp', $refused->errorMessage);
+        $this->assertCount(1, $this->server()->requests);
+    }
+
+    public function testWorkersAisClefTakesUpToFourDataUrlsAndJevTakesAssetsWithoutTheHeader(): void
+    {
+        $base = $this->serve(static fn (): array => [200, [], json_encode(['result' => self::jevOutput(), 'success' => true, 'errors' => [], 'messages' => []])]);
+        [$clef, $context, $options] = self::workersAiCall($base, '@cf/cloudflare/clef');
+        $withImage = new ClassifierContext($context->state, $context->questions, [new ImageContent('d2VicA==', 'image/webp')]);
+
+        self::classify($clef, $withImage, $options);
+
+        $payload = json_decode($this->server()->requests[0]['body'], true);
+        $this->assertSame(['data:image/webp;base64,d2VicA=='], $payload['input']['images']);
+        $this->assertSame(['message' => 'Help! My payouts have been failing for 3 days.'], $payload['input']['state']);
+        $this->assertArrayNotHasKey('typesafe-danger-zone-images', $this->server()->requests[0]['headers']);
+
+        $five = new ClassifierContext($context->state, $context->questions, array_fill(0, 5, new ImageContent('cG5n', 'image/png')));
+        $this->assertSame('Cloudflare Workers AI accepts at most 4 images for @cf/cloudflare/clef, got 5', self::classify($clef, $five, $options)->errorMessage);
+
+        [$jev] = self::workersAiCall($base, 'typesafe/jev');
+        self::classify($jev, new ClassifierContext($context->state, $context->questions, [new ImageContent('cG5n', 'image/png')]), $options);
+        $payload = json_decode(end($this->server()->requests)['body'], true);
+        $this->assertSame(['<image-1>', ['message' => 'Help! My payouts have been failing for 3 days.']], $payload['input']['state']);
+        $this->assertArrayNotHasKey('typesafe-danger-zone-images', end($this->server()->requests)['headers']);
     }
 
     public function testAModelForAnotherClassifierApiIsRefusedBeforeAnyRequest(): void

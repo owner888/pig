@@ -65,6 +65,21 @@ final readonly class Usage
         );
     }
 
+    /** The same counts with the provider's billed total cost — see `Cost::$totalFromProvider`. */
+    public function withProviderTotal(float $total): self
+    {
+        return new self(
+            $this->input,
+            $this->output,
+            $this->cacheRead,
+            $this->cacheWrite,
+            $this->totalTokens,
+            $this->cost->withProviderTotal($total),
+            $this->reasoning,
+            $this->cacheWrite1h,
+        );
+    }
+
     /** Anthropic reports the components and leaves the total to the caller. */
     public function withTotalTokens(): self
     {

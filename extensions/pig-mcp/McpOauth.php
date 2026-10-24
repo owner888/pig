@@ -413,10 +413,18 @@ final class McpOauth
      * @param array{showAuthorizationUrl: Closure, promptForRedirectUrl: Closure} $prompt
      * @param Closure(Request): Response|null $fetch
      *
-     * @throws McpSignInCancelledError when nobody finished the sign-in
+     * Aborting `$signal` stops the sign-in at any step with `McpSignInCancelledError` — upstream's
+     * `signInMcpServer({signal})` (#10565): every request to the authorization server is handed it,
+     * and the redirect URL prompt is aborted with it.
+     *
+     * @throws McpSignInCancelledError when nobody finished the sign-in, or `$signal` aborted it
      */
-    public function signIn(string $name, string $serverUrl, array $settings, ?array $challenge, array $prompt, ?Closure $fetch = null, float $timeout = 300.0): void
+    public function signIn(string $name, string $serverUrl, array $settings, ?array $challenge, array $prompt, ?Closure $fetch = null, float $timeout = 300.0, ?AbortSignal $signal = null): void
     {
+        if ($signal?->aborted() ?? false) {
+            throw new McpSignInCancelledError();
+        }
+
         $store = $this->forServer($name, $serverUrl);
         $stored = $store->load();
         $stepUp = ($challenge['error'] ?? null) === 'insufficient_scope';
@@ -451,6 +459,7 @@ final class McpOauth
 
             $flow = [
                 'serverUrl' => $serverUrl,
+                'signal' => $signal,
                 'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
                 'authorizationServerMetadataUrl' => isset($settings['authServerMetadataUrl']) ? (string) $settings['authServerMetadataUrl'] : null,
                 // A server asking for more scope gets it on top of the configured scope and — since
@@ -473,8 +482,15 @@ final class McpOauth
 
             $state = $provider->state();
             ($prompt['showAuthorizationUrl'])($authorizationUrl);
-            ['code' => $code, 'iss' => $iss] = self::waitForAuthorizationResponse($callback, $state, $prompt['promptForRedirectUrl']);
+            ['code' => $code, 'iss' => $iss] = self::waitForAuthorizationResponse($callback, $state, $prompt['promptForRedirectUrl'], $signal);
             Flow::authorize($provider, [...$flow, 'authorizationCode' => $code, 'iss' => $iss], $fetch);
+        } catch (\Throwable $error) {
+            // "Aborted requests fail with the signal's reason; report them as the cancellation they are."
+            if ($signal?->aborted() ?? false) {
+                throw new McpSignInCancelledError();
+            }
+
+            throw $error;
         } finally {
             $callback->close();
         }
@@ -495,17 +511,19 @@ final class McpOauth
     }
 
     /**
-     * Wait for the browser callback or a pasted redirect URL, whichever comes first.
+     * Wait for the browser callback or a pasted redirect URL, whichever comes first. Aborting
+     * `$signal` aborts the prompt, which then cancels the sign-in.
      *
      * @param Closure(AbortSignal): ?string $promptForRedirectUrl
-     */
-    /**
      * @return array{code: string, iss: ?string} the code, and the `iss` the response carried (RFC 9207)
      */
-    private static function waitForAuthorizationResponse(OauthCallbackServer $callback, string $state, Closure $promptForRedirectUrl): array
+    private static function waitForAuthorizationResponse(OauthCallbackServer $callback, string $state, Closure $promptForRedirectUrl, ?AbortSignal $signal = null): array
     {
         $controller = new AbortController();
         $answer = new Deferred();
+        $outer = $signal?->onAbort(static function () use ($controller): void {
+            $controller->abort('sign-in cancelled');
+        });
 
         $settle = static function (Closure $produce) use ($answer): void {
             try {
@@ -541,6 +559,10 @@ final class McpOauth
         try {
             return $answer->future->await();
         } finally {
+            if ($outer !== null) {
+                $signal?->removeListener($outer);
+            }
+
             // The losing side ends once the prompt is aborted or the callback server closes.
             $controller->abort('sign-in settled');
         }

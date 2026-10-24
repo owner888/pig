@@ -94,6 +94,8 @@ return static function (ExtensionApi $pi): void {
     $serverReady = [];
     $waitedForStartup = false;
     $generation = 0;
+    /** The session's sign-ins: session shutdown aborts them, and a fresh one replaces it. */
+    $signIns = new \Pig\Async\AbortController();
     $cwd = $pi->cwd();
     $credentials = new McpOauth(McpOauth::defaultPath(Config::home()));
     $log = new McpServerLog(Config::home() . '/mcp.log');
@@ -235,7 +237,7 @@ return static function (ExtensionApi $pi): void {
                     $defined->description,
                     $defined->parameters,
                     static fn (array $args, \Pig\Async\AbortSignal $signal, HookContext $ctx): mixed => McpTools::scriptValue($connection->callTool($toolName, $args, ['signal' => $signal, 'timeout' => $connection->timeout()])),
-                    ['name' => $server, 'description' => $connection->instructions],
+                    ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
                     $exposure,
                     McpTools::callToolResultSchema($tool),
                 );
@@ -255,7 +257,7 @@ return static function (ExtensionApi $pi): void {
                     $name,
                     (string) ($tool['description'] ?? ''),
                     $tool['inputSchema'] ?? null,
-                    ['name' => $server, 'description' => $connection->instructions],
+                    ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
                     static function () use ($pi, $define): \Pig\CodingAgent\CustomTools\CustomTool {
                         $defined = $define();
                         $pi->registerTool($defined);
@@ -798,8 +800,11 @@ return static function (ExtensionApi $pi): void {
         $reportProblems($ctx, $connecting);
     });
 
-    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools): void {
+    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools, &$signIns): void {
         $generation++;
+        // A sign-in still running belongs to the session that is ending (upstream #10565).
+        $signIns->abort('session shutdown');
+        $signIns = new \Pig\Async\AbortController();
         $configuredEntries = [];
         $overridden = [];
         $registeredConfigs = [];
@@ -828,9 +833,12 @@ return static function (ExtensionApi $pi): void {
      * Sign in to a server and reconnect. Answers a message when it did not work (null when it did),
      * so a menu can show it beside the server.
      *
+     * `$cancel` aborts it from the caller (escape on a status screen); session shutdown aborts every
+     * sign-in still running (upstream #10565).
+     *
      * @param array{showAuthorizationUrl: \Closure, promptForRedirectUrl: \Closure} $prompt
      */
-    $signIn = static function (ServerEntry $entry, array $prompt) use (&$connections, $credentials, $emitChange): ?string {
+    $signIn = static function (ServerEntry $entry, array $prompt, ?\Pig\Async\AbortSignal $cancel = null) use (&$connections, $credentials, $emitChange, &$signIns): ?string {
         $connection = $connections[$entry->name] ?? null;
         $url = $connection?->oauthUrl();
 
@@ -838,12 +846,30 @@ return static function (ExtensionApi $pi): void {
             return "MCP server \"{$entry->name}\" does not use OAuth. Only HTTP servers without an Authorization header do.";
         }
 
+        // One signal for this sign-in, aborted by the session's or by the caller's.
+        $controller = new \Pig\Async\AbortController();
+        $session = $signIns->signal;
+        $listeners = [[$session, $session->onAbort(static fn () => $controller->abort('session shutdown'))]];
+
+        if ($cancel !== null) {
+            $listeners[] = [$cancel, $cancel->onAbort(static fn () => $controller->abort('sign-in cancelled'))];
+        }
+
         try {
-            $credentials->signIn($entry->name, $url, $connection->oauthSettings(), $connection->challenge, $prompt);
+            $credentials->signIn($entry->name, $url, $connection->oauthSettings(), $connection->challenge, $prompt, signal: $controller->signal);
         } catch (McpSignInCancelledError) {
             return 'Sign-in cancelled.';
         } catch (\Throwable $error) {
             return "Sign-in to MCP server \"{$entry->name}\" failed: {$error->getMessage()}";
+        } finally {
+            foreach ($listeners as [$signal, $id]) {
+                $signal->removeListener($id);
+            }
+        }
+
+        // The session ended while the sign-in finished: its connection is closed and gone.
+        if ($session->aborted()) {
+            return 'Sign-in cancelled.';
         }
 
         $connection->challenge = null;
@@ -1097,19 +1123,22 @@ return static function (ExtensionApi $pi): void {
             case 'signin':
                 $title = "Sign in to {$name}";
                 $authorizationUrl = '';
-                $ui->status($title, 'Contacting the authorization server…');
+                // Escape cancels the sign-in at every step, not only at the redirect URL box.
+                $cancel = new \Pig\Async\AbortController();
+                $onCancel = static fn () => $cancel->abort('sign-in cancelled');
+                $ui->status($title, 'Contacting the authorization server…', $onCancel);
                 $message = $signIn($entry, [
                     'showAuthorizationUrl' => static function (string $url) use (&$authorizationUrl, $openUrl): void {
                         $authorizationUrl = $url;
                         $openUrl($url);
                     },
-                    'promptForRedirectUrl' => static function (\Pig\Async\AbortSignal $signal) use ($ui, $title, &$authorizationUrl): ?string {
+                    'promptForRedirectUrl' => static function (\Pig\Async\AbortSignal $signal) use ($ui, $title, &$authorizationUrl, $onCancel): ?string {
                         $value = $ui->redirectUrl($title, $authorizationUrl, $signal);
-                        $ui->status($title, 'Connecting…');
+                        $ui->status($title, 'Connecting…', $onCancel);
 
                         return $value;
                     },
-                ]);
+                ], $cancel->signal);
                 break;
             case 'signout':
                 $message = $signOut($entry);

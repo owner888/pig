@@ -469,24 +469,27 @@ const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
  * "OpenCode Zen serves Jev through its TypeSafe-compatible System One endpoint. Neither its
  * /zen/v1/models listing nor models.dev carries metadata for it", and "Workers AI has no
  * unauthenticated catalog and models.dev does not list its System One models yet. Cloudflare
- * publishes pricing only in the dashboard." The Clef models "accept images, but classifier contexts
- * carry text or JSON state only, so the catalog advertises text."
+ * publishes pricing only in the dashboard." Each row's `compat` says how its service takes images
+ * (`SystemOneCompat`).
  *
- * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float}>
+ * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float, compat?: array<string, string|bool>}>
  */
 const HAND_KEPT_CLASSIFIERS = [
     'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    // "Cloudflare-hosted Clef decision models. They take up to four PNG, JPEG, or WebP images as data
+    // URLs. Clef Omni also takes audio and video, which classifier contexts do not carry."
     // Pricing and context: https://developers.cloudflare.com/workers-ai/models/clef/,
     // https://developers.cloudflare.com/workers-ai/models/clef-flash/ and
     // https://developers.cloudflare.com/workers-ai/models/clef-omni/ (upstream 7f225f25d).
-    'cloudflare-workers-ai/@cf/cloudflare/clef' => ['name' => 'Clef', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.24, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 24_576, 'input' => ['text'], 'in' => 0.038, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['name' => 'Clef Omni', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 64_000, 'input' => ['text'], 'in' => 0.15, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/@cf/cloudflare/clef' => ['name' => 'Clef', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text', 'image'], 'in' => 0.24, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'compat' => ['imageInput' => 'images']],
+    'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 24_576, 'input' => ['text', 'image'], 'in' => 0.038, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'compat' => ['imageInput' => 'images']],
+    'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['name' => 'Clef Omni', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 64_000, 'input' => ['text', 'image'], 'in' => 0.15, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'compat' => ['imageInput' => 'images']],
+    // "TypeSafe's Jev models take PNG and JPEG images as System One assets."
     // https://developers.cloudflare.com/ai/models/typesafe/jev/ (jev-latest) and
     // https://developers.cloudflare.com/ai/models/typesafe/jev-1.14.0/
-    'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['name' => 'Jev 1.14', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text', 'image'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'compat' => ['imageInput' => 'assets']],
+    'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['name' => 'Jev 1.14', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text', 'image'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'compat' => ['imageInput' => 'assets']],
     // Upstream's `OPENAI_CLASSIFIER_MODELS` (ce8972a0e): "OpenAI Decisions API (public beta):
     // gpt-6-luna is its only model. It bills input tokens only, with the same long-context
     // multiplier as chat requests. Only API keys work: Sign in with ChatGPT tokens are rejected on
@@ -1891,8 +1894,11 @@ function classifierRows(?string $decisionsFile, ?string $openRouterDecisionsFile
             'api' => ClassifierApi::TypesafeSystemOne,
             'baseUrl' => 'https://api.typesafe.ai/v1/',
             'context' => (int) (($metadata['limit']['context'] ?? 0) ?: 64_000),
-            'input' => in_array('image', (array) ($metadata['modalities']['input'] ?? []), true) ? ['text', 'image'] : ['text'],
+            // "models.dev lists text input only, but the API accepts image assets as an experimental
+            // feature behind an opt-in header, which the typesafe-system-one API sends."
+            'input' => ['text', 'image'],
             'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
+            'compat' => ['imageInput' => 'assets', 'sendImageOptInHeader' => true],
         ];
     } catch (Throwable $error) {
         printf("  ! Failed to load models.dev classifier data: %s\n", $error->getMessage());
@@ -1914,6 +1920,8 @@ function classifierRows(?string $decisionsFile, ?string $openRouterDecisionsFile
                 'context' => (int) (($model['top_provider']['context_length'] ?? 0) ?: ($model['context_length'] ?? 0) ?: 4_096),
                 'input' => $input !== [] ? $input : ['text'],
                 'in' => $prices['input'], 'out' => $prices['out'], 'cacheRead' => $prices['cacheRead'], 'cacheWrite' => $prices['cacheWrite'],
+                // "OpenRouter answers TypeSafe `assets` with 200 but drops the images."
+                'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false],
             ];
         }
     } catch (Throwable $error) {
@@ -2027,11 +2035,16 @@ function renderClassifiers(array $rows): string
         money((float) $row['out']),
         money((float) $row['cacheRead']),
         money((float) $row['cacheWrite']),
-        // Tiers under their own key, as a chat row carries them.
-        ($row['tiers'] ?? []) === [] ? '' : ", 'tiers' => [" . implode(', ', array_map(
+        // Tiers under their own key, as a chat row carries them; and the System One compat.
+        (($row['tiers'] ?? []) === [] ? '' : ", 'tiers' => [" . implode(', ', array_map(
             static fn (array $tier): string => sprintf('[%s, %s, %s, %s, %s]', grouped((int) $tier[0]), money((float) $tier[1]), money((float) $tier[2]), money((float) $tier[3]), money((float) $tier[4])),
             $row['tiers'],
-        )) . ']',
+        )) . ']')
+        . (($row['compat'] ?? []) === [] ? '' : ", 'compat' => [" . implode(', ', array_map(
+            static fn (string $field, string|bool $value): string => var_export($field, true) . ' => ' . var_export($value, true),
+            array_keys($row['compat']),
+            $row['compat'],
+        )) . ']'),
     ), array_keys($rows), $rows));
 }
 

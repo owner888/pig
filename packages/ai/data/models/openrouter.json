@@ -16002,7 +16002,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 16384
+        "contextWindow": 16384,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16020,7 +16024,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 16384
+        "contextWindow": 16384,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16039,7 +16047,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16058,7 +16070,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 24576
+        "contextWindow": 24576,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16077,7 +16093,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16096,7 +16116,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16115,7 +16139,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16133,7 +16161,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 8192
+        "contextWindow": 8192,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16152,7 +16184,11 @@
             "cacheRead": 0.02,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16171,7 +16207,11 @@
             "cacheRead": 0.042,
             "cacheWrite": 0.0
         },
-        "contextWindow": 32768
+        "contextWindow": 32768,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16189,7 +16229,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 32768
+        "contextWindow": 32768,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16207,7 +16251,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16225,7 +16273,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 131072
+        "contextWindow": 131072,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16243,7 +16295,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 131072
+        "contextWindow": 131072,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16262,7 +16318,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 1050000
+        "contextWindow": 1050000,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16281,7 +16341,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16300,7 +16364,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16318,7 +16386,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 4096
+        "contextWindow": 4096,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16336,7 +16408,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 4096
+        "contextWindow": 4096,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16354,7 +16430,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 4096
+        "contextWindow": 4096,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16373,7 +16453,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 131072
+        "contextWindow": 131072,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16392,7 +16476,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 1000000
+        "contextWindow": 1000000,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16410,7 +16498,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 32768
+        "contextWindow": 32768,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16429,7 +16521,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16448,7 +16544,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16466,7 +16566,11 @@
             "cacheRead": 0.05,
             "cacheWrite": 0.0
         },
-        "contextWindow": 524288
+        "contextWindow": 524288,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16484,7 +16588,11 @@
             "cacheRead": 0.05,
             "cacheWrite": 0.0
         },
-        "contextWindow": 524288
+        "contextWindow": 524288,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16503,7 +16611,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16522,7 +16634,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "classifier",
@@ -16541,7 +16657,11 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 262144
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
     },
     {
         "type": "image",

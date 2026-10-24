@@ -111,6 +111,7 @@ final class ModelJson
                 $pricing,
                 $headers,
                 $inputLimits,
+                SystemOneCompat::fromArray($entry['compat'] ?? null),
             ),
             'image' => new ImageModel(
                 $id,
@@ -189,6 +190,10 @@ final class ModelJson
 
         if (!$model instanceof ImageModel) {
             $entry['contextWindow'] = $model->contextWindow;
+        }
+
+        if ($model instanceof ClassifierModel && $model->compat !== null && $model->compat->toArray() !== []) {
+            $entry['compat'] = $model->compat->toArray();
         }
 
         if ($model instanceof Model) {

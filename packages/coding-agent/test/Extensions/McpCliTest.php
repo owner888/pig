@@ -276,6 +276,27 @@ final class McpCliTest extends TestCase
         }
     }
 
+    public function testLoginTimeoutEndsTheWholeSignIn(): void
+    {
+        // Upstream #10565: `--timeout` is a limit on the whole sign-in; nobody plays the browser
+        // here, so it runs out and says so.
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => ['remote' => ['url' => $server->url()]]]));
+
+        try {
+            $started = microtime(true);
+            $exit = Async::run(fn (): int => $this->mcp('login', 'remote', '--timeout', '1'));
+
+            $this->assertSame(1, $exit);
+            $this->assertSame('Sign-in to MCP server "remote" was cancelled or not completed within 1 seconds.', end($this->err));
+            $this->assertLessThan(5.0, microtime(true) - $started);
+        } finally {
+            $server->stop();
+        }
+    }
+
     public function testLoginRefusesWhatCannotBeSignedInto(): void
     {
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [

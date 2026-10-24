@@ -151,9 +151,11 @@ final class ProcessTerminal implements Terminal
         // of twenty lines is one event instead of twenty Enters.
         $this->write("\x1b[?2004h");
 
-        // Kitty keyboard protocol, level 1. Terminals that speak it start reporting keys
-        // that plain ANSI cannot distinguish — Shift+Enter as \e[13;2u rather than \r.
-        $this->write("\x1b[>1u");
+        // Kitty keyboard protocol: disambiguate (1), so terminals that speak it report keys plain
+        // ANSI cannot distinguish — Shift+Enter as \e[13;2u rather than \r — and report alternate
+        // keys (4), so Ctrl+Shift+= also says it typed `+` and a `ctrl++` binding matches it
+        // (upstream #9880). Not event types (2): pig reads presses only.
+        $this->write("\x1b[>5u");
 
         // The OSC 7501 program status query, with DA1 as its sentinel: a terminal that supports
         // it replies before DA, one that does not answers DA alone. `PIG_PROGRAM_STATUS=1` or `0`

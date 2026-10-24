@@ -807,6 +807,25 @@ final class ToolExecutionTest extends TestCase
         $this->assertContains([true, false], $seen);
     }
 
+    public function testTheResultRendererIsToldTheOutputPad(): void
+    {
+        // Upstream #10557: `context.outputPad`, for a renderer that lays out its own lines.
+        $pads = [];
+        $tool = $this->custom(
+            renderResult: static function (AgentToolResult $result, RenderOptions $options) use (&$pads): Component {
+                $pads[] = $options->outputPad;
+
+                return new Text('drawn', 0, 0);
+            },
+        );
+
+        $tool->updateResult($this->said('one'), partial: false);
+        $tool->setOutputPad(0);
+
+        $this->assertSame(1, $pads[0]);
+        $this->assertSame(0, end($pads));
+    }
+
     /** A picture that silently turns into plain text is a bug nobody reports. */
     public function testARendererThatThrowsFallsBackAndSaysSo(): void
     {

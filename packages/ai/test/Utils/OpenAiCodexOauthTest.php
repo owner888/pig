@@ -185,6 +185,30 @@ final class OpenAiCodexOauthTest extends TestCase
         $server->stop();
     }
 
+    public function testAnAppNamesItselfAsTheBrowserLoginsOriginator(): void
+    {
+        // Upstream #10433: `LoginOptions.agentName` replaces pi's name as the originator.
+        $flow = new OpenAiCodex(authBaseUrl: 'http://127.0.0.1:9', server: new CallbackServer(self::freePort(), OpenAiCodex::CALLBACK_PATH, 'OpenAI'));
+        $shown = null;
+
+        Async::run(static function () use ($flow, &$shown): ?Credentials {
+            return $flow->login(
+                static function (string $url) use (&$shown): void {
+                    $shown = $url;
+                },
+                static fn (): ?string => null,
+                null,
+                static fn (): string => OpenAiCodex::METHOD_BROWSER,
+                'my-app',
+            );
+        });
+
+        parse_str((string) parse_url((string) $shown, PHP_URL_QUERY), $query);
+        $this->assertSame('my-app', $query['originator']);
+        parse_str((string) parse_url((new OpenAiCodex())->createAuthorizationFlow()['url'], PHP_URL_QUERY), $default);
+        $this->assertSame('pi', $default['originator']);
+    }
+
     public function testEscapingThePasteBoxIsNobodyFinishing(): void
     {
         $flow = new OpenAiCodex(authBaseUrl: 'http://127.0.0.1:9', server: new CallbackServer(self::freePort(), OpenAiCodex::CALLBACK_PATH, 'OpenAI'));

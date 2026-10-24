@@ -8,6 +8,7 @@ use Closure;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
+use Pig\Async\AbortSignal;
 use Pig\Mcp\Protocol\Protocol;
 use RuntimeException;
 
@@ -20,10 +21,27 @@ use RuntimeException;
  */
 final class Discovery
 {
-    /** @param Closure(Request): Response|null $fetch */
-    public static function fetcher(?Closure $fetch = null): Closure
+    /**
+     * The fetch every request of discovery and the flow goes through. With `$signal` — upstream's
+     * `signal` option (#10565) — an aborted signal stops the next request before it is sent, and the
+     * default fetch is handed it, so it also ends the one in flight.
+     *
+     * @param Closure(Request, ?AbortSignal=): Response|null $fetch
+     * @return Closure(Request): Response
+     */
+    public static function fetcher(?Closure $fetch = null, ?AbortSignal $signal = null): Closure
     {
-        return $fetch ?? static fn (Request $request): Response => (new HttpClient(timeout: 15.0))->follow($request);
+        $fetch ??= static fn (Request $request, ?AbortSignal $signal = null): Response => (new HttpClient(timeout: 15.0))->follow($request, $signal);
+
+        if ($signal === null) {
+            return $fetch;
+        }
+
+        return static function (Request $request) use ($fetch, $signal): Response {
+            $signal->throwIfAborted();
+
+            return $fetch($request, $signal);
+        };
     }
 
     /** 4xx and 502 mean "not here", so discovery tries the next candidate URL. */

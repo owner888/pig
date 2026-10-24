@@ -16,6 +16,10 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 64000
+        "contextWindow": 64000,
+        "compat": {
+            "imageInput": "assets",
+            "sendImageOptInHeader": true
+        }
     }
 ]

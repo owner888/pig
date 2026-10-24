@@ -354,6 +354,31 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame(110, $message->usage->totalTokens);
     }
 
+    public function testOpenRoutersBilledCostReplacesTheCatalogTotal(): void
+    {
+        // Upstream #10286: OpenRouter streams its billing with the usage; that is the total cost,
+        // and the components stay the catalog's estimate.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+            ['usage' => ['prompt_tokens' => 1000, 'completion_tokens' => 100, 'cost' => 0.0042, 'is_byok' => false]],
+        ]);
+        $base = $this->model(baseUrl: $url);
+        $model = new Model($base->id, $base->name, $base->api, 'openrouter', $base->baseUrl, $base->contextWindow, $base->maxTokens, false, $base->input, $base->pricing);
+
+        $message = Async::run(function () use ($model): AssistantMessage {
+            $stream = (new OpenAiCompletions())->stream($model, Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'test-key'));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(0.0042, $message->usage->cost->total);
+        $this->assertTrue($message->usage->cost->totalFromProvider);
+        $this->assertEqualsWithDelta(0.001, $message->usage->cost->input, 1e-12);
+    }
+
     /** @return iterable<string, array{array<string, mixed>, int}> */
     public static function cacheReadFields(): iterable
     {

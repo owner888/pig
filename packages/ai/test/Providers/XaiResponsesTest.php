@@ -64,10 +64,11 @@ final class XaiResponsesTest extends TestCase
             $this->assertEquals(new OpenAiCompat(supportsLongCacheRetention: false), $model->compat, $model->id);
         }
 
-        $this->assertSame(['low', 'medium', 'high'], self::model('grok-4.5')->supportedThinkingLevels());
+        // Upstream fbc456d82: models.dev gives Grok 4.3 and Grok 4.5 xhigh.
+        $this->assertSame(['low', 'medium', 'high', 'xhigh'], self::model('grok-4.5')->supportedThinkingLevels());
         $this->assertSame(['low', 'medium', 'high', 'xhigh'], self::model('grok-4.6')->supportedThinkingLevels());
         $this->assertSame(['low', 'medium', 'high', 'xhigh'], self::model('grok-4.7')->supportedThinkingLevels());
-        $this->assertSame(['off', 'low', 'medium', 'high'], self::model('grok-4.3')->supportedThinkingLevels());
+        $this->assertSame(['off', 'low', 'medium', 'high', 'xhigh'], self::model('grok-4.3')->supportedThinkingLevels());
     }
 
     public function testGrok47CarriesItsCapabilitiesAndLongContextPricing(): void

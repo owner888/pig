@@ -146,6 +146,19 @@ final class CustomModelsTest extends TestCase
 
     // ---- a good file -----------------------------------------------------------------------
 
+    public function testAProvidersBaseUrlAndCompatReachItsClassifierModels(): void
+    {
+        // Upstream 7f225f25d: "models.json provider compat now applies to classifiers" — a proxy in
+        // front of OpenRouter's classifiers says there how the service takes images.
+        $this->load(['baseUrl' => 'https://proxy.example/v1/', 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]], 'typesafe')->install();
+
+        $jev = Models::findOfType(\Pig\Ai\ModelType::Classifier, 'typesafe', 'jev-latest');
+
+        $this->assertInstanceOf(\Pig\Ai\ClassifierModel::class, $jev);
+        $this->assertSame('https://proxy.example/v1', rtrim($jev->baseUrl, '/'));
+        $this->assertEquals(new \Pig\Ai\SystemOneCompat('state-image-urls', false), $jev->compat);
+    }
+
     public function testADeclaredModelBecomesOneTheRegistryKnows(): void
     {
         $this->load(self::provider())->install();

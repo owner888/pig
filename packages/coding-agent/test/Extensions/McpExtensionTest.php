@@ -244,6 +244,32 @@ final class McpExtensionTest extends TestCase
         $this->assertSame(['a'], $params['required']);
     }
 
+    public function testTheResultSchemaRelocatesTheServersLocalReferences(): void
+    {
+        // Upstream 24382bedd: the server's output schema sits at `#/properties/structuredContent` of
+        // the result schema, so its `#/$defs/…` references are rewritten to keep resolving; data
+        // keywords and property names are left as they are.
+        $schema = McpTools::callToolResultSchema(['outputSchema' => [
+            'type' => 'object',
+            'properties' => [
+                'items' => ['type' => 'array', 'items' => ['$ref' => '#/$defs/Item']],
+                '$ref' => ['type' => 'string'],
+                'self' => ['$ref' => '#'],
+            ],
+            'default' => ['$ref' => '#/kept'],
+            '$defs' => ['Item' => ['type' => 'object', 'properties' => ['next' => ['$ref' => '#/$defs/Item']]]],
+        ]]);
+
+        $content = $schema['properties']['structuredContent'];
+        $this->assertSame('#/properties/structuredContent/$defs/Item', $content['properties']['items']['items']['$ref']);
+        $this->assertSame(['type' => 'string'], $content['properties']['$ref'], 'a property named $ref is a name');
+        $this->assertSame('#/properties/structuredContent', $content['properties']['self']['$ref']);
+        $this->assertSame(['$ref' => '#/kept'], $content['default'], 'data is not a schema');
+        $this->assertSame('#/properties/structuredContent/$defs/Item', $content['$defs']['Item']['properties']['next']['$ref']);
+        $this->assertArrayNotHasKey('_meta', $schema['properties'], 'scripts never see _meta');
+        $this->assertTrue(McpTools::callToolResultSchema([])['properties']['structuredContent']);
+    }
+
     public function testAResultsBlocksBecomeModelContentAndAnErrorResultRaises(): void
     {
         $result = McpTools::convert('fs', 'read', ['content' => [

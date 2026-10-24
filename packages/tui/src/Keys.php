@@ -548,7 +548,25 @@ final class Keys
             return false;
         }
 
-        return $parsed[0] === $codepoint && ($parsed[1] & ~self::LOCK_MASK) === ($modifier & ~self::LOCK_MASK);
+        $actual = $parsed[1] & ~self::LOCK_MASK;
+        $expected = $modifier & ~self::LOCK_MASK;
+
+        // Physical match: the key and every modifier reported.
+        if ($parsed[0] === $codepoint && $actual === $expected) {
+            return true;
+        }
+
+        // Upstream's logical match (#9880): "Kitty reports symbols such as '+' as Shift plus the
+        // physical '=' key. Bindings name the produced symbol, so consume that implicit Shift while
+        // preserving Ctrl, Alt, and Super. The physical 'shift+=' spelling remains valid through the
+        // match above." The shifted key is what the alternate-key report carries.
+        $shifted = $parsed[2] ?? null;
+
+        return $shifted !== null
+            && ($actual & self::SHIFT) !== 0
+            && $shifted === $codepoint
+            && in_array(mb_chr($shifted), self::SYMBOL_KEYS, true)
+            && ($actual & ~self::SHIFT) === $expected;
     }
 
     /**
@@ -558,16 +576,22 @@ final class Keys
      * them rather than replacing them: `\e[<cp>;<mod>u` for ordinary keys, `\e[1;<mod>A`
      * for arrows, `\e[<n>;<mod>~` for the editing keys, and `\e[1;<mod>H` for Home and End.
      *
-     * @return array{0: int, 1: int}|null the codepoint and the modifier bits
+     * @return array{0: int, 1: int, 2?: int}|null the codepoint, the modifier bits, and the shifted
+     *         key when the alternate-key report carries one
      */
     private static function parse(string $data): ?array
     {
-        // `<cp>[:<shifted>[:<base>]][;<mod>[:<event>]]u` — the alternate keys and the event type
-        // (press, repeat, release) do not change which key it is.
-        if (preg_match('/^\x1b\[(\d+)(?::\d*){0,2}(?:;(\d+)(?::\d+)?)?u$/', $data, $match) === 1) {
+        // `<cp>[:<shifted>[:<base>]][;<mod>[:<event>]]u` — the event type (press, repeat, release)
+        // does not change which key it is; the shifted key is kept for the logical match.
+        if (preg_match('/^\x1b\[(\d+)(?::(\d*))?(?::\d*)?(?:;(\d+)(?::\d+)?)?u$/', $data, $match) === 1) {
             $codepoint = (int) $match[1];
+            $parsed = [self::KITTY_KEYPAD_EQUIVALENTS[$codepoint] ?? $codepoint, (int) (($match[3] ?? '') === '' ? 1 : $match[3]) - 1];
 
-            return [self::KITTY_KEYPAD_EQUIVALENTS[$codepoint] ?? $codepoint, (int) (($match[2] ?? '') === '' ? 1 : $match[2]) - 1];
+            if (($match[2] ?? '') !== '') {
+                $parsed[] = (int) $match[2];
+            }
+
+            return $parsed;
         }
 
         if (preg_match('/^\x1b\[1;(\d+)(?::\d+)?([ABCD])$/', $data, $match) === 1) {

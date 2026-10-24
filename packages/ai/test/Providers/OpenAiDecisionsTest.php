@@ -211,8 +211,8 @@ final class OpenAiDecisionsTest extends TestCase
 
     public function testImagesForAModelThatCannotSeeAreRefusedBeforeItsProviderIs(): void
     {
-        // Upstream's `assertClassifierInputSupported()`, in `Models::classify()`; and the two
-        // APIs that cannot carry an image say so themselves when handed one directly.
+        // Upstream's `assertClassifierInputSupported()`, in `Models::classify()`; System One models
+        // that do take images are `SystemOneTest`'s.
         $base = $this->serve(static fn (): array => [200, [], json_encode(['answers' => []])]);
         $textOnly = new ClassifierModel('jev-latest', 'Jev', ClassifierApi::TypesafeSystemOne, 'typesafe', $base . '/v1', 64_000);
         $withImage = new ClassifierContext([], self::context()->questions, [self::image()]);
@@ -220,11 +220,6 @@ final class OpenAiDecisionsTest extends TestCase
         $refused = self::classify($textOnly, $withImage, new ClassifierOptions(apiKey: 'secret'));
         $this->assertSame(StopReason::Error, $refused->stopReason);
         $this->assertSame('Model typesafe/jev-latest does not accept image input', $refused->errorMessage);
-
-        $claims = new ClassifierModel('jev-latest', 'Jev', ClassifierApi::TypesafeSystemOne, 'typesafe', $base . '/v1', 64_000, ['text', 'image']);
-        $cannot = self::classify($claims, $withImage, new ClassifierOptions(apiKey: 'secret'));
-        $this->assertSame(StopReason::Error, $cannot->stopReason);
-        $this->assertStringContainsString('System One API does not support image input', (string) $cannot->errorMessage);
         $this->assertSame([], $this->server()->requests);
     }
 

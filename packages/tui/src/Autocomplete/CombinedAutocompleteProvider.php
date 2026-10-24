@@ -564,7 +564,6 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         return $results;
     }
 
-    /** Exact name beats a name that starts with it beats a name that contains it. */
     /**
      * Upstream's `buildFdPathQuery()`: `fd` reads its pattern as a regex, so the query is escaped —
      * `[slug]` or `(group)` found nothing before (#10972) — and a query with a `/` matches its
@@ -593,6 +592,7 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         return $hasTrailingSeparator ? $pattern . $separatorPattern : $pattern;
     }
 
+    /** Exact name beats a name that starts with it beats a name that contains it. */
     private static function score(string $path, string $query, bool $isDirectory): int
     {
         $name = mb_strtolower(basename(rtrim($path, '/')), 'UTF-8');

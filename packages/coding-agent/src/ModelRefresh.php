@@ -15,6 +15,7 @@ use Pig\Ai\Model;
 use Pig\Ai\ModelJson;
 use Pig\Ai\Models;
 use Pig\Ai\Providers\OpenRouterUserModels;
+use Pig\Ai\Providers\RadiusConfig;
 use Pig\Ai\RemoteCatalog;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
@@ -38,7 +39,8 @@ use Throwable;
  * - **The built-in providers refresh too**: each one's catalog from the catalog server
  *   (`Ai\RemoteCatalog`, upstream's `withRemoteCatalog()`) is laid over its shipped models when it
  *   is newer than them, and OpenRouter's is narrowed to the models the key may use
- *   (`withPersonalizedCatalog()`). Radius and a provider an extension replaced are left out.
+ *   (`withPersonalizedCatalog()`), and Radius's replaced by the gateway's catalog for the account.
+ *   A provider an extension replaced is left out.
  * - **A failure is the provider's**, kept in the result's `errors` and nowhere else, so one
  *   provider that cannot be reached does not stop the next.
  *
@@ -156,8 +158,7 @@ final class ModelRefresh
 
     /**
      * The built-in providers named (every one when null) that keep a catalog from elsewhere: all but
-     * Radius, whose models come from the gateway's own configuration, and any an extension provider
-     * replaced. The stored catalogs first, all of them, then the network for each at once.
+     * any an extension provider replaced — Radius's from its gateway, the rest from the catalog server. The stored catalogs first, all of them, then the network for each at once.
      *
      * @param list<string>|null $providers
      * @return array<string, Throwable>
@@ -167,16 +168,17 @@ final class ModelRefresh
         $baseUrl = RemoteCatalog::baseUrl();
         $ids = array_values(array_filter(
             Models::builtinProviders(),
-            static fn (string $id): bool => $id !== Models::RADIUS
-                && ($providers === null || in_array($id, $providers, true))
+            static fn (string $id): bool => ($providers === null || in_array($id, $providers, true))
                 && ProviderRegistry::get($id) === null,
         ));
         $errors = [];
         $refreshes = [];
 
-        $one = static fn (string $id): mixed => $id === 'openrouter'
-            ? self::openRouter($auth, $baseUrl, $allowNetwork, $signal)
-            : self::remoteCatalog($auth, $id, $baseUrl, $allowNetwork, $force, $signal);
+        $one = static fn (string $id): mixed => match ($id) {
+            'openrouter' => self::openRouter($auth, $baseUrl, $allowNetwork, $signal),
+            Models::RADIUS => self::radius($auth, $allowNetwork, $signal),
+            default => self::remoteCatalog($auth, $id, $baseUrl, $allowNetwork, $force, $signal),
+        };
 
         // With the network, every provider's request at once — from inside a coroutine, which a
         // caller outside one (a test, a script) is not; without it there is nothing to wait for.
@@ -329,6 +331,46 @@ final class ModelRefresh
             : [...OpenRouterUserModels::personalize($chat, $allowed), ...array_filter($catalog, static fn ($model): bool => !$model instanceof Model)];
         self::write($auth, 'openrouter', ['models' => array_map(ModelJson::encode(...), array_values($personal)), 'checkedAt' => self::now()]);
         Models::useProviderCatalog('openrouter', array_values($personal), replace: true);
+    }
+
+    /**
+     * Upstream's `radiusProvider().refreshModels()` (43d376399): the gateway's catalog for this
+     * account. "Radius org owners can disable models, so once known it replaces the shipped baseline
+     * instead of overlaying it. The baseline only covers the time before any catalog exists." The
+     * saved catalog first, offline too; then, signed in (or with `RADIUS_API_KEY`) and with the
+     * network, `GET <gateway>/v1/config` with the account's token, saved.
+     */
+    private static function radius(Auth $auth, bool $allowNetwork, AbortSignal $signal): void
+    {
+        $stored = self::read($auth, Models::RADIUS);
+
+        if ($stored !== null) {
+            $saved = array_values(array_filter(
+                RemoteCatalog::models(Models::RADIUS, $stored['models']),
+                static fn ($model): bool => $model instanceof Model,
+            ));
+            Models::useProviderCatalog(Models::RADIUS, $saved, replace: true);
+        }
+
+        if (!$allowNetwork || $signal->aborted()) {
+            return;
+        }
+
+        $key = $auth->apiKey(Models::RADIUS);
+
+        if ($key === null || $key === '' || $key === \Pig\Ai\Stream::AMBIENT_AUTH_MARKER) {
+            return;
+        }
+
+        $config = RadiusConfig::loadRadiusGatewayConfig(RadiusConfig::DEFAULT_RADIUS_GATEWAY, $key, $signal);
+
+        if ($signal->aborted()) {
+            return;
+        }
+
+        $refreshed = RadiusConfig::getRadiusModelsFromConfig(Models::RADIUS, $config);
+        self::write($auth, Models::RADIUS, ['models' => array_map(ModelJson::encode(...), $refreshed), 'checkedAt' => self::now()]);
+        Models::useProviderCatalog(Models::RADIUS, $refreshed, replace: true);
     }
 
     /**

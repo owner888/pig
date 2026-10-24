@@ -210,16 +210,22 @@ return static function (ExtensionApi $pi): void {
         . $describeOutput($tool->definition()->outputSchema) . '.';
 
     /**
-     * Whether `$query` names the namespace: its name, its identifier (`mcp__dev-radius` is
-     * `mcp__dev_radius`), or the part after its last `__` in either form — upstream's
-     * `isNamespaceName()`.
+     * Upstream's `isNamespaceName()` (24382bedd): "Whether `query` names the namespace: its name or one
+     * of its aliases, as written or as the same script identifier (`dev-radius` and `dev_radius` are
+     * both `dev_radius`)." Aliases replaced the rule that took the part after a name's last `__`.
+     *
+     * @param array{name: string, aliases?: list<string>} $namespace
      */
-    $isNamespaceName = static function (string $namespace, string $query): bool {
-        $suffix = static fn (string $name): ?string => str_contains($name, '__') ? substr($name, strrpos($name, '__') + 2) : null;
-        $id = Identifier::of($namespace);
+    $isNamespaceName = static function (array $namespace, string $query): bool {
         $queryId = Identifier::of($query);
 
-        return $namespace === $query || $id === $queryId || $suffix($namespace) === $query || $suffix($id) === $queryId;
+        foreach ([$namespace['name'], ...($namespace['aliases'] ?? [])] as $name) {
+            if ($name === $query || Identifier::of($name) === $queryId) {
+                return true;
+            }
+        }
+
+        return false;
     };
 
     // ---- running a script -----------------------------------------------------------------------
@@ -739,7 +745,7 @@ return static function (ExtensionApi $pi): void {
                 foreach ($declarations($ctx) as $declaration) {
                     $space = $spaces[$declaration['name']] ?? null;
 
-                    if ($namespace !== null && ($space === null || !$isNamespaceName($space['name'], $namespace))) {
+                    if ($namespace !== null && ($space === null || !$isNamespaceName($space, $namespace))) {
                         continue;
                     }
 
@@ -779,7 +785,7 @@ return static function (ExtensionApi $pi): void {
                 foreach ($allNames as $tool) {
                     $space = $spaces[$tool] ?? null;
 
-                    if ($space === null || !$isNamespaceName($space['name'], $name)) {
+                    if ($space === null || !$isNamespaceName($space, $name)) {
                         continue;
                     }
 

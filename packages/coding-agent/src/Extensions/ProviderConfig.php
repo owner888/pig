@@ -321,7 +321,8 @@ final class ProviderConfig
                     ?? throw new InvalidArgumentException("{$where}: pig has no classifier API \"{$apiName}\", and \"classifiers\" does not implement it."),
             };
 
-            return [new ClassifierModel($modelId, $name, $classifierApi, $id, rtrim($modelBaseUrl, '/'), $contextWindow, $input ?: ['text'], $pricing, $modelHeaders, $inputLimits), $route];
+            // Upstream's `ProviderClassifierModelConfig.compat`: how a System One service takes images.
+            return [new ClassifierModel($modelId, $name, $classifierApi, $id, rtrim($modelBaseUrl, '/'), $contextWindow, $input ?: ['text'], $pricing, $modelHeaders, $inputLimits, \Pig\Ai\SystemOneCompat::fromArray($definition['compat'] ?? null)), $route];
         }
 
         // A chat model on the config's own api, when `streamSimple` speaks it, goes to the extension;

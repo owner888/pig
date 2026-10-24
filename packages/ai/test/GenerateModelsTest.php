@@ -503,16 +503,16 @@ final class GenerateModelsTest extends TestCase
     {
         $output = $this->generated();
 
-        self::assertStringContainsString("        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text'], 0.0, 0.0, 0.0, 0.0],", $output);
-        self::assertStringContainsString("        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString("        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text', 'image'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets', 'sendImageOptInHeader' => true]],", $output);
+        self::assertStringContainsString("        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],", $output);
         self::assertStringContainsString("        'vercel-ai-gateway/typesafe/jev' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],", $output);
-        self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.24, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],", $output);
         // A listed model whose output is not decisions is not a classifier.
         self::assertStringNotContainsString("'openrouter/vendor/chatty'", $output);
         // The hand-kept Decisions row, with the first classifier price tier.
         self::assertStringContainsString("        'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],", $output);
-        self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text'], 0.038, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text', 'image'], 0.038, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],", $output);
         self::assertStringContainsString("        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne,", $output);
         self::assertStringContainsString('classifiers      11 models', $output);
     }

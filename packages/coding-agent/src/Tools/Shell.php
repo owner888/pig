@@ -108,7 +108,7 @@ final class Shell
                 );
             }
 
-            return self::bashConfig($shellPath);
+            return self::bashConfig($shellPath, $env);
         }
 
         if ($osFamily === 'Windows') {
@@ -124,14 +124,14 @@ final class Shell
 
             foreach ($paths as $path) {
                 if ($exists($path)) {
-                    return self::bashConfig($path);
+                    return self::bashConfig($path, $env);
                 }
             }
 
             $onPath = self::findExecutableOnPath('bash.exe', $osFamily, $env, $exists);
 
             if ($onPath !== null) {
-                return self::bashConfig($onPath);
+                return self::bashConfig($onPath, $env);
             }
 
             throw new AgentError(
@@ -144,12 +144,12 @@ final class Shell
         }
 
         if ($exists('/bin/bash')) {
-            return self::bashConfig('/bin/bash');
+            return self::bashConfig('/bin/bash', $env);
         }
 
         $onPath = self::findExecutableOnPath('bash', $osFamily, $env, $exists);
 
-        return $onPath !== null ? self::bashConfig($onPath) : new ShellConfig('sh');
+        return $onPath !== null ? self::bashConfig($onPath, $env) : new ShellConfig('sh');
     }
 
     /** Upstream's `POWERSHELL_ARGS`. */
@@ -170,8 +170,24 @@ final class Shell
         }
 
         $env ??= self::environment();
+        $isFile = $exists ?? static fn (string $candidate): bool => is_file($candidate);
+        // "Installation directories may be on any drive and need not be on PATH" (#9501): PowerShell 7
+        // under `%ProgramFiles%`, Windows PowerShell under `%SystemRoot%`.
+        $programFiles = self::envValue($env, 'ProgramFiles');
+        $systemRoot = self::envValue($env, 'SystemRoot');
+        $installed = static function (?string $root, string $path) use ($isFile): ?string {
+            if ($root === null) {
+                return null;
+            }
+
+            $candidate = rtrim($root, '\\/') . '\\' . $path;
+
+            return $isFile($candidate) ? $candidate : null;
+        };
         $shell = self::findExecutableOnPath('pwsh.exe', $osFamily, $env, $exists)
-            ?? self::findExecutableOnPath('powershell.exe', $osFamily, $env, $exists);
+            ?? $installed($programFiles, 'PowerShell\\7\\pwsh.exe')
+            ?? self::findExecutableOnPath('powershell.exe', $osFamily, $env, $exists)
+            ?? $installed($systemRoot, 'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
 
         if ($shell === null) {
             throw new AgentError('No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.');
@@ -213,14 +229,38 @@ final class Shell
         return null;
     }
 
-    /** Upstream's `getBashShellConfig()`. */
-    private static function bashConfig(string $shell): ShellConfig
+    /**
+     * Upstream's `getBashShellConfig()` and `isLegacyWslBashPath()`: the WSL launcher is
+     * `%SystemRoot%\System32\bash.exe` (or `Sysnative`) wherever Windows is installed; only when
+     * `SystemRoot` is unknown is it taken to be under `C:\Windows` (#9501).
+     *
+     * @param array<string, string> $env
+     */
+    private static function bashConfig(string $shell, array $env = []): ShellConfig
     {
-        $normalized = strtolower(str_replace('/', '\\', $shell));
-
-        return preg_match('/^[a-z]:\\\\windows\\\\(?:system32|sysnative)\\\\bash\.exe$/', $normalized) === 1
+        return self::isLegacyWslBashPath($shell, $env)
             ? new ShellConfig($shell, ['-s'], 'stdin')
             : new ShellConfig($shell, ['-c']);
+    }
+
+    /** @param array<string, string> $env */
+    private static function isLegacyWslBashPath(string $shell, array $env): bool
+    {
+        $normalized = strtolower(str_replace('/', '\\', $shell));
+        $systemRoot = self::envValue($env, 'SystemRoot');
+
+        if ($systemRoot !== null) {
+            if (preg_match('/^[a-z]:[\\\\\/]/i', $systemRoot) !== 1) {
+                return false;
+            }
+
+            $root = rtrim(strtolower(str_replace('/', '\\', $systemRoot)), '\\');
+
+            return $normalized === "{$root}\\system32\\bash.exe" || $normalized === "{$root}\\sysnative\\bash.exe";
+        }
+
+        // "Fall back to conventional launcher paths only when the Windows directory is unknown."
+        return preg_match('/^[a-z]:\\\\windows\\\\(?:system32|sysnative)\\\\bash\.exe$/', $normalized) === 1;
     }
 
     /**

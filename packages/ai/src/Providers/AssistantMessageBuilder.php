@@ -340,6 +340,20 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * Upstream's `applyOpenRouterReportedCost(output.usage, reported)` for a model on OpenRouter
+     * (#10286): the usage, priced, with OpenRouter's billed total in place of the catalog's when the
+     * usage it streamed carries complete accounting. Call after `setUsage()`.
+     *
+     * @param array<string, mixed> $reported the usage object as it arrived
+     */
+    public function applyOpenRouterReportedCost(array $reported): void
+    {
+        if (\Pig\Ai\Utils\OpenRouterCost::isOpenRouterModel($this->model)) {
+            $this->usage = \Pig\Ai\Utils\OpenRouterCost::apply($this->usage, $reported);
+        }
+    }
+
+    /**
      * Price this response's usage as $model — upstream's `usageModel`, which Anthropic's provider
      * swaps in when a server-side fallback answered (`{...model, id: responseModel, cost:
      * fallbackCost}`). The message still names the model that was asked for.

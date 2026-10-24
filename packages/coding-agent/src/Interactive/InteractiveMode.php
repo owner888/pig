@@ -3468,7 +3468,7 @@ final class InteractiveMode
         if (!$this->clipboard->write($text)) {
             // A machine with no clipboard tool is not a broken machine, but it is worth
             // naming the thing to install rather than saying it did not work.
-            $this->sayError('Could not copy. On Linux this needs wl-copy, xclip or xsel.');
+            $this->sayError(SystemClipboard::unavailableReason());
 
             return;
         }
@@ -4647,7 +4647,7 @@ final class InteractiveMode
             }
 
             if (!$this->clipboard->write($text)) {
-                $this->sayError('Could not copy. On Linux this needs wl-copy, xclip or xsel.');
+                $this->sayError(SystemClipboard::unavailableReason());
 
                 return;
             }
@@ -7968,7 +7968,7 @@ final class InteractiveMode
 
         if ($renderer !== null) {
             try {
-                $drawn = $renderer($message, new RenderOptions($this->expanded), Themes::theme());
+                $drawn = $renderer($message, new RenderOptions($this->expanded, outputPad: $this->outputPad), Themes::theme());
             } catch (Throwable $problem) {
                 $this->sayWarning("The renderer for '{$message->customType}' failed: {$problem->getMessage()}");
                 $drawn = null;

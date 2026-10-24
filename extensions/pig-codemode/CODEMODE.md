@@ -69,7 +69,9 @@ What a call answers depends on the tool:
   the model cannot read it as text.
 
 A call that fails, is blocked, or gets invalid arguments throws an exception carrying the
-tool's error text; the arguments are checked against the tool's schema the way the model's own
+tool's error text — except a tool with an output schema that answered its structured array on
+failure too: `bash` with a non-zero exit answers `['output' => ..., 'exit_code' => ...]`, so check
+its fields. The arguments are checked against the tool's schema the way the model's own
 calls are, so the message names the parameter. Use `parallel_settled()` to keep the results of
 the calls that succeed. Each call is a `tool_execution_*` event of its own with
 `parentToolCallId` set to the script's call, and its id is `<script call id>/<n>`.
@@ -136,9 +138,11 @@ The context is `['state' => [...], 'questions' => [id => question, ...]]`. A que
   yes or no; answered as `['probability']`, the probability of `true`.
 
 An optional `'images' => [block, ...]` adds pictures for a model whose `input` includes
-`image` (`openai/gpt-6-luna`): each block is `['type' => 'image', 'data' => <base64>,
-'mimeType' => ...]`, the shape `$tools->read()` answers under `images` for a picture, so a
-read result can be passed straight through. A text-only model refuses a context with images.
+`image` — `openai/gpt-6-luna`, Jev from `typesafe` and `cloudflare-workers-ai`, Clef from
+`cloudflare-workers-ai`, and the OpenRouter decision models that list images: each block is
+`['type' => 'image', 'data' => <base64>, 'mimeType' => ...]`, the shape `$tools->read()` answers
+under `images` for a picture, so a read result can be passed straight through. Jev takes PNG and
+JPEG; Clef takes PNG, JPEG and WebP, at most four. A text-only model refuses a context with images.
 
 ```php
 $jev = $models->getModelOfType('classifier', 'typesafe', 'jev-latest');

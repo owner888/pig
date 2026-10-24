@@ -220,7 +220,8 @@ final class FuzzyTest extends TestCase
         yield 'query is a prefix' => ['cl', 'clone', true, -24.9];
         yield 'a model id in a search line' => ['gpt', 'openai gpt-5.5 openai/gpt-5.5', true, -22.6];
         yield 'a provider in a search line' => ['anthropic', 'anthropic anthropic/claude-opus-4-5 anthropic claude-opus-4-5', true, -231.4];
-        yield 'a late match scores above zero' => ['opus', 'anthropic anthropic/claude-opus-4-5 anthropic claude-opus-4-5', true, 45.4];
+        // The contiguous "opus" now, not o, p, u scattered from "anthropic" (upstream #11220).
+        yield 'a late contiguous match' => ['opus', 'anthropic anthropic/claude-opus-4-5 anthropic claude-opus-4-5', true, -28.6];
         yield 'a version number' => ['3.8', 'google google/gemini-3.8-flash google gemini-3.8-flash Gemini 3.8 Flash', true, -28.4];
         yield 'a name and a version, swapped' => ['flash38', 'google google/gemini-3.8-flash google gemini-3.8-flash Gemini 3.8 Flash', true, -25.3];
         yield 'multibyte, late' => ['项目', '构建中的项目', true, -4.1];
@@ -235,6 +236,29 @@ final class FuzzyTest extends TestCase
 
         $this->assertSame($expected, $matched);
         $this->assertSame($score, round($matched ? $actual : 0.0, 6) + 0.0);
+    }
+
+    public function testAContiguousOccurrenceBeatsAnEarlierScatteredAlignment(): void
+    {
+        // Upstream #11220: greedy alignment took o, p, u from "openrouter", so the real "opus"
+        // scored worst.
+        [, $opus] = Fuzzy::match('opus', 'openrouter openrouter/anthropic/claude-opus-4.1');
+        [, $sonnet] = Fuzzy::match('opus', 'openrouter openrouter/anthropic/claude-sonnet-4.5');
+        [, $gptOss] = Fuzzy::match('opus', 'openrouter openrouter/openai/gpt-oss-120b');
+
+        $this->assertLessThan($sonnet, $opus);
+        $this->assertLessThan($gptOss, $opus);
+
+        // The best contiguous occurrence, not the first.
+        $this->assertSame(Fuzzy::match('opus', 'xxxxxx opus')[1], Fuzzy::match('opus', 'xxopus opus')[1]);
+
+        $items = [
+            'radius radius/gpt-5.4 radius gpt-5.4 GPT 5.4',
+            'radius radius/agentic radius agentic Agentic',
+            'radius radius/gpt-6-sol radius gpt-6-sol GPT 6 Sol',
+            'radius radius/gpt-6-astra radius gpt-6-astra GPT 6 Astra',
+        ];
+        $this->assertSame($items[3], Fuzzy::filter($items, 'astra', static fn (string $x): string => $x)[0]);
     }
 
     // ---- what PHP has to be told and JavaScript does not --------------------------------

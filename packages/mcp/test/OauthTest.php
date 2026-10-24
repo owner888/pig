@@ -414,6 +414,44 @@ final class OauthTest extends TestCase
         }
     }
 
+    public function testAnAbortedFlowSendsNothingAndAnAbortedRefreshDoesNotFallBackToTheBrowser(): void
+    {
+        // Upstream #10565: the flow's `signal` stops every request, and a refresh that failed
+        // because the sign-in was cancelled is not a reason to start a new authorization.
+        Async::run(function (): void {
+            $redirected = 0;
+            $provider = new McpOauthProvider('https://mcp.example/mcp', 'http://127.0.0.1:1/callback', ['client_name' => 'pig'], static function () use (&$redirected): void {
+                $redirected++;
+            }, store: new MemoryOauthStateStore());
+            $provider->saveDiscoveryState([
+                'authorizationServerUrl' => 'https://as.example/',
+                'authorizationServerMetadata' => ['issuer' => 'https://as.example', 'authorization_endpoint' => 'https://as.example/a', 'token_endpoint' => 'https://as.example/t', 'response_types_supported' => ['code']],
+                'resourceMetadata' => null,
+            ]);
+            $provider->saveClientInformation(['client_id' => 'c', 'redirect_uris' => []]);
+            $provider->saveTokens(['access_token' => 'a', 'token_type' => 'Bearer', 'refresh_token' => 'r']);
+
+            $controller = new \Pig\Async\AbortController();
+            $sent = 0;
+            $fetch = static function (Request $request) use (&$sent, $controller): \Pig\Ai\Http\Response {
+                $sent++;
+                // The sign-in is cancelled while the refresh is in flight, and the server says so.
+                $controller->abort('cancelled');
+
+                return CannedResponse::make(500, '{"error":"server_error"}');
+            };
+
+            $error = $this->assertThrows(OauthError::class, static fn () => Flow::authorize($provider, ['serverUrl' => 'https://mcp.example/mcp', 'signal' => $controller->signal], $fetch));
+            $this->assertSame('server_error', $error->oauthCode);
+            $this->assertSame(1, $sent);
+            $this->assertSame(0, $redirected, 'no new authorization was started');
+
+            // Already aborted: nothing goes out at all.
+            $this->assertThrows(\Throwable::class, static fn () => Flow::authorize($provider, ['serverUrl' => 'https://mcp.example/mcp', 'signal' => $controller->signal], $fetch));
+            $this->assertSame(1, $sent);
+        });
+    }
+
     public function testATokenEndpointThatIsNotHttpsGetsNoCredentials(): void
     {
         Async::run(function (): void {

@@ -193,6 +193,40 @@ final class StreamableHttpTransportTest extends TestCase
         $this->assertSame('initialize', $this->server->requests[1]['body']['method']);
     }
 
+    public function testClosingReusesTheLastRequestsTokenInsteadOfAskingForOne(): void
+    {
+        // Upstream #10565: `token()` may refresh over the network, so closing — best effort, one
+        // second at most — sends the token of the last request and never waits for a refresh.
+        $this->server->getStream = null;
+        $this->server->sessionId = 'sess-7';
+        $provider = new class () implements AuthProvider {
+            public int $asked = 0;
+
+            public function token(): ?string
+            {
+                return 'tok-' . ++$this->asked;
+            }
+
+            public function onUnauthorized(Response $response, string $serverUrl, ?string $token): void
+            {
+            }
+        };
+        $client = new McpClient('pig-test', '0.0');
+        $asked = null;
+
+        Async::run(function () use ($client, $provider, &$asked): void {
+            $client->connect($this->transport($provider, getStream: false));
+            $client->ping();
+            $asked = $provider->asked;
+            $client->close();
+        });
+
+        $this->assertSame($asked, $provider->asked, 'close() did not ask for a token');
+        $delete = end($this->server->requests);
+        $this->assertSame('DELETE', $delete['method']);
+        $this->assertSame("Bearer tok-{$asked}", $delete['headers']['authorization']);
+    }
+
     public function testA401WithNoProviderIsTheNamedError(): void
     {
         $this->server->requireToken = 'secret';

@@ -57,8 +57,12 @@ abstract class TuiBase extends Container implements TUI
      */
     private const string TERMINAL_COLOR_REPLY = '/\x1b\](?:1[01]|4;\d{1,3});[^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b\[\?[\d;]*c|(?:\x1b\[\?997;[12]n)+/';
 
-    /** The start of a colour or DA1 reply cut off at the end of a read. */
-    private const string PARTIAL_TERMINAL_COLOR_REPLY = '/(?:\x1b\](?:1[01]?|4(?:;\d{0,3})?)?(?:;[^\x07\x1b]*)?|\x1b\[\?[\d;]*)$/';
+    /**
+     * The start of a colour or DA1 reply cut off at the end of a read — a colour reply cut between
+     * the ESC and the backslash of its `ESC \` terminator too, whose hex text would otherwise
+     * reach the editor as keystrokes (upstream keeps a trailing ESC buffered for the same reason).
+     */
+    private const string PARTIAL_TERMINAL_COLOR_REPLY = '/(?:\x1b\](?:1[01]?|4(?:;\d{0,3})?)?(?:;[^\x07\x1b]*\x1b?)?|\x1b\[\?[\d;]*)$/';
 
     /**
      * Color queries waiting for their DA1 reply, oldest first. Terminals answer in order, so color

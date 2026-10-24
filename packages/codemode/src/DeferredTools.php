@@ -24,7 +24,7 @@ use Closure;
 final class DeferredTools
 {
     /**
-     * @var array<string, array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, description: ?string}, loaded: bool, load: Closure}>
+     * @var array<string, array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, aliases?: list<string>, description: ?string}, loaded: bool, load: Closure}>
      *      in the order upstream's registry would hold them: listed, then loaded
      */
     private static array $tools = [];
@@ -36,7 +36,7 @@ final class DeferredTools
      * List a tool, or update one listed under that name in place. `$description` and
      * `$inputSchema` are what the search reads — the tool as its source describes it.
      *
-     * @param array{name: string, description: ?string} $namespace where it comes from — an MCP server
+     * @param array{name: string, aliases?: list<string>, description: ?string} $namespace where it comes from — an MCP server
      * @param Closure(): \Pig\CodingAgent\CustomTools\CustomTool $load registers the tool and answers it
      * @param bool $loaded already registered — a tool a resumed session declared
      */
@@ -79,7 +79,7 @@ final class DeferredTools
         return self::$tools[$name]['loaded'] ?? false;
     }
 
-    /** @param Closure(array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, description: ?string}, loaded: bool, load: Closure}): bool $which */
+    /** @param Closure(array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, aliases?: list<string>, description: ?string}, loaded: bool, load: Closure}): bool $which */
     public static function remove(Closure $which): void
     {
         $before = count(self::$tools);
@@ -90,7 +90,7 @@ final class DeferredTools
         }
     }
 
-    /** @return array<string, array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, description: ?string}, loaded: bool, load: Closure}> */
+    /** @return array<string, array{name: string, description: string, inputSchema: mixed, namespace: array{name: string, aliases?: list<string>, description: ?string}, loaded: bool, load: Closure}> */
     public static function all(): array
     {
         return self::$tools;

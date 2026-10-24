@@ -179,6 +179,22 @@ final class TerminalColorsTest extends TestCase
         }
     }
 
+    public function testAReplyCutInsideItsEscBackslashTerminatorWaitsForTheBackslash(): void
+    {
+        [$terminal, $tui, $component] = $this->setUpTui();
+        try {
+            $query = $tui->queryTerminalColors(1000);
+            $terminal->type("\x1b]10;#ffffff\x07\x1b]11;rgb:0000/0000/0000\x1b");
+            $terminal->type("\\" . implode('', self::paletteReplies()) . self::DA1 . 'z');
+
+            $this->assertTrue($query->isComplete());
+            $this->assertEquals(new RgbColor(0, 0, 0), $query->await()->background);
+            $this->assertSame('z', implode('', $component->inputs));
+        } finally {
+            $tui->stop();
+        }
+    }
+
     public function testColorSchemeReportsGoToListenersAndNotificationsAreTurnedOnAndOff(): void
     {
         [$terminal, $tui, $component] = $this->setUpTui();

@@ -21,8 +21,8 @@ use Throwable;
  * device; the token endpoint and the device endpoint live on the gateway, and only the browser's
  * authorization endpoint is discovered (`GET <gateway>/v1/oauth`).
  *
- * What is not here: upstream's Radius provider refreshes its model catalog from the gateway with the
- * account's token once signed in; pig keeps the gateway's public catalogue (`RadiusConfig`).
+ * Once signed in, the account's token also asks the gateway for its catalog for this account
+ * (`ModelRefresh`, upstream's `radiusProvider().refreshModels()`), which replaces the shipped one.
  */
 final readonly class Radius
 {

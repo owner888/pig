@@ -15,6 +15,11 @@ use Pig\Ai\Http\Response;
  */
 interface AuthProvider
 {
+    /**
+     * Token for the next request. "May refresh it over the network first, so the transport calls it
+     * only before requests whose answer it waits for. Closing a session reuses the token of the last
+     * request."
+     */
     public function token(): ?string;
 
     public function onUnauthorized(Response $response, string $serverUrl, ?string $token): void;

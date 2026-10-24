@@ -421,10 +421,10 @@ What is knowingly not there:
 
 - **zstd** on the Codex SSE body: PHP has no zstd without an extension; upstream sends it plain where
   `node:zlib` has none, and so does pig.
-- **Radius's sign-in and dynamic catalogue**: `auth/oauth/radius.ts`, a `models.json` provider with
-  `oauth: "radius"`, a custom gateway, the catalogue cached on the credential, and
-  `radiusProvider().refreshModels()` (pig has no models store) — so Radius is `RADIUS_API_KEY` with
-  the public catalogue. The bug-report upload to the gateway is not ported either.
+- **Radius beyond the default gateway**: a `models.json` provider with `oauth: "radius"`, a custom
+  gateway, and importing the catalogue an older upstream cached on the credential. Sign-in and the
+  account's catalogue from `radius.pi.dev` are there (`Utils\Oauth\Radius`, `ModelRefresh::radius()`).
+  The bug-report upload to the gateway is not ported.
 - **TypeSafe** has no chat models — only the `typesafe-system-one` classifier API, which is
   `Models::classify()` (see the trap on classifiers and image models).
 

@@ -440,7 +440,8 @@ final class MessageJson
                 'cacheRead' => $usage->cost->cacheRead,
                 'cacheWrite' => $usage->cost->cacheWrite,
                 'total' => $usage->cost->total,
-            ],
+                // Upstream's optional `totalFromProvider`, there only when true.
+            ] + ($usage->cost->totalFromProvider ? ['totalFromProvider' => true] : []),
         ];
     }
 
@@ -461,6 +462,7 @@ final class MessageJson
                 (float) ($cost['cacheRead'] ?? 0),
                 (float) ($cost['cacheWrite'] ?? 0),
                 (float) ($cost['total'] ?? 0),
+                ($cost['totalFromProvider'] ?? false) === true,
             ),
             isset($usage['reasoning']) ? (int) $usage['reasoning'] : null,
             isset($usage['cacheWrite1h']) ? (int) $usage['cacheWrite1h'] : null,

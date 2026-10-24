@@ -276,6 +276,9 @@ final class OpenAiCompletions
 
         if (isset($data['usage']) && is_array($data['usage'])) {
             $builder->setUsage($this->usage($data['usage']));
+            // "OpenRouter adds billing fields to streamed usage at runtime, although the OpenAI SDK
+            // does not type those fields."
+            $builder->applyOpenRouterReportedCost($data['usage']);
         }
 
         $choice = $data['choices'][0] ?? null;
@@ -288,6 +291,7 @@ final class OpenAiCompletions
         // of the chunk, and it is read from there only when the chunk has none of its own.
         if (!is_array($data['usage'] ?? null) && is_array($choice['usage'] ?? null)) {
             $builder->setUsage($this->usage($choice['usage']));
+            $builder->applyOpenRouterReportedCost($choice['usage']);
         }
 
         // `if (choice.finish_reason)`: a truthy one — an empty string is no finish reason.

@@ -137,9 +137,22 @@ final class McpManagerView extends Container implements InputHandler
     }
 
     /** A read-only screen: a title and a sentence, while something happens. */
-    public function status(string $title, string $message): void
+    /** Show a message while an operation runs. With `$onCancel`, escape calls it (upstream #10565). */
+    public function status(string $title, string $message, ?\Closure $onCancel = null): void
     {
-        $this->show($this->frame($title, [new Spacer(1), new ThemedText(static fn (): string => Themes::theme()->fg('muted', $message), 1, 0)]), null);
+        $body = [new Spacer(1), new ThemedText(static fn (): string => Themes::theme()->fg('muted', $message), 1, 0)];
+
+        if ($onCancel === null) {
+            $this->show($this->frame($title, $body), null);
+
+            return;
+        }
+
+        $this->show($this->frame($title, $body, 'esc cancel'), static function (string $data) use ($onCancel): void {
+            if (Keys::isEscape($data)) {
+                $onCancel();
+            }
+        });
     }
 
     /**

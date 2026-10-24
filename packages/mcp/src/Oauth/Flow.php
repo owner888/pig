@@ -8,6 +8,7 @@ use Closure;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Utils\Oauth\Pkce;
+use Pig\Async\AbortSignal;
 use RuntimeException;
 
 /**
@@ -27,12 +28,16 @@ final class Flow
     public const string REDIRECT = 'REDIRECT';
 
     /**
-     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, authorizationServerMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, iss?: ?string, skipRefresh?: bool, skipIssuerValidation?: bool} $options
-     * @param Closure(Request): Response|null $fetch
+     * `signal` is upstream's `OAuthFlowOptions.signal` (#10565): "Aborts every request of the flow.
+     * Requests have no time limit of their own; combine with a timeout as needed." An aborted refresh
+     * does not fall back to a new authorization.
+     *
+     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, authorizationServerMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, iss?: ?string, skipRefresh?: bool, skipIssuerValidation?: bool, signal?: ?AbortSignal} $options
+     * @param Closure(Request, ?AbortSignal=): Response|null $fetch
      */
     public static function authorize(McpOauthProvider $provider, array $options, ?Closure $fetch = null): string
     {
-        $fetch = Discovery::fetcher($fetch);
+        $fetch = Discovery::fetcher($fetch, $options['signal'] ?? null);
 
         try {
             return self::run($provider, $options, $fetch);
@@ -146,7 +151,7 @@ final class Flow
             } catch (OauthInsecureEndpointError $error) {
                 throw $error;
             } catch (OauthError $error) {
-                if ($error->oauthCode !== 'server_error') {
+                if ($error->oauthCode !== 'server_error' || (($options['signal'] ?? null)?->aborted() ?? false)) {
                     throw $error;
                 }
             }

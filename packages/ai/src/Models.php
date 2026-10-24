@@ -337,6 +337,26 @@ final class Models
     }
 
     /**
+     * @var (\Closure(array<string, ClassifierModel>): array<string, ClassifierModel>)|null the
+     *      `models.json` layer over the classifier table — see `useClassifierOverlay()`
+     */
+    private static ?\Closure $classifierOverlay = null;
+
+    /**
+     * The `models.json` layer over the classifier table: upstream's `applyModelsJson()` gives a
+     * provider's classifier models its `baseUrl`, and its `compat` over theirs — "Classifier APIs read
+     * their own compat fields, such as how a System One service takes images" (7f225f25d). Replaced,
+     * not added to, as `useOverlay()` is; null takes it away.
+     *
+     * @param (\Closure(array<string, ClassifierModel>): array<string, ClassifierModel>)|null $overlay
+     */
+    public static function useClassifierOverlay(?\Closure $overlay): void
+    {
+        self::$classifierOverlay = $overlay;
+        self::$classifiers = null;
+    }
+
+    /**
      * A provider's chat models as the built-in table, the registrations and the provider replacements
      * have them — **before** the `models.json` layer: the defaults upstream's `findModelDefaults()`
      * reads for a model a file declares under that provider.
@@ -361,6 +381,7 @@ final class Models
         self::$providerReplacements = [];
         self::$catalogs = [];
         self::$overlay = null;
+        self::$classifierOverlay = null;
         self::$models = null;
         self::$classifiers = null;
         self::$images = null;
@@ -648,7 +669,9 @@ final class Models
             $models[$model->provider . '/' . $model->id] ??= $model;
         }
 
-        return self::$classifiers = self::withReplacements($models, 1);
+        $models = self::withReplacements($models, 1);
+
+        return self::$classifiers = self::$classifierOverlay === null ? $models : (self::$classifierOverlay)($models);
     }
 
     /** @return array<string, ImageModel> keyed by "provider/id" */

@@ -423,7 +423,9 @@ PHP);
     {
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
-        $space = ['name' => 'mcp__dev-radius', 'description' => 'the radius server', 'instructions' => 'be gentle'];
+        // Upstream 24382bedd: a namespace names its other names (`aliases`), in place of the rule that
+        // took the part after its last `__`.
+        $space = ['name' => 'mcp__dev-radius', 'aliases' => ['dev-radius'], 'description' => 'the radius server', 'instructions' => 'be gentle'];
         Registry::register('mcp__dev-radius__search', 'search radius', ['type' => 'object', 'properties' => []], static fn (): string => 'found', $space, 'codemode');
         Registry::register('mcp__dev-radius__fetch', 'fetch a radius page', ['type' => 'object', 'properties' => []], static fn (): string => 'page', $space, 'codemode');
         Registry::register('mcp__other__search', 'search elsewhere', ['type' => 'object', 'properties' => []], static fn (): string => 'x', ['name' => 'mcp__other', 'description' => null], 'codemode');
@@ -445,7 +447,7 @@ PHP);
         $this->assertSame(['mcp__dev_radius__search', 'mcp__dev_radius__fetch'], $value[1]);
         $this->assertSame('mcp__dev-radius', $value[2]);
         $this->assertNull($value[3]);
-        $this->assertSame(['mcp__dev_radius__search'], $value[4], 'the namespace filter takes the suffix in identifier form');
+        $this->assertSame(['mcp__dev_radius__search'], $value[4], 'the namespace filter takes an alias in identifier form');
         $this->assertSame(['mcp__other__search'], $value[5]);
         $this->stop($started);
     }
@@ -472,7 +474,7 @@ PHP);
             ] as $try) {
                 try { $try(); $tries[] = 'no error'; } catch (Throwable $e) { $tries[] = $e->getMessage(); }
             }
-            $blind = $models->classify($models->getModelOfType('classifier', 'typesafe', 'jev-latest'), [
+            $blind = $models->classify($models->getModelOfType('classifier', 'opencode', 'jev-1.13'), [
                 'state' => ['a' => 1],
                 'questions' => ['q' => ['type' => 'bool', 'instructions' => 'ok?', 'criteria' => ['true' => 'yes', 'false' => 'no']]],
                 'images' => [['type' => 'image', 'data' => base64_encode('png'), 'mimeType' => 'image/png']],
@@ -495,7 +497,7 @@ PHP);
         $this->assertStringContainsString('$models->Classify() does not exist. Did you mean $models->classify()?', $value['tries'][6]);
         $this->assertStringContainsString('context.images[0] must be an image block with base64 data and a mimeType, got a string', $value['tries'][7]);
         $this->assertSame('error', $value['blind'][0], 'a picture for a text-only classifier is an error result, not an exception');
-        $this->assertStringContainsString('Model typesafe/jev-latest does not accept image input', $value['blind'][1]);
+        $this->assertStringContainsString('Model opencode/jev-1.13 does not accept image input', $value['blind'][1]);
         $this->assertCount(1, $result->details['calls'], 'only the image call for the text-only model reached Models::classify()');
         $this->assertSame('error', $result->details['calls'][0]['status']);
         $this->stop($started);

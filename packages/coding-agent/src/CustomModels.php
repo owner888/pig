@@ -220,6 +220,7 @@ final readonly class CustomModels
     public function install(?Auth $auth = null): void
     {
         Models::useOverlay($this->layers === [] ? null : $this->overlay(...));
+        Models::useClassifierOverlay($this->layers === [] ? null : $this->classifierOverlay(...));
 
         // The keys go in whether or not there are models: a provider whose models were all
         // rejected still has a key, and the next run with a fixed file should not need a
@@ -262,6 +263,37 @@ final readonly class CustomModels
                 if ($model !== null) {
                     $table[$provider . '/' . $id] = self::applyOverride($model, $override, $layer['declaredHeaders'][$id] ?? []);
                 }
+            }
+        }
+
+        return $table;
+    }
+
+    /**
+     * Upstream's `applyModelsJson()` over a provider's classifier models: its `baseUrl`, and its
+     * `compat` over theirs (7f225f25d) — a custom provider that proxies another service's
+     * classifiers says there how that service takes images. Declared models and `modelOverrides`
+     * apply to chat models only.
+     *
+     * @param array<string, \Pig\Ai\ClassifierModel> $table
+     * @return array<string, \Pig\Ai\ClassifierModel>
+     */
+    private function classifierOverlay(array $table): array
+    {
+        foreach ($this->layers as $provider => $layer) {
+            $compat = \Pig\Ai\SystemOneCompat::fromArray($layer['compat']);
+
+            if ($layer['baseUrl'] === null && $compat === null) {
+                continue;
+            }
+
+            foreach ($table as $key => $model) {
+                if ($model->provider !== $provider) {
+                    continue;
+                }
+
+                $model = $layer['baseUrl'] !== null ? $model->withBaseUrl($layer['baseUrl']) : $model;
+                $table[$key] = $compat !== null ? $model->withCompat($compat->over($model->compat)) : $model;
             }
         }
 

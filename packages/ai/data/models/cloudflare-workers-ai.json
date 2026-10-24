@@ -707,7 +707,8 @@
         "provider": "cloudflare-workers-ai",
         "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.24,
@@ -715,7 +716,10 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 65536
+        "contextWindow": 65536,
+        "compat": {
+            "imageInput": "images"
+        }
     },
     {
         "type": "classifier",
@@ -725,7 +729,8 @@
         "provider": "cloudflare-workers-ai",
         "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.038,
@@ -733,7 +738,10 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 24576
+        "contextWindow": 24576,
+        "compat": {
+            "imageInput": "images"
+        }
     },
     {
         "type": "classifier",
@@ -743,7 +751,8 @@
         "provider": "cloudflare-workers-ai",
         "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.15,
@@ -751,7 +760,10 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 64000
+        "contextWindow": 64000,
+        "compat": {
+            "imageInput": "images"
+        }
     },
     {
         "type": "classifier",
@@ -761,7 +773,8 @@
         "provider": "cloudflare-workers-ai",
         "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.042,
@@ -769,7 +782,10 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 32000
+        "contextWindow": 32000,
+        "compat": {
+            "imageInput": "assets"
+        }
     },
     {
         "type": "classifier",
@@ -779,7 +795,8 @@
         "provider": "cloudflare-workers-ai",
         "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.042,
@@ -787,6 +804,9 @@
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 32000
+        "contextWindow": 32000,
+        "compat": {
+            "imageInput": "assets"
+        }
     }
 ]

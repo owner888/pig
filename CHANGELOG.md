@@ -49,6 +49,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Added MiniMax-M3.1-Flash to the MiniMax providers: they now list every tool-calling model but the older M2, M2.1, M2.5 and M2.5-highspeed MiniMax asked to hide, and a model with effort levels uses adaptive thinking with `output_config.effort`, since MiniMax-M3.1-Flash rejects `thinking.type: "disabled"` (upstream #11121).
 - Added Clef Omni and Jev 1.14 to Workers AI's classifiers.
+- Added image input for System One classifiers: Jev from TypeSafe and Workers AI, Clef from Workers AI and OpenRouter's decision models take `ClassifierContext` images, each in its service's form — TypeSafe `assets` with its `TypeSafe-Danger-Zone-Images` opt-in header, Clef's `images` data URLs (PNG, JPEG and WebP, at most four), or OpenRouter's `image_url` parts. A classifier's `compat` (`imageInput`, `sendImageOptInHeader`) chooses the form; a `models.json` provider's `compat` and `baseUrl` now reach its classifier models, and an extension's classifier models take `compat` too.
+- Added the Radius gateway's catalog for the signed-in account: Radius models an organization owner disabled are no longer listed. The catalog is saved in `models-store.json` and replaces the shipped Radius models, offline too.
+- Added `outputPad` to the render options a custom tool's renderers are given (upstream #10557).
+- Added namespace `aliases` for codemode tools: `describe_namespace()` and `search_tools()`'s `namespace` find an MCP server by `docs` or `mcp__docs`, in place of the rule that took the part after a name's last `__`.
+- Added an `agentName` to the OpenAI Codex sign-in, which names the app as the browser login's originator (upstream #10433).
 
 ### Changed
 
@@ -60,6 +65,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Model and caller headers now override the Codex provider's `originator` and `User-Agent`, as for every other provider; `Authorization` and `chatgpt-account-id` stay fixed (upstream #10429).
 - Anthropic sign-in falls back to a free loopback port when 53692 cannot be bound (Hyper-V and WSL reserve port ranges on Windows), and without any callback port it still takes a pasted redirect URL (upstream #10571).
 - Custom providers pointing at `opencode.ai` are sent OpenCode's `x-opencode-session` header too.
+- OpenRouter responses on Chat Completions and Anthropic Messages report OpenRouter's billed cost as `usage.cost.total` (with the upstream inference cost for BYOK requests) and mark it `totalFromProvider`; the per-component costs stay catalog estimates (upstream #10286).
+- MCP OAuth sign-ins can be cancelled at every step: Esc on the manager's status screens and session shutdown abort a sign-in in flight, every request to the authorization server is handed the abort, an aborted refresh no longer falls back to a new authorization, and `pig mcp login --timeout` limits the whole sign-in rather than only the wait for the browser (upstream #10565).
+- Closing an MCP HTTP session sends the last request's token instead of asking for one, so closing never waits for a token refresh (upstream #10565).
+- MCP tool result schemas in codemode describe `content` blocks and relocate the server's own `$ref`s under `structuredContent`, so they resolve as declared.
+- Kitty keyboard reporting now includes alternate keys, so bindings naming a shifted symbol (`+`, `ctrl++`) match Shift plus the unshifted key (upstream #9880).
+- Fuzzy matching ranks a contiguous occurrence above an earlier scattered one, and the session picker's search matches the name, id, messages and working directory separately: the name ranks first, and the id and messages match only as exact text (upstream #11220).
+- Windows shell detection finds PowerShell 7 under `%ProgramFiles%` and Windows PowerShell and the legacy WSL launcher under `%SystemRoot%`, wherever Windows is installed (upstream #9501).
+- A failed copy names what to install: the Termux:API app and `termux-api` package on Termux, `wl-clipboard` under Wayland, `xclip` or `xsel` under X11.
+- The codemode description and `CODEMODE.md` say a tool with an output schema (such as `bash` exiting non-zero) answers its structured result on failure too; codemode's `image()` errors describe image blocks without calling them MCP blocks.
 
 ### Fixed
 
@@ -69,6 +83,8 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Fixed escape sequences and UTF-8 characters split across two reads of bash output leaving fragments such as `31m` in the output: an unfinished sequence is held back until the rest arrives (upstream #10504).
 - Fixed Workers AI classifier prices: Clef Flash is $0.038 with a 24,576-token context, Jev $0.042.
 - Fixed OpenRouter router models such as `openrouter/auto` getting negative prices in the catalog: a negative or unreadable price is now treated as unknown.
+- Fixed the cursor marker being dropped when an overlay ends directly left of the cursor, which lost the hardware cursor's place.
+- Fixed a terminal colour reply split between the ESC and the backslash of its terminator leaking its hex text as keystrokes.
 
 ## [0.10.2] - 2026-10-24
 

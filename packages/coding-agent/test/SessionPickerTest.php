@@ -416,6 +416,25 @@ final class SessionPickerTest extends TestCase
         $this->assertStringNotContainsString('Rename Session', self::text($list));
     }
 
+    public function testEachFieldIsMatchedOnItsOwnAndTheNameRanksFirst(): void
+    {
+        // Upstream #11220: a name hit beats a hit in the messages, which beats letters scattered
+        // through a name; a scattered subsequence in the messages or the id is no match at all.
+        $inName = self::session('/s/a.jsonl', 'a', text: 'nothing relevant', name: 'deploy notes');
+        $inText = self::session('/s/b.jsonl', 'b', text: 'we talked about deploy scripts at length');
+        $scattered = self::session('/s/c.jsonl', 'c', text: 'unrelated', name: 'd e p l o y');
+        $noise = self::session('/s/d.jsonl', 'd', text: 'do every possible little opinion yes');
+
+        $found = \Pig\CodingAgent\Cli\SessionSearch::filterAndSort([$noise, $scattered, $inText, $inName], 'deploy', \Pig\CodingAgent\Cli\SessionSearch::RELEVANCE);
+
+        $this->assertSame(['/s/a.jsonl', '/s/b.jsonl', '/s/c.jsonl'], array_map(static fn (SessionInfo $s): string => $s->path, $found));
+
+        // A token never spans two fields: "notes" in the name and "scripts" in the messages are two
+        // tokens that may land in different fields, but "deploynotes" is in none.
+        $this->assertCount(1, \Pig\CodingAgent\Cli\SessionSearch::filterAndSort([$inName, $inText], 'deploy notes', \Pig\CodingAgent\Cli\SessionSearch::RELEVANCE));
+        $this->assertSame([], \Pig\CodingAgent\Cli\SessionSearch::filterAndSort([$inText], 'lengthwe', \Pig\CodingAgent\Cli\SessionSearch::RELEVANCE));
+    }
+
     public function testQuotesSearchForAPhraseAndReSearchesForAPattern(): void
     {
         $sessions = [

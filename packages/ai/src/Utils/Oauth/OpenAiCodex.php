@@ -443,9 +443,9 @@ final class OpenAiCodex
      * @param Closure(string, ?string): void $onAuth
      * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
      */
-    private function loginOpenAICodex(Closure $onAuth, Closure $onPrompt, AbortSignal $signal): ?Credentials
+    private function loginOpenAICodex(Closure $onAuth, Closure $onPrompt, AbortSignal $signal, ?string $agentName = null): ?Credentials
     {
-        ['verifier' => $verifier, 'state' => $state, 'url' => $url] = $this->createAuthorizationFlow();
+        ['verifier' => $verifier, 'state' => $state, 'url' => $url] = $this->createAuthorizationFlow($agentName ?? 'pi');
 
         // "Port 1455 is shared with the Codex CLI; when it is taken, fall back to the pasted redirect
         // URL." — upstream's `.catch(() => undefined)` on starting the server, kept: a port somebody
@@ -588,8 +588,10 @@ final class OpenAiCodex
      * @param Closure(string, ?string): void $onAuth
      * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
      * @param Closure(string, list<array{0: string, 1: string}>): ?string|null $onSelect
+     * @param string|null $agentName upstream's `LoginOptions.agentName` (#10433): "Name this app
+     *        introduces itself with during login, e.g. … Codex originator. Defaults to pi's own name."
      */
-    public function login(Closure $onAuth, Closure $onPrompt, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+    public function login(Closure $onAuth, Closure $onPrompt, ?AbortSignal $signal = null, ?Closure $onSelect = null, ?string $agentName = null): ?Credentials
     {
         $method = self::METHOD_BROWSER;
 
@@ -614,7 +616,7 @@ final class OpenAiCodex
             throw new OauthError("Unknown OpenAI Codex login method: {$method}");
         }
 
-        return $this->loginOpenAICodex($onAuth, $onPrompt, $signal);
+        return $this->loginOpenAICodex($onAuth, $onPrompt, $signal, $agentName);
     }
 
     /** `new URLSearchParams(params).toString()`: form encoding, spaces as `+`. */

@@ -63,7 +63,7 @@ final class McpCli
 
         Other options:
           --json                  Print the list as JSON
-          --timeout <seconds>     How long login waits for the browser (default: 300)
+          --timeout <seconds>     Time limit for the whole sign-in (default: 300)
         TEXT;
 
     private const int DEFAULT_LOGIN_TIMEOUT = 300;
@@ -235,14 +235,21 @@ final class McpCli
             }
         };
 
+        // `--timeout` limits the whole sign-in — discovery, registration, the browser and the token
+        // exchange — as upstream's `signal: AbortSignal.timeout(timeoutMs)` does (#10565).
+        $deadline = new \Pig\Async\AbortController();
+        $timer = \Pig\Async\Loop::get()->delay($timeout, static function () use ($deadline): void {
+            $deadline->abort('sign-in timed out');
+        });
+
         try {
             $credentials->signIn($name, $url, $connection->oauthSettings(), $connection->challenge, [
                 'showAuthorizationUrl' => function (string $authorizationUrl) use ($name, $openUrl): void {
                     ($this->out)("Sign in to MCP server \"{$name}\" in your browser:\n{$authorizationUrl}");
                     $openUrl($authorizationUrl);
                 },
-                'promptForRedirectUrl' => fn (\Pig\Async\AbortSignal $signal): ?string => $this->waitForRedirectUrl($signal, $timeout),
-            ], timeout: $timeout);
+                'promptForRedirectUrl' => fn (\Pig\Async\AbortSignal $signal): ?string => $this->waitForRedirectUrl($signal),
+            ], timeout: $timeout, signal: $deadline->signal);
         } catch (McpSignInCancelledError) {
             ($this->err)("Sign-in to MCP server \"{$name}\" was cancelled or not completed within " . (int) round($timeout) . ' seconds.');
 
@@ -251,6 +258,8 @@ final class McpCli
             ($this->err)("Sign-in to MCP server \"{$name}\" failed: {$error->getMessage()}");
 
             return 1;
+        } finally {
+            \Pig\Async\Loop::get()->cancel($timer);
         }
 
         $connection->challenge = null;
@@ -270,20 +279,16 @@ final class McpCli
 
     /**
      * The pasted redirect URL from a terminal; otherwise only the browser callback can finish the
-     * sign-in. Answers null — cancelling — when the time runs out or the callback arrived first.
+     * sign-in. Answers null — cancelling — when `$signal` aborts: the callback arrived first, or the
+     * sign-in timed out.
      */
-    private function waitForRedirectUrl(\Pig\Async\AbortSignal $signal, float $timeout): ?string
+    private function waitForRedirectUrl(\Pig\Async\AbortSignal $signal): ?string
     {
         if ($this->askRedirectUrl !== null) {
             return ($this->askRedirectUrl)($signal);
         }
 
         $answer = new \Pig\Async\Deferred();
-        $timer = \Pig\Async\Loop::get()->delay($timeout, static function () use ($answer): void {
-            if (!$answer->isComplete()) {
-                $answer->complete(null);
-            }
-        });
         $listener = $signal->onAbort(static function () use ($answer): void {
             if (!$answer->isComplete()) {
                 $answer->complete(null);
@@ -306,7 +311,6 @@ final class McpCli
         try {
             return $answer->future->await();
         } finally {
-            \Pig\Async\Loop::get()->cancel($timer);
             $signal->removeListener($listener);
 
             if ($watcher !== null) {

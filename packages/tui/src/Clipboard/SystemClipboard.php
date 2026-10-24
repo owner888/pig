@@ -97,6 +97,22 @@ final class SystemClipboard implements Clipboard
     }
 
     /**
+     * Why a `write()` that answered false did not work — upstream's `copyToClipboard()` errors,
+     * which name what to install: Termux:API on Termux, `wl-clipboard` under Wayland, `xclip` or
+     * `xsel` under X11.
+     */
+    public static function unavailableReason(): string
+    {
+        return match (true) {
+            Env::isSet('TERMUX_VERSION') => 'Clipboard unavailable: install the Termux:API app and `termux-api` package',
+            PHP_OS_FAMILY === 'Linux' && Env::isSet('WAYLAND_DISPLAY') => 'Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access',
+            PHP_OS_FAMILY === 'Linux' && Env::isSet('DISPLAY') => 'Clipboard unavailable: install `xclip` or `xsel`, or check X11 access',
+            PHP_OS_FAMILY === 'Linux' => 'Clipboard unavailable: on Linux this needs wl-copy, xclip or xsel',
+            default => 'Clipboard unavailable',
+        };
+    }
+
+    /**
      * Upstream's `isRemoteSession()`: "Remote sessions also emit OSC 52 so the client terminal
      * receives the copy. PI_CLIPBOARD_OSC52=1 covers remote clients that leave no SSH markers, such
      * as multiplexer attaches or IDE daemons" — `PIG_CLIPBOARD_OSC52=1` here.

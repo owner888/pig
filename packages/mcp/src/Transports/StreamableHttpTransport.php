@@ -62,6 +62,9 @@ final class StreamableHttpTransport extends TransportEvents
 
     private ?string $protocolVersion = null;
 
+    /** Access token of the latest request, which `close()` reuses instead of asking the auth provider. */
+    private ?string $lastToken = null;
+
     private bool $getStreamStarted = false;
 
     /**
@@ -179,12 +182,14 @@ final class StreamableHttpTransport extends TransportEvents
         $this->controller->abort('transport closed');
 
         if ($this->started && $this->sessionId !== null) {
-            // Best effort, briefly: the session expires on the server either way.
+            // Best effort, briefly: the session expires on the server either way. "The auth provider
+            // may refresh tokens over the network, so it is not asked here and closing never waits
+            // for a refresh" — the token of the last request goes out instead (upstream #10565).
             $controller = new AbortController();
             $timer = Loop::get()->delay(1.0, static fn () => $controller->abort('timeout'));
 
             try {
-                $response = $this->client()->send(new Request('DELETE', $this->url, $this->requestHeaders()), $controller->signal);
+                $response = $this->client()->send(new Request('DELETE', $this->url, $this->buildHeaders([], $this->lastToken)), $controller->signal);
                 $response->body->close();
             } catch (Throwable) {
                 // Resolving auth headers failed, or the server did not answer in time.
@@ -239,17 +244,23 @@ final class StreamableHttpTransport extends TransportEvents
         }
     }
 
-    /** @param array<string, string> $extra */
-    private function requestHeaders(array $extra = []): array
-    {
-        return $this->requestHeadersWithToken($extra)[0];
-    }
-
     /**
      * @param array<string, string> $extra
      * @return array{0: array<string, string>, 1: ?string}
      */
     private function requestHeadersWithToken(array $extra): array
+    {
+        $token = $this->authProvider?->token();
+        $this->lastToken = $token;
+
+        return [$this->buildHeaders($extra, $token), $token];
+    }
+
+    /**
+     * @param array<string, string> $extra
+     * @return array<string, string>
+     */
+    private function buildHeaders(array $extra, ?string $token): array
     {
         $headers = [...$this->headers, ...$extra];
 
@@ -261,13 +272,11 @@ final class StreamableHttpTransport extends TransportEvents
             $headers['MCP-Protocol-Version'] = $this->protocolVersion;
         }
 
-        $token = $this->authProvider?->token();
-
         if ($token !== null && $token !== '') {
             $headers['Authorization'] = "Bearer {$token}";
         }
 
-        return [$headers, $token];
+        return $headers;
     }
 
     private function client(): HttpClient

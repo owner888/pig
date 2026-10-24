@@ -123,7 +123,7 @@ final class OpenRouterImagesTest extends TestCase
     {
         $images = Models::allOfType(ModelType::Image);
 
-        $this->assertCount(59, $images);
+        $this->assertCount(63, $images);
 
         foreach ($images as $model) {
             $this->assertSame(['openrouter', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1'], [$model->provider, $model->api, $model->baseUrl], $model->id);

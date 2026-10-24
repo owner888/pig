@@ -9,6 +9,7 @@ use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\ClassifierApi;
 use Pig\Ai\ClassifierModel;
+use Pig\Ai\SystemOneCompat;
 use Pig\Ai\ImageApi;
 use Pig\Ai\ImageModel;
 use Pig\Ai\Model;
@@ -888,51 +889,52 @@ final class BuiltinCatalog
      *
      * `openai/gpt-6-luna` is upstream's hand-kept `OPENAI_CLASSIFIER_MODELS` row (ce8972a0e): the
      * Decisions API's only model, billing input tokens only with the chat requests' long-context
-     * multiplier, and the one classifier that takes images.
+     * multiplier. A System One row's `compat` says how its service takes images (`SystemOneCompat`,
+     * upstream 7f225f25d).
      *
-     * @var array<string, array{0: string, 1: ClassifierApi, 2: string, 3: int, 4: list<string>, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
+     * @var array<string, array{0: string, 1: ClassifierApi, 2: string, 3: int, 4: list<string>, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>, compat?: array<string, string|bool>}>
      */
     private const array CLASSIFIER_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.24, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text'], 0.038, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['Clef Omni', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 64_000, ['text'], 0.15, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],
+        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text', 'image'], 0.038, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],
+        'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['Clef Omni', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 64_000, ['text', 'image'], 0.15, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],
+        'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
+        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
         'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
         'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/baseten/elephant-1:free' => ['Baseten: Elephant 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/baseten/mammoth-1:free' => ['Baseten: Mammoth 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0],
-        'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 24_576, ['text', 'image'], 0.019, 0.0, 0.0, 0.0],
-        'openrouter/cloudflare/clef-omni' => ['Cloudflare: Clef Omni', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.15, 0.0, 0.0, 0.0],
-        'openrouter/inception/mercury-decide' => ['Inception: Mercury Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
-        'openrouter/inception/mercury-decide:free' => ['Inception: Mercury Decide (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/jaredpalmer/kev-4b' => ['Jared Palmer: Kev 4B', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 8_192, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/liquid/d1' => ['LiquidAI: d1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.02, 0.0],
-        'openrouter/liquid/d1-ultra' => ['LiquidAI: d1-ultra', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text', 'image'], 0.042, 0.0, 0.042, 0.0],
-        'openrouter/microsoft/microsoft-decision-1' => ['Microsoft: Microsoft-Decision-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/nace-ai/drex-max' => ['Nace.AI: Drex Max', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text'], 0.06, 0.0, 0.0, 0.0],
-        'openrouter/nace-ai/drex-v1.5' => ['Nace.AI: Drex v1.5', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.04, 0.0, 0.0, 0.0],
-        'openrouter/nace-ai/drex-v2.0' => ['Nace.AI: Drex v2.0', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.06, 0.0, 0.0, 0.0],
-        'openrouter/openai/gpt-6-luna-decisions' => ['OpenAI: GPT-6 Luna Decisions', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_050_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0],
-        'openrouter/perplexity/pplx-decider-flash-v1.2' => ['Perplexity: Decider Flash V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
-        'openrouter/perplexity/pplx-decider-v1.2' => ['Perplexity: Decider V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
-        'openrouter/respan/span-01' => ['Respan: Span-01', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.02, 0.0, 0.0, 0.0],
-        'openrouter/respan/span-01-lite' => ['Respan: Span-01 Lite', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/respan/span-01-lite:free' => ['Respan: Span-01 Lite (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/respan/span-02' => ['Respan: Span-02', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
-        'openrouter/scaledown/classify-1' => ['ScaleDown: Classify-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_000_000, ['text', 'image'], 0.04, 0.0, 0.0, 0.0],
-        'openrouter/togethercomputer/tev1-4b-experimental' => ['Together: Tev1 4B Experimental', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/typesafe/jev-1.14' => ['TypeSafe: Jev 1.14', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/upstage/solar-decide' => ['Upstage: Solar Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0],
-        'openrouter/upstage/solar-decide-flash' => ['Upstage: Solar Decide Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0],
-        'openrouter/~perplexity/pplx-decider-flash-latest' => ['Perplexity: Decider Flash Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
-        'openrouter/~perplexity/pplx-decider-latest' => ['Perplexity: Decider Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
-        'openrouter/~typesafe/jev-latest' => ['TypeSafe: Jev Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
-        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/baseten/elephant-1:free' => ['Baseten: Elephant 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/baseten/mammoth-1:free' => ['Baseten: Mammoth 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 24_576, ['text', 'image'], 0.019, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/cloudflare/clef-omni' => ['Cloudflare: Clef Omni', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.15, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/inception/mercury-decide' => ['Inception: Mercury Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/inception/mercury-decide:free' => ['Inception: Mercury Decide (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/jaredpalmer/kev-4b' => ['Jared Palmer: Kev 4B', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 8_192, ['text'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/liquid/d1' => ['LiquidAI: d1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.02, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/liquid/d1-ultra' => ['LiquidAI: d1-ultra', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text', 'image'], 0.042, 0.0, 0.042, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/microsoft/microsoft-decision-1' => ['Microsoft: Microsoft-Decision-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/nace-ai/drex-max' => ['Nace.AI: Drex Max', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text'], 0.06, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/nace-ai/drex-v1.5' => ['Nace.AI: Drex v1.5', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.04, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/nace-ai/drex-v2.0' => ['Nace.AI: Drex v2.0', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.06, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/openai/gpt-6-luna-decisions' => ['OpenAI: GPT-6 Luna Decisions', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_050_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/perplexity/pplx-decider-flash-v1.2' => ['Perplexity: Decider Flash V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/perplexity/pplx-decider-v1.2' => ['Perplexity: Decider V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/respan/span-01' => ['Respan: Span-01', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.02, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/respan/span-01-lite' => ['Respan: Span-01 Lite', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/respan/span-01-lite:free' => ['Respan: Span-01 Lite (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/respan/span-02' => ['Respan: Span-02', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text', 'image'], 0.01, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/scaledown/classify-1' => ['ScaleDown: Classify-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_000_000, ['text', 'image'], 0.04, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/togethercomputer/tev1-4b-experimental' => ['Together: Tev1 4B Experimental', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/typesafe/jev-1.14' => ['TypeSafe: Jev 1.14', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/upstage/solar-decide' => ['Upstage: Solar Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/upstage/solar-decide-flash' => ['Upstage: Solar Decide Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/~perplexity/pplx-decider-flash-latest' => ['Perplexity: Decider Flash Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/~perplexity/pplx-decider-latest' => ['Perplexity: Decider Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'openrouter/~typesafe/jev-latest' => ['TypeSafe: Jev Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
+        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text', 'image'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets', 'sendImageOptInHeader' => true]],
         'vercel-ai-gateway/baseten/elephant-1' => ['Elephant-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/baseten/mammoth-1' => ['Mammoth-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/convaiinnovations/laya' => ['Laya', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 8_192, ['text'], 0.0, 0.0, 0.0, 0.0],
@@ -3986,7 +3988,7 @@ final class BuiltinCatalog
         foreach (self::CLASSIFIER_MODELS as $key => $row) {
             [$name, $api, $baseUrl, $window, $input, $in, $out, $read, $write] = $row;
             [$provider, $id] = explode('/', $key, 2);
-            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []));
+            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []), compat: SystemOneCompat::fromArray($row['compat'] ?? null));
         }
 
         return array_values($models);

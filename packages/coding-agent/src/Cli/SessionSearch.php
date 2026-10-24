@@ -18,8 +18,11 @@ use Pig\Tui\Fuzzy;
  * - **`re:<pattern>`**, a case-insensitive regular expression. One that does not compile matches
  *   nothing rather than everything, which is upstream's "treat query as non-matching".
  *
- * Matched against the id, the name, every word said and the working directory
- * (`getSessionSearchText()`), so a session can be found by any of them.
+ * Each field is matched on its own, so a token never matches across field boundaries (upstream
+ * #11220): the name and the working directory fuzzily, the id and every word said exactly only —
+ * a scattered subsequence in megabytes of messages or in a UUID is noise. Ranking is by tier
+ * first: the token's text in the name, then in the id, the messages or the working directory,
+ * then scattered through the name or the working directory.
  *
  * And three orders (`SortMode`): `threaded` is the fork tree when nothing is typed, `recent` keeps
  * the newest-first order the list came in, and `relevance` (shown as "Fuzzy") ranks by score with
@@ -30,6 +33,23 @@ final class SessionSearch
     public const string THREADED = 'threaded';
     public const string RECENT = 'recent';
     public const string RELEVANCE = 'relevance';
+
+    /** Upstream's match tiers, best first; a tier outweighs any fuzzy score within it. */
+    private const int TIER_NAME = 0;
+
+    private const int TIER_TEXT = 1;
+
+    private const int TIER_FUZZY = 2;
+
+    private const int TIER_WEIGHT = 1_000_000;
+
+    /**
+     * Lowercased message text per session: `text` holds every message and can be megabytes, so it
+     * is lowercased once and not on every keystroke.
+     *
+     * @var \WeakMap<SessionInfo, array{source: string, lower: string, normalized?: string}>|null
+     */
+    private static ?\WeakMap $messageText = null;
 
     /**
      * Upstream's `parseSearchQuery()`.
@@ -128,42 +148,32 @@ final class SessionSearch
      */
     public static function match(SessionInfo $session, array $parsed): array
     {
-        $text = self::searchText($session);
-
         if ($parsed['mode'] === 'regex') {
-            if ($parsed['regex'] === null || preg_match($parsed['regex'], $text, $found, PREG_OFFSET_CAPTURE) !== 1) {
+            if ($parsed['regex'] === null) {
                 return [false, 0.0];
             }
 
-            return [true, mb_strlen(substr($text, 0, $found[0][1])) * 0.1];
+            $score = self::matchRegex($session, $parsed['regex']);
+
+            return $score === null ? [false, 0.0] : [true, $score];
         }
 
         $total = 0.0;
-        $normalized = null;
 
         foreach ($parsed['tokens'] as $token) {
             if ($token['kind'] === 'phrase') {
-                $normalized ??= self::normalize($text);
                 $phrase = self::normalize($token['value']);
 
                 if ($phrase === '') {
                     continue;
                 }
 
-                $at = mb_strpos($normalized, $phrase);
-
-                if ($at === false) {
-                    return [false, 0.0];
-                }
-
-                $total += $at * 0.1;
-
-                continue;
+                $score = self::matchPhrase($session, $phrase);
+            } else {
+                $score = self::matchFuzzy($session, $token['value']);
             }
 
-            [$matched, $score] = Fuzzy::match($token['value'], $text);
-
-            if (!$matched) {
+            if ($score === null) {
                 return [false, 0.0];
             }
 
@@ -171,6 +181,111 @@ final class SessionSearch
         }
 
         return [true, $total];
+    }
+
+    private static function tierScore(int $tier, float $score = 0.0): float
+    {
+        return $tier * self::TIER_WEIGHT + $score;
+    }
+
+    /** Upstream's `matchLiteralToken()`: the token's text, exactly, in one field. */
+    private static function matchLiteral(SessionInfo $session, string $value): ?float
+    {
+        $name = mb_strtolower($session->name ?? '');
+
+        if ($value !== '' && str_contains($name, $value)) {
+            return self::tierScore(self::TIER_NAME, Fuzzy::match($value, $name)[1]);
+        }
+
+        if (str_contains(mb_strtolower($session->id), $value)
+            || str_contains(self::messageText($session)['lower'], $value)
+            || str_contains(mb_strtolower($session->cwd), $value)) {
+            return self::tierScore(self::TIER_TEXT);
+        }
+
+        return null;
+    }
+
+    /** Upstream's `matchFuzzyToken()`: exact anywhere, else scattered in the name or the working directory. */
+    private static function matchFuzzy(SessionInfo $session, string $value): ?float
+    {
+        $literal = self::matchLiteral($session, mb_strtolower($value));
+
+        if ($literal !== null) {
+            return $literal;
+        }
+
+        $best = null;
+
+        foreach ([$session->name ?? '', $session->cwd] as $field) {
+            [$matched, $score] = Fuzzy::match($value, $field);
+
+            if ($matched && ($best === null || $score < $best)) {
+                $best = $score;
+            }
+        }
+
+        return $best === null ? null : self::tierScore(self::TIER_FUZZY, $best);
+    }
+
+    /** Upstream's `matchPhraseToken()`, with case and runs of whitespace ignored. */
+    private static function matchPhrase(SessionInfo $session, string $phrase): ?float
+    {
+        $name = self::normalize($session->name ?? '');
+
+        if (str_contains($name, $phrase)) {
+            return self::tierScore(self::TIER_NAME, Fuzzy::match($phrase, $name)[1]);
+        }
+
+        $cache = self::messageText($session);
+        $normalized = $cache['normalized'] ?? self::cacheNormalized($session);
+
+        if (str_contains(mb_strtolower($session->id), $phrase)
+            || str_contains($normalized, $phrase)
+            || str_contains(self::normalize($session->cwd), $phrase)) {
+            return self::tierScore(self::TIER_TEXT);
+        }
+
+        return null;
+    }
+
+    /** Upstream's `matchRegex()`: the name first, then the id, the messages or the working directory. */
+    private static function matchRegex(SessionInfo $session, string $regex): ?float
+    {
+        if ($session->name !== null && $session->name !== '' && preg_match($regex, $session->name) === 1) {
+            return self::tierScore(self::TIER_NAME);
+        }
+
+        foreach ([$session->id, $session->text, $session->cwd] as $field) {
+            if (preg_match($regex, $field) === 1) {
+                return self::tierScore(self::TIER_TEXT);
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array{source: string, lower: string, normalized?: string} */
+    private static function messageText(SessionInfo $session): array
+    {
+        self::$messageText ??= new \WeakMap();
+        $cached = self::$messageText[$session] ?? null;
+
+        if ($cached === null || $cached['source'] !== $session->text) {
+            $cached = ['source' => $session->text, 'lower' => mb_strtolower($session->text)];
+            self::$messageText[$session] = $cached;
+        }
+
+        return $cached;
+    }
+
+    private static function cacheNormalized(SessionInfo $session): string
+    {
+        $cached = self::messageText($session);
+        $cached['normalized'] = trim((string) preg_replace('/\s+/u', ' ', $cached['lower']));
+        self::$messageText[$session] = $cached;
+
+        return $cached['normalized'];
     }
 
     /**
@@ -214,12 +329,6 @@ final class SessionSearch
     public static function hasName(SessionInfo $session): bool
     {
         return $session->name !== null && trim($session->name) !== '';
-    }
-
-    /** Upstream's `getSessionSearchText()`: id, name, every word said, and the working directory. */
-    private static function searchText(SessionInfo $session): string
-    {
-        return "{$session->id} " . ($session->name ?? '') . " {$session->text} {$session->cwd}";
     }
 
     private static function normalize(string $text): string

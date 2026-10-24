@@ -615,6 +615,12 @@ final class Anthropic
 
         // Merged with what `message_start` reported rather than replacing it — see `update()`.
         $builder->setUsage(self::update($builder->snapshot()->usage, $data['usage'] ?? []));
+
+        // "OpenRouter adds billing fields to streamed message_delta usage at runtime, although its
+        // OpenAPI schema and the Anthropic SDK do not type those fields" (#10286).
+        if (is_array($data['usage'] ?? null)) {
+            $builder->applyOpenRouterReportedCost($data['usage']);
+        }
     }
 
     /**

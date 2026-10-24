@@ -316,7 +316,10 @@ final class Width
                 $tracker->process($value);
                 if ($currentCol < $beforeEnd) {
                     $pendingAnsiBefore .= $value;
-                } elseif ($currentCol >= $afterStart && $currentCol < $afterEnd && $afterStarted) {
+                } elseif ($currentCol >= $afterStart && $currentCol < $afterEnd && ($afterStarted || str_starts_with($value, "\x1b_"))) {
+                    // "SGR codes are only included after 'after' started (styling already prepended).
+                    // Zero-width APC markers like CURSOR_MARKER are not tracked styling, so keep them
+                    // at the boundary too" — an overlay ending just left of the cursor kept it.
                     $after .= $value;
                 }
                 continue;

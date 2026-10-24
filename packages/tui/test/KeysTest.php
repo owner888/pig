@@ -40,4 +40,18 @@ final class KeysTest extends TestCase
         $this->assertFalse(Keys::matchesName("\x1b\r", 'alt+enter'), "Apple Terminal's Shift+Enter");
         $this->assertTrue(Keys::matchesName("\x1bx", 'alt+x'), 'the ESC-prefix form still holds for letters');
     }
+
+    public function testABindingNamingAShiftedSymbolMatchesShiftPlusTheUnshiftedKey(): void
+    {
+        // Upstream #9880: Kitty with alternate keys reports Ctrl++ as Ctrl+Shift+`=` with `+` as the
+        // shifted key. The binding names the symbol, so the implicit Shift is consumed.
+        $this->assertTrue(Keys::matchesName("\x1b[61:43;6u", 'ctrl++'));
+        $this->assertTrue(Keys::matchesName("\x1b[61:43;2u", '+'));
+        // The physical spelling still holds, and other modifiers still have to agree.
+        $this->assertTrue(Keys::matchesName("\x1b[61:43;6u", 'ctrl+shift+='));
+        $this->assertFalse(Keys::matchesName("\x1b[61:43;6u", 'alt++'));
+        $this->assertFalse(Keys::matchesName("\x1b[61:43;5u", 'ctrl++'), 'no Shift reported, no shifted symbol');
+        // A shifted letter is not a symbol: Ctrl+Shift+A is not `ctrl+A`'s logical twin.
+        $this->assertTrue(Keys::matchesName("\x1b[97:65;6u", 'ctrl+shift+a'));
+    }
 }

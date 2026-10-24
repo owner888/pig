@@ -112,8 +112,32 @@ final class McpTools
     }
 
     /**
-     * The output schema a codemode declaration shows for an MCP tool: a `CallToolResult`, with the
-     * server's own `outputSchema` as its `structuredContent` when it declared one.
+     * "MCP content blocks as one compact type with the fields of text and image blocks, which scripts
+     * read most (`image(block)` takes an image block as is)" — upstream's `CONTENT_BLOCK_SCHEMA`.
+     */
+    private const array CONTENT_BLOCK_SCHEMA = [
+        'type' => 'object',
+        'properties' => [
+            'type' => ['enum' => ['text', 'image', 'audio', 'resource_link', 'resource']],
+            'text' => ['type' => 'string'],
+            'data' => ['type' => 'string'],
+            'mimeType' => ['type' => 'string'],
+        ],
+        'required' => ['type'],
+        'additionalProperties' => true,
+    ];
+
+    /** "Keywords whose values are data, so a `$ref` key in them is not a reference." */
+    private const array SCHEMA_DATA_KEYWORDS = ['const', 'enum', 'default', 'examples'];
+
+    /** "Keywords whose values map names to schemas, so their keys are names, not keywords." */
+    private const array SCHEMA_MAP_KEYWORDS = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
+
+    /**
+     * The output schema a codemode declaration shows for an MCP tool — upstream's
+     * `createMcpResultSchema()`: the `CallToolResult` scripts receive (without `_meta`, which
+     * `scriptValue()` drops), with the server's own `outputSchema` as its `structuredContent` when it
+     * declared one — its local `$ref`s relocated so they resolve below it as before (24382bedd).
      *
      * @param array<string, mixed> $tool as listed
      * @return array<string, mixed>
@@ -123,13 +147,50 @@ final class McpTools
         return [
             'type' => 'object',
             'properties' => [
-                'content' => ['type' => 'array', 'items' => ['type' => 'object']],
+                'content' => ['type' => 'array', 'items' => self::CONTENT_BLOCK_SCHEMA],
+                // "Servers may send structured content without declaring a schema for it, and it may
+                // be any JSON value."
+                'structuredContent' => is_array($tool['outputSchema'] ?? null)
+                    ? self::relocateSchema($tool['outputSchema'], '#/properties/structuredContent')
+                    : true,
                 'isError' => ['type' => 'boolean'],
-                '_meta' => ['type' => 'object'],
-                'structuredContent' => is_array($tool['outputSchema'] ?? null) ? $tool['outputSchema'] : true,
             ],
             'required' => ['content'],
+            // "Fields newer protocol versions add."
+            'additionalProperties' => true,
         ];
+    }
+
+    /**
+     * Upstream's `relocateSchema()`: "`schema` as a subschema at the JSON pointer `pointer` of another
+     * schema: its local references (`#`, `#/$defs/Item`) are rewritten to point below `pointer`, so
+     * they resolve to the same subschemas as before."
+     */
+    public static function relocateSchema(mixed $schema, string $pointer): mixed
+    {
+        if (!is_array($schema)) {
+            return $schema;
+        }
+
+        if (array_is_list($schema)) {
+            return array_map(static fn (mixed $item): mixed => self::relocateSchema($item, $pointer), $schema);
+        }
+
+        $relocated = [];
+
+        foreach ($schema as $key => $value) {
+            if ($key === '$ref' && is_string($value) && ($value === '#' || str_starts_with($value, '#/'))) {
+                $relocated[$key] = $pointer . substr($value, 1);
+            } elseif (in_array($key, self::SCHEMA_DATA_KEYWORDS, true)) {
+                $relocated[$key] = $value;
+            } elseif (in_array($key, self::SCHEMA_MAP_KEYWORDS, true) && is_array($value) && ($value === [] || !array_is_list($value))) {
+                $relocated[$key] = array_map(static fn (mixed $subschema): mixed => self::relocateSchema($subschema, $pointer), $value);
+            } else {
+                $relocated[$key] = self::relocateSchema($value, $pointer);
+            }
+        }
+
+        return $relocated;
     }
 
     /**

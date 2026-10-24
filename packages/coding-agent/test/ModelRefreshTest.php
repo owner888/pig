@@ -130,6 +130,22 @@ final class ModelRefreshTest extends TestCase
         $this->assertSame([], array_values(array_filter(Models::allOfType(ModelType::Image), static fn ($m): bool => $m->provider === 'openrouter')));
     }
 
+    public function testTheSavedRadiusCatalogReplacesTheShippedOneWithoutTheNetwork(): void
+    {
+        // Upstream 43d376399: "Radius org owners can disable models, so once known it replaces the
+        // shipped baseline instead of overlaying it."
+        $shipped = array_values(array_filter(Models::all(), static fn ($m): bool => $m->provider === Models::RADIUS));
+        $this->assertGreaterThan(1, count($shipped));
+        $saved = [...ModelJson::encode($shipped[0]), 'contextWindow' => 1234];
+        file_put_contents("{$this->home}/models-store.json", json_encode([Models::RADIUS => ['models' => [$saved], 'checkedAt' => 1]]));
+
+        $result = ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), [Models::RADIUS], allowNetwork: false);
+
+        $this->assertSame([], $result->errors);
+        $radius = array_values(array_filter(Models::all(), static fn ($m): bool => $m->provider === Models::RADIUS));
+        $this->assertSame([[$shipped[0]->id, 1234]], array_map(static fn ($m): array => [$m->id, $m->contextWindow], $radius));
+    }
+
     public function testAnOpenRouterListSavedBeforeItHeldModelsLeavesTheCatalogAsBuilt(): void
     {
         $before = count(array_filter(Models::all(), static fn ($m): bool => $m->provider === 'openrouter'));

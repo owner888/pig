@@ -288,6 +288,20 @@ final class WidthTest extends TestCase
         $this->assertSame($segments['beforeWidth'], Width::visible($segments['before']));
     }
 
+    public function testTheCursorMarkerRightAfterAnOverlayIsKept(): void
+    {
+        // Upstream 1cedd3272: an overlay ending just left of the cursor dropped CURSOR_MARKER, which
+        // sat at the start of "after" before any visible character had opened it, and the hardware
+        // cursor lost its place.
+        $line = "abcd\x1b[31m" . \Pig\Tui\TUI::CURSOR_MARKER . 'EFGH';
+        $segments = Width::extractSegments($line, 2, 4, 4);
+
+        $this->assertStringStartsWith(\Pig\Tui\TUI::CURSOR_MARKER, $segments['after']);
+        $this->assertSame(4, $segments['afterWidth']);
+        // The SGR code before "after" started still arrives as the inherited styling, once.
+        $this->assertSame(1, substr_count($segments['after'], "\x1b[31m"));
+    }
+
     public function testCompositeAtTheRequestedColumnWhenItStartsInsideAWideGrapheme(): void
     {
         $out = Width::composite('abcd让EFGH', '│XX│', 5, 4, 20);

@@ -348,7 +348,7 @@ function text(mixed $value): void
  */
 function __codemode_image_url(mixed $value): string
 {
-    $expects = 'image expects a non-empty image URL string, an array with image_url, or a raw MCP image block';
+    $expects = "image expects a non-empty image URL string, an array with image_url, or an image block ['type' => 'image', 'data' => …, 'mimeType' => …]";
 
     if (is_string($value)) {
         return $value;
@@ -371,11 +371,11 @@ function __codemode_image_url(mixed $value): string
     }
 
     if ($value['type'] !== 'image') {
-        throw new TypeError('image only accepts MCP image blocks, got "' . $value['type'] . '"');
+        throw new TypeError('image only accepts image blocks, got "' . $value['type'] . '"');
     }
 
     if (!is_string($value['data'] ?? null) || $value['data'] === '') {
-        throw new TypeError('image expected MCP image data');
+        throw new TypeError('image expected image block data');
     }
 
     return str_starts_with(strtolower($value['data']), 'data:') ? $value['data'] : 'data:;base64,' . $value['data'];
@@ -392,7 +392,7 @@ function image(mixed $value): void
     $url = __codemode_image_url($value);
 
     if ($url === '') {
-        throw new TypeError('image expects a non-empty image URL string, an array with image_url, or a raw MCP image block');
+        throw new TypeError("image expects a non-empty image URL string, an array with image_url, or an image block ['type' => 'image', 'data' => …, 'mimeType' => …]");
     }
 
     $colon = strpos($url, ':');

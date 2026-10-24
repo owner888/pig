@@ -61,19 +61,21 @@ final class CatalogueProvidersTest extends TestCase
         $this->assertSame(['text'], self::model('baseten', 'zai-org/GLM-5.2-Fast')->input);
     }
 
-    public function testBasetenModelsKimiK26ReasoningAsAnExplicitOffOnToggle(): void
+    public function testMiniMaxM31FlashTakesAdaptiveThinkingAndCannotBeSwitchedOff(): void
     {
-        $model = self::model('baseten', 'moonshotai/Kimi-K2.6');
+        // Upstream #11121: "Models with effort levels (e.g. MiniMax-M3.1-Flash) take adaptive thinking
+        // with output_config.effort and reject thinking.type="disabled"."
+        foreach (['minimax', 'minimax-cn'] as $provider) {
+            $model = self::model($provider, 'MiniMax-M3.1-Flash');
 
-        $this->assertSame(['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], $model->thinkingLevelMap);
-        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
-        $this->assertSame([false, 'baseten', ['enable_thinking' => ['$var' => 'thinking.enabled']]], [$model->compat->reasoningEffort, $model->compat->thinkingFormat, $model->compat->chatTemplateArgs]);
-        $this->assertSame(['off', 'high'], $model->supportedThinkingLevels());
+            $this->assertNotContains('off', $model->supportedThinkingLevels(), $provider);
+            $payload = self::payload($model, ReasoningEffort::High);
+            $this->assertSame('adaptive', $payload['thinking']['type'] ?? null, $provider);
+            $this->assertSame('high', $payload['output_config']['effort'] ?? null, $provider);
+        }
 
-        $payload = self::payload($model, ReasoningEffort::High);
-
-        $this->assertSame(['enable_thinking' => true], $payload['chat_template_args'] ?? null);
-        $this->assertArrayNotHasKey('reasoning_effort', $payload);
+        // The older models MiniMax asked to hide stay hidden.
+        $this->assertNull(Models::find('minimax', 'MiniMax-M2.5'));
     }
 
     public function testBasetenSendsItsTemplateArgumentsWithTheReasoningEffort(): void
@@ -259,7 +261,7 @@ final class CatalogueProvidersTest extends TestCase
         $model = self::model('zai-coding-cn', 'glm-4.6v');
 
         $this->assertSame([Api::OpenAiCompletions, 'https://open.bigmodel.cn/api/coding/paas/v4', true, ['text', 'image']], [$model->api, $model->baseUrl, $model->reasoning, $model->input]);
-        $this->assertSame([0.3, 0.9, 0.0, 0.0], [$model->pricing->input, $model->pricing->output, $model->pricing->cacheRead, $model->pricing->cacheWrite]);
+        $this->assertSame([0.3, 0.9, 0.05, 0.0], [$model->pricing->input, $model->pricing->output, $model->pricing->cacheRead, $model->pricing->cacheWrite]);
         $this->assertSame([128_000, 32_768], [$model->contextWindow, $model->maxTokens]);
         $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
         $this->assertSame(['max_tokens', 'zai', true], [$model->compat->maxTokensField, $model->compat->thinkingFormat, $model->compat->zaiToolStream]);

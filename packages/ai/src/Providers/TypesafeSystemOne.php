@@ -11,6 +11,7 @@ use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\ProviderError;
+use Pig\Ai\SystemOneCompat;
 use stdClass;
 
 /**
@@ -18,6 +19,11 @@ use stdClass;
  * the same protocol, so both providers use this API with different base URLs" — Vercel's AI Gateway
  * and OpenCode Zen do too. `POST <baseUrl>/systemone` with `{model, state, questions}`; the answer is
  * the body itself.
+ *
+ * "TypeSafe takes images as `assets`. They are experimental and need the `TypeSafe-Danger-Zone-Images`
+ * opt-in header; without it the API answers 400. OpenRouter drops `assets` silently and takes images
+ * as `image_url` parts in the state instead. Models behind a proxy that hides both the provider ID
+ * and the OpenRouter host must set `compat.imageInput`."
  */
 final class TypesafeSystemOne implements SystemOneTransport
 {
@@ -41,6 +47,18 @@ final class TypesafeSystemOne implements SystemOneTransport
     public function label(): string
     {
         return 'System One API';
+    }
+
+    /**
+     * "OpenRouter by provider ID, which survives baseUrl overrides, or by host, which covers regional
+     * endpoints."
+     */
+    #[\Override]
+    public function detectCompat(ClassifierModel $model): SystemOneCompat
+    {
+        return $model->provider === 'openrouter' || str_contains($model->baseUrl, 'openrouter.ai')
+            ? new SystemOneCompat(SystemOneCompat::STATE_IMAGE_URLS, false)
+            : new SystemOneCompat(SystemOneCompat::ASSETS, true);
     }
 
     /** `new URL("systemone", `${model.baseUrl.replace(/\/+$/u, "")}/`)`. */

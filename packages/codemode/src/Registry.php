@@ -22,7 +22,7 @@ use Closure;
 final class Registry
 {
     /**
-     * @var array<string, array{name: string, description: string, parameters: array<string, mixed>, outputSchema?: mixed, execute: Closure, namespace: ?array{name: string, description: ?string}, exposure: string}>
+     * @var array<string, array{name: string, description: string, parameters: array<string, mixed>, outputSchema?: mixed, execute: Closure, namespace: ?array{name: string, aliases?: list<string>, description: ?string}, exposure: string}>
      */
     private static array $tools = [];
 
@@ -32,7 +32,7 @@ final class Registry
     /**
      * @param array<string, mixed> $parameters
      * @param Closure(array<string, mixed>, \Pig\Async\AbortSignal, \Pig\CodingAgent\Hooks\HookContext): mixed $execute
-     * @param array{name: string, description: ?string}|null $namespace
+     * @param array{name: string, aliases?: list<string>, description: ?string}|null $namespace
      * @param 'codemode'|'codemode-deferred' $exposure
      */
     public static function register(string $name, string $description, array $parameters, Closure $execute, ?array $namespace, string $exposure, mixed $outputSchema = null): void
@@ -60,7 +60,7 @@ final class Registry
         }
     }
 
-    /** @return array<string, array{name: string, description: string, parameters: array<string, mixed>, outputSchema?: mixed, execute: Closure, namespace: ?array{name: string, description: ?string}, exposure: string}> */
+    /** @return array<string, array{name: string, description: string, parameters: array<string, mixed>, outputSchema?: mixed, execute: Closure, namespace: ?array{name: string, aliases?: list<string>, description: ?string}, exposure: string}> */
     public static function all(): array
     {
         return self::$tools;
