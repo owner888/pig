@@ -18,6 +18,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [A test that could not fail, and the experiment that found the case](#a-test-that-could-not-fail-and-the-experiment-that-found-the-case)
 - [`phpunit | tail` hung after the whole suite had passed](#phpunit--tail-hung-after-the-whole-suite-had-passed)
 - [The test suite wrote into the developer's real home](#the-test-suite-wrote-into-the-developers-real-home)
+- [MCP startup notice test asserted before asynchronous servers settled](#mcp-startup-notice-test-asserted-before-asynchronous-servers-settled)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1094,3 +1095,18 @@ agent-dir variables, puts a deleting `trash` stand-in first on the `PATH` (macOS
 ignore `$HOME`), and appends the real `~/.pig/agent/bin` so downloaded `fd`/`rg` are still found. A
 test still isolates what it asserts on; the bootstrap is the floor under the ones that forget. Check:
 run the suite with `HOME` pointed at an empty directory and find nothing in it afterwards.
+
+## MCP startup notice test asserted before asynchronous servers settled
+
+**Symptom**: `McpExtensionTest::testTheExtensionConnectsAtSessionStartAndTheToolsReachTheAgent`
+intermittently failed in CI (e.g. PHP 8.5) with `Failed asserting that '' contains "MCP servers need attention"`.
+
+**Cause**: Session startup (`emitBeforeAgentStart`) only waits for servers declaring direct tools
+(`waitForDirectServers()`); servers with codemode exposure (like the fixture's `broken` server)
+connect concurrently in a background coroutine. If the direct server finishes first, `Async::run()`
+returns before the background coroutine finishes and calls `$reportProblems($ctx)`.
+
+**Rule**: Tests asserting on UI notices or state from background MCP connections must wait for the
+background operations to settle (`$this->until(...)` or `$this->untilServersSettle()`) instead of
+assuming all servers settled during `before_agent_start`.
+

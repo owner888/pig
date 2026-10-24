@@ -354,6 +354,7 @@ final class McpExtensionTest extends TestCase
         $this->assertSame(['mcp__fixture__echo'], $set->names(), 'the connected server\'s tool, under its MCP name');
         $this->assertGreaterThanOrEqual(1, $changes, 'and the agent was told to pick it up');
 
+        $this->until(static fn (): bool => $ui->notices !== []);
         $problems = implode("\n", $ui->notices);
         $this->assertStringContainsString('MCP servers need attention', $problems);
         $this->assertStringContainsString('broken: failed:', $problems);
