@@ -5,19 +5,21 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Theme;
 
 use InvalidArgumentException;
+use Pig\CodingAgent\Schemas\ConfigSchemas;
+use Pig\CodingAgent\Schemas\SchemaErrors;
 
 /**
- * Theme JSON validation — upstream's `theme-json.ts`, kept out of `Themes` as upstream keeps it
+ * Theme JSON validation — upstream's `theme-schema.ts`, kept out of `Themes` as upstream keeps it
  * out of `theme.ts`.
  *
- * Upstream compiles a typebox schema (`ThemeJsonSchema`) and turns its errors into one message.
- * pig adds no third-party package, so the schema is checked by hand here, in the schema's own
- * order, and reported in the same shape: missing `colors` tokens gathered into one sorted list,
- * everything else as `  - <instance path>: <message>` under "Other errors". The messages are
- * typebox's (ajv-style) wording as closely as practical — `must be string`, `must have required
- * properties name`, `must match a schema in anyOf` — but a union failure reports only the union,
- * not each branch it tried. Like typebox's `Type.Object`, properties the schema does not name are
- * allowed. `theme-schema.json` beside this file is upstream's JSON schema, copied verbatim.
+ * Upstream compiles `ThemeJsonSchema` with typebox and turns its errors into one message; here the
+ * schema is pig's published `theme.schema.json` (`ConfigSchemas`) and the errors are `SchemaErrors`,
+ * typebox's checker written out, so the message is upstream's to the word and in its order: a name
+ * with `/` refused before anything else, missing `colors` tokens gathered into one sorted list, and
+ * everything else as `  - <instance path>: <message>` under "Other errors" — at most eight of them,
+ * a union's branch errors before its `must match a schema in anyOf`. Like upstream since #9880 the
+ * schema is strict: a top-level key, a `colors` token or an `export` key it does not name is
+ * refused (`schema is false` at the key, then `must not have additional properties`).
  *
  * Documents are decoded JSON as PHP arrays (`json_decode(…, true)`): a JSON object is an array
  * with string keys, or an empty one; a JSON list is a non-empty list.
@@ -99,8 +101,6 @@ final class ThemeJson
         'bashMode' => true,
     ];
 
-    private const array EXPORT_KEYS = ['pageBg', 'cardBg', 'infoBg'];
-
     /**
      * Validate one theme document, throwing a message that names the offending tokens.
      *
@@ -109,70 +109,33 @@ final class ThemeJson
      */
     public static function validateThemeJson(string $label, mixed $json): array
     {
-        $missingColors = [];
-        $otherErrors = [];
-        $error = static function (string $path, string $message) use (&$otherErrors): void {
-            $otherErrors[] = '  - ' . ($path === '' ? '/' : $path) . ": {$message}";
-        };
-
-        if (!self::isObject($json)) {
-            $error('', 'must be object');
-        } else {
-            $missing = array_values(array_filter(['name', 'colors'], static fn (string $key): bool => !array_key_exists($key, $json)));
-            if ($missing !== []) {
-                $error('', 'must have required properties ' . implode(', ', $missing));
-            }
-            if (array_key_exists('$schema', $json) && !is_string($json['$schema'])) {
-                $error('/$schema', 'must be string');
-            }
-            if (array_key_exists('name', $json) && !is_string($json['name'])) {
-                $error('/name', 'must be string');
-            }
-            if (array_key_exists('appearance', $json) && !in_array($json['appearance'], ['dark', 'light'], true)) {
-                $error('/appearance', 'must match a schema in anyOf');
-            }
-            if (array_key_exists('vars', $json)) {
-                if (!self::isObject($json['vars'])) {
-                    $error('/vars', 'must be object');
-                } else {
-                    foreach ($json['vars'] as $key => $value) {
-                        if (!self::isColorValue($value)) {
-                            $error('/vars/' . self::pointer((string) $key), 'must match a schema in anyOf');
-                        }
-                    }
-                }
-            }
-            if (array_key_exists('colors', $json)) {
-                if (!self::isObject($json['colors'])) {
-                    $error('/colors', 'must be object');
-                } else {
-                    foreach (self::COLOR_TOKENS as $token => $required) {
-                        if (!array_key_exists($token, $json['colors'])) {
-                            if ($required) {
-                                $missingColors[] = $token;
-                            }
-                        } elseif (!self::isColorValue($json['colors'][$token])) {
-                            $error("/colors/{$token}", 'must match a schema in anyOf');
-                        }
-                    }
-                }
-            }
-            if (array_key_exists('export', $json)) {
-                if (!self::isObject($json['export'])) {
-                    $error('/export', 'must be object');
-                } else {
-                    foreach (self::EXPORT_KEYS as $key) {
-                        if (array_key_exists($key, $json['export']) && !self::isColorValue($json['export'][$key])) {
-                            $error("/export/{$key}", 'must match a schema in anyOf');
-                        }
-                    }
-                }
-            }
+        if (self::isObject($json) && is_string($json['name'] ?? null) && str_contains($json['name'], '/')) {
+            throw new InvalidArgumentException(
+                "Invalid theme name \"{$json['name']}\": theme names cannot contain \"/\" because it is reserved for automatic light/dark theme settings.",
+            );
         }
 
-        if ($missingColors !== [] || $otherErrors !== []) {
+        $errors = SchemaErrors::of(ConfigSchemas::load('theme'), $json, assoc: true);
+
+        if ($errors !== []) {
+            $missingColors = [];
+            $otherErrors = [];
+
+            foreach ($errors as $error) {
+                if ($error['keyword'] === 'required' && $error['instancePath'] === '/colors') {
+                    foreach ($error['params']['requiredProperties'] as $token) {
+                        $missingColors[$token] = true;
+                    }
+
+                    continue;
+                }
+
+                $otherErrors[] = '  - ' . ($error['instancePath'] === '' ? '/' : $error['instancePath']) . ": {$error['message']}";
+            }
+
             $errorMessage = "Invalid theme \"{$label}\":\n";
             if ($missingColors !== []) {
+                $missingColors = array_map(strval(...), array_keys($missingColors));
                 sort($missingColors, SORT_STRING);
                 $errorMessage .= "\nMissing required color tokens:\n";
                 $errorMessage .= implode("\n", array_map(static fn (string $color): string => "  - {$color}", $missingColors));
@@ -187,12 +150,6 @@ final class ThemeJson
         }
 
         /** @var array<string, mixed> $json */
-        if (str_contains($json['name'], '/')) {
-            throw new InvalidArgumentException(
-                "Invalid theme name \"{$json['name']}\": theme names cannot contain \"/\" because it is reserved for automatic light/dark theme settings.",
-            );
-        }
-
         return self::normalizeIntegers($json);
     }
 
@@ -202,26 +159,10 @@ final class ThemeJson
         return is_array($value) && ($value === [] || !array_is_list($value));
     }
 
-    /** Upstream's `ColorValueSchema`: any string, or an integer 0-255. */
-    private static function isColorValue(mixed $value): bool
-    {
-        if (is_string($value)) {
-            return true;
-        }
-
-        return self::isInteger($value) && $value >= 0 && $value <= 255;
-    }
-
     /** JSON has one number type: `24.0` is an integer to typebox, as `Number.isInteger(24.0)` says. */
     private static function isInteger(mixed $value): bool
     {
         return is_int($value) || (is_float($value) && is_finite($value) && $value === floor($value));
-    }
-
-    /** JSON Pointer escaping for an instance path segment. */
-    private static function pointer(string $key): string
-    {
-        return str_replace(['~', '/'], ['~0', '~1'], $key);
     }
 
     /**

@@ -30,9 +30,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Added specific new options, tools, commands, extension APIs, or platform integrations.
 
+- Added configuration schemas for `models.json`, `settings.json`, `keybindings.json` and theme files, published at `https://pigagent.dev/schemas/<name>.schema.json` (upstream #9880, #10751): name one in a file's `$schema` and an editor completes and checks it. All four files accept `$schema`; in `models.json` it must be a string. The schemas live in `packages/coding-agent/schemas/` and `models.json` and themes are checked against them at runtime, with upstream's messages.
+- Added LaTeX math rendering in Markdown, ported from upstream: inline `$…$` / `\(…\)` and display `$$…$$` / `\[…\]` math drawn as terminal-friendly Unicode (fractions, scripts, symbols, aligned equations, cases, matrices, stacked display fractions and operator limits). Unsupported, malformed or still-streaming math shows as written, and an unclosed display opener never swallows a following table (upstream #11159). `Markdown` takes `renderLatex: false` to turn it off.
+
 ### Changed
 
 - Changed defaults, adjusted behaviors, refactored internal mechanisms, or optimized performance.
+
+- Theme files are validated strictly, as upstream's are since #9880: a top-level key, a `colors` token or an `export` key the theme schema does not name refuses the theme (`schema is false` at the key, then `must not have additional properties`), and every theme loaded from the command line onward is checked, not only those the interactive mode loads. Theme errors are upstream's messages to the word, a union's branch errors included, at most eight.
+- `models.json` providers, models and `modelOverrides` entries are checked against the models schema with upstream's messages (`providers.<name>.models.0.contextWindow: must be > 0`): known `compat` fields must have their type (`supportsLongCacheRetention: "yes"` refuses the provider) while unknown ones are kept, a non-string `thinkingLevelMap` level or a list where `openRouterRouting` wants an object is a schema error instead of being dropped, and a template kwarg object must be a `$var` reference. As before, pig refuses only the provider, model or override the error is in.
+- Keybinding values in the published schema also accept the modifier spellings pig reads (`control`, `option`, `cmd`, `command`, `meta`) and `pageup` / `pagedown`, so pig's own `command+enter` default is valid.
 
 ### Fixed
 

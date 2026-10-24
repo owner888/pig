@@ -137,6 +137,11 @@ if (($argv[1] ?? '') === 'auth') {
     ))->run(array_slice($argv, 1)));
 }
 
+// Upstream's `setThemeJsonValidator(validateThemeJson)` at the top of `main()` (#9880): commands and
+// startup selectors can load user-authored themes before any mode starts, and every one of them is
+// held to the theme schema.
+Themes::setThemeJsonValidator(\Pig\CodingAgent\Theme\ThemeJson::validateThemeJson(...));
+
 // `pig install | remove | uninstall | update | list` — the package commands, upstream's
 // `package-manager-cli.ts`. `update` without a target is still the self-update.
 if (in_array($argv[1] ?? '', PackageCommands::COMMANDS, true)) {

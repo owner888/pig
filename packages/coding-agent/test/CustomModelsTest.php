@@ -219,20 +219,29 @@ final class CustomModelsTest extends TestCase
         $this->assertSame([], $problems);
     }
 
-    public function testRubbishInTheMapIsDroppedWithoutTakingTheModelWithIt(): void
+    /**
+     * Upstream's `ThinkingLevelMapSchema`: each level a string or null. A number there is a schema
+     * error that refuses the model, as upstream refuses the file over it; a key that is no level is
+     * the schema's business only in what it does not name, so it is kept and never asked for.
+     */
+    public function testANonStringInTheMapRefusesTheModel(): void
     {
         $custom = $this->load(self::provider([
-            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => [
-                'high' => 7,
-                'nonsense' => 'x',
-                'low' => 'low',
-            ]])],
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => ['high' => 7, 'low' => 'low']])],
         ]));
 
-        $this->assertCount(1, $custom->models);
-        // The number is not a level name, so `high` falls back to being sent as itself.
-        $this->assertSame('high', $custom->models[0]->thinkingEffort('high'));
-        $this->assertSame('low', $custom->models[0]->thinkingEffort('low'));
+        $this->assertSame([], $custom->models);
+        $this->assertStringEndsWith(
+            'model "qwen3-coder": invalid models.json schema: providers.my-box.models.0.thinkingLevelMap.high: must be string; '
+            . 'providers.my-box.models.0.thinkingLevelMap.high: must be null; providers.my-box.models.0.thinkingLevelMap.high: must match a schema in anyOf',
+            $custom->problems[0],
+        );
+
+        $kept = $this->load(self::provider([
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => ['nonsense' => 'x', 'low' => 'low']])],
+        ]));
+        $this->assertSame([], $kept->problems);
+        $this->assertSame('low', $kept->models[0]->thinkingEffort('low'));
     }
 
     public function testTheBaseUrlLosesItsTrailingSlash(): void
@@ -555,13 +564,16 @@ final class CustomModelsTest extends TestCase
         $this->assertSame(['allow_fallbacks' => false, 'order' => ['anthropic']], $model->compat->openRouterRouting);
         $this->assertSame(['only' => ['bedrock']], $model->compat->vercelGatewayRouting);
 
-        // Not said is null — not sent — and a list is not an object.
-        $plain = $this->load(self::provider([
-            'compat' => ['supportsStore' => false, 'openRouterRouting' => ['a', 'b']],
-        ]))->models[0];
+        // Not said is null — not sent.
+        $plain = $this->load(self::provider(['compat' => ['supportsStore' => false]]))->models[0];
         $this->assertInstanceOf(OpenAiCompat::class, $plain->compat);
         $this->assertNull($plain->compat->openRouterRouting);
         $this->assertNull($plain->compat->vercelGatewayRouting);
+
+        // A list is not an object: upstream's `OpenRouterRoutingSchema` refuses it, and so the provider.
+        $list = $this->load(self::provider(['compat' => ['openRouterRouting' => ['a', 'b']]]));
+        $this->assertSame([], $list->models);
+        $this->assertStringEndsWith('provider "my-box": invalid models.json schema: providers.my-box.compat.openRouterRouting: must be object', $list->problems[0]);
     }
 
     /** Upstream's `supportsOpenAIGrammarTools`, the flag that sends a grammar tool as an OpenAI custom tool. */
@@ -583,13 +595,13 @@ final class CustomModelsTest extends TestCase
     {
         $model = $this->load(self::provider([
             'compat' => ['openRouterRouting' => ['max_price' => new \stdClass(), 'only' => []]],
-            'models' => [self::model(['compat' => ['openRouterRouting' => ['sort' => ['by' => 'price', 'partition' => new \stdClass()]]]])],
+            'models' => [self::model(['compat' => ['openRouterRouting' => ['sort' => ['by' => 'price']]]])],
         ]))->models[0];
 
         $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
-        // An empty list stays a list, and an empty object an object, at every depth.
+        // An empty list stays a list, and an empty object an object.
         $this->assertSame(
-            '{"max_price":{},"only":[],"sort":{"by":"price","partition":{}}}',
+            '{"max_price":{},"only":[],"sort":{"by":"price"}}',
             json_encode($model->compat->openRouterRouting),
         );
 
@@ -599,22 +611,27 @@ final class CustomModelsTest extends TestCase
         $this->assertSame([], $empty->compat->openRouterRouting);
     }
 
-    public function testANestedEmptyObjectInTheTemplateValuesStaysAnObjectToo(): void
+    public function testTheTemplateValuesKeepTheirObjectsAndRefuseAnyOtherObject(): void
     {
-        // The same object-preserving read, for every object-valued compat key and not only the two
-        // routing ones: `chatTemplateKwargs` and `chatTemplateArgs` reach the wire whole through
-        // `StreamProxy`, and a nested `{}` in them went out as `[]`.
+        // The same object-preserving read for `chatTemplateKwargs` and `chatTemplateArgs`, which
+        // reach the wire whole through `StreamProxy`: a `$var` reference stays an object.
         $model = $this->load(self::provider([
             'compat' => [
                 'thinkingFormat' => 'chat-template',
-                'chatTemplateKwargs' => ['options' => ['extra' => new \stdClass()], 'flags' => []],
-                'chatTemplateArgs' => ['empty' => new \stdClass()],
+                'chatTemplateKwargs' => ['enable' => ['$var' => 'thinking.enabled', 'omitWhenOff' => true], 'flags' => null],
+                'chatTemplateArgs' => ['budget' => ['$var' => 'thinking.budget']],
             ],
         ]))->models[0];
 
         $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
-        $this->assertSame('{"options":{"extra":{}},"flags":[]}', json_encode($model->compat->chatTemplateKwargs));
-        $this->assertSame('{"empty":{}}', json_encode($model->compat->chatTemplateArgs));
+        $this->assertSame('{"enable":{"$var":"thinking.enabled","omitWhenOff":true},"flags":null}', json_encode($model->compat->chatTemplateKwargs));
+        $this->assertSame('{"budget":{"$var":"thinking.budget"}}', json_encode($model->compat->chatTemplateArgs));
+
+        // Upstream's `ChatTemplateKwargValueSchema`: a scalar, null, or a `$var` reference — any other
+        // object refuses the provider.
+        $refused = $this->load(self::provider(['compat' => ['chatTemplateKwargs' => ['options' => ['extra' => new \stdClass()]]]]));
+        $this->assertSame([], $refused->models);
+        $this->assertStringContainsString('providers.my-box.compat.chatTemplateKwargs.options.$var: must have required properties $var', $refused->problems[0]);
     }
 
     public function testATieredPriceIsReadFromTheCostBlock(): void
@@ -943,6 +960,36 @@ final class CustomModelsTest extends TestCase
         }
     }
 
+    /** Upstream's "accepts custom compatibility settings and rejects malformed known fields". */
+    public function testUnknownCompatSettingsAreAcceptedAndMalformedKnownOnesRefused(): void
+    {
+        $compat = ['customOption' => 'value', 'supportsStore' => true, 'supportsAdditionalTools' => true];
+        $this->assertSame([], $this->load(['api' => 'openai-completions', 'compat' => $compat], 'demo')->problems);
+
+        $custom = $this->load(['compat' => ['supportsLongCacheRetention' => 'yes']], 'demo');
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringEndsWith('provider "demo": invalid models.json schema: providers.demo.compat.supportsLongCacheRetention: must be boolean', $custom->problems[0]);
+    }
+
+    /** Upstream's "validates $schema in models.json at runtime". */
+    public function testASchemaReferenceIsAcceptedAndMustBeAString(): void
+    {
+        $file = static fn (mixed $schema, array|\stdClass $providers): string => (string) json_encode(['$schema' => $schema, 'providers' => $providers]);
+        $url = 'https://pigagent.dev/schemas/models.schema.json';
+
+        $custom = CustomModels::load($this->write($file($url, ['demo' => ['baseUrl' => 'http://localhost:8080/v1', 'api' => 'openai-completions', 'models' => [['id' => 'demo']]]])));
+        $this->assertSame([], $custom->problems);
+        $this->assertSame('demo', $custom->models[0]->id);
+
+        $empty = CustomModels::load($this->write($file($url, ['demo' => ['models' => [['id' => '']]]])));
+        $this->assertSame([], $empty->models);
+        $this->assertStringContainsString('invalid models.json schema', $empty->problems[0]);
+
+        $number = CustomModels::load($this->write($file(42, new \stdClass())));
+        $this->assertSame([], $number->models);
+        $this->assertStringEndsWith('models.json: invalid models.json schema: $schema: must be string', $number->problems[0]);
+    }
+
     public function testAnEmptyApiKeyIsASchemaErrorThatRefusesTheProvider(): void
     {
         $auth = Auth::inMemory();
@@ -952,7 +999,7 @@ final class CustomModelsTest extends TestCase
         $this->assertSame([], $custom->models);
         $this->assertNull($auth->apiKey('my-box'));
         $this->assertCount(1, $custom->problems);
-        $this->assertStringContainsString('"apiKey" must be a non-empty string', $custom->problems[0]);
+        $this->assertStringContainsString('invalid models.json schema: providers.my-box.apiKey: must not have fewer than 1 characters', $custom->problems[0]);
     }
 
     public function testAuthHeaderPutsTheResolvedKeyInTheHeaders(): void
@@ -1163,14 +1210,16 @@ final class CustomModelsTest extends TestCase
         return [
             [['apiKey' => 'K', 'api' => 'openai-completions', 'models' => [self::model()]], '"baseUrl" is required when defining custom models'],
             [[], 'must specify "baseUrl", "headers", "compat", "modelOverrides", or "models"'],
-            [self::provider(['api' => null, 'models' => [self::model()]]), '"api" must be a non-empty string'],
+            [self::provider(['api' => null, 'models' => [self::model()]]), 'providers.my-box.api: must be string'],
             [self::provider(['api' => 'telepathy']), '"api" must be one of'],
             [['baseUrl' => 'http://b', 'models' => [self::model()]], 'no "api" specified'],
-            [self::provider(['models' => [self::model(['id' => ''])]]), 'no "id"'],
-            [self::provider(['models' => [self::model(['name' => ''])]]), '"name" must be a non-empty string'],
-            [self::provider(['models' => [self::model(['contextWindow' => 0])]]), '"contextWindow" must be'],
-            [self::provider(['models' => [self::model(['contextWindow' => 'lots'])]]), '"contextWindow" must be'],
-            [self::provider(['models' => [self::model(['maxTokens' => -1])]]), '"maxTokens" must be'],
+            [self::provider(['models' => [self::model(['id' => ''])]]), 'providers.my-box.models.0.id: must not have fewer than 1 characters'],
+            [self::provider(['models' => [self::model(['name' => ''])]]), 'providers.my-box.models.0.name: must not have fewer than 1 characters'],
+            [self::provider(['models' => [self::model(['contextWindow' => 0])]]), 'providers.my-box.models.0.contextWindow: must be > 0'],
+            [self::provider(['models' => [self::model(['contextWindow' => 'lots'])]]), 'providers.my-box.models.0.contextWindow: must be number'],
+            [self::provider(['models' => [self::model(['maxTokens' => -1])]]), 'providers.my-box.models.0.maxTokens: must be > 0'],
+            // Upstream's schema takes any positive number; pig's model holds whole tokens.
+            [self::provider(['models' => [self::model(['maxTokens' => 1.5])]]), '"maxTokens" must be a positive whole number'],
         ];
     }
 

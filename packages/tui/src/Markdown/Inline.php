@@ -16,7 +16,7 @@ namespace Pig\Tui\Markdown;
 final class Inline
 {
     /** Characters a backslash may escape, from the CommonMark set. */
-    private const string ESCAPABLE = '\\`*_{}[]()#+-.!|~<>"\'';
+    private const string ESCAPABLE = '\\`*_{}[]()#+-.!|~<>"\'$';
 
     /** @return list<InlineToken> */
     public static function tokenize(string $text): array
@@ -28,6 +28,24 @@ final class Inline
 
         while ($pos < $length) {
             $char = $text[$pos];
+
+            // Math first, before an escape can eat the `\` of `\(`: `marked` tries upstream's
+            // `latex` extension ahead of its own tokenizers.
+            if ($char === '$' || ($char === '\\' && ($text[$pos + 1] ?? '') !== '' && str_contains('([', $text[$pos + 1]))) {
+                $latex = LatexSyntax::tokenizeInline(substr($text, $pos));
+
+                if ($latex !== null) {
+                    if ($buffer !== '') {
+                        $tokens[] = new Text($buffer);
+                        $buffer = '';
+                    }
+
+                    $tokens[] = $latex;
+                    $pos += strlen($latex->raw);
+
+                    continue;
+                }
+            }
 
             if ($char === '\\' && $pos + 1 < $length && str_contains(self::ESCAPABLE, $text[$pos + 1])) {
                 $buffer .= $text[$pos + 1];
@@ -88,6 +106,7 @@ final class Inline
             $text .= match (true) {
                 $token instanceof Text => $token->text,
                 $token instanceof CodeSpan => $token->code,
+                $token instanceof LatexSpan => $token->raw,
                 $token instanceof LineBreak => "\n",
                 $token instanceof Strong, $token instanceof Emphasis, $token instanceof Strikethrough,
                     $token instanceof Link => self::flatten($token->children),

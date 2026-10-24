@@ -407,3 +407,31 @@ because `php -l` only parses:
 Neither catches a **missing `use`**: an unimported class is resolved at run time too, and shows up
 only on the code path that touches it. Exercise every branch — `ThinkingStartEvent` went unimported
 and only the thinking test found it.
+
+## Configuration schemas: the JSON is the source
+
+Upstream writes its configuration schemas in typebox (`settings-schema.ts`, `compat-schema.ts`,
+`theme-schema.ts`, …), validates with `Compile(schema)` at runtime and generates the published
+`schemas/*.schema.json` from the same objects. pig has no typebox and adds no package for it, so the
+four files in `packages/coding-agent/schemas/` are kept by hand and are the source: `ConfigSchemas`
+reads them, `SchemaErrors` (typebox's `Errors()` written out — its keyword order, its `en_US`
+messages, its eight-error cap) checks `models.json` and themes against them, and the error messages
+are upstream's. What generation guaranteed upstream, `ConfigSchemasTest` checks instead: keybinding
+ids and descriptions against `Keybindings::keybindingDefinitions()`, theme tokens against
+`ThemeJson::COLOR_TOKENS`, settings defaults against what `Settings` answers for an empty file, the
+key grammar against `Keys::isKeyName()`, and `SchemaErrors` against typebox itself through
+`test/fixtures/schema-errors.json`, documents and the errors typebox 1.3.27 gave for them.
+
+Where pig's schemas differ from upstream's: the `$id`s are `https://pigagent.dev/schemas/…`; the
+settings schema leaves out what pig does not read (`npmCommand`, `enableAnalytics`, `trackingId`,
+`deviceId`, the legacy `queueMode` and `websockets`) and adds pig's own keys (`fallbackModels`,
+`hooks`, `customTools`, `disabledExtensions`, `proxy.bypass`, `update.check`, the legacy
+`tui.mode`); the key grammar also reads `control`, `option`, `cmd`, `command`, `meta`, `pageup` and
+`pagedown`. A change to a setting, a binding, a theme token or a `models.json` field is a change to
+the schema file in the same commit; the test names the file when it is forgotten. The files must be
+uploaded to pigagent.dev for the `$schema` URLs to resolve.
+
+`models.json` is checked piece by piece — the top of the file, each provider without its entries,
+each `models` entry, each `modelOverrides` entry — so that, as before, an error refuses only what it
+is in; upstream refuses the whole file.
+

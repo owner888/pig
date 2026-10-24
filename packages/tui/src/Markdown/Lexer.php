@@ -8,10 +8,10 @@ namespace Pig\Tui\Markdown;
  * Markdown, as much of it as a terminal can draw.
  *
  * Headings, paragraphs, fenced and indented code, lists with nesting, block quotes,
- * rules, and GFM tables and strikethrough. Not CommonMark. Anything it does not recognise stays a
- * paragraph and is drawn as the text it was, which is the behaviour that matters — this renders
- * whatever a model wrote, and being wrong should look like plain text rather than like mangled
- * markup.
+ * rules, GFM tables and strikethrough, and LaTeX display math (`LatexSyntax`). Not CommonMark.
+ * Anything it does not recognise stays a paragraph and is drawn as the text it was, which is the
+ * behaviour that matters — this renders whatever a model wrote, and being wrong should look like
+ * plain text rather than like mangled markup.
  *
  * **Run against `marked` 15 over a corpus of 54 documents**, which is where the two list bugs below
  * came from, and these are what is left. Each is a difference with a reason rather than a gap
@@ -75,7 +75,8 @@ final class Lexer
                 continue;
             }
 
-            $token = self::fence($lines, $index)
+            $token = self::latexBlock($lines, $index)
+                ?? self::fence($lines, $index)
                 ?? self::heading($lines, $index)
                 ?? self::rule($lines, $index)
                 ?? self::quote($lines, $index)
@@ -90,6 +91,31 @@ final class Lexer
         }
 
         return $tokens;
+    }
+
+    /**
+     * Display math — upstream's `latexBlock` extension, which `marked` tries before every other
+     * block tokenizer. Only a line that could open it pays for joining the rest of the document.
+     *
+     * The match always ends at the end of a line, so it is counted back into whole lines.
+     *
+     * @param list<string> $lines
+     * @return array{0: BlockToken, 1: int}|null
+     */
+    private static function latexBlock(array $lines, int $index): ?array
+    {
+        if (!LatexSyntax::startsBlock($lines[$index])) {
+            return null;
+        }
+
+        $token = LatexSyntax::tokenizeBlock(implode("\n", array_slice($lines, $index)));
+        if ($token === null) {
+            return null;
+        }
+
+        $newlines = substr_count($token->raw, "\n");
+
+        return [$token, str_ends_with($token->raw, "\n") ? $newlines : $newlines + 1];
     }
 
     /**
@@ -424,6 +450,12 @@ final class Lexer
     private static function interrupts(array $lines, int $index): bool
     {
         $line = $lines[$index];
+
+        // Upstream's block extension `start` cuts a paragraph where display math begins, as long as
+        // the math is really there; otherwise `marked` glues the two halves back together.
+        if (LatexSyntax::startsBlock($line) && self::latexBlock($lines, $index) !== null) {
+            return true;
+        }
 
         return preg_match('/^ {0,3}(`{3,}|~{3,})/', $line) === 1
             || preg_match('/^ {0,3}#{1,6}(\s|$)/', $line) === 1

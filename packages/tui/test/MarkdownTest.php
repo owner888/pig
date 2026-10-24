@@ -505,4 +505,213 @@ final class MarkdownTest extends TestCase
         $markdown->setText('# Other');
         $this->assertStringContainsString('Other', implode('', $markdown->render(40)));
     }
+
+    // ---- LaTeX math (upstream's `markdown.test.ts`, "LaTeX math") ----------------------
+
+    /** @return list<string> */
+    private function mathRows(string $markdown, bool $renderLatex = true): array
+    {
+        $lines = (new Markdown($markdown, 0, 0, null, null, $renderLatex))->render(80);
+
+        return array_map(static fn (string $line): string => rtrim(Ansi::strip($line)), $lines);
+    }
+
+    public function testRendersInlineDollarAndParenthesisDelimiters(): void
+    {
+        $this->assertSame(
+            ['A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, →, and s → ∞.'],
+            $this->mathRows('A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, $\rightarrow$, and \(s \to \infty\).'),
+        );
+    }
+
+    public function testRendersDisplayDollarDelimitersWithoutMarkdownEscapeCorruption(): void
+    {
+        $this->assertSame(
+            ['Before', '', '{3x+2y, x ∈ {0, ± 1}}', '', 'after'],
+            $this->mathRows(<<<'MD'
+                Before
+
+                $$\{3x+2y,\; x \in \{0, \pm 1\}\}$$
+
+                after
+                MD),
+        );
+    }
+
+    public function testRendersDisplayBracketDelimiters(): void
+    {
+        $this->assertSame(
+            ['Before', '', '    0.1 lux', 'E ≈ ────────', '    100 lm/W', '', 'after'],
+            $this->mathRows(<<<'MD'
+                Before
+
+                \[
+                E \approx \frac{0.1\ \text{lux}}{100\ \text{lm/W}}
+                \]
+
+                after
+                MD),
+        );
+    }
+
+    public function testAlignsMatrixRowsWithTheOpeningDelimiter(): void
+    {
+        $this->assertSame(
+            ['Consider the matrix', '', 'A = ⎛ π │ 0   ⎞', '    ⎝ 0 │ 1/π ⎠.'],
+            $this->mathRows(<<<'MD'
+                Consider the matrix
+
+                \[
+                A=
+                \begin{pmatrix}
+                \pi & 0\\
+                0 & \frac{1}{\pi}
+                \end{pmatrix}.
+                \]
+                MD),
+        );
+    }
+
+    public function testRendersLowerLimitsBeneathDisplayOperators(): void
+    {
+        $this->assertSame(
+            ['     (sin x)/x-1', 'lim  ─────────── = 0', 'x→0  (eˣ-1)/x-1'],
+            $this->mathRows(<<<'MD'
+                \[
+                \lim_{x\to 0}\frac{\frac{\sin x}{x}-1}{\frac{e^x-1}{x}-1}=0
+                \]
+                MD),
+        );
+    }
+
+    public function testRendersMathInsideListsAndTables(): void
+    {
+        $output = implode("\n", $this->mathRows(<<<'MD'
+            - Formula: $F_1 = u^2$
+
+            | Value |
+            | --- |
+            | $\mathbb{C}^3$ |
+            MD));
+
+        $this->assertStringContainsString('- Formula: F₁ = u²', $output);
+        $this->assertStringContainsString('│ ℂ³', $output);
+    }
+
+    public function testDoesNotTreatCurrencyShellVariablesOrCodeSpansAsMath(): void
+    {
+        $this->assertSame(
+            ['Costs $5 and $10 or $8k–$12k; use $x$, $HOME, and ${PATH}.'],
+            $this->mathRows('Costs $5 and $10 or $8k–$12k; use `$x$`, $HOME, and ${PATH}.'),
+        );
+
+        $shellVariables = 'Paths: $HOME/$USER and $XDG_CONFIG_HOME/$APP_CONFIG';
+        $this->assertSame([$shellVariables], $this->mathRows($shellVariables));
+    }
+
+    public function testPreservesUnsupportedAndIncompleteLatexExactly(): void
+    {
+        foreach (['Unknown $x + \unknown{y}$ after', 'Streaming $\mathbb{C}^3'] as $source) {
+            $this->assertSame([$source], $this->mathRows($source));
+        }
+    }
+
+    public function testPreservesIncompleteBackslashDelimitersWhileStreaming(): void
+    {
+        $this->assertSame(['Map \(\mathbb{C}^3'], $this->mathRows('Map \(\mathbb{C}^3'));
+        $this->assertSame(['\[', 'x^2'], $this->mathRows("\\[\nx^2"));
+    }
+
+    public function testDoesNotRenderLatexInsideEscapedDelimitersOrCodeFences(): void
+    {
+        // `\$` is an escape here as it is to `marked`: `$` joined the escapable set with LaTeX.
+        $source = implode("\n", ['Escaped \$x-y\$.', '', '```text', '$\mathbb{C}^3$', '```']);
+
+        $this->assertSame(['Escaped $x-y$.', '', '```text', '  $\mathbb{C}^3$', '```'], $this->mathRows($source));
+    }
+
+    public function testAllowsLatexRenderingToBeDisabled(): void
+    {
+        $this->assertSame(
+            ['$$', '\widetilde Y_{sf}', '=', '(1-w_{sf})\mu_{sf}^{\mathrm{MAR}}', '$$', '', 'Inline \(A_{sf}\)'],
+            $this->mathRows(<<<'MD'
+                $$
+                \widetilde Y_{sf}
+                =
+                (1-w_{sf})\mu_{sf}^{\mathrm{MAR}}
+                $$
+
+                Inline \(A_{sf}\)
+                MD, false),
+        );
+    }
+
+    /** @return iterable<string, array{list<string>, list<string>}> */
+    public static function unclosedDisplayMathBeforeTables(): iterable
+    {
+        $table = ['| A | B |', '|---|---|', '| 1 | 2 |'];
+        $rendered = ['┌───┬───┐', '│ A │ B │', '├───┼───┤', '│ 1 │ 2 │', '└───┴───┘'];
+
+        yield 'a table after an orphan $$ opener' => [
+            ['Intro', '', '$$', '', ...$table, '', 'After'],
+            ['Intro', '', '$$', '', ...$rendered, '', 'After'],
+        ];
+        yield 'a table after an orphan $$ opener with math-like content' => [
+            ['$$', 'x = 1', '', ...$table],
+            ['$$', 'x = 1', '', ...$rendered],
+        ];
+        yield 'an unclosed $$ not paired with a later $$ across a table' => [
+            ['Intro', '', '$$', 'x = 1', '', ...$table, '', '$$', 'y^2', '$$'],
+            ['Intro', '', '$$', 'x = 1', '', ...$rendered, '', 'y²'],
+        ];
+        yield 'a single-column table with a pipe-free aligned delimiter after an orphan $$' => [
+            ['$$', '', '| A |', ':---:', '| 1 |'],
+            ['$$', '', '┌───┐', '│ A │', '├───┤', '│ 1 │', '└───┘'],
+        ];
+        // Upstream draws `\\[` and `x^2` on lines of their own (and a stray blank line in front, from
+        // `marked` cutting the paragraph one character in); pig joins a paragraph's soft line breaks
+        // into spaces. What the case is about holds either way: the table is still a table.
+        yield 'a table after an orphan \[ opener' => [
+            ['\\\\[', 'x^2', '', ...$table],
+            ['\\[ x^2', '', ...$rendered],
+        ];
+        yield 'an unclosed \[ not paired with a later \[ across a table' => [
+            ['\\\\[', 'x = 1', '', ...$table, '', '\\\\[', 'y^2', '\\\\\\\\]'],
+            ['\\[ x = 1', '', ...$rendered, '', '\\[ y^2 \\\\]'],
+        ];
+        // Upstream's lexer takes `Value` over `| --- |` as a table; pig's wants a pipe in the header
+        // row, so here it is a paragraph — but the orphan `$$` still does not swallow it.
+        yield 'a pipe-free header after an orphan $$' => [
+            ['$$', 'x^2', '', 'Value', '| --- |', '1'],
+            ['$$', 'x^2', '', 'Value | --- | 1'],
+        ];
+        yield 'closed multi-line display math followed by a table' => [
+            ['$$', 'a', '+ b', '$$', '', ...$table],
+            ['a + b', '', ...$rendered],
+        ];
+    }
+
+    /**
+     * Upstream's #11159: display math never spans a table.
+     *
+     * @param list<string> $source
+     * @param list<string> $expected
+     */
+    #[DataProvider('unclosedDisplayMathBeforeTables')]
+    public function testUnclosedDisplayMathDoesNotSwallowATable(array $source, array $expected): void
+    {
+        $this->assertSame($expected, $this->mathRows(implode("\n", $source)));
+    }
+
+    public function testSwitchesFromRawToRenderedMathWhenAStreamedDelimiterCloses(): void
+    {
+        $markdown = new Markdown('Map $\mathbb{C}^3', 0, 0);
+        $strip = static fn (array $lines): array => array_map(static fn (string $line): string => rtrim(Ansi::strip($line)), $lines);
+
+        $this->assertSame(['Map $\mathbb{C}^3'], $strip($markdown->render(80)));
+
+        $markdown->setText('Map $\mathbb{C}^3$');
+
+        $this->assertSame(['Map ℂ³'], $strip($markdown->render(80)));
+    }
 }

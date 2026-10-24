@@ -7,6 +7,7 @@ namespace Pig\Tui\Components;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Images\TerminalImage;
+use Pig\Tui\Latex;
 use Pig\Tui\Markdown\Blank;
 use Pig\Tui\Markdown\Blockquote;
 use Pig\Tui\Markdown\BlockToken;
@@ -14,6 +15,8 @@ use Pig\Tui\Markdown\CodeBlock;
 use Pig\Tui\Markdown\CodeSpan;
 use Pig\Tui\Markdown\Emphasis;
 use Pig\Tui\Markdown\Heading;
+use Pig\Tui\Markdown\LatexBlock;
+use Pig\Tui\Markdown\LatexSpan;
 use Pig\Tui\Markdown\InlineToken;
 use Pig\Tui\Markdown\Lexer;
 use Pig\Tui\Markdown\LineBreak;
@@ -60,6 +63,8 @@ final class Markdown implements Component
         private readonly int $paddingY = 0,
         ?MarkdownTheme $theme = null,
         private readonly ?DefaultTextStyle $defaultStyle = null,
+        /** Render supported LaTeX math expressions as Unicode text — upstream's `renderLatex` option. */
+        private readonly bool $renderLatex = true,
     ) {
         // Not a default parameter: a theme is made of closures, and a default value has
         // to be a constant expression.
@@ -202,6 +207,7 @@ final class Markdown implements Component
             $token instanceof Heading => [$this->heading($token)],
             $token instanceof Paragraph => [$this->inline($token->children)],
             $token instanceof CodeBlock => $this->code($token),
+            $token instanceof LatexBlock => $this->latexBlock($token),
             $token instanceof ListBlock => $this->list($token, 0, $width),
             $token instanceof Table => $this->table($token, $width),
             $token instanceof Blockquote => $this->quote($token, $width),
@@ -546,6 +552,9 @@ final class Markdown implements Component
                 $token instanceof Emphasis => ($this->theme->italic)($this->inline($token->children)) . $resume,
                 $token instanceof Strikethrough => ($this->theme->strikethrough)($this->inline($token->children)) . $resume,
                 $token instanceof CodeSpan => ($this->theme->code)($token->code) . $resume,
+                $token instanceof LatexSpan => $this->styledLines(
+                    !$token->pending && $this->renderLatex ? (Latex::render($token->text) ?? $token->raw) : $token->raw,
+                ),
                 $token instanceof Link => $this->link($token) . $resume,
                 $token instanceof LineBreak => "\n",
                 default => '',
@@ -553,6 +562,33 @@ final class Markdown implements Component
         }
 
         return $text;
+    }
+
+    /**
+     * Display math, one drawn line per rendered line; the source as written when it does not
+     * render, has not closed yet, or rendering is off.
+     *
+     * @return list<string>
+     */
+    private function latexBlock(LatexBlock $token): array
+    {
+        $rendered = !$token->pending && $this->renderLatex
+            ? (Latex::render($token->text, true) ?? self::trimRaw($token->raw))
+            : self::trimRaw($token->raw);
+
+        return array_map(fn (string $line): string => $this->styled($line), explode("\n", $rendered));
+    }
+
+    /** `raw.trim()` — JavaScript's, which knows more whitespace than PHP's `trim()`. */
+    private static function trimRaw(string $raw): string
+    {
+        return preg_replace('/^[\s\x{FEFF}]+|[\s\x{FEFF}]+$/uD', '', $raw) ?? trim($raw);
+    }
+
+    /** Text that may hold line breaks, each line in the default style — upstream's `applyTextWithNewlines`. */
+    private function styledLines(string $text): string
+    {
+        return implode("\n", array_map(fn (string $line): string => $this->styled($line), explode("\n", $text)));
     }
 
     private function link(Link $token): string

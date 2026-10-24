@@ -12,6 +12,8 @@ use Pig\Ai\ModelJson;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
+use Pig\CodingAgent\Schemas\ConfigSchemas;
+use Pig\CodingAgent\Schemas\SchemaErrors;
 
 /**
  * Providers and models declared in a file, so somebody's own endpoint does not need a release.
@@ -165,7 +167,7 @@ final readonly class CustomModels
             $decoded = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
             // The same document with its objects kept as objects: `{}` and `[]` are one value as
             // arrays, and upstream's schema checks tell them apart — `"cost": []` is `must be
-            // object` there. `schemaErrors()` reads this one.
+            // object` there. `schemaProblems()` reads this one.
             $objects = json_decode($raw, false, flags: JSON_THROW_ON_ERROR);
             $decoded = self::keepCompatObjects($decoded, $objects);
         } catch (\JsonException $error) {
@@ -174,6 +176,15 @@ final readonly class CustomModels
 
         if (!is_array($decoded) || !isset($decoded['providers']) || !is_array($decoded['providers'])) {
             return new self([], [], ["{$path} has no \"providers\" object in it"]);
+        }
+
+        // Upstream's `ModelsConfigSchema` at the top: `$schema` may name the published schema
+        // (`https://pigagent.dev/schemas/models.schema.json`) and is never a provider, but it is a
+        // string. The file is refused over it, as upstream refuses it — it is about the whole file.
+        $topErrors = self::schemaProblems($objects, self::topSchema(), '');
+
+        if ($topErrors !== []) {
+            return new self([], [], ["{$path}: invalid models.json schema: " . implode('; ', $topErrors)]);
         }
 
         $models = [];
@@ -302,7 +313,7 @@ final readonly class CustomModels
 
     /**
      * @param array<mixed> $config
-     * @param \stdClass $object the same provider, decoded with its objects kept — for `schemaErrors()`
+     * @param \stdClass $object the same provider, decoded with its objects kept — for `schemaProblems()`
      * @return array{0: array{baseUrl: ?string, headers: array<string, string>, compat: array<mixed>, declared: list<Model>, declaredHeaders: array<string, array<string, string>>, overrides: array<string, array<mixed>>}|null, 1: string|null, 2: list<string>}
      */
     private static function provider(string $path, string $name, array $config, \stdClass $object): array
@@ -311,41 +322,22 @@ final readonly class CustomModels
         $baseUrl = $config['baseUrl'] ?? null;
         $key = $config['apiKey'] ?? null;
 
-        // Upstream's `ProviderConfigSchema`: `baseUrl`, `apiKey` and `api` are optional, and a string
-        // with at least one character when they are there.
-        foreach (['baseUrl' => $baseUrl, 'apiKey' => $key, 'api' => $config['api'] ?? null] as $field => $value) {
-            if (array_key_exists($field, $config) && (!is_string($value) || $value === '')) {
-                return [null, null, ["{$where}: \"{$field}\" must be a non-empty string"]];
-            }
+        // Upstream's `ProviderConfigSchema`, all of it but the entries of `models` and
+        // `modelOverrides`, which are checked one at a time below so that one bad model refuses that
+        // model rather than its provider.
+        $providerErrors = self::schemaProblems($object, self::providerSchema(), "/providers/{$name}");
+
+        if ($providerErrors !== []) {
+            return [null, null, ["{$where}: invalid models.json schema: " . implode('; ', $providerErrors)]];
         }
 
         $entries = $config['models'] ?? [];
         $overrides = $config['modelOverrides'] ?? [];
 
-        if (!is_array($entries) || !array_is_list($entries)) {
-            return [null, $key, ["{$where}: \"models\" must be a list"]];
-        }
-
-        if (!is_array($overrides) || ($overrides !== [] && array_is_list($overrides))) {
-            return [null, $key, ["{$where}: \"modelOverrides\" must be an object of model ids"]];
-        }
-
         // Upstream's `applyModelsJson()` refusal: a provider entry that changes nothing is a mistake.
         if ($entries === [] && $baseUrl === null && !isset($config['headers']) && !isset($config['compat'])
             && $overrides === [] && $key === null && !isset($config['oauth']) && !isset($config['authHeader'])) {
             return [null, null, ["{$where}: must specify \"baseUrl\", \"headers\", \"compat\", \"modelOverrides\", or \"models\""]];
-        }
-
-        // Upstream's `ProviderConfigSchema.compat`, the key of it whose shape pig checks: a provider's
-        // `allowedFallbackModels`, each with upstream's `ModelCostSchema` cost. A provider-level
-        // problem refuses the provider, as a model-level one refuses the model.
-        $compatObject = $object->compat ?? null;
-        $providerSchemaErrors = $compatObject instanceof \stdClass && property_exists($compatObject, 'allowedFallbackModels')
-            ? self::schemaErrors($compatObject->allowedFallbackModels, self::ALLOWED_FALLBACK_MODELS_SCHEMA, "providers.{$name}.compat.allowedFallbackModels")
-            : [];
-
-        if ($providerSchemaErrors !== []) {
-            return [null, $key, ["{$where}: invalid models.json schema: " . implode('; ', $providerSchemaErrors)]];
         }
 
         $problems = [];
@@ -386,7 +378,7 @@ final readonly class CustomModels
             $entryObject = $entryObjects[$position] ?? null;
 
             if (!is_array($entry) || !$entryObject instanceof \stdClass) {
-                $problems[] = "{$where}: a model that is not an object";
+                $problems[] = "{$where}: invalid models.json schema: " . implode('; ', self::schemaProblems($entryObject, self::modelSchema(), "/providers/{$name}/models/{$position}"));
 
                 continue;
             }
@@ -400,7 +392,7 @@ final readonly class CustomModels
                 $providerCompat,
                 $entry,
                 $entryObject,
-                "providers.{$name}.models.{$position}",
+                "/providers/{$name}/models/{$position}",
                 $existing,
             );
 
@@ -449,8 +441,8 @@ final readonly class CustomModels
      *        overrides key by key — upstream's `mergeCompat(providerConfig.compat, definition.compat)`
      * @param array<mixed>          $entry
      * @param \stdClass             $object the same model, decoded with its objects kept as objects
-     * @param string                $schemaPath upstream's validation path to this model,
-     *        `providers.<name>.models.<index>`, for the errors `schemaErrors()` reports
+     * @param string                $schemaPath the JSON pointer to this model,
+     *        `/providers/<name>/models/<index>`, which its schema errors are reported under
      * @param list<Model>           $existing the provider's models before the file, for the defaults
      * @return array{0: Model, 1: array<string, string>}|string the model and its own headers, resolved
      */
@@ -467,16 +459,20 @@ final readonly class CustomModels
         array $existing = [],
     ): array|string {
         $id = $entry['id'] ?? null;
+        $label = is_string($id) && $id !== '' ? "{$where}, model \"{$id}\"" : $where;
 
-        if (!is_string($id) || $id === '') {
-            return "{$where}: a model with no \"id\"";
+        // Upstream's `ModelDefinitionSchema`, the whole entry, in its words — `<path>: <message>`, the
+        // lines of its "Invalid models.json schema" — and in typebox's order, at most eight. Upstream
+        // refuses the whole file over one; pig refuses this model, as it does for everything else
+        // here. **`cost` is upstream's `ModelCostSchema`**: absent is free — that is what a local
+        // endpoint is — but a block that is there says all four rates, or the model is refused.
+        $schemaErrors = self::schemaProblems($object, self::modelSchema(), $schemaPath);
+
+        if ($schemaErrors !== [] || !is_string($id)) {
+            return "{$label}: invalid models.json schema: " . implode('; ', $schemaErrors);
         }
 
         $name = $entry['name'] ?? $id;
-
-        if (!is_string($name) || $name === '') {
-            return "{$where}, model \"{$id}\": \"name\" must be a non-empty string";
-        }
 
         // Upstream's rule: the model's own `api` wins, the provider's is next, and then the api of
         // the provider's existing models (`findModelDefaults()`: the same id, else one with the api
@@ -510,29 +506,6 @@ final readonly class CustomModels
 
         if (!is_int($maxTokens) || $maxTokens <= 0) {
             return "{$where}, model \"{$id}\": \"maxTokens\" must be a positive whole number";
-        }
-
-        // Upstream's `ModelDefinitionSchema` for the blocks below, checked the way its TypeBox schema
-        // checks them and reported in its words — `<path>: <message>`, the lines of its "Invalid
-        // models.json schema" — in the schema's order: `inputLimits`, `cost`, `promptCache`,
-        // `compat.allowedFallbackModels`. Upstream refuses the whole file over one; pig refuses this
-        // model, as it does for everything else here, and names every error the schema found in it.
-        //
-        // **`cost` is upstream's `ModelCostSchema`**: an object, all four rates required and each a
-        // number, and its tiers. Absent is free — that is what a local endpoint is — but a block that
-        // is there says all four, or the model is refused.
-        $compatObject = $object->compat ?? null;
-        $schemaErrors = [
-            ...self::schemaErrors($object->inputLimits ?? null, self::INPUT_LIMITS_SCHEMA, "{$schemaPath}.inputLimits", property_exists($object, 'inputLimits')),
-            ...self::schemaErrors($object->cost ?? null, self::COST_SCHEMA, "{$schemaPath}.cost", property_exists($object, 'cost')),
-            ...self::schemaErrors($object->promptCache ?? null, self::PROMPT_CACHE_SCHEMA, "{$schemaPath}.promptCache", property_exists($object, 'promptCache')),
-            ...($compatObject instanceof \stdClass
-                ? self::schemaErrors($compatObject->allowedFallbackModels ?? null, self::ALLOWED_FALLBACK_MODELS_SCHEMA, "{$schemaPath}.compat.allowedFallbackModels", property_exists($compatObject, 'allowedFallbackModels'))
-                : []),
-        ];
-
-        if ($schemaErrors !== []) {
-            return "{$where}, model \"{$id}\": invalid models.json schema: " . implode('; ', $schemaErrors);
         }
 
         try {
@@ -614,31 +587,15 @@ final readonly class CustomModels
     {
         $at = "{$where}, modelOverrides \"{$id}\"";
 
-        if (!is_array($override) || !$object instanceof \stdClass) {
-            return "{$at}: must be an object";
-        }
-
-        $path = "providers.{$provider}.modelOverrides.{$id}";
-        $compatObject = $object->compat ?? null;
-        $errors = [
-            ...self::schemaErrors($object->name ?? null, ['type' => 'string', 'minLength' => 1], "{$path}.name", property_exists($object, 'name')),
-            ...self::schemaErrors($object->inputLimits ?? null, self::INPUT_LIMITS_SCHEMA, "{$path}.inputLimits", property_exists($object, 'inputLimits')),
-            // `Type.Partial(ModelCostSchema)`: the same rates, none required.
-            ...self::schemaErrors($object->cost ?? null, [...self::COST_SCHEMA, 'required' => []], "{$path}.cost", property_exists($object, 'cost')),
-            ...self::schemaErrors($object->promptCache ?? null, self::PROMPT_CACHE_SCHEMA, "{$path}.promptCache", property_exists($object, 'promptCache')),
-            ...self::schemaErrors($object->contextWindow ?? null, ['type' => 'number', 'exclusiveMinimum' => 0], "{$path}.contextWindow", property_exists($object, 'contextWindow')),
-            ...self::schemaErrors($object->maxTokens ?? null, ['type' => 'number', 'exclusiveMinimum' => 0], "{$path}.maxTokens", property_exists($object, 'maxTokens')),
-            ...($compatObject instanceof \stdClass
-                ? self::schemaErrors($compatObject->allowedFallbackModels ?? null, self::ALLOWED_FALLBACK_MODELS_SCHEMA, "{$path}.compat.allowedFallbackModels", property_exists($compatObject, 'allowedFallbackModels'))
-                : []),
-        ];
-
-        if (array_key_exists('reasoning', $override) && !is_bool($override['reasoning'])) {
-            $errors[] = "{$path}.reasoning: must be boolean";
-        }
+        // Upstream's `ModelOverrideSchema`: every field optional, `cost` a partial `ModelCostSchema`.
+        $errors = self::schemaProblems($object, self::overrideSchema(), "/providers/{$provider}/modelOverrides/{$id}");
 
         if ($errors !== []) {
             return "{$at}: invalid models.json schema: " . implode('; ', $errors);
+        }
+
+        if (!is_array($override)) {
+            return "{$at}: must be an object";
         }
 
         try {
@@ -767,165 +724,58 @@ final readonly class CustomModels
         return new Model(...[...get_object_vars($model), ...$changes]);
     }
 
-    /** Upstream's `ModelCostSchema`: the four rates required, each a number, and optional tiers. */
-    private const array COST_SCHEMA = [
-        'type' => 'object',
-        'required' => ['input', 'output', 'cacheRead', 'cacheWrite'],
-        'properties' => [
-            'input' => ['type' => 'number'],
-            'output' => ['type' => 'number'],
-            'cacheRead' => ['type' => 'number'],
-            'cacheWrite' => ['type' => 'number'],
-            'tiers' => ['type' => 'array', 'items' => self::COST_TIER_SCHEMA],
-        ],
-    ];
+    // ---- upstream's models.json schema -----------------------------------------------------------
 
     /**
-     * Upstream's `allowedFallbackModels` schema: at most three `AnthropicAllowedFallbackModelSchema`
-     * entries — a provider and a model, neither empty, and a `ModelCostSchema` cost, tiers and all.
-     */
-    private const array ALLOWED_FALLBACK_MODELS_SCHEMA = [
-        'type' => 'array',
-        'maxItems' => 3,
-        'items' => [
-            'type' => 'object',
-            'required' => ['provider', 'model', 'cost'],
-            'properties' => [
-                'provider' => ['type' => 'string', 'minLength' => 1],
-                'model' => ['type' => 'string', 'minLength' => 1],
-                'cost' => self::COST_SCHEMA,
-            ],
-        ],
-    ];
-
-    /** Upstream's `ModelCostTierSchema`: all five fields required, each a number. */
-    private const array COST_TIER_SCHEMA = [
-        'type' => 'object',
-        'required' => ['inputTokensAbove', 'input', 'output', 'cacheRead', 'cacheWrite'],
-        'properties' => [
-            'inputTokensAbove' => ['type' => 'number'],
-            'input' => ['type' => 'number'],
-            'output' => ['type' => 'number'],
-            'cacheRead' => ['type' => 'number'],
-            'cacheWrite' => ['type' => 'number'],
-        ],
-    ];
-
-    /** Upstream's `ModelPromptCacheSchema`: seconds per tier, each above zero. */
-    private const array PROMPT_CACHE_SCHEMA = [
-        'type' => 'object',
-        'properties' => [
-            'short' => ['type' => 'number', 'exclusiveMinimum' => 0],
-            'long' => ['type' => 'number', 'exclusiveMinimum' => 0],
-        ],
-    ];
-
-    /** Upstream's `ModelInputLimitsSchema` and its `ImageResizeSchema`. */
-    private const array INPUT_LIMITS_SCHEMA = [
-        'type' => 'object',
-        'properties' => [
-            'maxRequestBytes' => ['type' => 'integer', 'minimum' => 1],
-            'images' => [
-                'type' => 'object',
-                'properties' => [
-                    'resize' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'maxWidth' => ['type' => 'integer', 'minimum' => 1],
-                            'maxHeight' => ['type' => 'integer', 'minimum' => 1],
-                            'maxBytes' => ['type' => 'integer', 'minimum' => 1],
-                            'jpegQuality' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100],
-                        ],
-                    ],
-                    'maxPerMessage' => ['type' => 'integer', 'minimum' => 1],
-                    'maxPerRequest' => ['type' => 'integer', 'minimum' => 1],
-                ],
-            ],
-        ],
-    ];
-
-    /**
-     * What upstream's TypeBox schema says about one value, as `formatValidationPath()` writes it:
-     * `<path>: <message>`, with TypeBox 1.3's English messages (`must be number`, `must be
-     * integer`, `must be string`, `must be object`, `must be array`, `must be > 0`, `must be >= 1`,
-     * `must be <= 100`, `must not have fewer than 1 characters`, `must not have more than 3 items`,
-     * `must have required properties a, b`) — a `required` error's path naming the first property
-     * missing. Its order (TypeBox's `ErrorSchema()`): the type, then an object's `required` before
-     * its properties in the schema's order, a list's items before its `maxItems`, a string's
-     * `minLength`, and a number's bounds — the bounds still checked on a number of the wrong kind
-     * (`0.5` is both `must be integer` and `must be >= 1`), the keywords of another type skipped.
-     *
-     * **The value is from the object-preserving decode**: a JSON object is a `stdClass` and a JSON
-     * array a PHP list, so `{}` where a list is wanted is `must be array` and `[]` where an object
-     * is wanted is `must be object`, as upstream tells them apart. This used to read the array
-     * decode, where the two are one value and either was taken as whichever the schema asked for.
-     * An absent optional value (`$present` false) has nothing to say.
+     * Everything `SchemaErrors` finds in $value against $schema, formatted as upstream's
+     * `formatValidationPath()` formats it: the instance path dotted, `root` for the document, and a
+     * missing property named after its object's path.
      *
      * @param array<string, mixed> $schema
      * @return list<string>
      */
-    private static function schemaErrors(mixed $value, array $schema, string $path, bool $present = true): array
+    private static function schemaProblems(mixed $value, array $schema, string $instancePath): array
     {
-        if (!$present) {
-            return [];
-        }
+        return array_map(static function (array $error): string {
+            $path = str_replace('/', '.', ltrim($error['instancePath'], '/'));
 
-        $isNumber = is_int($value) || is_float($value);
-        $isInteger = is_int($value) || (is_float($value) && is_finite($value) && floor($value) === $value);
-        $isObject = $value instanceof \stdClass;
-        $isArray = is_array($value);
-
-        $typeMatches = match ($schema['type']) {
-            'number' => $isNumber,
-            'integer' => $isNumber && $isInteger,
-            'string' => is_string($value),
-            'array' => $isArray,
-            default => $isObject,
-        };
-
-        $errors = $typeMatches ? [] : ["{$path}: must be {$schema['type']}"];
-
-        if ($isObject && $schema['type'] === 'object') {
-            $missing = array_values(array_filter($schema['required'] ?? [], static fn (string $key): bool => !property_exists($value, $key)));
-
-            if ($missing !== []) {
-                $errors[] = "{$path}.{$missing[0]}: must have required properties " . implode(', ', $missing);
+            if ($error['keyword'] === 'required' && ($missing = $error['params']['requiredProperties'][0] ?? null) !== null) {
+                return ($path === '' ? $missing : "{$path}.{$missing}") . ": {$error['message']}";
             }
 
-            foreach ($schema['properties'] as $key => $property) {
-                $errors = [...$errors, ...self::schemaErrors($value->{$key} ?? null, $property, "{$path}.{$key}", property_exists($value, $key))];
-            }
-        }
+            return ($path === '' ? 'root' : $path) . ": {$error['message']}";
+        }, SchemaErrors::of($schema, $value, ConfigSchemas::load('models'), $instancePath));
+    }
 
-        if ($isArray && $schema['type'] === 'array') {
-            foreach (array_values($value) as $index => $item) {
-                $errors = [...$errors, ...self::schemaErrors($item, $schema['items'], "{$path}.{$index}")];
-            }
+    /** @return array<string, mixed> the top of `models.schema.json`, its providers not looked into */
+    private static function topSchema(): array
+    {
+        $schema = ConfigSchemas::load('models');
+        $schema['properties']['providers'] = ['type' => 'object'];
 
-            if (isset($schema['maxItems']) && count($value) > $schema['maxItems']) {
-                $errors[] = "{$path}: must not have more than {$schema['maxItems']} items";
-            }
-        }
+        return $schema;
+    }
 
-        if (is_string($value) && isset($schema['minLength']) && mb_strlen($value) < $schema['minLength']) {
-            $errors[] = "{$path}: must not have fewer than {$schema['minLength']} characters";
-        }
+    /** @return array<string, mixed> one provider, its `models` and `modelOverrides` entries not looked into */
+    private static function providerSchema(): array
+    {
+        $schema = ConfigSchemas::load('models')['properties']['providers']['patternProperties']['^.*$'];
+        $schema['properties']['models'] = ['type' => 'array'];
+        $schema['properties']['modelOverrides'] = ['type' => 'object'];
 
-        if ($isNumber) {
-            if (isset($schema['exclusiveMinimum']) && !($value > $schema['exclusiveMinimum'])) {
-                $errors[] = "{$path}: must be > {$schema['exclusiveMinimum']}";
-            }
+        return $schema;
+    }
 
-            if (isset($schema['maximum']) && !($value <= $schema['maximum'])) {
-                $errors[] = "{$path}: must be <= {$schema['maximum']}";
-            }
+    /** @return array<string, mixed> one `models` entry */
+    private static function modelSchema(): array
+    {
+        return ConfigSchemas::load('models')['properties']['providers']['patternProperties']['^.*$']['properties']['models']['items'];
+    }
 
-            if (isset($schema['minimum']) && !($value >= $schema['minimum'])) {
-                $errors[] = "{$path}: must be >= {$schema['minimum']}";
-            }
-        }
-
-        return $errors;
+    /** @return array<string, mixed> one `modelOverrides` entry */
+    private static function overrideSchema(): array
+    {
+        return ConfigSchemas::load('models')['properties']['providers']['patternProperties']['^.*$']['properties']['modelOverrides']['patternProperties']['^.*$'];
     }
 
     /**

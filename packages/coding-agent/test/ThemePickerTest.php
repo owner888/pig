@@ -84,4 +84,31 @@ final class ThemePickerTest extends TestCase
         $this->assertStringContainsString('broken.json', $errors[0]);
         $this->assertStringContainsString('Failed to parse theme', $errors[0]);
     }
+
+    /** Upstream's "applies strict validation on initial load and reload" (#9880). */
+    public function testHoldsCustomThemesToTheStrictSchemaEveryTimeTheyAreListed(): void
+    {
+        Themes::setThemeJsonValidator(\Pig\CodingAgent\Theme\ThemeJson::validateThemeJson(...));
+        $path = $this->customThemesDir() . '/capability-test.json';
+        $theme = [...self::builtinThemeJson('dark'), 'name' => 'capability-test'];
+
+        try {
+            file_put_contents($path, json_encode([...$theme, 'unsupported' => true], JSON_THROW_ON_ERROR));
+            $this->assertNotContains('capability-test', Themes::getAvailableThemes());
+            $initial = Themes::getCustomThemeErrors();
+            $this->assertCount(1, $initial);
+            $this->assertStringContainsString($path, $initial[0]);
+            $this->assertStringContainsString('/unsupported', $initial[0]);
+
+            file_put_contents($path, json_encode($theme, JSON_THROW_ON_ERROR));
+            $this->assertContains('capability-test', Themes::getAvailableThemes());
+            $this->assertSame([], Themes::getCustomThemeErrors());
+
+            file_put_contents($path, json_encode([...$theme, 'unsupported' => true], JSON_THROW_ON_ERROR));
+            $this->assertNotContains('capability-test', Themes::getAvailableThemes());
+            $this->assertSame($initial, Themes::getCustomThemeErrors());
+        } finally {
+            Themes::setThemeJsonValidator(null);
+        }
+    }
 }
