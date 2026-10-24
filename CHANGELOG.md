@@ -47,6 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added Kimi Code subscription sign-in for the `kimi-coding` provider: `/login` → Kimi Code (subscription), a device code approved on kimi.com, with token renewal; `KIMI_CODE_OAUTH_HOST` (or `KIMI_OAUTH_HOST`) overrides the authorization host.
 - Added Radius uploads to `/share`: signed in to Radius, the session's JSONL goes up as an organization artifact and the share URL is its link. The `sessionShareDestination` setting (also a `/settings` row) chooses `auto` (Radius when signed in, otherwise a GitHub gist; the default), `gist` or `radius` (upstream #10870).
 
 ### Changed

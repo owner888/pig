@@ -19,6 +19,7 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
+use Pig\Ai\Utils\Oauth\KimiCoding;
 use Pig\Ai\Utils\Oauth\Radius;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
@@ -617,6 +618,7 @@ final class Auth
                 Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
                 Provider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
                 Provider::Radius => (new Radius())->login($onAuth, $onProgress, $signal, $onSelect),
+                Provider::KimiCoding => (new KimiCoding())->login($onAuth, $signal),
             };
             $id = $provider->value;
         }

@@ -132,12 +132,13 @@ final class SignInTest extends TestCase
         $this->signIn(['login']);
 
         $this->assertStringContainsString('1. Anthropic (Claude Pro/Max)', $this->said());
-        // Four built in — Antigravity is an extension's row now, and `pig-ai` loads no extensions.
+        // Five built in — Antigravity is an extension's row now, and `pig-ai` loads no extensions.
         $this->assertStringContainsString('2. GitHub Copilot', $this->said());
         $this->assertStringContainsString('3. OpenAI (ChatGPT Plus/Pro)', $this->said());
         $this->assertStringContainsString('4. Radius', $this->said());
+        $this->assertStringContainsString('5. Kimi Code (subscription)', $this->said());
         $this->assertStringNotContainsString('Antigravity', $this->said());
-        $this->assertStringContainsString('(1-4)', $this->asked[0], 'the numbered one comes first');
+        $this->assertStringContainsString('(1-5)', $this->asked[0], 'the numbered one comes first');
 
         // Two is Copilot, and reaching its own first question — which is what the second entry in
         // `asked` is — proves the number resolved to a flow rather than to a label.
