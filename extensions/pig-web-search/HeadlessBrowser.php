@@ -54,7 +54,7 @@ final class HeadlessBrowser
     ];
 
     /** How long Chrome gets to print its DevTools line. */
-    private const float LAUNCH_TIMEOUT = 15.0;
+    private const float LAUNCH_TIMEOUT = 30.0;
 
     /** @var resource */
     private $process;
@@ -264,7 +264,8 @@ final class HeadlessBrowser
             $chunk = fread($stderr, 65536);
             $seen .= is_string($chunk) ? $chunk : '';
             // stdout is drained too, or a chatty Chrome blocks on a full pipe nobody reads.
-            fread($stdout, 65536);
+            $outChunk = fread($stdout, 65536);
+            $seen .= is_string($outChunk) ? $outChunk : '';
 
             if (preg_match('#DevTools listening on (ws://\S+)#', $seen, $m) === 1) {
                 return $m[1];
@@ -279,7 +280,9 @@ final class HeadlessBrowser
             Async::delay(0.05);
         }
 
-        throw new RuntimeException('Chrome did not become ready within ' . self::LAUNCH_TIMEOUT . 's.');
+        $trailing = trim(substr($seen, -600));
+
+        throw new RuntimeException('Chrome did not become ready within ' . self::LAUNCH_TIMEOUT . 's' . ($trailing !== '' ? ": {$trailing}" : '.'));
     }
 
     private function connect(string $endpoint, ?AbortSignal $signal): void

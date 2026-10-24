@@ -19,6 +19,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [`phpunit | tail` hung after the whole suite had passed](#phpunit--tail-hung-after-the-whole-suite-had-passed)
 - [The test suite wrote into the developer's real home](#the-test-suite-wrote-into-the-developers-real-home)
 - [MCP startup notice test asserted before asynchronous servers settled](#mcp-startup-notice-test-asserted-before-asynchronous-servers-settled)
+- [Headless Chrome launch timeout was too tight for CI runner contention](#headless-chrome-launch-timeout-was-too-tight-for-ci-runner-contention)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1109,4 +1110,19 @@ returns before the background coroutine finishes and calls `$reportProblems($ctx
 **Rule**: Tests asserting on UI notices or state from background MCP connections must wait for the
 background operations to settle (`$this->until(...)` or `$this->untilServersSettle()`) instead of
 assuming all servers settled during `before_agent_start`.
+
+## Headless Chrome launch timeout was too tight for CI runner contention
+
+**Symptom**: `WebSearchExtensionTest::testAPageBuiltByJavascriptIsReadAfterItHasRun` threw
+`RuntimeException: Chrome did not become ready within 15s.` intermittently on GitHub Actions
+runners under CPU load (e.g. PHP 8.3 job while other PHP jobs passed in 13s).
+
+**Cause**: `HeadlessBrowser::LAUNCH_TIMEOUT` was hardcoded to 15.0s. Cold-starting Chrome with a
+new user data profile on a shared 2-vCPU CI runner takes 10–13 seconds normally, leaving no margin
+when runner CPU throttles. Additionally, `awaitDevToolsLine` discarded stdout chunks, so if Chrome
+output DevTools ws URL or diagnostic errors to stdout, they were lost.
+
+**Rule**: Subprocess browser launch timeout is 30.0s, draining both stdout and stderr into `$seen`
+and reporting trailing seen bytes if the launch fails or times out.
+
 
