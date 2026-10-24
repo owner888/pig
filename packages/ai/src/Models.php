@@ -2780,6 +2780,12 @@ final class Models
      */
     private static array $providerReplacements = [];
 
+    /**
+     * @var array<string, \Closure(list<Model>): list<Model>> provider => what narrows its built-in chat
+     *      rows to one credential's — see `personalize()`
+     */
+    private static array $personalized = [];
+
     /** @var list<ImageModel> image models a provider declared elsewhere — see `registerImages()` */
     private static array $registeredImages = [];
 
@@ -2809,6 +2815,27 @@ final class Models
         self::$models = null;
         self::$classifiers = null;
         self::$images = null;
+    }
+
+    /**
+     * Narrow a built-in provider's chat rows to what one credential may use — upstream's
+     * `withPersonalizedCatalog()`, OpenRouter's `GET /models/user` being the one there is (see
+     * `Providers\OpenRouterUserModels`). `$personalize` is given the provider's built-in rows and
+     * answers the ones to keep, with their limits and prices; classifier and image rows are left as
+     * they are. Applied before registrations, replacements and `models.json`, so a `baseUrl` from the
+     * file still lands on the kept rows. Null takes it away.
+     *
+     * @param (\Closure(list<Model>): list<Model>)|null $personalize
+     */
+    public static function personalize(string $provider, ?\Closure $personalize): void
+    {
+        if ($personalize === null) {
+            unset(self::$personalized[$provider]);
+        } else {
+            self::$personalized[$provider] = $personalize;
+        }
+
+        self::$models = null;
     }
 
     /**
@@ -2861,6 +2888,7 @@ final class Models
         self::$registeredClassifiers = [];
         self::$registeredImages = [];
         self::$providerReplacements = [];
+        self::$personalized = [];
         self::$overlay = null;
         self::$models = null;
         self::$classifiers = null;
@@ -3498,6 +3526,16 @@ final class Models
                 ),
                 inputLimits: self::inputLimits(self::COPILOT, $input, $window),
             );
+        }
+
+        // A credential's narrowing of a built-in provider — see `personalize()`.
+        foreach (self::$personalized as $provider => $personalize) {
+            $own = array_filter($models, static fn (Model $model): bool => $model->provider === $provider);
+            $models = array_diff_key($models, $own);
+
+            foreach ($personalize(array_values($own)) as $model) {
+                $models[$model->provider . '/' . $model->id] = $model;
+            }
         }
 
         // Last, and only where nothing is already: see `register()`. A built-in wins.

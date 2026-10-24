@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Ai\Api;
 use Pig\Ai\Extension\ApiKeyCredential;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Extension\RefreshModelsContext;
+use Pig\Ai\Models;
+use Pig\Ai\Providers\OpenRouterUserModels;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -63,6 +66,19 @@ final class ModelRefresh
 
         if ($signal->aborted()) {
             return new ModelRefreshResult(true, $errors);
+        }
+
+        // The built-in OpenRouter catalog, narrowed to the key's models (upstream's
+        // `withPersonalizedCatalog(provider, personalizeOpenRouterCatalog)`) — unless an extension
+        // provider of that name took its place.
+        if (($providers === null || in_array('openrouter', $providers, true)) && ProviderRegistry::get('openrouter') === null) {
+            try {
+                self::openRouter($auth, $allowNetwork, $signal);
+            } catch (Throwable $error) {
+                if (!$signal->aborted()) {
+                    $errors['openrouter'] = $error;
+                }
+            }
         }
 
         foreach (ProviderRegistry::all() as $provider) {
@@ -131,6 +147,57 @@ final class ModelRefresh
                 $done($result);
             }
         });
+    }
+
+    /**
+     * OpenRouter's two phases: the key's list as last saved, laid over the catalog with no network —
+     * "The combined list is saved and replaces the OpenRouter catalog, including offline" — then,
+     * with a key and the network, `GET /models/user` asked again, at the base URL the catalog's rows
+     * have (a regional endpoint `models.json` set applies its region's filtering). A key the endpoint
+     * rejects, or an endpoint that is not there, leaves the catalog as it is.
+     */
+    private static function openRouter(Auth $auth, bool $allowNetwork, AbortSignal $signal): void
+    {
+        $stored = self::read($auth, 'openrouter');
+
+        if ($stored !== null && $stored['models'] !== []) {
+            self::personalizeOpenRouter($stored['models']);
+        }
+
+        if (!$allowNetwork || $signal->aborted()) {
+            return;
+        }
+
+        $key = $auth->apiKey('openrouter');
+
+        if ($key === null || $key === '' || $key === \Pig\Ai\Stream::AMBIENT_AUTH_MARKER) {
+            return;
+        }
+
+        $baseUrl = null;
+
+        foreach (Models::all() as $model) {
+            if ($model->provider === 'openrouter' && $model->api === Api::OpenAiCompletions) {
+                $baseUrl = $model->baseUrl;
+
+                break;
+            }
+        }
+
+        $allowed = OpenRouterUserModels::fetch($key, $baseUrl, signal: $signal);
+
+        if ($allowed === null || $signal->aborted()) {
+            return;
+        }
+
+        self::write($auth, 'openrouter', ['models' => $allowed, 'checkedAt' => (int) (microtime(true) * 1000)]);
+        self::personalizeOpenRouter($allowed);
+    }
+
+    /** @param list<array<string, mixed>> $allowed */
+    private static function personalizeOpenRouter(array $allowed): void
+    {
+        Models::personalize('openrouter', static fn (array $catalog): array => OpenRouterUserModels::personalize($catalog, $allowed));
     }
 
     /** Upstream's `resolveRefreshCredential()`, for pig's two kinds of sign-in. */

@@ -47,11 +47,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added per-key OpenRouter model lists: with an OpenRouter key, pig lists only the chat models that key may use, with the key's context size, max output and prices (`GET /models/user`, at the base URL `models.json` sets, so guardrails and regional endpoints apply). The list is saved in `models-store.json` and used offline (upstream #10672).
+- Added `reachesTools` to `CustomTool`, so a tool that reaches other tools declares which ones a call may reach (`'all'`, or the words that may name them); `getAllTools()` carries it. The codemode tool reaches the servers a script names, or every one when it searches or enumerates tools; `tool_search` reaches all.
 - Added Kimi Code subscription sign-in for the `kimi-coding` provider: `/login` → Kimi Code (subscription), a device code approved on kimi.com, with token renewal; `KIMI_CODE_OAUTH_HOST` (or `KIMI_OAUTH_HOST`) overrides the authorization host.
 - Added Radius uploads to `/share`: signed in to Radius, the session's JSONL goes up as an organization artifact and the share URL is its link. The `sessionShareDestination` setting (also a `/settings` row) chooses `auto` (Radius when signed in, otherwise a GitHub gist; the default), `gist` or `radius` (upstream #10870).
 
 ### Changed
 
+- The first prompt waits only for MCP servers with direct tools; a codemode or tool_search server is waited for by the call that reaches it (its `tool_call`), and codemode or `tool_search` is activated from the configuration before servers connect.
 - Changed the `kimi-coding` provider to OpenAI Chat Completions at `https://api.kimi.com/coding/v1`, the protocol the official Kimi Code client uses: K3, K3-256K and Kimi For Coding take tools added mid-conversation without losing the prompt cache. A `models.json` override of the `kimi-coding` base URL must now include `/v1` (upstream #10720).
 - Moved OpenCode Zen and OpenCode Go to the `opencode.ai/inference` endpoints, which fixes OpenCode Go's Gemini models (404 on `/zen/go`); OpenCode Go's MiniMax M2.7 now uses the Anthropic Messages API, as Chat Completions answers "Model does not support this protocol".
 
