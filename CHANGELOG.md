@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.11.1] - 2026-10-24
+
+### Fixed
+
+- Fixed `bin/pig` losing its executable bit in 0.11.0, so running it from a git checkout failed with "permission denied". Composer installs were not affected.
+
 ## [0.11.0] - 2026-10-24
 
 Upstream pi 1.1–1.4 and later, fourth batch: configuration schemas published at pigagent.dev with strict theme and `models.json` checks, LaTeX math in Markdown, System One classifier images, cancellable MCP OAuth sign-ins, and GPT-6 thinking-level changes that keep the prompt cache.
