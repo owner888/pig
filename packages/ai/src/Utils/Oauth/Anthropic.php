@@ -113,8 +113,8 @@ final class Anthropic
      * The browser flow: listen, send the browser, take whichever answers first. Null means
      * nobody finished.
      *
-     * `listen()` comes before anything is shown, so a port that cannot be taken is reported to
-     * somebody who has not yet been sent to a browser. The paste box is opened beside the
+     * `listen()` comes before anything is shown, so the redirect sent names the port it took —
+     * the registered one, or a free one when that cannot be bound. The paste box is opened beside the
      * callback — not instead of it — because upstream's reason holds here: the browser may be on
      * another machine, and the person then has the redirect URL and nothing else.
      *
@@ -130,10 +130,9 @@ final class Anthropic
         ?AbortSignal $signal = null,
     ): ?Credentials {
         $pkce = Pkce::create();
-        $server = $this->server ?? new CallbackServer(self::CALLBACK_PORT, self::CALLBACK_PATH);
-        $redirectUri = $server->redirectUri();
-
-        $server->listen();
+        $server = $this->listen();
+        // Without a callback server, sign-in goes on with the pasted redirect URL.
+        $redirectUri = $server?->redirectUri() ?? self::callbackRedirectUri();
 
         try {
             $onAuth(
@@ -142,9 +141,9 @@ final class Anthropic
                 . 'If the browser is on another machine, paste the final redirect URL instead.',
             );
 
-            $answer = $this->firstOf($server, $pkce->verifier, $onPrompt, $signal);
+            $answer = $this->firstOf($server, $redirectUri, $pkce->verifier, $onPrompt, $signal);
         } finally {
-            $server->close();
+            $server?->close();
         }
 
         if ($answer === null) {
@@ -163,6 +162,37 @@ final class Anthropic
             'redirect_uri' => $redirectUri,
             'code_verifier' => $pkce->verifier,
         ]);
+    }
+
+    /**
+     * Upstream's `startCallbackServer(CALLBACK_PORT).catch(() => startCallbackServer(0)).catch(() =>
+     * undefined)` (#10571): the registered port first, so a forwarded port into a container or
+     * over SSH keeps working; then any free loopback port, which Anthropic accepts too, for when
+     * that one cannot be bound (Hyper-V and WSL exclude port ranges on Windows); then none.
+     *
+     * A server handed in by a test is listened on as it is, and its failure is not hidden.
+     */
+    private function listen(): ?CallbackServer
+    {
+        if ($this->server !== null) {
+            $this->server->listen();
+
+            return $this->server;
+        }
+
+        foreach ([self::CALLBACK_PORT, 0] as $port) {
+            $server = new CallbackServer($port, self::CALLBACK_PATH, 'Anthropic');
+
+            try {
+                $server->listen();
+
+                return $server;
+            } catch (OauthError) {
+                continue;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -294,7 +324,7 @@ final class Anthropic
      * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
      * @return array{code: string, state: string}|null
      */
-    private function firstOf(CallbackServer $server, string $verifier, Closure $onPrompt, ?AbortSignal $signal): ?array
+    private function firstOf(?CallbackServer $server, string $redirectUri, string $verifier, Closure $onPrompt, ?AbortSignal $signal): ?array
     {
         $controller = new AbortController();
         $answer = new Deferred();
@@ -319,24 +349,27 @@ final class Anthropic
             $controller->abort('sign-in cancelled');
         });
 
-        Async::spawn(static fn () => $settle(static function () use ($server, $controller, $verifier): ?array {
-            $callback = $server->await($controller->signal);
+        // No callback server: only the paste can answer, so there is nothing to race it.
+        if ($server !== null) {
+            Async::spawn(static fn () => $settle(static function () use ($server, $controller, $verifier): ?array {
+                $callback = $server->await($controller->signal);
 
-            if ($callback === null) {
-                return null;
-            }
+                if ($callback === null) {
+                    return null;
+                }
 
-            if (!hash_equals($verifier, $callback['state'])) {
-                throw new OauthError('The sign-in came back with the wrong state, so it was not the one this pig started.');
-            }
+                if (!hash_equals($verifier, $callback['state'])) {
+                    throw new OauthError('The sign-in came back with the wrong state, so it was not the one this pig started.');
+                }
 
-            return $callback;
-        }));
+                return $callback;
+            }));
+        }
 
-        Async::spawn(static fn () => $settle(static function () use ($onPrompt, $controller, $verifier): ?array {
+        Async::spawn(static fn () => $settle(static function () use ($onPrompt, $controller, $verifier, $redirectUri): ?array {
             $input = $onPrompt(
                 'Finish signing in in the browser, or paste the redirect URL or code here',
-                self::callbackRedirectUri(),
+                $redirectUri,
                 false,
                 $controller->signal,
             );

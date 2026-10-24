@@ -43,6 +43,33 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added MiniMax-M3.1-Flash to the MiniMax providers: they now list every tool-calling model but the older M2, M2.1, M2.5 and M2.5-highspeed MiniMax asked to hide, and a model with effort levels uses adaptive thinking with `output_config.effort`, since MiniMax-M3.1-Flash rejects `thinking.type: "disabled"` (upstream #11121).
+- Added Clef Omni and Jev 1.14 to Workers AI's classifiers.
+
+### Changed
+
+- GPT-6 models on the `openai` provider keep the prompt cache when the thinking level changes: with an API key, `reasoning.effort` stays fixed and the level is sent as `configuration_update` input items, recorded on each reply so earlier input is rebuilt unchanged. Controlled by `compat.supportsMidConvoEffort`; not used with Sign in with ChatGPT or with thinking off (upstream #10853).
+- Xiaomi MiMo models offer only thinking on and off and send no reasoning effort (upstream #10818).
+- Claude Haiku 5.5 and Claude Opus 5 can be switched off: `off` sends plain disabled thinking instead of an effort message (upstream #10753).
+- Gemini 4 and later models are sent Google's `thinkingLevel` instead of a token budget (upstream #10890).
+- The Codex provider no longer lists GPT-5.5 and GPT-5.3 Codex Spark, which the backend rejects for ChatGPT accounts, and GPT-6.1 Sol has a 500K context window there (upstream #11173, #10840).
+- Model and caller headers now override the Codex provider's `originator` and `User-Agent`, as for every other provider; `Authorization` and `chatgpt-account-id` stay fixed (upstream #10429).
+- Anthropic sign-in falls back to a free loopback port when 53692 cannot be bound (Hyper-V and WSL reserve port ranges on Windows), and without any callback port it still takes a pasted redirect URL (upstream #10571).
+- Custom providers pointing at `opencode.ai` are sent OpenCode's `x-opencode-session` header too.
+
+### Fixed
+
+- Fixed Anthropic dropping a held system update when it came before an assistant message that converts to nothing: it is now sent before the next assistant message that goes out (upstream #11091).
+- Fixed images in an error tool result being lost on Anthropic and Bedrock Claude: they now follow the tool results with a caption naming the call (upstream #10794).
+- Fixed ChatGPT Business workspace usage limits being retried: `subscription_sharing_workplace_individual_usage_limit_exceeded` is no longer retried and says to ask the workspace admin.
+- Fixed escape sequences and UTF-8 characters split across two reads of bash output leaving fragments such as `31m` in the output: an unfinished sequence is held back until the rest arrives (upstream #10504).
+- Fixed Workers AI classifier prices: Clef Flash is $0.038 with a 24,576-token context, Jev $0.042.
+- Fixed OpenRouter router models such as `openrouter/auto` getting negative prices in the catalog: a negative or unreadable price is now treated as unknown.
+
 ## [0.10.2] - 2026-10-24
 
 ### Fixed

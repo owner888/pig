@@ -1034,6 +1034,39 @@ final class AnthropicTest extends TestCase
         $this->assertSame('ephemeral', $body['messages'][5]['content'][0]['cache_control']['type']);
     }
 
+    public function testOffOnAManagedEffortModelThatAcceptsItSendsPlainDisabledThinking(): void
+    {
+        // Upstream #10753: Haiku 5.5 and Opus 5 accept `thinking: {type: "disabled"}`, and Anthropic
+        // rejects `block_binding` and effort markers that change level while thinking is disabled —
+        // so off sends neither, and records no level on the reply. Opus 5.5 cannot be switched off.
+        foreach (['claude-haiku-5-5', 'claude-opus-5'] as $id) {
+            $this->assertContains('off', Models::find(Models::ANTHROPIC, $id)?->supportedThinkingLevels() ?? [], $id);
+        }
+
+        $this->assertNotContains('off', Models::find(Models::ANTHROPIC, 'claude-opus-5-5')?->supportedThinkingLevels() ?? []);
+        $haiku = Models::find(Models::ANTHROPIC, 'claude-haiku-5-5');
+        $this->assertNotNull($haiku);
+        $earlier = new AssistantMessage([new TextContent('first')], Api::AnthropicMessages, 'anthropic', 'claude-haiku-5-5', new Usage(), StopReason::Stop, providerThinkingLevel: 'low');
+
+        [$head, $body] = $this->capture($haiku, new Context([new UserMessage('q1'), $earlier, new UserMessage('q2')]), new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false));
+
+        $this->assertSame(['type' => 'disabled'], $body['thinking']);
+        $this->assertArrayNotHasKey('output_config', $body);
+        $this->assertSame(['user', 'assistant', 'user'], array_column($body['messages'], 'role'));
+
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+        $served = new Model($haiku->id, $haiku->name, $haiku->api, $haiku->provider, rtrim($url, '/'), $haiku->contextWindow, $haiku->maxTokens, $haiku->reasoning, $haiku->input, $haiku->pricing, compat: $haiku->compat, thinkingLevelMap: $haiku->thinkingLevelMap);
+        $message = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($served, Transcript::normalizeContext(new Context([new UserMessage('hi')])), new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false))->result()->await());
+        $this->assertNull($message->providerThinkingLevel);
+
+        // Where off is not a level, a managed-effort model stays adaptive and says its effort.
+        $opus = Models::find(Models::ANTHROPIC, 'claude-opus-5-5');
+        $this->assertNotNull($opus);
+        [, $body] = $this->capture($opus, new Context([new UserMessage('q1')]), new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false));
+        $this->assertSame('adaptive', $body['thinking']['type']);
+        $this->assertSame(['role' => 'system', 'content' => [], 'output_config' => ['effort' => 'high']], $body['messages'][1]);
+    }
+
     public function testAManagedEffortTurnRecordsTheEffortItWasAskedFor(): void
     {
         // Upstream's `providerThinkingLevel = options?.effort ?? "high"` on the output — what the

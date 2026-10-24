@@ -182,4 +182,28 @@ final class BashOutputTest extends TestCase
 
         return (microtime(true) - $start) * 1000;
     }
+
+    public function testAnEscapeSplitAcrossTwoReadsIsStrippedWhole(): void
+    {
+        // Upstream #10504: a colour code cut in half by a pipe read used to leave its second half —
+        // `31m` here — in the output, because each read was cleaned on its own.
+        $output = $this->outputOf("printf '\\033[3'; sleep 0.3; printf '1mred\\033[0m \\033]8;;http://x'; sleep 0.3; printf '\\007link\\033]8;;\\007\\n'");
+
+        $this->assertSame("red link\n", $output);
+    }
+
+    public function testAUtf8CharacterSplitAcrossTwoReadsArrivesWhole(): void
+    {
+        // Upstream's `TextDecoder` with `stream: true` holds a cut character back for the next read.
+        $output = $this->outputOf("printf '\\342\\202'; sleep 0.3; printf '\\254 euro\\n'");
+
+        $this->assertSame("€ euro\n", $output);
+    }
+
+    public function testAnUnfinishedEscapeAtTheEndIsFlushedAsItIs(): void
+    {
+        // Upstream's `flushOutput()`: what is still held back when the command ends is not lost. It
+        // is cleaned as any unfinished sequence always was: the ESC goes, the `[` is only text.
+        $this->assertSame('done[', $this->outputOf("printf 'done\\033['"));
+    }
 }

@@ -175,5 +175,83 @@
                 }
             }
         }
+    },
+    {
+        "type": "chat",
+        "id": "kimi-k3.1-pro",
+        "name": "Kimi K3.1 Pro",
+        "api": "openai-completions",
+        "provider": "moonshotai",
+        "baseUrl": "https://api.moonshot.ai/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 2.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": false,
+            "thinkingFormat": "deepseek"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "kimi-k3.1-pro-highspeed",
+        "name": "Kimi K3.1 Pro Highspeed",
+        "api": "openai-completions",
+        "provider": "moonshotai",
+        "baseUrl": "https://api.moonshot.ai/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 4.0,
+            "output": 20.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 4.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": false,
+            "thinkingFormat": "deepseek"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
     }
 ]

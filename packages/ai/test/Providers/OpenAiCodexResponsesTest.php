@@ -126,6 +126,15 @@ final class OpenAiCodexResponsesTest extends TestCase
             self::assertSame($expected['method'], $actual['method']);
             self::assertSame($expected['body'], $actual['body'], "request {$i}'s body");
             $wanted = $expected['headers'];
+
+            // Recorded before upstream #10429, which let model and caller headers override
+            // `originator`: a caller's own value now goes out where the recording has `pi`.
+            foreach ($scenario['options']['headers'] ?? [] as $name => $value) {
+                if (strtolower((string) $name) === 'originator' && is_string($value)) {
+                    $wanted['originator'] = $value;
+                }
+            }
+
             $sent = array_intersect_key($actual['headers'], array_flip(['authorization', 'chatgpt-account-id', 'originator', 'openai-beta', 'accept', 'content-type', 'content-encoding', 'session-id', 'x-client-request-id', 'x-extra']));
             ksort($wanted);
             ksort($sent);
@@ -135,6 +144,27 @@ final class OpenAiCodexResponsesTest extends TestCase
 
         self::assertSame($upstream['events'], $events);
         self::assertEquals(UpstreamRecord::normalize($upstream['message']), UpstreamRecord::normalize((array) $message));
+    }
+
+    public function testModelAndCallerHeadersOverrideTheOriginatorAndUserAgentButNotTheAuth(): void
+    {
+        // Upstream #10429: the defaults go first, as every other provider has them; the token and
+        // its account go last and stay fixed.
+        $build = new \ReflectionMethod(OpenAiCodexResponses::class, 'buildSSEHeaders');
+        $headers = array_change_key_case($build->invoke(
+            null,
+            ['originator' => 'pi', 'User-Agent' => 'pig/1'],
+            ['User-Agent' => 'model-agent'],
+            ['originator' => 'mine', 'Authorization' => 'Bearer stolen', 'chatgpt-account-id' => 'other'],
+            'acc_1',
+            'tok',
+            null,
+        ));
+
+        self::assertSame('mine', $headers['originator']);
+        self::assertSame('model-agent', $headers['user-agent']);
+        self::assertSame('Bearer tok', $headers['authorization']);
+        self::assertSame('acc_1', $headers['chatgpt-account-id']);
     }
 
     public function testTheUrlIsTheBackendsResponsesPath(): void

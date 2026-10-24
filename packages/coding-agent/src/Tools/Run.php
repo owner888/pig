@@ -32,6 +32,9 @@ final class Run
 
     private const int READ_CHUNK = 65536;
 
+    /** Upstream's `MAX_PENDING_ANSI_LENGTH`: the longest unfinished escape sequence held back between reads. */
+    private const int MAX_PENDING_ANSI_LENGTH = 256;
+
     /**
      * The least time between two live updates of the output (`$onUpdate`).
      *
@@ -61,6 +64,15 @@ final class Run
 
     /** @var array<int, string> loop watcher ids, by pipe */
     private array $watchers = [];
+
+    /**
+     * Upstream's `pendingAnsi` (#10504), by pipe: the end of the last read that the next one
+     * completes — an unfinished escape sequence, or a UTF-8 character cut short (upstream's
+     * `TextDecoder` with `stream: true` holds that back for it).
+     *
+     * @var array<int, string>
+     */
+    private array $pending = [];
 
     /** @var resource|null */
     private mixed $spill = null;
@@ -320,22 +332,61 @@ final class Run
 
         if ($chunk === false || $chunk === '') {
             if (feof($pipe)) {
+                // Upstream's `flushOutput()`: what was held back goes out as it is.
+                $rest = $this->pending[$fd] ?? '';
+                unset($this->pending[$fd]);
+                $this->accept($rest);
                 $this->closePipe($fd);
             }
 
             return;
         }
 
+        // Upstream's `splitIncompleteAnsiSuffix(pendingAnsi + chunk)`: an escape sequence split
+        // across two reads is held back until the rest arrives, so it is stripped whole instead of
+        // leaving its halves in the output.
+        [$complete, $this->pending[$fd]] = self::splitIncompleteEnd(($this->pending[$fd] ?? '') . $chunk);
+        $this->accept($complete);
+    }
+
+    /**
+     * Upstream's `splitIncompleteAnsiSuffix()`, plus the UTF-8 character a read can cut short: the
+     * text that is safe to clean now, and the unfinished end to put before the next read. An
+     * unfinished sequence longer than upstream's `MAX_PENDING_ANSI_LENGTH` is not held back.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private static function splitIncompleteEnd(string $text): array
+    {
+        $whole = self::withoutPartialEnd($text);
+        $partial = substr($text, strlen($whole));
+
+        if (!str_contains($whole, "\x1b")) {
+            return [$whole, $partial];
+        }
+
+        // The sequences `Ansi::strip()` takes out, unfinished at the end: OSC or APC without its
+        // BEL or ST (a trailing ESC may start the ST), a CSI without its final byte, a bare ESC.
+        $windowStart = max(0, strlen($whole) - self::MAX_PENDING_ANSI_LENGTH);
+
+        if (preg_match('/(?:\x1b[\]_](?:[^\x07\x1b]|\x1b(?!\\\\))*|\x1b\[[0-9;]*|\x1b)$/', substr($whole, $windowStart), $match, PREG_OFFSET_CAPTURE) !== 1) {
+            return [$whole, $partial];
+        }
+
+        $splitAt = $windowStart + $match[0][1];
+
+        return [substr($whole, 0, $splitAt), substr($whole, $splitAt) . $partial];
+    }
+
+    /** Clean what was read, spill it, keep the tail, and tell the UI. */
+    private function accept(string $chunk): void
+    {
         // Cleaned here, at the source, which is upstream's own words for it in
         // `bash-executor.ts`: what reaches the model, the session file, the spill file and the
         // screen is then the same text. Cleaning at the display boundary — which is where pig had
         // it — leaves the escapes in the two places nobody looks at until a conversation is
         // replayed, and `npm`, `cargo` and `docker` colour their output whether or not anybody
         // is watching.
-        //
-        // An escape split across two reads survives, because each chunk is cleaned on its own.
-        // Upstream has that too, for the same reason, and the alternative is holding bytes back
-        // in case more of a sequence arrives — which would stop the output being live.
         $chunk = Shell::sanitize($chunk);
 
         if ($chunk === '') {

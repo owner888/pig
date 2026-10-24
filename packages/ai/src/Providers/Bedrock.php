@@ -997,16 +997,30 @@ final class Bedrock
             } elseif ($m instanceof ToolResultMessage) {
                 // "Collect all consecutive toolResult messages into a single user message. Bedrock
                 // requires all tool results to be in one message."
-                $toolResults = [self::toolResult($m)];
-                $j = $i + 1;
+                // "Claude rejects error tool results that contain anything but text, so for Claude
+                // their images follow all tool results of the turn (#10794). Other models keep them
+                // in place."
+                $toolResults = [];
+                $errorImages = [];
+                $j = $i;
 
                 while ($j < $count && $transformedMessages[$j] instanceof ToolResultMessage) {
-                    $toolResults[] = self::toolResult($transformedMessages[$j]);
+                    $split = self::isAnthropicClaudeModel($model) ? TransformMessages::splitErrorToolResultImages($transformedMessages[$j]) : null;
+                    $toolResults[] = self::toolResult($transformedMessages[$j], $split['content'] ?? null);
+
+                    if ($split !== null) {
+                        $errorImages[] = ['text' => $split['caption']];
+
+                        foreach ($split['images'] as $image) {
+                            $errorImages[] = ['image' => self::createImageBlock($image->mimeType, $image->data)];
+                        }
+                    }
+
                     $j++;
                 }
 
                 $i = $j - 1;
-                $result[] = ['role' => 'user', 'content' => $toolResults];
+                $result[] = ['role' => 'user', 'content' => [...$toolResults, ...$errorImages]];
             }
         }
 
@@ -1023,11 +1037,12 @@ final class Bedrock
     }
 
     /** @return array{toolResult: array<string, mixed>} */
-    private static function toolResult(ToolResultMessage $message): array
+    /** @param list<mixed>|null $content in place of the message's own, an error result's with its images split out */
+    private static function toolResult(ToolResultMessage $message, ?array $content = null): array
     {
         return ['toolResult' => [
             'toolUseId' => $message->toolCallId,
-            'content' => self::convertToolResultContent($message->content),
+            'content' => self::convertToolResultContent($content ?? $message->content),
             'status' => $message->isError ? 'error' : 'success',
         ]];
     }

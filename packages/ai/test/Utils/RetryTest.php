@@ -84,6 +84,7 @@ final class RetryTest extends TestCase
         yield 'monthly' => ['429 Monthly usage limit reached'];
         yield 'billing' => ['429 check your billing details'];
         yield 'chatgpt limit' => ['429 subscription_sharing_usage_limit_exceeded'];
+        yield 'chatgpt business workspace limit' => ['429 subscription_sharing_workplace_individual_usage_limit_exceeded'];
         // Nothing transient in it.
         yield 'a 400' => ['400 {"type":"error","error":{"type":"invalid_request_error","message":"bad"}}'];
         yield 'a 401' => ['401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'];

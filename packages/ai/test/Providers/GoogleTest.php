@@ -1202,6 +1202,14 @@ final class GoogleTest extends TestCase
 
         $this->assertSame('HIGH', $this->translate($this->model(reasoning: true, id: 'gemma4-e4b'), ReasoningEffort::High)->thinkingLevel);
 
+        // Gemini 4 and later: "Gemini 4 Argon rejected thinkingBudget on Vertex and ignored the
+        // selected thinking level on the Gemini API" (upstream #10890).
+        foreach (['gemini-4-argon', 'gemini-4.1-pro', 'gemini-12-flash'] as $id) {
+            $options = $this->translate($this->model(reasoning: true, id: $id), ReasoningEffort::High);
+            $this->assertSame('HIGH', $options->thinkingLevel, $id);
+            $this->assertNull($options->thinkingBudget, $id);
+        }
+
         // And a Gemini 3 id that is neither Pro nor Flash is not one: the regex asks for the family.
         $this->assertSame(-1, $this->translate($this->model(reasoning: true, id: 'gemini-3-ultra'), ReasoningEffort::High)->thinkingBudget);
     }
@@ -1262,7 +1270,8 @@ final class GoogleTest extends TestCase
 
     public function testAModelWithNoPublishedCeilingIsLeftToDecide(): void
     {
-        $unknown = $this->model(reasoning: true, id: 'gemini-9.9-experimental');
+        // A 2.x id: Gemini 4 and later send a `thinkingLevel` instead (upstream #10890).
+        $unknown = $this->model(reasoning: true, id: 'gemini-2.9-experimental');
 
         // -1 is "you decide", which beats a number nobody published.
         $this->assertSame(-1, $this->translate($unknown, ReasoningEffort::High)->thinkingBudget);

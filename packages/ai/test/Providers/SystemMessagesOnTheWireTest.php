@@ -76,6 +76,30 @@ final class SystemMessagesOnTheWireTest extends TestCase
         $this->assertSame(['type' => 'ephemeral'], $system[2]['cache_control'], 'the last block of the last message carries the breakpoint');
     }
 
+    public function testAnAnthropicUpdateIsHeldPastAnAssistantMessageThatConvertsToNoBlocks(): void
+    {
+        // Upstream #11091: another model's empty reply is dropped, and an update flushed before it
+        // landed before the next user message, which Claude refuses with a 400.
+        $compat = new AnthropicCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true);
+        $reply = static fn (string $text, string $provider, Api $api, string $model): AssistantMessage
+            => new AssistantMessage([new TextContent($text)], $api, $provider, $model, new Usage(), StopReason::Stop);
+        $messages = [
+            new SystemMessage('base prompt', null, null, null, 0),
+            new UserMessage('hi', 1),
+            new SystemMessage('updated guidance', null, null, null, 2),
+            $reply('', 'openai-codex', Api::OpenAiCodexResponses, 'gpt-x'),
+            new UserMessage('again', 4),
+        ];
+
+        // No later assistant: the update goes at the end.
+        $body = $this->anthropic($compat, new TranscriptContext($messages));
+        $this->assertSame(['user', 'user', 'system'], array_column($body['messages'], 'role'));
+
+        // A later assistant that is sent: the update goes directly before it.
+        $body = $this->anthropic($compat, new TranscriptContext([...$messages, $reply('answer', 'anthropic', Api::AnthropicMessages, 'claude-test'), new UserMessage('third', 5)]));
+        $this->assertSame(['user', 'user', 'system', 'assistant', 'user'], array_column($body['messages'], 'role'));
+    }
+
     public function testAnthropicWithTextOnlyUpdatesSendsTheCurrentToolList(): void
     {
         // Copilot and OpenCode forward mid-conversation system messages but refuse tool blocks.
@@ -331,12 +355,12 @@ final class SystemMessagesOnTheWireTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function anthropic(?AnthropicCompat $compat): array
+    private function anthropic(?AnthropicCompat $compat, ?TranscriptContext $context = null): array
     {
         $url = $this->refusing();
         $model = new Model('claude-test', 'C', Api::AnthropicMessages, 'anthropic', rtrim($url, '/'), 200_000, 8_000, compat: $compat);
 
-        Async::run(fn () => (new Anthropic())->stream($model, self::removingTranscript(), new AnthropicOptions(apiKey: 'test-key'))->result()->await());
+        Async::run(fn () => (new Anthropic())->stream($model, $context ?? self::removingTranscript(), new AnthropicOptions(apiKey: 'test-key'))->result()->await());
 
         return $this->server->receivedJson();
     }

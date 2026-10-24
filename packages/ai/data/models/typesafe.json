@@ -7,7 +7,8 @@
         "provider": "typesafe",
         "baseUrl": "https://api.typesafe.ai/v1/",
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
             "input": 0.0,

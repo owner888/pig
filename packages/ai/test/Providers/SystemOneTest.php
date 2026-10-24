@@ -256,7 +256,7 @@ final class SystemOneTest extends TestCase
 
     public function testWorkersAisClefModelsReturnTheirOutputDirectly(): void
     {
-        foreach (['@cf/cloudflare/clef' => 0.24, '@cf/cloudflare/clef-flash' => 0.09] as $id => $inputPrice) {
+        foreach (['@cf/cloudflare/clef' => 0.24, '@cf/cloudflare/clef-flash' => 0.038, '@cf/cloudflare/clef-omni' => 0.15] as $id => $inputPrice) {
             $clef = [
                 'model' => 'clef',
                 'answers' => [

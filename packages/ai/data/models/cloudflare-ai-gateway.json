@@ -1720,6 +1720,54 @@
     },
     {
         "type": "chat",
+        "id": "workers-ai/@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+        "name": "Deepseek V4.1 Flash 1017",
+        "api": "openai-completions",
+        "provider": "cloudflare-ai-gateway",
+        "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
+            "thinkingFormat": "deepseek",
+            "supportsLongCacheRetention": false,
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "workers-ai/@cf/google/gemma-4-26b-a4b-it",
         "name": "Gemma 4 26B A4B IT",
         "api": "openai-completions",

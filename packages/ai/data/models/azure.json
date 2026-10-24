@@ -596,44 +596,6 @@
     },
     {
         "type": "chat",
-        "id": "gpt-5.2-chat-latest",
-        "name": "GPT-5.2 Chat",
-        "api": "azure-openai-responses",
-        "provider": "azure",
-        "baseUrl": "",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": null,
-            "xhigh": "xhigh"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 1.75,
-            "output": 14.0,
-            "cacheRead": 0.175,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 128000,
-        "maxTokens": 16384,
-        "compat": {
-            "supportsOpenAIGrammarTools": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "gpt-5.2-pro",
         "name": "GPT-5.2 Pro",
         "api": "azure-openai-responses",
@@ -656,44 +618,6 @@
         },
         "contextWindow": 400000,
         "maxTokens": 128000,
-        "compat": {
-            "supportsOpenAIGrammarTools": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "gpt-5.3-chat-latest",
-        "name": "GPT-5.3 Chat (latest)",
-        "api": "azure-openai-responses",
-        "provider": "azure",
-        "baseUrl": "",
-        "reasoning": false,
-        "thinkingLevelMap": {
-            "off": null,
-            "xhigh": "xhigh"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 1.75,
-            "output": 14.0,
-            "cacheRead": 0.175,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 128000,
-        "maxTokens": 16384,
         "compat": {
             "supportsOpenAIGrammarTools": true
         },

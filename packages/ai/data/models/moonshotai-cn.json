@@ -12,9 +12,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.95,
-            "output": 4.0,
-            "cacheRead": 0.16,
+            "input": 0.9711,
+            "output": 4.0337,
+            "cacheRead": 0.1643,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -55,9 +55,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.95,
-            "output": 4.0,
-            "cacheRead": 0.19,
+            "input": 0.9711,
+            "output": 4.0337,
+            "cacheRead": 0.1942,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -98,9 +98,9 @@
             "image"
         ],
         "cost": {
-            "input": 1.9,
-            "output": 8.0,
-            "cacheRead": 0.38,
+            "input": 1.9421,
+            "output": 8.0673,
+            "cacheRead": 0.3884,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -164,6 +164,84 @@
             "thinkingFormat": "openai",
             "supportsMidConvoSystemMessages": true,
             "supportsMidConvoToolAdditions": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "kimi-k3.1-pro",
+        "name": "Kimi K3.1 Pro",
+        "api": "openai-completions",
+        "provider": "moonshotai-cn",
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.9437,
+            "output": 10.1671,
+            "cacheRead": 0.1944,
+            "cacheWrite": 1.9437
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": false,
+            "thinkingFormat": "deepseek"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "kimi-k3.1-pro-highspeed",
+        "name": "Kimi K3.1 Pro Highspeed",
+        "api": "openai-completions",
+        "provider": "moonshotai-cn",
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 3.8874,
+            "output": 20.3342,
+            "cacheRead": 0.1944,
+            "cacheWrite": 3.8874
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": false,
+            "thinkingFormat": "deepseek"
         },
         "inputLimits": {
             "images": {

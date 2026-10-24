@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\Model;
 
 /**
@@ -14,14 +15,13 @@ use Pig\Ai\Model;
  * `withOpenCodeSessionHeader()`, so every request through them — `stream` and `streamSimple` alike —
  * carries `x-opencode-session: <sessionId>`, whatever the cache retention. pig has no per-provider
  * stream objects to wrap: `Stream::start()` builds each API's options in one place, and asks this for
- * the headers there, keyed on the provider as upstream's registry is.
+ * the headers there. Upstream's `Models.resolveRequest()` also lays `getOpenCodeSessionHeaders()`
+ * under the auth and caller headers for any target pointing at OpenCode — a custom provider whose
+ * base URL is on `opencode.ai` too — so the test here is `ClientIdentity::openCodeSessionHeaders()`'s.
  */
 final class OpenCodeHeaders
 {
     public const string OPENCODE_SESSION_HEADER = 'x-opencode-session';
-
-    /** The providers whose APIs upstream wraps. */
-    private const array PROVIDERS = ['opencode', 'opencode-go'];
 
     /**
      * Upstream's `withSessionHeader()`, on the two fields it reads: the headers unchanged without a
@@ -34,15 +34,13 @@ final class OpenCodeHeaders
      */
     public static function withSessionHeader(Model $model, ?string $sessionId, ?array $headers): ?array
     {
-        if (!in_array($model->provider, self::PROVIDERS, true)) {
+        $session = ClientIdentity::openCodeSessionHeaders($model, $sessionId);
+
+        if ($session === null || self::hasHeader($headers, self::OPENCODE_SESSION_HEADER)) {
             return $headers;
         }
 
-        if ($sessionId === null || $sessionId === '' || self::hasHeader($headers, self::OPENCODE_SESSION_HEADER)) {
-            return $headers;
-        }
-
-        return [...($headers ?? []), self::OPENCODE_SESSION_HEADER => $sessionId];
+        return [...($headers ?? []), ...$session];
     }
 
     /**

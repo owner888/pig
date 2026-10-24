@@ -163,10 +163,11 @@ final class GenerateModelsTest extends TestCase
         $output = $this->generated();
 
         self::assertStringContainsString("'claude-sonnet-4.6' => ['Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 16_000,", $output);
-        self::assertStringContainsString("'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_000_000, 128_000,", $output);
         // A rule, not a correction: it says nothing, and an id it does not list keeps the
-        // catalogue's window, 1,050,000 or not.
+        // catalogue's window, 1,050,000 or not — GPT-5.4 among them since upstream dropped the
+        // retired ids from the list.
         self::assertStringNotContainsString('claude-sonnet-4.6 corrected', $output);
+        self::assertStringContainsString("'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_050_000, 128_000,", $output);
         self::assertStringContainsString("'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000,", $output);
     }
 
@@ -315,7 +316,9 @@ final class GenerateModelsTest extends TestCase
             $output,
         );
         self::assertStringContainsString("'moonshotai/Kimi-K3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],", $output);
-        self::assertStringContainsString("'MiniMaxAI/MiniMax-M2.7' => ['MiniMax M2.7', 196_608, 131_072, true, false, 0.3, 1.2, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null]],", $output);
+        // Upstream dropped `TOGETHER_REASONING_ONLY_MODELS` with the models it named: a reasoning
+        // model there is Together's toggle like the rest.
+        self::assertStringContainsString("'MiniMaxAI/MiniMax-M2.7' => ['MiniMax M2.7', 196_608, 131_072, true, false, 0.3, 1.2, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],", $output);
         self::assertStringContainsString("'plain/model' => ['Plain', 131_072, 8_192, false, false, 0.1, 0.1, 0.0, 0.0],", $output);
     }
 
@@ -394,6 +397,8 @@ final class GenerateModelsTest extends TestCase
         self::assertStringNotContainsString("'vendor/no-tools' => [", $output);
         self::assertStringContainsString("'moonshotai/kimi-k3' => ['MoonshotAI: Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072,", $output);
         self::assertStringContainsString("'z-ai/glm-5' => ['Z.ai: GLM 5', Api::OpenAiCompletions, 202_752, 4_096, true, false, 0.6, 1.9, 0.119, 0.0],", $output);
+        // Upstream's `perMillion()`: a negative or unreadable price is the fallback, 0 for a base rate.
+        self::assertStringContainsString("'vendor/router' => ['Vendor: Router', Api::OpenAiCompletions, 100_000, 4_096, false, false, 0.0, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("'auto' => ['Auto', Api::OpenAiCompletions, 2_000_000, 30_000, true, true, 0.0, 0.0, 0.0, 0.0],", $output);
         self::assertStringContainsString("'openrouter/fusion' => ['OpenRouter: Fusion', Api::OpenAiCompletions, 1_000_000, 30_000, true, false, 0.0, 0.0, 0.0, 0.0],", $output);
     }
@@ -507,7 +512,9 @@ final class GenerateModelsTest extends TestCase
         self::assertStringNotContainsString("'openrouter/vendor/chatty'", $output);
         // The hand-kept Decisions row, with the first classifier price tier.
         self::assertStringContainsString("        'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],", $output);
-        self::assertStringContainsString('classifiers      9 models', $output);
+        self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text'], 0.038, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString("        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne,", $output);
+        self::assertStringContainsString('classifiers      11 models', $output);
     }
 
     public function testImageRowsAreOpenRoutersImageListing(): void
@@ -664,18 +671,20 @@ final class GenerateModelsTest extends TestCase
 
     public function testCodexRowsAreUpstreamsExplicitList(): void
     {
-        // Upstream's `codexModels`, not models.dev's: Codex's 272k window, 128k output, and
-        // `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])` — Spark flat, at 128k.
+        // Upstream's `codexModels`, not models.dev's: Codex's 272k window — GPT-6.1 Sol's 500k
+        // (#10840) — 128k output, and `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])`; none
+        // of the models the backend rejects for ChatGPT accounts (#11173).
         $output = $this->generated();
 
         self::assertStringContainsString(
-            "'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],",
+            "'gpt-6.1-sol' => ['GPT-6.1 Sol', 500_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],",
             $output,
         );
         self::assertStringContainsString(
-            "'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 128_000, true, false, 1.75, 14.0, 0.175, 0.0],",
+            "'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000,",
             $output,
         );
+        self::assertStringNotContainsString("'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 128_000,", $output);
     }
 
     public function testRadiusRowsAreTheGatewaysCatalogueAsItSentThem(): void
@@ -900,6 +909,12 @@ final class GenerateModelsTest extends TestCase
                 'id' => 'moonshotai/kimi-k3', 'name' => 'MoonshotAI: Kimi K3', 'supported_parameters' => $tools,
                 'pricing' => ['prompt' => '0.000003', 'completion' => '0.000015'],
                 'top_provider' => ['context_length' => 1_048_576, 'max_completion_tokens' => 32_768],
+            ],
+            [
+                // A router's price depends on the model it picks, which OpenRouter reports as -1.
+                'id' => 'vendor/router', 'name' => 'Vendor: Router', 'supported_parameters' => ['tools'],
+                'pricing' => ['prompt' => '-1', 'completion' => '-1', 'input_cache_read' => 'n/a'],
+                'context_length' => 100_000,
             ],
             [
                 'id' => 'z-ai/glm-5', 'name' => 'Z.ai: GLM 5', 'supported_parameters' => $tools,

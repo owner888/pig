@@ -244,7 +244,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 131072,
+        "maxTokens": 81920,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -300,6 +300,39 @@
     },
     {
         "type": "chat",
+        "id": "Qwen/Qwen3-8B",
+        "name": "Qwen3 8B",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+        },
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.07,
+            "output": 0.18,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 40960,
+        "maxTokens": 32768,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        }
+    },
+    {
+        "type": "chat",
         "id": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
         "name": "Qwen3-Coder 30B-A3B Instruct",
         "api": "openai-completions",
@@ -340,7 +373,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 66536,
+        "maxTokens": 65536,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -388,31 +421,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 66536,
-        "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
-        "name": "Qwen3-Next-80B-A3B-Thinking",
-        "api": "openai-completions",
-        "provider": "huggingface",
-        "baseUrl": "https://router.huggingface.co/v1",
-        "reasoning": false,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.3,
-            "output": 2.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 131072,
+        "maxTokens": 32768,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -865,30 +874,6 @@
     },
     {
         "type": "chat",
-        "id": "XiaomiMiMo/MiMo-V2-Flash",
-        "name": "MiMo-V2-Flash",
-        "api": "openai-completions",
-        "provider": "huggingface",
-        "baseUrl": "https://router.huggingface.co/v1",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.1,
-            "output": 0.3,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 4096,
-        "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "XiaomiMiMo/MiMo-V2.5",
         "name": "MiMo-V2.5",
         "api": "openai-completions",
@@ -995,7 +980,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 163840,
-        "maxTokens": 163840,
+        "maxTokens": 32768,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -1279,6 +1264,50 @@
             "medium": null,
             "high": "high",
             "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 384000,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        "name": "DeepSeek V4.1 Flash 1017",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
             "max": "max"
         },
         "input": [
@@ -2029,30 +2058,6 @@
                     "jpegQuality": 80
                 }
             }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "zai-org/GLM-4.5",
-        "name": "GLM-4.5",
-        "api": "openai-completions",
-        "provider": "huggingface",
-        "baseUrl": "https://router.huggingface.co/v1",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.6,
-            "output": 2.2,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 131072,
-        "maxTokens": 98304,
-        "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true
         }
     },
     {

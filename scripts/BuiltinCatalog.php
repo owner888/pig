@@ -69,7 +69,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-10-24T00:00:00Z';
+    public const string GENERATED_AT = '2026-10-24T17:15:22Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -138,7 +138,6 @@ final class BuiltinCatalog
      * @var array<string, array<string, string|null>>
      */
     private const array COPILOT_THINKING_LEVEL_OVERRIDES = [
-        'claude-opus-4.7' => ['minimal' => 'low'],
         'claude-opus-4.8' => ['minimal' => 'low'],
         'claude-opus-5' => ['minimal' => 'low'],
         'claude-sonnet-4.6' => ['minimal' => 'low', 'max' => 'max'],
@@ -212,6 +211,13 @@ final class BuiltinCatalog
     private const array ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = ['glm-4.5', 'glm-4.5-air', 'glm-4.5-flash', 'glm-4.5v'];
 
     /**
+     * Upstream's generator `OPENAI_MID_CONVO_EFFORT_MODEL_IDS`: "OpenAI documents configuration_update
+     * for the GPT-6 family." Only the `openai` provider on the Responses API: "Not enabled for
+     * openai-codex (Codex CLI keeps it behind a flag that is off by default) or proxies."
+     */
+    private const array OPENAI_MID_CONVO_EFFORT_MODEL_IDS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'];
+
+    /**
      * Upstream's generator `OPENAI_TOOL_SEARCH_MODEL_IDS`, which is also its
      * `OPENAI_ADDITIONAL_TOOLS_MODEL_IDS` and `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS`: the OpenAI
      * models that take client-executed tool search, message-anchored `additional_tools`, and system
@@ -272,7 +278,7 @@ final class BuiltinCatalog
      */
     private const array CEREBRAS_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.35, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.99, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
@@ -286,9 +292,9 @@ final class BuiltinCatalog
         'llama-3.3-70b-versatile' => ['Llama 3.3 70B', 131_072, 32_768, false, false, 0.59, 0.79, 0.0, 0.0],
         'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 65_536, true, false, 0.15, 0.6, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'openai/gpt-oss-safeguard-20b' => ['Safety GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'openai/gpt-oss-safeguard-20b' => ['Safety GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'qwen/qwen3.6-27b' => ['Qwen3.6 27B', 131_072, 16_384, true, true, 0.6, 3.0, 0.3, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => null]],
-        'qwen/qwen3.8-27b' => ['Qwen3.8 27B', 131_042, 16_384, true, true, 0.8, 4.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'qwen/qwen3.8-27b' => ['Qwen3.8 27B', 131_072, 16_384, true, true, 0.8, 4.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -309,42 +315,34 @@ final class BuiltinCatalog
         'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.03, 0.0],
         'devstral-2512' => ['Devstral 2', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
         'devstral-latest' => ['Devstral 2', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
-        'devstral-medium-2507' => ['Devstral Medium', 128_000, 128_000, false, false, 0.4, 2.0, 0.04, 0.0],
         'devstral-medium-latest' => ['Devstral 2 (latest)', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
-        'devstral-small-2505' => ['Devstral Small 2505', 128_000, 128_000, false, false, 0.1, 0.3, 0.01, 0.0],
-        'devstral-small-2507' => ['Devstral Small', 128_000, 128_000, false, false, 0.1, 0.3, 0.01, 0.0],
         'glm-5-2' => ['GLM-5.2', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'labs-devstral-small-2512' => ['Devstral Small 2', 256_000, 256_000, false, true, 0.0, 0.0, 0.0, 0.0],
         'labs-leanstral-1-5-1' => ['Leanstral 1.5', 262_144, 128_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'magistral-medium-latest' => ['Magistral Medium (latest)', 262_144, 16_384, true, true, 2.0, 5.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'ministral-14b-2512' => ['Ministral 3 14B', 262_144, 262_144, false, true, 0.2, 0.2, 0.02, 0.0],
         'ministral-3b-2512' => ['Ministral 3 3B', 131_072, 262_144, false, true, 0.1, 0.1, 0.01, 0.0],
-        'ministral-3b-latest' => ['Ministral 3B (latest)', 131_072, 128_000, false, true, 0.04, 0.04, 0.004, 0.0],
+        'ministral-3b-latest' => ['Ministral 3B (latest)', 131_072, 128_000, false, true, 0.1, 0.1, 0.01, 0.0],
         'ministral-8b-2512' => ['Ministral 3 8B', 262_144, 262_144, false, true, 0.15, 0.15, 0.015, 0.0],
-        'ministral-8b-latest' => ['Ministral 8B (latest)', 262_144, 128_000, false, true, 0.1, 0.1, 0.01, 0.0],
-        'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.2, 0.0],
+        'ministral-8b-latest' => ['Ministral 8B (latest)', 262_144, 128_000, false, true, 0.15, 0.15, 0.015, 0.0],
         'mistral-large-2512' => ['Mistral Large 3', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
-        'mistral-large-4' => ['Mistral Large 4', 1_048_576, 262_144, true, true, 0.68, 2.09, 0.07, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistral-large-4' => ['Mistral Large 4', 1_048_576, 262_144, true, true, 1.36, 4.18, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
         'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.04, 0.0],
         'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.04, 0.0],
         'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-medium-3.5' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.015, 0.0],
         'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.01, 0.0],
         'mistral-small-2603' => ['Mistral Small 4', 262_144, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-small-latest' => ['Mistral Small (latest)', 262_144, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.025, 0.0],
         'open-mistral-nemo' => ['Open Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.015, 0.0],
-        'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.2, 0.0],
-        'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.07, 0.0],
         'pixtral-12b' => ['Pixtral 12B', 128_000, 128_000, false, true, 0.15, 0.15, 0.015, 0.0],
-        'pixtral-large-latest' => ['Pixtral Large (latest)', 128_000, 128_000, false, true, 2.0, 6.0, 0.2, 0.0],
         'voxtral-small-2507' => ['Voxtral Small', 32_768, 32_000, false, false, 0.1, 0.4, 0.01, 0.0],
-        'voxtral-small-latest' => ['Voxtral Small (latest)', 32_768, 32_000, false, false, 0.1, 0.3, 0.01, 0.0],
+        'voxtral-small-latest' => ['Voxtral Small (latest)', 32_768, 32_000, false, false, 0.1, 0.4, 0.01, 0.0],
         'zai-glm-5-2' => ['GLM-5.2', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'zai-glm-5-3' => ['GLM-5.3', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'zai-glm-5-3-flash' => ['GLM-5.3-Flash', 1_048_576, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -353,8 +351,8 @@ final class BuiltinCatalog
      */
     private const array XAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 0.6, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 0.6, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         // <<< generated
@@ -410,9 +408,7 @@ final class BuiltinCatalog
         'gpt-5-pro' => ['GPT-5 Pro', 400_000, 128_000, true, true, 15.0, 120.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'gpt-5.2-chat-latest' => ['GPT-5.2 Chat', 128_000, 16_384, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => null, 'xhigh' => null, 'max' => null]],
         'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'gpt-5.3-chat-latest' => ['GPT-5.3 Chat (latest)', 128_000, 16_384, false, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.3-codex' => ['GPT-5.3 Codex', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'gpt-5.4' => ['GPT-5.4', 272_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
@@ -478,6 +474,7 @@ final class BuiltinCatalog
         'gemini-4-argon' => ['Gemini 4 Argon', 1_048_576, 32_768, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-pro-latest' => ['Gemini Pro Latest', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]]],
         'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
         'gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
         // <<< generated
@@ -545,34 +542,34 @@ final class BuiltinCatalog
         'amazon.nova-lite-v1:0' => ['Nova Lite', 300_000, 10_000, false, true, 0.06, 0.24, 0.015, 0.06],
         'amazon.nova-micro-v1:0' => ['Nova Micro', 128_000, 10_000, false, false, 0.035, 0.14, 0.00875, 0.035],
         'amazon.nova-pro-v1:0' => ['Nova Pro', 300_000, 10_000, false, true, 0.8, 3.2, 0.2, 0.8],
-        'anthropic.claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
-        'anthropic.claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'anthropic.claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'strictMode' => true],
+        'anthropic.claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'strictMode' => true],
         'anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25, 'strictMode' => true],
-        'anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        'anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'strictMode' => true],
         'anthropic.claude-opus-4-1-20250805-v1:0' => ['Claude Opus 4.1', 200_000, 32_000, true, true, 15.0, 75.0, 1.5, 18.75],
         'anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
         'anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
-        'anthropic.claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'anthropic.claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'anthropic.claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
+        'anthropic.claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'anthropic.claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'anthropic.claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'strictMode' => true],
         'anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
         'anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
-        'anthropic.claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
-        'anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'anthropic.claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'strictMode' => true],
+        'anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'strictMode' => true],
         'apac.amazon.nova-lite-v1:0' => ['Nova Lite (APAC)', 300_000, 10_000, false, true, 0.063, 0.252, 0.01575, 0.063],
         'apac.amazon.nova-micro-v1:0' => ['Nova Micro (APAC)', 128_000, 10_000, false, false, 0.037, 0.148, 0.00925, 0.037],
         'apac.amazon.nova-pro-v1:0' => ['Nova Pro (APAC)', 300_000, 10_000, false, true, 0.84, 3.36, 0.21, 0.84],
         'apac.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (APAC)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'au.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (AU)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
-        'au.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (AU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'au.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (AU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]], 'strictMode' => true],
         'au.anthropic.claude-opus-4-6-v1' => ['AU Anthropic Claude Opus 4.6', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
-        'au.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'au.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'au.anthropic.claude-opus-5' => ['Claude Opus 5 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'au.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (AU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'au.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'au.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'au.anthropic.claude-opus-5' => ['Claude Opus 5 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'au.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (AU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5, 'strictMode' => true],
         'au.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (AU)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
         'au.anthropic.claude-sonnet-4-6' => ['AU Anthropic Claude Sonnet 4.6', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
-        'au.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (AU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'au.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (AU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'strictMode' => true],
         'ca.amazon.nova-lite-v1:0' => ['Nova Lite (CA)', 300_000, 10_000, false, true, 0.064, 0.256, 0.016, 0.064],
         'deepseek.v3-v1:0' => ['DeepSeek-V3.1', 163_840, 81_920, true, false, 0.58, 1.68, 0.0, 0.0, 'strictMode' => true],
         'deepseek.v3.2' => ['DeepSeek V3.2', 163_840, 81_920, true, false, 0.62, 1.85, 0.0, 0.0, 'strictMode' => true],
@@ -580,41 +577,41 @@ final class BuiltinCatalog
         'eu.amazon.nova-lite-v1:0' => ['Nova Lite (EU)', 300_000, 10_000, false, true, 0.069, 0.276, 0.01725, 0.069],
         'eu.amazon.nova-micro-v1:0' => ['Nova Micro (EU)', 128_000, 10_000, false, false, 0.04, 0.16, 0.01, 0.04],
         'eu.amazon.nova-pro-v1:0' => ['Nova Pro (EU)', 300_000, 10_000, false, true, 0.92, 3.68, 0.23, 0.92],
-        'eu.anthropic.claude-fable-5' => ['Claude Fable 5 (EU)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75],
+        'eu.anthropic.claude-fable-5' => ['Claude Fable 5 (EU)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75, 'strictMode' => true],
         'eu.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (EU)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
-        'eu.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (EU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'eu.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (EU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]], 'strictMode' => true],
         'eu.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (EU)', 200_000, 64_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
         'eu.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
-        'eu.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'eu.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'eu.anthropic.claude-opus-5' => ['Claude Opus 5 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'eu.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (EU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'eu.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'eu.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'eu.anthropic.claude-opus-5' => ['Claude Opus 5 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'eu.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (EU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5, 'strictMode' => true],
         'eu.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (EU)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'eu.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (EU)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
         'eu.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (EU)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
-        'eu.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
-        'eu.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75],
+        'eu.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'strictMode' => true],
+        'eu.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75, 'strictMode' => true],
         'eu.mistral.pixtral-large-2502-v1:0' => ['Pixtral Large (25.02) (EU)', 128_000, 8_192, false, true, 2.0, 6.0, 0.0, 0.0],
         'global.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (Global)', 1_000_000, 65_535, true, true, 0.3, 2.5, 0.075, 0.3],
-        'global.anthropic.claude-fable-5' => ['Claude Fable 5 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
-        'global.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'global.anthropic.claude-fable-5' => ['Claude Fable 5 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'strictMode' => true],
+        'global.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'strictMode' => true],
         'global.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (Global)', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25, 'strictMode' => true],
-        'global.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (Global)', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        'global.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (Global)', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'strictMode' => true],
         'global.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (Global)', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
         'global.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
-        'global.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'global.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'global.anthropic.claude-opus-5' => ['Claude Opus 5 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'global.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (Global)', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
+        'global.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'global.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'global.anthropic.claude-opus-5' => ['Claude Opus 5 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'global.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (Global)', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'strictMode' => true],
         'global.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (Global)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'global.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (Global)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
         'global.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (Global)', 1_000_000, 128_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
-        'global.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
-        'global.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'global.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'strictMode' => true],
+        'global.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'strictMode' => true],
         'global.moonshotai.kimi-k3' => ['Kimi K3 (Global)', 1_048_576, 128_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
         'global.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (Global)', 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]], 'strictMode' => true],
-        'global.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (Global)', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
-        'global.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (Global)', 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
+        'global.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (Global)', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'strictMode' => true],
+        'global.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (Global)', 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]], 'strictMode' => true],
         'global.openai.gpt-6-astra' => ['GPT-6 Astra (Global)', 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]], 'strictMode' => true],
         'global.openai.gpt-6-luna' => ['GPT-6 Luna (Global)', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'strictMode' => true],
         'global.openai.gpt-6-sol' => ['GPT-6 Sol (Global)', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'strictMode' => true],
@@ -629,17 +626,17 @@ final class BuiltinCatalog
         'in.anthropic.claude-opus-5' => ['Claude Opus 5 (India)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
         'in.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (India)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
         'in.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (India)', 1_050_000, 128_000, true, true, 0.22, 1.32, 0.022, 0.275, 'tiers' => [[272_000, 0.44, 1.98, 0.044, 0.55]], 'strictMode' => true],
-        'in.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (India)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]]],
+        'in.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (India)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]], 'strictMode' => true],
         'jp.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (JP)', 1_000_000, 65_535, true, true, 0.396, 3.311, 0.099, 0.396],
         'jp.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (JP)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
-        'jp.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (JP)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
-        'jp.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'jp.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'jp.anthropic.claude-opus-5' => ['Claude Opus 5 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'jp.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (JP)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'jp.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (JP)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]], 'strictMode' => true],
+        'jp.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'jp.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'jp.anthropic.claude-opus-5' => ['Claude Opus 5 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'jp.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (JP)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5, 'strictMode' => true],
         'jp.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (JP)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
         'jp.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (JP)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
-        'jp.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (JP)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'jp.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (JP)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'strictMode' => true],
         'meta.llama3-1-70b-instruct-v1:0' => ['Llama 3.1 70B Instruct', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
         'meta.llama3-1-8b-instruct-v1:0' => ['Llama 3.1 8B Instruct', 128_000, 4_096, false, false, 0.22, 0.22, 0.0, 0.0],
         'meta.llama3-3-70b-instruct-v1:0' => ['Llama 3.3 70B Instruct', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
@@ -692,22 +689,22 @@ final class BuiltinCatalog
         'us.amazon.nova-micro-v1:0' => ['Nova Micro (US)', 128_000, 10_000, false, false, 0.035, 0.14, 0.00875, 0.035],
         'us.amazon.nova-premier-v1:0' => ['Nova Premier (US)', 1_000_000, 10_000, false, true, 2.5, 12.5, 0.625, 2.5],
         'us.amazon.nova-pro-v1:0' => ['Nova Pro (US)', 300_000, 10_000, false, true, 0.8, 3.2, 0.2, 0.8],
-        'us.anthropic.claude-fable-5' => ['Claude Fable 5 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75],
-        'us.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 0.275, 13.75],
+        'us.anthropic.claude-fable-5' => ['Claude Fable 5 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75, 'strictMode' => true],
+        'us.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 0.275, 13.75, 'strictMode' => true],
         'us.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (US)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
-        'us.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (US)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'us.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (US)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]], 'strictMode' => true],
         'us.anthropic.claude-opus-4-1-20250805-v1:0' => ['Claude Opus 4.1 (US)', 200_000, 32_000, true, true, 15.0, 75.0, 1.5, 18.75],
         'us.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (US)', 200_000, 64_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
         'us.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
-        'us.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'us.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'us.anthropic.claude-opus-5' => ['Claude Opus 5 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
-        'us.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (US)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'us.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'us.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'us.anthropic.claude-opus-5' => ['Claude Opus 5 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'us.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (US)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5, 'strictMode' => true],
         'us.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (US)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'us.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (US)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
         'us.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (US)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
-        'us.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
-        'us.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75],
+        'us.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'strictMode' => true],
+        'us.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75, 'strictMode' => true],
         'us.meta.llama3-1-70b-instruct-v1:0' => ['Llama 3.1 70B Instruct (US)', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
         'us.meta.llama3-1-8b-instruct-v1:0' => ['Llama 3.1 8B Instruct (US)', 128_000, 4_096, false, false, 0.22, 0.22, 0.0, 0.0],
         'us.meta.llama3-3-70b-instruct-v1:0' => ['Llama 3.3 70B Instruct (US)', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
@@ -716,8 +713,8 @@ final class BuiltinCatalog
         'us.mistral.pixtral-large-2502-v1:0' => ['Pixtral Large (25.02) (US)', 128_000, 8_192, false, true, 2.0, 6.0, 0.0, 0.0],
         'us.moonshotai.kimi-k3' => ['Kimi K3 (US)', 1_048_576, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
         'us.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (US)', 1_050_000, 128_000, true, true, 0.22, 1.32, 0.022, 0.275, 'tiers' => [[272_000, 0.44, 1.98, 0.044, 0.55]], 'strictMode' => true],
-        'us.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (US)', 1_050_000, 128_000, true, true, 4.4, 22.0, 0.44, 5.5, 'tiers' => [[272_000, 8.8, 33.0, 0.88, 11.0]]],
-        'us.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (US)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]]],
+        'us.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (US)', 1_050_000, 128_000, true, true, 4.4, 22.0, 0.44, 5.5, 'tiers' => [[272_000, 8.8, 33.0, 0.88, 11.0]], 'strictMode' => true],
+        'us.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (US)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]], 'strictMode' => true],
         'us.openai.gpt-6-astra' => ['GPT-6 Astra (US)', 1_050_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75, 'tiers' => [[272_000, 22.0, 82.5, 2.2, 27.5]], 'strictMode' => true],
         'us.openai.gpt-6-luna' => ['GPT-6 Luna (US)', 1_050_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[272_000, 0.22, 0.825, 0.022, 0.275]], 'strictMode' => true],
         'us.openai.gpt-6-sol' => ['GPT-6 Sol (US)', 1_050_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 16.5, 0.44, 5.5]], 'strictMode' => true],
@@ -762,24 +759,16 @@ final class BuiltinCatalog
         'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::AnthropicMessages, 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
         'claude-haiku-5.5' => ['Claude Haiku 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 3.0, 15.0, 0.3, 3.75, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true, 1.5, 9.0, 0.15, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-4-argon' => ['Gemini 4 Argon', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 2.0, 10.0, 0.1, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true, 0.25, 2.0, 0.025, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
-        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[200_000, 0.4, 1.8, 0.04, 0.5]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
@@ -790,9 +779,7 @@ final class BuiltinCatalog
         'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true, 0.95, 4.0, 0.19, 0.0],
         'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false, 0.75, 4.5, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
@@ -835,9 +822,7 @@ final class BuiltinCatalog
         'gpt-5-pro' => ['GPT-5 Pro', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 15.0, 120.0, 0.0, 0.0],
         'gpt-5.1' => ['GPT-5.1', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
         'gpt-5.2' => ['GPT-5.2', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.2-chat-latest' => ['GPT-5.2 Chat', Api::AzureOpenAiResponses, 128_000, 16_384, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.2-pro' => ['GPT-5.2 Pro', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0],
-        'gpt-5.3-chat-latest' => ['GPT-5.3 Chat (latest)', Api::AzureOpenAiResponses, 128_000, 16_384, false, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', Api::AzureOpenAiResponses, 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.4' => ['GPT-5.4', Api::AzureOpenAiResponses, 1_050_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0],
@@ -868,23 +853,22 @@ final class BuiltinCatalog
     /**
      * ChatGPT's Codex backend (`Providers\OpenAiCodexResponses`), signed in with a ChatGPT Plus/Pro
      * subscription. Not from models.dev: upstream's generator keeps "a small, explicit list to avoid
-     * aliases" (`codexModels`), at Codex's 272k window ("Older model limits are based on observed server
-     * behavior; GPT-5.6 and GPT-6 use Codex's 272k default catalog limit") and 128k output, priced at
+     * aliases" (`codexModels`), only those the backend accepts for ChatGPT accounts (#11173), at Codex's
+     * 272k window — GPT-6.1 Sol's is 500k, the default `/backend-api/codex/models` returns — and 128k
+     * output, priced at
      * `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])` — the generator's `CODEX_MODELS`.
      *
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
      */
     private const array OPENAI_CODEX_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 128_000, true, false, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.5' => ['GPT-5.5', 272_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
         'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]]],
         'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
         'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
         'gpt-6-astra' => ['GPT-6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', 500_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
         // <<< generated
     ];
 
@@ -911,41 +895,58 @@ final class BuiltinCatalog
     private const array CLASSIFIER_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'cloudflare-workers-ai/@cf/cloudflare/clef' => ['Clef', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.24, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 65_536, ['text'], 0.09, 0.0, 0.0, 0.0],
-        'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text'], 0.038, 0.0, 0.0, 0.0],
+        'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['Clef Omni', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 64_000, ['text'], 0.15, 0.0, 0.0, 0.0],
+        'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
         'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text', 'image'], 0.021, 0.0, 0.0, 0.0],
+        'openrouter/baseten/elephant-1:free' => ['Baseten: Elephant 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/baseten/mammoth-1:free' => ['Baseten: Mammoth 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0],
+        'openrouter/cloudflare/clef-flash' => ['Cloudflare: Clef Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 24_576, ['text', 'image'], 0.019, 0.0, 0.0, 0.0],
         'openrouter/cloudflare/clef-omni' => ['Cloudflare: Clef Omni', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.15, 0.0, 0.0, 0.0],
         'openrouter/inception/mercury-decide' => ['Inception: Mercury Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
         'openrouter/inception/mercury-decide:free' => ['Inception: Mercury Decide (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/jaredpalmer/kev-4b' => ['Jared Palmer: Kev 4B', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 8_192, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/liquid/d1' => ['LiquidAI: d1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text'], 0.02, 0.0, 0.02, 0.0],
+        'openrouter/liquid/d1' => ['LiquidAI: d1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.02, 0.0, 0.02, 0.0],
+        'openrouter/liquid/d1-ultra' => ['LiquidAI: d1-ultra', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text', 'image'], 0.042, 0.0, 0.042, 0.0],
         'openrouter/microsoft/microsoft-decision-1' => ['Microsoft: Microsoft-Decision-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'openrouter/nace-ai/drex-max' => ['Nace.AI: Drex Max', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text'], 0.06, 0.0, 0.0, 0.0],
         'openrouter/nace-ai/drex-v1.5' => ['Nace.AI: Drex v1.5', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.04, 0.0, 0.0, 0.0],
         'openrouter/nace-ai/drex-v2.0' => ['Nace.AI: Drex v2.0', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text'], 0.06, 0.0, 0.0, 0.0],
         'openrouter/openai/gpt-6-luna-decisions' => ['OpenAI: GPT-6 Luna Decisions', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_050_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0],
-        'openrouter/perplexity/pplx-decider-v1.1-27b' => ['Perplexity: Decider V1.1 27B', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
+        'openrouter/perplexity/pplx-decider-flash-v1.2' => ['Perplexity: Decider Flash V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
+        'openrouter/perplexity/pplx-decider-v1.2' => ['Perplexity: Decider V1.2', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
         'openrouter/respan/span-01' => ['Respan: Span-01', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.02, 0.0, 0.0, 0.0],
         'openrouter/respan/span-01-lite' => ['Respan: Span-01 Lite', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/respan/span-01-lite:free' => ['Respan: Span-01 Lite (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 4_096, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/respan/span-02' => ['Respan: Span-02', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 131_072, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
         'openrouter/scaledown/classify-1' => ['ScaleDown: Classify-1', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 1_000_000, ['text', 'image'], 0.04, 0.0, 0.0, 0.0],
         'openrouter/togethercomputer/tev1-4b-experimental' => ['Together: Tev1 4B Experimental', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 64_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'openrouter/typesafe/jev-1.13' => ['TypeSafe: Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
+        'openrouter/typesafe/jev-1.14' => ['TypeSafe: Jev 1.14', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
         'openrouter/upstage/solar-decide' => ['Upstage: Solar Decide', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0],
         'openrouter/upstage/solar-decide-flash' => ['Upstage: Solar Decide Flash', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 524_288, ['text'], 0.05, 0.0, 0.05, 0.0],
-        'openrouter/~perplexity/pplx-decider-27b-latest' => ['Perplexity: Decider 27B Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
-        'openrouter/~typesafe/jev-latest' => ['TypeSafe: Jev Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 64_000, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/~perplexity/pplx-decider-flash-latest' => ['Perplexity: Decider Flash Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.01, 0.0, 0.0, 0.0],
+        'openrouter/~perplexity/pplx-decider-latest' => ['Perplexity: Decider Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.02, 0.0, 0.0, 0.0],
+        'openrouter/~typesafe/jev-latest' => ['TypeSafe: Jev Latest', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 262_144, ['text', 'image'], 0.042, 0.0, 0.0, 0.0],
+        'typesafe/jev-latest' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://api.typesafe.ai/v1/', 64_000, ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/baseten/elephant-1' => ['Elephant-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/baseten/mammoth-1' => ['Mammoth-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/convaiinnovations/laya' => ['Laya', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 8_192, ['text'], 0.0, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/convaiinnovations/laya-free' => ['Laya (Free)', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 8_192, ['text'], 0.0, 0.0, 0.0, 0.0],
-        'vercel-ai-gateway/liquid/d1' => ['Liquid d1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 65_536, ['text'], 0.04, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/liquid/d1' => ['Liquid d1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 65_536, ['text'], 0.02, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/liquid/d1-ultra' => ['Liquid d1 Ultra', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/microsoft/microsoft-decision-1' => ['Decision-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/openai/gpt-6-luna-decisions' => ['GPT-6 Luna Decisions', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 1_050_000, ['text'], 0.1, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/perplexity/pplx-decider-flash-v1.2' => ['Decider Flash V1.2 4B', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 262_144, ['text'], 0.01, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/perplexity/pplx-decider-v1.2' => ['Decider V1.2 27B', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 262_144, ['text'], 0.02, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/scaledown/scaledown-classify-1' => ['Classify-1', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 4_096, ['text'], 0.05, 0.0, 0.0, 0.0],
         'vercel-ai-gateway/typesafe-ai/jev' => ['Jev', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/typesafe-ai/jev-1.13.0' => ['Jev 1.13.0', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'vercel-ai-gateway/typesafe-ai/jev-1.14.0' => ['Jev 1.14.0', ClassifierApi::TypesafeSystemOne, 'https://ai-gateway.vercel.sh/typesafe/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         // <<< generated
     ];
 
@@ -961,7 +962,8 @@ final class BuiltinCatalog
      */
     private const array IMAGE_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'openrouter/black-forest-labs/flux-3-image' => ['Black Forest Labs: FLUX.3 Image', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/black-forest-labs/flux-3-image' => ['Black Forest Labs: FLUX 3 Image', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/black-forest-labs/flux-3-image-klein' => ['Black Forest Labs: FLUX 3 Image Klein', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/black-forest-labs/flux.2-flex' => ['Black Forest Labs: FLUX.2 Flex', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/black-forest-labs/flux.2-klein-4b' => ['Black Forest Labs: FLUX.2 Klein 4B', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/black-forest-labs/flux.2-max' => ['Black Forest Labs: FLUX.2 Max', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
@@ -977,6 +979,7 @@ final class BuiltinCatalog
         'openrouter/google/gemini-3.1-flash-image-preview' => ['Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['image', 'text'], ['image', 'text'], 0.5, 3.0, 0.0, 0.0],
         'openrouter/google/gemini-3.1-flash-lite-image' => ['Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['image', 'text'], ['image', 'text'], 0.25, 1.5, 0.0, 0.0],
         'openrouter/google/gemini-nano-banana-2.1' => ['Google: Nano Banana 2.1', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['image', 'text'], ['image', 'text'], 1.5, 7.5, 0.0, 0.0],
+        'openrouter/krea/k3-edit' => ['Krea: K3 Edit', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/krea/krea-2-large' => ['Krea: Krea 2 Large', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/krea/krea-2-medium' => ['Krea: Krea 2 Medium', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/krea/krea-2-medium-turbo' => ['Krea: Krea 2 Medium Turbo', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
@@ -993,8 +996,10 @@ final class BuiltinCatalog
         'openrouter/openai/gpt-image-2' => ['OpenAI: GPT Image 2', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 8.0, 8.0, 2.0, 0.0],
         'openrouter/openai/gpt-image-2.5-flare' => ['OpenAI: GPT Image 2.5 Flare', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 8.0, 8.0, 2.0, 0.0],
         'openrouter/openai/gpt-image-2.5-sunburst' => ['OpenAI: GPT Image 2.5 Sunburst', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 8.0, 8.0, 2.0, 0.0],
-        'openrouter/openrouter/auto' => ['Auto Router', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['text', 'image'], -1000000.0, -1000000.0, 0.0, 0.0],
-        'openrouter/openrouter/auto-beta' => ['Auto Router (Beta)', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['text', 'image'], -1000000.0, -1000000.0, 0.0, 0.0],
+        'openrouter/openrouter/auto' => ['Auto Router', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/openrouter/auto-beta' => ['Auto Router (Beta)', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['text', 'image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/qwen/qwen-image-2.1-pro' => ['Qwen: Qwen Image 2.1 Pro', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
+        'openrouter/qwen/qwen-image-2.1-turbo' => ['Qwen: Qwen Image 2.1 Turbo', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/qwen/qwen-image-3' => ['Qwen: Qwen Image 3', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/qwen/qwen-image-3-pro' => ['Qwen: Qwen Image 3 Pro', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/recraft/recraft-v3' => ['Recraft: Recraft V3', ImageApi::OpenRouterImages, 'https://openrouter.ai/api/v1', ['text', 'image'], ['image'], 0.0, 0.0, 0.0, 0.0],
@@ -1043,12 +1048,12 @@ final class BuiltinCatalog
         'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4-5' => ['Claude Haiku 4.5', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
-        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
         'claude-opus-4-5' => ['Claude Opus 4.5', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
         'claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-sonnet-4-5' => ['Claude Sonnet 4.5', 1_000_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-4-5' => ['Claude Sonnet 4.5', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
         'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_000_000, 32_768, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1064,9 +1069,12 @@ final class BuiltinCatalog
         'gpt-6-astra' => ['GPT 6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         'gpt-6-luna' => ['GPT 6 Luna', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         'gpt-6-sol' => ['GPT 6 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
+        'gpt-6.1-sol' => ['GPT 6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
         'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
         'kimi-k3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'minimax-m3.1-flash' => ['MiniMax M3.1 Flash', 1_000_000, 524_288, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'precise' => ['Precise', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'recursive/flint' => ['Flint (free, trains on data)', 262_144, 65_536, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -1164,13 +1172,10 @@ final class BuiltinCatalog
     private const array NVIDIA_HEADERS = ['NVCF-POLL-SECONDS' => '3600'];
 
     /**
-     * Upstream's generator `TOGETHER_REASONING_ONLY_MODELS`, `TOGETHER_REASONING_EFFORT_MODELS` and
+     * Upstream's generator `TOGETHER_REASONING_EFFORT_MODELS` and
      * `TOGETHER_TOGGLE_REASONING_EFFORT_MODELS`, which pick a Together model's compat
      * (`getTogetherCompat()`) — the level maps they pick are the generator's, written into the rows.
-     * The first is also its `detectOpenAICompletionsCompat()`'s `isTogetherReasoningOnly`.
      */
-    private const array TOGETHER_REASONING_ONLY_MODELS = ['deepseek-ai/DeepSeek-R1', 'MiniMaxAI/MiniMax-M2.7'];
-
     private const array TOGETHER_REASONING_EFFORT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'];
 
     private const array TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = ['deepseek-ai/DeepSeek-V4-Pro-0813'];
@@ -1232,28 +1237,20 @@ final class BuiltinCatalog
      */
     private const array BASETEN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'deepseek-ai/DeepSeek-V4-Flash-0731' => ['DeepSeek V4 Flash 0731', 1_048_576, 384_000, true, false, 0.13, 0.26, 0.028, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
-        'deepseek-ai/DeepSeek-V4-Pro' => ['DeepSeek V4 Pro', 1_048_576, 262_144, true, false, 1.74, 3.48, 0.145, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
-        'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 262_144, true, false, 1.32, 3.96, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 32_768, true, true, 0.3, 1.2, 0.03, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'deepseek-ai/DeepSeek-V4.1-Flash-Fast' => ['DeepSeek V4.1 Flash Fast', 1_048_576, 32_768, true, true, 0.6, 2.4, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'moonshotai/Kimi-K2.5' => ['Kimi K2.5', 262_000, 262_000, true, true, 0.6, 3.0, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'moonshotai/Kimi-K2.6' => ['Kimi K2.6', 262_000, 262_000, true, true, 0.95, 4.0, 0.16, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'moonshotai/Kimi-K2.7-Code' => ['Kimi K2.7 Code', 262_000, 262_000, true, true, 0.95, 4.0, 0.16, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'moonshotai/Kimi-K3' => ['Kimi K3', 1_048_576, 262_144, true, true, 3.0, 15.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B' => ['Nemotron Ultra', 202_800, 202_800, true, false, 0.6, 2.4, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'nvidia/Nemotron-120B-A12B' => ['Nemotron Super', 202_800, 202_800, true, false, 0.3, 0.75, 0.06, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'openai/gpt-oss-120b' => ['OpenAI GPT 120B', 128_072, 128_072, true, false, 0.1, 0.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
-        'thinkingmachines/inkling' => ['Inkling', 1_048_576, 32_768, true, true, 1.0, 4.05, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
-        'thinkingmachines/inkling-small' => ['Inkling Small', 1_048_576, 32_768, true, true, 0.5, 1.2, 0.1, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
-        'zai-org/GLM-4.7' => ['GLM 4.7', 200_000, 200_000, true, false, 0.6, 2.2, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'zai-org/GLM-5' => ['GLM 5', 202_800, 202_800, true, false, 0.95, 3.15, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'zai-org/GLM-5.1' => ['GLM 5.1', 202_800, 202_800, true, false, 1.3, 4.3, 0.26, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsToggle' => true],
-        'zai-org/GLM-5.2' => ['GLM 5.2', 1_048_576, 262_144, true, false, 1.4, 4.4, 0.3, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4-Flash-0731' => ['DeepSeek V4 Flash 0731', 1_048_576, 384_000, true, false, 0.13, 0.26, 0.028, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 262_144, true, false, 1.32, 3.96, 0.132, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 32_768, true, true, 0.3, 1.2, 0.007, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4.1-Flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_048_576, 262_144, true, true, 0.3, 1.2, 0.007, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast' => ['DeepSeek V4.1 Flash 1017 Fast', 1_048_576, 262_144, true, true, 0.6, 2.4, 0.014, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'deepseek-ai/DeepSeek-V4.1-Flash-Fast' => ['DeepSeek V4.1 Flash Fast', 1_048_576, 32_768, true, true, 0.6, 2.4, 0.014, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'moonshotai/Kimi-K3' => ['Kimi K3', 1_048_576, 262_144, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B' => ['Nemotron Ultra', 202_800, 202_800, true, false, 0.6, 2.4, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsEffort' => true],
+        'openai/gpt-oss-120b' => ['OpenAI GPT 120B', 128_072, 128_072, true, false, 0.1, 0.5, 0.1, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
+        'zai-org/GLM-5.2' => ['GLM 5.2', 1_048_576, 262_144, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'zai-org/GLM-5.2-Fast' => ['GLM 5.2 Fast', 1_048_576, 262_144, true, false, 2.1, 6.6, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'zai-org/GLM-5.3' => ['GLM 5.3', 1_048_576, 262_144, true, true, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'zai-org/GLM-5.3-Fast' => ['GLM 5.3 Fast', 1_048_576, 262_144, true, true, 2.1, 6.6, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
-        'zai-org/GLM-5.3-Flash' => ['GLM 5.3 Flash', 1_048_576, 131_072, true, true, 0.15, 0.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'zai-org/GLM-5.3-Fast' => ['GLM 5.3 Fast', 1_048_576, 262_144, true, true, 2.1, 6.6, 0.21, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'zai-org/GLM-5.3-Flash' => ['GLM 5.3 Flash', 1_048_576, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         // <<< generated
     ];
 
@@ -1309,14 +1306,15 @@ final class BuiltinCatalog
         'o4-mini' => ['o4-mini', Api::OpenAiResponses, 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731' => ['DeepSeek V4 Flash 0731', Api::OpenAiCompletions, 1_048_576, 1_048_576, true, false, 0.44, 1.32, 0.014, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 1_048_576, true, false, 1.32, 3.96, 0.044, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'workers-ai/@cf/google/gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', Api::OpenAiCompletions, 256_000, 16_384, true, true, 0.1, 0.3, 0.05, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'workers-ai/@cf/deepseek-ai/deepseek-v4.1-flash-1017' => ['Deepseek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 1_048_576, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'workers-ai/@cf/google/gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', Api::OpenAiCompletions, 256_000, 16_384, true, true, 0.1, 0.3, 0.05, 0.0],
         'workers-ai/@cf/ibm-granite/granite-4.0-h-micro' => ['Granite 4.0 H Micro', Api::OpenAiCompletions, 131_000, 131_000, false, false, 0.017, 0.112, 0.0, 0.0],
         'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast' => ['Llama 3.3 70B Instruct fp8 Fast', Api::OpenAiCompletions, 24_000, 24_000, false, false, 0.293, 2.253, 0.0, 0.0],
         'workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct' => ['Llama 4 Scout 17B 16E Instruct', Api::OpenAiCompletions, 131_000, 16_384, false, true, 0.27, 0.85, 0.0, 0.0],
         'workers-ai/@cf/mistralai/mistral-small-3.1-24b-instruct' => ['Mistral Small 3.1 24B Instruct', Api::OpenAiCompletions, 128_000, 128_000, false, true, 0.351, 0.555, 0.0, 0.0],
         'workers-ai/@cf/moonshotai/kimi-k2.6' => ['Kimi K2.6', Api::OpenAiCompletions, 262_144, 256_000, true, true, 0.95, 4.0, 0.16, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'workers-ai/@cf/moonshotai/kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
-        'workers-ai/@cf/nvidia/nemotron-3-120b-a12b' => ['Nemotron 3 Super 120B', Api::OpenAiCompletions, 256_000, 256_000, true, false, 0.5, 1.5, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'workers-ai/@cf/nvidia/nemotron-3-120b-a12b' => ['Nemotron 3 Super 120B', Api::OpenAiCompletions, 256_000, 256_000, true, false, 0.5, 1.5, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'workers-ai/@cf/openai/gpt-oss-120b' => ['GPT OSS 120B', Api::OpenAiCompletions, 128_000, 16_384, true, false, 0.35, 0.75, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'workers-ai/@cf/openai/gpt-oss-20b' => ['GPT OSS 20B', Api::OpenAiCompletions, 128_000, 16_384, true, false, 0.2, 0.3, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'workers-ai/@cf/qwen/qwen3-30b-a3b-fp8' => ['Qwen3 30B A3b fp8', Api::OpenAiCompletions, 32_768, 32_768, true, false, 0.0509, 0.335, 0.0, 0.0],
@@ -1338,14 +1336,15 @@ final class BuiltinCatalog
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         '@cf/deepseek-ai/deepseek-v4-flash-0731' => ['DeepSeek V4 Flash 0731', 1_048_576, 1_048_576, true, false, 0.44, 1.32, 0.014, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '@cf/deepseek-ai/deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 1_048_576, true, false, 1.32, 3.96, 0.044, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        '@cf/google/gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 256_000, 16_384, true, true, 0.1, 0.3, 0.05, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        '@cf/deepseek-ai/deepseek-v4.1-flash-1017' => ['Deepseek V4.1 Flash 1017', 1_048_576, 1_048_576, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '@cf/google/gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 256_000, 16_384, true, true, 0.1, 0.3, 0.05, 0.0],
         '@cf/ibm-granite/granite-4.0-h-micro' => ['Granite 4.0 H Micro', 131_000, 131_000, false, false, 0.017, 0.112, 0.0, 0.0],
         '@cf/meta/llama-3.3-70b-instruct-fp8-fast' => ['Llama 3.3 70B Instruct fp8 Fast', 24_000, 24_000, false, false, 0.293, 2.253, 0.0, 0.0],
         '@cf/meta/llama-4-scout-17b-16e-instruct' => ['Llama 4 Scout 17B 16E Instruct', 131_000, 16_384, false, true, 0.27, 0.85, 0.0, 0.0],
         '@cf/mistralai/mistral-small-3.1-24b-instruct' => ['Mistral Small 3.1 24B Instruct', 128_000, 128_000, false, true, 0.351, 0.555, 0.0, 0.0],
         '@cf/moonshotai/kimi-k2.6' => ['Kimi K2.6', 262_144, 256_000, true, true, 0.95, 4.0, 0.16, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '@cf/moonshotai/kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
-        '@cf/nvidia/nemotron-3-120b-a12b' => ['Nemotron 3 Super 120B', 256_000, 256_000, true, false, 0.5, 1.5, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        '@cf/nvidia/nemotron-3-120b-a12b' => ['Nemotron 3 Super 120B', 256_000, 256_000, true, false, 0.5, 1.5, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '@cf/openai/gpt-oss-120b' => ['GPT OSS 120B', 128_000, 16_384, true, false, 0.35, 0.75, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '@cf/openai/gpt-oss-20b' => ['GPT OSS 20B', 128_000, 16_384, true, false, 0.2, 0.3, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '@cf/qwen/qwen3-30b-a3b-fp8' => ['Qwen3 30B A3b fp8', 32_768, 32_768, true, false, 0.0509, 0.335, 0.0, 0.0],
@@ -1379,6 +1378,7 @@ final class BuiltinCatalog
     private const array FIREWORKS_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'accounts/fireworks/models/deepseek-v4p1-flash' => ['DeepSeek V4.1 Flash', Api::AnthropicMessages, 1_000_000, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
+        'accounts/fireworks/models/deepseek-v4p1-flash-1017' => ['DeepSeek V4.1 Flash 1017', Api::AnthropicMessages, 1_000_000, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/models/ember-1' => ['Ember-1', Api::AnthropicMessages, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/models/glm-5p3' => ['GLM 5.3', Api::OpenAiCompletions, 1_048_573, 262_144, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'accounts/fireworks/models/glm-5p3-flash' => ['GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_573, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
@@ -1386,17 +1386,23 @@ final class BuiltinCatalog
         'accounts/fireworks/models/inkling' => ['Inkling', Api::AnthropicMessages, 1_048_576, 1_048_576, true, true, 1.0, 4.05, 0.17, 0.0],
         'accounts/fireworks/models/kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/models/minimax-m3' => ['MiniMax-M3', Api::AnthropicMessages, 512_000, 512_000, true, false, 0.3, 1.2, 0.06, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsEffort' => true],
+        'accounts/fireworks/models/minimax-m3p1-flash' => ['MiniMax-M3.1-Flash', Api::AnthropicMessages, 1_000_000, 512_000, true, true, 0.15, 0.6, 0.015, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'supportsEffort' => true],
+        'accounts/fireworks/models/muse-spark-open' => ['Muse Spark Open', Api::AnthropicMessages, 1_048_576, 131_072, true, true, 1.25, 4.25, 0.15, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'supportsEffort' => true],
         'accounts/fireworks/models/nemotron-3-ultra-nvfp4' => ['Nemotron 3 Ultra 550B A55B', Api::AnthropicMessages, 262_144, 128_000, true, false, 0.6, 2.4, 0.12, 0.0, 'supportsToggle' => true],
         'accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b' => ['Nemotron 3.5 Lightning 30B A3B', Api::AnthropicMessages, 262_144, 262_144, true, false, 0.05, 0.2, 0.01, 0.0, 'supportsToggle' => true],
         'accounts/fireworks/models/qwen3p8-2p4t-a95b' => ['Qwen3.8 2.4T A95B', Api::AnthropicMessages, 262_144, 131_072, true, false, 2.0, 6.0, 0.25, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null], 'supportsEffort' => true],
         'accounts/fireworks/models/qwen3p8-max' => ['Qwen3.8 Max', Api::AnthropicMessages, 262_144, 131_072, true, true, 2.0, 6.0, 0.25, 0.0, 'supportsToggle' => true],
         'accounts/fireworks/routers/deepseek-flash-latest' => ['DeepSeek Flash Latest', Api::AnthropicMessages, 1_000_000, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
+        'accounts/fireworks/routers/deepseek-v4p1-flash-1017-spot' => ['DeepSeek V4.1 Flash 1017 Spot', Api::AnthropicMessages, 1_000_000, 384_000, true, true, 0.21, 0.84, 0.0042, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
+        'accounts/fireworks/routers/deepseek-v4p1-flash-spot' => ['DeepSeek V4.1 Flash Spot', Api::AnthropicMessages, 1_000_000, 384_000, true, true, 0.21, 0.84, 0.0042, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/routers/glm-5p3-fast' => ['GLM 5.3 Fast', Api::OpenAiCompletions, 1_048_572, 262_144, true, false, 2.1, 6.6, 0.39, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
+        'accounts/fireworks/routers/glm-5p3-spot' => ['GLM 5.3 Spot', Api::OpenAiCompletions, 1_048_573, 262_144, true, false, 0.98, 3.08, 0.182, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'accounts/fireworks/routers/glm-fast-latest' => ['GLM 5.3 Fast (Latest)', Api::OpenAiCompletions, 1_048_572, 262_144, true, false, 2.1, 6.6, 0.39, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'accounts/fireworks/routers/glm-flash-latest' => ['GLM Flash Latest (GLM 5.3 Flash)', Api::OpenAiCompletions, 1_048_573, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'accounts/fireworks/routers/glm-latest' => ['GLM Latest', Api::OpenAiCompletions, 1_048_573, 262_144, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsEffort' => true],
         'accounts/fireworks/routers/kimi-fast-latest' => ['Kimi Fast Latest', Api::AnthropicMessages, 1_048_576, 131_072, true, true, 4.5, 22.5, 0.45, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/routers/kimi-k3-fast' => ['Kimi K3 Fast', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 4.5, 22.5, 0.45, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
+        'accounts/fireworks/routers/kimi-k3-spot' => ['Kimi K3 Spot', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 2.1, 10.5, 0.21, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/routers/kimi-latest' => ['Kimi Latest', Api::AnthropicMessages, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'supportsToggle' => true, 'supportsEffort' => true],
         'accounts/fireworks/routers/minimax-latest' => ['MiniMax Latest', Api::AnthropicMessages, 512_000, 512_000, true, false, 0.3, 1.2, 0.06, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'supportsEffort' => true],
         'accounts/fireworks/routers/qwen-max-latest' => ['Qwen Max Latest (Qwen3.8 Max)', Api::AnthropicMessages, 262_144, 131_072, true, true, 2.0, 6.0, 0.25, 0.0, 'supportsToggle' => true],
@@ -1419,14 +1425,14 @@ final class BuiltinCatalog
         'Qwen/Qwen2.5-Coder-32B-Instruct' => ['Qwen2.5-Coder-32B-Instruct', 131_072, 8_192, false, false, 0.06, 0.2, 0.0, 0.0],
         'Qwen/Qwen3-235B-A22B' => ['Qwen3 235B-A22B', 40_960, 16_384, true, false, 0.2, 0.8, 0.0, 0.0],
         'Qwen/Qwen3-235B-A22B-Instruct-2507' => ['Qwen3 235B-A22B Instruct 2507', 262_144, 16_384, false, false, 0.855, 2.565, 0.0, 0.0],
-        'Qwen/Qwen3-235B-A22B-Thinking-2507' => ['Qwen3-235B-A22B-Thinking-2507', 262_144, 131_072, true, false, 0.3, 3.0, 0.0, 0.0],
+        'Qwen/Qwen3-235B-A22B-Thinking-2507' => ['Qwen3-235B-A22B-Thinking-2507', 262_144, 81_920, true, false, 0.3, 3.0, 0.0, 0.0],
         'Qwen/Qwen3-30B-A3B' => ['Qwen3 30B A3B', 40_960, 16_384, true, false, 0.12, 0.5, 0.0, 0.0],
         'Qwen/Qwen3-32B' => ['Qwen3 32B', 131_072, 16_384, true, false, 0.29, 0.59, 0.0, 0.0],
+        'Qwen/Qwen3-8B' => ['Qwen3 8B', 40_960, 32_768, true, false, 0.07, 0.18, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'Qwen/Qwen3-Coder-30B-A3B-Instruct' => ['Qwen3-Coder 30B-A3B Instruct', 262_144, 65_536, false, false, 0.07, 0.26, 0.0, 0.0],
-        'Qwen/Qwen3-Coder-480B-A35B-Instruct' => ['Qwen3-Coder-480B-A35B-Instruct', 262_144, 66_536, false, false, 2.0, 2.0, 0.0, 0.0],
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct' => ['Qwen3-Coder-480B-A35B-Instruct', 262_144, 65_536, false, false, 2.0, 2.0, 0.0, 0.0],
         'Qwen/Qwen3-Coder-Next' => ['Qwen3-Coder-Next', 262_144, 65_536, false, false, 0.2, 1.5, 0.0, 0.0],
-        'Qwen/Qwen3-Next-80B-A3B-Instruct' => ['Qwen3-Next-80B-A3B-Instruct', 262_144, 66_536, false, false, 0.25, 1.0, 0.0, 0.0],
-        'Qwen/Qwen3-Next-80B-A3B-Thinking' => ['Qwen3-Next-80B-A3B-Thinking', 262_144, 131_072, false, false, 0.3, 2.0, 0.0, 0.0],
+        'Qwen/Qwen3-Next-80B-A3B-Instruct' => ['Qwen3-Next-80B-A3B-Instruct', 262_144, 32_768, false, false, 0.25, 1.0, 0.0, 0.0],
         'Qwen/Qwen3-VL-235B-A22B-Instruct' => ['Qwen3 VL 235B A22B Instruct', 131_072, 32_768, false, true, 0.3, 1.5, 0.0, 0.0],
         'Qwen/Qwen3-VL-235B-A22B-Thinking' => ['Qwen3 VL 235B A22B Thinking', 131_072, 32_768, true, true, 0.98, 3.95, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'Qwen/Qwen3-VL-30B-A3B-Instruct' => ['Qwen3 VL 30B A3B Instruct', 131_072, 32_768, false, true, 0.2, 0.7, 0.0, 0.0],
@@ -1439,11 +1445,10 @@ final class BuiltinCatalog
         'Qwen/Qwen3.6-35B-A3B' => ['Qwen3.6 35B-A3B', 262_144, 65_536, true, true, 0.15, 0.95, 0.0, 0.0],
         'Qwen/Qwen3.8-2.4T-A95B' => ['Qwen3.8 2.4T A95B', 262_144, 131_072, true, false, 2.5, 6.25, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         'Qwen/Qwen3.8-27B' => ['Qwen3.8 27B', 262_144, 32_768, true, true, 0.4, 3.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
-        'XiaomiMiMo/MiMo-V2-Flash' => ['MiMo-V2-Flash', 262_144, 4_096, true, false, 0.1, 0.3, 0.0, 0.0],
         'XiaomiMiMo/MiMo-V2.5' => ['MiMo-V2.5', 262_144, 131_072, true, false, 0.4, 2.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'XiaomiMiMo/MiMo-V2.5-Pro' => ['MiMo-V2.5-Pro', 1_048_576, 131_072, true, false, 1.0, 3.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'deepseek-ai/DeepSeek-R1' => ['DeepSeek-R1', 64_000, 32_768, true, false, 0.7, 2.5, 0.0, 0.0],
-        'deepseek-ai/DeepSeek-R1-0528' => ['DeepSeek-R1-0528', 163_840, 163_840, true, false, 3.0, 5.0, 0.0, 0.0],
+        'deepseek-ai/DeepSeek-R1-0528' => ['DeepSeek-R1-0528', 163_840, 32_768, true, false, 3.0, 5.0, 0.0, 0.0],
         'deepseek-ai/DeepSeek-V3' => ['DeepSeek-V3', 64_000, 8_192, false, false, 0.4, 1.3, 0.0, 0.0],
         'deepseek-ai/DeepSeek-V3-0324' => ['DeepSeek V3 0324', 163_840, 163_840, false, false, 0.27, 1.12, 0.0, 0.0],
         'deepseek-ai/DeepSeek-V3.1' => ['DeepSeek-V3.1', 131_072, 8_192, true, false, 0.27, 1.0, 0.0, 0.0],
@@ -1454,6 +1459,7 @@ final class BuiltinCatalog
         'deepseek-ai/DeepSeek-V4-Pro' => ['DeepSeek V4 Pro', 1_048_576, 393_216, true, false, 0.435, 0.87, 0.003625, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_000_000, 384_000, true, false, 1.32, 3.96, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 384_000, true, true, 0.3, 1.2, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'deepseek-ai/DeepSeek-V4.1-Flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_048_576, 384_000, true, true, 0.3, 1.2, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'google/gemma-3-12b-it' => ['Gemma 3 12B IT', 131_072, 131_072, false, true, 0.05, 0.15, 0.0, 0.0],
         'google/gemma-3-27b-it' => ['Gemma 3 27B IT', 131_072, 131_072, false, true, 0.08, 0.16, 0.0, 0.0],
         'google/gemma-3-4b-it' => ['Gemma 3 4B IT', 131_072, 131_072, false, true, 0.05, 0.1, 0.0, 0.0],
@@ -1476,7 +1482,6 @@ final class BuiltinCatalog
         'tencent/Hy4-preview' => ['Hy4 preview', 1_000_000, 64_000, true, false, 0.834, 2.501, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/Inkling' => ['Inkling', 1_048_576, 1_048_576, true, true, 1.0, 4.05, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/Inkling-Small' => ['Inkling Small', 524_288, 1_048_576, true, true, 0.5, 1.2, 0.0, 0.0],
-        'zai-org/GLM-4.5' => ['GLM-4.5', 131_072, 98_304, true, false, 0.6, 2.2, 0.0, 0.0],
         'zai-org/GLM-4.5-Air' => ['GLM-4.5-Air', 131_072, 98_304, true, false, 0.13, 0.85, 0.0, 0.0],
         'zai-org/GLM-4.5V' => ['GLM-4.5V', 65_536, 16_384, true, true, 0.6, 1.8, 0.0, 0.0],
         'zai-org/GLM-4.6' => ['GLM-4.6', 204_800, 131_072, true, false, 0.55, 2.2, 0.0, 0.0],
@@ -1501,9 +1506,11 @@ final class BuiltinCatalog
      */
     private const array KIMI_CODING_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'k3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'k3-256k' => ['Kimi K3-256K', 262_144, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-for-coding' => ['kimi-for-coding', 1_048_576, 32_768, true, true, 0.95, 4.0, 0.19, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3-256k' => ['Kimi K3-256K', 262_144, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-for-coding' => ['kimi-for-coding', 1_048_576, 32_768, true, true, 0.95, 4.0, 0.19, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'kimi-for-coding-highspeed' => ['Kimi For Coding HighSpeed', 262_144, 32_768, true, true, 1.9, 8.0, 0.38, 0.0],
         // <<< generated
     ];
@@ -1525,8 +1532,8 @@ final class BuiltinCatalog
     ];
 
     /**
-     * MiniMax's Anthropic-compatible API, international and China: only the ids upstream's generator
-     * keeps (`minimaxDirectSupportedIds`).
+     * MiniMax's Anthropic-compatible API, international and China: every tool-calling model but the
+     * older ones MiniMax asked to hide (`minimaxHiddenIds`).
      *
      * @var array<string, array<int|string, mixed>>
      */
@@ -1534,16 +1541,18 @@ final class BuiltinCatalog
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'MiniMax-M2.7' => ['MiniMax-M2.7', 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.375],
         'MiniMax-M2.7-highspeed' => ['MiniMax-M2.7-highspeed', 204_800, 131_072, true, false, 0.6, 2.4, 0.06, 0.375],
-        'MiniMax-M3' => ['MiniMax-M3', 1_000_000, 512_000, true, true, 0.3, 1.2, 0.06, 0.0, 'tiers' => [[512_000, 0.6, 2.4, 0.12, 0.0]]],
+        'MiniMax-M3' => ['MiniMax-M3', 1_000_000, 524_288, true, true, 0.3, 1.2, 0.06, 0.0, 'tiers' => [[512_000, 0.6, 2.4, 0.12, 0.0]]],
+        'MiniMax-M3.1-Flash' => ['MiniMax-M3.1-Flash', 1_000_000, 524_288, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array MINIMAX_CN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'MiniMax-M2.7' => ['MiniMax-M2.7', 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.375],
-        'MiniMax-M2.7-highspeed' => ['MiniMax-M2.7-highspeed', 204_800, 131_072, true, false, 0.6, 2.4, 0.06, 0.375],
-        'MiniMax-M3' => ['MiniMax-M3', 1_000_000, 512_000, true, true, 0.3, 1.2, 0.06, 0.0, 'tiers' => [[512_000, 0.6, 2.4, 0.12, 0.0]]],
+        'MiniMax-M2.7' => ['MiniMax-M2.7', 204_800, 131_072, true, false, 0.3137, 1.2549, 0.0627, 0.3922],
+        'MiniMax-M2.7-highspeed' => ['MiniMax-M2.7-highspeed', 204_800, 131_072, true, false, 0.6275, 2.5098, 0.0627, 0.3922],
+        'MiniMax-M3' => ['MiniMax-M3', 1_000_000, 524_288, true, true, 0.3137, 1.2549, 0.0627, 0.0, 'tiers' => [[512_000, 0.6275, 2.5098, 0.1255, 0.0]]],
+        'MiniMax-M3.1-Flash' => ['MiniMax-M3.1-Flash', 1_000_000, 524_288, true, true, 0.1494, 0.5976, 0.0149, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         // <<< generated
     ];
 
@@ -1559,16 +1568,20 @@ final class BuiltinCatalog
         'kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
         'kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code HighSpeed', 262_144, 262_144, true, true, 1.9, 8.0, 0.38, 0.0],
         'kimi-k3' => ['Kimi K3', 1_048_576, 1_048_576, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 2.0, 10.0, 0.2, 2.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 4.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array MOONSHOTAI_CN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'kimi-k2.6' => ['Kimi K2.6', 262_144, 262_144, true, true, 0.95, 4.0, 0.16, 0.0],
-        'kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
-        'kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code HighSpeed', 262_144, 262_144, true, true, 1.9, 8.0, 0.38, 0.0],
+        'kimi-k2.6' => ['Kimi K2.6', 262_144, 262_144, true, true, 0.9711, 4.0337, 0.1643, 0.0],
+        'kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.9711, 4.0337, 0.1942, 0.0],
+        'kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code HighSpeed', 262_144, 262_144, true, true, 1.9421, 8.0673, 0.3884, 0.0],
         'kimi-k3' => ['Kimi K3', 1_048_576, 1_048_576, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 1.9437, 10.1671, 0.1944, 1.9437, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 3.8874, 20.3342, 0.1944, 3.8874, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -1587,18 +1600,19 @@ final class BuiltinCatalog
         'meta/llama-3.2-11b-vision-instruct' => ['Llama 3.2 11b Vision Instruct', 128_000, 4_096, false, true, 0.0, 0.0, 0.0, 0.0],
         'meta/llama-3.2-90b-vision-instruct' => ['Llama-3.2-90B-Vision-Instruct', 128_000, 8_192, false, true, 0.0, 0.0, 0.0, 0.0],
         'meta/muse-glimmer-30b' => ['Muse Glimmer 30B', 131_072, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'minimaxai/minimax-m3.1-flash' => ['MiniMax-M3.1-Flash', 262_144, 262_144, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'mistralai/mistral-7b-instruct-v0.3' => ['Mistral-7B-Instruct-v0.3', 65_536, 65_536, false, false, 0.0, 0.0, 0.0, 0.0],
         'moonshotai/kimi-k2.6' => ['Kimi K2.6', 262_144, 262_144, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'moonshotai/kimi-k3' => ['Kimi K3', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'nvidia/cosmos-reason2-8b' => ['Cosmos Reason2 8B', 131_072, 16_384, true, true, 0.0, 0.0, 0.0, 0.0],
         'nvidia/llama-3.1-nemotron-70b-instruct' => ['Llama 3.1 Nemotron 70B Instruct', 128_000, 8_192, false, false, 0.0, 0.0, 0.0, 0.0],
         'nvidia/llama-3.1-nemotron-ultra-253b-v1' => ['Llama 3.1 Nemotron Ultra 253B', 128_000, 16_384, true, false, 0.0, 0.0, 0.0, 0.0],
         'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' => ['Nemotron 3 Nano Omni', 256_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
-        'nvidia/nemotron-3-super-120b-a12b' => ['Nemotron 3 Super', 262_144, 262_144, true, false, 0.2, 0.8, 0.0, 0.0],
-        'nvidia/nemotron-3-ultra-550b-a55b' => ['Nemotron 3 Ultra 550B A55B', 1_000_000, 65_536, true, false, 0.5, 2.5, 0.15, 0.0],
+        'nvidia/nemotron-3-ultra-550b-a55b' => ['Nemotron 3 Ultra 550B A55B', 1_000_000, 65_536, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3.5-lightning-30b-a3b' => ['Nemotron 3.5 Lightning 30B A3B', 262_144, 262_144, true, false, 0.0, 0.0, 0.0, 0.0],
+        'nvidia/nemotron-3.5-super-vl-120b-a12b' => ['Nemotron 3.5 Super VL 120B A12B', 1_048_576, 8_192, true, true, 0.0, 0.0, 0.0, 0.0],
         'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 32_768, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'poolside/laguna-xs-2.1' => ['Laguna XS 2.1', 262_144, 16_384, true, false, 0.0, 0.0, 0.0, 0.0],
+        'stepfun-ai/step-5-preview' => ['Step 5 Preview', 1_048_576, 1_048_576, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'z-ai/glm-5.3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash' => ['GLM-5.3-Flash', 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
@@ -1615,8 +1629,8 @@ final class BuiltinCatalog
      */
     private const array OPENCODE_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'beam-free' => ['Beam Free', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'big-pickle' => ['Big Pickle', Api::OpenAiCompletions, 200_000, 32_000, true, false, 0.0, 0.0, 0.0, 0.0],
-        'cat-jam-free' => ['Cat Jam Free', Api::OpenAiCompletions, 262_144, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-fable-5-1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4-5' => ['Claude Haiku 4.5', Api::AnthropicMessages, 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
@@ -1627,16 +1641,15 @@ final class BuiltinCatalog
         'claude-opus-4-8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-opus-5-5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-sonnet-4' => ['Claude Sonnet 4', Api::AnthropicMessages, 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'claude-sonnet-4-5' => ['Claude Sonnet 4.5', Api::AnthropicMessages, 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'claude-sonnet-4-6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-sonnet-5-5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'deepseek-v4-flash' => ['DeepSeek V4 Flash', Api::OpenAiCompletions, 1_000_000, 384_000, true, false, 0.14, 0.28, 0.028, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek-v4-flash-vision-exp' => ['DeepSeek V4 Flash Vision Exp', Api::OpenAiCompletions, 1_000_000, 384_000, true, true, 0.14, 0.28, 0.028, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek-v4-pro' => ['DeepSeek V4 Pro', Api::OpenAiCompletions, 1_000_000, 384_000, true, false, 1.74, 3.84, 0.145, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-v4-pro' => ['DeepSeek V4 Pro', Api::OpenAiCompletions, 1_000_000, 384_000, true, false, 1.74, 3.48, 0.145, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_000_000, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'exo-free' => ['Exo Free', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'deepseek-v4.1-flash-free' => ['DeepSeek V4.1 Flash Free', Api::OpenAiCompletions, 200_000, 32_000, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'flint-40b-free' => ['Flint 40B Free', Api::OpenAiCompletions, 262_144, 65_536, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gemini-3-flash' => ['Gemini 3 Flash', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.1-pro' => ['Gemini 3.1 Pro Preview', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
@@ -1650,6 +1663,7 @@ final class BuiltinCatalog
         'glm-5.2' => ['GLM-5.2', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3' => ['GLM-5.3', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3-flash' => ['GLM-5.3-Flash', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.3-flash-free' => ['GLM-5.3-Flash Free', Api::OpenAiCompletions, 200_000, 32_000, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'gpt-5' => ['GPT-5', Api::OpenAiResponses, 400_000, 128_000, true, true, 1.07, 8.5, 0.107, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5-codex' => ['GPT-5 Codex', Api::OpenAiResponses, 400_000, 128_000, true, true, 1.07, 8.5, 0.107, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5-nano' => ['GPT-5 Nano', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.05, 0.4, 0.005, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
@@ -1668,7 +1682,7 @@ final class BuiltinCatalog
         'gpt-5.5-pro' => ['GPT-5.5 Pro', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 30.0, 180.0, 30.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.5, 15.0, 0.25, 3.125, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 6.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
@@ -1677,13 +1691,10 @@ final class BuiltinCatalog
         'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-build-0.1' => ['Grok Build 0.1', Api::OpenAiResponses, 256_000, 256_000, true, true, 1.0, 2.0, 0.2, 0.0],
-        'kimi-k2.5' => ['Kimi K2.5', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.6, 3.0, 0.08, 0.0],
+        'kimi-k2.5' => ['Kimi K2.5', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.6, 3.0, 0.1, 0.0],
         'kimi-k2.6' => ['Kimi K2.6', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.95, 4.0, 0.16, 0.0],
         'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
-        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => 'max']],
-        'ling-3.0-flash-fin-free' => ['Ling 3.0 Flash Fin Free', Api::OpenAiCompletions, 262_144, 32_768, true, false, 0.0, 0.0, 0.0, 0.0],
-        'ling-3.1-flash-free' => ['Ling 3.1 Flash Free', Api::OpenAiCompletions, 262_144, 32_768, true, false, 0.0, 0.0, 0.0, 0.0],
-        'longcat-2.5-preview-free' => ['LongCat 2.5 Preview Free', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
+        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 3.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'mimo-v2.6-flash-free' => ['MiMo-V2.6-Flash Free', Api::OpenAiCompletions, 200_000, 32_000, true, true, 0.0, 0.0, 0.0, 0.0],
         'minimax-m2.5' => ['MiniMax-M2.5', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.0],
         'minimax-m2.7' => ['MiniMax-M2.7', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.0],
@@ -1691,52 +1702,49 @@ final class BuiltinCatalog
         'mistral-large-4' => ['Mistral Large 4', Api::OpenAiCompletions, 524_288, 262_144, true, true, 0.68, 2.09, 0.07, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'muse-spark-1.2' => ['Muse Spark 1.2', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 1.25, 4.25, 0.15, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'muse-spark-1.3' => ['Muse Spark 1.3', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 1.25, 4.25, 0.15, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'muse-spark-1.3-contributor-free' => ['Muse Spark 1.3 Free', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'muse-wonder-1.0' => ['Muse Wonder', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 4.0, 20.0, 0.2, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'nemotron-3-ultra-free' => ['Nemotron 3 Ultra Free', Api::OpenAiCompletions, 1_000_000, 128_000, true, false, 0.0, 0.0, 0.0, 0.0],
         'nemotron-3.5-lightning-free' => ['Nemotron 3.5 Lightning Free', Api::OpenAiCompletions, 262_144, 262_144, true, false, 0.0, 0.0, 0.0, 0.0],
+        'nemotron-3.5-super-vl-free' => ['Nemotron 3.5 Super VL Free', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'qwen3.5-plus' => ['Qwen3.5 Plus', Api::AnthropicMessages, 262_144, 65_536, true, true, 0.2, 1.2, 0.02, 0.25],
         'qwen3.6-plus' => ['Qwen3.6 Plus', Api::AnthropicMessages, 262_144, 65_536, true, true, 0.5, 3.0, 0.05, 0.625],
         'qwen3.8-flash' => ['Qwen3.8 Flash', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.2, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
-        'qwen3.8-max' => ['Qwen3.8 Max', Api::OpenAiCompletions, 262_144, 131_072, true, true, 2.0, 6.0, 0.25, 2.5],
-        'space-bunny-free' => ['Space Bunny Free', Api::OpenAiCompletions, 1_048_576, 524_288, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'step-5-preview-free' => ['Step 5 Preview Free', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'qwen3.8-max' => ['Qwen3.8 Max', Api::OpenAiCompletions, 262_144, 131_072, true, true, 2.0, 6.0, 0.25, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array OPENCODE_GO_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'cat-jam-free' => ['Cat Jam Free', Api::OpenAiCompletions, 262_144, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'beam-free' => ['Beam Free', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-5-5' => ['Claude Haiku 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'deepseek-v4-pro' => ['DeepSeek V4 Pro (New)', Api::OpenAiCompletions, 1_000_000, 384_000, true, false, 0.66, 1.98, 0.022, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_000_000, 384_000, true, true, 0.15, 0.6, 0.003, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'gemini-4-argon-contributor' => ['Gemini 4 Argon Contributor', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 4.0, 20.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-4-argon' => ['Gemini 4 Argon', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'glm-5.2' => ['GLM-5.2', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3' => ['GLM-5.3', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3-flash' => ['GLM-5.3-Flash', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'hy3' => ['Hy3', Api::OpenAiCompletions, 256_000, 128_000, true, false, 0.14, 0.58, 0.035, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'hy4-preview' => ['Hy4 preview', Api::OpenAiCompletions, 1_024_000, 64_000, true, false, 0.834, 2.501, 0.042, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
-        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 3.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 2.0, 10.0, 0.2, 2.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'longcat-2.0' => ['LongCat-2.0', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 0.3, 1.2, 0.006, 0.0],
-        'longcat-2.5-preview-free' => ['LongCat 2.5 Preview Free', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
         'mimo-v2.5' => ['MiMo V2.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 0.14, 0.28, 0.0028, 0.0],
         'mimo-v2.5-pro' => ['MiMo V2.5 Pro', Api::OpenAiCompletions, 1_048_576, 128_000, true, false, 0.435, 0.87, 0.003625, 0.0],
         'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
         'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.435, 0.87, 0.003625, 0.0],
-        'minimax-m2.7' => ['MiniMax-M2.7', Api::AnthropicMessages, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.375],
         'minimax-m3' => ['MiniMax-M3', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 0.3, 1.2, 0.06, 0.0, 'tiers' => [[512_000, 0.6, 2.4, 0.12, 0.0]]],
+        'minimax-m3.1-flash' => ['MiniMax M3.1 Flash', Api::OpenAiCompletions, 1_000_000, 512_000, true, true, 0.15, 0.6, 0.015, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'muse-spark-1.2-contributor' => ['Muse Spark 1.2 Contributor', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 0.1, 0.2, 0.002, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'muse-spark-1.3-contributor' => ['Muse Spark 1.3 Contributor', Api::OpenAiResponses, 1_048_576, 131_072, true, true, 0.1, 0.2, 0.002, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'qwen3.7-plus' => ['Qwen3.7 Plus', Api::AnthropicMessages, 1_000_000, 65_536, true, true, 0.4, 1.6, 0.04, 0.5, 'tiers' => [[256_000, 1.2, 4.8, 0.12, 1.5]]],
         'qwen3.8-flash' => ['Qwen3.8 Flash', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.2, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         'qwen3.8-max' => ['Qwen3.8 Max', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 2.0, 6.0, 0.25, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
-        'space-bunny' => ['Space Bunny', Api::OpenAiCompletions, 1_048_576, 524_288, true, true, 0.15, 0.6, 0.03, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'step-5-preview-free' => ['Step 5 Preview Free', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'step-5-preview' => ['Step 5 Preview', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 1.0, 2.7, 0.1, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -1782,7 +1790,6 @@ final class BuiltinCatalog
         'anthropic/claude-opus-5.5' => ['Anthropic: Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'anthropic/claude-opus-5.5:batch' => ['Anthropic: Claude Opus 5.5 (batch)', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'anthropic/claude-opus-5:batch' => ['Anthropic: Claude Opus 5 (batch)', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 2.5, 12.5, 0.25, 3.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'anthropic/claude-sonnet-4' => ['Anthropic: Claude Sonnet 4', Api::AnthropicMessages, 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'anthropic/claude-sonnet-4.5' => ['Anthropic: Claude Sonnet 4.5', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'anthropic/claude-sonnet-4.5:batch' => ['Anthropic: Claude Sonnet 4.5 (batch)', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 1.5, 7.5, 0.15, 1.875, 'tiers' => [[200_000, 3.0, 11.25, 0.3, 3.75]]],
         'anthropic/claude-sonnet-4.6' => ['Anthropic: Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 3.0, 15.0, 0.3, 3.75, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1803,30 +1810,28 @@ final class BuiltinCatalog
         'cohere/command-r-08-2024' => ['Cohere: Command R (08-2024)', Api::OpenAiCompletions, 128_000, 4_000, false, false, 0.15, 0.6, 0.0, 0.0],
         'cohere/command-r-plus-08-2024' => ['Cohere: Command R+ (08-2024)', Api::OpenAiCompletions, 128_000, 4_000, false, false, 2.5, 10.0, 0.0, 0.0],
         'cohere/north-mini-code:free' => ['Cohere: North Mini Code (free)', Api::OpenAiCompletions, 256_000, 64_000, true, false, 0.0, 0.0, 0.0, 0.0],
-        'deepseek/deepseek-chat' => ['DeepSeek: DeepSeek V3', Api::OpenAiCompletions, 163_840, 16_384, false, false, 0.32, 0.89, 0.0, 0.0],
+        'deepseek/deepseek-chat' => ['DeepSeek: DeepSeek V3', Api::OpenAiCompletions, 128_000, 16_000, false, false, 0.2574, 1.0287, 0.0, 0.0],
         'deepseek/deepseek-chat-v3-0324' => ['DeepSeek: DeepSeek V3 0324', Api::OpenAiCompletions, 128_000, 115_200, false, false, 0.29, 1.14, 0.11, 0.0],
         'deepseek/deepseek-chat-v3.1' => ['DeepSeek: DeepSeek V3.1', Api::OpenAiCompletions, 163_840, 32_768, true, false, 0.25, 0.95, 0.13, 0.0],
-        'deepseek/deepseek-r1' => ['DeepSeek: R1', Api::OpenAiCompletions, 64_000, 16_000, true, false, 0.7, 2.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'deepseek/deepseek-r1-0528' => ['DeepSeek: R1 0528', Api::OpenAiCompletions, 163_840, 32_768, true, false, 0.5, 2.15, 0.35, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'deepseek/deepseek-v3.1-terminus' => ['DeepSeek: DeepSeek V3.1 Terminus', Api::OpenAiCompletions, 163_840, 147_456, true, false, 0.27, 1.0, 0.0, 0.0],
-        'deepseek/deepseek-v3.2' => ['DeepSeek: DeepSeek V3.2', Api::OpenAiCompletions, 163_840, 147_456, true, false, 0.259, 0.8, 0.14, 0.0],
+        'deepseek/deepseek-v3.2' => ['DeepSeek: DeepSeek V3.2', Api::OpenAiCompletions, 131_072, 65_536, true, false, 0.28, 0.42, 0.028, 0.0],
         'deepseek/deepseek-v3.2-exp' => ['DeepSeek: DeepSeek V3.2 Exp', Api::OpenAiCompletions, 163_840, 147_456, true, false, 0.27, 0.41, 0.0, 0.0],
         'deepseek/deepseek-v4-flash' => ['DeepSeek: DeepSeek V4 Flash 0423', Api::OpenAiCompletions, 1_048_575, 943_717, true, false, 0.091, 0.182, 0.0182, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'deepseek/deepseek-v4-flash-0731' => ['DeepSeek: DeepSeek V4 Flash 0731', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.016, 0.64, 0.016, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4-flash-0731' => ['DeepSeek: DeepSeek V4 Flash 0731', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.04444, 0.13332, 0.001414, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-flash-vision-exp' => ['DeepSeek: DeepSeek V4 Flash Vision Exp', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 0.2156, 0.6468, 0.00686, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_024_000, 384_000, true, false, 0.95526, 1.91052, 0.079605, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 1.32, 3.96, 0.044, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.0009, 0.6, 0.008, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4.1-flash:batch' => ['DeepSeek: DeepSeek V4.1 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.112, 0.336, 0.00336, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_024_000, 384_000, true, false, 0.2088, 0.4176, 0.0174, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.66, 1.98, 0.022, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.02, 1.0, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.15, 0.6, 0.003, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4.1-flash:batch' => ['DeepSeek: DeepSeek V4.1 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 384_000, true, true, 0.05, 0.15, 0.004, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'dots-studio/dots-3-note-preview:free' => ['Dots Studio: Dots3-Note Preview (free)', Api::OpenAiCompletions, 512_000, 460_800, true, true, 0.0, 0.0, 0.0, 0.0],
+        'elorian/glimpse' => ['Elorian: Glimpse', Api::OpenAiCompletions, 262_144, 256_000, true, true, 0.6, 3.0, 0.06, 0.0],
         'fireworks/ember-1' => ['Fireworks: Ember-1', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'google/gemini-2.5-flash' => ['Google: Gemini 2.5 Flash', Api::OpenAiCompletions, 1_048_576, 65_535, true, true, 0.3, 2.5, 0.03, 0.083333],
         'google/gemini-2.5-flash-lite' => ['Google: Gemini 2.5 Flash Lite', Api::OpenAiCompletions, 1_048_576, 65_535, true, true, 0.1, 0.4, 0.01, 0.083333],
-        'google/gemini-2.5-flash-lite:batch' => ['Google: Gemini 2.5 Flash Lite (batch)', Api::OpenAiCompletions, 1_048_576, 65_535, true, true, 0.05, 0.2, 0.01, 0.0],
-        'google/gemini-2.5-flash:batch' => ['Google: Gemini 2.5 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 65_535, true, true, 0.15, 1.25, 0.03, 0.0],
         'google/gemini-2.5-pro' => ['Google: Gemini 2.5 Pro', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.375, 'thinkingLevelMap' => ['off' => null], 'tiers' => [[200_000, 2.5, 15.0, 0.25, 0.375]]],
         'google/gemini-2.5-pro-preview' => ['Google: Gemini 2.5 Pro Preview 06-05', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.375, 'thinkingLevelMap' => ['off' => null], 'tiers' => [[200_000, 2.5, 15.0, 0.25, 0.375]]],
-        'google/gemini-2.5-pro:batch' => ['Google: Gemini 2.5 Pro (batch)', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.625, 5.0, 0.125, 0.0, 'thinkingLevelMap' => ['off' => null], 'tiers' => [[200_000, 1.25, 7.5, 0.25, 0.0]]],
         'google/gemini-3-flash-preview' => ['Google: Gemini 3 Flash Preview', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.083333, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-3-flash-preview:batch' => ['Google: Gemini 3 Flash Preview (batch)', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.25, 1.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-3-pro-image' => ['Google: Nano Banana Pro (Gemini 3 Pro Image)', Api::OpenAiCompletions, 65_536, 32_768, true, true, 2.0, 12.0, 0.2, 0.375, 'thinkingLevelMap' => ['off' => null]],
@@ -1844,20 +1849,21 @@ final class BuiltinCatalog
         'google/gemini-3.6-flash:batch' => ['Google: Gemini 3.6 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.375, 1.875, 0.0375, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-3.7-flash' => ['Google: Gemini 3.7 Flash', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-3.7-flash:batch' => ['Google: Gemini 3.7 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.375, 1.875, 0.0375, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'google/gemini-3.8-flash' => ['Google: Gemini 3.8 Flash', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'google/gemini-3.8-flash' => ['Google: Gemini 3.8 Flash', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.825, 4.125, 0.0825, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-3.8-flash:batch' => ['Google: Gemini 3.8 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.375, 1.875, 0.0375, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'google/gemini-4-argon' => ['Google: Gemini 4 Argon', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'google/gemini-4-argon' => ['Google: Gemini 4 Argon', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-4-argon:batch' => ['Google: Gemini 4 Argon (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.0, 5.0, 0.05, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemini-nano-banana-2.1' => ['Google: Nano Banana 2.1', Api::OpenAiCompletions, 65_536, 58_982, true, true, 1.5, 7.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'google/gemma-3-12b-it' => ['Google: Gemma 3 12B', Api::OpenAiCompletions, 131_072, 16_384, false, true, 0.05, 0.15, 0.0, 0.0],
-        'google/gemma-3-27b-it' => ['Google: Gemma 3 27B', Api::OpenAiCompletions, 131_072, 117_964, false, true, 0.08, 0.45, 0.04, 0.0],
-        'google/gemma-4-26b-a4b-it' => ['Google: Gemma 4 26B A4B ', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.09, 0.3, 0.05, 0.0],
+        'google/gemma-3-27b-it' => ['Google: Gemma 3 27B', Api::OpenAiCompletions, 131_072, 117_964, false, true, 0.08, 0.35, 0.04, 0.0],
+        'google/gemma-4-26b-a4b-it' => ['Google: Gemma 4 26B A4B ', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.0675, 0.225, 0.0375, 0.0],
         'google/gemma-4-26b-a4b-it:free' => ['Google: Gemma 4 26B A4B  (free)', Api::OpenAiCompletions, 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
-        'google/gemma-4-31b-it' => ['Google: Gemma 4 31B', Api::OpenAiCompletions, 262_144, 16_384, true, true, 0.09, 0.34, 0.05, 0.0],
+        'google/gemma-4-31b-it' => ['Google: Gemma 4 31B', Api::OpenAiCompletions, 262_144, 16_384, true, true, 0.2, 0.4, 0.0, 0.0],
         'google/gemma-4-31b-it:free' => ['Google: Gemma 4 31B (free)', Api::OpenAiCompletions, 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
         'ibm-granite/granite-4.2-8b' => ['IBM: Granite 4.2 8B', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.06, 0.25, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'inception/mercury-2' => ['Inception: Mercury 2', Api::OpenAiCompletions, 128_000, 50_000, true, false, 0.25, 0.75, 0.025, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'inception/mercury-2.5' => ['Inception: Mercury 2.5', Api::OpenAiCompletions, 260_000, 65_536, true, false, 0.04, 0.15, 0.004, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'inception/mercury-3' => ['Inception: Mercury 3', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 0.1, 0.35, 0.01, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'inclusionai/ling-3.0-flash' => ['inclusionAI: Ling 3.0 Flash', Api::OpenAiCompletions, 262_144, 32_768, true, false, 0.021, 0.063, 0.0042, 0.0],
         'inclusionai/ling-3.0-flash-vl' => ['inclusionAI: Ling 3.0 Flash VL', Api::OpenAiCompletions, 131_072, 32_768, true, true, 0.06, 0.18, 0.012, 0.0],
         'inclusionai/ling-3.1-flash' => ['inclusionAI: Ling 3.1 Flash', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.075, 0.225, 0.015, 0.0],
@@ -1866,22 +1872,24 @@ final class BuiltinCatalog
         'meituan/longcat-2.0' => ['Meituan: LongCat 2.0', Api::OpenAiCompletions, 1_048_756, 262_144, true, false, 0.3, 1.2, 0.006, 0.0],
         'meta-llama/llama-3.1-70b-instruct' => ['Meta: Llama 3.1 70B Instruct', Api::OpenAiCompletions, 131_072, 16_384, false, false, 0.4, 0.4, 0.0, 0.0],
         'meta-llama/llama-3.1-8b-instruct' => ['Meta: Llama 3.1 8B Instruct', Api::OpenAiCompletions, 131_072, 117_964, false, false, 0.05, 0.08, 0.025, 0.0],
-        'meta-llama/llama-3.3-70b-instruct' => ['Meta: Llama 3.3 70B Instruct', Api::OpenAiCompletions, 131_072, 32_768, false, false, 0.59, 0.79, 0.295, 0.0],
+        'meta-llama/llama-3.3-70b-instruct' => ['Meta: Llama 3.3 70B Instruct', Api::OpenAiCompletions, 131_072, 16_384, false, false, 0.1, 0.32, 0.0, 0.0],
         'meta-llama/llama-4-maverick' => ['Meta: Llama 4 Maverick', Api::OpenAiCompletions, 128_000, 16_384, false, true, 0.1875, 0.6525, 0.05, 0.0],
-        'meta-llama/llama-4-scout' => ['Meta: Llama 4 Scout', Api::OpenAiCompletions, 131_072, 117_964, false, true, 0.18, 0.59, 0.0, 0.0],
+        'meta-llama/llama-4-scout' => ['Meta: Llama 4 Scout', Api::OpenAiCompletions, 327_680, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
         'meta/muse-glimmer-30b' => ['Meta: Muse Glimmer 30B', Api::OpenAiCompletions, 131_072, 16_384, true, true, 0.3, 1.2, 0.04, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'meta/muse-spark-1.1' => ['Meta: Muse Spark 1.1', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.25, 4.25, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'meta/muse-spark-1.2' => ['Meta: Muse Spark 1.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.25, 4.25, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'meta/muse-spark-1.2-contributor' => ['Meta: Muse Spark 1.2 Contributor', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.1, 0.2, 0.002, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'meta/muse-spark-1.3' => ['Meta: Muse Spark 1.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.25, 4.25, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'meta/muse-spark-1.3-contributor' => ['Meta: Muse Spark 1.3 Contributor', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.1, 0.2, 0.002, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'meta/muse-spark-open' => ['Meta: Muse Spark Open', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.25, 4.25, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'meta/muse-wonder' => ['Meta: Muse Wonder', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 4.0, 20.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'minimax/minimax-m1' => ['MiniMax: MiniMax M1', Api::OpenAiCompletions, 1_000_000, 40_000, true, false, 0.55, 2.2, 0.0, 0.0],
         'minimax/minimax-m2' => ['MiniMax: MiniMax M2', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.255, 1.02, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'minimax/minimax-m2.1' => ['MiniMax: MiniMax M2.1', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null]],
-        'minimax/minimax-m2.5' => ['MiniMax: MiniMax M2.5', Api::OpenAiCompletions, 200_000, 128_000, true, false, 0.27, 1.08, 0.027, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'minimax/minimax-m2.5' => ['MiniMax: MiniMax M2.5', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'minimax/minimax-m2.7' => ['MiniMax: MiniMax M2.7', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.3, 1.2, 0.06, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'minimax/minimax-m3' => ['MiniMax: MiniMax M3', Api::OpenAiCompletions, 524_288, 512_000, true, true, 0.3, 1.2, 0.06, 0.0],
+        'minimax/minimax-m3.1-flash' => ['MiniMax: MiniMax M3.1 Flash', Api::OpenAiCompletions, 1_048_576, 524_288, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'mistralai/codestral-2508' => ['Mistral: Codestral 2508', Api::OpenAiCompletions, 256_000, 204_800, false, false, 0.3, 0.9, 0.03, 0.0],
         'mistralai/codestral-2508:batch' => ['Mistral: Codestral 2508 (batch)', Api::OpenAiCompletions, 256_000, 204_800, false, false, 0.15, 0.45, 0.015, 0.0],
         'mistralai/devstral-2512' => ['Mistral: Devstral 2 2512', Api::OpenAiCompletions, 262_144, 209_715, false, false, 0.4, 2.0, 0.04, 0.0],
@@ -1893,7 +1901,7 @@ final class BuiltinCatalog
         'mistralai/mistral-large-2407' => ['Mistral Large 2407', Api::OpenAiCompletions, 131_072, 104_857, false, false, 2.0, 6.0, 0.2, 0.0],
         'mistralai/mistral-large-2512' => ['Mistral: Mistral Large 3 2512', Api::OpenAiCompletions, 262_144, 209_715, false, true, 0.5, 1.5, 0.05, 0.0],
         'mistralai/mistral-large-2512:batch' => ['Mistral: Mistral Large 3 2512 (batch)', Api::OpenAiCompletions, 262_144, 209_715, false, true, 0.25, 0.75, 0.025, 0.0],
-        'mistralai/mistral-large-4-0' => ['Mistral: Mistral Large 4', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 0.68, 2.09, 0.07, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistralai/mistral-large-4-0' => ['Mistral: Mistral Large 4', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 1.36, 4.18, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistralai/mistral-medium-3' => ['Mistral: Mistral Medium 3', Api::OpenAiCompletions, 131_072, 104_857, false, true, 0.4, 2.0, 0.04, 0.0],
         'mistralai/mistral-medium-3-5' => ['Mistral: Mistral Medium 3.5', Api::OpenAiCompletions, 262_144, 209_715, true, true, 1.5, 7.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistralai/mistral-medium-3-5:batch' => ['Mistral: Mistral Medium 3.5 (batch)', Api::OpenAiCompletions, 262_144, 209_715, true, true, 0.75, 3.75, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
@@ -1904,7 +1912,7 @@ final class BuiltinCatalog
         'mistralai/mistral-small-2603' => ['Mistral: Mistral Small 4', Api::OpenAiCompletions, 262_144, 209_715, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistralai/mistral-small-2603:batch' => ['Mistral: Mistral Small 4 (batch)', Api::OpenAiCompletions, 262_144, 209_715, true, true, 0.075, 0.3, 0.0075, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistralai/mistral-small-3.1-24b-instruct' => ['Mistral: Mistral Small 3.1 24B', Api::OpenAiCompletions, 128_000, 102_400, false, true, 0.351, 0.555, 0.0, 0.0],
-        'mistralai/mistral-small-3.2-24b-instruct' => ['Mistral: Mistral Small 3.2 24B', Api::OpenAiCompletions, 256_000, 16_384, false, true, 0.09375, 0.25, 0.0, 0.0],
+        'mistralai/mistral-small-3.2-24b-instruct' => ['Mistral: Mistral Small 3.2 24B', Api::OpenAiCompletions, 128_000, 16_384, false, true, 0.075, 0.2, 0.0, 0.0],
         'mistralai/mixtral-8x22b-instruct' => ['Mistral: Mixtral 8x22B Instruct', Api::OpenAiCompletions, 65_536, 52_428, false, false, 2.0, 6.0, 0.2, 0.0],
         'mistralai/voxtral-small-24b-2507' => ['Mistral: Voxtral Small 24B 2507', Api::OpenAiCompletions, 32_768, 26_214, false, false, 0.1, 0.3, 0.01, 0.0],
         'moonshotai/kimi-k2' => ['MoonshotAI: Kimi K2 0711', Api::OpenAiCompletions, 131_072, 98_304, false, false, 0.57, 2.3, 0.0, 0.0],
@@ -1912,18 +1920,21 @@ final class BuiltinCatalog
         'moonshotai/kimi-k2-thinking' => ['MoonshotAI: Kimi K2 Thinking', Api::OpenAiCompletions, 262_144, 98_304, true, false, 0.6, 2.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'moonshotai/kimi-k2.5' => ['MoonshotAI: Kimi K2.5', Api::OpenAiCompletions, 262_144, 4_096, true, true, 0.41, 2.06, 0.07, 0.0],
         'moonshotai/kimi-k2.6' => ['MoonshotAI: Kimi K2.6', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.65, 3.41, 0.15, 0.0],
-        'moonshotai/kimi-k2.7-code' => ['MoonshotAI: Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.6712, 3.35, 0.18, 0.0, 'thinkingLevelMap' => ['off' => null]],
-        'moonshotai/kimi-k3' => ['MoonshotAI: Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.7, 15.0, 0.32, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'moonshotai/kimi-k2.7-code' => ['MoonshotAI: Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.6712, 3.35, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'moonshotai/kimi-k3' => ['MoonshotAI: Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.239, 10.8, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'moonshotai/kimi-k3.1-pro' => ['MoonshotAI: Kimi K3.1 Pro', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'moonshotai/kimi-k3:batch' => ['MoonshotAI: Kimi K3 (batch)', Api::OpenAiCompletions, 1_048_576, 16_384, true, true, 2.28, 11.4, 0.228, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'nex-agi/nex-n2.5-pro' => ['Nex AGI: Nex-N2.5-Pro', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.075, 0.25, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3-nano-30b-a3b' => ['NVIDIA: Nemotron 3 Nano 30B A3B', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.06, 0.24, 0.0, 0.0],
         'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free' => ['NVIDIA: Nemotron 3 Nano Omni (free)', Api::OpenAiCompletions, 256_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
-        'nvidia/nemotron-3-super-120b-a12b' => ['NVIDIA: Nemotron 3 Super', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.08, 0.45, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => null, 'max' => null]],
+        'nvidia/nemotron-3-super-120b-a12b' => ['NVIDIA: Nemotron 3 Super', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.3, 2.4, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3-super-120b-a12b:free' => ['NVIDIA: Nemotron 3 Super (free)', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3-ultra-550b-a55b' => ['NVIDIA: Nemotron 3 Ultra', Api::OpenAiCompletions, 202_800, 182_520, true, false, 0.6, 2.4, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3-ultra-550b-a55b:free' => ['NVIDIA: Nemotron 3 Ultra (free)', Api::OpenAiCompletions, 1_000_000, 65_536, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3.5-lightning' => ['NVIDIA: Nemotron 3.5 Lightning', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.07, 0.2, 0.04, 0.0],
         'nvidia/nemotron-3.5-lightning:free' => ['NVIDIA: Nemotron 3.5 Lightning (free)', Api::OpenAiCompletions, 1_000_000, 65_536, true, false, 0.0, 0.0, 0.0, 0.0],
+        'nvidia/nemotron-3.5-super-vl' => ['NVIDIA: Nemotron 3.5 Super VL', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.15, 0.5, 0.02, 0.0],
+        'nvidia/nemotron-3.5-super-vl:free' => ['NVIDIA: Nemotron 3.5 Super VL (free)', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
         'openai/gpt-3.5-turbo' => ['OpenAI: GPT-3.5 Turbo', Api::OpenAiCompletions, 16_385, 4_096, false, false, 0.5, 1.5, 0.0, 0.0],
         'openai/gpt-3.5-turbo-0613' => ['OpenAI: GPT-3.5 Turbo (older v0613)', Api::OpenAiCompletions, 4_095, 3_685, false, false, 1.0, 2.0, 0.0, 0.0],
         'openai/gpt-3.5-turbo-16k' => ['OpenAI: GPT-3.5 Turbo 16k', Api::OpenAiCompletions, 16_385, 4_096, false, false, 3.0, 4.0, 0.0, 0.0],
@@ -1955,7 +1966,7 @@ final class BuiltinCatalog
         'openai/gpt-5.1' => ['OpenAI: GPT-5.1', Api::OpenAiCompletions, 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-5.1-codex' => ['OpenAI: GPT-5.1-Codex', Api::OpenAiCompletions, 400_000, 128_000, true, true, 1.25, 10.0, 0.13, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-5.1-codex-max' => ['OpenAI: GPT-5.1-Codex-Max', Api::OpenAiCompletions, 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'openai/gpt-5.1-codex-mini' => ['OpenAI: GPT-5.1-Codex-Mini', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.25, 2.0, 0.03, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'openai/gpt-5.1-codex-mini' => ['OpenAI: GPT-5.1-Codex-Mini', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.25, 2.0, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-5.1:batch' => ['OpenAI: GPT-5.1 (batch)', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.625, 5.0, 0.0625, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-5.2' => ['OpenAI: GPT-5.2', Api::OpenAiCompletions, 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'openai/gpt-5.2-chat' => ['OpenAI: GPT-5.2 Chat', Api::OpenAiCompletions, 128_000, 32_000, false, true, 1.75, 14.0, 0.175, 0.0],
@@ -1980,10 +1991,10 @@ final class BuiltinCatalog
         'openai/gpt-5.6-luna-pro' => ['OpenAI: GPT-5.6 Luna Pro', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]]],
         'openai/gpt-5.6-luna-pro:batch' => ['OpenAI: GPT-5.6 Luna Pro (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.6, 0.01, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.9, 0.02, 0.0]]],
         'openai/gpt-5.6-luna:batch' => ['OpenAI: GPT-5.6 Luna (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.6, 0.01, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.9, 0.02, 0.0]]],
-        'openai/gpt-5.6-sol' => ['OpenAI: GPT-5.6 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'openai/gpt-5.6-sol-pro' => ['OpenAI: GPT-5.6 Sol Pro', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'openai/gpt-5.6-sol-pro:batch' => ['OpenAI: GPT-5.6 Sol Pro (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 1.0, 5.0, 0.1, 1.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 2.0, 7.5, 0.2, 2.5]]],
-        'openai/gpt-5.6-sol:batch' => ['OpenAI: GPT-5.6 Sol (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 1.0, 5.0, 0.1, 1.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 2.0, 7.5, 0.2, 2.5]]],
+        'openai/gpt-5.6-sol' => ['OpenAI: GPT-5.6 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'openai/gpt-5.6-sol-pro' => ['OpenAI: GPT-5.6 Sol Pro', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'openai/gpt-5.6-sol-pro:batch' => ['OpenAI: GPT-5.6 Sol Pro (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
+        'openai/gpt-5.6-sol:batch' => ['OpenAI: GPT-5.6 Sol (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
         'openai/gpt-5.6-terra' => ['OpenAI: GPT-5.6 Terra', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
         'openai/gpt-5.6-terra-pro' => ['OpenAI: GPT-5.6 Terra Pro', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
         'openai/gpt-5.6-terra-pro:batch' => ['OpenAI: GPT-5.6 Terra Pro (batch)', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 1.0, 6.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 2.0, 9.0, 0.2, 0.0]]],
@@ -2008,26 +2019,26 @@ final class BuiltinCatalog
         'openai/gpt-audio' => ['OpenAI: GPT Audio', Api::OpenAiCompletions, 128_000, 16_384, false, false, 2.5, 10.0, 0.0, 0.0],
         'openai/gpt-audio-mini' => ['OpenAI: GPT Audio Mini', Api::OpenAiCompletions, 128_000, 16_384, false, false, 0.6, 2.4, 0.0, 0.0],
         'openai/gpt-chat-latest' => ['OpenAI: GPT Chat Latest', Api::OpenAiCompletions, 400_000, 128_000, false, true, 5.0, 30.0, 0.5, 0.0],
-        'openai/gpt-oss-120b' => ['OpenAI: gpt-oss-120b', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.037, 0.17, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'openai/gpt-oss-120b' => ['OpenAI: gpt-oss-120b', Api::OpenAiCompletions, 131_072, 65_536, true, false, 0.15, 0.6, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-oss-120b:batch' => ['OpenAI: gpt-oss-120b (batch)', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.0296, 0.136, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-oss-20b' => ['OpenAI: gpt-oss-20b', Api::OpenAiCompletions, 131_072, 32_768, true, false, 0.018, 0.09, 0.009, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-oss-20b:batch' => ['OpenAI: gpt-oss-20b (batch)', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.024, 0.112, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'openai/gpt-oss-safeguard-20b' => ['OpenAI: gpt-oss-safeguard-20b', Api::OpenAiCompletions, 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0, 'thinkingLevelMap' => ['off' => null]],
-        'openai/o1' => ['OpenAI: o1', Api::OpenAiCompletions, 200_000, 100_000, true, true, 15.0, 60.0, 7.5, 0.0],
-        'openai/o3' => ['OpenAI: o3', Api::OpenAiCompletions, 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
-        'openai/o3-mini' => ['OpenAI: o3 Mini', Api::OpenAiCompletions, 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0],
+        'openai/o1' => ['OpenAI: o1', Api::OpenAiCompletions, 200_000, 100_000, true, true, 15.0, 60.0, 7.5, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openai/o3' => ['OpenAI: o3', Api::OpenAiCompletions, 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openai/o3-mini' => ['OpenAI: o3 Mini', Api::OpenAiCompletions, 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'openai/o3-mini-high' => ['OpenAI: o3 Mini High', Api::OpenAiCompletions, 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'openai/o3-mini:batch' => ['OpenAI: o3 Mini (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, false, 0.55, 2.2, 0.275, 0.0],
-        'openai/o3-pro' => ['OpenAI: o3 Pro', Api::OpenAiCompletions, 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0],
-        'openai/o3:batch' => ['OpenAI: o3 (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.0, 4.0, 0.25, 0.0],
-        'openai/o4-mini' => ['OpenAI: o4 Mini', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0],
+        'openai/o3-mini:batch' => ['OpenAI: o3 Mini (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, false, 0.55, 2.2, 0.275, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openai/o3-pro' => ['OpenAI: o3 Pro', Api::OpenAiCompletions, 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openai/o3:batch' => ['OpenAI: o3 (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.0, 4.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openai/o4-mini' => ['OpenAI: o4 Mini', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'openai/o4-mini-high' => ['OpenAI: o4 Mini High', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'openai/o4-mini:batch' => ['OpenAI: o4 Mini (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 0.55, 2.2, 0.1375, 0.0],
-        'openrouter/auto' => ['Auto Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, true, -1000000.0, -1000000.0, 0.0, 0.0],
-        'openrouter/auto-beta' => ['Auto Router (Beta)', Api::OpenAiCompletions, 2_000_000, 4_096, true, true, -1000000.0, -1000000.0, 0.0, 0.0],
+        'openai/o4-mini:batch' => ['OpenAI: o4 Mini (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 0.55, 2.2, 0.1375, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'openrouter/auto' => ['Auto Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, true, 0.0, 0.0, 0.0, 0.0],
+        'openrouter/auto-beta' => ['Auto Router (Beta)', Api::OpenAiCompletions, 2_000_000, 4_096, true, true, 0.0, 0.0, 0.0, 0.0],
         'openrouter/free' => ['Free Models Router', Api::OpenAiCompletions, 200_000, 4_096, true, true, 0.0, 0.0, 0.0, 0.0],
         'openrouter/fusion' => ['OpenRouter: Fusion', Api::OpenAiCompletions, 1_000_000, 30_000, true, false, 0.0, 0.0, 0.0, 0.0],
-        'openrouter/pareto-code' => ['Pareto Code Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, false, -1000000.0, -1000000.0, 0.0, 0.0],
+        'openrouter/pareto-code' => ['Pareto Code Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, false, 0.0, 0.0, 0.0, 0.0],
         'perceptron/perceptron-mk1.5' => ['Perceptron: Perceptron Mk1.5', Api::OpenAiCompletions, 36_864, 8_192, true, true, 0.15, 1.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'poolside/laguna-s-2.1' => ['Poolside: Laguna S 2.1', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.09, 0.18, 0.009, 0.0],
         'poolside/laguna-s-2.1:free' => ['Poolside: Laguna S 2.1 (free)', Api::OpenAiCompletions, 262_144, 32_768, true, false, 0.0, 0.0, 0.0, 0.0],
@@ -2041,39 +2052,42 @@ final class BuiltinCatalog
         'qwen/qwen3-235b-a22b-2507' => ['Qwen: Qwen3 235B A22B Instruct 2507', Api::OpenAiCompletions, 262_144, 16_384, false, false, 0.09, 0.55, 0.0, 0.0],
         'qwen/qwen3-235b-a22b-thinking-2507' => ['Qwen: Qwen3 235B A22B Thinking 2507', Api::OpenAiCompletions, 128_000, 16_384, true, false, 0.45, 3.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'qwen/qwen3-30b-a3b' => ['Qwen: Qwen3 30B A3B', Api::OpenAiCompletions, 40_960, 16_384, true, false, 0.12, 0.5, 0.0, 0.0],
-        'qwen/qwen3-30b-a3b-instruct-2507' => ['Qwen: Qwen3 30B A3B Instruct 2507', Api::OpenAiCompletions, 262_144, 235_929, false, false, 0.1, 0.3, 0.0, 0.0],
+        'qwen/qwen3-30b-a3b-instruct-2507' => ['Qwen: Qwen3 30B A3B Instruct 2507', Api::OpenAiCompletions, 262_144, 235_929, false, false, 0.09, 0.3, 0.0, 0.0],
         'qwen/qwen3-32b' => ['Qwen: Qwen3 32B', Api::OpenAiCompletions, 40_960, 16_384, true, false, 0.08, 0.28, 0.0, 0.0],
         'qwen/qwen3-coder' => ['Qwen: Qwen3 Coder 480B A35B', Api::OpenAiCompletions, 262_144, 65_536, false, false, 0.3, 1.0, 0.1, 0.0],
         'qwen/qwen3-coder-30b-a3b-instruct' => ['Qwen: Qwen3 Coder 30B A3B Instruct', Api::OpenAiCompletions, 262_144, 235_929, false, false, 0.07, 0.28, 0.0, 0.0],
         'qwen/qwen3-coder-flash' => ['Qwen: Qwen3 Coder Flash', Api::OpenAiCompletions, 1_000_000, 65_536, false, false, 0.195, 0.975, 0.039, 0.24375, 'tiers' => [[32_000, 0.325, 1.625, 0.065, 0.40625], [128_000, 0.52, 2.6, 0.104, 0.65]]],
         'qwen/qwen3-coder-next' => ['Qwen: Qwen3 Coder Next', Api::OpenAiCompletions, 262_144, 235_929, false, false, 0.12, 0.8, 0.07, 0.0],
-        'qwen/qwen3-next-80b-a3b-instruct' => ['Qwen: Qwen3 Next 80B A3B Instruct', Api::OpenAiCompletions, 262_144, 235_929, false, false, 0.1, 1.1, 0.07, 0.0],
+        'qwen/qwen3-next-80b-a3b-instruct' => ['Qwen: Qwen3 Next 80B A3B Instruct', Api::OpenAiCompletions, 262_144, 16_384, false, false, 0.09, 1.1, 0.0, 0.0],
         'qwen/qwen3-next-80b-a3b-thinking' => ['Qwen: Qwen3 Next 80B A3B Thinking', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.15, 1.2, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'qwen/qwen3-vl-235b-a22b-instruct' => ['Qwen: Qwen3 VL 235B A22B Instruct', Api::OpenAiCompletions, 131_072, 32_768, false, true, 0.21, 1.9, 0.1, 0.0],
         'qwen/qwen3-vl-30b-a3b-instruct' => ['Qwen: Qwen3 VL 30B A3B Instruct', Api::OpenAiCompletions, 262_144, 16_384, false, true, 0.15, 0.6, 0.0, 0.0],
         'qwen/qwen3-vl-30b-a3b-thinking' => ['Qwen: Qwen3 VL 30B A3B Thinking', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.29, 1.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'qwen/qwen3-vl-8b-instruct' => ['Qwen: Qwen3 VL 8B Instruct', Api::OpenAiCompletions, 262_144, 235_929, false, true, 0.25, 0.75, 0.12, 0.0],
-        'qwen/qwen3.5-122b-a10b' => ['Qwen: Qwen3.5-122B-A10B', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.26, 2.08, 0.0, 0.0],
-        'qwen/qwen3.5-27b' => ['Qwen: Qwen3.5-27B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.26, 2.6, 0.0, 0.0],
-        'qwen/qwen3.5-35b-a3b' => ['Qwen: Qwen3.5-35B-A3B', Api::OpenAiCompletions, 256_000, 16_384, true, true, 0.15, 1.0, 0.05, 0.0],
+        'qwen/qwen3.5-122b-a10b' => ['Qwen: Qwen3.5-122B-A10B', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.4, 3.2, 0.0, 0.0],
+        'qwen/qwen3.5-27b' => ['Qwen: Qwen3.5-27B', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.27, 2.16, 0.27, 0.0],
+        'qwen/qwen3.5-35b-a3b' => ['Qwen: Qwen3.5-35B-A3B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.14, 1.0, 0.05, 0.0],
         'qwen/qwen3.5-397b-a17b' => ['Qwen: Qwen3.5 397B A17B', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.5, 3.6, 0.3, 0.0],
-        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 256_000, 32_768, true, true, 0.1, 0.15, 0.0, 0.0],
+        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.17, 0.25, 0.0, 0.0],
         'qwen/qwen3.5-flash-02-23' => ['Qwen: Qwen3.5-Flash', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.065, 0.26, 0.0, 0.0],
         'qwen/qwen3.5-plus-02-15' => ['Qwen: Qwen3.5 Plus 2026-02-15', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.26, 1.56, 0.0, 0.0, 'tiers' => [[256_000, 0.325, 1.95, 0.0, 0.0]]],
         'qwen/qwen3.5-plus-20260420' => ['Qwen: Qwen3.5 Plus 2026-04-20', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.3, 1.8, 0.0, 0.375, 'tiers' => [[256_000, 0.375, 2.25, 0.0, 0.46875]]],
-        'qwen/qwen3.6-27b' => ['Qwen: Qwen3.6 27B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.32, 3.2, 0.0, 0.0],
-        'qwen/qwen3.6-35b-a3b' => ['Qwen: Qwen3.6 35B A3B', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.1, 0.95, 0.1, 0.0],
+        'qwen/qwen3.6-27b' => ['Qwen: Qwen3.6 27B', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.25, 2.0, 0.025, 0.0],
+        'qwen/qwen3.6-35b-a3b' => ['Qwen: Qwen3.6 35B A3B', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.1, 0.95, 0.05, 0.0],
         'qwen/qwen3.6-flash' => ['Qwen: Qwen3.6 Flash', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.1875, 1.125, 0.0, 0.234375, 'tiers' => [[256_000, 0.75, 3.0, 0.0, 0.9375]]],
         'qwen/qwen3.6-plus' => ['Qwen: Qwen3.6 Plus', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.325, 1.95, 0.0, 0.40625, 'tiers' => [[256_000, 1.3, 3.9, 0.0, 1.625]]],
         'qwen/qwen3.7-flash' => ['Qwen: Qwen3.7 Flash', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.03, 0.13, 0.006, 0.038, 'tiers' => [[32_000, 0.1, 0.4, 0.02, 0.125], [256_000, 0.2, 0.8, 0.04, 0.25]]],
         'qwen/qwen3.7-max' => ['Qwen: Qwen3.7 Max', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.475, 4.425, 0.295, 1.84375],
         'qwen/qwen3.7-plus' => ['Qwen: Qwen3.7 Plus', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.32, 1.28, 0.064, 0.4, 'tiers' => [[256_000, 0.96, 3.84, 0.192, 1.2]]],
-        'qwen/qwen3.8-2.4t-a95b' => ['Qwen: Qwen3.8 2.4T A95B', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 2.0, 6.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
-        'qwen/qwen3.8-27b' => ['Qwen: Qwen3.8 27B', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.04, 2.3, 0.0198, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
+        'qwen/qwen3.7-plus:batch' => ['Qwen: Qwen3.7 Plus (batch)', Api::OpenAiCompletions, 262_144, 131_072, true, true, 0.23, 0.92, 0.0, 0.0],
+        'qwen/qwen3.8-2.4t-a95b' => ['Qwen: Qwen3.8 2.4T A95B', Api::OpenAiCompletions, 1_010_000, 909_000, true, false, 2.0, 6.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
+        'qwen/qwen3.8-27b' => ['Qwen: Qwen3.8 27B', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.2, 2.5, 0.09, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         'qwen/qwen3.8-flash' => ['Qwen: Qwen3.8 Flash', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.0],
         'qwen/qwen3.8-max-0902' => ['Qwen: Qwen3.8 Max (0902)', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 2.0, 6.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'qwen/qwen3.8-max-prime' => ['Qwen: Qwen3.8 Max Prime', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 4.0, 12.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'qwen/qwen3.8-omni-flash' => ['Qwen: Qwen3.8 Omni Flash', Api::OpenAiCompletions, 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.0],
+        'recursive/flint-v1.0:free' => ['Recursive: Flint (free)', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
+        'reflection/beam-1.0-501b-a23b' => ['Reflection: Beam 1.0 501B A23B', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.25, 1.0, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'rekaai/reka-edge' => ['Reka Edge', Api::OpenAiCompletions, 16_384, 14_745, false, true, 0.1, 0.1, 0.0, 0.0],
         'relace/relace-search' => ['Relace: Relace Search', Api::OpenAiCompletions, 256_000, 128_000, false, false, 1.0, 3.0, 0.0, 0.0],
         'sakana/fugu-max' => ['Sakana: Fugu Max', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 2.0, 6.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
@@ -2082,20 +2096,20 @@ final class BuiltinCatalog
         'sakana/sakana-namazu' => ['Sakana: Sakana Namazu', Api::OpenAiCompletions, 262_144, 65_536, true, true, 0.95, 4.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'stepfun/step-3.5-flash' => ['StepFun: Step 3.5 Flash', Api::OpenAiCompletions, 262_144, 65_536, true, false, 0.1, 0.3, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'stepfun/step-3.7-flash' => ['StepFun: Step 3.7 Flash', Api::OpenAiCompletions, 256_000, 230_400, true, true, 0.2, 1.15, 0.04, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'stepfun/step-5-preview' => ['StepFun: Step 5 Preview', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 1.0, 2.7, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'tencent/hy3' => ['Tencent: Hy3', Api::OpenAiCompletions, 262_144, 128_000, true, false, 0.132, 0.528, 0.033, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'stepfun/step-5-preview' => ['StepFun: Step 5 Preview', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 1.0, 2.7, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'tencent/hy3' => ['Tencent: Hy3', Api::OpenAiCompletions, 262_144, 128_000, true, false, 0.0825, 0.33, 0.020625, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'tencent/hy3-preview' => ['Tencent: Hy3 preview', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.18, 0.6, 0.06, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'tencent/hy4-preview' => ['Tencent: Hy4 preview', Api::OpenAiCompletions, 1_048_576, 64_000, true, false, 0.834, 2.501, 0.042, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'tencent/hy4-preview' => ['Tencent: Hy4 preview', Api::OpenAiCompletions, 1_048_576, 64_000, true, false, 0.7506, 2.2509, 0.0378, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/inkling' => ['Thinking Machines: Inkling', Api::OpenAiCompletions, 524_288, 471_859, true, true, 1.0, 4.05, 0.17, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/inkling-small' => ['Thinking Machines: Inkling Small', Api::OpenAiCompletions, 524_288, 262_144, true, true, 0.45, 1.2, 0.1, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/inkling-small:free' => ['Thinking Machines: Inkling Small (free)', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/inkling:free' => ['Thinking Machines: Inkling (free)', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'typesafe/jev-router' => ['TypeSafe: Jev Router', Api::OpenAiCompletions, 1_000_000, 4_096, true, true, -1000000.0, -1000000.0, 0.0, 0.0],
-        'unbiased/pareto-26.10-preview' => ['Pareto 26.10 Preview', Api::OpenAiCompletions, 1_048_576, 131_072, false, true, 0.8, 3.2, 0.03, 0.0],
+        'typesafe/jev-router' => ['TypeSafe: Jev Router', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
+        'unbiased/pareto-26.10' => ['Pareto 26.10', Api::OpenAiCompletions, 1_048_576, 131_072, false, true, 0.8, 3.2, 0.03, 0.0],
         'unbiased/pareto-26.9' => ['Pareto 26.9', Api::OpenAiCompletions, 262_144, 131_072, false, true, 2.5, 7.5, 0.25, 0.0],
         'upstage/solar-mini4' => ['Upstage: Solar Mini 4', Api::OpenAiCompletions, 524_288, 131_072, true, false, 0.05, 0.2, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'upstage/solar-pro-3' => ['Upstage: Solar Pro 3', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'upstage/solar-pro4' => ['Upstage: Solar Pro 4', Api::OpenAiCompletions, 524_288, 131_072, true, false, 0.09, 0.36, 0.018, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'upstage/solar-pro4' => ['Upstage: Solar Pro 4', Api::OpenAiCompletions, 524_288, 131_072, true, false, 0.15, 0.6, 0.03, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'x-ai/grok-4.20' => ['SpaceXAI: Grok 4.20', Api::OpenAiCompletions, 2_000_000, 1_800_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]]],
         'x-ai/grok-4.3' => ['SpaceXAI: Grok 4.3', Api::OpenAiCompletions, 1_000_000, 900_000, true, true, 1.25, 2.5, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]]],
         'x-ai/grok-4.3:batch' => ['SpaceXAI: Grok 4.3 (batch)', Api::OpenAiCompletions, 1_000_000, 900_000, true, true, 1.0, 2.0, 0.16, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 2.0, 4.0, 0.32, 0.0]]],
@@ -2103,25 +2117,26 @@ final class BuiltinCatalog
         'x-ai/grok-4.6' => ['SpaceXAI: Grok 4.6', Api::OpenAiCompletions, 500_000, 450_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
         'x-ai/grok-4.7' => ['SpaceXAI: Grok 4.7', Api::OpenAiCompletions, 500_000, 450_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
         'x-ai/grok-build-0.1' => ['SpaceXAI: Grok Build 0.1', Api::OpenAiCompletions, 256_000, 230_400, true, true, 1.0, 2.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null], 'tiers' => [[200_000, 2.0, 4.0, 0.4, 0.0]]],
-        'xiaomi/mimo-v2.5' => ['Xiaomi: MiMo-V2.5', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
-        'xiaomi/mimo-v2.5-pro' => ['Xiaomi: MiMo-V2.5-Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.435, 0.87, 0.0036, 0.0],
+        'xiaomi/mimo-v2.5' => ['Xiaomi: MiMo-V2.5', Api::OpenAiCompletions, 1_050_000, 945_000, true, true, 0.119, 0.238, 0.00255, 0.0],
+        'xiaomi/mimo-v2.5-pro' => ['Xiaomi: MiMo-V2.5-Pro', Api::OpenAiCompletions, 1_050_000, 945_000, true, false, 0.3045, 0.609, 0.0028, 0.0],
         'xiaomi/mimo-v2.6-flash' => ['Xiaomi: MiMo-V2.6-Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
         'xiaomi/mimo-v2.6-pro' => ['Xiaomi: MiMo-V2.6-Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.435, 0.87, 0.0036, 0.0],
         'xiaomi/mimo-v2.6-pro-ultraspeed' => ['Xiaomi: MiMo-V2.6-Pro-UltraSpeed', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 4.35, 8.7, 0.036, 0.0],
+        'xingchen-agi/xing4.0-29b-a4b:free' => ['XingChen: Xing4.0 29B A4B (free)', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.0, 0.0, 0.0, 0.0],
         'z-ai/glm-4.5' => ['Z.ai: GLM 4.5', Api::OpenAiCompletions, 131_072, 98_304, true, false, 0.6, 2.2, 0.11, 0.0],
         'z-ai/glm-4.5-air' => ['Z.ai: GLM 4.5 Air', Api::OpenAiCompletions, 131_072, 98_304, true, false, 0.13, 0.85, 0.025, 0.0],
         'z-ai/glm-4.5v' => ['Z.ai: GLM 4.5V', Api::OpenAiCompletions, 65_536, 16_384, true, true, 0.6, 1.8, 0.11, 0.0],
-        'z-ai/glm-4.6' => ['Z.ai: GLM 4.6', Api::OpenAiCompletions, 202_752, 131_072, true, false, 0.5, 2.0, 0.1, 0.0],
+        'z-ai/glm-4.6' => ['Z.ai: GLM 4.6', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.55, 2.2, 0.11, 0.0],
         'z-ai/glm-4.6v' => ['Z.ai: GLM 4.6V', Api::OpenAiCompletions, 131_072, 32_768, true, true, 0.3, 0.9, 0.055, 0.0],
-        'z-ai/glm-4.7' => ['Z.ai: GLM 4.7', Api::OpenAiCompletions, 202_752, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
+        'z-ai/glm-4.7' => ['Z.ai: GLM 4.7', Api::OpenAiCompletions, 204_800, 131_072, true, false, 0.54, 1.98, 0.099, 0.0],
         'z-ai/glm-4.7-flash' => ['Z.ai: GLM 4.7 Flash', Api::OpenAiCompletions, 131_072, 117_964, true, false, 0.0605, 0.4, 0.0, 0.0],
-        'z-ai/glm-5' => ['Z.ai: GLM 5', Api::OpenAiCompletions, 198_000, 128_000, true, false, 0.6, 1.9, 0.119, 0.0],
+        'z-ai/glm-5' => ['Z.ai: GLM 5', Api::OpenAiCompletions, 202_752, 131_072, true, false, 0.6, 1.9, 0.119, 0.0],
         'z-ai/glm-5-turbo' => ['Z.ai: GLM 5 Turbo', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
-        'z-ai/glm-5.1' => ['Z.ai: GLM 5.1', Api::OpenAiCompletions, 202_745, 131_072, true, false, 1.33, 4.18, 0.247, 0.0],
-        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.05, 7.0, 0.049, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.079, 4.8, 0.059, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.036, 0.9, 0.0108, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.06, 0.2, 0.012, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'z-ai/glm-5.1' => ['Z.ai: GLM 5.1', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
+        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0341, 7.0, 0.033, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.079, 1.4, 0.078, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.05, 0.18, 0.01, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flashx' => ['Z.ai: GLM 5.3 FlashX', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.37, 1.25, 0.09, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-prime' => ['Z.ai: GLM 5.3 Prime', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 2.8, 8.8, 0.56, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3:batch' => ['Z.ai: GLM 5.3 (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.45, 2.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2130,21 +2145,21 @@ final class BuiltinCatalog
         '~anthropic/claude-haiku-latest' => ['Anthropic: Claude Haiku Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
         '~anthropic/claude-opus-latest' => ['Anthropic: Claude Opus Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         '~anthropic/claude-sonnet-latest' => ['Anthropic: Claude Sonnet Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        '~deepseek/deepseek-flash-latest' => ['DeepSeek: DeepSeek Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.0009, 0.6, 0.008, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        '~deepseek/deepseek-pro-latest' => ['DeepSeek: DeepSeek Pro Latest', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.225, 8.0, 0.23, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0144, 0.576, 0.0108, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~deepseek/deepseek-flash-latest' => ['DeepSeek: DeepSeek Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.02, 1.0, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~deepseek/deepseek-pro-latest' => ['DeepSeek: DeepSeek Pro Latest', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.1188, 8.0, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0422, 0.1763, 0.027, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~google/gemini-flash-latest' => ['Google: Gemini Flash Latest', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.375, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.375]]],
-        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.56, 14.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.19, 8.94, 0.19, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~openai/gpt-astra-latest' => ['OpenAI: GPT Astra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         '~openai/gpt-luna-latest' => ['OpenAI: GPT Luna Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         '~openai/gpt-mini-latest' => ['OpenAI: GPT Mini Latest', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         '~openai/gpt-sol-latest' => ['OpenAI: GPT Sol Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
         '~openai/gpt-terra-latest' => ['OpenAI: GPT Terra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
-        '~unbiased/pareto-latest' => ['Pareto Latest', Api::OpenAiCompletions, 262_144, 131_072, false, true, 2.5, 7.5, 0.25, 0.0],
+        '~unbiased/pareto-latest' => ['Pareto Latest', Api::OpenAiCompletions, 1_048_576, 131_072, false, true, 0.8, 3.2, 0.03, 0.0],
         '~x-ai/grok-latest' => ['xAI: Grok Latest', Api::OpenAiCompletions, 500_000, 450_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
-        '~z-ai/glm-flash-latest' => ['Z.ai: GLM Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.036, 0.9, 0.0108, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        '~z-ai/glm-latest' => ['Z.ai: GLM Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.063, 4.4, 0.0586, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~z-ai/glm-flash-latest' => ['Z.ai: GLM Flash Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.051, 0.0702, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~z-ai/glm-latest' => ['Z.ai: GLM Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.075, 4.295, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -2164,6 +2179,7 @@ final class BuiltinCatalog
         'deepseek-v4-pro' => ['DeepSeek V4 Pro', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_000_000, 384_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-v4.1-flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_000_000, 384_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5' => ['GLM-5', 202_752, 16_384, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.1' => ['GLM-5.1', 202_752, 128_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2190,6 +2206,7 @@ final class BuiltinCatalog
         'deepseek-v4-pro' => ['DeepSeek V4 Pro', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_000_000, 384_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-v4.1-flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_000_000, 384_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5' => ['GLM-5', 202_752, 16_384, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.1' => ['GLM-5.1', 202_752, 128_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2229,22 +2246,20 @@ final class BuiltinCatalog
      */
     private const array TOGETHER_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'MiniMaxAI/MiniMax-M2.7' => ['MiniMax-M2.7', 196_608, 131_072, true, false, 0.3, 1.2, 0.06, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null]],
-        'MiniMaxAI/MiniMax-M3' => ['MiniMax-M3', 524_288, 250_000, true, true, 0.3, 1.2, 0.06, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
-        'Qwen/Qwen2.5-7B-Instruct-Turbo' => ['Qwen 2.5 7B Instruct Turbo', 32_768, 32_768, false, false, 0.3, 0.3, 0.0, 0.0],
+        'MiniMaxAI/MiniMax-M3' => ['MiniMax-M3', 524_288, 524_288, true, true, 0.3, 1.2, 0.06, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
         'Qwen/Qwen3.5-9B' => ['Qwen3.5 9B', 262_144, 65_536, true, true, 0.17, 0.25, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
-        'Qwen/Qwen3.6-Plus' => ['Qwen3.6 Plus', 1_000_000, 500_000, true, false, 0.5, 3.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
-        'Qwen/Qwen3.7-Max' => ['Qwen3.7 Max', 1_000_000, 500_000, false, false, 1.25, 3.75, 0.125, 0.0],
-        'deepseek-ai/DeepSeek-V4-Flash-0731' => ['DeepSeek V4 Flash 0731', 1_048_576, 384_000, true, false, 0.14, 0.28, 0.03, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 384_000, true, false, 1.32, 3.96, 0.13, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'meta-llama/Llama-3.3-70B-Instruct-Turbo' => ['Llama 3.3 70B', 131_072, 131_072, false, false, 1.04, 1.04, 0.0, 0.0],
-        'moonshotai/Kimi-K3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'nvidia/nemotron-3-ultra-550b-a55b' => ['Nemotron 3 Ultra 550B A55B', 512_300, 512_300, true, false, 0.6, 3.6, 0.2, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
+        'Qwen/Qwen3.6-Plus' => ['Qwen3.6 Plus', 1_000_000, 65_536, true, false, 0.5, 3.0, 0.0, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
+        'Qwen/Qwen3.7-Max' => ['Qwen3.7 Max', 1_000_000, 131_072, true, false, 2.5, 7.5, 0.5, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
+        'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 384_000, true, false, 1.32, 3.96, 0.13, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 384_000, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'meta-models/Muse-Spark-Open-816B-A42B' => ['Muse Spark Open', 1_048_576, 131_072, true, true, 1.25, 4.25, 0.15, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'moonshotai/Kimi-K3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'nvidia/NVIDIA-Nemotron-3.5-Super-VL' => ['Nemotron 3.5 Super VL 120B A12B', 262_144, 262_144, true, true, 0.15, 0.5, 0.02, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null]],
         'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 131_072, true, false, 0.15, 0.6, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'thinkingmachines/Inkling' => ['Inkling', 524_288, 131_072, true, true, 1.0, 4.05, 0.17, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'reflection/Beam-1.0-501B-A23B' => ['Beam 1.0 501B A23B', 1_048_576, 131_072, true, false, 0.4, 1.2, 0.04, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'thinkingmachines/Inkling' => ['Inkling', 524_288, 131_072, true, true, 1.0, 4.05, 0.17, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'zai-org/GLM-5.2' => ['GLM-5.2', 1_048_575, 164_000, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'zai-org/GLM-5.3' => ['GLM-5.3', 1_048_576, 262_144, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'zai-org/GLM-5.3' => ['GLM-5.3', 1_048_575, 262_144, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'zai-org/GLM-5.3-Flash' => ['GLM-5.3-Flash', 1_048_575, 400_000, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['minimal' => null, 'low' => null, 'medium' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
@@ -2282,10 +2297,10 @@ final class BuiltinCatalog
         'alibaba/qwen3.8-max-0902' => ['Qwen3.8 Max 0902', 991_000, 128_000, true, true, 2.0, 6.0, 0.25, 2.5],
         'alibaba/qwen3.8-max-prime' => ['Qwen 3.8 Max Prime', 1_000_000, 131_072, true, true, 4.0, 12.0, 0.5, 5.0],
         'alibaba/qwen3.8-omni-flash' => ['Qwen 3.8 Omni Flash', 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.0],
-        'amazon/nova-2-lite' => ['Nova 2 Lite', 1_000_000, 1_000_000, true, true, 0.3, 2.5, 0.075, 0.0],
-        'amazon/nova-lite' => ['Nova Lite', 300_000, 8_192, false, true, 0.06, 0.24, 0.0, 0.0],
-        'amazon/nova-micro' => ['Nova Micro', 128_000, 8_192, false, false, 0.035, 0.14, 0.0, 0.0],
-        'amazon/nova-pro' => ['Nova Pro', 300_000, 8_192, false, true, 0.8, 3.2, 0.0, 0.0],
+        'amazon/nova-2-lite' => ['Nova 2 Lite', 1_000_000, 1_000_000, true, true, 0.33, 2.75, 0.0825, 0.0],
+        'amazon/nova-lite' => ['Nova Lite', 300_000, 8_192, false, true, 0.06, 0.24, 0.015, 0.0],
+        'amazon/nova-micro' => ['Nova Micro', 128_000, 8_192, false, false, 0.035, 0.14, 0.0087, 0.0],
+        'amazon/nova-pro' => ['Nova Pro', 300_000, 8_192, false, true, 0.8, 3.2, 0.2, 0.0],
         'anthropic/claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
         'anthropic/claude-fable-5-batch' => ['Claude Fable 5 (Batch)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
         'anthropic/claude-fable-5.1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
@@ -2309,7 +2324,6 @@ final class BuiltinCatalog
         'anthropic/claude-opus-5.5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
         'anthropic/claude-opus-5.5-batch' => ['Claude Opus 5.5 (Batch)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
         'anthropic/claude-opus-5.5-fast' => ['Claude Opus 5.5 (Fast)', 1_000_000, 128_000, true, true, 8.0, 40.0, 0.4, 10.0],
-        'anthropic/claude-sonnet-4' => ['Claude Sonnet 4', 1_000_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'anthropic/claude-sonnet-4.5' => ['Claude Sonnet 4.5', 1_000_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.6, 7.5]]],
         'anthropic/claude-sonnet-4.5-batch' => ['Claude Sonnet 4.5 (Batch)', 1_000_000, 64_000, true, true, 1.5, 7.5, 0.15, 1.875, 'tiers' => [[200_000, 3.0, 11.25, 0.3, 3.75]]],
         'anthropic/claude-sonnet-4.6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, true, 3.0, 15.0, 0.3, 3.75],
@@ -2318,7 +2332,7 @@ final class BuiltinCatalog
         'anthropic/claude-sonnet-5-batch' => ['Claude Sonnet 5 (Batch)', 1_000_000, 128_000, true, true, 1.0, 5.0, 0.1, 1.25],
         'anthropic/claude-sonnet-5.5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
         'anthropic/claude-sonnet-5.5-batch' => ['Claude Sonnet 5.5 (Batch)', 1_000_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25],
-        'arcee-ai/trinity-large-thinking' => ['Trinity Large Thinking', 262_100, 80_000, true, false, 0.25, 0.8, 0.0, 0.0],
+        'arcee-ai/trinity-large-thinking' => ['Trinity Large Thinking', 262_100, 80_000, true, false, 0.25, 0.8, 0.06, 0.0],
         'bytedance/seed-1.6' => ['Seed 1.6', 256_000, 32_000, true, true, 0.25, 2.0, 0.05, 0.0, 'tiers' => [[128_000, 0.5, 4.0, 0.05, 0.0]]],
         'bytedance/seed-1.8' => ['Bytedance Seed 1.8', 256_000, 64_000, true, true, 0.25, 2.0, 0.05, 0.0, 'tiers' => [[128_000, 0.5, 4.0, 0.05, 0.0]]],
         'bytedance/seed-2.1-turbo' => ['Seed 2.1 Turbo', 262_144, 262_144, true, true, 0.5, 2.5, 0.1, 0.0],
@@ -2333,7 +2347,9 @@ final class BuiltinCatalog
         'deepseek/deepseek-v4-flash-vision-exp' => ['DeepSeek V4 Flash Vision Exp', 1_048_576, 1_048_576, true, true, 0.2156, 0.6468, 0.0068, 0.0],
         'deepseek/deepseek-v4-pro' => ['DeepSeek V4 Pro', 1_000_000, 384_000, true, false, 0.66, 1.98, 0.022, 0.0],
         'deepseek/deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', 1_000_000, 384_000, true, false, 0.66, 1.98, 0.066, 0.0],
-        'deepseek/deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_048_576, 32_768, true, true, 0.3, 1.2, 0.007, 0.0],
+        'deepseek/deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_048_576, 32_768, true, true, 0.075, 0.3, 0.0015, 0.0],
+        'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_048_576, 1_048_576, true, true, 0.075, 0.3, 0.0015, 0.0],
+        'deepseek/deepseek-v4.1-flash-1017-fast' => ['DeepSeek V4.1 Flash 1017 Fast', 1_048_576, 262_144, true, true, 0.6, 2.4, 0.014, 0.0],
         'deepseek/deepseek-v4.1-flash-fast' => ['DeepSeek V4.1 Flash Fast', 1_048_576, 32_768, true, true, 0.6, 2.4, 0.014, 0.0],
         'fireworks/ember-1' => ['Ember-1', 1_048_576, 1_048_576, true, true, 3.0, 15.0, 0.3, 0.0],
         'google/gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_000_000, 65_535, true, true, 0.3, 2.5, 0.03, 0.0],
@@ -2362,6 +2378,7 @@ final class BuiltinCatalog
         'google/gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 131_072, true, true, 0.14, 0.4, 0.0, 0.0],
         'inception/mercury-2' => ['Mercury 2', 128_000, 128_000, true, false, 0.25, 0.75, 0.025, 0.0],
         'inception/mercury-2.5' => ['Mercury 2.5', 260_000, 65_536, true, false, 0.04, 0.15, 0.004, 0.0],
+        'inception/mercury-3' => ['Mercury 3', 1_000_000, 131_072, true, false, 0.1, 0.35, 0.01, 0.0],
         'inception/mercury-coder-small' => ['Mercury Coder Small Beta', 32_000, 16_384, false, false, 0.25, 1.0, 0.0, 0.0],
         'inclusionai/ling-3.0-flash' => ['Ling 3.0 Flash', 256_000, 32_000, true, false, 0.021, 0.063, 0.0042, 0.0],
         'inclusionai/ling-3.0-flash-fin' => ['Ling 3.0 Flash Fin', 256_000, 32_000, true, false, 0.075, 0.22, 0.015, 0.0],
@@ -2382,6 +2399,7 @@ final class BuiltinCatalog
         'meta/muse-spark-1.2-contributor' => ['Muse Spark 1.2 Contributor', 1_048_576, 1_048_576, true, true, 0.1, 0.2, 0.002, 0.0],
         'meta/muse-spark-1.3' => ['Muse Spark 1.3', 1_048_576, 1_048_576, true, true, 1.25, 4.25, 0.15, 0.0],
         'meta/muse-spark-1.3-contributor' => ['Muse Spark 1.3 Contributor', 1_048_576, 1_048_576, true, true, 0.1, 0.2, 0.002, 0.0],
+        'meta/muse-spark-open' => ['Muse Spark Open', 1_048_576, 1_048_576, true, true, 1.25, 4.25, 0.15, 0.0],
         'meta/muse-wonder-1.0' => ['Muse Wonder', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 0.0],
         'minimax/minimax-m2' => ['MiniMax M2', 205_000, 205_000, true, false, 0.3, 1.2, 0.03, 0.375],
         'minimax/minimax-m2.1' => ['MiniMax M2.1', 204_800, 131_072, true, false, 0.3, 1.2, 0.03, 0.375],
@@ -2391,12 +2409,13 @@ final class BuiltinCatalog
         'minimax/minimax-m2.7' => ['MiniMax M2.7', 204_800, 131_000, true, false, 0.3, 1.2, 0.06, 0.375],
         'minimax/minimax-m2.7-highspeed' => ['MiniMax M2.7 High Speed', 204_800, 131_100, true, false, 0.6, 2.4, 0.06, 0.375],
         'minimax/minimax-m3' => ['MiniMax M3', 512_000, 512_000, true, true, 0.3, 1.2, 0.06, 0.0],
+        'minimax/minimax-m3.1-flash' => ['MiniMax-M3.1-Flash', 1_048_576, 1_048_576, true, true, 0.15, 0.6, 0.015, 0.0],
         'mistral/codestral' => ['Mistral Codestral', 128_000, 4_000, false, false, 0.3, 0.9, 0.03, 0.0],
         'mistral/ministral-14b' => ['Ministral 14B', 262_144, 256_000, false, true, 0.2, 0.2, 0.02, 0.0],
         'mistral/ministral-3b' => ['Ministral 3B', 131_072, 4_000, false, true, 0.1, 0.1, 0.01, 0.0],
         'mistral/ministral-8b' => ['Ministral 8B', 262_144, 4_000, false, true, 0.15, 0.15, 0.015, 0.0],
         'mistral/mistral-large-3' => ['Mistral Large 3', 262_144, 256_000, false, true, 0.5, 1.5, 0.05, 0.0],
-        'mistral/mistral-large-4' => ['Mistral Large 4', 524_288, 262_144, true, true, 0.68, 2.09, 0.07, 0.0],
+        'mistral/mistral-large-4' => ['Mistral Large 4', 524_288, 262_144, true, true, 1.36, 4.18, 0.14, 0.0],
         'mistral/mistral-medium-3.5' => ['Mistral Medium Latest', 262_144, 256_000, true, true, 1.5, 7.5, 0.15, 0.0],
         'mistral/mistral-nemo' => ['Mistral Nemo 12B', 131_072, 131_072, false, false, 0.029, 0.03, 0.0, 0.0],
         'mistral/mistral-small' => ['Mistral Small', 262_144, 4_000, false, true, 0.15, 0.6, 0.015, 0.0],
@@ -2408,24 +2427,23 @@ final class BuiltinCatalog
         'moonshotai/kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code High Speed', 262_144, 32_768, true, true, 1.9, 8.0, 0.38, 0.0],
         'moonshotai/kimi-k3' => ['Kimi K3', 1_000_000, 131_072, true, true, 3.0, 15.0, 0.3, 0.0],
         'moonshotai/kimi-k3-fast' => ['Kimi K3 Fast', 1_000_000, 131_072, true, true, 4.5, 22.5, 0.45, 0.0],
+        'moonshotai/kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 2.0, 10.0, 0.2, 2.0],
+        'moonshotai/kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 4.0],
         'nvidia/nemotron-3-nano-30b-a3b' => ['Nemotron 3 Nano 30B A3B', 262_144, 262_144, true, false, 0.05, 0.2, 0.025, 0.0],
         'nvidia/nemotron-3-super-120b-a12b' => ['NVIDIA Nemotron 3 Super 120B A12B', 256_000, 32_000, true, false, 0.15, 0.65, 0.0, 0.0],
         'nvidia/nemotron-3-ultra-550b-a55b' => ['Nemotron 3 Ultra', 1_000_000, 65_000, true, false, 0.6, 2.4, 0.12, 0.0],
         'nvidia/nemotron-3.5-lightning' => ['Nemotron 3.5 Lightning 30B', 262_144, 131_072, true, false, 0.05, 0.2, 0.01, 0.0],
         'nvidia/nemotron-3.5-lightning-free' => ['Nemotron 3.5 Lightning Free', 1_000_000, 65_000, true, false, 0.0, 0.0, 0.0, 0.0],
+        'nvidia/nemotron-3.5-super-vl' => ['NVIDIA Nemotron 3.5 Super VL', 1_048_576, 1_048_576, true, true, 0.2, 0.5, 0.04, 0.0],
         'nvidia/nemotron-nano-12b-v2-vl' => ['Nvidia Nemotron Nano 12B V2 VL', 131_072, 131_072, true, true, 0.2, 0.6, 0.0, 0.0],
         'nvidia/nemotron-nano-9b-v2' => ['Nvidia Nemotron Nano 9B V2', 131_072, 131_072, true, false, 0.06, 0.23, 0.0, 0.0],
-        'openai/gpt-3.5-turbo' => ['GPT-3.5 Turbo', 16_385, 4_096, false, false, 0.5, 1.5, 0.0, 0.0],
-        'openai/gpt-4-turbo' => ['GPT-4 Turbo', 128_000, 4_096, false, true, 10.0, 30.0, 0.0, 0.0],
         'openai/gpt-4.1' => ['GPT-4.1', 1_047_576, 32_768, false, true, 2.0, 8.0, 0.5, 0.0],
         'openai/gpt-4.1-batch' => ['GPT-4.1 (Batch)', 1_047_576, 32_768, false, true, 1.0, 4.0, 0.25, 0.0],
         'openai/gpt-4.1-fast' => ['GPT-4.1 (Fast)', 1_047_576, 32_768, false, true, 3.5, 14.0, 0.875, 0.0],
         'openai/gpt-4.1-mini' => ['GPT-4.1 mini', 1_047_576, 32_768, false, true, 0.4, 1.6, 0.1, 0.0],
         'openai/gpt-4.1-mini-batch' => ['GPT-4.1 mini (Batch)', 1_047_576, 32_768, false, true, 0.2, 0.8, 0.05, 0.0],
         'openai/gpt-4.1-mini-fast' => ['GPT-4.1 mini (Fast)', 1_047_576, 32_768, false, true, 0.7, 2.8, 0.175, 0.0],
-        'openai/gpt-4.1-nano' => ['GPT-4.1 nano', 1_047_576, 32_768, false, true, 0.1, 0.4, 0.025, 0.0],
-        'openai/gpt-4.1-nano-batch' => ['GPT-4.1 nano (Batch)', 1_047_576, 32_768, false, true, 0.05, 0.2, 0.0125, 0.0],
-        'openai/gpt-4.1-nano-fast' => ['GPT-4.1 nano (Fast)', 1_047_576, 32_768, false, true, 0.2, 0.8, 0.05, 0.0],
+        'openai/gpt-4.1-nano' => ['GPT-4.1 nano', 1_047_576, 32_768, false, true, 0.1, 0.4, 0.03, 0.0],
         'openai/gpt-4o' => ['GPT-4o', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
         'openai/gpt-4o-batch' => ['GPT-4o (Batch)', 128_000, 16_384, false, true, 1.25, 5.0, 0.625, 0.0],
         'openai/gpt-4o-fast' => ['GPT-4o (Fast)', 128_000, 16_384, false, true, 4.25, 17.0, 2.125, 0.0],
@@ -2500,17 +2518,16 @@ final class BuiltinCatalog
         'openai/o3-mini' => ['o3-mini', 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0],
         'openai/o3-pro' => ['o3 Pro', 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0],
         'openai/o4-mini' => ['o4-mini', 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0],
-        'openai/o4-mini-fast' => ['o4-mini (Fast)', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
         'poolside/laguna-s-2.1' => ['Laguna S 2.1', 1_000_000, 131_072, true, false, 0.09, 0.18, 0.009, 0.0],
         'poolside/laguna-s-2.1-free' => ['Laguna S 2.1 Free', 256_000, 32_768, true, false, 0.0, 0.0, 0.0, 0.0],
         'quiverai/arrow-2' => ['Arrow 2', 131_072, 131_072, true, true, 4.0, 20.0, 0.4, 5.0],
         'quiverai/arrow-2-telos' => ['Arrow 2 Telos', 131_072, 131_072, true, true, 6.0, 30.0, 0.6, 7.5],
+        'reflection/beam' => ['Beam 1.0', 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
+        'reflection/beam-free' => ['Beam 1.0 (Free)', 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
         'sakana/fugu-max' => ['Fugu Max', 1_000_000, 1_000_000, true, true, 2.0, 6.0, 0.25, 0.0],
         'sakana/fugu-ultra' => ['Fugu Ultra', 1_000_000, 1_000_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
         'sakana/fugu-ultra-v2' => ['Fugu Ultra v2', 1_000_000, 1_000_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
         'sakana/namazu' => ['Sakana Namazu', 256_000, 256_000, true, true, 0.95, 4.0, 0.15, 0.0],
-        'spacexai/grok-4.1-fast-non-reasoning' => ['Grok 4.1 Fast Non-Reasoning', 1_000_000, 1_000_000, false, true, 0.2, 0.5, 0.05, 0.0],
-        'spacexai/grok-4.1-fast-reasoning' => ['Grok 4.1 Fast Reasoning', 1_000_000, 1_000_000, true, true, 0.2, 0.5, 0.05, 0.0],
         'spacexai/grok-4.20-multi-agent' => ['Grok 4.20 Multi-Agent', 2_000_000, 2_000_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]]],
         'spacexai/grok-4.20-multi-agent-batch' => ['Grok 4.20 Multi-Agent (Batch)', 2_000_000, 2_000_000, true, true, 1.0, 2.0, 0.16, 0.0, 'tiers' => [[200_000, 2.0, 4.0, 0.32, 0.0]]],
         'spacexai/grok-4.20-multi-agent-beta' => ['Grok 4.20 Multi Agent Beta', 2_000_000, 2_000_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]]],
@@ -2526,14 +2543,16 @@ final class BuiltinCatalog
         'spacexai/grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
         'spacexai/grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
         'spacexai/grok-build-0.1' => ['Grok Build 0.1', 256_000, 256_000, true, true, 1.0, 2.0, 0.2, 0.0, 'tiers' => [[200_000, 2.0, 4.0, 0.4, 0.0]]],
+        'spacexai/grok-voice-3.0' => ['Grok Voice 3.0', 4_096, 4_096, true, false, 0.0, 0.0, 0.0, 0.0],
         'stealth/glyph-cluster' => ['Glyph Cluster', 256_000, 256_000, true, false, 0.0, 0.0, 0.0, 0.0],
         'stepfun/step-3.7-flash' => ['Step 3.7 Flash', 256_000, 256_000, true, true, 0.2, 1.15, 0.04, 0.0],
+        'stepfun/step-5-preview' => ['Step 5 Preview', 1_048_576, 1_048_576, true, true, 1.0, 2.7, 0.1, 0.0],
         'tencent/hy3' => ['Hy3', 262_144, 262_144, true, false, 0.14, 0.58, 0.035, 0.0],
         'tencent/hy4-preview' => ['Tencent Hy4 Preview', 1_024_000, 64_000, true, false, 0.834, 2.501, 0.042, 0.0],
         'thinkingmachines/inkling' => ['Inkling', 256_000, 256_000, true, true, 1.0, 4.05, 0.17, 0.0],
         'thinkingmachines/inkling-small' => ['Inkling Small', 1_000_000, 1_000_000, true, true, 0.45, 1.2, 0.1, 0.0],
-        'xiaomi/mimo-v2.5' => ['MiMo M2.5', 1_050_000, 131_100, true, true, 0.14, 0.28, 0.0028, 0.0],
-        'xiaomi/mimo-v2.5-pro' => ['MiMo V2.5 Pro', 1_050_000, 131_000, true, false, 0.435, 0.87, 0.0036, 0.0],
+        'xiaomi/mimo-v2.5' => ['MiMo M2.5', 1_050_000, 131_100, true, true, 0.119, 0.238, 0.0025, 0.0],
+        'xiaomi/mimo-v2.5-pro' => ['MiMo V2.5 Pro', 1_050_000, 131_000, true, false, 0.3045, 0.609, 0.0028, 0.0],
         'xiaomi/mimo-v2.6-flash' => ['MiMo V2.6 Flash', 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
         'xiaomi/mimo-v2.6-pro' => ['MiMo V2.6 Pro', 1_048_576, 131_072, true, true, 0.435, 0.87, 0.0036, 0.0],
         'xiaomi/mimo-v2.6-pro-ultraspeed' => ['MiMo V2.6 Pro UltraSpeed', 1_048_576, 131_072, true, true, 4.35, 8.7, 0.036, 0.0],
@@ -2549,7 +2568,7 @@ final class BuiltinCatalog
         'zai/glm-5.1' => ['GLM 5.1', 202_800, 64_000, true, false, 1.4, 4.4, 0.26, 0.0],
         'zai/glm-5.2' => ['GLM 5.2', 1_000_000, 128_000, true, false, 0.8, 2.55, 0.16, 0.0],
         'zai/glm-5.2-fast' => ['GLM 5.2 Fast', 1_000_000, 128_000, true, false, 2.8, 8.8, 0.56, 0.0],
-        'zai/glm-5.3' => ['GLM 5.3', 1_000_000, 1_000_000, true, false, 1.4, 4.4, 0.14, 0.0],
+        'zai/glm-5.3' => ['GLM 5.3', 1_000_000, 1_000_000, true, false, 1.2, 4.0, 0.2, 0.0],
         'zai/glm-5.3-fast' => ['GLM 5.3 Fast', 1_048_576, 262_144, true, false, 2.1, 6.6, 0.21, 0.0],
         'zai/glm-5.3-flash' => ['GLM 5.3 Flash', 1_000_000, 131_000, true, true, 0.15, 0.5, 0.03, 0.0],
         'zai/glm-5.3-flashx' => ['GLM 5.3 FlashX', 1_000_000, 131_072, true, true, 0.37, 1.25, 0.075, 0.0],
@@ -2566,42 +2585,33 @@ final class BuiltinCatalog
      */
     private const array XIAOMI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'mimo-v2.5' => ['MiMo-V2.5', 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
-        'mimo-v2.5-pro' => ['MiMo-V2.5-Pro', 1_048_576, 131_072, true, false, 0.435, 0.87, 0.0036, 0.0],
-        'mimo-v2.5-pro-ultraspeed' => ['MiMo-V2.5-Pro-UltraSpeed', 1_048_576, 131_072, true, false, 1.305, 2.61, 0.0108, 0.0],
-        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0],
-        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.435, 0.87, 0.0036, 0.0],
-        'mimo-v2.6-pro-ultraspeed' => ['MiMo-V2.6-Pro-UltraSpeed', 1_048_576, 131_072, true, true, 4.35, 8.7, 0.036, 0.0],
+        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.14, 0.28, 0.0028, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.435, 0.87, 0.0036, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mimo-v2.6-pro-ultraspeed' => ['MiMo-V2.6-Pro-UltraSpeed', 1_048_576, 131_072, true, true, 4.35, 8.7, 0.036, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array XIAOMI_TOKEN_PLAN_AMS_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'mimo-v2.5' => ['MiMo-V2.5', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.5-pro' => ['MiMo-V2.5-Pro', 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
+        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array XIAOMI_TOKEN_PLAN_CN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'mimo-v2.5' => ['MiMo-V2.5', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.5-pro' => ['MiMo-V2.5-Pro', 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
+        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
     /** @var array<string, array<int|string, mixed>> */
     private const array XIAOMI_TOKEN_PLAN_SGP_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'mimo-v2.5' => ['MiMo-V2.5', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.5-pro' => ['MiMo-V2.5-Pro', 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
-        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0],
+        'mimo-v2.6-flash' => ['MiMo-V2.6-Flash', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mimo-v2.6-pro' => ['MiMo-V2.6-Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -2614,7 +2624,7 @@ final class BuiltinCatalog
      */
     private const array ZAI_CODING_CN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'glm-4.6v' => ['GLM-4.6V', 128_000, 32_768, true, true, 0.3, 0.9, 0.0, 0.0],
+        'glm-4.6v' => ['GLM-4.6V', 128_000, 32_768, true, true, 0.3, 0.9, 0.05, 0.0],
         'glm-5.3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3-flash' => ['GLM-5.3-Flash', 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'glm-5.3-highspeed' => ['GLM-5.3 Highspeed', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2805,7 +2815,10 @@ final class BuiltinCatalog
             // rejects tool-bearing system messages with a 400." "All models accept system text after
             // the conversation starts."
             'kimi-coding' => self::kimiCodingCompat(in_array($id, ['k3', 'k3-256k', 'kimi-for-coding'], true)),
-            'meta', 'minimax', 'minimax-cn' => null,
+            'meta' => null,
+            // A row with models.dev effort levels takes adaptive thinking with `output_config.effort`
+            // (upstream #11121: MiniMax-M3.1-Flash rejects `thinking.type: "disabled"`).
+            'minimax', 'minimax-cn' => isset($row['thinkingLevelMap']) ? new AnthropicCompat(forceAdaptiveThinking: true) : null,
             // `moonshotCompat`, and Kimi K3's: `requiresReasoningContentOnAssistantMessages`, the
             // `openai` format, `supportsReasoningEffort`.
             'moonshotai', 'moonshotai-cn' => new OpenAiCompat(
@@ -2842,6 +2855,9 @@ final class BuiltinCatalog
             'vercel-ai-gateway' => new AnthropicCompat(allowEmptySignature: true),
             // `xiaomiCompat`.
             'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-sgp' => new OpenAiCompat(
+                // "MiMo Chat Completions only documents thinking.type enabled/disabled and rejects
+                // some reasoning_effort values (e.g. "minimal")" (upstream #10818).
+                reasoningEffort: false,
                 reasoningContentOnAssistantMessages: true,
                 thinkingFormat: 'deepseek',
             ),
@@ -2862,14 +2878,14 @@ final class BuiltinCatalog
 
     /**
      * Upstream's generator `getTogetherCompat()`: `TOGETHER_BASE_COMPAT` for a model that does not
-     * reason or reasons always, `openai` effort for gpt-oss, Together's toggle plus effort for DeepSeek
+     * reason, `openai` effort for gpt-oss, Together's toggle plus effort for DeepSeek
      * V4 Pro, Together's toggle for the rest.
      */
     private static function togetherCompat(string $id, bool $reasoning): OpenAiCompat
     {
         $effort = $reasoning && in_array($id, self::TOGETHER_REASONING_EFFORT_MODELS, true);
         $toggleEffort = $reasoning && in_array($id, self::TOGETHER_TOGGLE_REASONING_EFFORT_MODELS, true);
-        $toggle = $reasoning && !$effort && !in_array($id, self::TOGETHER_REASONING_ONLY_MODELS, true);
+        $toggle = $reasoning && !$effort;
 
         return new OpenAiCompat(
             store: false,
@@ -3026,10 +3042,9 @@ final class BuiltinCatalog
      * the keys whose detected value is not `OPENAI_COMPLETIONS_DEFAULT_COMPAT`'s, every other key null.
      *
      * Not `OpenAiCompat::detect()`, which is the runtime `detectCompat()`: the generator's copy differs
-     * in three places, all copied — `supportsStrictMode` is "built-in behavior as explicit metadata
+     * in two places, both copied — `supportsStrictMode` is "built-in behavior as explicit metadata
      * against the conservative runtime default" (true but for Moonshot, Together, Cloudflare's gateway,
-     * NVIDIA and Cerebras), a Together model that reasons always (`TOGETHER_REASONING_ONLY_MODELS`) is
-     * not given Together's thinking format, and OpenRouter's `~anthropic/` aliases get Anthropic's cache
+     * NVIDIA and Cerebras), and OpenRouter's `~anthropic/` aliases get Anthropic's cache
      * control too (`/^~?anthropic\//`). Its `sessionAffinityFormat` is not detected at all.
      */
     private static function detectedCompletionsCompat(string $provider, string $baseUrl, string $id): OpenAiCompat
@@ -3043,7 +3058,6 @@ final class BuiltinCatalog
         $isNvidia = $provider === 'nvidia' || str_contains($baseUrl, 'integrate.api.nvidia.com');
         $isAntLing = $provider === 'ant-ling' || str_contains($baseUrl, 'api.ant-ling.com');
         $isCerebras = $provider === 'cerebras' || str_contains($baseUrl, 'cerebras.ai');
-        $isTogetherReasoningOnly = $isTogether && in_array($id, self::TOGETHER_REASONING_ONLY_MODELS, true);
         $isDeepSeek = $provider === 'deepseek' || str_contains(strtolower($baseUrl), 'deepseek.com');
 
         $isNonStandard = $isNvidia
@@ -3073,7 +3087,7 @@ final class BuiltinCatalog
         $thinkingFormat = match (true) {
             $isDeepSeek => 'deepseek',
             $isZai => 'zai',
-            $isTogether && !$isTogetherReasoningOnly => 'together',
+            $isTogether => 'together',
             $isAntLing => 'ant-ling',
             $isOpenRouter => 'openrouter',
             default => 'openai',
@@ -3136,6 +3150,21 @@ final class BuiltinCatalog
             ...get_object_vars($under),
             ...array_filter(get_object_vars($over), static fn (mixed $value): bool => $value !== null),
         ]);
+    }
+
+    /**
+     * Upstream's generator `ANTHROPIC_DISABLED_THINKING_MODELS`: "Claude models that accept
+     * `thinking: {type: "disabled"}` alongside per-message effort. Opus 5.5, Sonnet 5.5, Fable 5.1,
+     * and Mythos 5.1 reject it." (#10753)
+     */
+    private const array ANTHROPIC_DISABLED_THINKING_MODELS = ['claude-opus-5', 'claude-haiku-5-5', 'claude-haiku-5.5'];
+
+    /** Upstream's `supportsAnthropicDisabledThinkingWithMidConvoEffort()`: OpenRouter's prefix and a dated snapshot ignored. */
+    private static function supportsAnthropicDisabledThinkingWithMidConvoEffort(string $id): bool
+    {
+        $id = (string) preg_replace(['/^~?anthropic\//', '/-\d{8}$/'], '', strtolower($id));
+
+        return in_array($id, self::ANTHROPIC_DISABLED_THINKING_MODELS, true);
     }
 
     /**
@@ -3209,11 +3238,23 @@ final class BuiltinCatalog
         // 1. `// models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort metadata is complete.`
         if (($provider === Models::ANTHROPIC && in_array($id, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], true))
             || ($provider === Models::COPILOT && $id === 'claude-opus-5.5')) {
-            $map = [...$map, 'off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'];
+            $map = [
+                ...$map,
+                // "Haiku 5.5 accepts disabled thinking; Opus 5.5 and Sonnet 5.5 reject it." (upstream #10753)
+                ...($id === 'claude-haiku-5-5' ? [] : ['off' => null]),
+                'minimal' => null,
+                'low' => 'low',
+                'medium' => 'medium',
+                'high' => 'high',
+                'xhigh' => 'xhigh',
+                'max' => 'max',
+            ];
         }
 
         // 2.
-        if ($api === Api::AnthropicMessages && AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true) {
+        if ($api === Api::AnthropicMessages
+            && AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true
+            && !self::supportsAnthropicDisabledThinkingWithMidConvoEffort($id)) {
             $map = [...$map, 'off' => null];
         }
 
@@ -3693,6 +3734,8 @@ final class BuiltinCatalog
                     supportsMidConvoSystemMessages: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
                     supportsToolSearch: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
                     supportsAdditionalTools: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
+                    // `applyOpenAIMidConvoEffortMetadata()` (#10853).
+                    supportsMidConvoEffort: in_array($id, self::OPENAI_MID_CONVO_EFFORT_MODEL_IDS, true) ? true : null,
                 ),
                 // `supportsDirectReasoningEffort()` is true for every Responses model.
                 thinkingLevelMap: self::thinkingLevelMap('openai', Api::OpenAiResponses, $id, effortLevelMap: $row['effortLevelMap'] ?? null),

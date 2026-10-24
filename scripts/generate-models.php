@@ -176,16 +176,12 @@ const ZAI_GLM52_IDS = ['glm-5.2', 'glm-5.2-highspeed'];
  */
 const GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = [
     'claude-fable-5',
-    'claude-opus-4.6',
-    'claude-opus-4.7',
     'claude-opus-4.8',
     'claude-opus-5',
     'claude-opus-5.5',
     'claude-sonnet-4.6',
     'claude-sonnet-5',
     'gpt-5.3-codex',
-    'gpt-5.4',
-    'gpt-5.5',
     'gpt-6-astra',
     'gpt-6-luna',
     'gpt-6-sol',
@@ -269,21 +265,20 @@ const AZURE_DEEPSEEK_V4_PRO_COST = ['input' => 1.925, 'out' => 3.828, 'cacheRead
 
 /**
  * Upstream's `codexModels`, "OpenAI Codex (ChatGPT OAuth) models": "These are not fetched from
- * models.dev; we keep a small, explicit list to avoid aliases. Older model limits are based on
- * observed server behavior; GPT-5.6 and GPT-6 use Codex's 272k default catalog limit." id => [name,
- * window, takes images, price] — the price `withOpenAiLongContextPricing()` of
- * `OPENAI_STANDARD_COSTS[id]` where it names `standard`, and GPT-5.5 of its own rates; Spark's is
- * flat. `CODEX_MAX_TOKENS` (128000) for every one.
+ * models.dev; we keep a small, explicit list to avoid aliases. Only list models the Codex backend
+ * accepts for ChatGPT accounts. GPT-5.5 and GPT-5.3 Codex Spark are rejected with 'not supported
+ * when using Codex with a ChatGPT account' (#11173). GPT-5.6 and GPT-6 use Codex's 272k default
+ * catalog limit. GPT-6.1 Sol uses the 500k default returned by /backend-api/codex/models (#10840)."
+ * id => [name, window, takes images, price] — the price `withOpenAiLongContextPricing()` of
+ * `OPENAI_STANDARD_COSTS[id]` where it names `standard`. `CODEX_MAX_TOKENS` (128000) for every one.
  *
  * @var array<string, array{0: string, 1: int, 2: bool, 3: string|array{input: float, out: float, cacheRead: float, cacheWrite: float}, 4: bool}>
  */
 const CODEX_MODELS = [
-    'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, true, 'standard', true],
+    'gpt-6.1-sol' => ['GPT-6.1 Sol', 500_000, true, 'standard', true],
     'gpt-6-astra' => ['GPT-6 Astra', 272_000, true, 'standard', true],
     'gpt-6-sol' => ['GPT-6 Sol', 272_000, true, 'standard', true],
     'gpt-6-luna' => ['GPT-6 Luna', 272_000, true, 'standard', true],
-    'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, false, ['input' => 1.75, 'out' => 14.0, 'cacheRead' => 0.175, 'cacheWrite' => 0.0], false],
-    'gpt-5.5' => ['GPT-5.5', 272_000, true, ['input' => 5.0, 'out' => 30.0, 'cacheRead' => 0.5, 'cacheWrite' => 0.0], true],
     'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, true, 'standard', true],
     'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, true, 'standard', true],
     'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, true, 'standard', true],
@@ -319,15 +314,9 @@ const REASONING_OPTION_PROVIDERS = [
     'together',
     'opencode',
     'opencode-go',
-    'minimax',
-    'minimax-cn',
     'kimi-coding',
     'moonshotai',
     'moonshotai-cn',
-    'xiaomi',
-    'xiaomi-token-plan-cn',
-    'xiaomi-token-plan-ams',
-    'xiaomi-token-plan-sgp',
 ];
 
 /** Upstream's `THINKING_LEVELS` in `models-dev-reasoning-options.ts` — no `off`, which `none` stands for. */
@@ -384,8 +373,7 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = [
     'upstage/solar-10.7b-instruct',
 ];
 
-/** Upstream's `TOGETHER_REASONING_ONLY_MODELS`, `TOGETHER_REASONING_EFFORT_MODELS`, `TOGETHER_TOGGLE_REASONING_EFFORT_MODELS`. */
-const TOGETHER_REASONING_ONLY_MODELS = ['deepseek-ai/DeepSeek-R1', 'MiniMaxAI/MiniMax-M2.7'];
+/** Upstream's `TOGETHER_REASONING_EFFORT_MODELS`, `TOGETHER_TOGGLE_REASONING_EFFORT_MODELS`. */
 
 const TOGETHER_REASONING_EFFORT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'];
 
@@ -393,6 +381,14 @@ const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = ['deepseek-ai/DeepSeek-V4-Pro-08
 
 /** `processBasetenModels()`' `toggleThinkingLevelMap` and `glm52ThinkingLevelMap`. */
 const BASETEN_TOGGLE_THINKING_LEVEL_MAP = ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null];
+
+/**
+ * Upstream's `xiaomiThinkingLevelMap` (#10818): "MiMo Chat Completions only documents thinking.type
+ * enabled/disabled and rejects some reasoning_effort values (e.g. "minimal"). Xiaomi documents all
+ * effort levels as identical, so expose only off and high." Its models.dev reasoning options are no
+ * longer recorded, and its compat sends no `reasoning_effort` (`BuiltinCatalog`).
+ */
+const XIAOMI_THINKING_LEVEL_MAP = ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null];
 
 const BASETEN_GLM52_THINKING_LEVEL_MAP = ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'];
 
@@ -442,8 +438,8 @@ const KIMI_CODING_IMPLIED_COSTS = [
 /** Upstream's `OPENROUTER_KIMI_K3_MODEL_IDS`. */
 const OPENROUTER_KIMI_K3_MODEL_IDS = ['moonshotai/kimi-k3', '~moonshotai/kimi-latest'];
 
-/** Upstream's `minimaxDirectSupportedIds`: every other MiniMax model is removed from both providers. */
-const MINIMAX_DIRECT_SUPPORTED_IDS = ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M3'];
+/** Upstream's `minimaxHiddenIds`: "MiniMax asked to hide older models from its direct providers (#2596)." */
+const MINIMAX_HIDDEN_IDS = ['MiniMax-M2', 'MiniMax-M2.1', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed'];
 
 /**
  * Upstream's hand-written `deepseekModels`: "DeepSeek also offers time-based off-peak rates, which
@@ -481,11 +477,16 @@ const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
 const HAND_KEPT_CLASSIFIERS = [
     'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    // Pricing: https://developers.cloudflare.com/workers-ai/models/clef/ and …/clef-flash/
+    // Pricing and context: https://developers.cloudflare.com/workers-ai/models/clef/,
+    // https://developers.cloudflare.com/workers-ai/models/clef-flash/ and
+    // https://developers.cloudflare.com/workers-ai/models/clef-omni/ (upstream 7f225f25d).
     'cloudflare-workers-ai/@cf/cloudflare/clef' => ['name' => 'Clef', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.24, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.09, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    // https://developers.cloudflare.com/ai/models/typesafe/jev/
-    'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 24_576, 'input' => ['text'], 'in' => 0.038, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['name' => 'Clef Omni', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 64_000, 'input' => ['text'], 'in' => 0.15, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    // https://developers.cloudflare.com/ai/models/typesafe/jev/ (jev-latest) and
+    // https://developers.cloudflare.com/ai/models/typesafe/jev-1.14.0/
+    'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['name' => 'Jev 1.14', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     // Upstream's `OPENAI_CLASSIFIER_MODELS` (ce8972a0e): "OpenAI Decisions API (public beta):
     // gpt-6-luna is its only model. It bills input tokens only, with the same long-context
     // multiplier as chat requests. Only API keys work: Sign in with ChatGPT tokens are rejected on
@@ -969,6 +970,11 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
                 $provider === 'opencode-go' && $id === 'deepseek-v4.1-flash' => getEffortThinkingLevelMap($reasoningOptions),
                 default => null,
             },
+            'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-sgp' => $reasoning ? XIAOMI_THINKING_LEVEL_MAP : null,
+            // "Models with effort levels (e.g. MiniMax-M3.1-Flash) take adaptive thinking with
+            // output_config.effort and reject thinking.type="disabled" (no "none" effort, so off is
+            // null)" — `BuiltinCatalog` gives such a row `forceAdaptiveThinking` (upstream #11121).
+            'minimax', 'minimax-cn' => getEffortThinkingLevelMap($reasoningOptions),
             'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual' => getEffortThinkingLevelMap($reasoningOptions)
                 ?? (in_array($id, QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS, true) ? QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP : null),
             default => null,
@@ -1060,7 +1066,6 @@ function getTogetherThinkingLevelMap(string $modelId, bool $reasoning): ?array
         !$reasoning => null,
         in_array($modelId, TOGETHER_REASONING_EFFORT_MODELS, true) => ['off' => null, 'minimal' => null],
         in_array($modelId, TOGETHER_TOGGLE_REASONING_EFFORT_MODELS, true) => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null],
-        in_array($modelId, TOGETHER_REASONING_ONLY_MODELS, true) => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null],
         default => ['minimal' => null, 'low' => null, 'medium' => null],
     };
 }
@@ -1602,15 +1607,28 @@ function openRouterRows(?string $file): array
 }
 
 /**
- * `openrouter-catalog.ts`' `cost()`: `perMillion(value, fallback)` is `value ? roundCost(parseFloat(value)
- * * 1_000_000) : fallback` — an empty price is the fallback, `"0"` is zero.
+ * Upstream's `openRouterCost()` (`providers/openrouter-api.ts`), which `openrouter-catalog.ts` uses:
+ * "Convert one $/token price to $/1M tokens. 0 means free. Missing, invalid and negative prices use
+ * the fallback: OpenRouter reports -1 for router models such as `openrouter/auto`, whose price
+ * depends on the model they pick." The same rule as `OpenRouterUserModels::perMillion()`.
  *
  * @param array<string, mixed> $pricing
  * @return array{0: array{input: float, out: float, cacheRead: float, cacheWrite: float}, 1: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}
  */
 function openRouterCost(array $pricing): array
 {
-    $perMillion = static fn (mixed $value, float $fallback): float => is_string($value) && $value !== '' ? roundCost((float) $value * 1_000_000) : $fallback;
+    $perMillion = static function (mixed $value, float $fallback): float {
+        // `Number.parseFloat()`: the longest number the text starts with, or NaN.
+        $text = is_string($value) ? trim($value) : (is_int($value) || is_float($value) ? (string) $value : '');
+
+        if (preg_match('/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/', $text, $match) !== 1) {
+            return $fallback;
+        }
+
+        $perToken = (float) $match[0];
+
+        return $perToken >= 0 ? roundCost($perToken * 1_000_000) : $fallback;
+    };
     $base = [
         'input' => $perMillion($pricing['prompt'] ?? null, 0.0),
         'out' => $perMillion($pricing['completion'] ?? null, 0.0),
@@ -2056,7 +2074,7 @@ function listOf(array $values): string
  *   (`OPENROUTER_KIMI_K3_MODEL_IDS`), and "Keep selected OpenRouter model metadata stable until
  *   upstream settles" — Kimi K2.5's price and output cap, GLM-5's price;
  * - Vercel AI Gateway: Kimi K3's output cap;
- * - MiniMax: only `MINIMAX_DIRECT_SUPPORTED_IDS` are kept.
+ * - MiniMax: `MINIMAX_HIDDEN_IDS` are dropped (upstream #11121; it used to keep an allowlist).
  *
  * @param array<string, array<string, mixed>> $rows
  * @return array<string, array<string, mixed>>
@@ -2092,7 +2110,7 @@ function catalogueTemporaryOverrides(array $rows, string $provider): array
             $row = [...$row, 'input' => 0.6, 'out' => 1.9, 'cacheRead' => 0.119];
         }
 
-        if (($provider === 'minimax' || $provider === 'minimax-cn') && !in_array($id, MINIMAX_DIRECT_SUPPORTED_IDS, true)) {
+        if (($provider === 'minimax' || $provider === 'minimax-cn') && in_array($id, MINIMAX_HIDDEN_IDS, true)) {
             unset($rows[$id]);
 
             continue;

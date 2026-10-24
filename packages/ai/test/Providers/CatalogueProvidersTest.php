@@ -12,7 +12,9 @@ use Pig\Ai\Context;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
+use Pig\Ai\Pricing;
 use Pig\Ai\Providers\OpenAiOptions;
+use Pig\Ai\Providers\OpenCodeHeaders;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -121,11 +123,6 @@ final class CatalogueProvidersTest extends TestCase
         $this->assertSame(['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null], $deepSeek->thinkingLevelMap);
         $this->assertInstanceOf(OpenAiCompat::class, $deepSeek->compat);
         $this->assertSame([true, 'together'], [$deepSeek->compat->reasoningEffort, $deepSeek->compat->thinkingFormat]);
-
-        $minimax = self::model('together', 'MiniMaxAI/MiniMax-M2.7');
-        $this->assertSame(['off' => null, 'minimal' => null, 'low' => null, 'medium' => null], $minimax->thinkingLevelMap);
-        $this->assertInstanceOf(OpenAiCompat::class, $minimax->compat);
-        $this->assertSame([null, false], [$minimax->compat->thinkingFormat, $minimax->compat->reasoningEffort]);
     }
 
     public function testFireworksServesItsOtherModelsOverItsMessagesApi(): void
@@ -238,9 +235,22 @@ final class CatalogueProvidersTest extends TestCase
                 $this->assertNull(Models::find($provider, $id), "{$provider}/{$id}");
             }
 
-            foreach (['mimo-v2.5', 'mimo-v2.5-pro'] as $id) {
+            foreach (['mimo-v2.6-flash', 'mimo-v2.6-pro'] as $id) {
                 $this->assertNotNull(Models::find($provider, $id), "{$provider}/{$id}");
             }
+        }
+    }
+
+    public function testXiaomiOffersOnlyThinkingOnAndOffAndSendsNoEffort(): void
+    {
+        // Upstream #10818: "MiMo Chat Completions rejects reasoning_effort "minimal" with a 400. Xiaomi
+        // documents only thinking.type enabled/disabled and treats all effort levels identically."
+        foreach (['xiaomi', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-sgp'] as $provider) {
+            $model = self::model($provider, 'mimo-v2.6-pro');
+            $this->assertSame(['off', 'high'], $model->supportedThinkingLevels(), $provider);
+            $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+            $this->assertFalse($model->compat->reasoningEffort, $provider);
+            $this->assertSame('deepseek', $model->compat->thinkingFormat, $provider);
         }
     }
 
@@ -317,6 +327,17 @@ final class CatalogueProvidersTest extends TestCase
         $this->send($model, new OpenAiOptions(apiKey: 'test-key', sessionId: 'conversation-1'));
 
         $this->assertStringNotContainsString('x-opencode-session', strtolower($this->server()->received()));
+    }
+
+    public function testACustomProviderPointingAtOpenCodeIsSentItsSessionHeaderToo(): void
+    {
+        // Upstream's `getOpenCodeSessionHeaders()` in `Models.resolveRequest()`: any target on
+        // `opencode.ai`, not only the two providers whose APIs `withOpenCodeSessionHeader()` wraps.
+        $custom = new Model('glm-5.3', 'GLM', Api::OpenAiCompletions, 'my-opencode', 'https://opencode.ai/zen/v1', 200_000, 32_000, false, ['text'], new Pricing());
+        $elsewhere = new Model('glm-5.3', 'GLM', Api::OpenAiCompletions, 'my-proxy', 'https://example.com/v1', 200_000, 32_000, false, ['text'], new Pricing());
+
+        $this->assertSame(['x-custom' => 'value', 'x-opencode-session' => 'conversation-1'], OpenCodeHeaders::withSessionHeader($custom, 'conversation-1', ['x-custom' => 'value']));
+        $this->assertSame(['x-custom' => 'value'], OpenCodeHeaders::withSessionHeader($elsewhere, 'conversation-1', ['x-custom' => 'value']));
     }
 
     public function testEachProvidersKeyIsReadFromUpstreamsVariable(): void

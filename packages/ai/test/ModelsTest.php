@@ -423,8 +423,9 @@ final class ModelsTest extends TestCase
 
     public function testCodexRowsAreUpstreamsCatalogueRows(): void
     {
-        // Pinned from upstream's published catalogue (`openai-codex.json`, pi-ai 1.1.0).
-        $this->assertCount(9, self::of(Models::OPENAI_CODEX));
+        // Pinned from upstream's published catalogue (`openai-codex.json`, pi-ai 1.1.0), less the two
+        // models the backend rejects for ChatGPT accounts (#11173).
+        $this->assertCount(7, self::of(Models::OPENAI_CODEX));
 
         $luna = Models::find(Models::OPENAI_CODEX, 'gpt-5.6-luna');
         $this->assertNotNull($luna);
@@ -435,19 +436,19 @@ final class ModelsTest extends TestCase
         $this->assertInstanceOf(OpenAiCompat::class, $luna->compat);
         $this->assertSame([true, true, true, true], [$luna->compat->grammarTools, $luna->compat->supportsAdditionalTools, $luna->compat->supportsToolSearch, $luna->compat->supportsMidConvoSystemMessages]);
 
-        // GPT-5.5 takes tool search and not `additional_tools` on Codex, where OpenAI's takes both.
-        $gpt = Models::find(Models::OPENAI_CODEX, 'gpt-5.5');
-        $this->assertNotNull($gpt);
-        $this->assertInstanceOf(OpenAiCompat::class, $gpt->compat);
-        $this->assertNull($gpt->compat->supportsAdditionalTools);
-        $this->assertTrue($gpt->compat->supportsToolSearch);
-        $this->assertSame(['xhigh' => 'xhigh', 'minimal' => 'low'], $gpt->thinkingLevelMap);
+        // Upstream #11173: the Codex backend rejects GPT-5.5 and GPT-5.3 Codex Spark for ChatGPT
+        // accounts, so neither is offered.
+        $this->assertNull(Models::find(Models::OPENAI_CODEX, 'gpt-5.5'));
+        $this->assertNull(Models::find(Models::OPENAI_CODEX, 'gpt-5.3-codex-spark'));
+
+        // Upstream #10840: GPT-6.1 Sol takes the 500k window `/backend-api/codex/models` reports.
+        $sol = Models::find(Models::OPENAI_CODEX, 'gpt-6.1-sol');
+        $this->assertSame([500_000, 128_000], [$sol?->contextWindow, $sol?->maxTokens]);
 
         $this->assertSame(
             ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
             Models::find(Models::OPENAI_CODEX, 'gpt-6-astra')?->thinkingLevelMap,
         );
-        $this->assertNull(Models::find(Models::OPENAI_CODEX, 'gpt-5.3-codex-spark')?->inputLimits);
     }
 
     public function testRadiusRowsAreUpstreamsCatalogueRows(): void
@@ -790,8 +791,8 @@ final class ModelsTest extends TestCase
         );
         // The compat and the map every 5.5 model gets: adaptive, no temperature, managed effort,
         // strict tools, mid-conversation system messages and tool changes (upstream's generator
-        // `supportsAnthropicMidConvoSystemMessages()`, added to pig's compat since), and the whole
-        // 5.5 map.
+        // `supportsAnthropicMidConvoSystemMessages()`, added to pig's compat since), and the 5.5 map
+        // with `off` left in: "Haiku 5.5 accepts disabled thinking" (upstream #10753).
         $this->assertEquals(new AnthropicCompat(
             forceAdaptiveThinking: true,
             strictTools: true,
@@ -801,7 +802,7 @@ final class ModelsTest extends TestCase
             supportsMidConvoToolChanges: true,
         ), $model->compat);
         $this->assertSame(
-            ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
+            ['minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
             $model->thinkingLevelMap,
         );
     }
@@ -1114,12 +1115,12 @@ final class ModelsTest extends TestCase
             [Models::ANTHROPIC, 'claude-sonnet-4-6', ['max' => 'max']],
             [Models::ANTHROPIC, 'claude-opus-4-7', ['xhigh' => 'xhigh', 'max' => 'max']],
             [Models::ANTHROPIC, 'claude-sonnet-5', ['xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            // Opus 5 and Haiku 5.5 can be switched off (upstream #10753).
+            [Models::ANTHROPIC, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max']],
             [Models::ANTHROPIC, 'claude-opus-5-5', $whole],
-            [Models::ANTHROPIC, 'claude-haiku-5-5', $whole],
+            [Models::ANTHROPIC, 'claude-haiku-5-5', array_diff_key($whole, ['off' => true])],
             [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'claude-sonnet-4.6', ['max' => 'max', 'minimal' => 'low']],
-            [Models::COPILOT, 'claude-opus-4.7', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
             [Models::COPILOT, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
             [Models::COPILOT, 'claude-sonnet-5.5', ['xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'claude-opus-5.5', $whole],
@@ -1146,8 +1147,7 @@ final class ModelsTest extends TestCase
     {
         foreach ([
             [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'],
-            [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-opus-5-5'],
-            [Models::ANTHROPIC, 'claude-sonnet-5-5'], [Models::ANTHROPIC, 'claude-haiku-5-5'],
+            [Models::ANTHROPIC, 'claude-opus-5-5'], [Models::ANTHROPIC, 'claude-sonnet-5-5'],
             [Models::COPILOT, 'claude-fable-5'], [Models::COPILOT, 'claude-fable-5.1'],
             [Models::COPILOT, 'claude-opus-5.5'],
         ] as [$provider, $id]) {
@@ -1162,6 +1162,8 @@ final class ModelsTest extends TestCase
             [Models::ANTHROPIC, 'claude-opus-4-6'], [Models::ANTHROPIC, 'claude-opus-4-8'],
             [Models::COPILOT, 'claude-sonnet-4.6'], [Models::COPILOT, 'claude-opus-5'],
             [Models::COPILOT, 'claude-sonnet-5.5'],
+            // Managed effort, but they accept disabled thinking (upstream #10753).
+            [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-haiku-5-5'],
         ] as [$provider, $id]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");

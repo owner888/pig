@@ -338,6 +338,7 @@ final class StreamProxy
                 'supportsMidConvoToolAdditions' => $model->compat->supportsMidConvoToolAdditions,
                 'supportsToolSearch' => $model->compat->supportsToolSearch,
                 'supportsAdditionalTools' => $model->compat->supportsAdditionalTools,
+                'supportsMidConvoEffort' => $model->compat->supportsMidConvoEffort,
             ], static fn (mixed $value): bool => $value !== null);
         }
 

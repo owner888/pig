@@ -1827,6 +1827,17 @@ final class OpenAiResponsesTest extends TestCase
             $message->errorMessage,
         );
 
+        // A ChatGPT Business workspace limit, which only the workspace admin can raise.
+        $this->server = new CannedServer();
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => [
+            'code' => 'subscription_sharing_workplace_individual_usage_limit_exceeded', 'message' => 'Limit reached',
+        ]]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame(
+            "subscription_sharing_workplace_individual_usage_limit_exceeded: Limit reached\nYou've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at admin.openai.com → Workspace → Usage limits.",
+            $message->errorMessage,
+        );
+
         // Any other error is left alone.
         $this->server = new CannedServer();
         $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => ['code' => 'server_error', 'message' => 'x']]]]);

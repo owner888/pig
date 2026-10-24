@@ -81,6 +81,7 @@ final class UpstreamRecord
                 supportsMidConvoSystemMessages: $flag('supportsMidConvoSystemMessages'),
                 supportsToolSearch: $flag('supportsToolSearch'),
                 supportsAdditionalTools: $flag('supportsAdditionalTools'),
+                supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
             ),
             thinkingLevelMap: $m['thinkingLevelMap'] ?? [],
         );

@@ -272,6 +272,55 @@ final class OauthTest extends TestCase
         $this->assertSame("http://localhost:{$port}/callback", $sent['redirect_uri']);
     }
 
+    public function testTheBrowserFlowFallsBackToAFreePortWhenTheRegisteredOneIsTaken(): void
+    {
+        // Upstream #10571: 53692 first, then any free loopback port — Windows reserves port ranges
+        // under Hyper-V and WSL — and the authorize URL, the paste box and the exchange all name
+        // the port that was taken.
+        $holder = stream_socket_server('tcp://127.0.0.1:' . Anthropic::CALLBACK_PORT);
+        $url = $this->serve(['access_token' => 'sk-ant-oat-f', 'refresh_token' => 'r', 'expires_in' => 3600]);
+        $shown = null;
+        $placeholder = null;
+
+        try {
+            $credentials = $this->onTheLoop(function () use ($url, &$shown, &$placeholder): ?Credentials {
+                return (new Anthropic(new HttpClient(), $url))->loginWithBrowser(
+                    static function (string $u, ?string $i) use (&$shown): void {
+                        $shown = $u;
+                        parse_str((string) parse_url($u, PHP_URL_QUERY), $query);
+                        $port = (int) parse_url((string) $query['redirect_uri'], PHP_URL_PORT);
+                        Loop::get()->defer(static function () use ($port, $query): void {
+                            self::pretendBrowser($port, "/callback?code=from-the-browser&state={$query['state']}");
+                        });
+                    },
+                    static function (string $m, string $p, bool $e, $closing) use (&$placeholder): ?string {
+                        $placeholder = $p;
+                        $parked = new \Pig\Async\Deferred();
+                        $closing->onAbort(static function () use ($parked): void {
+                            if (!$parked->isComplete()) {
+                                $parked->complete(null);
+                            }
+                        });
+
+                        return $parked->future->await();
+                    },
+                );
+            });
+        } finally {
+            if (is_resource($holder)) {
+                fclose($holder);
+            }
+        }
+
+        $this->assertNotNull($credentials);
+        parse_str((string) parse_url((string) $shown, PHP_URL_QUERY), $query);
+        $redirect = (string) $query['redirect_uri'];
+        $this->assertMatchesRegularExpression('#^http://localhost:\d+/callback$#', $redirect);
+        $this->assertNotSame('http://localhost:' . Anthropic::CALLBACK_PORT . '/callback', $redirect);
+        $this->assertSame($redirect, $placeholder);
+        $this->assertSame($redirect, $this->server->receivedJson()['redirect_uri']);
+    }
+
     public function testTheBrowserFlowTakesAPastedRedirectUrlWhenTheBrowserIsElsewhere(): void
     {
         $port = self::freePort();

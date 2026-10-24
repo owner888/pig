@@ -33,6 +33,36 @@ final class TransformMessages
     /** Upstream's `NON_VISION_TOOL_IMAGE_PLACEHOLDER`. */
     private const string NON_VISION_TOOL_IMAGE_PLACEHOLDER = '(tool image omitted: model does not support images)';
 
+    /** Upstream's `ERROR_TOOL_IMAGE_PLACEHOLDER`. */
+    private const string ERROR_TOOL_IMAGE_PLACEHOLDER = '(image attached after the tool results)';
+
+    /**
+     * Upstream's `splitErrorToolResultImages()`: the images out of an error tool result, for the APIs
+     * that refuse images in one (Anthropic, and Claude on Bedrock). The content goes as the result,
+     * each run of images a note; the caption and the images go after all the turn's tool results, in
+     * the same user message. Null for a result that needs no split (upstream #10794).
+     *
+     * @return array{content: list<TextContent>, caption: string, images: list<ImageContent>}|null
+     */
+    public static function splitErrorToolResultImages(ToolResultMessage $message): ?array
+    {
+        if (!$message->isError) {
+            return null;
+        }
+
+        $images = array_values(array_filter($message->content, static fn ($block): bool => $block instanceof ImageContent));
+
+        if ($images === []) {
+            return null;
+        }
+
+        return [
+            'content' => self::replaceImagesWithPlaceholder($message->content, self::ERROR_TOOL_IMAGE_PLACEHOLDER),
+            'caption' => "Images from the error result of tool call {$message->toolCallId} ({$message->toolName}):",
+            'images' => $images,
+        ];
+    }
+
     /**
      * Upstream's `transformMessages(messages, model, normalizeToolCallId?)`.
      *

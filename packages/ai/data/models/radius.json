@@ -191,7 +191,6 @@
         "baseUrl": "https://radius.pi.dev/v1",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": null,
             "minimal": null,
             "low": "low",
             "medium": "medium",
@@ -306,7 +305,6 @@
         "baseUrl": "https://radius.pi.dev/v1",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": null,
             "xhigh": "xhigh",
             "max": "max"
         },
@@ -391,7 +389,7 @@
             "cacheRead": 0.3,
             "cacheWrite": 3.75
         },
-        "contextWindow": 1000000,
+        "contextWindow": 200000,
         "maxTokens": 64000,
         "inputLimits": {
             "images": {
@@ -1051,6 +1049,55 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.1-sol",
+        "name": "GPT 6.1 Sol",
+        "api": "pi-messages",
+        "provider": "radius",
+        "baseUrl": "https://radius.pi.dev/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 2.5,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 4.0,
+                    "output": 15.0,
+                    "cacheRead": 0.2,
+                    "cacheWrite": 5.0
+                }
+            ]
+        },
+        "contextWindow": 272000,
+        "maxTokens": 128000,
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "grok-4.7",
         "name": "Grok 4.7",
         "api": "pi-messages",
@@ -1140,6 +1187,46 @@
     },
     {
         "type": "chat",
+        "id": "minimax-m3.1-flash",
+        "name": "MiniMax M3.1 Flash",
+        "api": "pi-messages",
+        "provider": "radius",
+        "baseUrl": "https://radius.pi.dev/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.015,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 524288,
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "precise",
         "name": "Precise",
         "api": "pi-messages",
@@ -1186,5 +1273,34 @@
                 }
             }
         }
+    },
+    {
+        "type": "chat",
+        "id": "recursive/flint",
+        "name": "Flint (free, trains on data)",
+        "api": "pi-messages",
+        "provider": "radius",
+        "baseUrl": "https://radius.pi.dev/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": null,
+            "xhigh": null,
+            "max": null
+        },
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 65536
     }
 ]

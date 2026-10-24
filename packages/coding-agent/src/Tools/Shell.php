@@ -297,9 +297,8 @@ final class Shell
      * upstream strips them, because that is a crash in `string-width` where `Width` reads them as
      * `\p{Cf}` and measures them at nothing, which is what they are.
      *
-     * An escape split across two reads survives, because a caller reading a pipe cleans each chunk
-     * on its own. Upstream has that too, and the alternative is holding bytes back in case the rest
-     * of a sequence arrives, which would stop the output being live.
+     * A caller reading a pipe holds back an escape sequence a read cuts short until the rest arrives
+     * (`Run::splitIncompleteEnd()`, upstream #10504), so each sequence reaches this whole.
      */
     public static function sanitize(string $text): string
     {

@@ -58,6 +58,9 @@ final class CallbackServer
     /** A counter, because an object id can be reused the moment the object is collected. */
     private int $next = 0;
 
+    /** The port `listen()` took — the one the system picked, when the server was asked for port 0. */
+    private ?int $boundPort = null;
+
     /**
      * @param string $who which provider sends the browser here — named in the two messages that
      *        blame the far end, since Anthropic's flow uses this server as well as Google's two
@@ -80,7 +83,9 @@ final class CallbackServer
     /** What the provider has to be told to come back to. */
     public function redirectUri(): string
     {
-        return "http://localhost:{$this->port}{$this->path}";
+        $port = $this->boundPort ?? $this->port;
+
+        return "http://localhost:{$port}{$this->path}";
     }
 
     /**
@@ -126,6 +131,12 @@ final class CallbackServer
 
         stream_set_blocking($socket, false);
         $this->socket = $socket;
+
+        // Port 0 asks the system for a free one; the redirect has to name what it picked.
+        if ($this->port === 0) {
+            $name = (string) stream_socket_get_name($socket, false);
+            $this->boundPort = (int) substr($name, (int) strrpos($name, ':') + 1);
+        }
     }
 
     /**

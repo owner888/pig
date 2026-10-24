@@ -140,6 +140,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -177,6 +180,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -257,6 +263,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -398,6 +407,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -434,6 +446,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -470,6 +485,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -579,6 +597,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -615,6 +636,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -811,6 +835,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -885,6 +912,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -921,6 +951,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -957,6 +990,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -993,6 +1029,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1102,6 +1141,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1333,6 +1375,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1413,6 +1458,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1522,6 +1570,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1558,6 +1609,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1594,6 +1648,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1630,6 +1687,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1771,6 +1831,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1807,6 +1870,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1908,6 +1974,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -1945,6 +2014,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2025,6 +2097,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2134,6 +2209,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2170,6 +2248,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2206,6 +2287,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2242,6 +2326,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2383,6 +2470,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2419,6 +2509,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2545,6 +2638,9 @@
         },
         "contextWindow": 1050000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -2589,6 +2685,9 @@
         },
         "contextWindow": 1050000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3167,6 +3266,9 @@
         },
         "contextWindow": 1050000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3279,6 +3381,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3315,6 +3420,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3351,6 +3459,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3387,6 +3498,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3423,6 +3537,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -3532,6 +3649,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5110,6 +5230,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5147,6 +5270,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5227,6 +5353,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5368,6 +5497,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5404,6 +5536,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5440,6 +5575,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5476,6 +5614,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5617,6 +5758,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5653,6 +5797,9 @@
         },
         "contextWindow": 1000000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5935,6 +6082,9 @@
         },
         "contextWindow": 1050000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,
@@ -5979,6 +6129,9 @@
         },
         "contextWindow": 1050000,
         "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
         "inputLimits": {
             "images": {
                 "maxPerMessage": 20,

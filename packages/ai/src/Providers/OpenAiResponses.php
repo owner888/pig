@@ -58,6 +58,12 @@ final class OpenAiResponses
     /** Upstream's `CHATGPT_USAGE_URL`, appended to a Sign in with ChatGPT usage-limit error. */
     private const string CHATGPT_USAGE_URL = 'https://chatgpt.com/settings/usage';
 
+    /** Upstream's `CHATGPT_WORKSPACE_LIMIT_HINT`, appended to a ChatGPT Business workspace-limit error. */
+    /** Upstream's `CONFIGURATION_UPDATE_REQUEST_EFFORT`: the fixed `reasoning.effort` while `configuration_update` items carry the thinking level. */
+    private const string CONFIGURATION_UPDATE_REQUEST_EFFORT = 'medium';
+
+    private const string CHATGPT_WORKSPACE_LIMIT_HINT = "You've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at admin.openai.com → Workspace → Usage limits.";
+
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
     }
@@ -86,6 +92,9 @@ final class OpenAiResponses
         $builder = new AssistantMessageBuilder($model);
         // Upstream's `stopReason: "pending"`: only a terminal event's status replaces it.
         $builder->setStopReason(StopReason::Pending);
+        // Upstream's `providerThinkingLevel: configurationUpdateEffort`: the level this reply was
+        // asked for in a `configuration_update` item, so later requests rebuild it unchanged.
+        $builder->setProviderThinkingLevel(self::getConfigurationUpdateEffort($model, $options));
         $signal = $options?->signal;
 
         try {
@@ -167,8 +176,11 @@ final class OpenAiResponses
             // Upstream: "Sign in with ChatGPT shares the subscription's usage limit with other apps."
             // Its test is the formatted message, which for a refused request is the SDK's JSON of the
             // error object, code included — `explain()` writes the same.
+            // "On ChatGPT Business plans, the workspace admin also sets a per-user limit."
             if (str_contains($message, 'subscription_sharing_usage_limit_exceeded')) {
                 $message .= "\nCheck your ChatGPT usage: " . self::CHATGPT_USAGE_URL;
+            } elseif (str_contains($message, 'subscription_sharing_workplace_individual_usage_limit_exceeded')) {
+                $message .= "\n" . self::CHATGPT_WORKSPACE_LIMIT_HINT;
             }
 
             $builder->fail($message, $signal?->aborted() ?? false);
@@ -380,22 +392,19 @@ final class OpenAiResponses
             'supportsStrictMode' => $compat?->strictMode ?? false,
             'supportsOpenAIGrammarTools' => self::supportsGrammarTools($model),
         ];
+        $configurationUpdateEffort = self::getConfigurationUpdateEffort($model, $options);
         $input = OpenAiResponsesShared::convertResponsesMessages($model, $context, self::TOOL_CALL_PROVIDERS, [
             'grammarToolInputProperties' => $grammar,
             'supportsMidConvoSystemMessages' => $compat?->supportsMidConvoSystemMessages ?? false,
             'supportsAdditionalTools' => $compat?->supportsAdditionalTools ?? false,
             'supportsToolSearch' => $compat?->supportsToolSearch ?? false,
             'toolOptions' => $toolOptions,
+            'configurationUpdateEffort' => $configurationUpdateEffort,
         ]);
         $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
         $supportsLongCacheRetention = $compat?->supportsLongCacheRetention ?? true;
         $supportsExplicitPromptCacheMode = $compat?->supportsExplicitPromptCacheMode ?? false;
-        // Upstream's `isChatGPTSignIn()`: "Sign in with ChatGPT rejects these request fields" —
-        // OpenAI's own endpoint with a credential that is not an `sk-` API key.
-        $omitUnsupportedFields = $model->provider === 'openai'
-            && $model->baseUrl === 'https://api.openai.com/v1'
-            && $options?->apiKey !== null
-            && !str_starts_with($options->apiKey, 'sk-');
+        $omitUnsupportedFields = self::isChatGPTSignIn($model, $options?->apiKey);
 
         $body = [
             'model' => $model->id,
@@ -469,8 +478,10 @@ final class OpenAiResponses
             // — what the model calls the level, its own name when the map says nothing (`??`, so a
             // null entry also sends the name; `Stream::simple()` has clamped such a level away).
             $level = $options?->reasoning?->value;
+            $requestedEffort = $level !== null ? ($model->thinkingLevelMap[$level] ?? $level) : 'medium';
             $body['reasoning'] = [
-                'effort' => $level !== null ? ($model->thinkingLevelMap[$level] ?? $level) : 'medium',
+                // Held fixed while `configuration_update` items carry the level (upstream #10853).
+                'effort' => $configurationUpdateEffort === null ? $requestedEffort : self::CONFIGURATION_UPDATE_REQUEST_EFFORT,
                 // `options?.reasoningSummary || "auto"`.
                 'summary' => $hasSummary ? $reasoningSummary : 'auto',
             ];
@@ -492,6 +503,37 @@ final class OpenAiResponses
         }
 
         return $body;
+    }
+
+    /**
+     * Upstream's `isChatGPTSignIn()`: "Sign in with ChatGPT rejects these request fields" — OpenAI's
+     * own endpoint with a credential that is not an `sk-` API key.
+     */
+    private static function isChatGPTSignIn(Model $model, ?string $apiKey): bool
+    {
+        return $model->provider === 'openai'
+            && $model->baseUrl === 'https://api.openai.com/v1'
+            && $apiKey !== null
+            && !str_starts_with($apiKey, 'sk-');
+    }
+
+    /**
+     * Upstream's `getConfigurationUpdateEffort()`: the effort to send in `configuration_update`
+     * items, or null to send it as `reasoning.effort` — only for a model whose compat says
+     * `supportsMidConvoEffort`, with a thinking level asked for, and not with Sign in with ChatGPT,
+     * which rejects those items.
+     */
+    private static function getConfigurationUpdateEffort(Model $model, ?OpenAiOptions $options): ?string
+    {
+        $level = $options?->reasoning?->value;
+
+        if ((self::compat($model)?->supportsMidConvoEffort ?? false) !== true
+            || $level === null || $level === ''
+            || self::isChatGPTSignIn($model, $options->apiKey)) {
+            return null;
+        }
+
+        return $model->thinkingLevelMap[$level] ?? $level;
     }
 
     /** The model's `OpenAiCompat`, or null — a compat of another API's type says nothing here. */

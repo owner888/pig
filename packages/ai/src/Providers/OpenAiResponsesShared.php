@@ -116,11 +116,16 @@ final class OpenAiResponsesShared
      * - `supportsMidConvoSystemMessages` — "Whether later system messages are sent in place;
      *   otherwise they are folded into the leading prompt";
      * - `supportsAdditionalTools`, `supportsToolSearch` — how a later system message's tools load;
-     * - `toolOptions` — what `convertResponsesTools()` is given for those tools.
+     * - `toolOptions` — what `convertResponsesTools()` is given for those tools;
+     * - `configurationUpdateEffort` — the effort for the reply being generated. When set, the
+     *   thinking level goes out as `configuration_update` items instead of a changing
+     *   `reasoning.effort`, which would invalidate the prompt cache: one before every earlier reply
+     *   of this model with the level recorded on it (`providerThinkingLevel`), and one with this
+     *   effort at the end, so earlier input never changes.
      *
      * @param list<string> $allowedToolCallProviders upstream's `OPENAI_TOOL_CALL_PROVIDERS` and its
      *        Azure and Codex copies: the providers whose `call_id|item_id` pair is kept as a pair
-     * @param array{includeSystemPrompt?: bool, grammarToolInputProperties?: array<string, string>, supportsMidConvoSystemMessages?: bool, supportsAdditionalTools?: bool, supportsToolSearch?: bool, toolOptions?: array<string, mixed>} $options
+     * @param array{includeSystemPrompt?: bool, grammarToolInputProperties?: array<string, string>, supportsMidConvoSystemMessages?: bool, supportsAdditionalTools?: bool, supportsToolSearch?: bool, toolOptions?: array<string, mixed>, configurationUpdateEffort?: string|null} $options
      * @return list<array<string, mixed>>
      */
     public static function convertResponsesMessages(Model $model, TranscriptContext $context, array $allowedToolCallProviders, array $options = []): array
@@ -137,6 +142,7 @@ final class OpenAiResponsesShared
         /** Tools announced as removed and not declared again since. */
         $unavailableTools = [];
         $includeInitialSystemMessage = $options['includeSystemPrompt'] ?? true;
+        $configurationUpdateEffort = $options['configurationUpdateEffort'] ?? null;
         // Upstream's `instructionRole`: `model.reasoning && compat?.supportsDeveloperRole !== false ?
         // "developer" : "system"` — a model whose compat says it has no developer role gets
         // `system`, which an OpenAI-compatible Responses endpoint may be the only one of.
@@ -252,6 +258,18 @@ final class OpenAiResponsesShared
 
             $converted = self::convert($message, $model, $msgIndex, $grammar);
 
+            // Upstream's `pushConfigurationUpdate(msg.providerThinkingLevel)` before the output of a
+            // reply of this model that recorded its level (upstream #10853).
+            if ($configurationUpdateEffort !== null
+                && $message instanceof AssistantMessage
+                && $converted !== []
+                && $message->provider === $model->provider
+                && $message->api === $model->api
+                && $message->model === $model->id
+                && $message->providerThinkingLevel !== null) {
+                $items[] = self::configurationUpdate($message->providerThinkingLevel);
+            }
+
             foreach ($converted as $item) {
                 $items[] = $item;
             }
@@ -266,7 +284,22 @@ final class OpenAiResponsesShared
             }
         }
 
+        if ($configurationUpdateEffort !== null) {
+            $items[] = self::configurationUpdate($configurationUpdateEffort);
+        }
+
         return $items;
+    }
+
+    /**
+     * Upstream's `pushConfigurationUpdate()`: an item that sets the reasoning effort from where it
+     * stands on.
+     *
+     * @return array{type: 'configuration_update', reasoning: array{effort: string}}
+     */
+    private static function configurationUpdate(string $effort): array
+    {
+        return ['type' => 'configuration_update', 'reasoning' => ['effort' => $effort]];
     }
 
     /**

@@ -52,6 +52,7 @@ final class ModelJson
         'supportsMidConvoToolAdditions' => 'supportsMidConvoToolAdditions',
         'supportsToolSearch' => 'supportsToolSearch',
         'supportsAdditionalTools' => 'supportsAdditionalTools',
+        'supportsMidConvoEffort' => 'supportsMidConvoEffort',
     ];
 
     /** pi's `AnthropicMessagesCompat` keys, by `AnthropicCompat` property. */
@@ -288,6 +289,7 @@ final class ModelJson
             supportsMidConvoToolAdditions: $flag('supportsMidConvoToolAdditions'),
             supportsToolSearch: $flag('supportsToolSearch'),
             supportsAdditionalTools: $flag('supportsAdditionalTools'),
+            supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
         );
     }
 

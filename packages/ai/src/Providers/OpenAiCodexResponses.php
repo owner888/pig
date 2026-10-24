@@ -1544,8 +1544,8 @@ final class OpenAiCodexResponses
 
     /**
      * Upstream's `buildBaseCodexHeaders()` and `buildSSEHeaders()`: the model's headers, the
-     * options' over them (a null deletes), then the backend's own — `Authorization`,
-     * `chatgpt-account-id`, `originator: pi`, the identity's `User-Agent` and attribution — and the SSE ones: `OpenAI-Beta:
+     * options' over them (a null deletes), all over `originator: pi` and the identity's `User-Agent`
+     * and attribution; then `Authorization` and `chatgpt-account-id` — and the SSE ones: `OpenAI-Beta:
      * responses=experimental`, `accept`, `content-type`, and the session as `session-id` and
      * `x-client-request-id`.
      *
@@ -1570,10 +1570,10 @@ final class OpenAiCodexResponses
     }
 
     /**
-     * Upstream's `buildBaseCodexHeaders()`: the model's headers, the caller's over them (a null
-     * deletes), then the token, its account, `originator: pi` and the identity's headers — the order
-     * the recordings were made with. (Upstream's source has since put `originator` and the
-     * `User-Agent` first, "so model and caller headers can override them".)
+     * Upstream's `buildBaseCodexHeaders()`: `originator: pi` and the identity's headers first, "so
+     * model and caller headers can override them, matching the other providers" (upstream #10429);
+     * the model's headers, the caller's over them (a null deletes); then the token and its account,
+     * which nothing overrides.
      *
      * @param array<string, string> $identityHeaders `originator: pi` and the client identity's
      * @param array<string, string> $initHeaders
@@ -1583,12 +1583,12 @@ final class OpenAiCodexResponses
     private static function baseCodexHeaderSources(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token): array
     {
         return [
+            $identityHeaders,
             $initHeaders,
             $additionalHeaders,
             [
                 'Authorization' => "Bearer {$token}",
                 'chatgpt-account-id' => $accountId,
-                ...$identityHeaders,
             ],
         ];
     }

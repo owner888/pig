@@ -889,9 +889,9 @@ final class Stream
     }
 
     /**
-     * The options' base fields with the key resolved late — and for OpenCode Zen and Go their routing
-     * header (`OpenCodeHeaders`, upstream's `withOpenCodeSessionHeader()` around the four APIs those
-     * providers serve: Anthropic's, both OpenAI ones and Gemini's, the three builders that call this).
+     * The options' base fields with the key resolved late — and for OpenCode Zen and Go, or a custom
+     * provider on `opencode.ai`, their routing header (`OpenCodeHeaders`, upstream's
+     * `withOpenCodeSessionHeader()` and `getOpenCodeSessionHeaders()`).
      *
      * `$requestAuth` is what the provider's auth resolved for the request (`headers`, `env`), laid over
      * the caller's fields as upstream's `applyAuth()` hands the API `{...options, apiKey, headers, env}`.

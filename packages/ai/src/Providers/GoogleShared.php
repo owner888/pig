@@ -111,7 +111,7 @@ final class GoogleShared
      *
      * Upstream's comment: which levels it supports comes from the model's `thinkingLevelMap`; this
      * only selects the wire format. Gemini 3 Pro and Flash with or without a minor version
-     * (`gemini-3-flash-preview`, `gemini-3.1-pro-preview`, `gemini-3.8-flash`), the two
+     * (`gemini-3-flash-preview`, `gemini-3.1-pro-preview`, `gemini-3.8-flash`), Gemini 4 and later, the two
      * `-latest` aliases, and Gemma 4 in both of its hosted spellings, `gemma-4-*` and `gemma4-*`.
      */
     public static function usesGoogleThinkingLevel(Model $model): bool
@@ -119,6 +119,8 @@ final class GoogleShared
         $id = strtolower($model->id);
 
         return preg_match('/gemini-3(?:\.\d+)?-(?:pro|flash)/', $id) === 1
+            // "Match Gemini 4 and later, such as gemini-4-argon (#10890)."
+            || preg_match('/gemini-(?:[4-9]|[1-9]\d)/', $id) === 1
             || $id === 'gemini-flash-latest'
             || $id === 'gemini-flash-lite-latest'
             || preg_match('/gemma-?4/', $id) === 1;

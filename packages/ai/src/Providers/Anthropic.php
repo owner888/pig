@@ -180,9 +180,10 @@ final class Anthropic
         // Upstream's `stopReason: "pending"` on the output from the start: only `message_delta`'s
         // `stop_reason` replaces it, so a stream that never sends one can be told from one that did.
         $builder->setStopReason(StopReason::Pending);
-        // Upstream: `providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort
-        // ?? "high") : undefined`, on the output from the start — so a failed turn records it too.
-        if (self::compat($model)?->supportsMidConvoEffort === true) {
+        // Upstream's `providerThinkingLevel`: the effort of the last effort marker, recorded on the
+        // reply so later requests can replay it — none when thinking is off and no marker goes out.
+        // On the output from the start, so a failed turn records it too.
+        if (self::sendsEffortMessages($model, $options)) {
             $builder->setProviderThinkingLevel($options?->effort ?? 'high');
         }
         $signal = $options?->signal;
@@ -1002,6 +1003,27 @@ final class Anthropic
         return $json;
     }
 
+    /**
+     * Upstream's `thinkingDisabled`: `model.reasoning && options?.thinkingEnabled === false &&
+     * model.thinkingLevelMap?.off !== null` — a map whose `off` is null means the model cannot be
+     * switched off, and then nothing is sent; `hasThinkingLevel()` is that test, an absent key and
+     * no map both counting as "has it".
+     */
+    private static function thinkingDisabled(Model $model, ?AnthropicOptions $options): bool
+    {
+        return $model->reasoning && $options?->thinkingEnabled === false && $model->hasThinkingLevel('off');
+    }
+
+    /**
+     * Upstream's `effortMessages`: a managed-effort model says its effort in system messages — but
+     * "effort cannot change between messages while thinking is disabled, so "off" sends no effort
+     * markers" (Haiku 5.5 and Opus 5 can be switched off; Opus 5.5 cannot).
+     */
+    private static function sendsEffortMessages(Model $model, ?AnthropicOptions $options): bool
+    {
+        return self::compat($model)?->supportsMidConvoEffort === true && !self::thinkingDisabled($model, $options);
+    }
+
     /** @return array<string, mixed> */
     /**
      * @param bool $hasPreferredStrictTools set when a `prefer` tool went out strict — upstream's
@@ -1011,6 +1033,8 @@ final class Anthropic
     {
         $compat = self::compat($model);
         $midConvoEffort = $compat?->supportsMidConvoEffort === true;
+        $thinkingDisabled = self::thinkingDisabled($model, $options);
+        $effortMessages = self::sendsEffortMessages($model, $options);
         // Upstream's `activeEffort = options?.effort ?? "high"`, said to a managed-effort model in the
         // system message that closes the conversation.
         $activeEffort = $options?->effort ?? 'high';
@@ -1040,7 +1064,7 @@ final class Anthropic
         $convertToolDefinitions = $nativeToolChanges ? $convert : null;
         $body = [
             'model' => $model->id,
-            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null, $cacheControl, $initialSystemMessage !== null, $convertToolDefinitions),
+            'messages' => $this->messages($context, $model, $isOAuth, $effortMessages ? $activeEffort : null, $cacheControl, $initialSystemMessage !== null, $convertToolDefinitions),
             // Upstream's `max_tokens: options?.maxTokens ?? model.maxTokens`: the model's own ceiling
             // when nobody said. `Stream::simple()` always says — the ceiling clamped to the room the
             // context leaves, and on a budget-thinking turn raised by the budget — so this default
@@ -1102,7 +1126,13 @@ final class Anthropic
         // explains: "Managed effort models always use adaptive thinking so prefix mismatches can be
         // dropped instead of surfacing as persistent 400 responses." Its effort goes in the system
         // messages `messages()` adds, so the top-level one is always `high`.
-        if ($midConvoEffort) {
+        if ($thinkingDisabled) {
+            // Upstream #10753: "No effort is sent, so the model default applies. Anthropic rejects
+            // `block_binding` with disabled thinking." Off is said, not left to the API's default — a
+            // model that thinks unless told otherwise (the adaptive ones) thought and billed for it
+            // on every turn pig meant to have no thinking.
+            $body['thinking'] = ['type' => 'disabled'];
+        } elseif ($effortMessages) {
             $body['thinking'] = [
                 'type' => 'adaptive',
                 'display' => $options?->thinkingDisplay ?? 'summarized',
@@ -1130,14 +1160,6 @@ final class Anthropic
                         'display' => $display,
                     ];
                 }
-            } elseif ($options?->thinkingEnabled === false && $model->hasThinkingLevel('off')) {
-                // Upstream: `options?.thinkingEnabled === false && model.thinkingLevelMap?.off !==
-                // null`. Off is said, not left to the API's default — a model that thinks unless
-                // told otherwise (the adaptive ones) thought and billed for it on every turn pig
-                // meant to have no thinking. A map whose `off` is null means the model cannot be
-                // switched off, and then nothing is sent; `hasThinkingLevel()` is that test, absent
-                // key and no map both counting as "has it".
-                $body['thinking'] = ['type' => 'disabled'];
             }
         }
 
@@ -1421,10 +1443,14 @@ final class Anthropic
             }
 
             if ($message instanceof AssistantMessage) {
-                $flushPendingSystemMessages();
                 $blocks = $this->assistantBlocks($message, $isOAuth, $allowEmptySignature);
 
                 if ($blocks !== []) {
+                    // Held past an assistant message that converts to no blocks (empty text, or
+                    // another model's reasoning alone), which is dropped: flushed before it, the
+                    // update would land before a user message and Claude answers 400 (upstream #11091).
+                    $flushPendingSystemMessages();
+
                     if ($activeEffort !== null
                         && $message->api === Api::AnthropicMessages
                         && $message->provider === $model->provider
@@ -1439,16 +1465,29 @@ final class Anthropic
             }
 
             if ($message instanceof ToolResultMessage) {
-                // Anthropic wants every consecutive result in one user turn.
+                // Anthropic wants every consecutive result in one user turn. It refuses an error
+                // result holding anything but text, so those images follow all the turn's results,
+                // which have to come first in the message (upstream #10794).
                 $results = [];
+                $errorImages = [];
 
                 while ($i < $count && $messages[$i] instanceof ToolResultMessage) {
-                    $results[] = $this->toolResult($messages[$i]);
+                    $split = TransformMessages::splitErrorToolResultImages($messages[$i]);
+                    $results[] = $this->toolResult($messages[$i], $split['content'] ?? null);
+
+                    if ($split !== null) {
+                        $errorImages[] = ['type' => 'text', 'text' => $split['caption']];
+
+                        foreach ($split['images'] as $image) {
+                            $errorImages[] = $this->image($image);
+                        }
+                    }
+
                     $i++;
                 }
 
                 $i--;
-                $out[] = ['role' => 'user', 'content' => $results];
+                $out[] = ['role' => 'user', 'content' => [...$results, ...$errorImages]];
             }
         }
 
@@ -1562,25 +1601,28 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function toolResult(ToolResultMessage $message): array
+    /** @param list<mixed>|null $content in place of the message's own, an error result's with its images split out */
+    private function toolResult(ToolResultMessage $message, ?array $content = null): array
     {
         return [
             'type' => 'tool_result',
             'tool_use_id' => $message->toolCallId,
-            'content' => $this->resultContent($message),
+            'content' => $this->resultContent($message, $content),
             'is_error' => $message->isError,
         ];
     }
 
     /** @return string|list<array<string, mixed>> */
-    private function resultContent(ToolResultMessage $message): string|array
+    /** @param list<mixed>|null $content */
+    private function resultContent(ToolResultMessage $message, ?array $content = null): string|array
     {
-        $images = array_filter($message->content, static fn ($block): bool => $block instanceof ImageContent);
+        $content ??= $message->content;
+        $images = array_filter($content, static fn ($block): bool => $block instanceof ImageContent);
 
         if ($images === []) {
             $texts = array_map(
                 static fn ($block): string => $block instanceof TextContent ? $block->text : '',
-                $message->content,
+                $content,
             );
 
             return Utf8::sanitize(implode("\n", $texts));
@@ -1588,7 +1630,7 @@ final class Anthropic
 
         $blocks = [];
 
-        foreach ($message->content as $block) {
+        foreach ($content as $block) {
             $blocks[] = $block instanceof ImageContent
                 ? $this->image($block)
                 : ['type' => 'text', 'text' => Utf8::sanitize($block instanceof TextContent ? $block->text : '')];

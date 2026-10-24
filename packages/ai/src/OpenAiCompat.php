@@ -109,6 +109,10 @@ final readonly class OpenAiCompat
      *        its `tool_search_output`
      * @param bool|null   $supportsAdditionalTools the model takes message-anchored `additional_tools`
      *        items (Responses; default false), which win over tool search
+     * @param bool|null   $supportsMidConvoEffort upstream's `OpenAIResponsesCompat.supportsMidConvoEffort`
+     *        (Responses; default false): "thinking level changes are sent as configuration_update input
+     *        items instead of changing reasoning.effort, so a change keeps the prompt cache" — ignored
+     *        with Sign in with ChatGPT
      */
     public function __construct(
         public ?bool $store = null,
@@ -142,6 +146,7 @@ final readonly class OpenAiCompat
         public ?bool $supportsMidConvoToolAdditions = null,
         public ?bool $supportsToolSearch = null,
         public ?bool $supportsAdditionalTools = null,
+        public ?bool $supportsMidConvoEffort = null,
     ) {
     }
 
@@ -203,6 +208,7 @@ final readonly class OpenAiCompat
             // Responses keys, which completions detection says nothing about.
             supportsToolSearch: $explicit->supportsToolSearch,
             supportsAdditionalTools: $explicit->supportsAdditionalTools,
+            supportsMidConvoEffort: $explicit->supportsMidConvoEffort,
         );
     }
 
