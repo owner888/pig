@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -20,7 +21,6 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\Headers;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\Transcript;
@@ -180,7 +180,7 @@ final class AzureOpenAiResponses
      */
     private static function request(Model $model, ?AzureOpenAiResponsesOptions $options, array $config, array $params, string $apiKey, int $timeoutMs): Request
     {
-        $headers = ['User-Agent' => PigUserAgent::get()];
+        $headers = ClientIdentity::headers($model, $options?->identity);
 
         foreach ($model->headers as $name => $value) {
             $headers[(string) $name] = $value;
@@ -221,7 +221,10 @@ final class AzureOpenAiResponses
         $compat = self::compat($model);
         $supportsAdditionalTools = $compat?->supportsAdditionalTools ?? false;
         $supportsToolSearch = $compat?->supportsToolSearch ?? false;
-        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, $supportsAdditionalTools || $supportsToolSearch);
+        $transcriptTools = Transcript::resolveTranscriptTools(
+            $context->messages,
+            OpenAiResponsesShared::getResponsesToolSupport($compat?->supportsMidConvoSystemMessages ?? false, $supportsAdditionalTools, $supportsToolSearch),
+        );
         $toolOptions = [
             'supportsStrictMode' => $compat?->strictMode ?? true,
             'supportsOpenAIGrammarTools' => $compat?->grammarTools ?? false,

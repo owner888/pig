@@ -114,7 +114,7 @@ final class AzureOpenAiResponsesTest extends TestCase
             self::assertSame($wanted, $sent, "request {$i}'s headers");
 
             if (str_starts_with((string) $expected['userAgent'], 'pi (')) {
-                self::assertStringStartsWith('pig (', $actual['headers']['user-agent'] ?? '');
+                self::assertSame(\Pig\Ai\ClientIdentity::formatUserAgent(), $actual['headers']['user-agent'] ?? null);
             } else {
                 self::assertSame($expected['userAgent'], $actual['headers']['user-agent'] ?? null);
             }

@@ -3869,18 +3869,17 @@ final class AgentSession
      * `websocketConnectTimeoutMs` (the request's, else the setting) goes the same way, and so does
      * `transport`, which upstream's agent carries from the setting into every request.
      *
-     * The headers start from upstream's `mergeProviderAttributionHeaders()`
-     * (`ProviderAttribution`): what OpenRouter, NVIDIA, Cloudflare and OpenCode are told about the
-     * client, under the request's own headers and before the hooks see them.
+     * The headers start from the session's OpenCode routing header (`ProviderAttribution::merge()`),
+     * under the request's own headers and before the hooks see them; the identity — the
+     * `User-Agent` and the attribution headers — is `ProviderAttribution::identity()`, which the
+     * providers send under all of them.
      */
     private function buildRequestOptions(Model $model, SimpleStreamOptions $options): SimpleStreamOptions
     {
         $provider = $this->settings?->providerRetrySettings() ?? ['timeoutMs' => null, 'maxRetries' => null, 'maxRetryDelayMs' => 60_000];
         $httpIdleTimeoutMs = $this->settings?->httpIdleTimeoutMs() ?? 300_000;
         $effectiveTimeoutMs = $httpIdleTimeoutMs === 0 ? 2_147_483_647 : $httpIdleTimeoutMs;
-        $headers = $this->settings !== null
-            ? ProviderAttribution::merge($model, $this->settings, $options->sessionId, $options->headers)
-            : $options->headers;
+        $headers = ProviderAttribution::merge($model, $options->sessionId, $options->headers);
 
         if ($this->hooks?->hasHandlers('before_provider_headers') === true) {
             $headers = $this->hooks->emitBeforeProviderHeaders($headers ?? []);
@@ -3898,6 +3897,8 @@ final class AgentSession
             'thinkingBudgets' => $options->thinkingBudgets ?? $this->settings?->thinkingBudgets(),
             'transport' => $options->transport ?? $this->settings?->transport(),
             'websocketConnectTimeoutMs' => $options->websocketConnectTimeoutMs ?? $this->settings?->websocketConnectTimeoutMs(),
+            // "Replaces the agent loop's default identity; read per request so telemetry changes apply at once."
+            'identity' => $this->settings !== null ? ProviderAttribution::identity($this->settings) : $options->identity,
         ]);
     }
 

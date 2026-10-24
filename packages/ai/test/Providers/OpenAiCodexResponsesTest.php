@@ -130,7 +130,7 @@ final class OpenAiCodexResponsesTest extends TestCase
             ksort($wanted);
             ksort($sent);
             self::assertSame($wanted, $sent, "request {$i}'s headers");
-            self::assertStringStartsWith('pig (', $actual['headers']['user-agent'] ?? '');
+            self::assertSame(\Pig\Ai\ClientIdentity::formatUserAgent(), $actual['headers']['user-agent'] ?? null);
         }
 
         self::assertSame($upstream['events'], $events);

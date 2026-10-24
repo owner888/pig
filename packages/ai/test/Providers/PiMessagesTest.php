@@ -114,9 +114,10 @@ final class PiMessagesTest extends TestCase
             ksort($wanted);
             ksort($sent);
             self::assertSame($wanted, $sent, "request {$i}'s headers");
-            // Upstream sets no user agent of its own; what it sent was undici's `node`.
+            // The recordings predate the client identity, when upstream sent undici's `node`; it
+            // now sends `getIdentityHeaders()` first, as pig does.
             self::assertSame('node', $expected['userAgent']);
-            self::assertArrayNotHasKey('user-agent', $actual['headers']);
+            self::assertSame(\Pig\Ai\ClientIdentity::formatUserAgent(), $actual['headers']['user-agent'] ?? null);
         }
 
         self::assertSame($upstream['events'], $events);

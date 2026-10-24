@@ -53,7 +53,8 @@ final readonly class AzureOpenAiResponsesOptions extends StreamOptions
         public ?string $azureResourceName = null,
         public ?string $azureBaseUrl = null,
         public ?string $azureDeploymentName = null,
+        ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
     }
 }

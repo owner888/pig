@@ -21,6 +21,7 @@ use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\ThinkingEndEvent;
 use Pig\Ai\ThinkingStartEvent;
 use Pig\Ai\Tool;
+use Pig\Ai\ToolReference;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
@@ -63,6 +64,48 @@ final class OpenAiResponsesShared
     // ---- message conversion ----------------------------------------------------------------
 
     /**
+     * How a Responses transport expresses tool changes — upstream's `getResponsesToolSupport()`:
+     * "`additional_tools` items accumulate: a later item adds tools and replaces same-name
+     * definitions from earlier items, but it cannot replace a top-level tool and cannot remove any
+     * tool (verified with strict schemas on the OpenAI, Codex, and Copilot backends, October 2026).
+     * Like Codex, every tool is therefore declared in `additional_tools` items, starting with one
+     * at the head of the input, and removals are announced as text. Synthetic tool search can
+     * only add tools. Without mid-conversation system messages there is nothing to anchor."
+     *
+     * @return Transcript::TOOLS_*
+     */
+    public static function getResponsesToolSupport(bool $supportsMidConvoSystemMessages, bool $supportsAdditionalTools, bool $supportsToolSearch): string
+    {
+        if ($supportsMidConvoSystemMessages && $supportsAdditionalTools) {
+            return Transcript::TOOLS_CHANGES;
+        }
+
+        return $supportsToolSearch ? Transcript::TOOLS_ADDITIONS : Transcript::TOOLS_NONE;
+    }
+
+    /**
+     * Upstream's `renderIncrementalToolsNotice()`, before every `additional_tools` item after the
+     * first: "Without it, models read the latest item as the complete tool set once a removal was
+     * announced; Codex precedes its incremental tool batches with the same guidance. Restating the
+     * tools that are still unavailable keeps smaller models (gpt-5.6-luna, gpt-6-luna) from calling
+     * them again after later loads (verified October 2026)."
+     *
+     * @param list<string> $unavailable
+     */
+    private static function renderIncrementalToolsNotice(array $unavailable): string
+    {
+        $notice = 'This is an incremental tools update. Previously declared tools remain available unless explicitly marked unavailable. A tool declared again here is available again, and its latest definition replaces the earlier one.';
+
+        return $unavailable === [] ? $notice : $notice . "\nStill unavailable: " . implode(', ', $unavailable) . '.';
+    }
+
+    /** @param list<string> $names */
+    private static function renderToolRemovalNotice(array $names): string
+    {
+        return "The following tools are no longer available. Do not call them:\n" . implode("\n", array_map(static fn (string $name): string => "- {$name}", $names));
+    }
+
+    /**
      * Upstream's `convertResponsesMessages(model, context, allowedToolCallProviders, options)`.
      *
      * `$options` is upstream's `ConvertResponsesMessagesOptions`:
@@ -88,7 +131,11 @@ final class OpenAiResponsesShared
         $supportsAdditionalTools = $options['supportsAdditionalTools'] ?? false;
         $supportsToolSearch = $options['supportsToolSearch'] ?? false;
         $toolOptions = $options['toolOptions'] ?? [];
-        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, $supportsAdditionalTools || $supportsToolSearch);
+        $toolSupport = self::getResponsesToolSupport($options['supportsMidConvoSystemMessages'] ?? false, $supportsAdditionalTools, $supportsToolSearch);
+        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, $toolSupport);
+        $declaredAdditionalTools = false;
+        /** Tools announced as removed and not declared again since. */
+        $unavailableTools = [];
         $includeInitialSystemMessage = $options['includeSystemPrompt'] ?? true;
         // Upstream's `instructionRole`: `model.reasoning && compat?.supportsDeveloperRole !== false ?
         // "developer" : "system"` — a model whose compat says it has no developer role gets
@@ -96,25 +143,34 @@ final class OpenAiResponsesShared
         $compat = $model->compat instanceof OpenAiCompat ? $model->compat : null;
         $instructionRole = $model->reasoning && $compat?->developerRole !== false ? 'developer' : 'system';
 
-        // Upstream's `appendSystemToolAdditions()`: the tools a later system message adds, loaded
-        // where it stands — as an `additional_tools` item where the model takes those, or else as a
+        // Upstream's `appendSystemToolAdditions()`: the tools a system message adds, declared where it
+        // stands — as an `additional_tools` item where the model takes those (every tool, the leading
+        // message's too, each item after the first preceded by the incremental notice), or else as a
         // completed client-executed tool search, a `tool_search_call` and the `tool_search_output`
-        // that answers it, whose tools are marked `defer_loading`. Nothing when the transcript does
-        // not anchor additions (a removal or a redefinition), since `tools` is the current set then.
-        $appendSystemToolAdditions = static function (SystemMessage $message, string $seed) use (&$items, $transcriptTools, $supportsAdditionalTools, $supportsToolSearch, $toolOptions): void {
-            $tools = $transcriptTools['anchorsAdditions'] ? ($message->toolsAdded ?? []) : [];
+        // that answers it, whose tools are marked `defer_loading`.
+        $appendSystemToolAdditions = static function (SystemMessage $message, string $seed) use (&$items, &$declaredAdditionalTools, &$unavailableTools, $toolSupport, $toolOptions, $instructionRole): void {
+            $tools = $message->toolsAdded ?? [];
+
+            foreach ($tools as $tool) {
+                unset($unavailableTools[$tool->name]);
+            }
 
             if ($tools === []) {
                 return;
             }
 
-            if ($supportsAdditionalTools) {
+            if ($toolSupport === Transcript::TOOLS_CHANGES) {
+                if ($declaredAdditionalTools) {
+                    $items[] = ['role' => $instructionRole, 'content' => self::renderIncrementalToolsNotice(array_keys($unavailableTools))];
+                }
+
+                $declaredAdditionalTools = true;
                 $items[] = ['type' => 'additional_tools', 'role' => 'developer', 'tools' => self::convertResponsesTools($tools, $toolOptions)];
 
                 return;
             }
 
-            if (!$supportsToolSearch) {
+            if ($toolSupport !== Transcript::TOOLS_ADDITIONS) {
                 return;
             }
 
@@ -142,6 +198,7 @@ final class OpenAiResponsesShared
         // does not count either. A later system message does.
         $msgIndex = 0;
         $sourceIndex = 0;
+        $systemIndex = 0;
         $normalizeToolCallId = static fn (string $id, Model $target, AssistantMessage $source): string
             => self::normalizeToolCallId($id, $model, $source, $allowedToolCallProviders);
 
@@ -149,13 +206,37 @@ final class OpenAiResponsesShared
             $isLeadingSystemMessage = $sourceIndex++ === 0 && $message instanceof SystemMessage;
 
             if ($message instanceof SystemMessage) {
-                if (!$isLeadingSystemMessage) {
+                // `TransformMessages` keeps system messages in order, so their position matches the transcript.
+                $anchorsToolChanges = $systemIndex++ >= $transcriptTools['foldedSystemMessages'];
+
+                if ($anchorsToolChanges) {
                     $appendSystemToolAdditions($message, "system:{$msgIndex}");
                 }
 
                 // `if (!isLeadingSystemMessage || includeInitialSystemMessage)`.
                 if (!$isLeadingSystemMessage || $includeInitialSystemMessage) {
-                    $text = $isLeadingSystemMessage ? Text::getSystemMessageText($message) : Text::renderSystemMessageUpdate($message);
+                    $parts = [$isLeadingSystemMessage ? Text::getSystemMessageText($message) : Text::renderSystemMessageUpdate($message)];
+
+                    if ($anchorsToolChanges) {
+                        // A redefinition is a removal plus an addition of the same name; only true
+                        // removals are announced.
+                        $added = array_flip(array_map(static fn (Tool $tool): string => $tool->name, $message->toolsAdded ?? []));
+                        $removed = array_values(array_filter(
+                            array_map(static fn (ToolReference $tool): string => $tool->name, $message->toolsRemoved ?? []),
+                            static fn (string $name): bool => !isset($added[$name]),
+                        ));
+
+                        if ($removed !== []) {
+                            $parts[] = self::renderToolRemovalNotice($removed);
+                        }
+
+                        // Recorded after this message's additions, whose notice precedes this removal notice.
+                        foreach ($removed as $name) {
+                            $unavailableTools[$name] = true;
+                        }
+                    }
+
+                    $text = implode("\n\n", array_filter($parts, static fn (string $part): bool => $part !== ''));
 
                     if ($text !== '') {
                         $items[] = ['role' => $instructionRole, 'content' => Utf8::sanitize($text)];

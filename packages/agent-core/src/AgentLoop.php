@@ -7,6 +7,8 @@ namespace Pig\Agent;
 use Closure;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageEvent;
+use Pig\Ai\ClientAttribution;
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -45,6 +47,15 @@ use Throwable;
  */
 final class AgentLoop
 {
+    /**
+     * Upstream's `DEFAULT_AGENT_IDENTITY`: "Request identity of agent loops: pi-ai's defaults with
+     * provider attribution to pi" — to pig here. `AgentLoopConfig::$identity` overrides it field by field.
+     */
+    public static function defaultIdentity(): ClientIdentity
+    {
+        return new ClientIdentity(attribution: ClientAttribution::pig());
+    }
+
     /**
      * Start a run with new prompts, which are added to the context and announced.
      *
@@ -575,6 +586,7 @@ final class AgentLoop
             onPayload: $config->onPayload,
             onResponse: $config->onResponse,
             onProviderStreamEvent: $config->onProviderStreamEvent,
+            identity: ClientIdentity::merge(self::defaultIdentity(), $config->identity),
         );
 
         $response = $streamFn !== null

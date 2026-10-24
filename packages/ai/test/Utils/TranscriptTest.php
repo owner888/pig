@@ -124,22 +124,36 @@ final class TranscriptTest extends TestCase
         $this->assertTrue(Transcript::declarationsEqual($live[0], $fromFile[0]));
     }
 
-    public function testToolsAnchorAtTheirSystemMessageOnlyWhenNothingWasRemovedOrRedeclared(): void
+    public function testTheTopLevelToolBoundaryMovesOncePerRemovalOrRedeclarationPerTransport(): void
     {
+        // Upstream's "resolves the top-level tool boundary per transport" (#10940).
+        $base = self::tool('base');
+        $drop = self::tool('drop');
+        $lateX = self::tool('late', 'x');
+        $lateY = self::tool('late', 'y');
+        $messages = [
+            new SystemMessage('base prompt', null, [$base, $drop], null, 0),
+            new SystemMessage('', null, null, [new ToolReference('drop')], 1),
+            new SystemMessage('', null, [$drop], null, 2),
+            new SystemMessage('', null, [$lateX], null, 3),
+            new SystemMessage('', null, [$lateY], null, 4),
+        ];
+
+        $this->assertSame(['requestTools' => [$base], 'foldedSystemMessages' => 2], Transcript::resolveTranscriptTools(array_slice($messages, 0, 2), Transcript::TOOLS_ADDITIONS));
+        // "Kimi K3 ignores a removed tool that a later tool message declares again", so the re-added
+        // `drop` moves the boundary; the new `late` after it stays anchored.
+        $this->assertSame(['requestTools' => [$base, $drop], 'foldedSystemMessages' => 3], Transcript::resolveTranscriptTools(array_slice($messages, 0, 4), Transcript::TOOLS_ADDITIONS));
+        // The redefinition of `late` moves it to its message.
+        $this->assertSame(['requestTools' => [$base, $drop, $lateY], 'foldedSystemMessages' => 5], Transcript::resolveTranscriptTools($messages, Transcript::TOOLS_ADDITIONS));
+        $this->assertSame(['requestTools' => [], 'foldedSystemMessages' => 0], Transcript::resolveTranscriptTools($messages, Transcript::TOOLS_CHANGES));
+        $this->assertSame(['requestTools' => [$base, $drop, $lateY], 'foldedSystemMessages' => 5], Transcript::resolveTranscriptTools($messages, Transcript::TOOLS_NONE));
+
         $additive = [new SystemMessage('', null, [self::tool('a')]), new UserMessage('hi'), new SystemMessage('', null, [self::tool('b')])];
-
-        $this->assertSame(['requestTools' => [$additive[0]->toolsAdded[0]], 'anchorsAdditions' => true], Transcript::resolveTranscriptTools($additive, true));
+        $this->assertSame(['requestTools' => [$additive[0]->toolsAdded[0]], 'foldedSystemMessages' => 1], Transcript::resolveTranscriptTools($additive, Transcript::TOOLS_ADDITIONS));
         $this->assertFalse(Transcript::hasNonAdditiveToolChanges($additive));
-        $this->assertSame(['a', 'b'], self::names(Transcript::resolveTranscriptTools($additive, false)['requestTools']));
-
-        $removing = [...$additive, new SystemMessage('', null, null, [new ToolReference('a')])];
-        $this->assertTrue(Transcript::hasNonAdditiveToolChanges($removing));
-        $this->assertSame(['requestTools' => [$additive[2]->toolsAdded[0]], 'anchorsAdditions' => false], Transcript::resolveTranscriptTools($removing, true));
-
-        $redeclaring = [...$additive, new SystemMessage('', null, [self::tool('a', 'new')])];
-        $this->assertTrue(Transcript::hasNonAdditiveToolChanges($redeclaring));
-        $this->assertTrue(Transcript::hasToolRedefinitions($redeclaring));
-        $this->assertSame(['a', 'b'], self::names(Transcript::getDeclaredTools($redeclaring)));
+        $this->assertTrue(Transcript::hasNonAdditiveToolChanges($messages));
+        $this->assertTrue(Transcript::hasToolRedefinitions($messages));
+        $this->assertSame(['base', 'drop', 'late'], self::names(Transcript::getDeclaredTools($messages)));
     }
 
     public function testASystemMessageGoesToJsonAndBackWithAnEmptySchemaObjectKept(): void

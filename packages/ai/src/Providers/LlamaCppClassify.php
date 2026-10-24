@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\ClassifierApi;
 use Pig\Ai\ClassifierBoolAnswer;
 use Pig\Ai\ClassifierBoolQuestion;
@@ -374,6 +375,7 @@ final class LlamaCppClassify
 
         $apiKey = $options?->apiKey;
         $headers = Headers::providerHeadersToRecord(
+            ClientIdentity::headers($model, $options?->identity),
             ['content-type' => 'application/json', ...($apiKey !== null && $apiKey !== '' ? ['authorization' => "Bearer {$apiKey}"] : [])],
             $model->headers,
             $options?->headers,

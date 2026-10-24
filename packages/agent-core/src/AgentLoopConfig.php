@@ -50,6 +50,8 @@ final readonly class AgentLoopConfig
      *        upstream's `AgentLoopConfig.prepareNextTurn`: "Called after `turn_end` when the loop will
      *        continue, immediately before the next turn starts. Return replacement
      *        context/model/thinking state or messages to append to affect that turn."
+     * @param \Pig\Ai\ClientIdentity|null $identity upstream's `AgentLoopConfig.identity`, over
+     *        `AgentLoop::defaultIdentity()` field by field
      */
     public function __construct(
         public Model $model,
@@ -70,6 +72,7 @@ final readonly class AgentLoopConfig
         public ?int $maxRetryDelayMs = null,
         public ?Closure $prepareNextTurn = null,
         public ?Closure $prepareRequest = null,
+        public ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
     }
 
@@ -95,6 +98,7 @@ final readonly class AgentLoopConfig
             $this->maxRetryDelayMs,
             $this->prepareNextTurn,
             $this->prepareRequest,
+            $this->identity,
         );
     }
 }

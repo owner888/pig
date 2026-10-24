@@ -39,7 +39,8 @@ final readonly class PiMessagesOptions extends StreamOptions
         public ?string $reasoning = null,
         public string|array|null $toolChoice = null,
         public bool $debug = false,
+        ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
     }
 }

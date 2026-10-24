@@ -403,6 +403,19 @@ final class AgentTest extends TestCase
         $this->assertSame('session-7', $this->options[0]->sessionId);
     }
 
+    public function testRequestsAreAttributedToPigUnlessTheAgentsIdentitySaysOtherwise(): void
+    {
+        // Upstream's `DEFAULT_AGENT_IDENTITY`, with `Agent.identity` over it field by field.
+        $agent = $this->agent(['ok', 'ok']);
+
+        Async::run(static fn () => $agent->prompt('hi'));
+        $this->assertEquals(new \Pig\Ai\ClientIdentity(attribution: \Pig\Ai\ClientAttribution::pig()), $this->options[0]->identity);
+
+        $agent->identity = new \Pig\Ai\ClientIdentity('short', false);
+        Async::run(static fn () => $agent->prompt('again'));
+        $this->assertEquals(new \Pig\Ai\ClientIdentity('short', false), $this->options[1]->identity);
+    }
+
     public function testThinkingOffSendsNoReasoningAtAll(): void
     {
         $agent = $this->agent(['ok']);

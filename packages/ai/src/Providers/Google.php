@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -18,7 +19,6 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\JsJson;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
@@ -307,7 +307,7 @@ final class Google
      */
     private function request(Model $model, string $apiKey, ?GoogleOptions $options, array $body): Request
     {
-        $merged = ['User-Agent' => PigUserAgent::get()];
+        $merged = ClientIdentity::headers($model, $options?->identity);
 
         foreach ([$model->headers, $options?->headers ?? []] as $source) {
             foreach ($source as $name => $value) {

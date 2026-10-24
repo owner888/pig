@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -24,7 +25,6 @@ use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortError;
 use Pig\Async\Async;
@@ -299,9 +299,9 @@ final class OpenAiResponses
      */
     private function request(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $params, string $apiKey, int $timeoutMs): Request
     {
-        // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`, then Copilot's: its models
-        // speak this API, so this is the provider that has to send them. See `Copilot`.
-        $headers = ['User-Agent' => PigUserAgent::get()];
+        // Upstream's `{...getIdentityHeaders(model, identity), ...model.headers}`, then Copilot's: its
+        // models speak this API, so this is the provider that has to send them. See `Copilot`.
+        $headers = ClientIdentity::headers($model, $options?->identity);
 
         foreach ([$model->headers, Copilot::headers($model, $context)] as $source) {
             foreach ($source as $name => $value) {
@@ -362,12 +362,16 @@ final class OpenAiResponses
     private function body(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $grammar = []): array
     {
         $compat = self::compat($model);
-        // Upstream's `resolveTranscriptTools(context.messages, compat.supportsAdditionalTools ||
-        // compat.supportsToolSearch)`: where later tools can be loaded in place, the request's
-        // `tools` is the initial set; otherwise it is the current one.
+        // Upstream's `resolveTranscriptTools(context.messages, getResponsesToolSupport(compat))`: no
+        // top-level `tools` where every tool is declared in `additional_tools` items, the tool state
+        // up to the last removal where later tools load by tool search, the current set otherwise.
         $transcriptTools = Transcript::resolveTranscriptTools(
             $context->messages,
-            ($compat?->supportsAdditionalTools ?? false) || ($compat?->supportsToolSearch ?? false),
+            OpenAiResponsesShared::getResponsesToolSupport(
+                $compat?->supportsMidConvoSystemMessages ?? false,
+                $compat?->supportsAdditionalTools ?? false,
+                $compat?->supportsToolSearch ?? false,
+            ),
         );
         $toolOptions = [
             // `supportsStrictMode: model.compat?.supportsStrictMode ?? false` — on for OpenAI's own

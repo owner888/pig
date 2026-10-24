@@ -32,6 +32,7 @@ final readonly class ImagesOptions
         public ?int $maxRetries = null,
         public ?int $maxRetryDelayMs = null,
         public ?array $metadata = null,
+        public ?ClientIdentity $identity = null,
     ) {
     }
 

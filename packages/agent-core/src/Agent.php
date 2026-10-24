@@ -68,6 +68,9 @@ final class Agent
     /** Upstream's `Agent.maxRetryDelayMs`, handed to every request. */
     public ?int $maxRetryDelayMs;
 
+    /** Upstream's `Agent.identity`: "Request identity forwarded to the stream function, over `DEFAULT_AGENT_IDENTITY`." */
+    public ?\Pig\Ai\ClientIdentity $identity;
+
     /**
      * Upstream's `Agent.prepareNextTurn`: asked, with the run's signal, before each turn after the
      * first; what it answers replaces the context, model or thinking level for the rest of the run,
@@ -149,6 +152,7 @@ final class Agent
         $this->onResponse = $options->onResponse;
         $this->onProviderStreamEvent = $options->onProviderStreamEvent;
         $this->maxRetryDelayMs = $options->maxRetryDelayMs;
+        $this->identity = $options->identity;
         $this->prepareNextTurn = $options->prepareNextTurn;
         $this->prepareNextTurnWithContext = $options->prepareNextTurnWithContext;
         $this->prepareRequest = $options->prepareRequest;
@@ -556,6 +560,7 @@ final class Agent
             onResponse: $this->onResponse,
             onProviderStreamEvent: $this->onProviderStreamEvent,
             maxRetryDelayMs: $this->maxRetryDelayMs,
+            identity: $this->identity,
         );
     }
 

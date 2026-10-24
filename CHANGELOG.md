@@ -47,6 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added client identity to `pig/ai`: an `identity` request option (`ClientIdentity`) chooses the `User-Agent` (`detailed` with a version, `short`, or custom) and the attribution headers for OpenRouter, NVIDIA NIM and OpenCode (`ClientAttribution`). Agent loops attribute requests to pig by default, and `Agent::$identity` overrides it field by field.
 - Added model catalog updates from pigagent.dev: each built-in provider's list (chat, image and classifier models) is fetched at most every four hours, revalidated with its ETag, saved in `models-store.json` for offline use, and laid over the shipped models only when it is newer than them. OpenRouter's per-key list is narrowed from the shipped models plus that catalog. `PIG_MODEL_CATALOG_URL` names another catalog server; `off` turns it off. Radius and providers an extension replaces are left out.
 - Added per-key OpenRouter model lists: with an OpenRouter key, pig lists only the chat models that key may use, with the key's context size, max output and prices (`GET /models/user`, at the base URL `models.json` sets, so guardrails and regional endpoints apply). The list is saved in `models-store.json` and used offline (upstream #10672).
 - Added `reachesTools` to `CustomTool`, so a tool that reaches other tools declares which ones a call may reach (`'all'`, or the words that may name them); `getAllTools()` carries it. The codemode tool reaches the servers a script names, or every one when it searches or enumerates tools; `tool_search` reaches all.
@@ -55,10 +56,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Changed
 
+- Provider requests now send `pig/<version> (<platform>; php/<version>; <arch>)` as their `User-Agent`, and the attribution headers come from the client identity: `before_provider_headers` handlers no longer see the OpenRouter, NVIDIA and OpenCode attribution headers (returning `null` for one still removes it), Cloudflare gets the detailed `User-Agent` instead of `pig-coding-agent`, as do GitHub release checks for tool downloads, and OpenCode gets `x-opencode-client` whenever attribution is on, not only with a session.
 - The first prompt waits only for MCP servers with direct tools; a codemode or tool_search server is waited for by the call that reaches it (its `tool_call`), and codemode or `tool_search` is activated from the configuration before servers connect.
 - Changed the `kimi-coding` provider to OpenAI Chat Completions at `https://api.kimi.com/coding/v1`, the protocol the official Kimi Code client uses: K3, K3-256K and Kimi For Coding take tools added mid-conversation without losing the prompt cache. A `models.json` override of the `kimi-coding` base URL must now include `/v1` (upstream #10720).
 - Moved OpenCode Zen and OpenCode Go to the `opencode.ai/inference` endpoints, which fixes OpenCode Go's Gemini models (404 on `/zen/go`); OpenCode Go's MiniMax M2.7 now uses the Anthropic Messages API, as Chat Completions answers "Model does not support this protocol".
 - Changed the built-in model catalog to pi's model JSON: one file per provider in `packages/ai/data/models/`, the format of pi's own catalog, of pi.dev's `/api/models/providers/<id>` and of `models.json`, read at startup instead of derived from PHP tables. The models, prices and request settings are unchanged; `scripts/generate-models.php` writes the rows and then the JSON, and `scripts/build-models.php` rebuilds the JSON after a hand edit.
+
+### Fixed
+
+- Fixed OpenAI Responses models losing the prompt cache on every deferred tool load after a tool was removed: models with `additional_tools` declare every tool in `additional_tools` items, starting with one at the head of the input, and announce removals as text; tool search and Kimi tool messages move the top-level tool list once per removal or redeclared name and keep later loads anchored (upstream #10940).
 
 ## [0.9.1] - 2026-10-23
 

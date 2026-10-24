@@ -43,7 +43,8 @@ final readonly class SimpleStreamOptions extends StreamOptions
         ?string $transport = null,
         ?int $websocketConnectTimeoutMs = null,
         public ?array $thinkingBudgets = null,
+        ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
     }
 }

@@ -50,7 +50,8 @@ final readonly class GoogleOptions extends StreamOptions
         ?array $env = null,
         ?string $transport = null,
         ?int $websocketConnectTimeoutMs = null,
+        ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
     }
 }

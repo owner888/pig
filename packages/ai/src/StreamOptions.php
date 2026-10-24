@@ -69,6 +69,7 @@ readonly class StreamOptions
         public ?array $env = null,
         public ?string $transport = null,
         public ?int $websocketConnectTimeoutMs = null,
+        public ?ClientIdentity $identity = null,
     ) {
     }
 
@@ -133,6 +134,7 @@ readonly class StreamOptions
             'env' => $this->env,
             'transport' => $this->transport,
             'websocketConnectTimeoutMs' => $this->websocketConnectTimeoutMs,
+            'identity' => $this->identity,
         ];
     }
 }

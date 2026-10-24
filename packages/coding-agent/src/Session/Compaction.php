@@ -1167,6 +1167,7 @@ final class Compaction
             transport: $options->transport,
             websocketConnectTimeoutMs: $options->websocketConnectTimeoutMs,
             thinkingBudgets: $options->thinkingBudgets,
+            identity: $options->identity,
         );
 
         $produce = static function () use ($model, $context, $request, $streamFn): AssistantMessage {

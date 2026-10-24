@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\AssistantImages;
 use Pig\Ai\Cost;
 use Pig\Ai\Http\HttpClient;
@@ -64,8 +65,9 @@ final class OpenRouterImages
             }
 
             $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
-            // `createClient()`: `defaultHeaders: providerHeadersToRecord({...model.headers, ...optionsHeaders})`.
-            $defaultHeaders = Headers::providerHeadersToRecord($model->headers, $options?->headers) ?? [];
+            // `createClient()`: `defaultHeaders: providerHeadersToRecord(getIdentityHeaders(model, identity),
+            // model.headers, optionsHeaders)`.
+            $defaultHeaders = Headers::providerHeadersToRecord(ClientIdentity::headers($model, $options?->identity), $model->headers, $options?->headers) ?? [];
             $request = new Request(
                 'POST',
                 rtrim($model->baseUrl, '/') . '/chat/completions',

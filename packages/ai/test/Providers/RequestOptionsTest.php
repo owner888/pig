@@ -235,7 +235,7 @@ final class RequestOptionsTest extends TestCase
 
         // The SDK's own `User-Agent` is under upstream's `defaultHeaders`, whose pi user agent
         // replaces it; a null for it there would remove both.
-        $this->assertStringContainsString("user-agent: pig (", $head);
+        $this->assertStringContainsString("user-agent: " . \Pig\Ai\ClientIdentity::formatUserAgent(), $head);
         $this->assertStringNotContainsString($sdk, $head);
         $this->assertStringContainsString("accept: application/json\r\n", $head);
         $this->assertStringContainsString("x-stainless-retry-count: 0\r\n", $head);
@@ -262,7 +262,7 @@ final class RequestOptionsTest extends TestCase
         $this->assertStringContainsString("x-goog-api-key: test-key\r\n", $head);
         $this->assertStringNotContainsString("\r\naccept:", $head);
         // The pi user agent replaces the SDK's, as upstream's `httpOptions.headers` does.
-        $this->assertStringContainsString("user-agent: pig (", $head);
+        $this->assertStringContainsString("user-agent: " . \Pig\Ai\ClientIdentity::formatUserAgent(), $head);
     }
 
     public function testAnAuthHeaderStandsInForTheKey(): void

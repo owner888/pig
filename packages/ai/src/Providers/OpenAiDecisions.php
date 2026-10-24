@@ -85,7 +85,7 @@ final class OpenAiDecisions
                 $payload = $transformed;
             }
 
-            $headers = SystemOneShared::requestHeaders($model, $apiKey, $options?->headers);
+            $headers = SystemOneShared::requestHeaders($model, $apiKey, $options?->headers, $options?->identity);
             $body = SystemOneShared::encode($payload);
             $url = rtrim($model->baseUrl, '/') . '/decisions';
             $http = $this->http;

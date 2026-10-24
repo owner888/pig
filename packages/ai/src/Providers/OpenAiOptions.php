@@ -50,7 +50,8 @@ final readonly class OpenAiOptions extends StreamOptions
         ?int $websocketConnectTimeoutMs = null,
         /** @var array<string, int>|null upstream's `thinkingBudgets`, read by Chat Completions' budget fields */
         public ?array $thinkingBudgets = null,
+        ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
     }
 }

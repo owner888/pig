@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use JsonException;
 use Pig\Ai\ClassifierBoolAnswer;
 use Pig\Ai\ClassifierBoolQuestion;
@@ -83,7 +84,7 @@ final class SystemOneShared
                 $payload = $transformed;
             }
 
-            $headers = self::requestHeaders($model, $apiKey, $options?->headers);
+            $headers = self::requestHeaders($model, $apiKey, $options?->headers, $options?->identity);
             $body = self::encode($payload);
             [$response, $decoded] = ProviderRetry::retryProviderRequest(
                 static fn (): array => self::postJson($http, $transport->url($model), $headers, $body, $options?->signal, $options?->timeoutMs, $transport->label()),
@@ -329,15 +330,16 @@ final class SystemOneShared
     }
 
     /**
-     * Upstream's `requestHeaders()`: `{authorization: Bearer <key>, content-type: application/json}`,
+     * Upstream's `requestHeaders()`: the identity's headers, `{authorization: Bearer <key>, content-type: application/json}`,
      * the model's, then the caller's — merged whatever the case, a null removing one.
      *
      * @param array<string, string|null>|null $optionsHeaders
      * @return array<string, string>
      */
-    public static function requestHeaders(ClassifierModel $model, string $apiKey, ?array $optionsHeaders): array
+    public static function requestHeaders(ClassifierModel $model, string $apiKey, ?array $optionsHeaders, ?ClientIdentity $identity = null): array
     {
         return Headers::providerHeadersToRecord(
+            ClientIdentity::headers($model, $identity),
             ['authorization' => "Bearer {$apiKey}", 'content-type' => 'application/json'],
             $model->headers,
             $optionsHeaders,

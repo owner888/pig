@@ -327,51 +327,101 @@ final class Transcript
      */
     public static function hasNonAdditiveToolChanges(array $messages): bool
     {
+        return self::findLastNonAdditiveToolChange(self::systemMessages($messages)) >= 0;
+    }
+
+    /**
+     * How a transport can express tool changes after the first request — upstream's
+     * `TranscriptToolSupport`:
+     *
+     * - `none`: only the top-level tool list exists; it always holds the current tools.
+     * - `additions`: tools can be added at a later message, but not removed or redefined.
+     * - `changes`: every tool, including the initial ones, is declared in place, and a later
+     *   declaration under the same name replaces the earlier one. Removals are not expressible on
+     *   the wire, so the transport announces them as text and the removed tools stay declared.
+     */
+    public const string TOOLS_NONE = 'none';
+
+    public const string TOOLS_ADDITIONS = 'additions';
+
+    public const string TOOLS_CHANGES = 'changes';
+
+    /**
+     * Split tool declarations between the top-level request field and in-place changes —
+     * upstream's `resolveTranscriptTools()` (#10940).
+     *
+     * With `changes`, the top-level list stays empty and every system message, the leading one
+     * included, declares its tools in place: an in-place declaration can replace an earlier
+     * in-place one, but not a top-level one. With `additions`, a removal or redefinition cannot be
+     * expressed in place, so the top-level list becomes the tool state after the last such change;
+     * later additions stay anchored, and the cached prefix is invalidated once per removal instead
+     * of on every later addition. With `none`, the top-level list is the current tool set.
+     *
+     * pig used to send the current tool list on every request after the first removal, which cost
+     * the prompt cache on each later tool load.
+     *
+     * @param list<mixed> $messages
+     * @param self::TOOLS_* $support
+     * @return array{requestTools: list<Tool>, foldedSystemMessages: int} `requestTools` are sent in
+     *         the top-level request field; `foldedSystemMessages` is how many leading system messages
+     *         they already hold the tool changes of — every later one carries its own in place
+     */
+    public static function resolveTranscriptTools(array $messages, string $support): array
+    {
+        $systemMessages = self::systemMessages($messages);
+
+        if ($support === self::TOOLS_NONE) {
+            return ['requestTools' => self::getCurrentTools($systemMessages), 'foldedSystemMessages' => count($systemMessages)];
+        }
+
+        if ($support === self::TOOLS_CHANGES) {
+            return ['requestTools' => [], 'foldedSystemMessages' => 0];
+        }
+
+        $folded = max(
+            self::getInitialSystemMessage($messages) !== null ? 1 : 0,
+            self::findLastNonAdditiveToolChange($systemMessages) + 1,
+        );
+
+        return ['requestTools' => self::getCurrentTools(array_slice($systemMessages, 0, $folded)), 'foldedSystemMessages' => $folded];
+    }
+
+    /**
+     * Index of the last system message with a removal or a same-name redeclaration, or -1. A name
+     * declared before counts as a redeclaration even after its removal: "Kimi K3 ignores a removed
+     * tool that a later tool message declares again (verified October 2026)."
+     *
+     * @param list<SystemMessage> $systemMessages
+     */
+    private static function findLastNonAdditiveToolChange(array $systemMessages): int
+    {
         $declared = [];
+        $last = -1;
 
-        foreach ($messages as $message) {
-            if (!$message instanceof SystemMessage) {
-                continue;
-            }
-
+        foreach ($systemMessages as $index => $message) {
             if (($message->toolsRemoved ?? []) !== []) {
-                return true;
+                $last = $index;
             }
 
             foreach ($message->toolsAdded ?? [] as $tool) {
                 if (isset($declared[$tool->name])) {
-                    return true;
+                    $last = $index;
                 }
 
                 $declared[$tool->name] = true;
             }
         }
 
-        return false;
+        return $last;
     }
 
     /**
-     * Split tool declarations between the top-level request field and in-place additions —
-     * upstream's `resolveTranscriptTools()`. Transports that can anchor additions at a system
-     * message keep the initial tools at the top and load later ones where they appear; that only
-     * works when no tool was removed or redeclared, so everything else sends the current tool list.
-     *
      * @param list<mixed> $messages
-     * @return array{requestTools: list<Tool>, anchorsAdditions: bool} `requestTools` are sent in the
-     *         top-level request field; `anchorsAdditions` says whether later system messages carry
-     *         their own `toolsAdded` as in-place additions (when false, `requestTools` already
-     *         holds the complete current tool set)
+     * @return list<SystemMessage>
      */
-    public static function resolveTranscriptTools(array $messages, bool $supportsToolAdditions): array
+    private static function systemMessages(array $messages): array
     {
-        $anchorsAdditions = $supportsToolAdditions && !self::hasNonAdditiveToolChanges($messages);
-
-        return [
-            'requestTools' => $anchorsAdditions
-                ? (self::getInitialSystemMessage($messages)?->toolsAdded ?? [])
-                : self::getCurrentTools($messages),
-            'anchorsAdditions' => $anchorsAdditions,
-        ];
+        return array_values(array_filter($messages, static fn (mixed $message): bool => $message instanceof SystemMessage));
     }
 
     private static function canonical(Tool $tool): string

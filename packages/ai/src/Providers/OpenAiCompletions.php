@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\Stream;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
@@ -43,7 +44,6 @@ use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\JsJson;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\ShortHash;
@@ -911,9 +911,9 @@ final class OpenAiCompletions
      */
     private function request(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $params, string $apiKey, int $timeoutMs): Request
     {
-        // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`, then Copilot's: a
+        // Upstream's `{...getIdentityHeaders(model, identity), ...model.headers}`, then Copilot's: a
         // registry entry cannot turn off the headers Copilot needs to accept the request at all.
-        $headers = ['User-Agent' => PigUserAgent::get()];
+        $headers = ClientIdentity::headers($model, $options?->identity);
 
         foreach ([$model->headers, Copilot::headers($model, $context)] as $source) {
             foreach ($source as $name => $value) {
@@ -994,6 +994,20 @@ final class OpenAiCompletions
     }
 
     /**
+     * How these messages express tool changes: Kimi K3's tool-bearing system messages can add tools
+     * mid-conversation but not remove or redefine them (`additions`); everything else has only the
+     * top-level list (`none`).
+     *
+     * @return Transcript::TOOLS_*
+     */
+    private static function toolSupport(OpenAiCompat $compat): string
+    {
+        return $compat->supportsMidConvoSystemMessages === true && $compat->supportsMidConvoToolAdditions === true
+            ? Transcript::TOOLS_ADDITIONS
+            : Transcript::TOOLS_NONE;
+    }
+
+    /**
      * @param array<string, string> $grammar see `run()`
      * @return array<string, mixed>
      */
@@ -1001,12 +1015,9 @@ final class OpenAiCompletions
     {
         $compat = OpenAiCompat::resolve($model);
         // Upstream's `resolveTranscriptTools()`: with mid-conversation system messages that may add
-        // tools (Kimi K3), the initial tools go in `tools` and later ones where they were added;
-        // otherwise `tools` is the current set.
-        $transcriptTools = Transcript::resolveTranscriptTools(
-            $context->messages,
-            $compat->supportsMidConvoSystemMessages === true && $compat->supportsMidConvoToolAdditions === true,
-        );
+        // tools (Kimi K3), `tools` is the tool state up to the last removal or redeclared name and
+        // later tools go where they were added; otherwise `tools` is the current set.
+        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, self::toolSupport($compat));
         $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
         $supportsLongCacheRetention = $compat->supportsLongCacheRetention ?? true;
 
@@ -1482,10 +1493,8 @@ final class OpenAiCompletions
         $context = Transcript::resolveTranscript($context, $compat->supportsMidConvoSystemMessages);
         $normalizeToolCallId = fn (string $id): string => $this->normalizeToolCallId($id, $model);
         $messages = array_values(TransformMessages::apply($context->messages, $model, $normalizeToolCallId));
-        $transcriptTools = Transcript::resolveTranscriptTools(
-            $context->messages,
-            $compat->supportsMidConvoSystemMessages === true && $compat->supportsMidConvoToolAdditions === true,
-        );
+        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, self::toolSupport($compat));
+        $systemIndex = 0;
         // A reasoning model reads `developer` as the stronger of the two roles; the strict endpoints
         // have never heard of it.
         $instructionRole = $model->reasoning && $compat->developerRole ? 'developer' : 'system';
@@ -1506,9 +1515,10 @@ final class OpenAiCompletions
 
             // The leading system message is the whole prompt; a later one is an update. Tools it adds
             // go first, as the system message Kimi K3 reads them from (`{role: "system", tools}`),
-            // when the transcript anchors additions. Upstream sets `lastRole` after this arm too.
+            // when the message is past the ones `tools` already holds. Upstream sets `lastRole` after this arm too.
             if ($message instanceof SystemMessage) {
-                $addedTools = $i > 0 && $transcriptTools['anchorsAdditions'] ? ($message->toolsAdded ?? []) : [];
+                // `TransformMessages` keeps system messages in order, so their position matches the transcript.
+                $addedTools = $systemIndex++ >= $transcriptTools['foldedSystemMessages'] ? ($message->toolsAdded ?? []) : [];
 
                 if ($addedTools !== []) {
                     $out[] = ['role' => 'system', 'tools' => array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $addedTools)];

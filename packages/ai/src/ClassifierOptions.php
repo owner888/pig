@@ -37,6 +37,7 @@ final readonly class ClassifierOptions
         public ?int $maxRetries = null,
         public ?int $maxRetryDelayMs = null,
         public ?float $temperature = null,
+        public ?ClientIdentity $identity = null,
     ) {
     }
 

@@ -209,8 +209,8 @@ final class ToolInstaller
     private static function fetch(string $url, float $timeout): string
     {
         $response = (new HttpClient($timeout))->follow(new Request('GET', $url, [
-            // GitHub refuses an API request with no user agent.
-            'User-Agent' => 'pig',
+            // GitHub refuses an API request with no user agent; pig's detailed one, as upstream sends pi's.
+            'User-Agent' => \Pig\Ai\Utils\PigUserAgent::get(),
             'Accept' => '*/*',
         ]));
 

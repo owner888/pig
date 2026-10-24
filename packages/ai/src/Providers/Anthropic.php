@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
@@ -50,7 +51,6 @@ use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Transcript;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\JsonRepair;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Utf8;
@@ -752,7 +752,8 @@ final class Anthropic
      *    `dangerouslyAllowBrowser`) and `anthropic-version`;
      * 2. auth: `X-Api-Key` for an API key, `Authorization: Bearer` for Copilot's token, a
      *    subscription token, or the federated access token; nothing for header-owned auth;
-     * 3. upstream's `defaultHeaders`, `mergeClientHeaders()`: `User-Agent: pig (…)`, `accept` and the
+     * 3. upstream's `defaultHeaders`, `mergeClientHeaders()`: the identity's (`User-Agent: pig/…` and
+     *    the attribution headers; none for a subscription token), `accept` and the
      *    browser header, then per arm the Claude Code identity, the session-affinity header, the
      *    model's headers, Copilot's dynamic headers, and `options.headers` last;
      * 4. the JSON body's `content-type`;
@@ -789,10 +790,12 @@ final class Anthropic
         if ($isCopilot) {
             // `authToken: apiKey ?? null`.
             $auth = $apiKey !== null ? ['Authorization' => "Bearer {$apiKey}"] : [];
-            $defaultHeaders = self::mergeClientHeaders($clientDefaults, $model->headers, Copilot::headers($model, $context), $optionsHeaders);
+            $defaultHeaders = self::mergeClientHeaders(ClientIdentity::headers($model, $options?->identity), $clientDefaults, $model->headers, Copilot::headers($model, $context), $optionsHeaders);
         } elseif ($isOAuth) {
             $auth = ['Authorization' => "Bearer {$apiKey}"];
+            // "Claude Code identity headers instead of the client identity."
             $defaultHeaders = self::mergeClientHeaders(
+                [],
                 [...$clientDefaults, 'user-agent' => 'claude-cli/' . ClaudeCode::VERSION, 'x-app' => 'cli'],
                 $model->headers,
                 $optionsHeaders,
@@ -819,7 +822,7 @@ final class Anthropic
                 $apiKey !== null => ['X-Api-Key' => $apiKey],
                 default => [],
             };
-            $defaultHeaders = self::mergeClientHeaders($clientDefaults, $sessionAffinityHeaders, $model->headers, $optionsHeaders);
+            $defaultHeaders = self::mergeClientHeaders(ClientIdentity::headers($model, $options?->identity), $clientDefaults, $sessionAffinityHeaders, $model->headers, $optionsHeaders);
         }
 
         $callHeaders = [];
@@ -860,15 +863,17 @@ final class Anthropic
     }
 
     /**
-     * Upstream's `mergeClientHeaders()`: `mergeHeaders({"User-Agent": getPiUserAgent()}, ...)`, an
-     * `Object.assign` — exact-name keys replaced in place, nulls kept for the SDK to act on.
+     * Upstream's `mergeHeaders(getIdentityHeaders(model, identity), ...)`, an `Object.assign` —
+     * exact-name keys replaced in place, nulls kept for the SDK to act on. The identity's headers
+     * are none for a subscription token, which carries Claude Code's instead.
      *
+     * @param array<string, string> $identityHeaders
      * @param array<string, string|null> ...$headerSources
      * @return array<string, string|null>
      */
-    private static function mergeClientHeaders(array ...$headerSources): array
+    private static function mergeClientHeaders(array $identityHeaders, array ...$headerSources): array
     {
-        $merged = ['User-Agent' => PigUserAgent::get()];
+        $merged = $identityHeaders;
 
         foreach ($headerSources as $headers) {
             foreach ($headers as $name => $value) {

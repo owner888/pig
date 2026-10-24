@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Generator;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
@@ -115,6 +116,7 @@ final class PiMessages
                 'POST',
                 $url,
                 Headers::providerHeadersToRecord(
+                    ClientIdentity::headers($model, $options?->identity),
                     ['authorization' => "Bearer {$apiKey}", 'accept' => 'text/event-stream', 'content-type' => 'application/json'],
                     $options?->headers,
                 ) ?? [],

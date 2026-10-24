@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Pig\Ai\Utils;
 
 /**
- * Upstream's `utils/pi-user-agent.ts`: `<product> (<platform> <release>; <arch>)`, the `User-Agent` every
- * built-in provider sends first, under the model's and the request's own headers (so Copilot's
- * `GitHubCopilotChat/…` and a subscription token's `claude-cli/…` still win).
+ * Upstream's `utils/pi-user-agent.ts`: "pi's `User-Agent` for its own network requests; the same
+ * detailed form pi-ai sends to providers" — `ClientIdentity::formatUserAgent()`,
+ * `pig/<version> (<platform>; php/<version>; <arch>)`. The product name is `pig`, not upstream's
+ * `pi` (开发者要求): pig's requests say what sent them.
  *
- * The three parts are Node's `os.platform()`, `os.release()` and `os.arch()`, spelt the way Node
- * spells them from what PHP reports: `darwin`/`linux`/`win32`, the kernel release, `x64`/`arm64`.
- * The product name is `pig`, not upstream's `pi` (开发者要求): pig's requests say what sent them.
+ * The parts are spelt the way Node spells `os.platform()`, `os.release()` and `os.arch()` from what
+ * PHP reports: `darwin`/`linux`/`win32`, the kernel release, `x64`/`arm64` — the AWS SDK's
+ * `User-Agent` reads the release too.
  */
 final class PigUserAgent
 {
@@ -19,7 +20,7 @@ final class PigUserAgent
 
     public static function get(): string
     {
-        return self::$value ??= 'pig (' . self::platform() . ' ' . self::release() . '; ' . self::arch() . ')';
+        return self::$value ??= \Pig\Ai\ClientIdentity::formatUserAgent();
     }
 
     /**

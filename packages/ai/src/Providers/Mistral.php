@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -38,7 +39,6 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\JsJson;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\TextDecoder;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Text;
@@ -379,8 +379,9 @@ final class Mistral
     private static function buildMistralHeaders(Model $model, string $apiKey, ?MistralOptions $options): array
     {
         $headers = [
-            // Upstream's `"User-Agent": getPiUserAgent()`, which the model's own headers can replace.
-            'user-agent' => PigUserAgent::get(),
+            // Upstream's `...getIdentityHeaders(model, options?.identity)`, which the model's own
+            // headers can replace.
+            ...array_change_key_case(ClientIdentity::headers($model, $options?->identity)),
             'accept' => 'text/event-stream',
             'authorization' => "Bearer {$apiKey}",
             'content-type' => 'application/json',

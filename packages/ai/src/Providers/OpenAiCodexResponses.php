@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Generator;
 use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Context;
@@ -27,7 +28,6 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\JsJson;
-use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\TextDecoder;
 use Pig\Ai\Utils\Transcript;
@@ -172,7 +172,9 @@ final class OpenAiCodexResponses
                 $body = (array) $nextBody;
             }
 
-            $sseHeaders = self::buildSSEHeaders($model->headers, $options?->headers, $accountId, $apiKey, $codexSessionId);
+            // "Codex expects an originator on every request; it is not attribution."
+            $identityHeaders = ['originator' => 'pi', ...ClientIdentity::headers($model, $options?->identity)];
+            $sseHeaders = self::buildSSEHeaders($identityHeaders, $model->headers, $options?->headers, $accountId, $apiKey, $codexSessionId);
             $bodyJson = self::encode($body);
             $httpTimeoutMs = self::normalizeTimeoutMs($options?->timeoutMs);
             $websocketConnectTimeoutMs = self::normalizeTimeoutMs($options?->websocketConnectTimeoutMs);
@@ -186,7 +188,7 @@ final class OpenAiCodexResponses
 
             if ($transport !== 'sse' && !$websocketDisabledForSession) {
                 $websocketRequestId = $codexSessionId !== null && $codexSessionId !== '' ? $codexSessionId : Uuid::v7();
-                $websocketHeaders = self::buildWebSocketHeaders($model->headers, $options?->headers, $accountId, $apiKey, $websocketRequestId);
+                $websocketHeaders = self::buildWebSocketHeaders($identityHeaders, $model->headers, $options?->headers, $accountId, $apiKey, $websocketRequestId);
                 $retriedWebSocketConnectionLimit = false;
                 $retriedMissingWebSocketContinuation = false;
 
@@ -941,14 +943,15 @@ final class OpenAiCodexResponses
      * `session-id`. (Upstream then deletes `OpenAI-Beta` from the record it hands the socket, but
      * the record's names are lowercase by then, so the beta goes out.)
      *
+     * @param array<string, string> $identityHeaders `originator: pi` and the client identity's
      * @param array<string, string> $initHeaders
      * @param array<string, string|null>|null $additionalHeaders
      * @return array<string, string>
      */
-    private static function buildWebSocketHeaders(array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, string $requestId): array
+    private static function buildWebSocketHeaders(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, string $requestId): array
     {
         $built = Headers::build(
-            ...self::baseCodexHeaderSources($initHeaders, $additionalHeaders, $accountId, $token),
+            ...self::baseCodexHeaderSources($identityHeaders, $initHeaders, $additionalHeaders, $accountId, $token),
             ...[
                 ['accept' => null, 'content-type' => null, 'OpenAI-Beta' => null],
                 [
@@ -977,7 +980,10 @@ final class OpenAiCodexResponses
         $supportsGrammarTools = $compat?->grammarTools ?? false;
         $supportsAdditionalTools = $compat?->supportsAdditionalTools ?? false;
         $supportsToolSearch = $compat?->supportsToolSearch ?? false;
-        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, $supportsAdditionalTools || $supportsToolSearch);
+        $transcriptTools = Transcript::resolveTranscriptTools(
+            $context->messages,
+            OpenAiResponsesShared::getResponsesToolSupport($compat?->supportsMidConvoSystemMessages ?? false, $supportsAdditionalTools, $supportsToolSearch),
+        );
         $toolOptions = ['strict' => null, 'supportsStrictMode' => $supportsStrictMode, 'supportsOpenAIGrammarTools' => $supportsGrammarTools];
         $messages = OpenAiResponsesShared::convertResponsesMessages($model, $context, self::CODEX_TOOL_CALL_PROVIDERS, [
             'includeSystemPrompt' => false,
@@ -1539,18 +1545,19 @@ final class OpenAiCodexResponses
     /**
      * Upstream's `buildBaseCodexHeaders()` and `buildSSEHeaders()`: the model's headers, the
      * options' over them (a null deletes), then the backend's own — `Authorization`,
-     * `chatgpt-account-id`, `originator: pi`, `User-Agent` — and the SSE ones: `OpenAI-Beta:
+     * `chatgpt-account-id`, `originator: pi`, the identity's `User-Agent` and attribution — and the SSE ones: `OpenAI-Beta:
      * responses=experimental`, `accept`, `content-type`, and the session as `session-id` and
      * `x-client-request-id`.
      *
+     * @param array<string, string> $identityHeaders `originator: pi` and the client identity's
      * @param array<string, string> $initHeaders
      * @param array<string, string|null>|null $additionalHeaders
      * @return array<string, string>
      */
-    private static function buildSSEHeaders(array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, ?string $sessionId): array
+    private static function buildSSEHeaders(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, ?string $sessionId): array
     {
         $built = Headers::build(
-            ...self::baseCodexHeaderSources($initHeaders, $additionalHeaders, $accountId, $token),
+            ...self::baseCodexHeaderSources($identityHeaders, $initHeaders, $additionalHeaders, $accountId, $token),
             ...[[
                 'OpenAI-Beta' => 'responses=experimental',
                 'accept' => 'text/event-stream',
@@ -1564,15 +1571,16 @@ final class OpenAiCodexResponses
 
     /**
      * Upstream's `buildBaseCodexHeaders()`: the model's headers, the caller's over them (a null
-     * deletes), then the token, its account, `originator: pi` and the `User-Agent` — the order
+     * deletes), then the token, its account, `originator: pi` and the identity's headers — the order
      * the recordings were made with. (Upstream's source has since put `originator` and the
      * `User-Agent` first, "so model and caller headers can override them".)
      *
+     * @param array<string, string> $identityHeaders `originator: pi` and the client identity's
      * @param array<string, string> $initHeaders
      * @param array<string, string|null>|null $additionalHeaders
      * @return list<array<string, string|null>|null>
      */
-    private static function baseCodexHeaderSources(array $initHeaders, ?array $additionalHeaders, string $accountId, string $token): array
+    private static function baseCodexHeaderSources(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token): array
     {
         return [
             $initHeaders,
@@ -1580,8 +1588,7 @@ final class OpenAiCodexResponses
             [
                 'Authorization' => "Bearer {$token}",
                 'chatgpt-account-id' => $accountId,
-                'originator' => 'pi',
-                'User-Agent' => PigUserAgent::get(),
+                ...$identityHeaders,
             ],
         ];
     }

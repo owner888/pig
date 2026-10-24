@@ -4,31 +4,28 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Ai\ClientAttribution;
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\Model;
 
 /**
- * Upstream's `core/provider-attribution.ts` and `core/telemetry.ts`: the headers that tell
- * OpenRouter, NVIDIA NIM, Cloudflare and OpenCode which client is calling.
+ * Upstream's `core/client-identity.ts`, `core/telemetry.ts` and what is left of
+ * `core/provider-attribution.ts`: how pig's requests identify it to providers.
  *
- * **pig's name, not pi's**, as the developer asked: `X-OpenRouter-Title: pig` with `https://pigagent.dev`,
- * `X-BILLING-INVOKE-ORIGIN: Pig`, `User-Agent: pig-coding-agent` and `x-opencode-client: pig` —
- * a request says what sent it, as `PigUserAgent` does. And **no install ping**: upstream's
+ * **pig's name, not pi's**, as the developer asked: a detailed `User-Agent` with pig's version
+ * (`pig/<version> (…)`), and attribution to pig as a CLI agent (`ClientAttribution::pig()`:
+ * `X-OpenRouter-Title: pig` with `https://pigagent.dev`, `X-BILLING-INVOKE-ORIGIN: Pig`,
+ * `x-opencode-client: pig`) while `enableInstallTelemetry` is on (the default), which `PIG_TELEMETRY`
+ * overrides either way (`1`/`true`/`yes`, anything else off). And **no install ping**: upstream's
  * `reportInstallTelemetry()` reports to pi.dev, which counts pi's installs, not pig's.
  *
- * The first three ride on `enableInstallTelemetry` (on by default), which `PIG_TELEMETRY`
- * overrides either way (`1`/`true`/`yes`, anything else off). OpenCode's client header goes
- * beside its session header whatever the setting, as upstream's `getSessionHeaders()` does.
+ * The providers send the identity's headers under every other header of a request (`pig/ai`'s
+ * `ClientIdentity`), so `before_provider_headers` handlers no longer see the attribution headers;
+ * returning null for one still removes it. Cloudflare gets the detailed `User-Agent` like everyone
+ * else, where it used to get `pig-coding-agent`.
  */
 final class ProviderAttribution
 {
-    private const string OPENROUTER_HOST = 'openrouter.ai';
-
-    private const string NVIDIA_NIM_HOST = 'integrate.api.nvidia.com';
-
-    private const string CLOUDFLARE_API_HOST = 'api.cloudflare.com';
-
-    private const string CLOUDFLARE_AI_GATEWAY_HOST = 'gateway.ai.cloudflare.com';
-
     private const string OPENCODE_HOST = 'opencode.ai';
 
     /**
@@ -47,75 +44,35 @@ final class ProviderAttribution
     }
 
     /**
-     * Upstream's `mergeProviderAttributionHeaders()`: the session's and the attribution headers,
-     * with the request's own over them — so a caller can still change or delete any of them.
+     * Upstream's `getClientIdentity()`: read per request, so a change of the setting applies at once.
+     */
+    public static function identity(Settings $settings, string|false|null $environment = null): ClientIdentity
+    {
+        try {
+            $version = Version::current();
+        } catch (CodingAgentError) {
+            $version = null;
+        }
+
+        return new ClientIdentity(
+            'detailed',
+            self::telemetryEnabled($settings, $environment) ? ClientAttribution::pig() : false,
+            $version,
+        );
+    }
+
+    /**
+     * The session's OpenCode routing header with the request's own headers over it — what
+     * upstream's `Models` adds before `transformHeaders`, so `before_provider_headers` handlers
+     * see it and can change or delete it.
      *
      * @param array<string, string|null>|null $headers
      * @return array<string, string|null>|null
      */
-    public static function merge(Model $model, Settings $settings, ?string $sessionId, ?array $headers, string|false|null $environment = null): ?array
+    public static function merge(Model $model, ?string $sessionId, ?array $headers): ?array
     {
-        $merged = [
-            ...self::sessionHeaders($model, $sessionId),
-            ...self::defaultHeaders($model, $settings, $environment),
-            ...($headers ?? []),
-        ];
+        $merged = [...(ClientIdentity::openCodeSessionHeaders($model, $sessionId) ?? []), ...($headers ?? [])];
 
         return $merged === [] ? null : $merged;
-    }
-
-    /** @return array<string, string> */
-    private static function defaultHeaders(Model $model, Settings $settings, string|false|null $environment): array
-    {
-        if (!self::telemetryEnabled($settings, $environment)) {
-            return [];
-        }
-
-        if ($model->provider === 'openrouter' || str_contains($model->baseUrl, self::OPENROUTER_HOST)) {
-            return [
-                'HTTP-Referer' => 'https://pigagent.dev',
-                'X-OpenRouter-Title' => 'pig',
-                'X-OpenRouter-Categories' => 'cli-agent',
-            ];
-        }
-
-        if ($model->provider === 'nvidia' || self::matchesHost($model->baseUrl, self::NVIDIA_NIM_HOST)) {
-            return ['X-BILLING-INVOKE-ORIGIN' => 'Pig'];
-        }
-
-        if (in_array($model->provider, ['cloudflare-workers-ai', 'cloudflare-ai-gateway'], true)
-            || self::matchesHost($model->baseUrl, self::CLOUDFLARE_API_HOST)
-            || self::matchesHost($model->baseUrl, self::CLOUDFLARE_AI_GATEWAY_HOST)) {
-            return ['User-Agent' => 'pig-coding-agent'];
-        }
-
-        return [];
-    }
-
-    /**
-     * Upstream's `getSessionHeaders()`. `x-opencode-session` is also what `pig/ai` adds on its own
-     * (`OpenCodeHeaders`), as upstream's provider wrapper does; the same value either way.
-     *
-     * @return array<string, string>
-     */
-    private static function sessionHeaders(Model $model, ?string $sessionId): array
-    {
-        if ($sessionId === null || $sessionId === '') {
-            return [];
-        }
-
-        if (!in_array($model->provider, ['opencode', 'opencode-go'], true) && !self::matchesHost($model->baseUrl, self::OPENCODE_HOST)) {
-            return [];
-        }
-
-        return ['x-opencode-session' => $sessionId, 'x-opencode-client' => 'pig'];
-    }
-
-    /** Upstream's `matchesHost()`: the URL's host exactly, and false for one that does not parse. */
-    private static function matchesHost(string $baseUrl, string $host): bool
-    {
-        $parsed = parse_url($baseUrl, PHP_URL_HOST);
-
-        return is_string($parsed) && strtolower($parsed) === $host;
     }
 }

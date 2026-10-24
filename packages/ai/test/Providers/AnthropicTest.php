@@ -278,10 +278,10 @@ final class AnthropicTest extends TestCase
 
     public function testTheUserAgentIsPisUnderTheModelsAndClaudeCodesOwn(): void
     {
-        // `mergeClientHeaders()`: `{"User-Agent": getPiUserAgent()}` first, then everything else.
+        // `mergeHeaders(getIdentityHeaders(model, identity), ...)` first, then everything else.
         [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), $this->options());
         $this->assertStringContainsString("user-agent: " . PigUserAgent::get() . "\r\n", $head);
-        $this->assertMatchesRegularExpression('/^pig \((darwin|linux|win32|[a-z]+) \S+; [a-z0-9_]+\)$/', PigUserAgent::get());
+        $this->assertMatchesRegularExpression('/^pig(\/\S+)? \((darwin|linux|win32|[a-z]+); php\/\S+; [a-z0-9_]+\)$/', PigUserAgent::get());
 
         // A subscription token's `user-agent: claude-cli/…` replaces it, and so does a model's own.
         [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'sk-ant-oat01-abc'));

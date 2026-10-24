@@ -26,6 +26,7 @@ final readonly class AgentOptions
      * @param Closure|null $prepareNextTurn upstream's `AgentOptions.prepareNextTurn` — see `Agent::$prepareNextTurn`
      * @param Closure|null $prepareNextTurnWithContext upstream's `AgentOptions.prepareNextTurnWithContext`
      * @param Closure|null $prepareRequest upstream's `AgentOptions.prepareRequest` — see `Agent::$prepareRequest`
+     * @param \Pig\Ai\ClientIdentity|null $identity upstream's `AgentOptions.identity` — see `Agent::$identity`
      */
     public function __construct(
         public ?AgentState $initialState = null,
@@ -43,6 +44,7 @@ final readonly class AgentOptions
         public ?Closure $prepareNextTurn = null,
         public ?Closure $prepareNextTurnWithContext = null,
         public ?Closure $prepareRequest = null,
+        public ?\Pig\Ai\ClientIdentity $identity = null,
     ) {
     }
 }

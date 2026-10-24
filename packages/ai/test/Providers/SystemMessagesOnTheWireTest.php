@@ -124,15 +124,131 @@ final class SystemMessagesOnTheWireTest extends TestCase
 
     // ---- OpenAI Responses --------------------------------------------------------------------
 
-    public function testAdditionalToolsAreLoadedWhereTheSystemMessageStands(): void
+    public function testEveryToolIsDeclaredInAdditionalToolsWhereItsSystemMessageStands(): void
     {
+        // Upstream #10940: a later `additional_tools` item cannot replace a top-level tool, so no
+        // tool is declared there; the initial ones head the input.
         $body = $this->responses(new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsAdditionalTools: true, supportsToolSearch: true));
 
-        $this->assertSame(['read'], array_column($body['tools'], 'name'));
-        $this->assertSame(['additional_tools', null], [$body['input'][3]['type'] ?? null, $body['input'][4]['type'] ?? null]);
-        $this->assertSame('developer', $body['input'][3]['role']);
-        $this->assertSame('write', $body['input'][3]['tools'][0]['name']);
-        $this->assertSame(['system', 'also this'], [$body['input'][4]['role'], $body['input'][4]['content']]);
+        $this->assertArrayNotHasKey('tools', $body);
+        $this->assertSame(
+            ['additional_tools', 'base prompt', 'hi', 'message', 'incremental', 'additional_tools', 'also this', 'and now'],
+            array_map(static fn (array $item): ?string => self::kind($item), $body['input']),
+        );
+        $this->assertSame([['read'], ['write']], array_map(
+            static fn (array $item): array => array_column($item['tools'], 'name'),
+            array_values(array_filter($body['input'], static fn (array $item): bool => ($item['type'] ?? null) === 'additional_tools')),
+        ));
+        $this->assertSame('developer', $body['input'][0]['role']);
+    }
+
+    public function testARemovalIsAnnouncedAsTextAndARedefinitionIsNot(): void
+    {
+        $compat = new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsAdditionalTools: true);
+        $body = $this->responses($compat, self::removingTranscript());
+
+        $this->assertArrayNotHasKey('tools', $body);
+        $this->assertStringContainsString("The following tools are no longer available. Do not call them:\n- read", $body['input'][count($body['input']) - 2]['content']);
+
+        $redefined = new Tool('read', 'changed', ['type' => 'object', 'properties' => new \stdClass()]);
+        $body = $this->responses($compat, new TranscriptContext([
+            new SystemMessage('base prompt', null, [self::tool('read')], null, 0),
+            new UserMessage('before'),
+            new SystemMessage('', null, [$redefined], [new ToolReference('read')]),
+        ]));
+
+        $this->assertSame(['additional_tools', 'base prompt', 'before', 'incremental', 'additional_tools'], array_map(static fn (array $item): ?string => self::kind($item), $body['input']));
+        $this->assertSame('changed', $body['input'][4]['tools'][0]['description']);
+        $this->assertStringContainsString('latest definition replaces the earlier one', $body['input'][3]['content']);
+    }
+
+    public function testAdditionalToolsKeepTheRequestPrefixAcrossARemovalAndLaterLoads(): void
+    {
+        // Upstream #10940: deferred loads after a removal must not rewrite the cached prefix.
+        $bodies = $this->history(fn (TranscriptContext $context): array => $this->responses(new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $context));
+
+        foreach ($bodies as $body) {
+            $this->assertArrayNotHasKey('tools', $body);
+        }
+
+        self::assertGrowingPrefix(array_column($bodies, 'input'));
+        $last = $bodies[count($bodies) - 1]['input'];
+        $this->assertSame([['base_tool', 'drop_tool'], ['late_tool'], ['later_tool']], array_map(
+            static fn (array $item): array => array_column($item['tools'], 'name'),
+            array_values(array_filter($last, static fn (array $item): bool => ($item['type'] ?? null) === 'additional_tools')),
+        ));
+        // Each later load restates the tools that are still unavailable.
+        $notices = array_values(array_filter($last, static fn (array $item): bool => self::kind($item) === 'incremental'));
+        $this->assertCount(2, $notices);
+
+        foreach ($notices as $notice) {
+            $this->assertStringEndsWith("\nStill unavailable: drop_tool.", $notice['content']);
+        }
+    }
+
+    public function testAToolIsNotListedAsUnavailableBeforeItsRemovalOrAfterItIsDeclaredAgain(): void
+    {
+        $compat = new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsAdditionalTools: true);
+        $base = [self::tool('base_tool'), self::tool('drop_tool')];
+
+        $same = $this->responses($compat, new TranscriptContext([
+            new SystemMessage('base prompt', null, $base, null, 0),
+            new SystemMessage('', null, [self::tool('late_tool')], [new ToolReference('drop_tool')], 1),
+            new UserMessage('go'),
+        ]));
+        // Like Codex: the notice, the tools, then the removal notice.
+        $this->assertSame(['incremental', 'additional_tools'], array_map(static fn (array $item): ?string => self::kind($item), array_slice($same['input'], -4, 2)));
+        $this->assertStringNotContainsString('Still unavailable', $same['input'][count($same['input']) - 4]['content']);
+        $this->assertStringContainsString("Do not call them:\n- drop_tool", $same['input'][count($same['input']) - 2]['content']);
+
+        $again = $this->responses($compat, new TranscriptContext([
+            new SystemMessage('base prompt', null, $base, null, 0),
+            new SystemMessage('', null, null, [new ToolReference('drop_tool')], 1),
+            new SystemMessage('', null, [self::tool('drop_tool')], null, 2),
+            new UserMessage('go'),
+        ]));
+        $notice = array_values(array_filter($again['input'], static fn (array $item): bool => self::kind($item) === 'incremental'));
+        $this->assertCount(1, $notice);
+        $this->assertStringNotContainsString('Still unavailable', $notice[0]['content']);
+        $this->assertSame(['drop_tool'], array_column($again['input'][count($again['input']) - 2]['tools'], 'name'));
+    }
+
+    public function testToolSearchMovesTheTopLevelToolsOncePerRemovalAndKeepsLaterLoadsAnchored(): void
+    {
+        $bodies = $this->history(fn (TranscriptContext $context): array => $this->responses(new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsToolSearch: true), $context));
+        $before = array_shift($bodies);
+
+        $this->assertSame(['base_tool', 'drop_tool'], array_column($before['tools'], 'name'));
+
+        foreach ($bodies as $body) {
+            $this->assertSame(['base_tool'], array_column($body['tools'], 'name'));
+        }
+
+        self::assertGrowingPrefix(array_column($bodies, 'input'));
+        $this->assertSame(['late_tool', 'later_tool'], array_map(
+            static fn (array $item): string => $item['tools'][0]['name'],
+            array_values(array_filter($bodies[count($bodies) - 1]['input'], static fn (array $item): bool => ($item['type'] ?? null) === 'tool_search_output')),
+        ));
+    }
+
+    public function testKimiMovesTheTopLevelToolsOncePerRemovalAndKeepsLaterLoadsAnchored(): void
+    {
+        $compat = new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true);
+        $bodies = $this->history(fn (TranscriptContext $context): array => $this->completions($compat, $context));
+        $before = array_shift($bodies);
+        $names = static fn (array $tools): array => array_column(array_column($tools, 'function'), 'name');
+
+        $this->assertSame(['base_tool', 'drop_tool'], $names($before['tools']));
+
+        foreach ($bodies as $body) {
+            $this->assertSame(['base_tool'], $names($body['tools']));
+        }
+
+        self::assertGrowingPrefix(array_column($bodies, 'messages'));
+        $this->assertSame(['late_tool', 'later_tool'], array_map(
+            static fn (array $message): string => $message['tools'][0]['function']['name'],
+            array_values(array_filter($bodies[count($bodies) - 1]['messages'], static fn (array $message): bool => isset($message['tools']))),
+        ));
     }
 
     public function testToolSearchLoadsThemWithACompletedClientSearchWhenThereAreNoAdditionalTools(): void
@@ -237,14 +353,68 @@ final class SystemMessagesOnTheWireTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function responses(?OpenAiCompat $compat): array
+    private function responses(?OpenAiCompat $compat, ?TranscriptContext $context = null): array
     {
         $url = $this->refusing();
         $model = new Model('gpt-test', 'G', Api::OpenAiResponses, 'openai', rtrim($url, '/'), 200_000, 8_000, compat: $compat);
 
-        Async::run(fn () => (new OpenAiResponses())->stream($model, self::additiveTranscript(), new OpenAiOptions(apiKey: 'sk-k'))->result()->await());
+        Async::run(fn () => (new OpenAiResponses())->stream($model, $context ?? self::additiveTranscript(), new OpenAiOptions(apiKey: 'sk-k'))->result()->await());
 
         return $this->server->receivedJson();
+    }
+
+    /**
+     * Upstream's `captureToolHistory()`: one request after each step — the first turn, `drop_tool`
+     * removed, then two loads.
+     *
+     * @param \Closure(TranscriptContext): array<string, mixed> $send
+     * @return list<array<string, mixed>>
+     */
+    private function history(\Closure $send): array
+    {
+        $steps = [
+            [new UserMessage('first', 1)],
+            [new SystemMessage('', null, null, [new ToolReference('drop_tool')], 2), new UserMessage('after removal', 3)],
+            [new SystemMessage('', null, [self::tool('late_tool')], null, 4), new UserMessage('after first load', 5)],
+            [new SystemMessage('', null, [self::tool('later_tool')], null, 6), new UserMessage('after second load', 7)],
+        ];
+        $messages = [new SystemMessage('base prompt', null, [self::tool('base_tool'), self::tool('drop_tool')], null, 0)];
+        $bodies = [];
+
+        foreach ($steps as $step) {
+            $messages = [...$messages, ...$step];
+            $bodies[] = $send(new TranscriptContext($messages));
+        }
+
+        return $bodies;
+    }
+
+    /**
+     * Every request's list starts with the previous request's list.
+     *
+     * @param list<list<mixed>> $lists
+     */
+    private static function assertGrowingPrefix(array $lists): void
+    {
+        for ($index = 1; $index < count($lists); $index++) {
+            self::assertSame($lists[$index - 1], array_slice($lists[$index], 0, count($lists[$index - 1])), "request {$index} rewrote the prefix");
+        }
+    }
+
+    /** What an input item is, for comparing a whole input at a glance. */
+    private static function kind(array $item): ?string
+    {
+        if (isset($item['type'])) {
+            return $item['type'];
+        }
+
+        $content = $item['content'] ?? null;
+
+        if (is_string($content) && str_starts_with($content, 'This is an incremental tools update.')) {
+            return 'incremental';
+        }
+
+        return is_string($content) ? $content : (is_array($content) ? ($content[0]['text'] ?? null) : null);
     }
 
     /** @return array<string, mixed> */
