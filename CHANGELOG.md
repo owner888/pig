@@ -43,7 +43,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [0.10.0] - 2026-10-24
+
+Upstream pi 1.2–1.4, third batch: the built-in model catalog as pi's JSON, kept current from pigagent.dev; client identity; the prompt cache kept across tool changes on Responses.
 
 ### Added
 
