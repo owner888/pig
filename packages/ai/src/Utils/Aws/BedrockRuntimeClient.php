@@ -111,8 +111,10 @@ final class BedrockRuntimeClient
      *     token?: string|null,
      *     headers?: array<string, string>|null,
      *     onResponse?: (Closure(array{status: int, headers: array<string, string>}): void)|null,
+     *     customUserAgent?: list<array{0: string, 1?: string}>|null,
      * } $config upstream's `BedrockRuntimeClientConfig`, with the custom headers and `onResponse`
-     *        its two middlewares carry
+     *        its two middlewares carry; `customUserAgent` is the SDK's: name/version pairs appended,
+     *        escaped, to both user agents
      * @param (Closure(): int)|null $now milliseconds, for tests
      * @param (Closure(int): void)|null $sleep milliseconds, for tests
      */
@@ -175,13 +177,15 @@ final class BedrockRuntimeClient
         ];
         $invocationId = self::uuid();
         $retryCount = 0;
+        $custom = implode(' ', array_map(self::escapeUserAgent(...), $this->config['customUserAgent'] ?? []));
+        $customSuffix = $custom === '' ? '' : ' ' . $custom;
 
         for ($attempt = 1; ; $attempt++) {
             $headers = [
                 'content-type' => 'application/json',
                 'content-length' => (string) strlen($body),
-                'x-amz-user-agent' => 'aws-sdk-js/' . self::SDK_VERSION,
-                'user-agent' => self::userAgent($features, 'bedrock-runtime', self::SDK_VERSION),
+                'x-amz-user-agent' => 'aws-sdk-js/' . self::SDK_VERSION . $customSuffix,
+                'user-agent' => self::userAgent($features, 'bedrock-runtime', self::SDK_VERSION) . $customSuffix,
                 'host' => $host,
                 'amz-sdk-invocation-id' => $invocationId,
                 'amz-sdk-request' => "attempt={$attempt}; max={$maxAttempts}",
@@ -637,6 +641,40 @@ final class BedrockRuntimeClient
         if ($mode === 'adaptive') {
             throw new RuntimeException('The adaptive AWS retry mode (AWS_RETRY_MODE / retry_mode = adaptive) is not supported by pig; use standard');
         }
+    }
+
+    /**
+     * The SDK's `escapeUserAgent()`: a `[name, version]` pair as `prefix/name#version` — the name
+     * split at its first `/` into a prefix and the rest, each part's characters outside the token
+     * set replaced with `-`, and the version's likewise (`#` allowed there).
+     *
+     * @param array{0: string, 1?: string} $pair
+     * @internal
+     */
+    public static function escapeUserAgent(array $pair): string
+    {
+        $name = implode('/', array_map(static fn (string $part): string => (string) preg_replace('/[^!$%&\'*+\-.^_`|~\d\w]/', '-', $part), explode('/', $pair[0])));
+        $version = isset($pair[1]) ? (string) preg_replace('/[^!$%&\'*+\-.^_`|~\d\w#]/', '-', $pair[1]) : null;
+        $separator = strpos($name, '/');
+        $prefix = $separator === false ? '' : substr($name, 0, $separator);
+        $uaName = $separator === false ? $name : substr($name, $separator + 1);
+
+        if ($prefix === 'api') {
+            $uaName = strtolower($uaName);
+        }
+
+        $items = array_values(array_filter([$prefix, $uaName, $version], static fn (?string $item): bool => $item !== null && $item !== ''));
+        $out = '';
+
+        foreach ($items as $index => $item) {
+            $out = match ($index) {
+                0 => $item,
+                1 => "{$out}/{$item}",
+                default => "{$out}#{$item}",
+            };
+        }
+
+        return $out;
     }
 
     /**

@@ -301,6 +301,16 @@ final class BedrockTest extends TestCase
         return [$requests, $events, $message];
     }
 
+    public function testTheClientIdentityIsAppendedToBothUserAgentsAsTheSdkEscapesIt(): void
+    {
+        $escape = \Pig\Ai\Utils\Aws\BedrockRuntimeClient::escapeUserAgent(...);
+
+        $this->assertSame('pig/1.2.3', $escape(['pig', '1.2.3']));
+        $this->assertSame('pig', $escape(['pig']));
+        $this->assertSame('mine/1-x', $escape(['mine/1 x']));
+        $this->assertSame('api/bedrock#3.0', $escape(['api/Bedrock', '3.0']));
+    }
+
     /**
      * The headers as the fixture records upstream's: the ones that cannot match left out, the user
      * agent without the machine and the runtime, a signature cut to its scope and signed headers.
@@ -315,6 +325,16 @@ final class BedrockTest extends TestCase
         foreach ($headers as $name => $value) {
             if (in_array($name, ['amz-sdk-invocation-id', 'host', 'connection', 'accept-encoding', 'x-amz-date'], true)) {
                 continue;
+            }
+
+            // The recordings predate the client identity, which Bedrock's client appends to both
+            // user agents (`customUserAgent`); it is checked here and taken off. A credential
+            // provider's STS or SSO request carries none.
+            if (($name === 'user-agent' || $name === 'x-amz-user-agent') && str_contains($headers['user-agent'] ?? '', 'api/bedrock-runtime')) {
+                $version = \Pig\Ai\ClientIdentity::version();
+                $identity = ' ' . \Pig\Ai\Utils\Aws\BedrockRuntimeClient::escapeUserAgent($version === null ? ['pig'] : ['pig', $version]);
+                self::assertStringEndsWith($identity, $value);
+                $value = substr($value, 0, -strlen($identity));
             }
 
             if ($name === 'user-agent') {

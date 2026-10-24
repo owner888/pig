@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\ClientIdentity;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\BedrockCompat;
@@ -228,6 +229,7 @@ final class Bedrock
                 };
             }
 
+            $config['customUserAgent'] = self::bedrockUserAgent($options->identity);
             $customHeaders = Headers::providerHeadersToRecord($options->headers);
 
             if ($customHeaders !== null) {
@@ -796,6 +798,26 @@ final class Bedrock
     private static function cachePoint(string $cacheRetention): array
     {
         return ['type' => 'default', ...($cacheRetention === 'long' ? ['ttl' => '1h'] : [])];
+    }
+
+    /**
+     * Upstream's `bedrockUserAgent()`: "The client identity as AWS SDK user agent pairs. The SDK
+     * appends them to its own `User-Agent` and escapes characters" — `pig/<version>`, `pig` for the
+     * short form (or a build with no version), or the custom value as it is.
+     *
+     * @return list<array{0: string, 1?: string}>
+     */
+    private static function bedrockUserAgent(?ClientIdentity $identity): array
+    {
+        $mode = $identity?->userAgent ?? 'detailed';
+
+        if (is_array($mode)) {
+            return [[$mode['custom']]];
+        }
+
+        $version = ClientIdentity::version($identity);
+
+        return $mode === 'short' || $version === null ? [['pig']] : [['pig', $version]];
     }
 
     /** Upstream's `normalizeToolCallId()`: Bedrock's `[a-zA-Z0-9_-]`, at most 64. */
