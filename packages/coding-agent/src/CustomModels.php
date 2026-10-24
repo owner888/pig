@@ -8,10 +8,10 @@ use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\Model;
+use Pig\Ai\ModelJson;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
 
 /**
  * Providers and models declared in a file, so somebody's own endpoint does not need a release.
@@ -916,25 +916,7 @@ final readonly class CustomModels
      */
     public static function thinkingLevelMap(?array $map): array
     {
-        if ($map === null) {
-            return [];
-        }
-
-        $kept = [];
-
-        foreach (['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as $level) {
-            if (!array_key_exists($level, $map)) {
-                continue;
-            }
-
-            $value = $map[$level];
-
-            if ($value === null || is_string($value)) {
-                $kept[$level] = $value;
-            }
-        }
-
-        return $kept;
+        return ModelJson::thinkingLevelMap($map);
     }
 
     /**
@@ -950,30 +932,7 @@ final readonly class CustomModels
      */
     public static function pricing(array $cost): Pricing
     {
-        $number = static fn (string $key): float => is_int($cost[$key] ?? null) || is_float($cost[$key] ?? null)
-            ? (float) $cost[$key]
-            : 0.0;
-
-        // Upstream's `ModelCost.tiers`: `{inputTokensAbove, input, output, cacheRead, cacheWrite}`
-        // each, "the highest matching input threshold applies to the full request". A model's tiers
-        // have passed `schemaErrors()` by now — all five fields, all numbers — so the guards here
-        // are for `allowedFallbackModels`' costs, which are not checked that way.
-        $tiers = [];
-
-        foreach (is_array($cost['tiers'] ?? null) ? $cost['tiers'] : [] as $tier) {
-            if (!is_array($tier) || (!is_int($tier['inputTokensAbove'] ?? null) && !is_float($tier['inputTokensAbove'] ?? null))) {
-                continue;
-            }
-
-            $rate = static fn (string $key): float => is_int($tier[$key] ?? null) || is_float($tier[$key] ?? null)
-                ? (float) $tier[$key]
-                : 0.0;
-            // `PricingTier` counts tokens in whole numbers; a fractional threshold is compared as
-            // the whole number below it, which no token count can tell apart.
-            $tiers[] = new PricingTier((int) $tier['inputTokensAbove'], $rate('input'), $rate('output'), $rate('cacheRead'), $rate('cacheWrite'));
-        }
-
-        return new Pricing($number('input'), $number('output'), $number('cacheRead'), $number('cacheWrite'), $tiers);
+        return ModelJson::pricing($cost);
     }
 
     /**
@@ -1134,127 +1093,7 @@ final readonly class CustomModels
      */
     public static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
     {
-        if ($compat === null || $compat === []) {
-            return null;
-        }
-
-        $flag = static fn (string $key): ?bool => is_bool($compat[$key] ?? null) ? $compat[$key] : null;
-
-        // Upstream's `BedrockCompatSchema`, a `bedrock-converse-stream` model's block: one key,
-        // "Whether the model supports Bedrock strict tool schemas."
-        if ($api === Api::BedrockConverseStream) {
-            return new BedrockCompat(supportsStrictMode: $flag('supportsStrictMode'));
-        }
-
-        // Upstream types `compat` by the model's API, and an `anthropic-messages` model's block is
-        // `AnthropicMessagesCompat`: `forceAdaptiveThinking` is how a proxy serving an adaptive-only
-        // Claude says so, since nothing at request time looks at the id.
-        if ($api === Api::AnthropicMessages) {
-            return new AnthropicCompat(
-                forceAdaptiveThinking: $flag('forceAdaptiveThinking'),
-                strictTools: $flag('supportsStrictTools'),
-                supportsTemperature: $flag('supportsTemperature'),
-                supportsEagerToolInputStreaming: $flag('supportsEagerToolInputStreaming'),
-                supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
-                supportsLongCacheRetention: $flag('supportsLongCacheRetention'),
-                sendSessionAffinityHeaders: $flag('sendSessionAffinityHeaders'),
-                sessionAffinityFormat: is_string($compat['sessionAffinityFormat'] ?? null) ? $compat['sessionAffinityFormat'] : null,
-                supportsCacheControlOnTools: $flag('supportsCacheControlOnTools'),
-                allowEmptySignature: $flag('allowEmptySignature'),
-                allowedFallbackModels: self::allowedFallbackModels($compat['allowedFallbackModels'] ?? null),
-                supportsMidConvoSystemMessages: $flag('supportsMidConvoSystemMessages'),
-                supportsMidConvoToolChanges: $flag('supportsMidConvoToolChanges'),
-            );
-        }
-
-        $maxTokensField = $compat['maxTokensField'] ?? null;
-
-        return new OpenAiCompat(
-            store: $flag('supportsStore'),
-            developerRole: $flag('supportsDeveloperRole'),
-            reasoningEffort: $flag('supportsReasoningEffort'),
-            // A string that is neither name still means `max_completion_tokens`, as it does
-            // upstream, where only `=== "max_tokens"` sends the older field.
-            maxTokensField: is_string($maxTokensField)
-                ? ($maxTokensField === 'max_tokens' ? 'max_tokens' : 'max_completion_tokens')
-                : null,
-            toolResultName: $flag('requiresToolResultName'),
-            assistantAfterToolResult: $flag('requiresAssistantAfterToolResult'),
-            thinkingAsText: $flag('requiresThinkingAsText'),
-            reasoningContentOnAssistantMessages: $flag('requiresReasoningContentOnAssistantMessages'),
-            strictMode: $flag('supportsStrictMode'),
-            thinkingFormat: is_string($compat['thinkingFormat'] ?? null) ? $compat['thinkingFormat'] : null,
-            chatTemplateKwargs: self::templateValues($compat['chatTemplateKwargs'] ?? null),
-            chatTemplateArgs: self::templateValues($compat['chatTemplateArgs'] ?? null),
-            // Upstream's routing objects, passed through as written: OpenRouter's `provider` field
-            // and Vercel's `only`/`order`. A JSON object, or not said — the same test as the
-            // template values. `{}` is said, and is sent as `{}`, as upstream sends it.
-            openRouterRouting: self::templateValues($compat['openRouterRouting'] ?? null),
-            vercelGatewayRouting: self::templateValues($compat['vercelGatewayRouting'] ?? null),
-            grammarTools: $flag('supportsOpenAIGrammarTools'),
-            // `OpenAIResponsesCompat`'s keys, which the Responses provider reads.
-            sessionAffinityFormat: is_string($compat['sessionAffinityFormat'] ?? null) ? $compat['sessionAffinityFormat'] : null,
-            supportsLongCacheRetention: $flag('supportsLongCacheRetention'),
-            supportsExplicitPromptCacheMode: $flag('supportsExplicitPromptCacheMode'),
-            supportsMaxOutputTokens: $flag('supportsMaxOutputTokens'),
-            // Upstream's `OpenAICompletionsCompatSchema` keys for caching and session affinity.
-            sendSessionAffinityHeaders: $flag('sendSessionAffinityHeaders'),
-            cacheControlFormat: is_string($compat['cacheControlFormat'] ?? null) ? $compat['cacheControlFormat'] : null,
-            // The rest of `OpenAICompletionsCompatSchema`: streaming and finish-reason support, z.ai's
-            // `tool_stream`, the reasoning-budget field, vLLM's priority, and the transcript keys.
-            supportsUsageInStreaming: $flag('supportsUsageInStreaming'),
-            supportsFinishReason: $flag('supportsFinishReason'),
-            zaiToolStream: $flag('zaiToolStream'),
-            thinkingTokenBudgetField: is_string($compat['thinkingTokenBudgetField'] ?? null) ? $compat['thinkingTokenBudgetField'] : null,
-            supportsThinkingTokenBudget: $flag('supportsThinkingTokenBudget'),
-            vllmPriority: is_int($compat['vllmPriority'] ?? null) || is_float($compat['vllmPriority'] ?? null) ? $compat['vllmPriority'] : null,
-            supportsMidConvoSystemMessages: $flag('supportsMidConvoSystemMessages'),
-            supportsMidConvoToolAdditions: $flag('supportsMidConvoToolAdditions'),
-            // `OpenAIResponsesCompat`'s tool-search keys.
-            supportsToolSearch: $flag('supportsToolSearch'),
-            supportsAdditionalTools: $flag('supportsAdditionalTools'),
-        );
-    }
-
-    /**
-     * Upstream's `allowedFallbackModels`: a list of `{provider, model, cost}`, an entry missing the
-     * two names left out. Not said is null; a list with nothing usable in it is empty, which sends
-     * no `fallbacks`.
-     *
-     * @return list<array{provider: string, model: string, cost: Pricing}>|null
-     */
-    private static function allowedFallbackModels(mixed $entries): ?array
-    {
-        if (!is_array($entries) || !array_is_list($entries)) {
-            return null;
-        }
-
-        $allowed = [];
-
-        foreach ($entries as $entry) {
-            if (!is_array($entry) || !is_string($entry['provider'] ?? null) || !is_string($entry['model'] ?? null)) {
-                continue;
-            }
-
-            $allowed[] = [
-                'provider' => $entry['provider'],
-                'model' => $entry['model'],
-                'cost' => self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []),
-            ];
-        }
-
-        return $allowed;
-    }
-
-    /**
-     * `chatTemplateKwargs` / `chatTemplateArgs` (and the two routing objects): a JSON object, or
-     * not said. A list is not one.
-     *
-     * @return array<string, mixed>|null
-     */
-    private static function templateValues(mixed $values): ?array
-    {
-        return is_array($values) && ($values === [] || !array_is_list($values)) ? $values : null;
+        return $compat === null ? null : ModelJson::compat($compat, $api);
     }
 
     /**

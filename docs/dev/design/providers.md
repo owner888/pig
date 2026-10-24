@@ -403,7 +403,7 @@ than by reading:
 - **`pi-messages`** — `Providers\PiMessages` and `PiMessagesEventConverter`, pi's own wire protocol,
   which the Radius gateway speaks; `Providers\RadiusConfig` is `radius-config.ts`' catalogue half.
 
-The rows: `Models::AZURE_MODELS` is upstream's clone of the `openai` Responses rows (before the
+The rows: `BuiltinCatalog::AZURE_MODELS` is upstream's clone of the `openai` Responses rows (before the
 metadata, so no strict mode, tool search or models.dev efforts, no tiers, Azure's 1,050,000 windows)
 plus DeepSeek V4 Pro on Chat Completions; `OPENAI_CODEX_MODELS` is upstream's hand-kept `codexModels`;
 `RADIUS_MODELS` is the gateway's public `/v1/config`. All three were written from upstream's

@@ -757,10 +757,12 @@ final class GenerateModelsTest extends TestCase
 
     public function testADryRunWritesNothing(): void
     {
-        $before = (string) file_get_contents(__DIR__ . '/../src/Models.php');
+        $rows = __DIR__ . '/../../../scripts/BuiltinCatalog.php';
+        $catalogue = __DIR__ . '/../data/models/anthropic.json';
+        $before = [(string) file_get_contents($rows), (string) file_get_contents($catalogue)];
         $this->generated();
 
-        self::assertSame($before, (string) file_get_contents(__DIR__ . '/../src/Models.php'));
+        self::assertSame($before, [(string) file_get_contents($rows), (string) file_get_contents($catalogue)]);
     }
 
     public function testAProviderMissingFromTheCatalogueIsNamedAndItsTableIsLeftAlone(): void

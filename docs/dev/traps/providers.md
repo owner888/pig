@@ -1310,7 +1310,7 @@ class. See "A provider an extension brings" above.
 **Root cause**: upstream's generator routes Copilot's Claude to `anthropic-messages` by `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/` (token as bearer, Copilot's static and dynamic headers, `forceAdaptiveThinking` from the id list, no `supportsStrictTools`); pig's `copilotApi()` only distinguished Responses from completions.
 
 **Trap rules**:
-- Copilot's API is decided by `copilotApi()` in `scripts/generate-models.php`; a rule change updates the generator and the table in `Models.php` together.
+- Copilot's API is decided by `copilotApi()` in `scripts/generate-models.php`; a rule change updates the generator, the table in `scripts/BuiltinCatalog.php` and `packages/ai/data/models/github-copilot.json` together.
 - `Anthropic` for `github-copilot`: `authorization: Bearer <token>`, no `x-api-key`, not treated as a Claude Code subscription; the address follows the token's `proxy-ep` (`GithubCopilot::baseUrl()`); `Copilot::headers()` come after the model headers.
 - Tests: `AnthropicTest::testACopilotClaudeAuthenticatesWithItsTokenAsABearerAndSendsCopilotsHeaders`, `testACopilotTokenDecidesWhereTheMessagesGo`, `ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`, `testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt`, `GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`.
 
@@ -1342,7 +1342,7 @@ class. See "A provider an extension brings" above.
 **Root cause**: upstream's generator `needsResponsesApi` is the prefixes `gpt-`, `grok-`, `oswe`, `mai-` (no exceptions); pig's `copilotApi()` recognized only `gpt-5` and `oswe`.
 
 **Trap rules**:
-- A change to `copilotApi()` in `scripts/generate-models.php` changes the `COPILOT_MODELS` row in `Models.php` with it.
+- A change to `copilotApi()` in `scripts/generate-models.php` changes the `COPILOT_MODELS` row in `scripts/BuiltinCatalog.php`, and the built `github-copilot.json`, with it.
 - Tests: `ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`, `GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`.
 
 ## Anthropic: Opus 4.7+ refused a temperature, and thinking turns carried one too

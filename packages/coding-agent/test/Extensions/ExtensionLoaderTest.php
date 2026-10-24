@@ -153,7 +153,9 @@ PHP);
     {
         $ns = 'PigLoaderHelper' . bin2hex(random_bytes(4));
         $write = static function (string $dir, string $version) use ($ns): string {
-            @mkdir($dir, 0755, true);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
             file_put_contents($dir . '/Helper.php', "<?php\nnamespace {$ns};\ninterface Helper {}\n// {$version}\n");
             file_put_contents($dir . '/entry.php', "<?php\nrequire_once __DIR__ . '/Helper.php';\nreturn static function (\$pi): void {};\n");
 

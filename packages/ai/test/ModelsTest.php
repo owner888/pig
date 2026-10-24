@@ -15,6 +15,10 @@ use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
 use Pig\Ai\PricingTier;
 use Pig\Ai\Usage;
+use Pig\Scripts\BuiltinCatalog;
+
+// The rules that make the catalogue's rows, which pig itself never loads.
+require_once __DIR__ . '/../../../scripts/BuiltinCatalog.php';
 
 /**
  * The table of models, and what it costs to run one.
@@ -563,7 +567,7 @@ final class ModelsTest extends TestCase
      * Fireworks models with these reasoning options and reads the catalogue it writes. Here the two
      * halves pig splits that into: the row `scripts/generate-models.php` writes for each — its
      * `effortLevelMap` (`getEffortThinkingLevelMap()` of the options) and the toggle/effort flags, as
-     * `GenerateModelsTest` checks — and the model `Models` makes of the row.
+     * `GenerateModelsTest` checks — and the model `BuiltinCatalog` makes of the row.
      */
     public function testFireworksCombinesModelsDevsEffortAndToggleWithNarrowCorrections(): void
     {
@@ -575,7 +579,7 @@ final class ModelsTest extends TestCase
             )),
         ];
         $model = static function (string $id, array $row): Model {
-            $build = new \ReflectionMethod(Models::class, 'catalogueModel');
+            $build = new \ReflectionMethod(BuiltinCatalog::class, 'catalogueModel');
 
             return $build->invoke(null, 'fireworks', "accounts/fireworks/models/{$id}", ['Model', Api::AnthropicMessages, 262_144, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, ...$row]);
         };
@@ -626,7 +630,7 @@ final class ModelsTest extends TestCase
         // Upstream asks `supportsDirectReasoningEffort()` before `applyThinkingLevelMetadata()` writes
         // `forceAdaptiveThinking` from the id, so an OpenCode or OpenRouter Claude keeps the id rules'
         // map alone — the published catalogue's `claude-opus-4-6` on OpenCode is `{max: "max"}`.
-        $build = new \ReflectionMethod(Models::class, 'catalogueModel');
+        $build = new \ReflectionMethod(BuiltinCatalog::class, 'catalogueModel');
         $opus = $build->invoke(null, 'opencode', 'claude-opus-4-6', ['Claude Opus 4.6', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25,
             'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']]);
 
@@ -983,8 +987,8 @@ final class ModelsTest extends TestCase
         // driven here directly, with the map `getEffortThinkingLevelMap()` makes of
         // `{type: "effort", values: ["none", "low", "medium", "high"]}`.
         $effort = ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null];
-        $map = new \ReflectionMethod(Models::class, 'thinkingLevelMap');
-        $direct = new \ReflectionMethod(Models::class, 'supportsDirectReasoningEffort');
+        $map = new \ReflectionMethod(BuiltinCatalog::class, 'thinkingLevelMap');
+        $direct = new \ReflectionMethod(BuiltinCatalog::class, 'supportsDirectReasoningEffort');
 
         // Every Responses model takes it, and the id rules still come after it: gpt-5.2's `xhigh`.
         $this->assertTrue($direct->invoke(null, Api::OpenAiResponses, 'openai', 'https://api.openai.com/v1', 'gpt-5.2', null));

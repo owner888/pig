@@ -57,6 +57,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - The first prompt waits only for MCP servers with direct tools; a codemode or tool_search server is waited for by the call that reaches it (its `tool_call`), and codemode or `tool_search` is activated from the configuration before servers connect.
 - Changed the `kimi-coding` provider to OpenAI Chat Completions at `https://api.kimi.com/coding/v1`, the protocol the official Kimi Code client uses: K3, K3-256K and Kimi For Coding take tools added mid-conversation without losing the prompt cache. A `models.json` override of the `kimi-coding` base URL must now include `/v1` (upstream #10720).
 - Moved OpenCode Zen and OpenCode Go to the `opencode.ai/inference` endpoints, which fixes OpenCode Go's Gemini models (404 on `/zen/go`); OpenCode Go's MiniMax M2.7 now uses the Anthropic Messages API, as Chat Completions answers "Model does not support this protocol".
+- Changed the built-in model catalog to pi's model JSON: one file per provider in `packages/ai/data/models/`, the format of pi's own catalog, of pi.dev's `/api/models/providers/<id>` and of `models.json`, read at startup instead of derived from PHP tables. The models, prices and request settings are unchanged; `scripts/generate-models.php` writes the rows and then the JSON, and `scripts/build-models.php` rebuilds the JSON after a hand edit.
 
 ## [0.9.1] - 2026-10-23
 

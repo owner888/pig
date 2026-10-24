@@ -76,8 +76,10 @@ php test/lint.php       # php -l over every file (PHPUnit only parses what it lo
 vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
 php test/live.php       # the providers against the real endpoints — costs money, needs keys
                         # `… google` for one provider, `… google/<model-id>` for one model
-php scripts/generate-models.php   # rewrite Ai\Models' rows from models.dev
+php scripts/generate-models.php   # rewrite the built-in rows (scripts/BuiltinCatalog.php) from models.dev,
+                        # then the pi-format catalogue Ai\Models reads (packages/ai/data/models/)
                         # `--dry-run` prints them instead; `--from <file>` reads a saved api.json
+php scripts/build-models.php      # rebuild packages/ai/data/models/ after editing BuiltinCatalog.php by hand
 php scripts/bench-tui.php [session.jsonl] [regular|fullscreen] [cols] [rows]
                         # ms and bytes per frame on a real conversation against a fake terminal
 ```

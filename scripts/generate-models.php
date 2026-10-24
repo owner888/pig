@@ -4,7 +4,8 @@
 declare(strict_types=1);
 
 /**
- * Rewrite `Ai\Models`' tables from models.dev.
+ * Rewrite the built-in catalogue's rows (`scripts/BuiltinCatalog.php`) from models.dev, and the
+ * catalogue `Ai\Models` reads (`packages/ai/data/models/*.json`) from them.
  *
  * `php scripts/generate-models.php [--from <file>] [--radius-from <file>] [--openrouter-from <file>]
  *  [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>]
@@ -33,16 +34,17 @@ declare(strict_types=1);
  *
  * What it does **not** do, on purpose:
  *
- * - **It writes rows, not files.** Each table in `Models.php` carries a `>>> generated` /
- *   `<<< generated` pair and only what lies between them is replaced, so every docblock, base
- *   URL, `RESOLD` entry and Copilot header stays hand-written and a regeneration's diff is the
- *   rows and nothing else.
+ * - **It writes rows, and the catalogue from them.** Each table in `BuiltinCatalog.php` carries a
+ *   `>>> generated` / `<<< generated` pair and only what lies between them is replaced, so every
+ *   docblock, base URL and Copilot header stays hand-written; then `build-models.php` turns rows
+ *   and rules into the pi-format JSON `Models` reads. A regeneration's diff is the rows and the
+ *   JSON they produce, and nothing else.
  * - **It does not touch `ANTIGRAVITY_MODELS`.** That one is hand-written in
  *   *upstream's* generator too — models.dev does not carry a subscription deployment's catalogue —
  *   so they are hand-written here for the same reason and not for want of trying.
  * - **It does not add providers.** The filter is "the protocol is ported", which is `Models`' own
  *   standing rule: offering a model and then failing to send the request is a worse answer than
- *   "no such model". A provider is added by giving it a table in `Models` first. The classifier and
+ *   "no such model". A provider is added by giving it a table in `BuiltinCatalog` first. The classifier and
  *   image models are written into their own two tables (`CLASSIFIER_MODELS`, `IMAGE_MODELS`) from
  *   their own sources — models.dev's decision models (`--decisions-from`), OpenRouter's image and
  *   decision listings (`--openrouter-images-from`, `--openrouter-decisions-from`), Vercel's
@@ -89,14 +91,14 @@ use Pig\Async\Async;
 
 const MODELS_DEV = 'https://models.dev/api.json';
 
-const TABLE = __DIR__ . '/../packages/ai/src/Models.php';
+const TABLE = __DIR__ . '/BuiltinCatalog.php';
 
 /**
  * provider on models.dev => [pig's constant, the api, the base URL]
  *
  * The three columns upstream's script varies per provider and nothing else does. `github-copilot`
  * is absent because its api is per model — see `copilotApi()`. `amazon-bedrock`'s base URL is per
- * model too (upstream's `getBedrockBaseUrl()`, which `Models` applies to each row): the one named
+ * model too (upstream's `getBedrockBaseUrl()`, which `BuiltinCatalog` applies to each row): the one named
  * here is everything but the `eu.` inference profiles'.
  *
  * @var array<string, array{0: string, 1: Api, 2: string}>
@@ -112,8 +114,8 @@ const DIRECT = [
     'xai' => ['XAI_MODELS', Api::OpenAiResponses, 'https://api.x.ai/v1'],
     'zai' => ['ZAI_MODELS', Api::OpenAiCompletions, 'https://api.z.ai/api/coding/paas/v4'],
     'amazon-bedrock' => ['AMAZON_BEDROCK_MODELS', Api::BedrockConverseStream, 'https://bedrock-runtime.us-east-1.amazonaws.com'],
-    // `Models::CATALOGUE_PROVIDERS`' models.dev providers. Fireworks' and the OpenCodes' api is per
-    // model (`rowsFor()`), as is their base URL (`Models`).
+    // `BuiltinCatalog::CATALOGUE_PROVIDERS`' models.dev providers. Fireworks' and the OpenCodes' api is per
+    // model (`rowsFor()`), as is their base URL (`BuiltinCatalog`).
     'baseten' => ['BASETEN_MODELS', Api::OpenAiCompletions, 'https://inference.baseten.co/v1'],
     'cloudflare-workers-ai' => ['CLOUDFLARE_WORKERS_AI_MODELS', Api::OpenAiCompletions, Cloudflare::CLOUDFLARE_WORKERS_AI_BASE_URL],
     'fireworks' => ['FIREWORKS_MODELS', Api::AnthropicMessages, 'https://api.fireworks.ai/inference'],
@@ -162,7 +164,7 @@ const SOURCE = [
 /**
  * Upstream's `isGlm52` in `processZaiModels()`: the two GLM-5.2 ids whose effort map, when they
  * have one, says `off: "none"`. (`ZAI_TOOL_STREAM_UNSUPPORTED_MODELS`, the other z.ai list, is read
- * at run time by `Models`, which is where pig works out a built-in model's compat.)
+ * by `BuiltinCatalog`, which is where pig works out a built-in model's compat.)
  */
 const ZAI_GLM52_IDS = ['glm-5.2', 'glm-5.2-highspeed'];
 
@@ -260,7 +262,7 @@ const AZURE_CONTEXT_WINDOW_OVERRIDES = [
 /**
  * Upstream's `AZURE_DEEPSEEK_V4_PRO_COST`, for its Azure DeepSeek clone — the `deepseek-v4-pro` row of
  * `DEEPSEEK_ROWS` under `azure` at these rates: "Azure resells DeepSeek at its own rates. US data zone,
- * checked 2026-09-16" — on Chat Completions. Its compat and level map are `Models`' (`azureCompat()`,
+ * checked 2026-09-16" — on Chat Completions. Its compat and level map are `BuiltinCatalog`'s (`azureCompat()`,
  * the DeepSeek V4 arm of `thinkingLevelMap()`).
  */
 const AZURE_DEEPSEEK_V4_PRO_COST = ['input' => 1.925, 'out' => 3.828, 'cacheRead' => 0.165, 'cacheWrite' => 0.0];
@@ -446,7 +448,7 @@ const MINIMAX_DIRECT_SUPPORTED_IDS = ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 
 /**
  * Upstream's hand-written `deepseekModels`: "DeepSeek also offers time-based off-peak rates, which
  * the cost schema cannot represent yet." Flash's map is `DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP`; the
- * compat (`deepseekCompat`) is `Models`'.
+ * compat (`deepseekCompat`) is `BuiltinCatalog`'s.
  */
 const DEEPSEEK_ROWS = [
     'deepseek-flash' => [
@@ -494,7 +496,7 @@ const HAND_KEPT_CLASSIFIERS = [
 
 /**
  * Upstream's hand-written `antLingModels`. The compat (`antLingCompat`, and the Ring row's thinking
- * format) and the Ring level map are `Models`'.
+ * format) and the Ring level map are `BuiltinCatalog`'s.
  */
 const ANT_LING_ROWS = [
     'Ling-2.6-1T' => ['name' => 'Ling 2.6 1T', 'reasoning' => false, 'images' => false, 'context' => 262_144, 'output' => 65_536, 'input' => 0.06, 'out' => 0.25, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
@@ -560,7 +562,7 @@ const OVERRIDES = [
         ],
     ],
     // Upstream's own hand-added rows: "Add Claude Opus 5.5 until models.dev includes it" and the same
-    // for Sonnet 5.5, each with the whole effort map (which `Models::thinkingLevelMap()` merges by id).
+    // for Sonnet 5.5, each with the whole effort map (which `BuiltinCatalog::thinkingLevelMap()` merges by id).
     // https://platform.claude.com/docs/en/models/opus-5-5/overview
     'anthropic/claude-opus-5-5' => [
         'kind' => 'add',
@@ -813,14 +815,14 @@ function catalogue(?string $file): array
  *   `EXCLUDED`'s inference-profile-only id; and `strictMode` (upstream's
  *   `compat: {supportsStrictMode: true}`) where models.dev says `structured_output`. No map: upstream
  *   records the reasoning options, but `supportsDirectReasoningEffort()` is false for
- *   `bedrock-converse-stream`, and the map `Models` gives a Bedrock row is the ids'.
+ *   `bedrock-converse-stream`, and the map `BuiltinCatalog` gives a Bedrock row is the ids'.
  * - **nvidia**: models that take text in and out, under the id NIM's own `/v1/models` gives them
  *   (`$nvidiaIds`, `fetchNvidiaNimModelIds()`: as listed, or lower-cased with `_` read as `.`), and
  *   not `NVIDIA_NIM_UNSUPPORTED_MODELS`.
  * - **together**: models.dev's `together`, `togetherai` or `together-ai` entry, whichever there is;
  *   the map `getTogetherThinkingLevelMap()`'s.
  * - **baseten** (`processBasetenModels()`): the map GLM-5.2's, a toggle's, or the efforts'; the row
- *   says whether models.dev lists a toggle and an effort, which `Models` picks the compat by; GLM-5.2
+ *   says whether models.dev lists a toggle and an effort, which `BuiltinCatalog` picks the compat by; GLM-5.2
  *   takes no images "despite models.dev reporting image input".
  * - **fireworks** (`processFireworksModels()`): GLM and Kimi K3 on Chat Completions, the rest on the
  *   Messages API; the row says whether models.dev lists a toggle and an effort.
@@ -937,9 +939,9 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
         $optionTypes = array_map(static fn (mixed $option): mixed => is_array($option) ? ($option['type'] ?? null) : null, $reasoningOptions);
         // Upstream's `recordModelsDevReasoningOptions(provider, id, m)`, read back by
         // `applyModelsDevReasoningOptionMetadata()`. That reader needs the model's api and compat
-        // (`supportsDirectReasoningEffort()`), which pig works out in `Models::table()` and not
+        // (`supportsDirectReasoningEffort()`), which pig works out in `BuiltinCatalog::chat()` and not
         // here — so what the row carries is the options' effort map, the part that depends on the
-        // catalogue alone, and `Models` decides whether it applies. See `effortLevelMap` there.
+        // catalogue alone, and `BuiltinCatalog` decides whether it applies. See `effortLevelMap` there.
         $effortLevelMap = in_array($provider, REASONING_OPTION_PROVIDERS, true) && is_array($model['reasoning_options'] ?? null)
             ? getEffortThinkingLevelMap($model['reasoning_options'])
             : null;
@@ -1777,7 +1779,7 @@ function aiGatewayCost(array $pricing): array
  * Then the temporary override "Cloudflare AI Gateway passes OpenAI usage through at OpenAI list
  * prices": `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])` where there is one.
  *
- * The compat (`sendSessionAffinityHeaders` on the Anthropic and Workers AI rows) is `Models`'.
+ * The compat (`sendSessionAffinityHeaders` on the Anthropic and Workers AI rows) is `BuiltinCatalog`'s.
  *
  * @param array<string, mixed> $catalogue
  * @return array<string, array<string, mixed>>
@@ -2178,7 +2180,7 @@ function render(array $rows, string $constant): string
             $cells[] = "'strictMode' => true";
         }
 
-        // What `Models` picks Baseten's and Fireworks' compat by, and an OpenCode `@ai-sdk/alibaba` model's.
+        // What `BuiltinCatalog` picks Baseten's and Fireworks' compat by, and an OpenCode `@ai-sdk/alibaba` model's.
         foreach (['supportsToggle', 'supportsEffort'] as $flag) {
             if (($row[$flag] ?? false) === true) {
                 $cells[] = "'{$flag}' => true";
@@ -2454,7 +2456,7 @@ foreach ($derived as $provider => [$constant, $rows]) {
     }
 }
 
-// The classifier and image models, which are their own tables (`Models::CLASSIFIER_MODELS`,
+// The classifier and image models, which are their own tables (`BuiltinCatalog::CLASSIFIER_MODELS`,
 // `IMAGE_MODELS`) as upstream keeps chat, image and classifier catalogues apart.
 foreach ([
     'classifiers' => ['CLASSIFIER_MODELS', classifierRows($decisionsFrom, $openRouterDecisionsFrom, $vercelFrom), renderClassifiers(...)],
@@ -2493,8 +2495,16 @@ if (file_put_contents(TABLE, $source) === false) {
     fail('could not write ' . TABLE);
 }
 
-// Re-read the table through a fresh process: this one has the old constants loaded, and PHP
-// cannot be told to forget a class it has already resolved.
+// The catalogue `Models` reads is the JSON built from those rows, so build it — in a fresh process,
+// as is the re-read below: this one has the old constants loaded, and PHP cannot be told to forget
+// a class it has already resolved.
+exec(sprintf('%s %s 2>&1', escapeshellarg(PHP_BINARY), escapeshellarg(__DIR__ . '/build-models.php')), $built, $status);
+
+if ($status !== 0) {
+    fail("the rewritten rows do not build — " . TABLE . " is written and needs looking at:\n" . implode("\n", $built));
+}
+
+// Re-read the table through a fresh process, for the same reason.
 $reload = sprintf(
     '%s -r %s',
     escapeshellarg(PHP_BINARY),
@@ -2540,4 +2550,4 @@ foreach ($output as $line) {
 
 report($before, $after);
 
-printf("\nwritten: %s\n", TABLE);
+printf("\nwritten: %s and %s\n", TABLE, Models::CATALOGUE_DIR);
