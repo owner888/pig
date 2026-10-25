@@ -845,6 +845,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // the page poured the whole SKILL.md into the user bubble on every replay.
     const SKILL_BLOCK = /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/;
 
+    // The header of a skill, summary or hook block can be selected; the click that ends that
+    // selection would otherwise also open or close the block, which `<summary>` does on any click.
+    // On the document: each tab has its own conversation element, and `chatScroll` is the current one.
+    document.addEventListener("click", (e) => {
+      const summary = e.target instanceof Element ? e.target.closest("summary.compaction-header") : null;
+      const selection = window.getSelection?.();
+      if (summary && selection && !selection.isCollapsed && summary.contains(selection.anchorNode)) e.preventDefault();
+    });
+
     function appendSkillInvocation(name, location, content) {
       const block = document.createElement("details");
       block.className = "compaction-box hook-message skill-invocation";

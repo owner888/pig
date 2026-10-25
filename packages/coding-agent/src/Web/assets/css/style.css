@@ -1858,7 +1858,10 @@
       cursor: pointer;
       color: var(--color-text-primary);
       font-weight: 500;
-      user-select: none;
+      /* Selectable: a skill's name and location, a summary's or a hook's label are worth copying.
+         A click that ends a selection does not toggle the block (app.js). */
+      user-select: text;
+      -webkit-user-select: text;
       list-style: none;
     }
     .compaction-header::-webkit-details-marker { display: none; }
