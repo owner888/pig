@@ -1240,6 +1240,9 @@
     }
     .tool-header-chevron.expanded { transform: rotate(90deg); }
     .tool-header-title {
+      /* The header is a toggle and stays unselectable; the command or path in it is not. */
+      user-select: text;
+      -webkit-user-select: text;
       font-weight: 500;
       color: var(--color-text-primary);
       overflow: hidden;

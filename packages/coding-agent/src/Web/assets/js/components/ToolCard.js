@@ -132,7 +132,13 @@ export class ToolCard {
     `;
 
     const header = this.element.querySelector(".tool-header");
-    header.addEventListener("click", () => this.toggleExpand());
+    // The title can be selected and copied; a click that ends a selection in the header is that
+    // selection, not a request to expand or collapse.
+    header.addEventListener("click", () => {
+      const selection = window.getSelection?.();
+      if (selection && !selection.isCollapsed && header.contains(selection.anchorNode)) return;
+      this.toggleExpand();
+    });
   }
 
   toggleExpand() {
