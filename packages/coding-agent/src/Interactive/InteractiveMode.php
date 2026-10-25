@@ -893,6 +893,11 @@ final class InteractiveMode
         }
 
         $this->running = false;
+        // `PIG_STALL_LOG` is about a screen that does not answer; from here there is no screen,
+        // and letting go of the session (its hooks, MCP servers, the transcript written back) is
+        // allowed to take its time. Off before console output comes back on, or the quit itself
+        // is reported on the terminal.
+        Loop::get()->watchStalls(null);
         Logger::setConsoleOutput(true);
         $this->terminalProgress(false);
         // Stopping the web server winds its children down and suspends while it does, and this

@@ -205,7 +205,10 @@ kept, as none was for `~/.pig` → `~/.pig/agent`.
   a remote client without SSH markers). `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
 - **New, pig's own**: `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
   (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, and where the coroutine it
-  resumed had suspended before and after, which brackets the slow code.
+  resumed had suspended before and after, which brackets the slow code. A coroutine held before its
+  first suspension is named after the closure it runs (`Async.php:94 → ModelRefresh.php:120`), since
+  `Async::spawn()`'s starter is the same callback for all of them. Watching stops when the
+  interactive mode stops: quitting has no screen to keep responsive.
 - **Set, not read**: `PIG_CODING_AGENT=true` and `AI_AGENT=pig` for every child, and the
   `PIG_SESSION_*` / `PIG_PROVIDER` / `PIG_MODEL` / `PIG_REASONING_LEVEL` a shell command is given
   (see the shell tools above). The last three share names with the dropped config variables; they

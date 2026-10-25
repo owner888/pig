@@ -912,7 +912,9 @@ final class PackageManager
      */
     private function captureComposer(array $arguments, string $root, bool $includeStderr = true): ?string
     {
-        [$exit, $stdout, $stderr] = Process::run(['composer', ...$arguments, '--no-interaction', "--working-dir={$root}"], self::NETWORK_TIMEOUT * 6);
+        // On the loop when there is one: the startup update check asks this from a coroutine beside
+        // the keyboard, and a blocking wait on Packagist would hold the first frames with it.
+        [$exit, $stdout, $stderr] = Process::runAsync(['composer', ...$arguments, '--no-interaction', "--working-dir={$root}"], self::NETWORK_TIMEOUT * 6);
 
         // `--dry-run` reports its plan on standard error, `outdated --format=json` on standard output.
         if ($exit !== 0) {
@@ -1361,7 +1363,10 @@ final class PackageManager
      */
     private function capture(array $command, ?string $cwd, float $timeout = self::NETWORK_TIMEOUT): ?string
     {
-        [$exit, $stdout] = Process::run(['env', 'GIT_TERMINAL_PROMPT=0', ...$command], $timeout, $cwd);
+        // On the loop when there is one, as `captureComposer()`: `git ls-remote` is a network round
+        // trip, and the startup update check makes one per git package (PIG_STALL_LOG measured the
+        // check holding the loop for 830ms with the blocking wait).
+        [$exit, $stdout] = Process::runAsync(['env', 'GIT_TERMINAL_PROMPT=0', ...$command], $timeout, $cwd);
 
         return $exit === 0 ? $stdout : null;
     }

@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed the startup package update check holding the terminal for most of a second: `git ls-remote` for each git package and the Composer queries now wait on the event loop instead of blocking it, so the first frames and the keyboard are not held while a remote answers.
+- Fixed `PIG_STALL_LOG` reporting the quit itself on the terminal: watching stops when the interactive mode stops. A coroutine held before its first suspension is now logged under the closure it runs (`Async.php:94 → pig:1321`) instead of the shared starter.
+
 ## [0.11.1] - 2026-10-24
 
 ### Fixed

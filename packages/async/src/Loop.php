@@ -281,6 +281,8 @@ final class Loop
     private function timed(Closure $callback, array $arguments): void
     {
         $before = $this->suspends;
+        // Named before it runs: a coroutine that finishes inside it can no longer say what it ran.
+        $name = self::callbackName($callback);
         $started = hrtime(true);
 
         try {
@@ -289,16 +291,41 @@ final class Loop
             $seconds = (hrtime(true) - $started) / 1e9;
 
             if ($this->onStall !== null && $seconds >= $this->stallThreshold) {
-                $reflection = new \ReflectionFunction($callback);
                 $resumed = $this->suspends !== $before;
                 ($this->onStall)(
                     $seconds,
-                    basename((string) $reflection->getFileName()) . ':' . $reflection->getStartLine(),
+                    $name,
                     $resumed ? $this->previousSuspend : null,
                     $resumed ? $this->lastSuspend : null,
                 );
             }
         }
+    }
+
+    /**
+     * Where a callback was written, `file:line`. A coroutine's first run is `Async::spawn()`'s
+     * starter for every coroutine alike, so for one of those the closure the coroutine runs is
+     * named after it: `Async.php:94 → ModelRefresh.php:120`.
+     */
+    private static function callbackName(Closure $callback): string
+    {
+        $name = static function (Closure $closure): string {
+            $reflection = new \ReflectionFunction($closure);
+
+            return basename((string) $reflection->getFileName()) . ':' . $reflection->getStartLine();
+        };
+        $described = $name($callback);
+
+        foreach ((new \ReflectionFunction($callback))->getClosureUsedVariables() as $used) {
+            if ($used instanceof \Fiber && !$used->isTerminated()) {
+                $body = (new \ReflectionFiber($used))->getCallable();
+                $fn = $body instanceof Closure ? ((new \ReflectionFunction($body))->getClosureUsedVariables()['fn'] ?? $body) : null;
+
+                return $fn instanceof Closure ? "{$described} → {$name($fn)}" : $described;
+            }
+        }
+
+        return $described;
     }
 
     /** @param list<mixed> $arguments */

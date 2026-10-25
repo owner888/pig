@@ -364,4 +364,26 @@ final class LoopTest extends TestCase
         $this->assertStringContainsString('LoopTest.php:', (string) $at);
         $this->assertNotSame($from, $at);
     }
+
+    public function testAStalledCoroutineStartIsNamedAfterWhatTheCoroutineRuns(): void
+    {
+        $stalls = [];
+        Loop::get()->watchStalls(static function (float $seconds, string $callback) use (&$stalls): void {
+            $stalls[] = $callback;
+        }, 0.1);
+
+        try {
+            \Pig\Async\Async::run(static function (): void {
+                // Slow before its first suspension: the stall is the coroutine's start.
+                \Pig\Async\Async::spawn(static function (): void {
+                    usleep(150_000);
+                })->await();
+            });
+        } finally {
+            Loop::get()->watchStalls(null);
+        }
+
+        $this->assertCount(1, $stalls);
+        $this->assertMatchesRegularExpression('/^Async\.php:\d+ → LoopTest\.php:\d+$/', $stalls[0]);
+    }
 }
