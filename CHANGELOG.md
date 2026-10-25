@@ -50,7 +50,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [0.11.3] - 2026-10-25
+
+Faster startup and no more freezes on a slow network: host names looked up off the event loop, shadowed extensions no longer loaded twice, a cheaper model table, and upstream's per-extension startup timings.
 
 ### Changed
 
@@ -61,6 +63,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Fixed a slow DNS server freezing the whole terminal: a host name is now looked up in a child process while the event loop keeps running, instead of inside the connect, where the lookup held everything for seconds (up to the connect timeout). Addresses are kept for five minutes per host; TLS still verifies and names the host.
 - Fixed an extension in `~/.pig/agent/extensions` being loaded and initialised only to be replaced by a trusted project's extension of the same name: it is now held back until the project's trust is known and loaded only when no project copy took its name. Starting pig in its own repository loaded every bundled extension twice.
 - Faster startup with a large model catalog: the model table is rebuilt in one pass over the stored catalogs instead of one pass per catalog (it is rebuilt whenever an extension registers models), the shipped rows are keyed once, and the catalog's 1,700 rows share their identical `compat` and price objects.
+
+## [0.11.2] - 2026-10-25
+
+### Fixed
+
 - Fixed the startup package update check holding the terminal for most of a second: `git ls-remote` for each git package and the Composer queries now wait on the event loop instead of blocking it, so the first frames and the keyboard are not held while a remote answers.
 - Fixed `PIG_STALL_LOG` reporting the quit itself on the terminal: watching stops when the interactive mode stops. A coroutine held before its first suspension is now logged under the closure it runs (`Async.php:94 → pig:1321`) instead of the shared starter.
 
