@@ -7,48 +7,58 @@ namespace Pig\CodingAgent;
 use Pig\Ai\Timestamp;
 
 /**
- * How long each part of starting up took, when anybody asked.
+ * Central timing instrumentation for startup profiling — upstream's `core/timings.ts`, enabled
+ * with `PIG_TIMING=1` as upstream's is with `PI_TIMING=1`.
  *
- * Upstream's `core/timings.ts`, behind `PIG_TIMING=1` as upstream's is behind `PI_TIMING=1`.
- * Off, `mark()` is a comparison and a return, which is what lets the calls sit in `bin/pig`
+ * Two namespaces, upstream's: `main`, the steps of `bin/pig` (its labels are pig's, because its
+ * steps are), and `extensions`, a `<path> module import` and a `<path> factory` line for each
+ * extension `ExtensionLoader` loads, reset at every load as upstream's resource loader resets it.
+ * Off, `time()` is a comparison and a return, which is what lets the calls sit in `bin/pig`
  * unconditionally rather than behind an `if` at every step.
  *
- * It measures **gaps, not moments**: each mark records the time since the last one, so what
- * comes out is a list of steps and what each cost. A list of timestamps would need subtracting
- * by whoever read it, and that is the part nobody does.
+ * It measures **gaps, not moments**: each `time()` records the milliseconds since the one before
+ * it in the same namespace, named after what just *happened* — `time('skills')` after loading
+ * them is the cost of loading them.
  *
- * Output goes to standard error, like every other thing `bin/pig` says before a UI exists —
- * standard output belongs to `--mode json` and to `-p`, and a table of milliseconds in the
- * middle of a JSON stream stops whatever was parsing it.
+ * Output goes to standard error, as upstream's `console.error`, and like every other thing
+ * `bin/pig` says before a UI exists — standard output belongs to `--mode json` and to `-p`.
  */
 final class Timings
 {
-    /** @var list<array{0: string, 1: int}> label, and the milliseconds since the mark before it */
-    private static array $steps = [];
-
-    private static ?int $last = null;
+    /** @var array<string, array{timings: list<array{label: string, ms: int}>, lastTime: int}> upstream's `timingNamespaces`, in first-use order */
+    private static array $namespaces = [];
 
     private static ?bool $enabled = null;
 
-    /**
-     * Note that a step has finished.
-     *
-     * Named after what just *happened*, not what is about to: a mark is the end of the thing
-     * before it, so `mark('skills')` after loading them is the cost of loading them.
-     */
-    public static function mark(string $label): void
+    /** Upstream's `resetTimings()`: start a namespace over, its clock from now. */
+    public static function resetTimings(string $namespace = 'main'): void
+    {
+        if (!self::enabled()) {
+            return;
+        }
+
+        self::$namespaces[$namespace] = ['timings' => [], 'lastTime' => Timestamp::nowMs()];
+    }
+
+    /** Upstream's `time()`: a step of $namespace has finished. */
+    public static function time(string $label, string $namespace = 'main'): void
     {
         if (!self::enabled()) {
             return;
         }
 
         $now = Timestamp::nowMs();
-        self::$steps[] = [$label, $now - (self::$last ?? $now)];
-        self::$last = $now;
+
+        if (!isset(self::$namespaces[$namespace])) {
+            self::resetTimings($namespace);
+        }
+
+        self::$namespaces[$namespace]['timings'][] = ['label' => $label, 'ms' => $now - self::$namespaces[$namespace]['lastTime']];
+        self::$namespaces[$namespace]['lastTime'] = $now;
     }
 
-    /** Print what was collected, if anything was. */
-    public static function report(): void
+    /** Upstream's `printTimings()`. */
+    public static function printTimings(): void
     {
         $table = self::table();
 
@@ -58,59 +68,66 @@ final class Timings
     }
 
     /**
-     * The table, or an empty string when there is nothing to say.
+     * What `printTimings()` writes: upstream's `printTimingGroup()` for each namespace, an empty
+     * string when nothing was measured.
      *
-     * Separate from `report()` so the content can be asserted on: `report()` writes to standard
-     * error, which `ob_start()` does not capture, so a test against it would pass whatever the
-     * table said. Empty rather than a heading with no rows, because `PIG_TIMING=1 bin/pig
-     * --version` should not answer with one.
+     * Separate so the content can be asserted on: standard error is not what `ob_start()`
+     * captures, so a test against `printTimings()` would pass whatever the table said.
      */
     public static function table(): string
     {
-        if (!self::enabled() || self::$steps === []) {
+        if (!self::enabled()) {
             return '';
         }
 
-        $width = 0;
+        $out = '';
 
-        foreach (self::$steps as [$label, $ignored]) {
-            $width = max($width, strlen($label));
+        foreach (self::$namespaces as $namespace => $timingNamespace) {
+            $out .= self::timingGroup("Startup Timings: {$namespace}", $timingNamespace['timings']);
         }
 
-        $lines = ["\n--- Startup timings ---"];
-        $total = 0;
+        return $out;
+    }
 
-        foreach (self::$steps as [$label, $spent]) {
-            $total += $spent;
-            $lines[] = '  ' . str_pad($label, $width) . '  ' . $spent . 'ms';
+    /**
+     * The steps of one namespace, as recorded.
+     *
+     * @return list<array{label: string, ms: int}>
+     */
+    public static function timings(string $namespace = 'main'): array
+    {
+        return self::$namespaces[$namespace]['timings'] ?? [];
+    }
+
+    /** For a test: forget everything measured, and whether timing is on. */
+    public static function reset(): void
+    {
+        self::$namespaces = [];
+        self::$enabled = null;
+    }
+
+    /** @param list<array{label: string, ms: int}> $timings */
+    private static function timingGroup(string $title, array $timings): string
+    {
+        $printable = array_values(array_filter($timings, static fn (array $timing): bool => $timing['ms'] >= 0));
+
+        if ($printable === []) {
+            return '';
         }
 
-        $lines[] = '  ' . str_pad('TOTAL', $width) . '  ' . $total . 'ms';
-        $lines[] = "-----------------------\n";
+        $lines = ["\n--- {$title} ---"];
+
+        foreach ($printable as $timing) {
+            $lines[] = "  {$timing['label']}: {$timing['ms']}ms";
+        }
+
+        $lines[] = '  TOTAL: ' . array_sum(array_column($printable, 'ms')) . 'ms';
+        $lines[] = str_repeat('-', strlen($title) + 8) . "\n";
 
         return implode("\n", $lines) . "\n";
     }
 
-    /** For a test: forget everything measured so far. */
-    public static function reset(): void
-    {
-        self::$steps = [];
-        self::$last = null;
-        self::$enabled = null;
-    }
-
-    /**
-     * @return list<array{0: string, 1: int}>
-     */
-    public static function steps(): array
-    {
-        return self::$steps;
-    }
-
-    /**
-     * Read once and remembered, because the environment does not change mid-startup and this
-     * is asked at every step.
-     */
+    /** Read once: the environment does not change mid-startup, and this is asked at every step. */
     private static function enabled(): bool
     {
         return self::$enabled ??= getenv('PIG_TIMING') === '1';

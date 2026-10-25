@@ -52,6 +52,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Changed
+
+- `PIG_TIMING=1` prints upstream's tables: `Startup Timings: main` in upstream's format, and a new `Startup Timings: extensions` with a `module import` and a `factory` line for each extension (`builtin:<name>` for a built-in), so the cost of each extension can be read and a pig table compared with a pi one.
+
 ### Fixed
 
 - Fixed the startup package update check holding the terminal for most of a second: `git ls-remote` for each git package and the Composer queries now wait on the event loop instead of blocking it, so the first frames and the keyboard are not held while a remote answers.

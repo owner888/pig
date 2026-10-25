@@ -5,17 +5,20 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Timings;
 
 /**
- * Where the startup time went, when anybody asked.
+ * Where the startup time went, when anybody asked — upstream's `core/timings.ts`.
  *
- * The interesting half is that it is *off*: the marks sit in `bin/pig` unconditionally, so
+ * The interesting half is that it is *off*: the calls sit in `bin/pig` unconditionally, so
  * "does nothing when the variable is unset" is the property that keeps them from costing
  * anything at every start.
  */
 final class TimingsTest extends TestCase
 {
+    private ?string $root = null;
+
     #[\Override]
     protected function setUp(): void
     {
@@ -28,15 +31,28 @@ final class TimingsTest extends TestCase
     {
         putenv('PIG_TIMING');
         Timings::reset();
+
+        if ($this->root !== null) {
+            foreach (glob("{$this->root}/*/*") ?: [] as $file) {
+                unlink($file);
+            }
+            foreach (glob("{$this->root}/*") ?: [] as $dir) {
+                rmdir($dir);
+            }
+            rmdir($this->root);
+        }
     }
 
     public function testNothingIsCollectedUnlessItWasAskedFor(): void
     {
-        Timings::mark('one');
-        Timings::mark('two');
+        Timings::resetTimings();
+        Timings::time('one');
+        Timings::time('two', 'extensions');
 
         // The calls are unconditional in `bin/pig`, so this is what keeps them free.
-        $this->assertSame([], Timings::steps());
+        $this->assertSame([], Timings::timings());
+        $this->assertSame([], Timings::timings('extensions'));
+        $this->assertSame('', Timings::table());
     }
 
     public function testSomethingOtherThanOneIsStillOff(): void
@@ -45,31 +61,36 @@ final class TimingsTest extends TestCase
         // would be a variable that cannot be turned off the obvious way.
         putenv('PIG_TIMING=0');
         Timings::reset();
-        Timings::mark('one');
+        Timings::time('one');
 
-        $this->assertSame([], Timings::steps());
+        $this->assertSame([], Timings::timings());
     }
 
-    public function testEachMarkRecordsTheGapSinceTheOneBeforeIt(): void
+    public function testEachTimeRecordsTheGapSinceTheResetOrTheOneBeforeIt(): void
     {
         putenv('PIG_TIMING=1');
         Timings::reset();
 
-        Timings::mark('start');
+        Timings::resetTimings();
         usleep(30_000);
-        Timings::mark('settings');
+        Timings::time('parseArgs');
+        Timings::time('settings');
 
-        $steps = Timings::steps();
+        $timings = Timings::timings();
+        $this->assertSame(['parseArgs', 'settings'], array_column($timings, 'label'));
+        // Gaps, not moments: the first from the reset, the second from the first.
+        $this->assertGreaterThanOrEqual(20, $timings[0]['ms']);
+        $this->assertLessThan(20, $timings[1]['ms']);
+    }
 
-        $this->assertCount(2, $steps);
-        $this->assertSame('start', $steps[0][0]);
-        // The first is an anchor: there was nothing before it to measure from.
-        $this->assertSame(0, $steps[0][1]);
+    public function testANamespaceUsedBeforeAResetStartsItsClockAtItsFirstTime(): void
+    {
+        putenv('PIG_TIMING=1');
+        Timings::reset();
 
-        $this->assertSame('settings', $steps[1][0]);
-        // Gaps, not moments. A list of timestamps would need subtracting by whoever read it,
-        // which is the part nobody does.
-        $this->assertGreaterThanOrEqual(20, $steps[1][1]);
+        Timings::time('a', 'extensions');
+
+        $this->assertSame([['label' => 'a', 'ms' => 0]], Timings::timings('extensions'));
     }
 
     public function testNothingMeasuredSaysNothing(): void
@@ -81,33 +102,56 @@ final class TimingsTest extends TestCase
         $this->assertSame('', Timings::table());
     }
 
-    public function testTheTableNamesEveryStepAndAddsThemUp(): void
+    /** Upstream's `printTimingGroup()`, one group per namespace in first-use order. */
+    public function testTheTableIsUpstreamsOneGroupPerNamespace(): void
     {
         putenv('PIG_TIMING=1');
         Timings::reset();
 
-        Timings::mark('start');
-        usleep(20_000);
-        Timings::mark('settings');
-        usleep(20_000);
-        Timings::mark('skills');
+        Timings::resetTimings();
+        Timings::time('parseArgs');
+        Timings::time('settings');
+        Timings::resetTimings('extensions');
+        Timings::time('/x/copy.php module import', 'extensions');
 
-        $table = Timings::table();
+        $main = Timings::timings();
+        $extensions = Timings::timings('extensions');
 
-        $this->assertStringContainsString('Startup timings', $table);
-        $this->assertStringContainsString('settings', $table);
-        $this->assertStringContainsString('skills', $table);
-        $this->assertStringContainsString('TOTAL', $table);
-        // Asserted against `table()` and not `report()`: the latter writes to standard error,
-        // which `ob_start()` does not capture, so a test against it would pass whatever the
-        // table said — which is a test that proves nothing while looking like it does.
-        $this->assertMatchesRegularExpression('/TOTAL\s+\d+ms/', $table);
+        $this->assertSame(
+            "\n--- Startup Timings: main ---\n"
+            . "  parseArgs: {$main[0]['ms']}ms\n"
+            . "  settings: {$main[1]['ms']}ms\n"
+            . '  TOTAL: ' . ($main[0]['ms'] + $main[1]['ms']) . "ms\n"
+            . "-----------------------------\n\n"
+            . "\n--- Startup Timings: extensions ---\n"
+            . "  /x/copy.php module import: {$extensions[0]['ms']}ms\n"
+            . "  TOTAL: {$extensions[0]['ms']}ms\n"
+            . "-----------------------------------\n\n",
+            Timings::table(),
+        );
     }
 
-    public function testWithNothingAskedForThereIsNoTableEither(): void
+    /** Upstream's loader: a `module import` and a `factory` line per extension, reset at each load. */
+    public function testEachExtensionIsTimedByTheLoader(): void
     {
-        Timings::mark('one');
+        putenv('PIG_TIMING=1');
+        Timings::reset();
+        $this->root = sys_get_temp_dir() . '/pig-timings-' . bin2hex(random_bytes(4));
+        mkdir("{$this->root}/home/extensions", 0o777, true);
+        mkdir("{$this->root}/project", 0o777, true);
+        rmdir("{$this->root}/home/extensions");
+        mkdir("{$this->root}/extensions", 0o777, true);
+        $file = "{$this->root}/extensions/timed.php";
+        file_put_contents($file, "<?php\nreturn static function (\$api): void { usleep(20_000); };\n");
 
-        $this->assertSame('', Timings::table());
+        ExtensionLoader::load("{$this->root}/project", configured: [$file], home: "{$this->root}/home");
+
+        $timings = Timings::timings('extensions');
+        $this->assertSame(["{$file} module import", "{$file} factory"], array_column($timings, 'label'));
+        $this->assertGreaterThanOrEqual(15, $timings[1]['ms']);
+
+        // A second load is measured on its own.
+        ExtensionLoader::load("{$this->root}/project", configured: [$file], home: "{$this->root}/home");
+        $this->assertCount(2, Timings::timings('extensions'));
     }
 }

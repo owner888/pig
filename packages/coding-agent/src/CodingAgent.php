@@ -441,7 +441,7 @@ final class CodingAgent
             $warnings[] = $problem;
         }
 
-        Timings::mark('contextFiles');
+        Timings::time('contextFiles');
 
         // Upstream's `DefaultResourceLoader.reload()`: `SYSTEM.md` and `APPEND_SYSTEM.md`, the
         // project's (trusted) over the agent directory's, unless the run named its own.
@@ -459,13 +459,13 @@ final class CodingAgent
             $warnings[] = $problem;
         }
 
-        Timings::mark('packages');
+        Timings::time('packages');
 
         // Before the agent as well as before any UI, because the hooks are handed the session file
         // and the agent is handed the hooks.
         $store = $save ? self::store($cwd, $resume, $continue, $sessionId, $cwdOverride) : null;
         $resumed = $save && ($resume !== null || $continue);
-        Timings::mark('session');
+        Timings::time('session');
 
         [$loadedHooks, $hookProblems] = $withHooks
             ? HookLoader::load($cwd, $settings->hooks(), projectTrusted: $projectTrusted)
@@ -481,7 +481,7 @@ final class CodingAgent
         }
 
         $hooks = new HookRunner($loadedHooks, $cwd, $store);
-        Timings::mark('hooks');
+        Timings::time('hooks');
 
         // The built-in names are handed in so a tool that would shadow `bash` is named rather than
         // quietly replacing it.
@@ -573,7 +573,7 @@ final class CodingAgent
             }
         }
 
-        Timings::mark('customTools');
+        Timings::time('customTools');
         $customTools = new CustomToolSet($loadedTools, $toolApi);
 
         foreach ($loadedExtensions as $ext) {
@@ -616,7 +616,7 @@ final class CodingAgent
             hooks: $hooks,
             customTools: $customTools,
         );
-        Timings::mark('agent');
+        Timings::time('agent');
 
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
         // same way the ones at startup did: beside the built-ins, wrapped with the hooks, and
@@ -738,7 +738,7 @@ final class CodingAgent
             [$skills, $skillWarnings] = self::firstByName($skills, $skillWarnings, Skills::fromPaths($skillPaths, $cwd));
         }
 
-        Timings::mark('skills');
+        Timings::time('skills');
 
         foreach ($skillWarnings as $warning) {
             $warnings[] = "skill {$warning->path}: {$warning->message}";
@@ -776,7 +776,7 @@ final class CodingAgent
         $promptWarnings = array_map(static fn (string $warning): string => "prompt template {$warning}", $promptWarnings);
         $warnings = [...$warnings, ...$promptWarnings];
 
-        Timings::mark('slashCommands');
+        Timings::time('slashCommands');
 
         Themes::setResolvedThemeFiles(array_map(
             static fn (ResolvedResource $r): string => $r->path,

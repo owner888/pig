@@ -923,24 +923,30 @@ ignores escape parks the turn — which nothing here can prevent, because it hol
 ## Where the startup time went
 
 `Timings` is upstream's `core/timings.ts`, behind `PIG_TIMING=1` as upstream's is behind
-`PI_TIMING=1`. Twelve marks in `bin/pig` — arguments, settings, credentials, context files,
-skills, slash commands, the session, hooks, custom tools, the agent, the `@file` reads — and a
-table on **standard error** at the point a mode takes over.
+`PI_TIMING=1`, with its API (`resetTimings()`, `time()`, `printTimings()`) and its two
+namespaces. `main` is the steps of `bin/pig` — arguments, settings, credentials, `models.json`,
+extensions, context files, skills, slash commands, the session, hooks, custom tools, the agent,
+the `@file` reads — under pig's labels, because pig's steps are not upstream's. `extensions` is
+upstream's to the label: `ExtensionLoader` writes a `<path> module import` line after an
+extension's file is required and a `<path> factory` line after its factory ran, a built-in as
+`builtin:<name>`, and resets the namespace at every load, so `/reload` is measured on its own.
+The tables go to **standard error** at the point a mode takes over, in upstream's format
+(`--- Startup Timings: main ---`, `  label: Nms`, `  TOTAL: Nms`), so a pi table and a pig table
+can be read side by side.
 
 Four things about it:
 
-- **Gaps, not moments.** Each mark records the time since the last, so what comes out is a list
-  of steps and what each cost. A list of timestamps needs subtracting by whoever reads it, and
-  that is the part nobody does. The first mark is an anchor and reads 0.
-- **The marks are unconditional**, and `mark()` is a comparison and a return when the variable
-  is unset. An `if` at each of twelve steps would be the same thing written twelve times.
+- **Gaps, not moments.** Each `time()` records the time since the one before it in its
+  namespace (or since `resetTimings()`), so what comes out is a list of steps and what each
+  cost. A list of timestamps needs subtracting by whoever reads it, and that is the part nobody
+  does.
+- **The calls are unconditional**, and `time()` is a comparison and a return when the variable
+  is unset. An `if` at each step would be the same thing written over and over.
 - **Standard error, and before the mode starts**, not at the end. Standard output belongs to
   `--mode json` and `-p`, and a report printed when pig quits is one somebody has to scroll back
   an hour to find.
-- **`table()` is separate from `report()`** because `report()` writes to standard error, which
-  `ob_start()` does not capture — a test against it would pass whatever the table said. That is
-  the same failure as the `/label` test that passed while doing the wrong thing, caught this
-  time by noticing the assertion could not fail.
+- **`table()` is separate from `printTimings()`** because the latter writes to standard error,
+  which `ob_start()` does not capture — a test against it would pass whatever the table said.
 
 Exactly `1`, as upstream tests it: `PIG_TIMING=0` meaning "on" would be a variable that cannot
 be turned off the obvious way.

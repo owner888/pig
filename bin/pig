@@ -75,10 +75,10 @@ use Pig\Tui\Style;
 // out of date for ever. `Version` reads Composer's own answer, so there is nothing to bump.
 define('VERSION', Version::current());
 
-// The first mark is an anchor and costs nothing; every one after it is the gap since the
-// last. All of them are no-ops unless `PIG_TIMING=1`, which is why they can sit in the flow
+// Upstream's `resetTimings()` at the top of `main()`: the clock every `time()` after it measures
+// from. All of them are no-ops unless `PIG_TIMING=1`, which is why they can sit in the flow
 // rather than behind an `if` at each step.
-Timings::mark('start');
+Timings::resetTimings();
 
 // What happens when pig falls over: the crash is written down for `/bug` to attach, the terminal
 // is handed back, and the message is printed with the way to report it — upstream's
@@ -175,7 +175,7 @@ if ($arguments->errors() !== []) {
     exit(1);
 }
 
-Timings::mark('parseArgs');
+Timings::time('parseArgs');
 
 if (isset($options['version'])) {
     echo 'pig ' . VERSION . "\n";
@@ -592,7 +592,7 @@ $askTrust = $interactive && $startsASession
     }
     : null;
 
-Timings::mark('settings');
+Timings::time('settings');
 
 // Before anything opens a socket, which the first token refresh in `Auth::discover()` already
 // does. `--proxy`, then the environment with the settings' `httpProxy` filling in — upstream's
@@ -642,7 +642,7 @@ $configureHttp = static function (Settings $settings) use ($options): void {
     }
 };
 $configureHttp($settings);
-Timings::mark('proxy');
+Timings::time('proxy');
 
 // Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
@@ -660,7 +660,7 @@ if ($movedCredentials !== []) {
     ));
 }
 
-Timings::mark('migrations');
+Timings::time('migrations');
 
 // Not affected by `--no-session`, which is about not writing this conversation down. A stored
 // sign-in is still the way in, and a token renewed during the run has to be kept or the next
@@ -671,7 +671,7 @@ foreach ($auth->problems() as $problem) {
     fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));
 }
 
-Timings::mark('credentials');
+Timings::time('credentials');
 
 // Before the model is resolved, because `--model my-box/qwen3-coder` has to be able to find
 // one of these. Read with `--no-session` too: it is about not writing the conversation down,
@@ -686,7 +686,7 @@ foreach ($custom->problems as $problem) {
     fwrite(STDERR, Style::yellow("models.json: {$problem}\n"));
 }
 
-Timings::mark('customModels');
+Timings::time('customModels');
 
 // And the providers the extensions bring, for the same reason `models.json` is read before
 // `--list-models`: a listing that cannot show a model an installed extension sells is a listing
@@ -850,7 +850,7 @@ if (!$trustUndecided) {
     $settleTrust(true);
 }
 
-Timings::mark('extensions');
+Timings::time('extensions');
 
 // What `--use-theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
 // Null is upstream's default, the system theme.
@@ -1182,7 +1182,7 @@ $hooks = $started->hooks;
 $customTools = $started->customTools;
 $extensions = $started->extensions;
 
-Timings::mark('assembled');
+Timings::time('assembled');
 
 // Read here rather than in the parser: a missing file should be reported after the cheap
 // mistakes and before the expensive setup, and it is the one positional argument that can
@@ -1207,8 +1207,8 @@ $messages = InitialMessage::build($stdinContent, $files->text, $messages);
 // Here rather than at the end: startup is over the moment a mode takes the screen, and a
 // report printed when pig quits would be one somebody has to scroll back to find — after an
 // hour of conversation, if they are still there at all.
-Timings::mark('files');
-Timings::report();
+Timings::time('files');
+Timings::printTimings();
 
 // Standard output belongs to the answer in every non-interactive mode, which is why every
 // warning above went to standard error: something parsing JSON lines must not find a yellow

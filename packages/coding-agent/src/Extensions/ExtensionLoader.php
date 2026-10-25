@@ -11,6 +11,7 @@ use Pig\CodingAgent\Hooks\DeclaredSymbols;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Packages\PackageManager;
+use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
@@ -66,6 +67,9 @@ final class ExtensionLoader
         bool $discover = true,
         array $builtins = [],
     ): array {
+        // Upstream's resource loader resets the `extensions` timings at every load, so a `/reload`
+        // under `PIG_TIMING=1` is measured on its own.
+        Timings::resetTimings('extensions');
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
@@ -303,8 +307,13 @@ final class ExtensionLoader
         $hash = $declared === [] ? '' : DeclaredSymbols::hashOf($resolved);
         $kept = $declared === [] ? null : DeclaredSymbols::recall($resolved, $hash);
 
+        // Upstream labels a line by the path the extension was loaded from; a built-in is
+        // `builtin:<name>` there, and here too.
+        $label = ($builtin = BuiltinExtensions::nameOf($path)) !== null ? BuiltinExtensions::PREFIX . $builtin : $path;
+
         if ($kept !== null) {
             $factory = $kept['factory'];
+            Timings::time("{$label} module import", 'extensions');
 
             if ($kept['changed']) {
                 $note = new ExtensionError($path, 'reload', 'declares ' . HookLoader::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
@@ -348,6 +357,8 @@ final class ExtensionLoader
                 return [null, new ExtensionError($path, 'load', self::describe($error))];
             }
 
+            Timings::time("{$label} module import", 'extensions');
+
             $printed = ob_get_clean();
 
             if (is_string($printed) && trim($printed) !== '') {
@@ -368,6 +379,8 @@ final class ExtensionLoader
         } catch (Throwable $error) {
             return [null, new ExtensionError($path, 'load', self::describe($error))];
         }
+
+        Timings::time("{$label} factory", 'extensions');
 
         return [new LoadedExtension($path, $resolved, $name, $api), $note];
     }
