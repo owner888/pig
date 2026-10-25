@@ -58,6 +58,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- Fixed a slow DNS server freezing the whole terminal: a host name is now looked up in a child process while the event loop keeps running, instead of inside the connect, where the lookup held everything for seconds (up to the connect timeout). Addresses are kept for five minutes per host; TLS still verifies and names the host.
 - Fixed an extension in `~/.pig/agent/extensions` being loaded and initialised only to be replaced by a trusted project's extension of the same name: it is now held back until the project's trust is known and loaded only when no project copy took its name. Starting pig in its own repository loaded every bundled extension twice.
 - Faster startup with a large model catalog: the model table is rebuilt in one pass over the stored catalogs instead of one pass per catalog (it is rebuilt whenever an extension registers models), the shipped rows are keyed once, and the catalog's 1,700 rows share their identical `compat` and price objects.
 - Fixed the startup package update check holding the terminal for most of a second: `git ls-remote` for each git package and the Composer queries now wait on the event loop instead of blocking it, so the first frames and the keyboard are not held while a remote answers.

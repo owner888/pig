@@ -25,6 +25,7 @@ Fiber, Loop, Future, sockets, and where PHP is not JavaScript. Moved out of `AGE
 - [PHP 8.5's `curl_close()` deprecation and the `CurlHandle` lifetime](#php-85s-curl_close-deprecation-and-the-curlhandle-lifetime)
 - [`Socket::write()` and `read()` on a peer-closed connection leaked Broken pipe warnings onto the terminal and broke retries](#socketwrite-and-read-on-a-peer-closed-connection-leaked-broken-pipe-warnings-onto-the-terminal-and-broke-retries)
 - [`fwrite(): SSL operation failed` zero-write spin, `fclose` close_notify warning leak, and stronger network retries](#fwrite-ssl-operation-failed-zero-write-spin-fclose-close_notify-warning-leak-and-stronger-network-retries)
+- [`stream_socket_client()` looks the host up before its asynchronous connect, with the whole process waiting](#stream_socket_client-looks-the-host-up-before-its-asynchronous-connect-with-the-whole-process-waiting)
 
 ## `stream_socket_enable_crypto()` returns `0`, not just `true`/`false`
 
@@ -749,3 +750,12 @@ In long conversations, on a flaky network, when a proxy closed the connection or
 3. `Socket::capturingWarnings()` accumulates (`$warning .= ' ' . $message`) so OpenSSL's compound warnings (code 5 plus the Broken pipe detail) are kept whole.
 4. Whether such a transport failure is retried by the session depends on the provider reporting it in Node fetch's words (`Connection error.`/`fetch failed` before the response headers, `terminated` mid-body — see `SdkRequest::errorMessage()`), not on PHP's native exception text; upstream's retryable patterns only recognize the former.
 5. The wait after a zero write uses what is left of the overall write timeout (`$stallLimit - elapsed`), not a fixed one-second slice; `SocketTest::testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout` uses a local peer that accepts but never reads to show the old code failing after about 1 second and the new code waiting the full 1.5 seconds.
+
+## `stream_socket_client()` looks the host up before its asynchronous connect, with the whole process waiting
+
+**Phenomenon**: with `PIG_STALL_LOG=1`, `Event loop held for 6957ms` with the coroutine resumed in the agent loop and suspended at `HttpClient.php:170` (`Socket::connect()`), and `held for 30054ms` beside it; the screen took no key and drew nothing for that long. No proxy was configured, so every request dialled the provider's host name directly.
+
+**Cause**: `STREAM_CLIENT_ASYNC_CONNECT` makes the TCP handshake non-blocking, not the `getaddrinfo()` before it. A slow or unreachable DNS server held the one thread for the whole lookup, up to the connect timeout. PHP has no asynchronous resolver.
+
+**Countermeasure**: `Pig\Async\Dns::resolve()` looks the name up in a child process (`php -n -r gethostbynamel()`), read on the loop, and `Socket::connect()` dials the address it answers. It is still the system's resolver (`/etc/hosts`, a VPN's split DNS). Addresses are kept for five minutes per host, and callers asking at once share one lookup. TLS still names the host: `peer_name` and `SNI_server_name` are the host, not the address. Literals, `localhost` and calls outside a coroutine are left to `stream_socket_client()` as before; a name with no IPv4 address is handed back for the connect to resolve and report; a lookup that does not answer within the connect timeout is a `SocketError`, never a blocking retry. `DnsTest::testTheLoopKeepsRunningWhileANameIsLookedUp` shows the loop ticking through a lookup.
+

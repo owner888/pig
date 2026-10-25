@@ -42,12 +42,18 @@ final class Socket
     ): self {
         $signal?->throwIfAborted();
 
-        $context = stream_context_create($tls ? ['ssl' => ['peer_name' => $host]] : []);
+        // The name looked up on the loop (`Dns`): `stream_socket_client()` would look it up itself,
+        // before its asynchronous connect, with the whole process waiting on the DNS server. TLS
+        // still names the host: `peer_name` is what the certificate is checked against, and
+        // `SNI_server_name` what the server is told it is.
+        $address = Dns::resolve($host, $timeout, $signal);
+        $context = stream_context_create($tls ? ['ssl' => ['peer_name' => $host, 'SNI_server_name' => $host]] : []);
         $errno = 0;
         $errstr = '';
+        $target = str_contains($address, ':') && !str_starts_with($address, '[') ? "[{$address}]" : $address;
 
         [$stream, $warning] = self::capturingWarnings(static fn () => stream_socket_client(
-            "tcp://{$host}:{$port}",
+            "tcp://{$target}:{$port}",
             $errno,
             $errstr,
             $timeout,
@@ -251,6 +257,9 @@ final class Socket
         // The name to verify against, set here rather than only in `connect()`'s context: a
         // tunnelled socket was dialled to the proxy and would otherwise be checked against it.
         stream_context_set_option($this->stream, 'ssl', 'peer_name', $host);
+        // And the name the server is told (SNI): PHP would otherwise take it from the address that
+        // was dialled, which is the proxy for a tunnel and an IP address for a looked-up host.
+        stream_context_set_option($this->stream, 'ssl', 'SNI_server_name', $host);
 
         while (true) {
             [$done, $warning] = self::capturingWarnings(
