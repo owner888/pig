@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.11.4] - 2026-10-25
+
+### Changed
+
+- The web UI's tool call titles (the command or path a call ran on) and the titles of skill, summary and hook blocks can be selected and copied; a click that ends a selection no longer expands or collapses the card or block.
+
 ## [0.11.3] - 2026-10-25
 
 Faster startup and no more freezes on a slow network: host names looked up off the event loop, shadowed extensions no longer loaded twice, a cheaper model table, and upstream's per-extension startup timings.
