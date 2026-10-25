@@ -74,6 +74,7 @@ final class ExtensionLoader
         $cwd = rtrim($cwd, '/');
 
         $paths = $discover ? self::discover($home . '/extensions') : [];
+        $homeFolder = $paths;
 
         foreach ([...($discover ? $configured : []), ...$cliPaths] as $path) {
             $paths[] = Paths::resolve($path, $cwd);
@@ -125,7 +126,21 @@ final class ExtensionLoader
             }
         };
 
-        $loadAll($paths);
+        // A project extension with the name of one in `~/.pig/agent/extensions` replaces it, which
+        // used to mean loading the person's, running its factory, and throwing it away when the
+        // project's came. Held back instead until the project's trust is known, and loaded then
+        // only if no project copy took its name. Most visible with pig's own repository as the
+        // project, whose `extensions/` holds every extension the person's folder has a copy of.
+        // Found from the files alone, so nothing of an untrusted project runs to find it.
+        $projectFolders = $discover && $projectTrusted !== false
+            ? [...self::discover($cwd . '/.pig/extensions'), ...self::inProjectFolder($cwd)]
+            : [];
+        // Only the person's folder is held back: a path the settings or the command line name is
+        // asked for by name, and loads first as it always did.
+        $projectNames = array_flip(array_map(self::nameOf(...), $projectFolders));
+        $heldBack = array_values(array_filter($homeFolder, static fn (string $path): bool => isset($projectNames[self::nameOf($path)])));
+
+        $loadAll(array_values(array_filter($paths, static fn (string $path): bool => !in_array($path, $heldBack, true))));
 
         if ($projectTrusted instanceof Closure) {
             $projectTrusted = $projectTrusted(array_values($extensions));
@@ -138,10 +153,7 @@ final class ExtensionLoader
         // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An
         // extension is `require`d into this process, which is the whole reason the question exists.
         if ($projectTrusted) {
-            $project = [
-                ...self::discover($cwd . '/.pig/extensions'),
-                ...self::inProjectFolder($cwd),
-            ];
+            $project = $projectFolders;
 
             foreach ($projectConfigured === null ? [] : $projectConfigured() as $path) {
                 $project[] = Paths::resolve($path, $cwd);
@@ -149,6 +161,10 @@ final class ExtensionLoader
 
             $loadAll($project);
         }
+
+        // What was held back for a project copy that did not come — the project untrusted, or its
+        // copy failing to load.
+        $loadAll(array_values(array_filter($heldBack, static fn (string $path): bool => !isset($extensions[self::nameOf($path)]))));
 
         if ($packageExtensions !== null) {
             $loadAll(self::entryFiles($packageExtensions($projectTrusted)));

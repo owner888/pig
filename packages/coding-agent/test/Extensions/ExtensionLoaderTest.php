@@ -349,8 +349,10 @@ PHP);
 
     public function testADifferentCopyOfAnExtensionsClassIsRefusedByName(): void
     {
+        // Under two names: a project copy with the person's copy's name replaces it before either
+        // is loaded (see the held-back test below), so there is nothing to refuse.
         $global = $this->homeDir . '/extensions/twice';
-        $project = $this->cwd . '/extensions/twice';
+        $project = $this->cwd . '/extensions/twice-checkout';
         mkdir($global, 0755, true);
         mkdir($project, 0755, true);
         $entry = "<?php\nnamespace ExtLoaderTestB;\nclass Shared {}\nreturn function (\$pi): void {};\n";
@@ -397,5 +399,37 @@ PHP);
         $this->assertCount(1, $loaded);
         $this->assertSame('pig-antigravity', $loaded[0]->name);
         $this->assertSame('project', $loaded[0]->api->commands()['antigravity.usage']->description);
+    }
+
+    /**
+     * The person's copy is not loaded at all when a trusted project has one of the same name: its
+     * factory used to run and its result be thrown away. Untrusted, the person's copy loads.
+     */
+    public function testThePersonsCopyIsHeldBackWhenATrustedProjectHasOneOfTheSameName(): void
+    {
+        $marker = $this->tempDir . '/ran.txt';
+        $write = static function (string $dir, string $who) use ($marker): void {
+            mkdir($dir, 0755, true);
+            file_put_contents($dir . '/index.php', "<?php\nreturn function (\$pi): void { file_put_contents(" . var_export($marker, true) . ", " . var_export($who . "\n", true) . ", FILE_APPEND); };\n");
+        };
+        $write($this->homeDir . '/extensions/same', 'home');
+        $write($this->cwd . '/extensions/same', 'project');
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: true);
+        $this->assertSame([], $errors);
+        $this->assertSame([$this->cwd . '/extensions/same/index.php'], array_map(static fn ($e) => $e->path, $loaded));
+        $this->assertSame("project\n", file_get_contents($marker));
+
+        unlink($marker);
+        [$loaded] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: false);
+        $this->assertSame([$this->homeDir . '/extensions/same/index.php'], array_map(static fn ($e) => $e->path, $loaded));
+        $this->assertSame("home\n", file_get_contents($marker));
+
+        // Decided by the trust question, which the person's other extensions may answer: held back
+        // until then, and loaded after it when the answer is no.
+        unlink($marker);
+        [$loaded] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: static fn (array $extensions): bool => false);
+        $this->assertSame([$this->homeDir . '/extensions/same/index.php'], array_map(static fn ($e) => $e->path, $loaded));
+        $this->assertSame("home\n", file_get_contents($marker));
     }
 }

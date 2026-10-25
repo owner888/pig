@@ -656,11 +656,7 @@ final class Models
             return self::$classifiers;
         }
 
-        $models = [];
-
-        foreach (self::builtins()[1] as $model) {
-            $models[$model->provider . '/' . $model->id] = $model;
-        }
+        $models = self::builtinTable(1);
 
         $models = self::withCatalogs($models, ClassifierModel::class);
 
@@ -681,11 +677,7 @@ final class Models
             return self::$images;
         }
 
-        $models = [];
-
-        foreach (self::builtins()[2] as $model) {
-            $models[$model->provider . '/' . $model->id] = $model;
-        }
+        $models = self::builtinTable(2);
 
         $models = self::withCatalogs($models, ImageModel::class);
 
@@ -744,6 +736,30 @@ final class Models
         return self::$builtins = [$chat, $classifiers, $images, $generatedAt === false ? null : $generatedAt * 1000, $providers];
     }
 
+    /** @var array<int, array<string, Model|ClassifierModel|ImageModel>> `builtinTable()`'s, by kind */
+    private static array $builtinTables = [];
+
+    /**
+     * The shipped rows of one kind keyed `provider/id` — 0 chat, 1 classifier, 2 image — built once:
+     * every rebuild of a table starts from it, and the table is rebuilt whenever something registers.
+     *
+     * @return array<string, Model|ClassifierModel|ImageModel>
+     */
+    private static function builtinTable(int $kind): array
+    {
+        if (!isset(self::$builtinTables[$kind])) {
+            $table = [];
+
+            foreach (self::builtins()[$kind] as $model) {
+                $table[$model->provider . '/' . $model->id] = $model;
+            }
+
+            self::$builtinTables[$kind] = $table;
+        }
+
+        return self::$builtinTables[$kind];
+    }
+
     /**
      * `$models` (built-in rows, keyed `provider/id`) with each provider's catalog from elsewhere laid
      * over the rows of `$type` — see `useProviderCatalog()`.
@@ -755,43 +771,69 @@ final class Models
      */
     private static function withCatalogs(array $models, string $type): array
     {
-        foreach (self::$catalogs as $provider => ['models' => $catalog, 'replace' => $replace]) {
-            $mine = [];
+        if (self::$catalogs === []) {
+            return $models;
+        }
+
+        // One pass over the table rather than one per catalog: the table is rebuilt whenever an
+        // extension registers something at startup, and with every built-in provider's catalog
+        // in `models-store.json` the per-catalog scan was most of each rebuild. The result is the
+        // catalogs applied one after another: a provider's rows in place (each replaced by the
+        // catalog's row of the same id, or all of them dropped for a `replace` catalog), the
+        // catalog's other rows right after the provider's last row, and those of a provider with
+        // no rows here at the end, in catalog order.
+        $mine = [];
+
+        foreach (self::$catalogs as $provider => ['models' => $catalog]) {
+            $mine[$provider] = [];
 
             foreach ($catalog as $model) {
                 if ($model::class === $type) {
-                    $mine[$provider . '/' . $model->id] = $model;
+                    $mine[$provider][$provider . '/' . $model->id] = $model;
                 }
             }
-
-            $last = null;
-
-            foreach ($models as $key => $model) {
-                if ($model->provider === $provider) {
-                    $last = $key;
-                }
-            }
-
-            $merged = [];
-
-            foreach ($models as $key => $model) {
-                if ($model->provider !== $provider) {
-                    $merged[$key] = $model;
-                } elseif (!$replace) {
-                    $merged[$key] = $mine[$key] ?? $model;
-                    unset($mine[$key]);
-                }
-
-                if ($key === $last) {
-                    $merged = [...$merged, ...$mine];
-                    $mine = [];
-                }
-            }
-
-            $models = [...$merged, ...$mine];
         }
 
-        return $models;
+        $last = [];
+
+        foreach ($models as $key => $model) {
+            if (isset($mine[$model->provider])) {
+                $last[$model->provider] = $key;
+            }
+        }
+
+        $merged = [];
+
+        foreach ($models as $key => $model) {
+            $provider = $model->provider;
+
+            if (!isset($mine[$provider])) {
+                $merged[$key] = $model;
+
+                continue;
+            }
+
+            if (!self::$catalogs[$provider]['replace']) {
+                $merged[$key] = $mine[$provider][$key] ?? $model;
+                unset($mine[$provider][$key]);
+            }
+
+            if ($key === $last[$provider]) {
+                foreach ($mine[$provider] as $catalogKey => $catalogModel) {
+                    $merged[$catalogKey] = $catalogModel;
+                }
+
+                $mine[$provider] = [];
+            }
+        }
+
+        foreach ($mine as $rest) {
+            foreach ($rest as $catalogKey => $catalogModel) {
+                $merged[$catalogKey] = $catalogModel;
+            }
+        }
+
+        return $merged;
     }
 
     /** @return array<string, Model> keyed by "provider/id", which is unique by construction */
@@ -801,11 +843,7 @@ final class Models
             return self::$models;
         }
 
-        $models = [];
-
-        foreach (self::builtins()[0] as $model) {
-            $models[$model->provider . '/' . $model->id] = $model;
-        }
+        $models = self::builtinTable(0);
 
         // A built-in provider's catalog from elsewhere — see `useProviderCatalog()`.
         $models = self::withCatalogs($models, Model::class);

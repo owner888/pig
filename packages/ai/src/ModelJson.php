@@ -95,7 +95,7 @@ final class ModelJson
         $baseUrl = is_string($entry['baseUrl'] ?? null) ? $entry['baseUrl'] : throw new InvalidArgumentException("{$provider}/{$id}: a model with no \"baseUrl\"");
         $api = self::requiredString($entry, 'api');
         $input = self::strings($entry['input'] ?? null) ?: ['text'];
-        $pricing = self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []);
+        $pricing = self::sharedPricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []);
         $headers = self::headers($entry['headers'] ?? null);
         $inputLimits = is_array($entry['inputLimits'] ?? null) ? $entry['inputLimits'] : null;
 
@@ -140,7 +140,7 @@ final class ModelJson
                     $input,
                     $pricing,
                     $headers,
-                    is_array($entry['compat'] ?? null) ? self::compat($entry['compat'], $chatApi) : null,
+                    is_array($entry['compat'] ?? null) ? self::sharedCompat($entry['compat'], $chatApi) : null,
                     self::thinkingLevelMap(is_array($entry['thinkingLevelMap'] ?? null) ? $entry['thinkingLevelMap'] : null),
                     $inputLimits,
                     is_array($entry['promptCache'] ?? null) ? $entry['promptCache'] : null,
@@ -296,6 +296,40 @@ final class ModelJson
             supportsAdditionalTools: $flag('supportsAdditionalTools'),
             supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
         );
+    }
+
+    /** @var array<string, Pricing> `sharedPricing()`'s, by the rates they were built from */
+    private static array $pricings = [];
+
+    /** @var array<string, OpenAiCompat|AnthropicCompat|BedrockCompat|null> `sharedCompat()`'s, by api and settings */
+    private static array $compats = [];
+
+    /**
+     * `pricing()`, one object per distinct set of rates. The shipped catalogue decodes 1,700 rows at
+     * every start and many share their rates; a `Pricing` is immutable, so they can share it too.
+     *
+     * @param array<string, mixed> $cost
+     */
+    private static function sharedPricing(array $cost): Pricing
+    {
+        return self::$pricings[serialize($cost)] ??= self::pricing($cost);
+    }
+
+    /**
+     * `compat()`, one object per distinct api and settings: 1,400 rows of the shipped catalogue carry
+     * a `compat` and there are fewer than a hundred different ones. Each compat class is immutable.
+     *
+     * @param array<string, mixed> $compat
+     */
+    private static function sharedCompat(array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
+    {
+        $key = $api->value . "\0" . serialize($compat);
+
+        if (!array_key_exists($key, self::$compats)) {
+            self::$compats[$key] = self::compat($compat, $api);
+        }
+
+        return self::$compats[$key];
     }
 
     /**
