@@ -289,6 +289,12 @@ final class AgentSession
     /** When that in-memory session began, for its header. */
     private int $memoryCreatedAt;
 
+    /** Whether this is a private session (`goIncognito()`). */
+    private bool $incognito = false;
+
+    /** The private session's own temporary directory, removed with it; null until it is private. */
+    private ?string $scratch = null;
+
     /**
      * @param list<FileCommand> $fileCommands
      * @param list<ModelChoice> $modelScope
@@ -317,6 +323,8 @@ final class AgentSession
         // Upstream's `defaultToolModifiers`: the `--tools +name`/`-name` entries.
         /** @var list<string> */
         private readonly array $defaultToolModifiers = [],
+        // pig's `--incognito`: start private (`goIncognito()`). Implies there is no store.
+        bool $incognito = false,
     ) {
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
@@ -332,6 +340,10 @@ final class AgentSession
         // Upstream's agent carries the session manager's id as its `sessionId` — the in-memory
         // manager's too.
         $this->agent->sessionId = $this->sessionId();
+
+        if ($incognito) {
+            $this->goIncognito();
+        }
 
         // Upstream's `createAgentSession()` builds the agent with the extension provider hooks as
         // its `onPayload` / `onResponse` / `onProviderStreamEvent`, `maxRetryDelayMs` from the
@@ -575,6 +587,125 @@ final class AgentSession
         return $this->store?->resumeCommand();
     }
 
+    /**
+     * Whether this is a private session — pig's own, Chrome's incognito window: nothing about it is
+     * left on this machine once it ends. No session file, no tool output kept past the session
+     * (`scratchDirectory()`), and the modes leave the logs and the crash records alone for it.
+     * What is sent to the provider is sent all the same: private is about this machine.
+     */
+    public function isIncognito(): bool
+    {
+        return $this->incognito;
+    }
+
+    /**
+     * Stop writing anything down from here on — `--incognito` at the start, `/incognito` part way.
+     *
+     * The conversation carries on as it was, in memory, under the **same id**: the provider's
+     * prompt cache is keyed by it, and a turn after this should not pay for the whole context
+     * again. The file that was being written is the caller's to remove (`/incognito` moves it to the
+     * trash); this only lets go of it, so nothing writes it back. Once private, a session stays
+     * private: `/new` starts another conversation in memory, and `/resume` reads a file without
+     * writing to it, as both already do for a session with no store.
+     *
+     * @throws AgentError when the private temporary directory cannot be made — refused rather than
+     *         carried on with tool output going where it would be kept
+     */
+    public function goIncognito(): void
+    {
+        if ($this->incognito) {
+            return;
+        }
+
+        $directory = sys_get_temp_dir() . '/pig-incognito-' . bin2hex(random_bytes(8));
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $made = mkdir($directory, 0o700);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!$made) {
+            throw new AgentError("Could not create a private temporary directory in " . sys_get_temp_dir());
+        }
+
+        $this->scratch = $directory;
+        $this->incognito = true;
+        // Whatever way this process ends — `/quit`, Ctrl+C, a crash the handler catches — not only
+        // through `dispose()`.
+        register_shutdown_function($this->removeScratch(...));
+        self::exitCleanlyOnSignals();
+
+        if ($this->store !== null) {
+            $this->memoryId = $this->store->id;
+            $this->memoryCreatedAt = $this->store->createdAt();
+            $this->writeTo(null);
+        }
+    }
+
+    /**
+     * Where a private session's temporary files go — a command's full output when it is too long
+     * to show (`Run`), and what an extension saves for the session (`ExtensionApi::artifactsDirectory()`).
+     * Removed, with everything in it, when the session is disposed or the process ends. Null for a
+     * session that is not private, whose files go where they always went.
+     */
+    public function scratchDirectory(): ?string
+    {
+        return $this->scratch;
+    }
+
+    /**
+     * A signal that would end the process — `kill`, a closed terminal, Ctrl+C in `-p` — ends it
+     * through `exit()` instead, which runs the shutdown functions and so removes the private
+     * directory; killed outright, PHP runs none. Only where nothing else handles the signal: the web
+     * and MCP modes' own handlers, and the terminal's, are left as they are.
+     */
+    private static function exitCleanlyOnSignals(): void
+    {
+        if (!function_exists('pcntl_signal')) {
+            return;
+        }
+
+        pcntl_async_signals(true);
+
+        foreach ([SIGTERM, SIGHUP, SIGINT] as $signal) {
+            if (pcntl_signal_get_handler($signal) === SIG_DFL) {
+                pcntl_signal($signal, static function (int $received): never {
+                    exit(128 + $received);
+                });
+            }
+        }
+    }
+
+    /** Remove the private temporary directory and everything in it. Safe to call twice. */
+    private function removeScratch(): void
+    {
+        if ($this->scratch === null || !is_dir($this->scratch)) {
+            return;
+        }
+
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $items = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($this->scratch, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST,
+            );
+
+            foreach ($items as $item) {
+                /** @var \SplFileInfo $item */
+                $item->isDir() && !$item->isLink() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+            }
+
+            rmdir($this->scratch);
+        } catch (Throwable) {
+            // Gone already, or not ours to remove: there is nobody left to tell at shutdown.
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     /** The project directory, so a mode holding a session need not be handed it twice. */
     public function cwd(): string
     {
@@ -810,6 +941,7 @@ final class AgentSession
         $this->listeners = [];
         $this->cacheWarmer?->cancel();
         $this->closeSessionResources();
+        $this->removeScratch();
     }
 
     /** Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket is the one there is. */
@@ -2854,6 +2986,7 @@ final class AgentSession
                 $prefix !== null ? "{$prefix}\n{$command}" : $command,
                 $onUpdate,
                 onChunk: fn (string $delta) => $this->announce(new BashExecutionUpdateEvent($id, $delta)),
+                spillDirectory: $this->scratch,
             );
             $run->start();
             $exit = $run->wait($this->bash->signal, null);

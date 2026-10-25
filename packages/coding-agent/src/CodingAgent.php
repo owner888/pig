@@ -233,6 +233,8 @@ final class CodingAgent
      * @param string|null $cwdOverride upstream's `SessionManager.open(…, cwdOverride)`: for a
      *        `$resume` whose stored working directory has gone, the one carried on in instead —
      *        `$cwd`, after somebody said yes to `SessionCwd::prompt()`.
+     * @param bool $incognito pig's `--incognito`: a private session (`AgentSession::goIncognito()`),
+     *        which is never written down — `$save` is false whatever was passed
      *
      * @throws CodingAgentError with a sentence worth showing as-is
      */
@@ -271,8 +273,10 @@ final class CodingAgent
         ?string $provider = null,
         ?string $sessionId = null,
         ?string $cwdOverride = null,
+        bool $incognito = false,
     ): StartedSession {
         $warnings = [];
+        $save = $save && !$incognito;
 
         // Said once, up front, where the loaders below each quietly leave the project's root out.
         // Upstream's sentence: a project whose hooks are not running must say so, or a guard
@@ -464,7 +468,11 @@ final class CodingAgent
         // Before the agent as well as before any UI, because the hooks are handed the session file
         // and the agent is handed the hooks.
         $store = $save ? self::store($cwd, $resume, $continue, $sessionId, $cwdOverride) : null;
-        $resumed = $save && ($resume !== null || $continue);
+        // A private session can still start from one that was written down: its `/resume` of another
+        // project's conversation is rebuilt here for that directory, and reads the file without
+        // writing to it. (`--no-session` ignores a resume path instead, as it always has.)
+        $readFrom = $incognito && $resume !== null ? self::store($cwd, $resume, false, null, $cwdOverride) : null;
+        $resumed = $store !== null ? $resume !== null || $continue : $readFrom !== null;
         Timings::time('session');
 
         [$loadedHooks, $hookProblems] = $withHooks
@@ -632,22 +640,28 @@ final class CodingAgent
         // message would be in the transcript and never in the file, so it is taken out here.
         $agent->replaceMessages([]);
 
-        $session = new AgentSession(
-            $agent,
-            $cwd,
-            $store,
-            $settings,
-            $hooks,
-            $fileCommands,
-            $scope,
-            auth: $auth,
-            loadout: $loadout,
-            projectTrusted: $projectTrusted,
-            // Upstream's `SessionManager.inMemory(cwd, { id: parsed.sessionId })` for `--no-session`.
-            sessionId: $store === null ? $sessionId : null,
-            usesDefaultTools: $usesDefaultTools,
-            defaultToolModifiers: $modifiers ?? [],
-        );
+        try {
+            $session = new AgentSession(
+                $agent,
+                $cwd,
+                $store,
+                $settings,
+                $hooks,
+                $fileCommands,
+                $scope,
+                auth: $auth,
+                loadout: $loadout,
+                projectTrusted: $projectTrusted,
+                // Upstream's `SessionManager.inMemory(cwd, { id: parsed.sessionId })` for `--no-session`.
+                sessionId: $store === null ? $sessionId : null,
+                usesDefaultTools: $usesDefaultTools,
+                defaultToolModifiers: $modifiers ?? [],
+                incognito: $incognito,
+            );
+        } catch (\Pig\Agent\AgentError $error) {
+            // A private session whose temporary directory could not be made: said, not crashed on.
+            throw new CodingAgentError($error->getMessage());
+        }
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not
         // here: the interactive one is what has a screen to draw a dialog on, and upstream says the
@@ -658,6 +672,8 @@ final class CodingAgent
             // And what it was being talked on. `--model` beats the file: that is somebody saying
             // what they want now, where the file says what was true last time.
             $session->restoreSettings(modelWasAskedFor: $model !== null);
+        } elseif ($readFrom !== null) {
+            $session->restore($readFrom->messages());
         } elseif ($store !== null) {
             // Upstream's two lines, and they were missing here: *"Save initial model and thinking
             // level for new sessions so they can be restored on resume."*

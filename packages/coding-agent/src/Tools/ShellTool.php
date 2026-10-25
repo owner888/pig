@@ -156,6 +156,9 @@ final class ShellTool implements AgentTool
             ($this->resolveShell)(),
             $context->env,
             $this->spillPrefix,
+            // Asked whether or not the variables are exposed: a private session's output stays in
+            // its own directory either way.
+            spillDirectory: $this->sessionEnvironment !== null ? ($this->sessionEnvironment)()?->tempDirectory : null,
         );
         $run->start();
         $exit = $run->wait($signal, $timeout);

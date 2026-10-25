@@ -27,6 +27,9 @@ final readonly class SessionEnvironment
         public ?string $provider = null,
         public ?string $model = null,
         public ?string $reasoningLevel = null,
+        // Not a variable the command is told: where a private session's spill files go
+        // (`AgentSession::scratchDirectory()`), null for any other session.
+        public ?string $tempDirectory = null,
     ) {
     }
 
@@ -46,6 +49,7 @@ final readonly class SessionEnvironment
             $model?->provider,
             $model?->id,
             $session->thinkingLevel()->value,
+            $session->scratchDirectory(),
         );
     }
 

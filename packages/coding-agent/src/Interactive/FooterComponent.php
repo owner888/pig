@@ -40,6 +40,9 @@ final class FooterComponent implements Component
 
     private const float ALARM_AT = 90.0;
 
+    /** What the top line opens with in a private session (`AgentSession::isIncognito()`). */
+    public const string INCOGNITO_LABEL = 'incognito';
+
     /** false once looked for and not found, null when it has not been looked for. */
     private string|false|null $branch = null;
 
@@ -118,7 +121,7 @@ final class FooterComponent implements Component
     public function render(int $width): array
     {
         $lines = [
-            Themes::theme()->fg('dim', $this->where($width)),
+            $this->topLine($width),
             $this->status($width),
         ];
 
@@ -137,6 +140,22 @@ final class FooterComponent implements Component
     }
 
     // ---- the top line ----------------------------------------------------------------
+
+    /** The place, dim — after the word `incognito`, in the private session's colour, when it is one. */
+    private function topLine(int $width): string
+    {
+        if (!$this->session->isIncognito()) {
+            return Themes::theme()->fg('dim', $this->where($width));
+        }
+
+        $label = self::INCOGNITO_LABEL;
+
+        if ($width <= Width::visible($label) + 1) {
+            return Themes::theme()->fg('warning', Width::truncate($label, $width));
+        }
+
+        return Themes::theme()->fg('warning', $label) . ' ' . Themes::theme()->fg('dim', $this->where($width - Width::visible($label) - 1));
+    }
 
     private function where(int $width): string
     {

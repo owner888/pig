@@ -162,6 +162,7 @@ pig
   - `pig --session <id|path>`: Open a specific session by ID prefix or file path; an ID found only in another project is offered as a fork into this one. A resumed session carries on in its own working directory.
   - `pig --fork <id|path>` copies a session into a new one here; `pig --session-id <id>` opens or creates a session with that exact id; `pig --no-session` runs without saving the conversation.
   - `/discard` decides it afterwards: it asks, quits, and moves the session's file to the trash — for a question not worth keeping in `/resume`.
+  - `pig --incognito` is a private session, like Chrome's incognito window: no session file, no logs or crash records, and long tool output is removed when it ends; `/incognito` makes the session on screen private part way (its file goes to the trash), and the web UI has "New private session". The footer and the editor's border say so. Requests still go to the model provider. Extensions are told with `isIncognito()`, and save what they make in `artifactsDirectory()`.
 - **Model Selection**:
   - `pig --model sonnet`, `pig --model antigravity/gemini-3.8-flash`, or `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high` (sets model and thinking level simultaneously)
@@ -299,7 +300,7 @@ An extension is a PHP file (or a folder with `index.php`) returning `function (E
 | **Tools, commands, renderers** | `registerTool()`, `removeTools()`, `registerCommand()`, `registerMessageRenderer()`, `registerLocale()`. |
 | **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and upstream's provider events — `before_provider_request` (replace the payload), `before_provider_headers` (edit the headers in place), `after_provider_response` (status and headers), `provider_stream_event` (each raw stream event) — plus `model_select`, `thinking_level_select`. |
 | **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |
-| **The session** | `getSettings()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
+| **The session** | `getSettings()`, `isIncognito()`, `artifactsDirectory()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
 | **The web UI** | `registerWebPanel(id, title, render, action, icon, commands, placement, label)` puts a panel in `pig web`'s sidebar or header (the person can move it): `render` returns blocks (text, lists with buttons, meters, cards, lazy sections) and the page draws them in its own theme; a button's `action` gets a `$ui` that asks the person like `$ctx->ui` (`confirm`, `select`, `input`, `notify`) — the Antigravity accounts panel is one. `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests of your own. |
 | **A second credential store** | `Auth::useSecondStore(provider, read, renewed)` for a provider that keeps several accounts beside `auth.json`. |
 

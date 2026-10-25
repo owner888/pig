@@ -42,6 +42,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const thinkingSelect = document.getElementById("thinking-select");
     const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
     const newSessionBtn = document.getElementById("new-session-btn");
+    const newPrivateSessionBtn = document.getElementById("new-private-session-btn");
     const searchSessionsBtn = document.getElementById("search-sessions-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
     const langBtn = document.getElementById("lang-btn");
@@ -60,10 +61,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const pageId = randomHex();
 
     class Tab {
-      constructor(cwd, sessionFile) {
+      constructor(cwd, sessionFile, incognito = false) {
         this.id = "tab-" + (++tabSeq);
         this.cwd = cwd;
-        this.sessionFile = sessionFile || null;   // null until the child names its file
+        // A private session (`pig --incognito`): no file, not kept among the tabs a reload reopens.
+        this.incognito = !!incognito;
+        this.sessionFile = this.incognito ? null : (sessionFile || null);   // null until the child names its file
         this.sessionPath = null;
         this.name = null;
         this.opening = null;
@@ -137,7 +140,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (this === active) drawCwdChip();
       }
 
-      get key() { return (this.cwd || "") + "::" + (this.sessionFile || ("__new__::" + clientId + ":" + this.id)); }
+      get key() { return (this.cwd || "") + "::" + (this.sessionFile || ((this.incognito ? "__incognito__::" : "__new__::") + clientId + ":" + this.id)); }
 
       subscribe() {
         this.bound = false;
@@ -146,6 +149,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           tabId: this.id,
           cwd: this.cwd,
           sessionFile: this.sessionFile || undefined,
+          incognito: this.incognito || undefined,
           // So a reconnect finds this tab's child again even before its conversation is saved.
           pageId,
           // The page's theme, so a child started for this tab draws its extensions' colours in it
@@ -195,6 +199,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           this.bound = true;
           this.ended = false;
           if (m.sessionFile) this.sessionFile = m.sessionFile;
+          if (m.incognito) this.incognito = true;
           if (this === active) { pigReachable(); hideStatusBanner(); }
           this.onBound();
           return;
@@ -366,6 +371,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             this.render(() => this.earlyNotices.forEach(drawNotify));
             this.earlyNotices = [];
           }
+          // Drawing the conversation cleared the chat, so the private session's notice goes back on
+          // top of it each time.
+          if (this.incognito) this.render(() => prependIncognitoNotice());
           this.showStoppedMidRun();
         } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_conversation"), err); }
       }
@@ -754,6 +762,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
     newSessionBtn.addEventListener("click", () => startNewSession());
+    newPrivateSessionBtn?.addEventListener("click", () => startNewSession(null, true));
     searchSessionsBtn.addEventListener("click", () => openSessionSearch());
 
     // File input attachment
@@ -839,12 +848,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       agentWorkingChanged();
     }
 
-    // `Prompt\SkillBlock::parse()`'s pattern: a `/skill:name` prompt is recorded as the skill's
-    // text in a `<skill>` block, with whatever the person typed after it below. The TUI draws
-    // that as a collapsed `[skill] name` line (`SkillInvocationMessageComponent`); before this
-    // the page poured the whole SKILL.md into the user bubble on every replay.
-    const SKILL_BLOCK = /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/;
-
     // The header of a skill, summary or hook block can be selected; the click that ends that
     // selection would otherwise also open or close the block, which `<summary>` does on any click.
     // On the document: each tab has its own conversation element, and `chatScroll` is the current one.
@@ -853,6 +856,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const selection = window.getSelection?.();
       if (summary && selection && !selection.isCollapsed && summary.contains(selection.anchorNode)) e.preventDefault();
     });
+
+    // `Prompt\SkillBlock::parse()`'s pattern: a `/skill:name` prompt is recorded as the skill's
+    // text in a `<skill>` block, with whatever the person typed after it below. The TUI draws
+    // that as a collapsed `[skill] name` line (`SkillInvocationMessageComponent`); before this
+    // the page poured the whole SKILL.md into the user bubble on every replay.
+    const SKILL_BLOCK = /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/;
 
     function appendSkillInvocation(name, location, content) {
       const block = document.createElement("details");
@@ -942,6 +951,17 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       block.innerHTML = `<strong>Warning:</strong> ${escapeHtml(text)}`;
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
+    }
+
+    // The TUI's `sayIncognito()`: what a private session keeps off this machine, and what it does not.
+    function prependIncognitoNotice() {
+      const block = document.createElement("div");
+      block.className = "msg-block msg-incognito";
+      const strong = document.createElement("strong");
+      strong.innerText = t("incognito");
+      block.appendChild(strong);
+      block.appendChild(document.createTextNode(" — " + t("incognito_notice")));
+      chatScroll.prepend(block);
     }
 
     // The TUI's `say()`: one dim line in the transcript for something the session did on its
@@ -1298,7 +1318,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     /** A new conversation is a new tab — and a new child. */
-    async function startNewSession(cwd = null) {
+    async function startNewSession(cwd = null, incognito = false) {
       pendingImages = [];
       renderPendingImages();
 
@@ -1307,7 +1327,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         ? cwd.trim()
         : (active?.cwd || serverCwd);
 
-      openTab(new Tab(targetCwd, null));
+      openTab(new Tab(targetCwd, null, incognito));
 
       if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
         sidebar.classList.add("collapsed");
@@ -2087,15 +2107,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function saveTabs() {
       try {
         localStorage.setItem(TABS_KEY, JSON.stringify({
-          active: active ? active.key : null,
-          tabs: tabs.map((t) => ({ cwd: t.cwd, sessionFile: t.sessionFile, name: t.name, opening: t.opening })),
+          active: active && !active.incognito ? active.key : null,
+          // Not a private one: like an incognito window, it is gone once the page is.
+          tabs: tabs.filter((t) => !t.incognito).map((t) => ({ cwd: t.cwd, sessionFile: t.sessionFile, name: t.name, opening: t.opening })),
         }));
       } catch (e) {}
     }
 
     function tabLabel(tab) {
       // Not the filename: a UUID is not a label anybody can tell from the next one.
-      const fallback = __t("tab_new_session");
+      const fallback = __t(tab.incognito ? "tab_private_session" : "tab_new_session");
       const raw = tab.name || tab.opening || fallback;
       return cleanSessionTitle(raw) || fallback;
     }
@@ -2147,8 +2168,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       for (const t of tabs) {
         const el = document.createElement("div");
         const isActive = t === active;
-        el.className = "session-tab" + (isActive ? " active" : "") + (t.isRunning ? " working" : "") + (t.ended ? " ended" : "");
-        el.title = (t.cwd ? t.cwd + "\n" : "") + (t.sessionFile || "") + (t.ended ? "\n(agent exited)" : "");
+        el.className = "session-tab" + (isActive ? " active" : "") + (t.isRunning ? " working" : "") + (t.ended ? " ended" : "") + (t.incognito ? " incognito" : "");
+        el.title = (t.cwd ? t.cwd + "\n" : "") + (t.incognito ? __t("incognito") : (t.sessionFile || "")) + (t.ended ? "\n(agent exited)" : "");
         const label = document.createElement("span");
         label.className = "session-tab-label";
         label.textContent = tabLabel(t);
@@ -2221,7 +2242,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
       const rawName = tObj.sessionFile;
       const fullPath = tObj.sessionPath || (rawName && tObj.cwd ? `${tObj.cwd}/${rawName}` : rawName);
-      if (!rawName) {
+      if (tObj.incognito) {
+        sessionFileText.innerText = t("incognito");
+        sessionFileText.style.fontStyle = "normal";
+        sessionFileText.style.opacity = "1";
+        sessionFileBadge.title = t("incognito") + " — " + t("incognito_notice");
+      } else if (!rawName) {
         sessionFileText.innerText = t("in_memory");
         sessionFileText.style.fontStyle = "italic";
         sessionFileText.style.opacity = "0.75";
@@ -2322,6 +2348,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function applyActiveTabToChrome() {
       const cur = active;
       if (!cur) return;
+      // The prompt's border in the private session's colour, as the TUI's editor border.
+      document.body.classList.toggle("incognito", !!cur.incognito);
       drawCwdChip();
       cwdDisplay.innerText = cur.cwd ? (cur.cwd.split("/").filter(Boolean).pop() || cur.cwd) : "~";
       if (sessionTitleDisplay) {

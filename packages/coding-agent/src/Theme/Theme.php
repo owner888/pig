@@ -345,4 +345,13 @@ final class Theme
     {
         return fn (string $str): string => $this->fg('bashMode', $str);
     }
+
+    /**
+     * pig's own: the editor's border in a private session (`--incognito`). `warning`, because it is
+     * the one colour no thinking level and not the bash mode uses, so it cannot be read as either.
+     */
+    public function getIncognitoBorderColor(): Closure
+    {
+        return fn (string $str): string => $this->fg('warning', $str);
+    }
 }

@@ -937,6 +937,11 @@
     }
     .session-tab:hover { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-text-primary) 3%, transparent); }
     .session-tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-primary); }
+    /* A private session (`--incognito`): the TUI's colour for it, on the tab and around the prompt. */
+    .session-tab.incognito { color: var(--color-warning); }
+    .session-tab.incognito.active { border-bottom-color: var(--color-warning); }
+    body.incognito .input-wrapper,
+    body.incognito .input-wrapper:focus-within { border-color: var(--color-warning); }
     .session-tab.working::before {
       content: "";
       width: 6px; height: 6px; border-radius: 50%;
@@ -1062,6 +1067,15 @@
     .msg-stopped .modal-btn {
       margin-left: 8px;
     }
+
+    /* The private session's notice, on top of its conversation. */
+    .msg-incognito {
+      background: var(--color-surface);
+      border: 1px dashed var(--color-warning);
+      color: var(--color-text-subtle);
+      font-size: var(--text-base);
+    }
+    .msg-incognito strong { color: var(--color-warning); }
 
     /* `notify(…, "warning")`: the TUI's `Warning:` line. */
     .msg-warning {

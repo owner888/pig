@@ -102,6 +102,9 @@ final class Run
      * @param (Closure(string): void)|null $onChunk each piece of output as it arrives, cleaned —
      *        upstream's `onChunk`, which `AgentSession::executeBash()` turns into
      *        `bash_execution_update` deltas; `$onUpdate` is the tail so far, for a screen
+     * @param string|null $spillDirectory where the spill file goes — a private session's own
+     *        temporary directory (`AgentSession::scratchDirectory()`), removed with it; null is the
+     *        system's
      */
     public function __construct(
         private readonly string $cwd,
@@ -111,6 +114,7 @@ final class Run
         private readonly ?array $env = null,
         private readonly string $spillPrefix = 'pig-bash',
         private readonly ?Closure $onChunk = null,
+        private readonly ?string $spillDirectory = null,
     ) {
     }
 
@@ -452,7 +456,7 @@ final class Run
     private function spillIfLarge(string $chunk): void
     {
         if ($this->spill === null && ($this->totalBytes > self::SPILL_AFTER || $this->totalLines > Truncate::MAX_LINES)) {
-            $path = sys_get_temp_dir() . '/' . $this->spillPrefix . '-' . bin2hex(random_bytes(8)) . '.log';
+            $path = ($this->spillDirectory ?? sys_get_temp_dir()) . '/' . $this->spillPrefix . '-' . bin2hex(random_bytes(8)) . '.log';
             $handle = fopen($path, 'wb');
 
             if ($handle === false) {

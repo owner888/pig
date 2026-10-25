@@ -87,9 +87,12 @@ Timings::resetTimings();
 $running = null;
 $session = null;
 
-set_exception_handler(static function (Throwable $error) use (&$running, &$session): void {
+set_exception_handler(static function (Throwable $error) use (&$running, &$session, $argv): void {
     $store = $session instanceof Pig\CodingAgent\Session\AgentSession ? $session->store() : null;
-    $recorded = CrashLog::record('fatal_error', $error, $store?->path, getcwd() ?: '.');
+    // A private session leaves no crash record behind: `--incognito` from the start, `/incognito` since.
+    $private = ($session instanceof Pig\CodingAgent\Session\AgentSession && $session->isIncognito())
+        || in_array('--incognito', array_slice($argv, 1), true);
+    $recorded = $private ? null : CrashLog::record('fatal_error', $error, $store?->path, getcwd() ?: '.');
 
     if ($running instanceof InteractiveMode) {
         try {
@@ -256,6 +259,9 @@ if (isset($options['help'])) {
       --session-dir <d> keep every session in this one directory
       -n, --name <name> name this session, as /name does
       --no-session      do not write this session to disk
+      --incognito       a private session: no session file, no logs or crash records,
+                        long tool output removed on exit. Requests still go to the
+                        model provider
       -a, --approve     trust project-local files for this run
       -na, --no-approve ignore project-local files for this run
       --export <file>   write a session file out as HTML and stop. A second word is
@@ -360,6 +366,18 @@ $conflicts = static fn (array $flags): array => array_values(array_map(
     array_filter($flags, static fn (string $flag): bool => isset($options[$flag])),
 ));
 
+// pig's own: a private session is a new one, as an incognito window opens on nothing.
+if (isset($options['incognito']) && ($with = $conflicts(['session', 'session-id', 'continue', 'resume', 'fork'])) !== []) {
+    fwrite(STDERR, Style::red('Error: --incognito starts a new private session and cannot be combined with ' . implode(', ', $with) . "\n"));
+
+    exit(1);
+}
+
+// Off before anything is logged, so nothing this process says reaches `~/.pig/agent/logs`.
+if (isset($options['incognito'])) {
+    Pig\CodingAgent\Logger::setFileLog(false);
+}
+
 if (isset($options['fork']) && ($with = $conflicts(['session', 'continue', 'resume', 'no-session'])) !== []) {
     fwrite(STDERR, Style::red('Error: --fork cannot be combined with ' . implode(', ', $with) . "\n"));
 
@@ -405,7 +423,7 @@ $initStartupTheme = static function () use ($cwd, $options): void {
 // project, and that conversation carries on in its own directory — so the project's settings,
 // trust, extensions, context files and tools have to be the ones *there*, resolved only once the
 // session's directory is known.
-$noSession = isset($options['no-session']);
+$noSession = isset($options['no-session']) || isset($options['incognito']);
 $sessionId = $options['session-id'] ?? null;
 $resumePath = null;
 // The id a new session gets — only when `--session-id` names none of this project's.
@@ -1011,7 +1029,7 @@ $assemble = static function (
     ?array $preloadedExtensions,
     \Pig\CodingAgent\Packages\ResolvedPaths $packageResources,
     ?string $newSessionId,
-) use ($auth, $options, $noSession, $toolNames, $modelPatterns, $cliExtensionPaths, $excludeTools, $cliPaths, $arguments): Pig\CodingAgent\StartedSession {
+) use ($auth, $options, $noSession, $toolNames, $modelPatterns, $cliExtensionPaths, $excludeTools, $cliPaths, $arguments, &$session): Pig\CodingAgent\StartedSession {
     return CodingAgent::session(
         $cwd,
         $settings,
@@ -1053,6 +1071,8 @@ $assemble = static function (
         provider: $options['provider'] ?? null,
         sessionId: $newSessionId,
         cwdOverride: $cwdOverride,
+        // Also for the runtime `/resume` builds in another directory: a private session stays private.
+        incognito: isset($options['incognito']) || ($session instanceof Pig\CodingAgent\Session\AgentSession && $session->isIncognito()),
     );
 };
 
@@ -1236,7 +1256,9 @@ if ($mode === 'rpc') {
     // nothing does not mark the notes as seen.
     $changelog = null;
 
-    if (!isset($options['continue']) && !isset($options['resume'])) {
+    // Not in a private session, which writes nothing to the settings it did not ask to: the notes
+    // wait for the next ordinary start.
+    if (!isset($options['continue']) && !isset($options['resume']) && !isset($options['incognito'])) {
         $seen = $settings->lastChangelogVersion();
         $entries = Changelog::parse();
 

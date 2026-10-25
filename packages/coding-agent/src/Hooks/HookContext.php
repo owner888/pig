@@ -192,6 +192,18 @@ final readonly class HookContext
         return $this->session?->modelScope() ?? [];
     }
 
+    /** Whether the session is private (`ExtensionApi::isIncognito()`). */
+    public function isIncognito(): bool
+    {
+        return $this->session?->isIncognito() ?? false;
+    }
+
+    /** Where to save what is made for the session (`ExtensionApi::artifactsDirectory()`). */
+    public function artifactsDirectory(): string
+    {
+        return $this->session?->scratchDirectory() ?? \Pig\CodingAgent\Config::home() . '/artifacts';
+    }
+
     /** Whether `<cwd>/.pig/` was allowed to load. */
     public function isProjectTrusted(): bool
     {

@@ -594,6 +594,8 @@ final class RpcMode
             ...($store === null ? [] : ['sessionFile' => $store->path]),
             'sessionId' => $this->session->sessionId(),
             ...($name === null ? [] : ['sessionName' => $name]),
+            // pig's own, only when true: a private session (`--incognito`), which the web page badges.
+            ...($this->session->isIncognito() ? ['incognito' => true] : []),
             'autoCompactionEnabled' => $this->settings?->compactionEnabled() ?? true,
             'messageCount' => count($this->session->messages()),
             'pendingMessageCount' => count($this->session->queued()),

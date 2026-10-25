@@ -662,10 +662,15 @@ final class InteractiveMode
 
         // Upstream's startup notice: the last time pig fell over, said once, with the way to
         // report it. A week old is too old to greet somebody with.
-        $crash = CrashLog::takeUnnotified();
+        // Not taken in a private session: taking one marks it told, in `crashes.json`.
+        $crash = $this->session->isIncognito() ? null : CrashLog::takeUnnotified();
 
         if ($crash !== null) {
             $this->sayWarning(CrashLog::notice($crash));
+        }
+
+        if ($this->session->isIncognito()) {
+            $this->sayIncognito();
         }
 
         $this->maybeWarnAboutAnthropicSubscriptionAuth();
@@ -982,7 +987,9 @@ final class InteractiveMode
 
             // Survived, drawn, and written down: a throw the loop had to catch is a pig bug by
             // definition, and `/bug` attaches these. Once per message, like the line above.
-            CrashLog::record('loop_error', $error, $this->session->store()?->path, $this->cwd);
+            if (!$this->session->isIncognito()) {
+                CrashLog::record('loop_error', $error, $this->session->store()?->path, $this->cwd);
+            }
         });
     }
 
@@ -2341,9 +2348,13 @@ final class InteractiveMode
     /** Green while the line is a command, otherwise the thinking level's colour. */
     private function borderColour(): Closure
     {
-        return $this->bashMode
-            ? Themes::theme()->getBashModeBorderColor()
-            : Themes::theme()->getThinkingBorderColor($this->session->thinkingLevel());
+        return match (true) {
+            $this->bashMode => Themes::theme()->getBashModeBorderColor(),
+            // Over the thinking level's colour, which the footer still names: a private session is
+            // the thing that has to be seen before typing.
+            $this->session->isIncognito() => Themes::theme()->getIncognitoBorderColor(),
+            default => Themes::theme()->getThinkingBorderColor($this->session->thinkingLevel()),
+        };
     }
 
     private function paintBorder(): void
@@ -2513,6 +2524,7 @@ final class InteractiveMode
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['bug', 'Report a bug to the pig developers (/bug [what went wrong])'],
         ['trust', 'Decide whether this project\'s .pig/ hooks, tools and extensions may load'],
+        ['incognito', 'Make this session private: its file goes to the trash and nothing more is saved'],
         ['discard', 'Throw this session away and quit: its file goes to the trash'],
         ['quit', 'Quit pig'],
     ];
@@ -2619,6 +2631,7 @@ final class InteractiveMode
             'trust' => $this->showTrust(),
             'exit', 'quit' => $this->stop(),
             'discard' => $this->discardSession(),
+            'incognito' => $this->goIncognito(),
             // A hook's or a file's, which is all that is left: `commandName()` only hands
             // over names something answers to, and the built-ins are above, so a built-in
             // can never be shadowed by something someone forgot they wrote.
@@ -2665,6 +2678,63 @@ final class InteractiveMode
                 fwrite(STDERR, "Could not discard the session ({$path}): {$problem}\n");
             }
         });
+    }
+
+    /**
+     * `/incognito`, pig's own: the rest of this conversation is private (`AgentSession::goIncognito()`)
+     * — Chrome's incognito window, opened part way through. The file written so far goes to the
+     * trash, as `/discard` sends it, after asking; from then on nothing is saved, the logs stop,
+     * and the footer and the editor's border say so. With nothing written yet there is nothing to
+     * ask about.
+     */
+    private function goIncognito(): void
+    {
+        if ($this->session->isIncognito()) {
+            $this->say('This session is already private');
+
+            return;
+        }
+
+        $store = $this->session->store();
+        $path = $store !== null && $store->isPersisted() ? $store->path : null;
+
+        Async::spawn(function () use ($path): void {
+            if ($path !== null && !$this->ui->confirm('Make this session private?', 'Moves ' . basename($path) . ' to the trash. The conversation carries on, and nothing more about it is saved.')) {
+                $this->say('Incognito cancelled');
+
+                return;
+            }
+
+            try {
+                $this->session->goIncognito();
+            } catch (Throwable $error) {
+                $this->sayError($error->getMessage());
+
+                return;
+            }
+
+            Logger::setFileLog(false);
+
+            // After the session has let go of it, so nothing writes it back.
+            $problem = $path === null ? null : SessionList::deleteSessionFile($path);
+
+            if ($problem !== null) {
+                $this->sayError("Could not move the session file to the trash ({$path}): {$problem}");
+            }
+
+            $this->footer->invalidate();
+            $this->paintBorder();
+            $this->sayIncognito();
+        });
+    }
+
+    /** What a private session is, said when one starts: what stays off this machine, and what does not. */
+    private function sayIncognito(): void
+    {
+        $this->sayThemed(fn (): string => Themes::theme()->fg('warning', 'Incognito')
+            . Themes::theme()->fg('dim', ' — nothing about this session is saved on this machine: no session file, no logs or crash records, and long tool output is removed when it ends. What you send still goes to '
+                . (($provider = $this->session->model()?->provider) !== null ? "the model provider ({$provider})" : 'the model provider')
+                . ', under its own terms.'));
     }
 
     /**
@@ -6165,7 +6235,8 @@ final class InteractiveMode
                     $selectionError = "{$actionLabel}, but its default model \"{$defaultId}\" is not available. Use /model to select a model.";
                 } else {
                     try {
-                        $this->session->setModel($selected, persistAsDefault: true);
+                        // Chosen for the person, not by them, so a private session does not write it down.
+                        $this->session->setModel($selected, persistAsDefault: !$this->session->isIncognito());
                         $this->paintBorder();
                     } catch (Throwable $error) {
                         $selected = null;

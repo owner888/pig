@@ -517,6 +517,19 @@ final class RpcModeTest extends TestCase
         $this->assertNull($state['routedModel']);
     }
 
+    public function testGetStateSaysWhenTheSessionIsPrivate(): void
+    {
+        $this->start(store: true);
+        $this->assertArrayNotHasKey('incognito', $this->data(['type' => 'get_state']), 'only said when true');
+
+        $this->session->goIncognito();
+        $state = $this->data(['type' => 'get_state']);
+
+        $this->assertTrue($state['incognito']);
+        $this->assertArrayNotHasKey('sessionFile', $state);
+        $this->session->dispose();
+    }
+
     public function testAHostCanSetEachQueuesModeAndNotOnlyReadIt(): void
     {
         // Upstream's `set_steering_mode` and `set_follow_up_mode`, one command per queue.

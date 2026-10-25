@@ -53,6 +53,8 @@ final class ManagedSession
         public readonly string $cwd,
         public readonly ?string $sessionFile,
         public readonly RpcClient $client,
+        /** A private session's child (`--incognito`). */
+        public readonly bool $incognito = false,
     ) {
     }
 }

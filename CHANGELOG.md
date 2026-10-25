@@ -55,6 +55,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Added
 
 - Added `/discard`, pig's own: after a confirmation it quits and moves the current session's file to the trash, for a question decided afterwards not to be worth keeping (`--no-session` is the same decision made before starting). With nothing on disk yet it simply quits.
+- Added incognito, pig's own, after Chrome's incognito window: `pig --incognito` starts a private session, `/incognito` makes the current one private part way (its file goes to the trash after a confirmation), and the web UI has "New private session". A private session writes no session file, no logs and no crash records, keeps a command's full output only in its own temporary directory (removed when it ends), and does not save the default model `/login` picks for you; settings you change on purpose are still saved. The footer and the editor's border mark it, and a notice says that requests still go to the model provider. Extensions are told with `isIncognito()` and get `artifactsDirectory()` for what they save.
 
 ## [0.11.4] - 2026-10-25
 

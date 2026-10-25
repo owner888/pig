@@ -49,7 +49,7 @@ use Throwable;
  *
  * | in | out |
  * |---|---|
- * | `start_session {cwd, sessionFile?}` — bind this socket to a conversation, starting its child if there is none | `rpc_event {event}` — a line from the bound child, verbatim |
+ * | `start_session {cwd, sessionFile?, incognito?}` — bind this socket to a conversation, starting its child if there is none (`--incognito` for a private one) | `rpc_event {event}` — a line from the bound child, verbatim |
  * | `detach_session` | `session_ended {reason}` — the bound child is gone |
  * | `rpc_command {command}` — forwarded whole, id and all, to the bound child | `error {message}` |
  *
@@ -160,12 +160,16 @@ final class HttpServer
         $this->middlewares = [new Middlewares\SameOriginMiddleware(), new Middlewares\LoginMiddleware($this->login)];
         $this->nodeManager = new NodeManager();
         $this->pool = new SessionPool(
-            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null): RpcClient {
-                $sessionArg = $sessionFile !== null ? SessionManager::find($cwd, $sessionFile) : null;
+            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null, bool $incognito = false): RpcClient {
+                $sessionArg = $sessionFile !== null && !$incognito ? SessionManager::find($cwd, $sessionFile) : null;
 
                 return new RpcClient(
                     cwd: $cwd,
-                    arguments: $sessionArg !== null ? ['--session', $sessionArg] : [],
+                    arguments: match (true) {
+                        $incognito => ['--incognito'],
+                        $sessionArg !== null => ['--session', $sessionArg],
+                        default => [],
+                    },
                     // The page's theme, which `RpcMode` makes the child's before `session_start`.
                     environment: $theme !== null ? ['PIG_WEB_THEME' => $theme] : [],
                 );
@@ -1139,6 +1143,8 @@ final class HttpServer
             $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
             $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : 'default';
             $theme = is_string($data['theme'] ?? null) && $data['theme'] !== '' ? $data['theme'] : null;
+            // A private tab (the page's "New private session"): a child started with `--incognito`.
+            $incognito = ($data['incognito'] ?? false) === true;
             // The page's own id, the same across its reconnects (pig's): a tab whose conversation is
             // not saved yet is bound to the same child again rather than a new one, so a prompt sent
             // again under its `requestId` after a dropped connection reaches the child that took it.
@@ -1151,7 +1157,7 @@ final class HttpServer
             // tab and nothing else, not a server that falls over.
             try {
                 $clientTag = ($pageId ?? $this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme);
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito);
             } catch (Throwable $e) {
                 $conn->send(array_filter([
                     'type' => 'error',
@@ -1168,6 +1174,7 @@ final class HttpServer
                 'cwd' => $managed->cwd,
                 'sessionFile' => $managed->sessionFile,
                 'shared' => count($managed->clients) > 1,
+                'incognito' => $managed->incognito ? true : null,
             ], static fn (mixed $v): bool => $v !== null));
 
             // What the extensions put on screen before this tab was here — widgets, statuses, the

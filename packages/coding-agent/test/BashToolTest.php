@@ -641,6 +641,26 @@ final class BashToolTest extends ToolTestCase
         $this->assertSame('sess-9 yes', $this->textOf($result));
     }
 
+    public function testAPrivateSessionsSpillGoesToItsOwnDirectoryEvenWithTheVariablesOff(): void
+    {
+        $directory = sys_get_temp_dir() . '/pig-incognito-test-' . bin2hex(random_bytes(4));
+        mkdir($directory, 0o700);
+        $tool = new BashTool(
+            $this->cwd,
+            exposeSessionEnvironment: false,
+            sessionEnvironment: static fn (): SessionEnvironment => new SessionEnvironment('s', tempDirectory: $directory),
+        );
+
+        $result = Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'seq 1 3000']));
+        $path = (string) $result->details['fullOutputPath'];
+
+        $this->assertSame($directory, dirname($path));
+        // Not a variable the command is told.
+        $this->assertSame([], array_keys(array_filter(SessionEnvironment::apply([], new SessionEnvironment(tempDirectory: $directory)))));
+        unlink($path);
+        rmdir($directory);
+    }
+
     public function testTheSessionDescribesItselfFromItsStoreModelAndLevel(): void
     {
         $inherited = ['PATH' => '/bin', 'PIG_PROVIDER' => 'stale'];

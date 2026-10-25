@@ -113,6 +113,15 @@ class Logger
     }
 
     /**
+     * 设置是否写日志文件（`~/.pig/agent/logs`）。隐身会话（`--incognito`、`/incognito`）关掉它，
+     * 这个进程之后的日志不再落盘
+     */
+    public static function setFileLog(bool $enable): void
+    {
+        self::$enableFileLog = $enable;
+    }
+
+    /**
      * 设置最低输出级别
      */
     public static function setLevel(string $level): void

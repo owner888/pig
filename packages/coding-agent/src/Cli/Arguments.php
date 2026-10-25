@@ -43,14 +43,14 @@ final readonly class Arguments
 
     /**
      * Every option that is a flag. Upstream's, then pig's own (`--read-only`, `--no-proxy`,
-     * `--no-hooks`, `--no-tool-files`, the update check, and the web and MCP modes').
+     * `--no-hooks`, `--no-tool-files`, the update check, the web and MCP modes', `--incognito`).
      * `--list-models` is neither list: its search is optional, as upstream's.
      */
     public const array FLAGS = [
         'help', 'version', 'continue', 'resume', 'print', 'no-session', 'no-tools', 'no-builtin-tools',
         'no-extensions', 'no-mcp', 'no-skills', 'no-prompt-templates', 'no-themes', 'no-context-files',
         'verbose', 'approve', 'no-approve', 'offline',
-        'read-only', 'no-proxy', 'no-hooks', 'no-tool-files', 'no-update-check', 'update-check', 'mcp-stdio', 'no-browser',
+        'read-only', 'no-proxy', 'no-hooks', 'no-tool-files', 'no-update-check', 'update-check', 'mcp-stdio', 'no-browser', 'incognito',
     ];
 
     /**

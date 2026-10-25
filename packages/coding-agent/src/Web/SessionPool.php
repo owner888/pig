@@ -60,9 +60,10 @@ final class SessionPool
     private array $bySubscription = [];
 
     /**
-     * @param Closure(string $cwd, ?string $sessionPath, ?string $theme): RpcClient $spawn how a
-     *        child is made — injectable so a test can hand back a client over a fixture rather
-     *        than `bin/pig`. `$theme` is the page's, for the child to draw in from the start.
+     * @param Closure(string $cwd, ?string $sessionPath, ?string $theme, bool $incognito): RpcClient $spawn
+     *        how a child is made — injectable so a test can hand back a client over a fixture rather
+     *        than `bin/pig`. `$theme` is the page's, for the child to draw in from the start;
+     *        `$incognito` asks for a private session (`--incognito`).
      * @param Closure(ManagedSession, array<string, mixed>): void $onEvent every event from
      *        any child, with the session it came from; `HttpServer` fans it out
      */
@@ -73,7 +74,7 @@ final class SessionPool
     ) {
     }
 
-    public static function key(string $cwd, ?string $sessionFile, ?string $clientId = null): string
+    public static function key(string $cwd, ?string $sessionFile, ?string $clientId = null, bool $incognito = false): string
     {
         // Resolved, as pi-web's `resolve(cwd)` is: the page says `/tmp/x` and the child, whose
         // `cwd()` is what `getcwd()` answered, says `/private/tmp/x` — and a key built from each
@@ -81,6 +82,12 @@ final class SessionPool
         // spelling, missed the pool entry under the page's, and spawned a second child for a
         // file one was already on.
         $cwd = rtrim(realpath($cwd) ?: $cwd, '/') ?: '/';
+
+        // A private session has no file, and is never the child a tab on an ordinary new
+        // conversation is bound to, nor the other way round.
+        if ($incognito) {
+            return $cwd . '::__incognito__::' . ($clientId ?? 'shared');
+        }
 
         if ($sessionFile !== null && $sessionFile !== '') {
             return $cwd . '::' . basename($sessionFile);
@@ -104,10 +111,12 @@ final class SessionPool
         string $clientId,
         ?string $tabId = null,
         ?string $theme = null,
+        bool $incognito = false,
     ): ManagedSession {
         $tabId ??= 'default';
         $subKey = "{$connectionId}:{$tabId}";
-        $key = self::key($cwd, $sessionFile, $clientId);
+        $sessionFile = $incognito ? null : $sessionFile;
+        $key = self::key($cwd, $sessionFile, $clientId, $incognito);
 
         $current = $this->bySubscription[$subKey] ?? null;
 
@@ -122,7 +131,7 @@ final class SessionPool
         $managed = $this->byKey[$key] ?? null;
 
         if ($managed === null || $managed->closing) {
-            $managed = $this->spawnSession($cwd, $sessionFile, $key, $theme);
+            $managed = $this->spawnSession($cwd, $sessionFile, $key, $theme, $incognito);
         }
 
         $managed->clients[$connectionId][$tabId] = true;
@@ -282,10 +291,10 @@ final class SessionPool
 
     // ---- internals -------------------------------------------------------------------------
 
-    private function spawnSession(string $cwd, ?string $sessionFile, string $key, ?string $theme = null): ManagedSession
+    private function spawnSession(string $cwd, ?string $sessionFile, string $key, ?string $theme = null, bool $incognito = false): ManagedSession
     {
-        $client = ($this->spawn)($cwd, $sessionFile, $theme);
-        $managed = new ManagedSession($cwd, $sessionFile, $client);
+        $client = ($this->spawn)($cwd, $sessionFile, $theme, $incognito);
+        $managed = new ManagedSession($cwd, $sessionFile, $client, $incognito);
         $managed->keys[$key] = true;
         $this->byKey[$key] = $managed;
 

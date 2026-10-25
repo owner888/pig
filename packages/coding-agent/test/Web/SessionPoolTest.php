@@ -20,19 +20,24 @@ final class SessionPoolTest extends TestCase
 
     private int $spawned = 0;
 
+    /** @var list<bool> what each spawn was asked: a private session or not */
+    private array $privately = [];
+
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         $this->events = [];
         $this->spawned = 0;
+        $this->privately = [];
     }
 
     private function pool(float $idleTtl = 0.15): SessionPool
     {
         return new SessionPool(
-            spawn: function (string $cwd, ?string $sessionFile): RpcClient {
+            spawn: function (string $cwd, ?string $sessionFile, ?string $theme = null, bool $incognito = false): RpcClient {
                 $this->spawned++;
+                $this->privately[] = $incognito;
 
                 return new RpcClient(
                     cwd: $cwd,
@@ -70,6 +75,8 @@ final class SessionPoolTest extends TestCase
         $this->assertSame('/p::__new__::c1', SessionPool::key('/p', null, 'c1'));
         $this->assertSame('/p::__new__::shared', SessionPool::key('/p', ''));
         $this->assertSame('/::x', SessionPool::key('/', 'x'), 'root does not become the empty string');
+        $this->assertSame('/p::__incognito__::c1', SessionPool::key('/p', null, 'c1', incognito: true));
+        $this->assertSame('/p::__incognito__::c1', SessionPool::key('/p', 'a.jsonl', 'c1', incognito: true), 'a private session has no file');
     }
 
     // ---- one child per conversation --------------------------------------------------------
@@ -127,6 +134,23 @@ final class SessionPoolTest extends TestCase
 
             $this->assertNotSame($a, $b, '"new" from two browsers is two conversations, not one');
             $this->assertSame(2, $this->spawned);
+
+            $pool->shutdown();
+        });
+    }
+
+    public function testAPrivateTabGetsAPrivateChildOfItsOwn(): void
+    {
+        $pool = $this->pool();
+
+        Async::run(function () use ($pool): void {
+            $ordinary = $pool->bind(1, '/tmp', null, 'browser-1', 'tab-1');
+            $private = $pool->bind(1, '/tmp', null, 'browser-1', 'tab-1', incognito: true);
+
+            $this->assertNotSame($ordinary, $private, 'never the child of an ordinary new conversation');
+            $this->assertTrue($private->incognito);
+            $this->assertNull($private->sessionFile);
+            $this->assertSame([false, true], $this->privately);
 
             $pool->shutdown();
         });

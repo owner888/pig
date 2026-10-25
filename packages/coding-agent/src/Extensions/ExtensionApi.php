@@ -520,6 +520,28 @@ final class ExtensionApi extends HookApi
     }
 
     /**
+     * pig's own: whether the session is private (`--incognito`, `/incognito`) — an extension that
+     * keeps records of its own (recently opened files, a history, a cache of what was asked) keeps
+     * none for this one. Asked when it is about to write, not once at load: `/incognito` can come
+     * part way through. False with no session yet.
+     */
+    public function isIncognito(): bool
+    {
+        return $this->session()?->isIncognito() ?? false;
+    }
+
+    /**
+     * pig's own: where an extension saves what it makes for the session — screenshots, recordings,
+     * downloaded files. `<agent-dir>/artifacts` ordinarily; in a private session its own temporary
+     * directory (`AgentSession::scratchDirectory()`), removed with everything in it when the session
+     * ends. Not created here: the ordinary one is made by whoever first writes to it, as before.
+     */
+    public function artifactsDirectory(): string
+    {
+        return $this->session()?->scratchDirectory() ?? \Pig\CodingAgent\Config::home() . '/artifacts';
+    }
+
+    /**
      * Switch the session's model. Upstream's `setModel()`: false when there is no key for it
      * or no session to switch — a refusal, not a failure, because a hook asking for a model
      * this machine cannot reach has nothing to do about it.

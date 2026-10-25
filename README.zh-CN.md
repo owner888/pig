@@ -145,6 +145,7 @@ pig
   - `pig --session <id|path>`：按会话 ID 前缀或文件路径打开会话；只在别的项目里找到的 ID 会询问是否分叉到当前项目。恢复的会话在它自己的工作目录里继续。
   - `pig --fork <id|path>` 把一个会话复制成当前项目的新会话；`pig --session-id <id>` 打开或新建该 ID 的会话；`pig --no-session` 运行但不保存对话。
   - `/discard` 是事后决定不保存：确认后退出，并把这次会话的文件移到废纸篓，适合问完不想留在 `/resume` 里的小问题。
+  - `pig --incognito` 是隐身会话，类似 Chrome 的隐身窗口：不写会话文件、日志和崩溃记录，较长的工具输出在会话结束时删除；`/incognito` 把当前会话中途转为隐身（已写的文件移到废纸篓），Web UI 有「新建隐身会话」。底栏和输入框边框会标出来。请求仍会发给模型服务商。扩展可以用 `isIncognito()` 判断，生成的文件存到 `artifactsDirectory()`。
 - **模型选择与动态切换**：
   - `pig --model sonnet`、`pig --model antigravity/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high`（同时设置模型与思考强度）
@@ -281,7 +282,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **工具、命令、渲染器** | `registerTool()`、`removeTools()`、`registerCommand()`、`registerMessageRenderer()`、`registerLocale()`。 |
 | **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及与上游一致的 provider 事件——`before_provider_request`（替换请求 payload）、`before_provider_headers`（原地改 header）、`after_provider_response`（状态码与 header）、`provider_stream_event`（每个原始流事件）——还有 `model_select`、`thinking_level_select`。 |
 | **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |
-| **会话** | `getSettings()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
+| **会话** | `getSettings()`、`isIncognito()`、`artifactsDirectory()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
 | **Web UI** | `registerWebPanel(id, title, render, action, icon, commands, placement, label)` 在 `pig web` 侧边栏或页头放一个面板（用户可以自己挪位置）：`render` 返回区块（文字、带按钮的列表、进度条、卡片、延迟加载的段落），由页面按自己的主题画出来；按钮的 `action` 会拿到一个 `$ui`，和 `$ctx->ui` 一样可以 `confirm`、`select`、`input`、`notify`——Antigravity 账号面板就是这样做的。`registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 用来应答自己的请求。 |
 | **第二个凭据存储** | `Auth::useSecondStore(provider, read, renewed)`，给在 `auth.json` 旁边另存多账号的 provider 用。 |
 

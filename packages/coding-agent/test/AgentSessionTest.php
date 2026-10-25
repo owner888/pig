@@ -290,6 +290,79 @@ final class AgentSessionTest extends TestCase
         $this->assertSame([], $session->queued());
     }
 
+    // ---- a private session -------------------------------------------------------------
+
+    public function testGoingIncognitoKeepsTheIdAndWritesNothingMore(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['an answer', 'another'], store: $store);
+        Async::run(static fn () => $session->prompt('hi'));
+        $this->assertTrue($store->isPersisted());
+        $written = (string) file_get_contents($store->path);
+        $id = $session->sessionId();
+
+        $session->goIncognito();
+
+        $this->assertTrue($session->isIncognito());
+        $this->assertNull($session->store());
+        // The same id: the provider's prompt cache is keyed by it.
+        $this->assertSame($id, $session->sessionId());
+        $this->assertSame($id, $session->agent->sessionId);
+        $this->assertSame($store->header()['timestamp'], $session->sessionHeader()['timestamp']);
+
+        Async::run(static fn () => $session->prompt('again'));
+        $this->assertCount(4, $session->messages(), 'the conversation carried on');
+        $this->assertSame($written, (string) file_get_contents($store->path), 'and the file did not hear of it');
+
+        $scratch = (string) $session->scratchDirectory();
+        $this->assertDirectoryExists($scratch);
+        $this->assertSame(0o700, fileperms($scratch) & 0o777);
+
+        $session->dispose();
+        $this->assertDirectoryDoesNotExist($scratch);
+    }
+
+    public function testAnExtensionIsToldTheSessionIsPrivateAndWhereToSaveThings(): void
+    {
+        $session = $this->session([]);
+        $context = new \Pig\CodingAgent\Hooks\HookContext(sys_get_temp_dir(), session: $session);
+
+        $this->assertFalse($context->isIncognito());
+        $this->assertSame(\Pig\CodingAgent\Config::home() . '/artifacts', $context->artifactsDirectory());
+
+        // Asked when it is about to write, so `/incognito` part way through is heard.
+        $session->goIncognito();
+        $this->assertTrue($context->isIncognito());
+        $this->assertSame($session->scratchDirectory(), $context->artifactsDirectory());
+        $session->dispose();
+    }
+
+    public function testAnOrdinarySessionHasNoScratchDirectory(): void
+    {
+        $session = $this->session([]);
+
+        $this->assertFalse($session->isIncognito());
+        $this->assertNull($session->scratchDirectory());
+    }
+
+    public function testAPrivateSessionsLongOutputIsKeptInItsOwnDirectoryAndGoesWithIt(): void
+    {
+        $session = $this->session([]);
+        $session->goIncognito();
+        $scratch = (string) $session->scratchDirectory();
+
+        // Past `Truncate::MAX_LINES`, so the whole output is spilled to a file.
+        $execution = Async::run(static fn () => $session->executeBash('seq 1 5000'));
+
+        $this->assertTrue($execution->truncated);
+        $this->assertNotNull($execution->fullOutputPath);
+        $this->assertStringStartsWith($scratch . '/', (string) $execution->fullOutputPath);
+        $this->assertFileExists((string) $execution->fullOutputPath);
+
+        $session->dispose();
+        $this->assertFileDoesNotExist((string) $execution->fullOutputPath);
+    }
+
     // ---- running a command yourself ---------------------------------------------------
 
     public function testABangCommandJoinsTheConversationAndReachesTheModel(): void

@@ -41,6 +41,7 @@ use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
@@ -216,6 +217,7 @@ final class InteractiveModeTest extends TestCase
         ?\Pig\CodingAgent\Keybindings $keybindings = null,
         ?string $tuiMode = null,
         ?Closure $createRuntime = null,
+        bool $incognito = false,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -261,6 +263,7 @@ final class InteractiveModeTest extends TestCase
             $hooks,
             $fileCommands,
             $modelScope,
+            incognito: $incognito,
         );
 
         if ($resume !== null && $saved !== null) {
@@ -5814,6 +5817,75 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringNotContainsString('Discard this session?', $this->screenText());
         $this->assertNull($this->mode->resumeCommand());
+    }
+
+    public function testIncognitoAsksThenTrashesTheFileAndCarriesOnUnsaved(): void
+    {
+        $this->start(['the first answer', 'the second answer'], store: true);
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $path = (string) $this->session->store()?->path;
+        $id = $this->session->sessionId();
+        $this->assertFileExists($path);
+        $this->assertStringNotContainsString(FooterComponent::INCOGNITO_LABEL, $this->screenText());
+
+        $this->type('/incognito');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Make this session private?', $this->screenText());
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertTrue($this->session->isIncognito());
+        $this->assertNull($this->session->store());
+        // The same id, so the provider's prompt cache still recognises the conversation.
+        $this->assertSame($id, $this->session->sessionId());
+        $screen = $this->screenText();
+        $this->assertStringContainsString(FooterComponent::INCOGNITO_LABEL, $screen, 'the footer says so');
+        $this->assertStringContainsString('still goes to the model provider (anthropic)', $screen);
+
+        // The conversation carries on, and nothing is written for it.
+        $this->type('and another');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('the second answer', $this->screenText());
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame([], glob(dirname($path) . '/*.jsonl') ?: []);
+        $this->assertNull($this->mode->resumeCommand());
+
+        $this->type('/incognito');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('This session is already private', $this->screenText());
+    }
+
+    public function testIncognitoWithNothingSavedAsksNothing(): void
+    {
+        $this->start();
+        $this->type('/incognito');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringNotContainsString('Make this session private?', $this->screenText());
+        $this->assertTrue($this->session->isIncognito());
+        $this->assertStringContainsString('Incognito — nothing about this session is saved', $this->screenText());
+    }
+
+    public function testAPrivateSessionSaysSoFromTheStart(): void
+    {
+        $this->start(incognito: true);
+
+        $screen = $this->screenText();
+        $this->assertStringContainsString(FooterComponent::INCOGNITO_LABEL, $screen);
+        $this->assertStringContainsString('Incognito — nothing about this session is saved', $screen);
+
+        // `/discard` has nothing to throw away: it is `/quit`.
+        $this->type('/discard');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringNotContainsString('Discard this session?', $this->screenText());
     }
 
     public function testImportAsksThenResumesACopyInThisProject(): void

@@ -618,6 +618,12 @@ final class SessionManager
         ));
     }
 
+    /** When this session began, in milliseconds — its header's `timestamp`. */
+    public function createdAt(): int
+    {
+        return $this->createdAt;
+    }
+
     /**
      * The header line, as the file opens with it — upstream's `getHeader()`, which `--mode json`
      * writes first so a reader knows which session the events that follow belong to.

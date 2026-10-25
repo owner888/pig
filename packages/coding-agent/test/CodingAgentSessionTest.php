@@ -702,6 +702,40 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertFalse($started->resumed);
     }
 
+    public function testAPrivateSessionHasNoFileAndSaysItIsPrivate(): void
+    {
+        $started = $this->start(['incognito' => true]);
+        self::converse($started, 'between us');
+
+        $this->assertNull($started->store);
+        $this->assertTrue($started->session->isIncognito());
+        $this->assertNotNull($started->session->scratchDirectory());
+        $this->assertSame([], glob($this->home . '/sessions/*/*.jsonl') ?: []);
+        $started->session->dispose();
+    }
+
+    public function testAPrivateSessionCanStartFromAFileWithoutWritingToIt(): void
+    {
+        // What `/resume` in a private session builds for a conversation from another directory.
+        $first = $this->start();
+        self::converse($first, 'the first thing said');
+        $path = (string) $first->store?->path;
+        $before = (string) file_get_contents($path);
+
+        $private = $this->start(['incognito' => true, 'resume' => $path]);
+        self::converse($private, 'said privately');
+
+        $this->assertTrue($private->resumed);
+        $this->assertNull($private->store);
+        $texts = array_map(
+            static fn (object $m): string => is_array($m->content) ? (string) ($m->content[0]->text ?? '') : '',
+            $private->session->messages(),
+        );
+        $this->assertContains('the first thing said', $texts);
+        $this->assertSame($before, (string) file_get_contents($path), 'the file did not hear what was said privately');
+        $private->session->dispose();
+    }
+
     // ---- what got loaded -----------------------------------------------------------------------
 
     public function testAProjectsOwnInstructionsAndSkillsAndCommandsComeBack(): void

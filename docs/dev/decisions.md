@@ -438,3 +438,37 @@ uploaded to pigagent.dev for the `$schema` URLs to resolve.
 each `models` entry, each `modelOverrides` entry — so that, as before, an error refuses only what it
 is in; upstream refuses the whole file.
 
+
+## Incognito: a private session, in core
+
+pig's own, after Chrome's incognito window: `pig --incognito` starts a private session,
+`/incognito` makes the one on screen private part way through (its file goes to the trash, as
+`/discard` sends it), and the web page's "New private session" starts a `--incognito` child for a
+tab of its own. It is about **this machine**: what is sent to the provider is sent all the same, and
+the notice says so.
+
+What a private session leaves out: the session file (`AgentSession::goIncognito()` lets go of the
+store; the id is kept, so the provider's prompt cache still recognises the conversation); the logs
+(`Logger::setFileLog(false)` for the process — a web tab's child is a process of its own) and the
+crash records, which are neither written nor marked told; a command's full output past the
+truncation, which goes to the session's own `0700` temporary directory and is removed with it at
+`dispose()` or at shutdown; and the default model `/login` would have chosen and saved on the
+person's behalf. Settings the person changes on purpose — `/settings`, "save as default" in `/model`
+and `/thinking` — are still saved: an incognito window keeps the bookmarks you add. The web page does
+not keep a private tab among the tabs a reload reopens.
+
+Extensions load as usual and are told: `isIncognito()` on `ExtensionApi` and `HookContext`, asked at
+the moment of writing because `/incognito` can come part way, and `artifactsDirectory()`, the place
+for what an extension makes for the session — `<agent-dir>/artifacts` ordinarily, the session's
+temporary directory in a private one.
+
+**In core, not an extension.** The developer asked whether it should be one; most of it could be, but
+the parts that matter most cannot be reached from an extension — the spill path inside `Run`, the
+crash handler in `bin/pig`, `/login`'s automatic default, the web daemon's child arguments, the
+editor's border — and opening a seam for each would have been more core than the feature itself.
+
+A private session stays private: `/new` starts another conversation in memory, `/resume` reads a file
+without writing to it (another project's is rebuilt for its directory with `CodingAgent::session(…,
+incognito: true, resume: …)`, which reads the file and keeps no store), and `/fork` and `/clone`
+refuse as they do for `--no-session`. `--incognito` cannot be combined with `--continue`,
+`--resume`, `--session`, `--session-id` or `--fork`: like an incognito window, it opens on nothing.
