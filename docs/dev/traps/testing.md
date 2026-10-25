@@ -1125,4 +1125,13 @@ output DevTools ws URL or diagnostic errors to stdout, they were lost.
 **Rule**: Subprocess browser launch timeout is 30.0s, draining both stdout and stderr into `$seen`
 and reporting trailing seen bytes if the launch fails or times out.
 
+## `uncapturedClosureReads()` falsely flagged static class property accesses
+
+**Symptom**: `php test/lint.php` flagged `self::$pending` and `self::$cache` inside a closure in `Dns.php` as uncaptured closure reads (`$pending is read inside a closure that neither takes it as a parameter...`).
+
+**Cause**: `test/lint.php`'s closure static analysis swept for `T_VARIABLE` tokens inside closure bodies, but did not check if the preceding non-ignorable token was `T_DOUBLE_COLON` (`::`), mistaking static class property accesses (`self::$prop`, `Class::$prop`) for uncaptured local variables.
+
+**Rule**: Static property accesses preceded by `T_DOUBLE_COLON` belong to class scope, not closure variable scope; static analysis must skip them when checking uncaptured closure variables.
+
+
 

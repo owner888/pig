@@ -87,7 +87,14 @@ final class Dns
         $key = strtolower($host);
         $deferred = new Deferred();
         $script = '$a = gethostbynamel($argv[1]); echo $a === false ? "" : $a[0];';
-        $process = @proc_open([PHP_BINARY, '-n', '-d', 'display_errors=0', '-r', $script, $host], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open([PHP_BINARY, '-n', '-d', 'display_errors=0', '-r', $script, $host], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        } finally {
+            restore_error_handler();
+        }
 
         $finish = static function (string|Throwable $answer) use ($deferred, $key): void {
             unset(self::$pending[$key]);

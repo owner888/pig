@@ -2364,6 +2364,12 @@ final class InteractiveModeTest extends TestCase
 
         // Not a broken machine, but worth naming the thing to install rather than
         // saying it did not work.
+        if (PHP_OS_FAMILY !== 'Linux') {
+            $this->assertStringContainsString('Error: Clipboard unavailable', $this->screen());
+
+            return;
+        }
+
         $this->assertStringContainsString('wl-copy, xclip or xsel', $this->screen());
     }
 

@@ -50,6 +50,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.12.1] - 2026-10-25
+
+### Fixed
+
+- Fixed `@` error suppression in `Dns::start()` and `SchemaErrors::matches()` triggering `test/lint.php` failures: replaced with `set_error_handler` and `restore_error_handler` as required by repo conventions.
+- Fixed `test/lint.php` false positive on static class property accesses (`self::$prop`, `Class::$prop`) inside closures in `uncapturedClosureReads()`.
+- Fixed `InteractiveModeTest` failing on macOS when checking clipboard unavailability message.
+
 ## [0.12.0] - 2026-10-25
 
 ### Added

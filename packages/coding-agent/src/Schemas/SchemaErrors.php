@@ -628,6 +628,12 @@ final class SchemaErrors
         static $compiled = [];
         $compiled[$pattern] ??= '#' . str_replace('#', '\\#', $pattern) . '#uD';
 
-        return @preg_match($compiled[$pattern], $value) === 1;
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            return preg_match($compiled[$pattern], $value) === 1;
+        } finally {
+            restore_error_handler();
+        }
     }
 }

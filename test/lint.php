@@ -372,8 +372,6 @@ function uncapturedClosureReads(string $source): array
             if (!$tok->is(T_VARIABLE)) {
                 continue;
             }
-            $name = substr($tok->text, 1);
-            $nx = next_token($tokens, $j);
             $pv = null;
             for ($p = $j - 1; $p > $open; $p--) {
                 if (!$tokens[$p]->isIgnorable()) {
@@ -381,6 +379,11 @@ function uncapturedClosureReads(string $source): array
                     break;
                 }
             }
+            if ($pv !== null && $pv->is(T_DOUBLE_COLON)) {
+                continue;
+            }
+            $name = substr($tok->text, 1);
+            $nx = next_token($tokens, $j);
 
             $isAssign = $nx !== null && (
                 $nx->text === '='
@@ -441,6 +444,16 @@ function uncapturedClosureReads(string $source): array
                 continue;
             }
             if ($tokens[$j]->is(T_VARIABLE)) {
+                $pv = null;
+                for ($p = $j - 1; $p > $open; $p--) {
+                    if (!$tokens[$p]->isIgnorable()) {
+                        $pv = $tokens[$p];
+                        break;
+                    }
+                }
+                if ($pv !== null && $pv->is(T_DOUBLE_COLON)) {
+                    continue;
+                }
                 $reads[] = [$tokens[$j]->line, substr($tokens[$j]->text, 1)];
             }
         }
