@@ -2513,6 +2513,7 @@ final class InteractiveMode
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['bug', 'Report a bug to the pig developers (/bug [what went wrong])'],
         ['trust', 'Decide whether this project\'s .pig/ hooks, tools and extensions may load'],
+        ['discard', 'Throw this session away and quit: its file goes to the trash'],
         ['quit', 'Quit pig'],
     ];
 
@@ -2617,11 +2618,53 @@ final class InteractiveMode
             'bug' => $this->reportBug(trim(substr($text, strlen($name) + 1))),
             'trust' => $this->showTrust(),
             'exit', 'quit' => $this->stop(),
+            'discard' => $this->discardSession(),
             // A hook's or a file's, which is all that is left: `commandName()` only hands
             // over names something answers to, and the built-ins are above, so a built-in
             // can never be shadowed by something someone forgot they wrote.
             default => $this->runAddedCommand($text, $name),
         };
+    }
+
+    /**
+     * `/discard`, pig's own: quit and leave nothing behind — for the question asked in passing that
+     * is not worth a place in `/resume`. Upstream has `--no-session` for deciding that before the
+     * first message; this is for deciding it after the answer.
+     *
+     * Asked first, because a session that is thrown away is the one thing here a slip of the key
+     * cannot undo from inside pig; then the screen stops as `/quit` stops it — hooks told, the
+     * session let go of, its last lines written — and only then is the file moved to the trash
+     * (`SessionList::deleteSessionFile()`, as the session list's delete key does, a tool's kept
+     * output with it), so nothing writes it back afterwards. With no file to throw away — nothing
+     * sent yet, or `--no-session` — it is `/quit`.
+     */
+    private function discardSession(): void
+    {
+        $store = $this->session->store();
+
+        if ($store === null || !$store->isPersisted()) {
+            $this->stop();
+
+            return;
+        }
+
+        Async::spawn(function () use ($store): void {
+            $path = $store->path;
+
+            if (!$this->ui->confirm('Discard this session?', 'Moves ' . basename($path) . ' to the trash and quits pig.')) {
+                $this->say('Discard cancelled');
+
+                return;
+            }
+
+            $this->stop();
+            $problem = SessionList::deleteSessionFile($path);
+
+            if ($problem !== null) {
+                // Nothing is drawn any more: the shell is where this can still be read.
+                fwrite(STDERR, "Could not discard the session ({$path}): {$problem}\n");
+            }
+        });
     }
 
     /**

@@ -5774,6 +5774,48 @@ final class InteractiveModeTest extends TestCase
         $this->assertCount(2, self::said(SessionManager::open($path)->messages()));
     }
 
+    /** pig's own `/discard`: asked, then quit, then the file is gone and there is nothing to resume. */
+    public function testDiscardAsksThenQuitsAndThrowsTheSessionFileAway(): void
+    {
+        $this->start(['the answer'], store: true);
+        $this->type('a passing question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $path = (string) $this->session->store()?->path;
+        $this->assertFileExists($path);
+
+        // No is no: the session stays, and so does pig.
+        $this->type('/discard');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Discard this session?', $this->screenText());
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('Discard cancelled', $this->screenText());
+        $this->assertFileExists($path);
+
+        $this->type('/discard');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertNull($this->mode->resumeCommand(), 'no "To resume this session" line for a file that is gone');
+    }
+
+    public function testDiscardWithNothingOnDiskIsQuit(): void
+    {
+        $this->start();
+        $this->type('/discard');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringNotContainsString('Discard this session?', $this->screenText());
+        $this->assertNull($this->mode->resumeCommand());
+    }
+
     public function testImportAsksThenResumesACopyInThisProject(): void
     {
         $this->start(['the answer'], store: true);

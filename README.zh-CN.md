@@ -144,6 +144,7 @@ pig
   - `pig -r` / `pig --resume`：唤出历史会话选择器——支持模糊词、`"短语"` 或 `re:<正则>` 搜索；Tab 在本目录与全部项目之间切换，`Ctrl+S` 循环切换树状 / 最近 / 模糊排序，`Ctrl+N` 只看已命名会话，`Ctrl+D` 删除。
   - `pig --session <id|path>`：按会话 ID 前缀或文件路径打开会话；只在别的项目里找到的 ID 会询问是否分叉到当前项目。恢复的会话在它自己的工作目录里继续。
   - `pig --fork <id|path>` 把一个会话复制成当前项目的新会话；`pig --session-id <id>` 打开或新建该 ID 的会话；`pig --no-session` 运行但不保存对话。
+  - `/discard` 是事后决定不保存：确认后退出，并把这次会话的文件移到废纸篓，适合问完不想留在 `/resume` 里的小问题。
 - **模型选择与动态切换**：
   - `pig --model sonnet`、`pig --model antigravity/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high`（同时设置模型与思考强度）

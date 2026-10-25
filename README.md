@@ -161,6 +161,7 @@ pig
   - `pig -r` / `pig --resume`: Open the interactive session picker — fuzzy words, `"phrases"` or `re:<pattern>`; Tab switches between this folder and all projects, `Ctrl+S` cycles threaded / recent / fuzzy order, `Ctrl+N` shows named sessions only, `Ctrl+D` deletes.
   - `pig --session <id|path>`: Open a specific session by ID prefix or file path; an ID found only in another project is offered as a fork into this one. A resumed session carries on in its own working directory.
   - `pig --fork <id|path>` copies a session into a new one here; `pig --session-id <id>` opens or creates a session with that exact id; `pig --no-session` runs without saving the conversation.
+  - `/discard` decides it afterwards: it asks, quits, and moves the session's file to the trash — for a question not worth keeping in `/resume`.
 - **Model Selection**:
   - `pig --model sonnet`, `pig --model antigravity/gemini-3.8-flash`, or `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high` (sets model and thinking level simultaneously)

@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added `/discard`, pig's own: after a confirmation it quits and moves the current session's file to the trash, for a question decided afterwards not to be worth keeping (`--no-session` is the same decision made before starting). With nothing on disk yet it simply quits.
+
 ## [0.11.4] - 2026-10-25
 
 ### Changed
