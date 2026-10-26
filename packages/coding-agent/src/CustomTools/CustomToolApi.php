@@ -49,6 +49,8 @@ final class CustomToolApi
      * Upstream's `setUIContext` on the load result, in the place the shared API actually
      * lives. The object is shared by every tool loaded in this session, which is what
      * makes one call enough.
+     *
+     * @internal
      */
     public function withUi(HookUi $ui): void
     {

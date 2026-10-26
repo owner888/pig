@@ -234,7 +234,10 @@ class HookApi
         $this->renderers[self::customType($customType)] = Closure::fromCallable($renderer);
     }
 
-    /** @return array<string, Closure> */
+    /**
+     * @return array<string, Closure>
+     * @internal
+     */
     public function renderers(): array
     {
         return $this->renderers;
@@ -251,7 +254,10 @@ class HookApi
         $this->entryRenderers[self::customType($customType)] = Closure::fromCallable($renderer);
     }
 
-    /** @return array<string, Closure> */
+    /**
+     * @return array<string, Closure>
+     * @internal
+     */
     public function entryRenderers(): array
     {
         return $this->entryRenderers;
@@ -278,6 +284,7 @@ class HookApi
         return $this->path;
     }
 
+    /** @internal */
     public function withContext(Closure $context): void
     {
         $this->context = $context;
@@ -330,6 +337,7 @@ class HookApi
         $this->note = $note ?? $this->note;
     }
 
+    /** @internal */
     public function bindSessionNames(?Closure $setSessionName, ?Closure $getSessionName): void
     {
         $this->setSessionName = $setSessionName ?? $this->setSessionName;
@@ -425,13 +433,19 @@ class HookApi
         return new ExecResult($exit, $stdout, $stderr);
     }
 
-    /** @return list<Closure> */
+    /**
+     * @return list<Closure>
+     * @internal
+     */
     public function handlers(string $event): array
     {
         return $this->handlers[$event] ?? [];
     }
 
-    /** @return array<string, RegisteredCommand> */
+    /**
+     * @return array<string, RegisteredCommand>
+     * @internal
+     */
     public function commands(): array
     {
         return $this->commands;

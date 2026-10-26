@@ -489,18 +489,26 @@ final class ExtensionApi extends HookApi
         self::$webPanels[$id] = new WebPanel($id, $title, $render, $action, $icon, array_values($commands), $placement, $label);
     }
 
-    /** @return list<WebPanel> in the order they were registered */
+    /**
+     * @return list<WebPanel> in the order they were registered
+     * @internal
+     */
     public static function webPanels(): array
     {
         return array_values(self::$webPanels);
     }
 
+    /** @internal */
     public static function webPanel(string $id): ?WebPanel
     {
         return self::$webPanels[$id] ?? null;
     }
 
-    /** For tests and `/reload`. */
+    /**
+     * For tests and `/reload`.
+     *
+     * @internal
+     */
     public static function forgetWebPanels(): void
     {
         self::$webPanels = [];
@@ -508,7 +516,11 @@ final class ExtensionApi extends HookApi
 
     // ---- the session, from an extension's side ------------------------------------------
 
-    /** The settings this run started with. Upstream's `getSettings()`. */
+    /**
+     * The settings this run started with. Upstream's `getSettings()`.
+     *
+     * @internal
+     */
     public static function useSettings(?Settings $settings): void
     {
         self::$settings = $settings;
@@ -640,7 +652,10 @@ final class ExtensionApi extends HookApi
         ];
     }
 
-    /** @return array<string, array{key: string, handler: Closure, description: string}> */
+    /**
+     * @return array<string, array{key: string, handler: Closure, description: string}>
+     * @internal
+     */
     public function shortcuts(): array
     {
         return $this->shortcuts;
@@ -657,7 +672,10 @@ final class ExtensionApi extends HookApi
         $this->markdownTransformers[] = Closure::fromCallable($transformer);
     }
 
-    /** @return list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    /**
+     * @return list<Closure(string, array{role: string, isStreaming: bool}): string>
+     * @internal
+     */
     public function markdownTransformers(): array
     {
         return $this->markdownTransformers;
@@ -674,7 +692,10 @@ final class ExtensionApi extends HookApi
         $this->toolRenderers[] = Closure::fromCallable($resolver);
     }
 
-    /** @return list<Closure> */
+    /**
+     * @return list<Closure>
+     * @internal
+     */
     public function toolRenderers(): array
     {
         return $this->toolRenderers;
@@ -713,6 +734,7 @@ final class ExtensionApi extends HookApi
      * Get all custom locales registered across loaded extensions.
      *
      * @return array<string, array{label: string, translations: array<string, string>}>
+     * @internal
      */
     public static function registeredLocales(): array
     {
