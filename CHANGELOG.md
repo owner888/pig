@@ -50,6 +50,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.0.0] - 2026-10-26
+
+The first stable release: the three release candidates below, unchanged, with this one note. From here pig follows semantic versioning for what the README's *What 1.0 Promises* names — the extension API, the files in `~/.pig/agent`, the session file, the RPC protocol and the command line — and for nothing else.
+
+### Changed
+
+- The README shows how to compact a model with a large window early: `compaction.modelOverrides` with a `reserveTokens` of most of the window, so a 1M-token Gemini is compacted at about 200k instead of sending most of a million tokens with every request. pi reads the same key.
+
 ## [1.0.0-rc.3] - 2026-10-26
 
 ### Changed
