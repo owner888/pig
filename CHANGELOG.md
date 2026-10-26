@@ -52,6 +52,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Fixed
+
+- Fixed skill and prompt template frontmatter being read a line at a time: it is YAML now, as upstream reads it. A `SKILL.md` whose frontmatter is not YAML — most often a second `: ` in an unquoted description, `description: Use when: …` — is refused with the reason and the line, as pi refuses it, instead of loading anyway; a prompt template with one is left out with the same warning; and a folded or literal description (`description: >` or `|`) is read whole instead of as `>`.
+- Fixed `PIG_STALL_LOG` naming another coroutine's await as where a stalled one resumed from: each coroutine's own suspension is kept, a coroutine's start has none, and each line now says how many cycle-collector runs fell inside the stall and for how long, and how much memory the process held.
+
+### Changed
+
+- The README says where pig runs: macOS, Linux and Android (Termux); on Windows, WSL.
+
+## [0.13.0] - 2026-10-26
+
 ### Added
 
 - Added ImageMagick as the image codec where PHP has no GD extension (Termux's PHP among them): the read tool, a pasted picture and a tool's screenshot are fitted inside the provider's limits through `magick` (or IM6's `convert`) with the same steps as through GD, instead of being left out and handed to the model to shrink with commands of its own. When PHP has no GD the installer installs it on Termux (`pkg install php-gd`, Termux's PHP being built without it), and elsewhere installs ImageMagick with the system's package manager (`brew`, `apt-get`, `dnf`, `yum`, `pacman`, `zypper` or `apk`), `/doctor` says what resizes pictures, and with neither the omission now says what is missing.

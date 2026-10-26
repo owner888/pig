@@ -60,10 +60,11 @@ Five things worth keeping straight:
 - **Five minutes is taken off every expiry**, which is upstream's margin. A token that expires
   in flight fails the request it was attached to rather than the next one, and that request is
   a whole turn.
-- **`available()` is false for the three that are not ported**, and they are still named.
-  Both halves matter: the credentials file is keyed by these strings and shared with pi, so a
-  name pig cannot sign in with is a name pig still has to *read* — and offering a sign-in that
-  cannot finish is the same mistake as offering a model whose protocol is not ported.
+- **`available()` says whether pig can sign in with a provider**, which every one of them can
+  now; it was false for three while their flows were not ported, and a provider it is false for
+  is still named. Both halves matter: the credentials file is keyed by these strings and shared
+  with pi, so a name pig cannot sign in with is a name pig still has to *read* — and offering a
+  sign-in that cannot finish is the same mistake as offering a model whose protocol is not ported.
 
 `Pkce` is upstream's `pkce.ts` with two differences, both because PHP has what JavaScript had to
 reach for: it is not asynchronous (`hash()` returns a string where Web Crypto's `digest()`

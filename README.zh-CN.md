@@ -376,6 +376,7 @@ Logger::timeEnd('benchmark');
 
 - **PHP >= 8.3**
 - 必需扩展：`ext-json`、`ext-mbstring`、`ext-openssl`、`ext-pcntl`、`ext-pcre`。
+- 支持 macOS、Linux 和 Android（Termux）。不支持原生 Windows——Windows 上的 PHP 没有 `ext-pcntl`，而终端界面需要它——在 Windows 上请用 WSL 运行 pig。
 - 可选扩展：`ext-posix`（仅后台守护运行 `pig web start -d` 需要）；`ext-gd`，或在 PHP 没有 GD 时用 ImageMagick，用来把大图压到模型服务商的限制以内——缺 GD 时安装脚本会自动装 ImageMagick。
 - 外部二进制工具：`stty`。（`fd` 与 `rg` 若系统未预装，pig 会在初次使用时自动下载至 `~/.pig/agent/bin/`）。
 

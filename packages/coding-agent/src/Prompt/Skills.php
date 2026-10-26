@@ -9,6 +9,7 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Packages\PathMetadata;
 use Pig\CodingAgent\Packages\ResolvedResource;
 use Pig\CodingAgent\Tools\Paths;
+use Pig\CodingAgent\Utils\YamlError;
 
 /**
  * Loading skills, and listing them for the model — upstream's `core/skills.ts`.
@@ -26,8 +27,8 @@ use Pig\CodingAgent\Tools\Paths;
  * wins** and every later one is a collision warning, which is upstream's `loadSkills()`.
  *
  * Not ported: the `.gitignore` / `.ignore` / `.fdignore` rules upstream applies while walking a
- * directory (see `Packages\ResourceDiscovery` for why), and its YAML parser — the frontmatter is
- * read a line at a time, so a malformed block is not refused as upstream refuses it.
+ * directory (see `Packages\ResourceDiscovery` for why). The frontmatter is YAML (`Frontmatter`),
+ * so a malformed block is refused as upstream refuses it.
  */
 final class Skills
 {
@@ -312,8 +313,17 @@ final class Skills
         }
 
         $declared = basename($path) === 'SKILL.md';
-        $fields = self::frontmatter($content);
-        $description = trim($fields['description'] ?? '');
+
+        try {
+            [$fields] = Frontmatter::parse($content);
+        } catch (YamlError $error) {
+            // Upstream's: said for a `SKILL.md`, which was meant to be a skill; any other `.md` is
+            // passed over as it would be for having no description.
+            return [null, $declared ? [new SkillWarning($path, $error->getMessage())] : []];
+        }
+
+        // Strings only, as upstream's `typeof … === "string"`: `description: 123` is no description.
+        $description = is_string($fields['description'] ?? null) ? trim($fields['description']) : '';
 
         if (!$declared && $description === '') {
             return [null, []];
@@ -328,7 +338,7 @@ final class Skills
             $messages[] = 'description exceeds ' . self::MAX_DESCRIPTION . " characters ({$length})";
         }
 
-        $name = ($fields['name'] ?? '') !== '' ? $fields['name'] : basename($baseDir);
+        $name = is_string($fields['name'] ?? null) && $fields['name'] !== '' ? $fields['name'] : basename($baseDir);
         $messages = [...$messages, ...self::nameProblems($name)];
         $warnings = array_map(static fn (string $message): SkillWarning => new SkillWarning($path, $message), $messages);
 
@@ -336,7 +346,7 @@ final class Skills
             return [null, $warnings];
         }
 
-        $disabled = in_array($fields['disable-model-invocation'] ?? null, ['true', 'True', 'TRUE'], true);
+        $disabled = ($fields['disable-model-invocation'] ?? null) === true;
 
         return [new Skill($name, $description, $path, $baseDir, $source, $disabled), $warnings];
     }
@@ -373,64 +383,7 @@ final class Skills
     /** Upstream's `stripFrontmatter()`: the body, without a byte-order mark, with `\n` line ends. */
     public static function stripFrontmatter(string $content): string
     {
-        $content = str_replace(["\r\n", "\r"], "\n", str_starts_with($content, "\u{FEFF}") ? substr($content, 3) : $content);
-
-        if (!str_starts_with($content, '---')) {
-            return $content;
-        }
-
-        $end = strpos($content, "\n---", 3);
-
-        return $end === false ? $content : trim(substr($content, $end + 4));
-    }
-
-    /**
-     * The `---` block at the top: the three keys this reads, as written.
-     *
-     * A line at a time rather than a YAML parser: the fields read here are scalars, and pig has no
-     * YAML parser to reach for. `name` and `description` lose their quotes; `disable-model-invocation`
-     * keeps them, because only an unquoted `true` is the boolean upstream's `=== true` asks for —
-     * `"true"` in YAML is a string.
-     *
-     * @return array<string, string>
-     */
-    private static function frontmatter(string $content): array
-    {
-        $content = str_replace(["\r\n", "\r"], "\n", str_starts_with($content, "\u{FEFF}") ? substr($content, 3) : $content);
-
-        if (!str_starts_with($content, '---')) {
-            return [];
-        }
-
-        $end = strpos($content, "\n---", 3);
-
-        if ($end === false) {
-            return [];
-        }
-
-        $fields = [];
-
-        foreach (explode("\n", substr($content, 4, $end - 4)) as $line) {
-            if (preg_match('/^(name|description|disable-model-invocation):\s*(.*)$/', $line, $match) !== 1) {
-                continue;
-            }
-
-            $value = trim(preg_replace('/\s+#.*$/', '', $match[2]) ?? $match[2]);
-            $fields[$match[1]] = $match[1] === 'disable-model-invocation' ? $value : self::unquote(trim($match[2]));
-        }
-
-        return $fields;
-    }
-
-    private static function unquote(string $value): string
-    {
-        foreach (['"', "'"] as $quote) {
-            if (strlen($value) >= 2 && str_starts_with($value, $quote) && str_ends_with($value, $quote)) {
-                return substr($value, 1, -1);
-            }
-        }
-
-        return $value;
+        return Frontmatter::body($content);
     }
 
     /**

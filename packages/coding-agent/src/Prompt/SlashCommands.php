@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Prompt;
 
+use Pig\CodingAgent\Utils\YamlError;
 use Pig\CodingAgent\Packages\ResolvedResource;
 use Pig\CodingAgent\Tools\Paths;
 
@@ -93,7 +94,14 @@ final class SlashCommands
             $files = is_dir($path) ? self::directChildren($path) : (is_file($path) && str_ends_with($path, '.md') ? [$path] : []);
 
             foreach ($files as $file) {
-                $command = self::read($file, $source);
+                try {
+                    $command = self::read($file, $source);
+                } catch (YamlError $error) {
+                    // Upstream's: the template is not loaded, and why is said.
+                    $collisions[] = "{$file}: {$error->getMessage()}";
+
+                    continue;
+                }
 
                 if ($command === null) {
                     continue;
@@ -277,6 +285,8 @@ final class SlashCommands
      * Upstream's `loadTemplateFromFile()`: the name is the file's, the description the
      * frontmatter's or else the first line with something on it, and `argument-hint` is kept for
      * the completion list.
+     *
+     * @throws YamlError when the frontmatter is not YAML
      */
     private static function read(string $path, string $source): ?FileCommand
     {
@@ -286,9 +296,11 @@ final class SlashCommands
             return null;
         }
 
-        [$frontmatter, $content] = self::frontmatter($raw);
+        [$frontmatter, $content] = Frontmatter::parse($raw);
         $label = "({$source})";
-        $description = $frontmatter['description'] ?? '';
+        // Strings only, as upstream's `typeof … === "string"`: unquoted, `argument-hint: [focus]` is
+        // a list, which is why the docs quote it.
+        $description = is_string($frontmatter['description'] ?? null) ? $frontmatter['description'] : '';
 
         if ($description === '') {
             $description = self::firstLine($content);
@@ -299,7 +311,7 @@ final class SlashCommands
             $description === '' ? $label : "{$description} {$label}",
             $content,
             $label,
-            $frontmatter['argument-hint'] ?? null,
+            is_string($frontmatter['argument-hint'] ?? null) ? $frontmatter['argument-hint'] : null,
             $path,
         );
     }
@@ -323,66 +335,5 @@ final class SlashCommands
         }
 
         return '';
-    }
-
-    /**
-     * Upstream's `parseFrontmatter()`, for the string fields a template has: the `---` block's
-     * `key: value` lines, and the body after it, trimmed. Without a block the body is the file
-     * (byte-order mark gone, line ends `\n`), untrimmed, as upstream's is.
-     *
-     * A value is the string YAML would give it or nothing: quotes come off, and an unquoted value
-     * that YAML reads as something else — a `[list]`, a `{map}`, a number, `true` — is not a string,
-     * so `typeof === "string"` upstream leaves it out. That is why the docs quote
-     * `argument-hint: "[focus]"`: unquoted, it is a list.
-     *
-     * @return array{0: array<string, string>, 1: string} fields, then the body
-     */
-    private static function frontmatter(string $raw): array
-    {
-        $raw = str_replace(["\r\n", "\r"], "\n", str_starts_with($raw, "\u{FEFF}") ? substr($raw, 3) : $raw);
-
-        if (!str_starts_with($raw, '---')) {
-            return [[], $raw];
-        }
-
-        $end = strpos($raw, "\n---", 3);
-
-        if ($end === false) {
-            return [[], $raw];
-        }
-
-        $fields = [];
-
-        foreach (explode("\n", substr($raw, 4, $end - 4)) as $line) {
-            if (preg_match('/^(\w[\w-]*):\s*(.*)$/', $line, $match) === 1) {
-                $value = self::yamlString(trim($match[2]));
-
-                if ($value !== null) {
-                    $fields[$match[1]] = $value;
-                }
-            }
-        }
-
-        return [$fields, trim(substr($raw, $end + 4))];
-    }
-
-    /** One scalar as YAML reads it, when it is a string; null when it is anything else. */
-    private static function yamlString(string $value): ?string
-    {
-        foreach (['"', "'"] as $quote) {
-            if (strlen($value) >= 2 && str_starts_with($value, $quote) && str_ends_with($value, $quote)) {
-                return substr($value, 1, -1);
-            }
-        }
-
-        $value = trim(preg_replace('/\s+#.*$/', '', $value) ?? $value);
-
-        if ($value === '' || $value[0] === '[' || $value[0] === '{' || is_numeric($value)
-            || in_array(strtolower($value), ['true', 'false', 'null', '~'], true)
-        ) {
-            return null;
-        }
-
-        return $value;
     }
 }

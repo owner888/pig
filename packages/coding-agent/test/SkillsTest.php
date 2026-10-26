@@ -321,6 +321,52 @@ final class SkillsTest extends TestCase
         $this->assertStringContainsString('description is required', $warnings[0]->message);
     }
 
+    public function testAFrontmatterThatIsNotYamlIsRefusedWithWhy(): void
+    {
+        // The usual one: a second `: ` in a plain value, which YAML reads as a nested mapping.
+        $path = $this->skill('home/.pig/agent/skills/colon', "name: colon\ndescription: Use when: the user asks");
+        $this->skill('home/.pig/agent/skills/quoted', "name: quoted\ndescription: \"Use when: the user asks\"");
+
+        [$skills, $warnings] = $this->load();
+
+        $this->assertSame(['quoted'], self::names($skills), 'quoted, the same sentence is fine');
+        $this->assertCount(1, $warnings);
+        $this->assertSame($path, $warnings[0]->path);
+        $this->assertSame('Nested mappings are not allowed in compact mappings at line 3', $warnings[0]->message);
+    }
+
+    public function testAFolderOfNotesWithBrokenFrontmatterIsPassedOverQuietly(): void
+    {
+        // Not a `SKILL.md`: a note that was never meant to be a skill is not complained about.
+        mkdir($this->home . '/.pig/agent/skills', 0o755, true);
+        file_put_contents($this->home . '/.pig/agent/skills/notes.md', "---\ndescription: a: b\n---\nnotes");
+
+        $this->assertSame([[], []], $this->load());
+    }
+
+    public function testAFoldedOrLiteralDescriptionIsReadWhole(): void
+    {
+        $this->skill('home/.pig/agent/skills/folded', "description: >\n  Reads the whole\n  folded paragraph.\nname: folded");
+        $this->skill('home/.pig/agent/skills/literal', "description: |\n  First line.\n  Second line.");
+
+        [$skills] = $this->load();
+        $descriptions = array_combine(self::names($skills), array_map(static fn (Skill $s): string => $s->description, $skills));
+
+        // It came back as `>` and `|`, the line it was announced on.
+        $this->assertSame(['folded' => 'Reads the whole folded paragraph.', 'literal' => "First line.\nSecond line."], $descriptions);
+    }
+
+    public function testOnlyABooleanTrueTurnsModelInvocationOff(): void
+    {
+        $this->skill('home/.pig/agent/skills/off', "description: d\ndisable-model-invocation: true");
+        $this->skill('home/.pig/agent/skills/string', "description: d\ndisable-model-invocation: \"true\"");
+
+        [$skills] = $this->load();
+        $disabled = array_combine(self::names($skills), array_map(static fn (Skill $s): bool => $s->disableModelInvocation, $skills));
+
+        $this->assertSame(['off' => true, 'string' => false], $disabled);
+    }
+
     public function testWithNoNameTheFolderIsTheName(): void
     {
         $this->skill('home/.pig/agent/skills/from-the-folder', 'description: named by its folder');

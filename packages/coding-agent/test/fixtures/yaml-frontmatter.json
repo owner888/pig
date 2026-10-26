@@ -1,0 +1,651 @@
+{
+ "generator": "yaml 2.9.0 (upstream's), YAML.parse() of each document",
+ "cases": [
+  {
+   "yaml": "name: foo\ndescription: Does a thing",
+   "value": {
+    "name": "foo",
+    "description": "Does a thing"
+   }
+  },
+  {
+   "yaml": "name: foo\ndescription: Use when: something happens",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "description: ends with colon:",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "description: 'single ''quoted'' text'",
+   "value": {
+    "description": "single 'quoted' text"
+   }
+  },
+  {
+   "yaml": "description: \"double \\\"quoted\\\" \\u00e9 \\n x\"",
+   "value": {
+    "description": "double \"quoted\" é \n x"
+   }
+  },
+  {
+   "yaml": "description: >\n  folded line one\n  folded line two\n\n  second para\nname: x",
+   "value": {
+    "description": "folded line one folded line two\nsecond para\n",
+    "name": "x"
+   }
+  },
+  {
+   "yaml": "description: |\n  literal one\n  literal two\nname: x",
+   "value": {
+    "description": "literal one\nliteral two\n",
+    "name": "x"
+   }
+  },
+  {
+   "yaml": "description: |-\n  stripped\n\n",
+   "value": {
+    "description": "stripped"
+   }
+  },
+  {
+   "yaml": "description: |+\n  kept\n\n\nname: y",
+   "value": {
+    "description": "kept\n\n\n",
+    "name": "y"
+   }
+  },
+  {
+   "yaml": "description: >-\n  a\n    indented more\n  b\n",
+   "value": {
+    "description": "a\n  indented more\nb"
+   }
+  },
+  {
+   "yaml": "description: plain multi\n  line continued\n  and more\nname: z",
+   "value": {
+    "description": "plain multi line continued and more",
+    "name": "z"
+   }
+  },
+  {
+   "yaml": "name: a\nname: b",
+   "error": "Map keys must be unique"
+  },
+  {
+   "yaml": "description: \"unterminated",
+   "error": "Missing closing \"quote"
+  },
+  {
+   "yaml": "description: 'unterminated",
+   "error": "Missing closing 'quote"
+  },
+  {
+   "yaml": "description: @handle",
+   "error": "Plain value cannot start with reserved character @"
+  },
+  {
+   "yaml": "description: `tick`",
+   "error": "Plain value cannot start with reserved character `"
+  },
+  {
+   "yaml": "allowed-tools: [Read, Write, \"Bash(git:*)\"]",
+   "value": {
+    "allowed-tools": [
+     "Read",
+     "Write",
+     "Bash(git:*)"
+    ]
+   }
+  },
+  {
+   "yaml": "allowed-tools:\n  - Read\n  - Write\nlicense: MIT",
+   "value": {
+    "allowed-tools": [
+     "Read",
+     "Write"
+    ],
+    "license": "MIT"
+   }
+  },
+  {
+   "yaml": "allowed-tools:\n- Read\n- Write\nlicense: MIT",
+   "value": {
+    "allowed-tools": [
+     "Read",
+     "Write"
+    ],
+    "license": "MIT"
+   }
+  },
+  {
+   "yaml": "metadata:\n  author: me\n  version: 1.0\n  tags: [a, b]",
+   "value": {
+    "metadata": {
+     "author": "me",
+     "version": 1,
+     "tags": [
+      "a",
+      "b"
+     ]
+    }
+   }
+  },
+  {
+   "yaml": "metadata: {author: me, version: 2}",
+   "value": {
+    "metadata": {
+     "author": "me",
+     "version": 2
+    }
+   }
+  },
+  {
+   "yaml": "disable-model-invocation: true",
+   "value": {
+    "disable-model-invocation": true
+   }
+  },
+  {
+   "yaml": "disable-model-invocation: \"true\"",
+   "value": {
+    "disable-model-invocation": "true"
+   }
+  },
+  {
+   "yaml": "disable-model-invocation: True",
+   "value": {
+    "disable-model-invocation": true
+   }
+  },
+  {
+   "yaml": "description: 123",
+   "value": {
+    "description": 123
+   }
+  },
+  {
+   "yaml": "description: 1.5e3",
+   "value": {
+    "description": 1500
+   }
+  },
+  {
+   "yaml": "description: 0x1F",
+   "value": {
+    "description": 31
+   }
+  },
+  {
+   "yaml": "description: ~",
+   "value": {
+    "description": null
+   }
+  },
+  {
+   "yaml": "description:",
+   "value": {
+    "description": null
+   }
+  },
+  {
+   "yaml": "description: # just a comment",
+   "value": {
+    "description": null
+   }
+  },
+  {
+   "yaml": "description: text # a comment",
+   "value": {
+    "description": "text"
+   }
+  },
+  {
+   "yaml": "description: text#not comment",
+   "value": {
+    "description": "text#not comment"
+   }
+  },
+  {
+   "yaml": "# a comment\nname: x\n# another\ndescription: y",
+   "value": {
+    "name": "x",
+    "description": "y"
+   }
+  },
+  {
+   "yaml": "name: x\n  bad: indent",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "  name: x\ndescription: y",
+   "error": "Unexpected scalar at node end"
+  },
+  {
+   "yaml": "name:\tx",
+   "value": {
+    "name": "x"
+   }
+  },
+  {
+   "yaml": "\tname: x",
+   "error": "Tabs are not allowed as indentation"
+  },
+  {
+   "yaml": "description: \"multi line\n  double quoted\"",
+   "value": {
+    "description": "multi line double quoted"
+   }
+  },
+  {
+   "yaml": "description: 'multi line\n\n  single quoted'",
+   "value": {
+    "description": "multi line\nsingle quoted"
+   }
+  },
+  {
+   "yaml": "list:\n  - a: 1\n    b: 2\n  - c: 3",
+   "value": {
+    "list": [
+     {
+      "a": 1,
+      "b": 2
+     },
+     {
+      "c": 3
+     }
+    ]
+   }
+  },
+  {
+   "yaml": "list:\n  - - nested\n    - seq",
+   "value": {
+    "list": [
+     [
+      "nested",
+      "seq"
+     ]
+    ]
+   }
+  },
+  {
+   "yaml": "description: a: b: c",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "key with spaces: value",
+   "value": {
+    "key with spaces": "value"
+   }
+  },
+  {
+   "yaml": "\"quoted key\": value",
+   "value": {
+    "quoted key": "value"
+   }
+  },
+  {
+   "yaml": "description: >\n\n  leading blank\n",
+   "value": {
+    "description": "\nleading blank\n"
+   }
+  },
+  {
+   "yaml": "description: [unclosed",
+   "error": "Flow sequence in block collection must be sufficiently indented and end with a ]"
+  },
+  {
+   "yaml": "description: {a: 1, a: 2}",
+   "error": "Map keys must be unique"
+  },
+  {
+   "yaml": "description: [a, b] trailing",
+   "error": "Unexpected scalar at node end"
+  },
+  {
+   "yaml": "description: \"closed\" trailing",
+   "error": "Unexpected scalar at node end"
+  },
+  {
+   "yaml": "description: &anchor value",
+   "value": {
+    "description": "value"
+   }
+  },
+  {
+   "yaml": "description: *alias",
+   "error": "Unresolved alias (the anchor must be set before the alias): alias"
+  },
+  {
+   "yaml": "description: !!str 123",
+   "value": {
+    "description": "123"
+   }
+  },
+  {
+   "yaml": "description: http://example.com/path",
+   "value": {
+    "description": "http://example.com/path"
+   }
+  },
+  {
+   "yaml": "description: 'it''s: fine'",
+   "value": {
+    "description": "it's: fine"
+   }
+  },
+  {
+   "yaml": "description: \"colon: inside quotes\"",
+   "value": {
+    "description": "colon: inside quotes"
+   }
+  },
+  {
+   "yaml": "description: text ending with dash -",
+   "value": {
+    "description": "text ending with dash -"
+   }
+  },
+  {
+   "yaml": "- a\n- b",
+   "value": [
+    "a",
+    "b"
+   ]
+  },
+  {
+   "yaml": "just a scalar",
+   "value": "just a scalar"
+  },
+  {
+   "yaml": "",
+   "value": null
+  },
+  {
+   "yaml": "   ",
+   "value": null
+  },
+  {
+   "yaml": "name: x\n\n\ndescription: y\n",
+   "value": {
+    "name": "x",
+    "description": "y"
+   }
+  },
+  {
+   "yaml": "description: |\n    deeper\n  shallower\n",
+   "error": "All mapping items must start at the same column"
+  },
+  {
+   "yaml": "description: >2\n   two extra\n  base\n",
+   "value": {
+    "description": " two extra\nbase\n"
+   }
+  },
+  {
+   "yaml": "nested:\n  inner:\n    deep: 1\n  other: 2",
+   "value": {
+    "nested": {
+     "inner": {
+      "deep": 1
+     },
+     "other": 2
+    }
+   }
+  },
+  {
+   "yaml": "description: Use this skill when the user asks to: do X",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "description: \"Use this skill when the user asks to: do X\"",
+   "value": {
+    "description": "Use this skill when the user asks to: do X"
+   }
+  },
+  {
+   "yaml": "description: >\n  Use when: folded has colon\n",
+   "value": {
+    "description": "Use when: folded has colon\n"
+   }
+  },
+  {
+   "yaml": "argument-hint: [focus]",
+   "value": {
+    "argument-hint": [
+     "focus"
+    ]
+   }
+  },
+  {
+   "yaml": "argument-hint: \"[focus]\"",
+   "value": {
+    "argument-hint": "[focus]"
+   }
+  },
+  {
+   "yaml": "description: value\n  - not a list",
+   "value": {
+    "description": "value - not a list"
+   }
+  },
+  {
+   "yaml": "a: 1\nb:\n  - x\n  - y\nc: 3",
+   "value": {
+    "a": 1,
+    "b": [
+     "x",
+     "y"
+    ],
+    "c": 3
+   }
+  },
+  {
+   "yaml": "a:\n  b: 1\n c: 2",
+   "error": "All mapping items must start at the same column"
+  },
+  {
+   "yaml": "description: \"escaped \\\n  join\"",
+   "value": {
+    "description": "escaped join"
+   }
+  },
+  {
+   "yaml": "description: \"bad \\q escape\"",
+   "error": "Invalid escape sequence \\q"
+  },
+  {
+   "yaml": "description: -leading dash",
+   "value": {
+    "description": "-leading dash"
+   }
+  },
+  {
+   "yaml": "description: - item?",
+   "error": "Unexpected block-seq-ind on same line with key"
+  },
+  {
+   "yaml": "description: ? question",
+   "error": "Nested mappings are not allowed in compact mappings"
+  },
+  {
+   "yaml": "description: '@ok in quotes'",
+   "value": {
+    "description": "@ok in quotes"
+   }
+  },
+  {
+   "yaml": "name: Foo Bar\ndescription: Multi word",
+   "value": {
+    "name": "Foo Bar",
+    "description": "Multi word"
+   }
+  },
+  {
+   "yaml": "description: 'a'\n  extra",
+   "error": "All mapping items must start at the same column"
+  },
+  {
+   "yaml": "description: |\n  ok\n bad less indented\n",
+   "error": "All mapping items must start at the same column"
+  },
+  {
+   "yaml": "x: [a, [b, c], {d: e}]",
+   "value": {
+    "x": [
+     "a",
+     [
+      "b",
+      "c"
+     ],
+     {
+      "d": "e"
+     }
+    ]
+   }
+  },
+  {
+   "yaml": "x: {a: [1, 2], b: {c: d}}",
+   "value": {
+    "x": {
+     "a": [
+      1,
+      2
+     ],
+     "b": {
+      "c": "d"
+     }
+    }
+   }
+  },
+  {
+   "yaml": "x: [a,\n  b,\n  c]",
+   "value": {
+    "x": [
+     "a",
+     "b",
+     "c"
+    ]
+   }
+  },
+  {
+   "yaml": "x: yes",
+   "value": {
+    "x": "yes"
+   }
+  },
+  {
+   "yaml": "x: no",
+   "value": {
+    "x": "no"
+   }
+  },
+  {
+   "yaml": "x: on",
+   "value": {
+    "x": "on"
+   }
+  },
+  {
+   "yaml": "x: .inf",
+   "value": {
+    "x": ".inf"
+   }
+  },
+  {
+   "yaml": "x: -.Inf",
+   "value": {
+    "x": "-.inf"
+   }
+  },
+  {
+   "yaml": "x: 0o17",
+   "value": {
+    "x": 15
+   }
+  },
+  {
+   "yaml": "x: 017",
+   "value": {
+    "x": 17
+   }
+  },
+  {
+   "yaml": "x: +12",
+   "value": {
+    "x": 12
+   }
+  },
+  {
+   "yaml": "x: 1_000",
+   "value": {
+    "x": "1_000"
+   }
+  },
+  {
+   "yaml": "x: 1.",
+   "value": {
+    "x": 1
+   }
+  },
+  {
+   "yaml": "x: .5",
+   "value": {
+    "x": 0.5
+   }
+  },
+  {
+   "yaml": "x: 2001-12-14",
+   "value": {
+    "x": "2001-12-14"
+   }
+  },
+  {
+   "yaml": "base: &b hello\ncopy: *b",
+   "value": {
+    "base": "hello",
+    "copy": "hello"
+   }
+  },
+  {
+   "yaml": "m: &m\n  a: 1\nn: *m",
+   "value": {
+    "m": {
+     "a": 1
+    },
+    "n": {
+     "a": 1
+    }
+   }
+  },
+  {
+   "yaml": "x: *missing",
+   "error": "Unresolved alias (the anchor must be set before the alias): missing"
+  },
+  {
+   "yaml": "x: !!str true",
+   "value": {
+    "x": "true"
+   }
+  },
+  {
+   "yaml": "x: !custom 5",
+   "value": {
+    "x": "5"
+   }
+  },
+  {
+   "yaml": "x: &a !!str 12",
+   "value": {
+    "x": "12"
+   }
+  },
+  {
+   "yaml": "- &x a\n- *x",
+   "value": [
+    "a",
+    "a"
+   ]
+  }
+ ]
+}

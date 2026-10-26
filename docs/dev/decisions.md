@@ -125,7 +125,8 @@ same thing either way — "this machine has no `wl-paste`" is a capability, not 
 | `wl-paste`, `xclip` | clipboard text and images | Wayland, X11 |
 | `powershell.exe`, `wslpath` | clipboard images | WSL |
 | `fd` | the `@` file picker in `pig/tui` | anywhere; `@` offers nothing without it |
-| `ext-gd` (an extension, not a binary) | fitting an image inside the provider's limits | anywhere; without it an in-limits image goes through and an oversized one is left out |
+| `ext-gd` (an extension, not a binary) | fitting an image inside the provider's limits | anywhere; without it ImageMagick below |
+| `magick`, or `convert` (ImageMagick 6) | fitting an image inside the provider's limits where PHP has no GD (Termux's) | the installer installs it, or Termux's `php-gd`, when GD is missing; with neither, an in-limits image goes through and an oversized one is left out, saying what is missing |
 
 **`fd` and `rg` are required by the `find` and `grep` tools**, as upstream requires them. A PHP
 walk with `.gitignore` support was written and measured first — about 220ms over a 100k-file
@@ -204,11 +205,14 @@ kept, as none was for `~/.pig` → `~/.pig/agent`.
   `PIG_SHARE_VIEWER_URL`, `PIG_CLIPBOARD_OSC52=1` (a copy also goes to the terminal as OSC 52, for
   a remote client without SSH markers). `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
 - **New, pig's own**: `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
-  (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, and where the coroutine it
-  resumed had suspended before and after, which brackets the slow code. A coroutine held before its
-  first suspension is named after the closure it runs (`Async.php:94 → ModelRefresh.php:120`), since
-  `Async::spawn()`'s starter is the same callback for all of them. Watching stops when the
-  interactive mode stops: quitting has no screen to keep responsive.
+  (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, where the coroutine it
+  resumed had suspended (each coroutine's own suspension, kept per fiber: the last suspension of any
+  coroutine named whatever else was waiting) and where it suspended next, which brackets the slow
+  code, and how many cycle-collector runs fell inside and for how long, with the memory held — what
+  a stall the bracketed code does not explain comes down to. A coroutine held before its first
+  suspension has no `resumedFrom` and is named after the closure it runs (`Async.php:94 →
+  ModelRefresh.php:120`), since `Async::spawn()`'s starter is the same callback for all of them.
+  Watching stops when the interactive mode stops: quitting has no screen to keep responsive.
 - **Set, not read**: `PIG_CODING_AGENT=true` and `AI_AGENT=pig` for every child, and the
   `PIG_SESSION_*` / `PIG_PROVIDER` / `PIG_MODEL` / `PIG_REASONING_LEVEL` a shell command is given
   (see the shell tools above). The last three share names with the dropped config variables; they

@@ -365,7 +365,38 @@ final class LoopTest extends TestCase
         $this->assertNotSame($from, $at);
     }
 
-    public function testAStalledCoroutineStartIsNamedAfterWhatTheCoroutineRuns(): void
+    public function testAStallSaysWhereTheCoroutineItResumedHadStoppedAndNotAnothers(): void
+    {
+        $stalls = [];
+        Loop::get()->watchStalls(static function (float $seconds, string $callback, ?string $from, ?string $at, array $runtime) use (&$stalls): void {
+            $stalls[] = [$callback, $from, $at, $runtime];
+        }, 0.1);
+
+        try {
+            \Pig\Async\Async::run(static function (): void {
+                // Something else waiting, suspended most recently of all when the slow one starts.
+                $other = \Pig\Async\Async::spawn(static fn () => \Pig\Async\Async::delay(0.3));
+                \Pig\Async\Async::spawn(static function (): void {
+                    usleep(150_000); // a coroutine slow from its very start
+                    \Pig\Async\Async::delay(0.01);
+                })->await();
+                $other->await();
+            });
+        } finally {
+            Loop::get()->watchStalls(null);
+        }
+
+        $this->assertCount(1, $stalls);
+        [$callback, $from, $at, $runtime] = $stalls[0];
+        $this->assertMatchesRegularExpression('/^Async\.php:\d+ → LoopTest\.php:\d+$/', $callback);
+        // Its start, not resumed from anything — once this said the other coroutine's await.
+        $this->assertNull($from);
+        $this->assertStringContainsString('LoopTest.php:', (string) $at);
+        $this->assertSame(['gcRuns', 'gcSeconds', 'memory'], array_keys($runtime));
+        $this->assertGreaterThan(0, $runtime['memory']);
+    }
+
+        public function testAStalledCoroutineStartIsNamedAfterWhatTheCoroutineRuns(): void
     {
         $stalls = [];
         Loop::get()->watchStalls(static function (float $seconds, string $callback) use (&$stalls): void {

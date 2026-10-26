@@ -804,8 +804,8 @@ arrangement is the thing to know before reading any of them:**
   `thinkingLevel`; the copies in `Retry`, `TransformMessages`, `FauxProvider` and
   `SessionManager` carry it, and `withThinkingLevel()` is the one way to set it on a readonly message.
 
-**Not yet ported from upstream's `ExtensionAPI`:** the context's `modelRegistry` (pig has `Auth` + the static `Models`), and `ExtensionCommandContext`
-(see below).
+**Not ported from upstream's `ExtensionAPI`:** `ExtensionCommandContext` (see below). The
+context's `modelRegistry` is here (`HookContext::$modelRegistry`, `ModelRegistry`).
 
 **What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
 Upstream gives a slash command's handler four methods an event handler does not get —

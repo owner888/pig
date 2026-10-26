@@ -356,9 +356,9 @@ the three kinds of line apart on a screen that is already full of colour: `sayEr
 — upstream's `showError()` / `showWarning()`. A message that is drawn by colour alone is
 a message nobody can name, so no new one is drawn that way.
 
-Not ported from upstream's compaction: the split-turn prefix summary — upstream generates a
-second, smaller summary when the cut falls inside a turn, which needs turn boundaries that the
-linear log here does not mark. Both summaries (compaction and the branch summary of `/tree`) go
+The split-turn prefix summary is upstream's too: when the cut falls inside a turn, the turn's
+beginning gets a second, smaller summary (`TURN_PREFIX_SUMMARIZATION_PROMPT`), merged under
+`**Turn Context (split turn):**` (`Compaction::compact()`). Both summaries (compaction and the branch summary of `/tree`) go
 through `Retry::retryAssistantCall()` with the session's retry settings and the session's own
 stream function and request options, as upstream's `retryAssistantCall()` callers do; a retry is
 reported as `SummarizationRetryEvent` (RPC `summarization_retry_*`). A compaction records the
@@ -395,11 +395,10 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are already taken by
 `Pig\Ai`; the developer chose matching upstream over matching the sibling package.
 
-`InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
-selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
-trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, thirty-four slash commands plus whatever the hooks add, the keys, and
-the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
+`InteractiveMode` started at ~1200 lines against upstream's 2439, the difference then almost
+entirely upstream's selectors; it is past 8000 now, with every selector here as a `SelectList` or a
+component of its own (the table in rpc.md, "What is left unported", maps each), the slash commands,
+the keys, and the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
 
 **Audited against its 2439 lines by surface** — 68 upstream methods mapped name by name against
 pig's 88, then every unmatched one chased down, which is the method `agent-session.ts` was read

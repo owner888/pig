@@ -626,11 +626,15 @@ final class InteractiveMode
         // `PIG_STALL_LOG=1`: every moment the loop is held — nothing drawn, no key read — for 0.3s
         // or more goes to the log, with where it was held (docs/dev/decisions.md).
         if (getenv('PIG_STALL_LOG') === '1') {
-            Loop::get()->watchStalls(static function (float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt): void {
+            Loop::get()->watchStalls(static function (float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt, array $runtime): void {
                 Logger::warning(sprintf('Event loop held for %dms', (int) round($seconds * 1000)), [
                     'callback' => $callback,
                     'resumedFrom' => $resumedFrom,
                     'suspendedAt' => $suspendedAt,
+                    // PHP's cycle collector, which runs wherever it fills up, and the memory held:
+                    // what a stall the code between the two points does not explain comes down to.
+                    'gc' => sprintf('%d runs, %dms', $runtime['gcRuns'], (int) round($runtime['gcSeconds'] * 1000)),
+                    'memory' => sprintf('%dMB', intdiv($runtime['memory'], 1048576)),
                 ]);
             });
         }

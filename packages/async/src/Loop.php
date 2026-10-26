@@ -42,17 +42,32 @@ final class Loop
     /** @var Closure(Throwable): void|null */
     private ?Closure $onError = null;
 
-    /** @var Closure(float, string, ?string, ?string): void|null `watchStalls()`'s reporter */
+    /** @var Closure(float, string, ?string, ?string, array{gcRuns: int, gcSeconds: float, memory: int}): void|null `watchStalls()`'s reporter */
     private ?Closure $onStall = null;
 
     private float $stallThreshold = 0.3;
 
-    /** Where a coroutine last suspended, and the time before — `noteSuspend()`, while stalls are watched. */
+    /** Where a coroutine last suspended — `noteSuspend()`, while stalls are watched. */
     private ?string $lastSuspend = null;
 
-    private ?string $previousSuspend = null;
+    /**
+     * Where each coroutine is suspended, so a callback that resumes one can say where *that one*
+     * had stopped. The last suspension of any coroutine was reported before, which named whatever
+     * else had been waiting — a coroutine's own start read as resumed from somebody else's await.
+     *
+     * @var \WeakMap<\Fiber, string>
+     */
+    private \WeakMap $suspendedAt;
+
+    /** Where the first coroutine the running callback resumed had suspended; null when it resumed none. */
+    private ?string $resumedFrom = null;
 
     private int $suspends = 0;
+
+    public function __construct()
+    {
+        $this->suspendedAt = new \WeakMap();
+    }
 
     public static function get(): self
     {
@@ -208,16 +223,19 @@ final class Loop
      * moments nothing is drawn and no key is read. pig's own, for `PIG_STALL_LOG`: the reporter is
      * given how long it took, where the callback was written, and — when it resumed a coroutine —
      * where that coroutine had suspended before (the slow code starts there) and where it
-     * suspended after (it ends there). Null stops watching.
+     * suspended after (it ends there) — and how much of the time PHP's cycle collector took, and
+     * how much memory the process held, which a stall nothing in the code explains comes down to.
+     * Null stops watching.
      *
-     * @param Closure(float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt): void|null $report
+     * @param Closure(float $seconds, string $callback, ?string $resumedFrom, ?string $suspendedAt, array{gcRuns: int, gcSeconds: float, memory: int} $runtime): void|null $report
      */
     public function watchStalls(?Closure $report, float $threshold = 0.3): void
     {
         $this->onStall = $report;
         $this->stallThreshold = $threshold;
         $this->lastSuspend = null;
-        $this->previousSuspend = null;
+        $this->resumedFrom = null;
+        $this->suspendedAt = new \WeakMap();
     }
 
     /** @internal `Future::await()` says where a coroutine suspends, when stalls are watched. */
@@ -228,8 +246,24 @@ final class Loop
         }
 
         $this->suspends++;
-        $this->previousSuspend = $this->lastSuspend;
         $this->lastSuspend = self::where(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12));
+        $fiber = \Fiber::getCurrent();
+
+        if ($fiber !== null) {
+            $this->suspendedAt[$fiber] = $this->lastSuspend;
+        }
+    }
+
+    /** @internal `Future::await()` says a coroutine is running again, when stalls are watched. */
+    public function noteResume(): void
+    {
+        $fiber = \Fiber::getCurrent();
+
+        if ($this->onStall === null || $fiber === null) {
+            return;
+        }
+
+        $this->resumedFrom ??= $this->suspendedAt[$fiber] ?? null;
     }
 
     /**
@@ -283,6 +317,8 @@ final class Loop
         $before = $this->suspends;
         // Named before it runs: a coroutine that finishes inside it can no longer say what it ran.
         $name = self::callbackName($callback);
+        $this->resumedFrom = null;
+        $gc = gc_status();
         $started = hrtime(true);
 
         try {
@@ -291,12 +327,17 @@ final class Loop
             $seconds = (hrtime(true) - $started) / 1e9;
 
             if ($this->onStall !== null && $seconds >= $this->stallThreshold) {
-                $resumed = $this->suspends !== $before;
+                $gcAfter = gc_status();
                 ($this->onStall)(
                     $seconds,
                     $name,
-                    $resumed ? $this->previousSuspend : null,
-                    $resumed ? $this->lastSuspend : null,
+                    $this->resumedFrom,
+                    $this->suspends !== $before ? $this->lastSuspend : null,
+                    [
+                        'gcRuns' => $gcAfter['runs'] - $gc['runs'],
+                        'gcSeconds' => (float) (($gcAfter['collector_time'] ?? 0.0) - ($gc['collector_time'] ?? 0.0)),
+                        'memory' => memory_get_usage(true),
+                    ],
                 );
             }
         }

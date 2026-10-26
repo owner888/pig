@@ -73,7 +73,11 @@ final class Future
 
         Loop::get()->noteSuspend();
 
-        return Fiber::suspend();
+        try {
+            return Fiber::suspend();
+        } finally {
+            Loop::get()->noteResume();
+        }
     }
 
     /** @param Closure(?\Throwable, T): void $callback */

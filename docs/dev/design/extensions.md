@@ -63,9 +63,12 @@ is `name "x" collision: … is loaded and this one is skipped`, and one file rea
   sees. Any other `.md` without one is skipped silently: a stray README is not a broken skill. The name
   is not compared with the folder's, as upstream does not compare it.
 
-Warnings go to stderr before the UI starts. The frontmatter is read a line at a time (no YAML
-parser), so malformed frontmatter is not refused as upstream refuses it, and the `.gitignore` rules
-upstream applies while walking a skills directory are not ported — both are known gaps.
+Warnings go to stderr before the UI starts. The frontmatter is YAML (`Prompt\Frontmatter` over
+`Utils\Yaml`, the subset of YAML 1.2 a frontmatter is written in, checked against upstream's `yaml`
+by `YamlTest`): a `SKILL.md` whose block is not YAML is refused with the reason and its line, as
+upstream refuses it, and a folded or literal description (`>`, `|`) is read whole. The `.gitignore`
+rules upstream applies while walking a skills directory are not read, by the developer's decision
+(see "Packages" in decisions.md).
 
 **All five of upstream's protocols are here.** The fifth took a correction on the way: this
 used to say it "was never a protocol" — that `google-gemini-cli` was Gemini behind a sign-in. It

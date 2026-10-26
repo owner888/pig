@@ -207,6 +207,17 @@ final class SlashCommandsTest extends TestCase
         $this->assertSame('(user)', $this->load()[0]->description);
     }
 
+    public function testATemplateWhoseFrontmatterIsNotYamlIsLeftOutWithWhy(): void
+    {
+        $this->command('home/.pig/prompts/broken.md', "---\ndescription: review: the diff\n---\nx");
+        $this->command('home/.pig/prompts/fine.md', "---\ndescription: review the diff\n---\nx");
+
+        [$commands, $warnings] = $this->loadWithWarnings();
+
+        $this->assertSame(['fine'], self::names($commands));
+        $this->assertSame([$this->root . '/home/.pig/prompts/broken.md: Nested mappings are not allowed in compact mappings at line 2'], $warnings);
+    }
+
     public function testArgumentHintIsReadWhenItIsAString(): void
     {
         $this->command('home/.pig/prompts/quoted.md', "---\ndescription: d\nargument-hint: \"[focus]\"\n---\nx");
