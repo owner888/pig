@@ -20,11 +20,15 @@ use Pig\Tui\Images\TerminalImage;
  * qualities, and shrink by a quarter until something fits or the picture is one pixel. A resized
  * image comes with upstream's note on how to map coordinates back.
  *
- * **GD is the codec, and it is optional.** Upstream bundles Photon (Rust compiled to WASM); PHP's
- * equivalent is `ext-gd`, which most builds have and pig does not require. Without it, an image
- * already inside the limits — measured from its header, which needs no codec — goes through as it
- * is, and one that is not cannot be fitted and is omitted with upstream's sentence. Upstream with
- * no Photon omits every image, in-limits ones too; passing those through is the one deviation.
+ * **GD is the codec, ImageMagick the other one, and neither is required.** Upstream bundles Photon
+ * (Rust compiled to WASM), so it can always resize; PHP has nothing it can bundle, and its equivalent
+ * is `ext-gd`, which most builds have and some do not — Termux's PHP among them. Without GD the same
+ * steps run through ImageMagick (`magick`, or IM6's `convert`), which the installer puts on such a
+ * machine: the read tool and a pasted picture are fitted all the same, so the model is never handed
+ * an omitted picture to go and shrink with a command of its own. With neither, an image already
+ * inside the limits — measured from its header, which needs no codec — goes through as it is, and
+ * one that is not is omitted with a sentence that says what is missing. Upstream with no Photon
+ * omits every image, in-limits ones too; passing those through is the one deviation.
  */
 final class ImageProcess
 {
@@ -36,6 +40,12 @@ final class ImageProcess
     public const string CONVERT_FAILED = '[Image omitted: could not be converted to a supported inline image format.]';
     public const string RESIZE_FAILED = '[Image omitted: could not be resized below the inline image size limit.]';
 
+    /** pig's own: the same omission with no codec at all, saying what would fix it. */
+    public const string NO_CODEC = '[Image omitted: it is over the inline image size limit, and this machine has neither PHP\'s GD extension nor ImageMagick to resize it. Ask the user to install ImageMagick (or GD) and restart pig.]';
+
+    /** How long one ImageMagick run may take, in seconds: a phone's photo takes well under one. */
+    private const float MAGICK_TIMEOUT = 30.0;
+
     private const array SUPPORTED = [
         'image/png' => 'image/png',
         'image/jpeg' => 'image/jpeg',
@@ -46,6 +56,17 @@ final class ImageProcess
 
     /** Whether this PHP can decode and encode pictures. A seam for tests. */
     public static ?bool $codec = null;
+
+    /** ImageMagick's binary — a path, or false for none. Looked up once; a seam for tests. */
+    public static string|false|null $magick = null;
+
+    /**
+     * What resizes pictures here, for `/doctor`: `GD`, ImageMagick's path, or null for nothing.
+     */
+    public static function codecName(): ?string
+    {
+        return self::hasCodec() ? 'GD' : (self::magick() ?: null);
+    }
 
     /**
      * Upstream's `processImage()`.
@@ -75,7 +96,7 @@ final class ImageProcess
         $resized = self::resize($bytes, $mimeType, $resize);
 
         if ($resized === null) {
-            return ['ok' => false, 'message' => self::RESIZE_FAILED];
+            return ['ok' => false, 'message' => self::codecName() === null ? self::NO_CODEC : self::RESIZE_FAILED];
         }
 
         if ($resized['wasResized']) {
@@ -140,6 +161,12 @@ final class ImageProcess
             return [$bytes, self::SUPPORTED[$base], null];
         }
 
+        if (!self::hasCodec() && ($magick = self::magick()) !== false) {
+            $png = self::withInputFile($bytes, static fn (string $input): ?string => self::runMagick([$magick, "{$input}[0]", '-auto-orient', '-strip', 'png:-']));
+
+            return $png === null ? null : [$png, 'image/png', $base];
+        }
+
         $image = self::decode($bytes);
 
         if ($image === null) {
@@ -185,6 +212,15 @@ final class ImageProcess
                 'height' => $height,
                 'wasResized' => false,
             ];
+        }
+
+        if (!self::hasCodec()) {
+            $magick = self::magick();
+
+            return $magick === false ? null : self::withInputFile(
+                $bytes,
+                static fn (string $input): ?array => self::resizeWithMagick($magick, $input, $base64, $mimeType, $width, $height, $maxWidth, $maxHeight, $maxBytes, $quality),
+            );
         }
 
         $decoded = self::decode($bytes);
@@ -270,6 +306,188 @@ final class ImageProcess
             $targetWidth = $nextWidth;
             $targetHeight = $nextHeight;
         }
+    }
+
+    /**
+     * `resize()`'s steps through ImageMagick: the same fit, PNG then JPEG at the same falling
+     * qualities, and the same shrinking by a quarter. Each size is scaled once from the original
+     * (`-auto-orient` turning it as `ExifOrientation` would) into a PNG, and the JPEG attempts are
+     * encoded from that small file rather than by decoding the photo again.
+     *
+     * @return array{data: string, mimeType: string, originalWidth: int, originalHeight: int, width: int, height: int, wasResized: bool}|null
+     */
+    private static function resizeWithMagick(
+        string $magick,
+        string $input,
+        string $base64,
+        string $mimeType,
+        ?int $width,
+        ?int $height,
+        int $maxWidth,
+        int $maxHeight,
+        int $maxBytes,
+        int $quality,
+    ): ?array {
+        // The header could not be read: ask ImageMagick, as GD's path asks what it decoded.
+        if ($width === null || $height === null) {
+            $size = self::runMagick([$magick, "{$input}[0]", '-auto-orient', '-format', '%w %h', 'info:']);
+
+            if ($size === null || preg_match('/^(\d+) (\d+)$/', trim($size), $m) !== 1) {
+                return null;
+            }
+
+            [$width, $height] = [(int) $m[1], (int) $m[2]];
+
+            if ($width <= $maxWidth && $height <= $maxHeight && strlen($base64) < $maxBytes) {
+                return [
+                    'data' => $base64,
+                    'mimeType' => $mimeType,
+                    'originalWidth' => $width,
+                    'originalHeight' => $height,
+                    'width' => $width,
+                    'height' => $height,
+                    'wasResized' => false,
+                ];
+            }
+        }
+
+        $targetWidth = $width;
+        $targetHeight = $height;
+
+        if ($targetWidth > $maxWidth) {
+            $targetHeight = (int) round($targetHeight * $maxWidth / $targetWidth);
+            $targetWidth = $maxWidth;
+        }
+
+        if ($targetHeight > $maxHeight) {
+            $targetWidth = (int) round($targetWidth * $maxHeight / $targetHeight);
+            $targetHeight = $maxHeight;
+        }
+
+        $qualities = array_values(array_unique([$quality, 85, 70, 55, 40]));
+        $scaledPath = $input . '-scaled.png';
+
+        try {
+            while (true) {
+                $targetWidth = max(1, $targetWidth);
+                $targetHeight = max(1, $targetHeight);
+                $png = self::runMagick([$magick, "{$input}[0]", '-auto-orient', '-resize', "{$targetWidth}x{$targetHeight}!", '-strip', 'png:-']);
+
+                if ($png === null || file_put_contents($scaledPath, $png) === false) {
+                    return null;
+                }
+
+                if (strlen($data = base64_encode($png)) < $maxBytes) {
+                    return self::fitted($data, 'image/png', $width, $height, $targetWidth, $targetHeight);
+                }
+
+                foreach ($qualities as $q) {
+                    // Over white, as a picture with transparency has to be for JPEG.
+                    $jpeg = self::runMagick([$magick, $scaledPath, '-background', 'white', '-alpha', 'remove', '-quality', (string) $q, 'jpeg:-']);
+
+                    if ($jpeg !== null && strlen($data = base64_encode($jpeg)) < $maxBytes) {
+                        return self::fitted($data, 'image/jpeg', $width, $height, $targetWidth, $targetHeight);
+                    }
+                }
+
+                if ($targetWidth === 1 && $targetHeight === 1) {
+                    return null;
+                }
+
+                $nextWidth = $targetWidth === 1 ? 1 : max(1, (int) floor($targetWidth * 0.75));
+                $nextHeight = $targetHeight === 1 ? 1 : max(1, (int) floor($targetHeight * 0.75));
+
+                if ($nextWidth === $targetWidth && $nextHeight === $targetHeight) {
+                    return null;
+                }
+
+                $targetWidth = $nextWidth;
+                $targetHeight = $nextHeight;
+            }
+        } finally {
+            if (is_file($scaledPath)) {
+                unlink($scaledPath);
+            }
+        }
+    }
+
+    /** @return array{data: string, mimeType: string, originalWidth: int, originalHeight: int, width: int, height: int, wasResized: true} */
+    private static function fitted(string $data, string $mimeType, int $originalWidth, int $originalHeight, int $width, int $height): array
+    {
+        return [
+            'data' => $data,
+            'mimeType' => $mimeType,
+            'originalWidth' => $originalWidth,
+            'originalHeight' => $originalHeight,
+            'width' => $width,
+            'height' => $height,
+            'wasResized' => true,
+        ];
+    }
+
+    /**
+     * The picture in a file of its own for ImageMagick to read, readable by this user alone and
+     * removed as soon as $use is done with it.
+     *
+     * @template T
+     * @param \Closure(string): T $use
+     * @return T|null
+     */
+    private static function withInputFile(string $bytes, \Closure $use): mixed
+    {
+        $input = sys_get_temp_dir() . '/pig-image-' . bin2hex(random_bytes(8));
+
+        if (file_put_contents($input, '') === false || !chmod($input, 0o600) || file_put_contents($input, $bytes) === false) {
+            if (is_file($input)) {
+                unlink($input);
+            }
+
+            return null;
+        }
+
+        try {
+            return $use($input);
+        } finally {
+            unlink($input);
+        }
+    }
+
+    /**
+     * What ImageMagick wrote to standard output, or null when it failed. On the loop when there is
+     * a fiber (`Process::runAsync()`), so a photo being shrunk does not stop the keyboard.
+     *
+     * @param list<string> $command
+     */
+    private static function runMagick(array $command): ?string
+    {
+        [$exit, $output] = \Pig\Tui\Process::runAsync($command, self::MAGICK_TIMEOUT);
+
+        return $exit === 0 && $output !== '' ? $output : null;
+    }
+
+    /**
+     * ImageMagick's binary: `magick` (7), or `convert` (6) — not on Windows, where `convert.exe`
+     * is the system's disk converter.
+     */
+    private static function magick(): string|false
+    {
+        if (self::$magick !== null) {
+            return self::$magick;
+        }
+
+        $names = PHP_OS_FAMILY === 'Windows' ? ['magick.exe'] : ['magick', 'convert'];
+
+        foreach ($names as $name) {
+            foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $directory) {
+                $candidate = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $name;
+
+                if ($directory !== '' && is_file($candidate) && is_executable($candidate)) {
+                    return self::$magick = $candidate;
+                }
+            }
+        }
+
+        return self::$magick = false;
     }
 
     private static function hasCodec(): bool

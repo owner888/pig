@@ -110,4 +110,71 @@ final class InstallScriptTest extends TestCase
         $this->assertSame('pig_installer_main "$@"', end($lines));
         $this->assertSame(1, substr_count(self::script(), "\npig_installer_main \"\$@\""));
     }
+
+    // ---- pictures ------------------------------------------------------------------------------
+
+    public function testWithoutGdImageMagickIsInstalledWithThisSystemsCommand(): void
+    {
+        // Termux first: its PHP has no GD, and `pkg` needs no root.
+        $this->assertSame('pkg install -y imagemagick', $this->call('imagemagick_install_command', ['TERMUX_VERSION' => '0.118']));
+
+        // As root on a Debian-like system (`fakeBin()` answers `id -u` with 0): no sudo in front.
+        $bin = $this->fakeBin(['apt-get']);
+        $this->assertSame('apt-get update && apt-get install -y imagemagick', $this->call('imagemagick_install_command', ['PATH' => $bin], $bin));
+
+        $bin = $this->fakeBin(['pacman']);
+        $this->assertSame('pacman -S --needed --noconfirm imagemagick', $this->call('imagemagick_install_command', ['PATH' => $bin], $bin));
+    }
+
+    public function testNothingIsInstalledWhenThisPhpHasGd(): void
+    {
+        if (!extension_loaded('gd')) {
+            $this->markTestSkipped('this PHP has no GD');
+        }
+
+        // `pkg` would be the command; it is never reached.
+        $this->assertSame('', $this->call('ensure_image_resizer', ['TERMUX_VERSION' => '0.118']));
+    }
+
+    /** What one of the script's functions prints, with everything but the last line defined. */
+    private function call(string $function, array $env, ?string $cleanUp = null): string
+    {
+        $script = (string) preg_replace('/^pig_installer_main "\$@"\s*$/m', '', self::script());
+        $file = tempnam(sys_get_temp_dir(), 'pig-install-');
+        file_put_contents($file, $script . "\n{$function}\n");
+
+        try {
+            $process = proc_open(['/bin/sh', $file], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, [...getenv(), ...$env]);
+            $out = (string) stream_get_contents($pipes[1]);
+            proc_close($process);
+        } finally {
+            unlink($file);
+
+            if ($cleanUp !== null) {
+                array_map('unlink', glob("{$cleanUp}/*") ?: []);
+                rmdir($cleanUp);
+            }
+        }
+
+        return trim($out);
+    }
+
+    /** @param list<string> $names a directory of commands that exist and do nothing */
+    private function fakeBin(array $names): string
+    {
+        $dir = sys_get_temp_dir() . '/pig-fake-bin-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+
+        foreach ([...$names, 'uname', 'id'] as $name) {
+            $body = match ($name) {
+                'uname' => 'echo Linux',
+                'id' => 'echo 0',
+                default => 'exit 0',
+            };
+            file_put_contents("{$dir}/{$name}", "#!/bin/sh\n{$body}\n");
+            chmod("{$dir}/{$name}", 0o755);
+        }
+
+        return $dir;
+    }
 }

@@ -13,6 +13,8 @@
 #     no phar and no second artifact here on purpose: pig's version comes from the git tag through
 #     Composer, and a second install route would be a second answer to "which version am I running"
 #     — plus an update command that does not work for half the people who see it.
+#   - Where PHP has no GD extension (Termux's has none), it installs ImageMagick, which pig then
+#     resizes pictures with — otherwise a photo over 2000px could not be sent to the model.
 #   - It fixes the one thing Composer says nothing about: its global bin directory is not on
 #     anybody's PATH. This is why the installer exists at all; `composer global require` on its own
 #     ends in `command not found`.
@@ -45,6 +47,8 @@ pig_installer_main() {
   fi
 
   install_pig_package
+
+  ensure_image_resizer || true
 
   bin_dir=$(composer_bin_dir)
 
@@ -316,6 +320,78 @@ install_pig_package() {
   fi
 }
 
+# ---- pictures ---------------------------------------------------------------------------
+
+# pig fits a picture inside the provider's limits with PHP's GD extension, and with ImageMagick where
+# PHP has none — Termux's PHP among them. With neither, a photo over 2000px cannot be sent, and the
+# model is left to shrink it with whatever command it can find. Never fatal: pig runs without it.
+ensure_image_resizer() {
+  if php -r 'exit(extension_loaded("gd") ? 0 : 1);' 2>/dev/null; then
+    return 0
+  fi
+
+  if command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; then
+    return 0
+  fi
+
+  install_command=$(imagemagick_install_command)
+
+  if [ -z "$install_command" ]; then
+    printf '\n  note: PHP has no GD extension and ImageMagick is not installed, so pig cannot resize\n'
+    printf '        large pictures. Install ImageMagick with your package manager.\n'
+    return 0
+  fi
+
+  printf '\n  PHP has no GD extension, so pig resizes pictures with ImageMagick. Installing it:\n'
+  printf '    %s\n\n' "$install_command"
+
+  if sh -c "$install_command"; then
+    return 0
+  fi
+
+  printf '\n  note: ImageMagick was not installed, so pig cannot resize large pictures.\n'
+  printf '        Install it later with: %s\n' "$install_command"
+  return 0
+}
+
+# The command that installs ImageMagick here, or nothing when there is no package manager this knows
+# or no way to be root for it.
+imagemagick_install_command() {
+  if is_termux; then
+    echo 'pkg install -y imagemagick'
+    return 0
+  fi
+
+  if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      echo 'brew install imagemagick'
+    fi
+    return 0
+  fi
+
+  as_root=""
+  if [ "$(id -u 2>/dev/null || echo 0)" != "0" ]; then
+    command -v sudo >/dev/null 2>&1 || return 0
+    as_root="sudo "
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "${as_root}apt-get update && ${as_root}apt-get install -y imagemagick"
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "${as_root}dnf install -y ImageMagick"
+  elif command -v yum >/dev/null 2>&1; then
+    echo "${as_root}yum install -y ImageMagick"
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "${as_root}pacman -S --needed --noconfirm imagemagick"
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "${as_root}zypper --non-interactive install ImageMagick"
+  elif command -v apk >/dev/null 2>&1; then
+    echo "${as_root}apk add imagemagick"
+  fi
+
+  return 0
+}
+
 composer_bin_dir() {
   dir=""
   if command -v composer >/dev/null 2>&1; then
@@ -461,8 +537,12 @@ collect_missing_path_dirs() {
 
 # ---- the PATH, which is the reason this script exists -----------------------------------
 
+# Each its own line: chained with `||`, a true first test only made the line succeed and the
+# `return 1` after it still ran, so only `$PREFIX` was ever recognised.
 is_termux() {
-  [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ] || case "${PREFIX:-}" in *com.termux*) return 0 ;; esac
+  [ -n "${TERMUX_VERSION:-}" ] && return 0
+  [ -d "/data/data/com.termux" ] && return 0
+  case "${PREFIX:-}" in *com.termux*) return 0 ;; esac
   return 1
 }
 

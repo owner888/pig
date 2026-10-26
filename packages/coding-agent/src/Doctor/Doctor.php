@@ -44,6 +44,7 @@ final class Doctor
 
         $clipboardText = self::detectTextClipboard();
         $clipboardImage = self::detectImageClipboard();
+        $imageCodec = \Pig\CodingAgent\Utils\ImageProcess::codecName();
 
         // 3. Auth & Providers
         $authPath = $auth->path();
@@ -134,6 +135,7 @@ final class Doctor
                 'rg' => $rg !== false ? $rg : null,
                 'clipboardText' => $clipboardText,
                 'clipboardImage' => $clipboardImage,
+                'imageCodec' => $imageCodec,
             ],
             auth: [
                 'path' => $authPath,
@@ -201,6 +203,13 @@ final class Doctor
 
         $clipImgMark = $report->binaries['clipboardImage'] !== null ? $tick : $warn;
         $lines[] = "  {$clipImgMark} image clipboard: " . ($report->binaries['clipboardImage'] ?? Themes::theme()->fg('warning', 'none detected'));
+
+        $codecMark = $report->binaries['imageCodec'] !== null ? $tick : $warn;
+        $lines[] = "  {$codecMark} image resizing: " . match ($report->binaries['imageCodec']) {
+            null => Themes::theme()->fg('warning', 'none (no ext-gd, no ImageMagick): pictures over 2000px are left out'),
+            'GD' => 'ext-gd',
+            default => 'ImageMagick ' . Themes::theme()->fg('dim', $report->binaries['imageCodec']),
+        };
 
         $lines[] = '';
 
@@ -272,6 +281,11 @@ final class Doctor
         $lines[] = '  rg:   ' . ($report->binaries['rg'] ?? 'missing');
         $lines[] = '  text clipboard:  ' . ($report->binaries['clipboardText'] ?? 'none');
         $lines[] = '  image clipboard: ' . ($report->binaries['clipboardImage'] ?? 'none');
+        $lines[] = '  image resizing:  ' . match ($report->binaries['imageCodec']) {
+            null => 'none (no ext-gd, no ImageMagick)',
+            'GD' => 'ext-gd',
+            default => "ImageMagick {$report->binaries['imageCodec']}",
+        };
         $lines[] = '';
 
         $lines[] = '[3. Model Providers & Credentials]';

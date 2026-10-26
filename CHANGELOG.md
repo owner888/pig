@@ -50,6 +50,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added ImageMagick as the image codec where PHP has no GD extension (Termux's PHP among them): the read tool, a pasted picture and a tool's screenshot are fitted inside the provider's limits through `magick` (or IM6's `convert`) with the same steps as through GD, instead of being left out and handed to the model to shrink with commands of its own. The installer installs ImageMagick with the system's package manager (`pkg`, `brew`, `apt-get`, `dnf`, `yum`, `pacman`, `zypper` or `apk`) when PHP has no GD, `/doctor` says what resizes pictures, and with neither the omission now says what is missing.
+
+### Fixed
+
+- Fixed the installer recognising Termux only through `$PREFIX`: `$TERMUX_VERSION` and `/data/data/com.termux` were checked but their answer was thrown away.
+
 ## [0.12.1] - 2026-10-25
 
 ### Fixed

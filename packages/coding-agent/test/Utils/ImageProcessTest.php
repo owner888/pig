@@ -19,6 +19,7 @@ final class ImageProcessTest extends TestCase
     protected function tearDown(): void
     {
         ImageProcess::$codec = null;
+        ImageProcess::$magick = null;
     }
 
     public function testAnImageInsideTheLimitsGoesThroughAsItIs(): void
@@ -64,18 +65,113 @@ final class ImageProcessTest extends TestCase
     public function testWithNoCodecAnImageInsideTheLimitsStillGoesThrough(): void
     {
         ImageProcess::$codec = false;
+        ImageProcess::$magick = false;
 
         $this->assertSame(TinyImages::PNG_BASE64, ImageProcess::process(TinyImages::png(), 'image/png')['data']);
     }
 
-    public function testWithNoCodecAnImageThatMustBeFittedIsOmittedInUpstreamsWords(): void
+    public function testWithNoCodecAnImageThatMustBeFittedIsOmittedSayingWhatIsMissing(): void
     {
         ImageProcess::$codec = false;
+        ImageProcess::$magick = false;
+
+        $this->assertSame(['ok' => false, 'message' => ImageProcess::NO_CODEC], ImageProcess::process(self::header(3000, 1000), 'image/png'));
+        $this->assertNull(ImageProcess::codecName());
+    }
+
+    public function testACodecThatCannotFitItIsOmittedInUpstreamsWords(): void
+    {
+        // A header and nothing else: there is a codec, and it cannot read this.
+        ImageProcess::$codec = false;
+        ImageProcess::$magick = '/nonexistent/magick';
 
         $this->assertSame(
             ['ok' => false, 'message' => '[Image omitted: could not be resized below the inline image size limit.]'],
             ImageProcess::process(self::header(3000, 1000), 'image/png'),
         );
+    }
+
+    // ---- without GD: ImageMagick --------------------------------------------------------------
+    //
+    // What the installer puts on a machine whose PHP has no GD (Termux's), so the read tool and a
+    // pasted picture are fitted there too and the model is not handed an omitted photo to shrink
+    // by itself. GD still draws the test pictures; `$codec = false` keeps it out of the resizing.
+
+    #[RequiresFunction('imagecreatetruecolor')]
+    public function testWithoutGdAnOversizedPictureIsFittedThroughImageMagick(): void
+    {
+        $this->withoutGd();
+
+        $result = ImageProcess::process(self::png(3000, 1000), 'image/png');
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame('image/png', $result['mimeType']);
+        $size = TerminalImage::getImageDimensions($result['data'], $result['mimeType']);
+        $this->assertSame([2000, 667], [$size?->widthPx, $size?->heightPx]);
+        $this->assertSame(['[Image: original 3000x1000, displayed at 2000x667. Multiply coordinates by 1.50 to map to original image.]'], $result['hints']);
+    }
+
+    #[RequiresFunction('imagecreatetruecolor')]
+    public function testWithoutGdAPictureTooBigAsPngComesBackAsJpeg(): void
+    {
+        $this->withoutGd();
+
+        // Noise does not compress: as a PNG it is over 4.5MB, as a JPEG well under.
+        $result = ImageProcess::process(self::png(2100, 1200, noise: true), 'image/png');
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame('image/jpeg', $result['mimeType']);
+        $this->assertLessThan(ImageProcess::DEFAULT_MAX_BYTES, strlen($result['data']));
+        $size = TerminalImage::getImageDimensions($result['data'], $result['mimeType']);
+        $this->assertSame([2000, 1143], [$size?->widthPx, $size?->heightPx]);
+    }
+
+    #[RequiresFunction('imagecreatetruecolor')]
+    public function testWithoutGdAPhotoOnItsSideIsResizedStandingUp(): void
+    {
+        $this->withoutGd();
+        $image = imagecreatetruecolor(40, 10);
+        ob_start();
+        imagejpeg($image);
+        $jpeg = self::withOrientation((string) ob_get_clean(), 6);
+
+        $turned = ImageProcess::process($jpeg, 'image/jpeg', resize: ['maxWidth' => 5, 'maxHeight' => 50]);
+
+        $size = TerminalImage::getImageDimensions($turned['data'], $turned['mimeType']);
+        $this->assertSame([5, 20], [$size?->widthPx, $size?->heightPx]);
+    }
+
+    public function testWithoutGdAFormatNoProviderTakesIsConvertedThroughImageMagick(): void
+    {
+        $this->withoutGd();
+        // A TIFF, which GD cannot write: ImageMagick makes it.
+        $tiff = (string) \Pig\Tui\Process::capture([(string) ImageProcess::codecName(), '-size', '10x10', 'xc:red', 'tiff:-']);
+        $this->assertNotSame('', $tiff);
+
+        $result = ImageProcess::process($tiff, 'image/tiff');
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame('image/png', $result['mimeType']);
+        $this->assertSame(['[Image converted from image/tiff to image/png.]'], $result['hints']);
+    }
+
+    public function testAPictureInsideTheLimitsNeverStartsImageMagick(): void
+    {
+        ImageProcess::$codec = false;
+        // A path that cannot run: reaching it would fail the picture.
+        ImageProcess::$magick = '/nonexistent/magick';
+
+        $this->assertSame(TinyImages::PNG_BASE64, ImageProcess::process(TinyImages::png(), 'image/png')['data']);
+    }
+
+    public function testDoctorIsToldWhatResizes(): void
+    {
+        ImageProcess::$codec = true;
+        $this->assertSame('GD', ImageProcess::codecName());
+
+        ImageProcess::$codec = false;
+        ImageProcess::$magick = '/usr/bin/magick';
+        $this->assertSame('/usr/bin/magick', ImageProcess::codecName());
     }
 
     #[RequiresFunction('imagebmp')]
@@ -147,6 +243,7 @@ final class ImageProcessTest extends TestCase
     public function testAToolsPictureThatCannotBeProcessedIsKeptAsTheToolMadeIt(): void
     {
         ImageProcess::$codec = false;
+        ImageProcess::$magick = false;
         $content = [new ImageContent(base64_encode(self::header(3000, 1000)), 'image/png')];
 
         $this->assertSame($content, ImageProcess::normalizeToolResult($content));
@@ -154,9 +251,27 @@ final class ImageProcessTest extends TestCase
         $this->assertSame($text, ImageProcess::normalizeToolResult($text));
     }
 
-    private static function png(int $width, int $height): string
+    private function withoutGd(): void
+    {
+        ImageProcess::$codec = false;
+
+        if (ImageProcess::codecName() === null) {
+            $this->markTestSkipped('ImageMagick is not installed');
+        }
+    }
+
+    private static function png(int $width, int $height, bool $noise = false): string
     {
         $image = imagecreatetruecolor($width, $height);
+
+        if ($noise) {
+            for ($y = 0; $y < $height; $y++) {
+                for ($x = 0; $x < $width; $x++) {
+                    imagesetpixel($image, $x, $y, random_int(0, 0xFFFFFF));
+                }
+            }
+        }
+
         ob_start();
         imagepng($image);
 

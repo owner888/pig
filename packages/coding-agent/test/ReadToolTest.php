@@ -301,16 +301,18 @@ final class ReadToolTest extends ToolTestCase
     public function testAnImageThatCannotBeFittedIsNotAttachedAndTheReadSaysWhy(): void
     {
         \Pig\CodingAgent\Utils\ImageProcess::$codec = false;
+        \Pig\CodingAgent\Utils\ImageProcess::$magick = false;
 
         try {
             $this->file('wide.png', "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00");
             $result = $this->execute($this->read(), ['path' => 'wide.png']);
         } finally {
             \Pig\CodingAgent\Utils\ImageProcess::$codec = null;
+            \Pig\CodingAgent\Utils\ImageProcess::$magick = null;
         }
 
         $this->assertCount(1, $result->content);
-        $this->assertSame("Read image file [image/png]\n[Image omitted: could not be resized below the inline image size limit.]", $this->textOf($result));
+        $this->assertSame("Read image file [image/png]\n" . \Pig\CodingAgent\Utils\ImageProcess::NO_CODEC, $this->textOf($result));
     }
 
     public function testWithAutoResizeOffAnOversizedImageIsSentAsItIs(): void

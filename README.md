@@ -396,7 +396,7 @@ Tokens are renewed automatically when they expire; the file is the same one pi r
 
 - **PHP >= 8.3**
 - Required PHP extensions: `ext-json`, `ext-mbstring`, `ext-openssl`, `ext-pcntl`, `ext-pcre`.
-- Optional: `ext-posix` (required for daemonizing `pig web start -d`).
+- Optional: `ext-posix` (required for daemonizing `pig web start -d`); `ext-gd`, or ImageMagick where PHP has no GD, to fit large pictures inside the provider's limits — the installer installs ImageMagick when GD is missing.
 - External binaries: `stty`. (`fd` and `rg` downloaded automatically into `~/.pig/agent/bin/` if absent).
 
 ```bash

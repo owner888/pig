@@ -97,16 +97,18 @@ final class FileArgumentsTest extends TestCase
     public function testAnImageThatCannotBeFittedSaysSoInItsElement(): void
     {
         \Pig\CodingAgent\Utils\ImageProcess::$codec = false;
+        \Pig\CodingAgent\Utils\ImageProcess::$magick = false;
 
         try {
             $path = $this->write('wide.png', "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 3000, 1000) . "\x08\x06\x00\x00\x00");
             $read = FileArguments::read(['wide.png'], $this->cwd);
         } finally {
             \Pig\CodingAgent\Utils\ImageProcess::$codec = null;
+            \Pig\CodingAgent\Utils\ImageProcess::$magick = null;
         }
 
         $this->assertSame([], $read->images);
-        $this->assertSame("<file name=\"{$path}\">[Image omitted: could not be resized below the inline image size limit.]</file>\n", $read->text);
+        $this->assertSame("<file name=\"{$path}\">" . \Pig\CodingAgent\Utils\ImageProcess::NO_CODEC . "</file>\n", $read->text);
     }
 
     #[\PHPUnit\Framework\Attributes\RequiresFunction('imagecreatetruecolor')]
