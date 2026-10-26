@@ -557,6 +557,120 @@ final class GoogleTest extends TestCase
         $this->assertSame($schema, $declared['parametersJsonSchema']);
     }
 
+    /** @param array<string, mixed> $parameters @return mixed what `parametersJsonSchema` carries */
+    private static function declared(array $parameters): mixed
+    {
+        return GoogleShared::convertTools([new Tool('pick', 'Pick one', $parameters)], false, false)[0]['functionDeclarations'][0]['parametersJsonSchema'];
+    }
+
+    public function testAStringOrNumberConstGoesToGeminiAsAOneValueEnum(): void
+    {
+        // Upstream 7314819f: Gemini ignores `const` in `parametersJsonSchema` and honours `enum`.
+        $parameters = [
+            'type' => 'object',
+            'properties' => [
+                'origin' => ['type' => 'string', 'const' => 'zq-src-7'],
+                'mode' => ['anyOf' => [['type' => 'string', 'const' => 'a'], ['type' => 'string', 'const' => 'b']]],
+                'level' => ['oneOf' => [['const' => 1], ['const' => 2]]],
+                'flag' => ['type' => 'boolean', 'const' => true],
+                'list' => ['type' => 'array', 'items' => ['const' => 'x']],
+                'const' => ['type' => 'string'],
+            ],
+            'required' => ['origin'],
+        ];
+
+        $this->assertSame([
+            'type' => 'object',
+            'properties' => [
+                'origin' => ['type' => 'string', 'enum' => ['zq-src-7']],
+                'mode' => ['anyOf' => [['type' => 'string', 'enum' => ['a']], ['type' => 'string', 'enum' => ['b']]]],
+                'level' => ['oneOf' => [['enum' => [1]], ['enum' => [2]]]],
+                'flag' => ['type' => 'boolean', 'const' => true],
+                'list' => ['type' => 'array', 'items' => ['enum' => ['x']]],
+                'const' => ['type' => 'string'],
+            ],
+            'required' => ['origin'],
+        ], self::declared($parameters));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function literalKeywords(): iterable
+    {
+        foreach (['default', 'examples', 'enum', 'const', 'x-custom'] as $key) {
+            yield $key => [$key];
+        }
+    }
+
+    #[DataProvider('literalKeywords')]
+    public function testLiteralDataThatLooksLikeASchemaIsSentAsWritten(string $key): void
+    {
+        // Upstream #11308: rewriting every `const` found also rewrote a default or an example.
+        $literal = ['const' => 'literal-data', 'properties' => ['nested' => ['const' => 1]]];
+        $parameters = ['type' => 'object', 'properties' => ['value' => ['type' => 'object', $key => in_array($key, ['enum', 'examples'], true) ? [$literal] : $literal]]];
+
+        $this->assertSame($parameters, self::declared($parameters));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function nameMaps(): iterable
+    {
+        foreach (['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'] as $key) {
+            yield $key => [$key];
+        }
+    }
+
+    #[DataProvider('nameMaps')]
+    public function testANameMapsKeysAreNamesAndItsValuesSchemas(string $key): void
+    {
+        $parameters = ['type' => 'object', $key => ['__proto__' => ['const' => 'x'], 'const' => ['const' => 'y'], 'properties' => ['const' => 'z']]];
+
+        $this->assertSame(
+            ['type' => 'object', $key => ['__proto__' => ['enum' => ['x']], 'const' => ['enum' => ['y']], 'properties' => ['enum' => ['z']]]],
+            self::declared($parameters),
+        );
+    }
+
+    public function testOnlyTheKeywordsThatHoldSchemasAreRewritten(): void
+    {
+        $parameters = [
+            'type' => 'object',
+            'additionalProperties' => ['const' => 'x'],
+            'unevaluatedProperties' => false,
+            'propertyNames' => ['const' => 'name'],
+            'allOf' => [['if' => ['const' => 'x'], 'then' => ['const' => 'y'], 'else' => ['not' => ['const' => 'z']]]],
+            'properties' => [
+                'list' => [
+                    'type' => 'array',
+                    'items' => [['const' => 1]],
+                    'prefixItems' => [['const' => 2]],
+                    'additionalItems' => ['const' => 3],
+                    'contains' => ['const' => 4],
+                    'unevaluatedItems' => ['const' => 5],
+                ],
+            ],
+            'dependencies' => ['list' => ['other']],
+        ];
+
+        $this->assertSame([
+            'type' => 'object',
+            'additionalProperties' => ['enum' => ['x']],
+            'unevaluatedProperties' => false,
+            'propertyNames' => ['enum' => ['name']],
+            'allOf' => [['if' => ['enum' => ['x']], 'then' => ['enum' => ['y']], 'else' => ['not' => ['enum' => ['z']]]]],
+            'properties' => [
+                'list' => [
+                    'type' => 'array',
+                    'items' => [['enum' => [1]]],
+                    'prefixItems' => [['enum' => [2]]],
+                    'additionalItems' => ['enum' => [3]],
+                    'contains' => ['enum' => [4]],
+                    'unevaluatedItems' => ['enum' => [5]],
+                ],
+            ],
+            'dependencies' => ['list' => ['other']],
+        ], self::declared($parameters));
+    }
+
     public function testTheCodeAssistToolsStillStripJsonSchemaMetaDeclarations(): void
     {
         // What the TypeScript MCP SDK emits for every tool: `$schema` at the top and `$defs`

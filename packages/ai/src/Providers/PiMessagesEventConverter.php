@@ -29,7 +29,7 @@ use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\MessageJson;
-use Pig\Ai\Utils\PartialJson;
+use Pig\Ai\Utils\StreamingJson;
 
 /**
  * Upstream's `createEventConverter(model)` in `pi-messages.ts`: one message, built from the
@@ -49,7 +49,12 @@ final class PiMessagesEventConverter
     /** @var array<int, array<string, mixed>> the blocks, by `contentIndex`, in pi's JSON shape */
     private array $content = [];
 
-    /** @var array<int, string> upstream's `toolJson`: a tool call's arguments so far, by content index */
+    /**
+     * Upstream's `toolJson`, by content index — a reader of a tool call's arguments rather than their
+     * text, so each delta is read once; reparsing the text so far per delta was quadratic.
+     *
+     * @var array<int, StreamingJson>
+     */
     private array $toolJson = [];
 
     private StopReason $stopReason = StopReason::Pending;
@@ -61,6 +66,8 @@ final class PiMessagesEventConverter
     private ?string $responseId = null;
 
     private ?string $providerThinkingLevel = null;
+
+    private ?string $responseModel = null;
 
     /** @var list<AssistantMessageDiagnostic>|null */
     private ?array $diagnostics = null;
@@ -151,15 +158,15 @@ final class PiMessagesEventConverter
                     'name' => (string) ($event['toolName'] ?? ''),
                     'arguments' => [],
                 ];
-                $this->toolJson[$index] = '';
+                $this->toolJson[$index] = new StreamingJson();
 
                 return new ToolCallStartEvent($index, $this->snapshot());
 
             case 'toolcall_delta':
                 $delta = (string) ($event['delta'] ?? '');
-                $json = ($this->toolJson[$index] ?? '') . $delta;
-                $this->toolJson[$index] = $json;
-                $this->assign($index, ['arguments' => PartialJson::parse($json)]);
+                $reader = $this->toolJson[$index] ??= new StreamingJson();
+                $reader->append($delta);
+                $this->assign($index, ['arguments' => $reader->value()]);
 
                 return new ToolCallDeltaEvent($index, $delta, $this->snapshot());
 
@@ -180,7 +187,9 @@ final class PiMessagesEventConverter
     }
 
     /**
-     * The terminal event's `providerThinkingLevel` (only when it has one) and its `rewrite`, as a
+     * The terminal event's `providerThinkingLevel` and `responseModel` (each only when it has one) —
+     * the model that answered, which for a virtual model such as Radius's `cheap` is not the one
+     * asked for — and its `rewrite`, as a
      * `pi_messages_rewrite` diagnostic — upstream's `appendRewriteDiagnostic()`.
      *
      * @param array<string, mixed> $event
@@ -189,6 +198,10 @@ final class PiMessagesEventConverter
     {
         if (array_key_exists('providerThinkingLevel', $event) && is_string($event['providerThinkingLevel'])) {
             $this->providerThinkingLevel = $event['providerThinkingLevel'];
+        }
+
+        if (array_key_exists('responseModel', $event) && is_string($event['responseModel'])) {
+            $this->responseModel = $event['responseModel'];
         }
 
         if (is_array($event['rewrite'] ?? null)) {
@@ -264,6 +277,7 @@ final class PiMessagesEventConverter
             $this->stopReason,
             $this->errorMessage,
             $this->timestamp,
+            responseModel: $this->responseModel,
             responseId: $this->responseId,
             diagnostics: $this->diagnostics,
             providerThinkingLevel: $this->providerThinkingLevel,

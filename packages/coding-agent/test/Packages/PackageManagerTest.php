@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Test\Packages;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Packages\PackageError;
 use Pig\CodingAgent\Packages\PackageFilter;
+use Pig\CodingAgent\Packages\PackageInstallFailure;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Packages\ResolvedPaths;
 use Pig\CodingAgent\Settings;
@@ -279,6 +280,32 @@ final class PackageManagerTest extends TestCase
         } finally {
             putenv('PIG_OFFLINE');
         }
+    }
+
+    public function testAPackageThatWillNotInstallIsLeftOutAndTheOthersStillLoad(): void
+    {
+        // Upstream #11088: one configured package that could not be installed — a registry down,
+        // a repository gone — took every package's resources with it, because the whole
+        // resolution threw and the caller fell back to nothing.
+        $repo = $this->bareRepository(['extensions/a.php' => '<?php']);
+        $gone = 'git:localhost/pig-test/gone';
+
+        $resolved = $this->manager(['packages' => [$gone, "git:{$repo}"]])->resolve();
+
+        $this->assertCount(1, $resolved->enabled('extensions'), 'the package that installed still loads');
+        $this->assertCount(1, $resolved->installFailures);
+        $failure = $resolved->installFailures[0];
+        $this->assertSame($gone, $failure->source);
+        $this->assertSame('user', $failure->scope);
+        $this->assertStringStartsWith("Extension package \"{$gone}\": failed to install (", $failure->warning());
+        $this->assertStringEndsWith("Run `pig remove {$gone}` to remove it from settings.json.", $failure->warning());
+
+        $this->assertStringEndsWith('`pig remove x --local` to remove it from settings.json.', (new PackageInstallFailure('x', 'project', 'm'))->warning());
+        $this->assertStringEndsWith('Check the source and try again.', (new PackageInstallFailure('x', 'temporary', 'm'))->warning());
+
+        // `pig install` still fails out loud: only resolving forgives.
+        $this->expectException(PackageError::class);
+        $this->manager()->install($gone);
     }
 
     public function testUpdateFollowsTheBranchAndAPinnedRefStaysPut(): void

@@ -239,6 +239,11 @@ final class Flow
         }
 
         $endpoint = (string) ($metadata['authorization_endpoint'] ?? self::join($authorizationServerUrl, '/authorize'));
+
+        // The caller opens this with the platform's URL opener, which runs files and custom protocols too.
+        if (!Metadata::isHttpUrl($endpoint)) {
+            throw new RuntimeException("Invalid authorization endpoint {$endpoint}");
+        }
         $separator = str_contains($endpoint, '?') ? '&' : '?';
 
         return [$endpoint . $separator . http_build_query($params, '', '&', PHP_QUERY_RFC3986), $pkce->verifier];

@@ -19,13 +19,22 @@ final readonly class ResolvedPaths
      * @param list<ResolvedResource> $skills
      * @param list<ResolvedResource> $prompts
      * @param list<ResolvedResource> $themes
+     * @param list<PackageInstallFailure> $installFailures configured packages left out because
+     *        installing them failed — for the caller to warn about, as nothing else did
      */
     public function __construct(
         public array $extensions = [],
         public array $skills = [],
         public array $prompts = [],
         public array $themes = [],
+        public array $installFailures = [],
     ) {
+    }
+
+    /** @param list<PackageInstallFailure> $failures */
+    public function withInstallFailures(array $failures): self
+    {
+        return new self($this->extensions, $this->skills, $this->prompts, $this->themes, $failures);
     }
 
     /** @return list<ResolvedResource> */

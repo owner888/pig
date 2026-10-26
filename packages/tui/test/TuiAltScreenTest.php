@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
+use Pig\Tui\Components\Box;
 use Pig\Tui\Components\HStack;
 use Pig\Tui\Components\Image;
 use Pig\Tui\Components\ImageOptions;
@@ -538,6 +539,9 @@ final class TuiAltScreenTest extends TestCase
         foreach ([
             ['extensions/starline/fixed-editor/compositor.ts', 'starline'],
             ['earendil-works/pi-tui', 'works'],
+            ['~/.pig/agent/settings.json', 'agent'],
+            ['~\\Documents\\pig', 'Documents'],
+            ['foo+bar', 'bar'],
         ] as [$line, $needle]) {
             $copied = [];
             $terminal = new FakeTerminal(80, 1);
@@ -1157,6 +1161,53 @@ final class TuiAltScreenTest extends TestCase
             }
         }
         $this->assertTrue($found);
+    }
+
+    public function testCropsAKittyImageInAPaddedColouredBoxWhoseFirstLineIsAboveTheViewport(): void
+    {
+        // The rows under the image line are the box's padding and colour, not empty: the search
+        // for the image line stopped at the first of them and the whole image was dropped.
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $imageId = 11271;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 3, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 3, 100, 100));
+        $box = new Box(1, 0, static fn (string $text): string => "\x1b[44m{$text}\x1b[49m");
+        $box->addChild(self::linesComponent(static fn (): array => [$imageLine, '', '']));
+        $tui->addChild(self::linesComponent(static fn (): array => ['before']));
+        $tui->addChild($box);
+        $tui->addChild(self::linesComponent(static fn (): array => ['after', 'end']));
+        $this->start($tui);
+
+        $this->assertSame(3, $tui->viewportTop());
+        $this->assertTrue(self::wroteCrop($terminal, 'i=11271'));
+    }
+
+    public function testCropsAKittyImageWithTextBesideItWhoseFirstLineIsAboveTheViewport(): void
+    {
+        // Upstream #11271: text or a border on the image's own rows stopped the search too.
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $imageId = 11272;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 3, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 3, 100, 100));
+        $tui->addChild(self::linesComponent(static fn (): array => ['before', $imageLine, '   | side', '   | side']));
+        $tui->addChild(self::linesComponent(static fn (): array => ['after', 'end']));
+        $this->start($tui);
+
+        $this->assertSame(3, $tui->viewportTop());
+        $this->assertTrue(self::wroteCrop($terminal, 'i=11272'));
+    }
+
+    private static function wroteCrop(FakeTerminal $terminal, string $image): bool
+    {
+        foreach ($terminal->events as $event) {
+            if ($event[0] === 'write' && str_contains($event[1], $image) && str_contains($event[1], 'y=66,h=34,r=1')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function testRedrawsWezTermKittyImagesAfterWritesToCoveredRows(): void

@@ -205,6 +205,12 @@ final class PackageCommands
         try {
             $global = (new PackageManager($cwd, Settings::load($cwd, $home, projectTrusted: false), $home))->resolve();
             $project = $trusted ? (new PackageManager($cwd, $settings, $home))->resolve() : $global;
+
+            // The project's resolution read the person's packages too, so its failures are all of them.
+            foreach ($project->installFailures as $failure) {
+                fwrite(STDERR, Style::yellow("Warning: {$failure->warning()}") . "\n");
+            }
+
             // Upstream's Built-in rows: the person's switches alone, and with the project's.
             $withBuiltins = static fn (ResolvedPaths $resolved, array $projectEntries): ResolvedPaths => new ResolvedPaths(
                 [...$resolved->extensions, ...BuiltinExtensions::resources($settings->extensionEntries('user'), $projectEntries)],

@@ -560,26 +560,33 @@ final class ModelResolver
      */
     private static function splitProviderPrefix(string $text, array $models): ?array
     {
-        $slash = strpos($text, '/');
-
-        if ($slash === false) {
-            return null;
-        }
-
-        $prefix = strtolower(trim(substr($text, 0, $slash)));
-        $modelText = trim(substr($text, $slash + 1));
-
-        if ($prefix === '' || $modelText === '') {
-            return null;
-        }
+        // "Provider ids may contain "/" themselves (e.g. URL-derived ids), so match known ids,
+        // longest first": `llama-server=http://host:10800/qwen` split at its first slash named a
+        // provider `llama-server=http:` that nothing has.
+        $lowerText = strtolower($text);
+        $best = null;
 
         foreach ($models as $model) {
-            if (strtolower($model->provider) === $prefix) {
-                return [$model->provider, $modelText];
+            $prefix = strtolower(trim($model->provider));
+
+            if ($prefix === '' || ($best !== null && strlen($best[0]) >= strlen($model->provider))) {
+                continue;
+            }
+
+            $slash = strpos($lowerText, '/', min(strlen($prefix), strlen($lowerText)));
+
+            if ($slash === false || trim(substr($lowerText, 0, $slash)) !== $prefix) {
+                continue;
+            }
+
+            $modelText = trim(substr($text, $slash + 1));
+
+            if ($modelText !== '') {
+                $best = [$model->provider, $modelText];
             }
         }
 
-        return null;
+        return $best;
     }
 
     /**
@@ -669,14 +676,12 @@ final class ModelResolver
         }
 
         $wanted = strtolower($pattern);
-        $slash = strpos($pattern, '/');
 
-        if ($slash !== false) {
-            $provider = strtolower(substr($pattern, 0, $slash));
-            $id = strtolower(substr($pattern, $slash + 1));
-
+        // `provider/id` whole rather than split at a slash: a provider can have one in its id
+        // (`llama=http://host:10800`), and so can a model (`openrouter/free`).
+        if (str_contains($pattern, '/')) {
             foreach ($available as $model) {
-                if (strtolower($model->provider) === $provider && strtolower($model->id) === $id) {
+                if (strtolower($model->provider . '/' . $model->id) === $wanted) {
                     return $model;
                 }
             }

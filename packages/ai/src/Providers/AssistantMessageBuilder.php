@@ -15,6 +15,7 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\PartialJson;
+use Pig\Ai\Utils\StreamingJson;
 
 /**
  * Accumulates a response as it streams, handing out an immutable snapshot per event.
@@ -37,6 +38,23 @@ final class AssistantMessageBuilder
      *      namespace: string|null}>
      */
     private array $blocks = [];
+
+    /**
+     * Each streaming tool call's reader, by block: what it has read so far stays read, so a delta
+     * costs its own length and not the whole of the arguments again. Kept off the blocks, as
+     * upstream keeps "stream state … off the content blocks".
+     *
+     * @var array<int, StreamingJson>
+     */
+    private array $readers = [];
+
+    /**
+     * A custom tool's input whose JSON has not been written yet, by block: `[property, input]`.
+     * See `setCustomInput()`.
+     *
+     * @var array<int, array{0: string, 1: string}>
+     */
+    private array $customInputs = [];
 
     private Usage $usage;
 
@@ -166,12 +184,27 @@ final class AssistantMessageBuilder
 
     public function append(int $index, string $field, string $delta): void
     {
+        if ($field === 'json') {
+            $this->writeCustomInput($index);
+        }
+
         $this->blocks[$index][$field] .= $delta;
 
         if ($field === 'json') {
-            // Reparsed here rather than in snapshot(), so an unrelated text delta does
-            // not re-run the repair over every tool call in the message.
-            $this->blocks[$index]['arguments'] = PartialJson::parse($this->blocks[$index]['json']);
+            // Read here rather than in snapshot(), so an unrelated text delta does not touch
+            // the tool calls. Only the delta is read: reparsing the whole text per delta was
+            // quadratic, four seconds of a frozen terminal for a 66KB `write`. A reader is
+            // started over the whole text where there is none — after `seedJson()` or `setJson()`.
+            $reader = $this->readers[$index] ?? null;
+
+            if ($reader === null) {
+                $reader = $this->readers[$index] = new StreamingJson();
+                $reader->append($this->blocks[$index]['json']);
+            } else {
+                $reader->append($delta);
+            }
+
+            $this->blocks[$index]['arguments'] = $reader->value();
         }
     }
 
@@ -184,6 +217,8 @@ final class AssistantMessageBuilder
     /** A tool call's argument JSON so far — upstream's `partialJson`. */
     public function jsonOf(int $index): string
     {
+        $this->writeCustomInput($index);
+
         return $this->blocks[$index]['json'];
     }
 
@@ -228,7 +263,46 @@ final class AssistantMessageBuilder
     public function setJson(int $index, string $json): void
     {
         $this->blocks[$index]['json'] = $json;
-        $this->blocks[$index]['arguments'] = PartialJson::parse($json);
+        unset($this->customInputs[$index]);
+        $reader = $this->readers[$index] = new StreamingJson();
+        $reader->append($json);
+        $this->blocks[$index]['arguments'] = $reader->value();
+    }
+
+    /**
+     * A custom (grammar) tool's input so far, as the arguments `{<property>: <input>}` — upstream's
+     * "grammar tool input appends per delta". The providers handed over the whole input as JSON at
+     * every delta and it was parsed back each time, which was quadratic; the arguments are known
+     * without reading anything, and the JSON text is written only when something asks for it.
+     * Input that is not UTF-8 goes through the JSON, for the same substitutes the JSON has.
+     */
+    public function setCustomInput(int $index, string $property, string $input): void
+    {
+        unset($this->readers[$index]);
+        $this->customInputs[$index] = [$property, $input];
+
+        if (mb_check_encoding($input, 'UTF-8')) {
+            $this->blocks[$index]['arguments'] = [$property => $input];
+
+            return;
+        }
+
+        $this->writeCustomInput($index);
+        $this->blocks[$index]['arguments'] = (array) json_decode($this->blocks[$index]['json'], true);
+    }
+
+    /** The JSON of a custom tool's input, as the providers wrote it: `{<property>: <input>}`. */
+    private function writeCustomInput(int $index): void
+    {
+        if (!isset($this->customInputs[$index])) {
+            return;
+        }
+
+        [$property, $input] = $this->customInputs[$index];
+        unset($this->customInputs[$index]);
+        $object = new \stdClass();
+        $object->{$property} = $input;
+        $this->blocks[$index]['json'] = (string) json_encode($object, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     /**
@@ -240,8 +314,11 @@ final class AssistantMessageBuilder
     {
         if ($json !== null) {
             $this->blocks[$index]['json'] = $json;
+            unset($this->customInputs[$index]);
         }
 
+        $this->writeCustomInput($index);
+        unset($this->readers[$index]);
         $parsed = PartialJson::parseToolCallArguments($this->blocks[$index]['json']);
         $this->blocks[$index]['arguments'] = $parsed['arguments'];
         $this->blocks[$index]['argumentsError'] = $parsed['argumentsError'] ?? null;
@@ -255,6 +332,7 @@ final class AssistantMessageBuilder
     public function seedJson(int $index, string $json): void
     {
         $this->blocks[$index]['json'] = $json;
+        unset($this->readers[$index], $this->customInputs[$index]);
     }
 
     /**

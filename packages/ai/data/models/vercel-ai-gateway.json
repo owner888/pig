@@ -5100,7 +5100,7 @@
             "cacheWrite": 2.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 1048576,
+        "maxTokens": 131072,
         "compat": {
             "allowEmptySignature": true
         },
@@ -5134,7 +5134,7 @@
             "cacheWrite": 4.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 1048576,
+        "maxTokens": 131072,
         "compat": {
             "allowEmptySignature": true
         },

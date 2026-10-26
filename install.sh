@@ -15,6 +15,8 @@
 #     — plus an update command that does not work for half the people who see it.
 #   - Where PHP has no GD extension, it installs one: Termux's `php-gd`, or elsewhere ImageMagick,
 #     which pig then resizes pictures with — otherwise a photo over 2000px could not be sent.
+#   - On Termux, it installs fd and ripgrep with `pkg`: the builds pig downloads elsewhere are for
+#     glibc Linux and do not run there.
 #   - It fixes the one thing Composer says nothing about: its global bin directory is not on
 #     anybody's PATH. This is why the installer exists at all; `composer global require` on its own
 #     ends in `command not found`.
@@ -49,6 +51,8 @@ pig_installer_main() {
   install_pig_package
 
   ensure_image_resizer || true
+
+  ensure_search_tools || true
 
   bin_dir=$(composer_bin_dir)
 
@@ -366,6 +370,30 @@ ensure_image_resizer() {
 
   printf '\n  note: ImageMagick was not installed, so pig cannot resize large pictures.\n'
   printf '        Install it later with: %s\n' "$install_command"
+  return 0
+}
+
+# pig's `find` and `grep` run fd and ripgrep, and download them from GitHub where the machine has
+# none — but those builds are for glibc Linux, and Termux is Android's C library, so there they are
+# installed from Termux's own packages instead. Elsewhere pig's download does it. Never fatal.
+ensure_search_tools() {
+  if ! is_termux; then
+    return 0
+  fi
+
+  if command -v fd >/dev/null 2>&1 && command -v rg >/dev/null 2>&1; then
+    return 0
+  fi
+
+  printf '\n  pig searches with fd and ripgrep. Installing them:\n'
+  printf '    pkg install -y fd ripgrep\n\n'
+
+  if pkg install -y fd ripgrep; then
+    return 0
+  fi
+
+  printf '\n  note: fd and ripgrep were not installed; pig'"'"'s find and grep need them.\n'
+  printf '        Install them later with: pkg install fd ripgrep\n'
   return 0
 }
 

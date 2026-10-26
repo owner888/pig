@@ -669,7 +669,9 @@
             "supportsStore": false,
             "supportsDeveloperRole": false,
             "maxTokensField": "max_tokens",
-            "supportsStrictMode": true
+            "supportsStrictMode": true,
+            "supportsMidConvoSystemMessages": true,
+            "supportsMidConvoToolAdditions": true
         },
         "inputLimits": {
             "images": {

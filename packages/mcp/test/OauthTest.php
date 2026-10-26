@@ -56,6 +56,22 @@ final class OauthTest extends TestCase
         $this->assertSame($expected, Metadata::wwwAuthenticate($header));
     }
 
+    public function testAnAuthorizationEndpointThatIsNotHttpIsNotOpened(): void
+    {
+        // Metadata the parsers never saw — passed in whole — is checked again where the URL is made.
+        $client = ['client_id' => 'c'];
+
+        try {
+            Flow::startAuthorization('https://x', ['authorization_endpoint' => 'file:///etc/passwd', 'response_types_supported' => ['code'], 'code_challenge_methods_supported' => ['S256']], $client, 'http://localhost/cb', null, null, null);
+            $this->fail('opened a file: endpoint');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Invalid authorization endpoint file:///etc/passwd', $error->getMessage());
+        }
+
+        [$url] = Flow::startAuthorization('https://x', ['authorization_endpoint' => 'https://x/a', 'response_types_supported' => ['code'], 'code_challenge_methods_supported' => ['S256']], $client, 'http://localhost/cb', null, null, null);
+        $this->assertStringStartsWith('https://x/a?', $url);
+    }
+
     public function testMetadataParsersRefuseWhatIsNotTheirShape(): void
     {
         $this->assertSame('x', Metadata::tokens(['access_token' => 'x', 'token_type' => 'Bearer', 'expires_in' => '60'])['access_token']);
@@ -67,6 +83,9 @@ final class OauthTest extends TestCase
             fn () => Metadata::tokens(['access_token' => 'x', 'token_type' => 'Bearer', 'expires_in' => 'soon']),
             fn () => Metadata::authorizationServer(['issuer' => 'https://x', 'authorization_endpoint' => 'https://x/a', 'token_endpoint' => 'https://x/t']),
             fn () => Metadata::authorizationServer(['issuer' => 'javascript:alert(1)', 'authorization_endpoint' => 'https://x/a', 'token_endpoint' => 'https://x/t', 'response_types_supported' => ['code']]),
+            // Opened with the platform's URL opener: anything but http(s) could launch a program.
+            fn () => Metadata::authorizationServer(['issuer' => 'https://x', 'authorization_endpoint' => 'file:///Applications/Calculator.app', 'token_endpoint' => 'https://x/t', 'response_types_supported' => ['code']]),
+            fn () => Metadata::authorizationServer(['issuer' => 'https://x', 'authorization_endpoint' => 'vscode://x/a', 'token_endpoint' => 'https://x/t', 'response_types_supported' => ['code']]),
             fn () => Metadata::clientInformation(['redirect_uris' => []]),
             fn () => Metadata::protectedResource('nope'),
         ] as $bad) {

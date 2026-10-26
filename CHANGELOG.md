@@ -50,6 +50,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- A long tool call no longer holds the screen while it streams: its arguments are read as they arrive instead of being parsed again from the start with every piece, which made a 70KB `write` cost 4.5 seconds of the event loop and now costs about 15ms (upstream #9265).
+- A blockquote nested dozens of levels deep renders in one pass instead of re-wrapping its lines at every level, which grew about threefold per level (upstream #11321).
+- In fullscreen, an image whose top has scrolled above the viewport is cropped instead of vanishing, inside a padded or bordered box too.
+- MCP OAuth accepts only `http` and `https` addresses, for the metadata it is given and for the authorization endpoint it opens.
+- A model named as `provider/id` resolves when the provider's own id contains a slash (upstream #11397).
+- A configured package that fails to install is left out with a warning naming `pig remove <source>`, instead of taking every package's resources with it; `pig install` and `pig update` still fail on it (upstream #11304).
+- On Termux, `fd` and `rg` are not downloaded — the published builds are for glibc Linux and do not run on Android — and the message says `pkg install fd ripgrep`; `install.sh` installs both there.
+
+### Changed
+
+- Gemini tool schemas send `const` as a one-value `enum`, leaving literal data such as `default` and `examples` as written.
+- With per-message effort, Anthropic requests send a fixed `low` top-level effort.
+- Tool search puts a tool first when the query is its name.
+- Double-click in fullscreen selects a whole path such as `~/.pig/agent/settings.json`, as iTerm2 does.
+- `/scoped-models` shows a model's name beside its id when the name says something the id does not.
+- The pi-messages protocol's final events carry `responseModel`.
+- Kimi K3.1 Pro models are treated as the Kimi K3 family in the built-in model lists.
+
 ## [1.0.0] - 2026-10-26
 
 The first stable release: the three release candidates below, unchanged, with this one note. From here pig follows semantic versioning for what the README's *What 1.0 Promises* names — the extension API, the files in `~/.pig/agent`, the session file, the RPC protocol and the command line — and for nothing else.

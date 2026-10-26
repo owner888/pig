@@ -244,7 +244,8 @@ final class GoogleShared
      * Upstream's `convertTools(tools, useParameters = false, supportsStrictMode = true)`, literally.
      *
      * By default the schema goes in `parametersJsonSchema`, which takes full JSON Schema
-     * (`anyOf`, `const`, `$schema` and the rest) as written. `$useParameters` sends the legacy
+     * (`anyOf`, `$schema` and the rest) as written — except `const`, which Gemini ignores there, so
+     * a string or number `const` goes as a one-value `enum` (`rewriteConstAsEnum()`). `$useParameters` sends the legacy
      * OpenAPI 3.0 `parameters` instead, stripped of JSON Schema's meta-declarations — what a Code
      * Assist endpoint translating to Anthropic's `input_schema` needs. A tool that goes strict
      * (`ConstrainedSampling`) is sent in its strict form either way.
@@ -268,7 +269,7 @@ final class GoogleShared
                     'description' => $tool->description,
                     ...($useParameters
                         ? ['parameters' => self::sanitizeForOpenApi($parameters)]
-                        : ['parametersJsonSchema' => $parameters]),
+                        : ['parametersJsonSchema' => self::rewriteConstAsEnum($parameters)]),
                 ];
             }, $tools),
         ]];
@@ -600,6 +601,53 @@ final class GoogleShared
             'description' => $tool->description,
             'parameters' => self::sanitizeForOpenApi($tool->parameters),
         ];
+    }
+
+    /** Upstream's `JSON_SCHEMA_NAME_MAPS`: keywords whose values map names to subschemas, so their keys are not keywords. */
+    private const array JSON_SCHEMA_NAME_MAPS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'];
+
+    /** Upstream's `JSON_SCHEMA_SUBSCHEMAS`: keywords holding a subschema or a list of them, not literal data. */
+    private const array JSON_SCHEMA_SUBSCHEMAS = [
+        'additionalProperties', 'unevaluatedProperties', 'propertyNames', 'items', 'prefixItems', 'additionalItems',
+        'unevaluatedItems', 'contains', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else', 'contentSchema',
+    ];
+
+    /**
+     * A string or number `const` as a one-value `enum` — upstream's `rewriteConstAsEnum()`:
+     * "Gemini ignores `const` in `parametersJsonSchema` but honors `enum`", so a tool pinning an
+     * argument to one value had it chosen freely.
+     *
+     * Only schemas are walked — the subschema keywords and the values of the name maps — so literal
+     * data that looks like a schema (a `default`, an `examples` entry, an `enum` value, an `x-` key)
+     * goes as written; walking everything rewrote those too (upstream #11308).
+     */
+    public static function rewriteConstAsEnum(mixed $schema, bool $isNameMap = false): mixed
+    {
+        if (!is_array($schema) || $schema === []) {
+            return $schema;
+        }
+
+        if (array_is_list($schema)) {
+            return array_map(static fn (mixed $item): mixed => self::rewriteConstAsEnum($item), $schema);
+        }
+
+        $result = [];
+
+        foreach ($schema as $key => $value) {
+            $result[$key] = match (true) {
+                $isNameMap, in_array($key, self::JSON_SCHEMA_SUBSCHEMAS, true) => self::rewriteConstAsEnum($value),
+                in_array($key, self::JSON_SCHEMA_NAME_MAPS, true) => self::rewriteConstAsEnum($value, true),
+                default => $value,
+            };
+        }
+
+        if (!$isNameMap && array_key_exists('const', $result) && !isset($result['enum'])
+            && (is_string($result['const']) || is_int($result['const']) || is_float($result['const']))) {
+            $result['enum'] = [$result['const']];
+            unset($result['const']);
+        }
+
+        return $result;
     }
 
     /**

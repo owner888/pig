@@ -118,6 +118,10 @@ final class ToolSearch
     /**
      * Okapi BM25 with the usual parameters (k1 = 1.2, b = 0.75). Ties keep document order.
      *
+     * A query that *names* a tool — its full name, or what follows a `__` (`thread_read` for
+     * `mcp__app__thread_read`) — ranks that tool first: length normalization could otherwise put a
+     * short description sharing the name's words above it (upstream #11331).
+     *
      * @param list<array{name: string, text: string}> $documents
      * @return list<array{name: string, score: float}>
      */
@@ -153,6 +157,7 @@ final class ToolSearch
             $idf[$term] = log(1 + ($count - $frequency + 0.5) / ($frequency + 0.5));
         }
 
+        $nameQuery = self::normalizeName($query);
         $matches = [];
 
         foreach ($documents as $index => $document) {
@@ -170,14 +175,31 @@ final class ToolSearch
             }
 
             if ($score > 0) {
-                $matches[] = ['name' => $document['name'], 'score' => $score];
+                $matches[] = ['name' => $document['name'], 'score' => $score, 'named' => self::names($nameQuery, $document['name'])];
             }
         }
 
         // usort is stable: equal scores keep document order, as upstream's sort does.
-        usort($matches, static fn (array $x, array $y): int => $y['score'] <=> $x['score']);
+        usort($matches, static fn (array $x, array $y): int => [$y['named'], $y['score']] <=> [$x['named'], $x['score']]);
 
-        return array_slice($matches, 0, $limit);
+        return array_map(
+            static fn (array $match): array => ['name' => $match['name'], 'score' => $match['score']],
+            array_slice($matches, 0, $limit),
+        );
+    }
+
+    /** Lowercased, with what a script identifier cannot hold as `_`: `dev-app` is `dev_app`. */
+    private static function normalizeName(string $name): string
+    {
+        return (string) preg_replace('/[^a-z0-9_$]/', '_', strtolower(trim($name)));
+    }
+
+    /** Whether $query (normalized) is the tool's name, whole or after a `__`. */
+    private static function names(string $query, string $name): bool
+    {
+        $normalized = self::normalizeName($name);
+
+        return $normalized === $query || str_ends_with($normalized, "__{$query}");
     }
 
     /**

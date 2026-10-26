@@ -218,6 +218,10 @@ final class FauxProviderTest extends TestCase
 
         $same = self::complete($faux, new Context($messages, 'Be concise.'), options: new SimpleStreamOptions(sessionId: 'session-1', cacheRetention: 'short'));
         $this->assertGreaterThan(0, $same->usage->cacheRead);
+        // Upstream f3fa8bd9: every prompt token is read from the cache or written to it, none is
+        // input as well — the written part used to be counted twice.
+        $this->assertSame([0, 0, 0], [$first->usage->input, $other->usage->input, $same->usage->input]);
+        $this->assertGreaterThan(0, $same->usage->cacheWrite);
 
         $none = self::complete($faux, new Context($messages, 'Be concise.'));
         $this->assertSame([0, 0], [$none->usage->cacheRead, $none->usage->cacheWrite]);

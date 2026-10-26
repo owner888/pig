@@ -149,6 +149,37 @@ final class ScopedModelsSelector implements Component, Focusable, InputHandler
         return "{$model->provider} {$model->provider}/{$model->id} {$model->provider} {$model->id} {$model->name}";
     }
 
+    /**
+     * The model's name when it says something its id does not — a renamed override like
+     * "MiniMax M3 [work@openrouter, parasail]" for `minimax/minimax-m3` — and null when it only
+     * restates the id in other casing or separators, or without a namespace or version suffix
+     * ("Claude Sonnet 4.5 (EU)" for `eu.anthropic.claude-sonnet-4-5-20250929-v1:0`). Upstream's
+     * `getDistinctModelName()`.
+     */
+    public static function distinctName(Model $model): ?string
+    {
+        $name = trim($model->name);
+        if ($name === '') {
+            return null;
+        }
+
+        $words = static fn (string $value): array => preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($value), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $idWords = $words($model->id);
+        $idTokens = array_fill_keys($idWords, true);
+        $compactId = implode('', $idWords);
+
+        foreach ($words($name) as $word) {
+            // "Single-character words must match a whole ID token: '4' is not covered by
+            // 'mistral-small-2603'."
+            $covered = isset($idTokens[$word]) || (mb_strlen($word) > 1 && str_contains($compactId, (string) $word));
+            if (!$covered) {
+                return $name;
+            }
+        }
+
+        return null;
+    }
+
     /** @return list<string>|null what is enabled now, for a caller (and a test) to read */
     public function enabledIds(): ?array
     {
@@ -188,9 +219,11 @@ final class ScopedModelsSelector implements Component, Focusable, InputHandler
                 $isSelected = $i === $this->selected;
                 $id = $item['model']?->id ?? $item['id'];
                 $styled = $item['model'] !== null ? $id : $theme->strikethrough($id);
+                $name = $item['model'] !== null ? self::distinctName($item['model']) : null;
                 $line = ($isSelected ? $theme->fg('accent', '→ ') : '  ')
                     . ($item['model'] !== null && $item['enabled'] ? $theme->fg('accent', '✓ ') : '  ')
                     . ($isSelected ? $theme->fg('accent', $styled) : $styled)
+                    . ($name !== null ? $theme->fg('muted', " ({$name})") : '')
                     . $theme->fg('muted', $item['model'] !== null ? " [{$item['model']->provider}]" : ' [unavailable]');
                 $lines[] = Width::truncate($line, $width, '…');
             }

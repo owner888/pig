@@ -149,6 +149,27 @@ final class InstallScriptTest extends TestCase
         $this->assertStringNotContainsString('imagemagick', $out, 'GD came with it, so nothing else is installed');
     }
 
+    // ---- search tools --------------------------------------------------------------------------
+
+    public function testOnTermuxFdAndRipgrepComeFromPkg(): void
+    {
+        // pig's own download is of glibc builds, which Android's C library does not run.
+        $bin = $this->fakeBin(['pkg']);
+        file_put_contents("{$bin}/pkg", "#!/bin/sh\necho \"pkg \$*\"\n");
+
+        $this->assertStringContainsString('pkg install -y fd ripgrep', $this->call('ensure_search_tools', ['PATH' => $bin, 'TERMUX_VERSION' => '0.118'], $bin));
+    }
+
+    public function testElsewhereOrWithBothThereNothingIsInstalled(): void
+    {
+        $bin = $this->fakeBin(['pkg', 'fd', 'rg']);
+        $this->assertSame('', $this->call('ensure_search_tools', ['PATH' => $bin, 'TERMUX_VERSION' => '0.118'], $bin));
+
+        // Not Termux: pig fetches its own copies when `find` or `grep` first needs them.
+        $bin = $this->fakeBin(['pkg']);
+        $this->assertSame('', $this->call('ensure_search_tools', ['PATH' => $bin, 'TERMUX_VERSION' => '', 'PREFIX' => '/usr'], $bin));
+    }
+
     /** What one of the script's functions prints, with everything but the last line defined. */
     private function call(string $function, array $env, ?string $cleanUp = null): string
     {

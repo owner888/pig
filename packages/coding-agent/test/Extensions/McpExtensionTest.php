@@ -1237,6 +1237,24 @@ final class McpExtensionTest extends TestCase
         $this->assertSame(['a', 'b'], array_column(ToolSearch::rank('github', [['name' => 'a', 'text' => 'github'], ['name' => 'b', 'text' => 'github']], 8), 'name'));
     }
 
+    public function testAQueryThatNamesAToolRanksItFirst(): void
+    {
+        // Upstream #11331: BM25's length normalization put the short description sharing the
+        // name's words first, so asking for `thread_read` by name found `queue_read`.
+        $documents = [
+            ToolSearch::document('mcp__app__queue_read', ['description' => 'Read a queued message of this thread.']),
+            ToolSearch::document('mcp__dev-app__thread_read', ['description' => 'Read durable state and a paginated timeline from any thread. The default view returns user messages, assistant messages and plans. Continue with afterPosition until hasMore is false.']),
+        ];
+
+        foreach (['thread_read', 'dev_app__thread_read', 'mcp__dev-app__thread_read', 'Thread_Read', 'thread read'] as $query) {
+            $this->assertSame(['mcp__dev-app__thread_read'], array_column(ToolSearch::rank($query, $documents, 1), 'name'), $query);
+        }
+
+        // Part of a name is no name: that still ranks by BM25.
+        $this->assertSame(['mcp__app__queue_read'], array_column(ToolSearch::rank('read', $documents, 1), 'name'));
+        $this->assertSame(['name', 'score'], array_keys(ToolSearch::rank('thread_read', $documents, 1)[0]));
+    }
+
     public function testASearchDocumentCarriesTheSchemaAndTheServer(): void
     {
         $document = ToolSearch::document('mcp__gh__get_issue', [

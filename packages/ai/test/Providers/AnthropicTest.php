@@ -1021,7 +1021,7 @@ final class AnthropicTest extends TestCase
         );
 
         $this->assertSame(['type' => 'adaptive', 'display' => 'summarized', 'block_binding' => ['prefix_mismatch_behavior' => 'drop_block']], $body['thinking']);
-        $this->assertSame(['effort' => 'high'], $body['output_config']);
+        $this->assertSame(['effort' => 'low'], $body['output_config']);
         $this->assertArrayNotHasKey('temperature', $body);
         $this->assertStringContainsString('mid-conversation-output-config-2026-07-01,thinking-binding-controls-2026-08-01', $head);
         $this->assertSame(

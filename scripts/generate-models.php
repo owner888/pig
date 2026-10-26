@@ -425,18 +425,29 @@ const KIMI_K3_COST = ['input' => 3.0, 'out' => 15.0, 'cacheRead' => 0.3, 'cacheW
 const KIMI_K3_MAX_TOKENS = 131_072;
 
 /**
+ * Upstream's `isKimiK3FamilyId()`: "Kimi K3 and its point releases (kimi-k3.1-pro,
+ * kimi-k3.1-pro-highspeed) share K3's request format" — `BuiltinCatalog::isKimiK3FamilyId()` for
+ * the compat, this for the rows.
+ */
+function isKimiK3FamilyId(string $id): bool
+{
+    return preg_match('/^kimi-k3(?:\.\d+)?(?:-|$)/', $id) === 1;
+}
+
+/**
  * Upstream's `KIMI_CODING_IMPLIED_COSTS`: "Kimi Coding is subscription-backed, so models.dev reports
  * zero cost. Use the equivalent Moonshot API rates to estimate the value of subscription usage."
  */
 const KIMI_CODING_IMPLIED_COSTS = [
     'k3' => KIMI_K3_COST,
+    'k3-256k' => KIMI_K3_COST,
+    'k3.1-pro' => ['input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.2, 'cacheWrite' => 0.0],
+    'k3.1-pro-highspeed' => ['input' => 4.0, 'out' => 20.0, 'cacheRead' => 0.2, 'cacheWrite' => 0.0],
     'kimi-for-coding' => ['input' => 0.95, 'out' => 4.0, 'cacheRead' => 0.19, 'cacheWrite' => 0.0],
     'kimi-for-coding-highspeed' => ['input' => 1.9, 'out' => 8.0, 'cacheRead' => 0.38, 'cacheWrite' => 0.0],
     'kimi-k2-thinking' => ['input' => 0.6, 'out' => 2.5, 'cacheRead' => 0.15, 'cacheWrite' => 0.0],
 ];
 
-/** Upstream's `OPENROUTER_KIMI_K3_MODEL_IDS`. */
-const OPENROUTER_KIMI_K3_MODEL_IDS = ['moonshotai/kimi-k3', '~moonshotai/kimi-latest'];
 
 /** Upstream's `minimaxHiddenIds`: "MiniMax asked to hide older models from its direct providers (#2596)." */
 const MINIMAX_HIDDEN_IDS = ['MiniMax-M2', 'MiniMax-M2.1', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed'];
@@ -951,7 +962,7 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
             : null;
         $reasoning = ($from['reasoning'] ?? null) === true
             || ($provider === 'kimi-coding' && $id === 'k3')
-            || (($provider === 'moonshotai' || $provider === 'moonshotai-cn') && $id === 'kimi-k3');
+            || (($provider === 'moonshotai' || $provider === 'moonshotai-cn') && isKimiK3FamilyId($id));
         $api = match ($provider) {
             'fireworks' => str_contains($id, 'glm-') || str_contains($id, 'kimi-k3') ? Api::OpenAiCompletions : Api::AnthropicMessages,
             'opencode', 'opencode-go' => opencodeApi($provider, $id, $model['provider']['npm'] ?? null),
@@ -1008,6 +1019,9 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
             },
             'cacheWrite' => match (true) {
                 $kimiK3Cost || $implied !== null => $price('cache_write', 'cacheWrite'),
+                // "Moonshot does not bill cache writes; models.dev lists the input rate as
+                // cache_write for Kimi K3" — and for its point releases.
+                ($provider === 'moonshotai' || $provider === 'moonshotai-cn') && isKimiK3FamilyId($id) => 0.0,
                 $provider === 'google-vertex' => 0.0,
                 default => (float) ($cost['cache_write'] ?? 0),
             },
@@ -2084,8 +2098,8 @@ function listOf(array $values): string
  * - OpenCode Zen and Go: Claude Opus/Sonnet 4.6 at a 1,000,000 window, "OpenCode variants list Claude
  *   Sonnet 4/4.5 with 1M context, actual limit is 200K", GPT-5.4 at 272,000 and 128,000;
  * - OpenRouter: "Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect"
- *   (`OPENROUTER_KIMI_K3_MODEL_IDS`), and "Keep selected OpenRouter model metadata stable until
- *   upstream settles" — Kimi K2.5's price and output cap, GLM-5's price;
+ *   (Kimi K3 and its point releases, through either gateway, and `~moonshotai/kimi-latest`),
+ *   and "Keep selected OpenRouter model metadata stable until upstream settles" — Kimi K2.5's price and output cap, GLM-5's price;
  * - Vercel AI Gateway: Kimi K3's output cap;
  * - MiniMax: `MINIMAX_HIDDEN_IDS` are dropped (upstream #11121; it used to keep an allowlist).
  *
@@ -2110,8 +2124,9 @@ function catalogueTemporaryOverrides(array $rows, string $provider): array
             }
         }
 
-        if (($provider === 'openrouter' && in_array($id, OPENROUTER_KIMI_K3_MODEL_IDS, true))
-            || ($provider === 'vercel-ai-gateway' && $id === 'moonshotai/kimi-k3')) {
+        if (($provider === 'openrouter' && $id === '~moonshotai/kimi-latest')
+            || (($provider === 'openrouter' || $provider === 'vercel-ai-gateway')
+                && str_starts_with($id, 'moonshotai/') && isKimiK3FamilyId(substr($id, strlen('moonshotai/'))))) {
             $row['output'] = KIMI_K3_MAX_TOKENS;
         }
 

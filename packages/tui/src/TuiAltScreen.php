@@ -54,10 +54,10 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
     /**
      * Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse
-     * selection, so mirror common terminal word-selection behavior by keeping paths and kebab-case
-     * tokens whole.
+     * selection, so it uses iTerm2's default "characters considered part of a word" set, as upstream
+     * does: `~/.pig/agent/settings.json` and `foo+bar` are one word each, not split at `~` or `.`.
      */
-    private const array TERMINAL_WORD_SELECTION_JOINERS = ['/', '-'];
+    private const array TERMINAL_WORD_SELECTION_JOINERS = ['/', '-', '+', '\\', '~', '_', '.'];
 
     /**
      * One mouse or focus report, as found inside a read that may hold several. Upstream's input

@@ -257,11 +257,14 @@ final class FauxProvider implements StreamApi
             if ($previousPrompt !== null && $previousPrompt !== '') {
                 $cachedChars = self::commonPrefixLength($previousPrompt, $promptText);
                 $cacheRead = self::estimateTokens(mb_substr($previousPrompt, 0, $cachedChars));
-                $cacheWrite = self::estimateTokens(mb_substr($promptText, $cachedChars));
-                $input = max(0, $promptTokens - $cacheRead);
+                $cacheWrite = max(0, $promptTokens - $cacheRead);
             } else {
                 $cacheWrite = $promptTokens;
             }
+
+            // "Every prompt token is either read from or written to the simulated cache": a write
+            // counted as input too made input + cacheRead + cacheWrite more than the prompt.
+            $input = 0;
 
             $this->promptCache[$sessionId] = $promptText;
         }

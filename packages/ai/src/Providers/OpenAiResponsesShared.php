@@ -1044,7 +1044,7 @@ final class OpenAiResponsesShared
     private static function appendCustomInput(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array &$slot, string $next, bool $close): void
     {
         $delta = ConstrainedSampling::appendGrammarToolInputJsonDelta($slot[2]['buffer'], $slot[2]['property'], $next, $close);
-        $builder->setJson($slot[0], self::customArguments($slot[2]['property'], $next));
+        $builder->setCustomInput($slot[0], $slot[2]['property'], $next);
 
         if ($delta !== null) {
             $stream->push(new ToolCallDeltaEvent($slot[0], $delta, $builder->snapshot()));

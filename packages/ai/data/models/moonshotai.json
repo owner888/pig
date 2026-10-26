@@ -184,6 +184,15 @@
         "provider": "moonshotai",
         "baseUrl": "https://api.moonshot.ai/v1",
         "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
         "input": [
             "text",
             "image"
@@ -192,17 +201,20 @@
             "input": 2.0,
             "output": 10.0,
             "cacheRead": 0.2,
-            "cacheWrite": 2.0
+            "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
         "maxTokens": 1048576,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
+            "supportsReasoningEffort": true,
             "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
             "supportsStrictMode": false,
-            "thinkingFormat": "deepseek"
+            "thinkingFormat": "openai",
+            "supportsMidConvoSystemMessages": true,
+            "supportsMidConvoToolAdditions": true
         },
         "inputLimits": {
             "images": {
@@ -223,6 +235,15 @@
         "provider": "moonshotai",
         "baseUrl": "https://api.moonshot.ai/v1",
         "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
         "input": [
             "text",
             "image"
@@ -231,17 +252,20 @@
             "input": 4.0,
             "output": 20.0,
             "cacheRead": 0.2,
-            "cacheWrite": 4.0
+            "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
         "maxTokens": 1048576,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
+            "supportsReasoningEffort": true,
             "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
             "supportsStrictMode": false,
-            "thinkingFormat": "deepseek"
+            "thinkingFormat": "openai",
+            "supportsMidConvoSystemMessages": true,
+            "supportsMidConvoToolAdditions": true
         },
         "inputLimits": {
             "images": {

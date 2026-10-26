@@ -49,6 +49,12 @@ final class TerminalImage
 
     private static int $kittyTransmissionGeneration = 0;
 
+    /**
+     * The tallest image registered so far. "Bounds backward searches for image lines above a
+     * viewport: no image line further up than this can reach into it."
+     */
+    private static int $maxKittyImageRows = 0;
+
     public static function getCellDimensions(): CellDimensions
     {
         return self::$cellDimensions ??= new CellDimensions(9, 18);
@@ -406,9 +412,15 @@ final class TerminalImage
         return ($length * 3) >> 2;
     }
 
+    public static function maxKittyImageRows(): int
+    {
+        return self::$maxKittyImageRows;
+    }
+
     public static function registerKittyImageMetadata(KittyImageMetadata $metadata): void
     {
         self::$kittyTransmissionGeneration += 1;
+        self::$maxKittyImageRows = max(self::$maxKittyImageRows, $metadata->rows);
         unset(self::$kittyImageMetadata[$metadata->imageId]);
         self::$kittyImageMetadata[$metadata->imageId] = [
             'metadata' => $metadata,

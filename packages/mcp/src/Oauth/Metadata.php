@@ -199,15 +199,29 @@ final class Metadata
         return $value;
     }
 
+    /**
+     * Only `http:` and `https:`. The server supplies these URLs and the authorization endpoint is
+     * handed to the platform's URL opener, which launches a `file:` URL or a custom protocol's
+     * program as readily as a browser — so a list of bad schemes let everything else through.
+     */
     private static function safeUrl(mixed $value, string $name): string
     {
         $text = self::requiredString($value, $name);
-        $scheme = strtolower((string) parse_url($text, PHP_URL_SCHEME));
 
-        if ($scheme === '' || in_array($scheme, ['javascript', 'data', 'vbscript'], true)) {
+        if (!self::isHttpUrl($text)) {
             throw new RuntimeException("Invalid {$name}");
         }
 
         return $text;
+    }
+
+    /** Whether $url is an `http:` or `https:` URL with a host. */
+    public static function isHttpUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        return is_array($parts)
+            && in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
+            && ($parts['host'] ?? '') !== '';
     }
 }

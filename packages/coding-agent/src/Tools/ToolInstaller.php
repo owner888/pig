@@ -172,6 +172,16 @@ final class ToolInstaller
      */
     private static function target(array $config): array
     {
+        // Linux by `uname`, but Android's C library: the published builds are glibc ones (and
+        // ripgrep's x86_64 one musl), which do not run there. Termux packages both. The command
+        // first, for a UI that shows one truncated line of a tool error.
+        if (self::termux()) {
+            throw new AgentError(
+                'Install fd and ripgrep with: pkg install fd ripgrep' . "\n"
+                    . 'The builds pig downloads elsewhere are for glibc Linux, which Termux is not.',
+            );
+        }
+
         $machine = php_uname('m');
         $arch = match (true) {
             $machine === 'arm64', $machine === 'aarch64' => 'aarch64',
@@ -190,6 +200,14 @@ final class ToolInstaller
             'No published build of ' . $config['repo'] . ' for ' . PHP_OS_FAMILY . '/' . $machine
                 . '. Install it with your package manager instead.',
         );
+    }
+
+    /** Termux, told apart the way `install.sh`'s `is_termux` does it. */
+    public static function termux(): bool
+    {
+        return getenv('TERMUX_VERSION') !== false
+            || str_contains((string) getenv('PREFIX'), 'com.termux')
+            || is_dir('/data/data/com.termux');
     }
 
     private static function latestVersion(string $repo): string

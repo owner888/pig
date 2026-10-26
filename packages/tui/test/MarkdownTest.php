@@ -335,6 +335,18 @@ final class MarkdownTest extends TestCase
         }
     }
 
+    public function testQuotesNestedPastTheWidthStopAddingBorders(): void
+    {
+        // Upstream #11272: past about 39 levels at 80 columns every further `>` wrapped each
+        // child row at width 1 again, so the rows tripled per level — 60 of them never finished.
+        $start = microtime(true);
+        $rows = $this->rows(str_repeat('>', 60) . 'x', 80);
+
+        $this->assertLessThan(2.0, microtime(true) - $start);
+        $this->assertCount(1, $rows);
+        $this->assertStringEndsWith('x', rtrim($rows[0]));
+    }
+
     public function testATableIsDrawnWithBorders(): void
     {
         $rows = $this->rows("| a | b |\n|---|---|\n| 1 | 2 |", 20);

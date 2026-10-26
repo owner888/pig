@@ -376,23 +376,30 @@ final class Layout
         // A Kitty image whose first line is scrolled above the view: paint the visible part of it,
         // cropped, on the view's first row.
         if ($box->scrollView !== null && $box->scrollContentLines !== null && $box->scrollView->scrollTop() > 0 && $box->rect->height > 0) {
-            for ($imageRow = $box->scrollView->scrollTop() - 1; $imageRow >= 0; $imageRow--) {
+            // The nearest image line above the view. The rows under an image line can hold padding,
+            // a border or text beside the image, so what bounds the search is the tallest image
+            // there is, not what a row contains: a boxed image stopped it at its first row of
+            // border and vanished whole once its top scrolled out.
+            $scrollTop = $box->scrollView->scrollTop();
+            $minRow = max(0, $scrollTop - TerminalImage::maxKittyImageRows());
+            for ($imageRow = $scrollTop - 1; $imageRow >= $minRow; $imageRow--) {
                 $imageLine = $box->scrollContentLines[$imageRow] ?? '';
+                if (!TerminalImage::isImageLine($imageLine)) {
+                    continue;
+                }
                 $metadata = TerminalImage::getKittyImageMetadata($imageLine);
-                if ($metadata !== null) {
-                    $hiddenRows = $box->scrollView->scrollTop() - $imageRow;
-                    if ($hiddenRows < $metadata->rows) {
-                        $visibleRows = min($box->rect->height, $metadata->rows - $hiddenRows);
-                        $cropped = TerminalImage::cropKittyImageLine($imageLine, $hiddenRows, $visibleRows);
-                        if ($box->rect->x === 0 && $box->rect->width >= $totalWidth) {
-                            $screen[$box->rect->y] = $cropped;
-                        }
+                if ($metadata === null) {
+                    continue;
+                }
+                $hiddenRows = $scrollTop - $imageRow;
+                if ($hiddenRows < $metadata->rows) {
+                    $visibleRows = min($box->rect->height, $metadata->rows - $hiddenRows);
+                    $cropped = TerminalImage::cropKittyImageLine($imageLine, $hiddenRows, $visibleRows);
+                    if ($box->rect->x === 0 && $box->rect->width >= $totalWidth) {
+                        $screen[$box->rect->y] = $cropped;
                     }
-                    break;
                 }
-                if ($imageLine !== '') {
-                    break;
-                }
+                break;
             }
         }
 

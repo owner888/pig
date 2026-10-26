@@ -92,9 +92,9 @@ final class PackageManager
         }
 
         $accumulator = new ResourceAccumulator();
-        $this->resolvePackageSources($this->dedupe($all), $accumulator, $onMissing);
+        $failures = $this->resolvePackageSources($this->dedupe($all), $accumulator, $onMissing);
 
-        return $accumulator->toResolvedPaths();
+        return $accumulator->toResolvedPaths()->withInstallFailures($failures);
     }
 
     /**
@@ -113,9 +113,9 @@ final class PackageManager
             $entries[] = ['package' => $source, 'scope' => $scope];
         }
 
-        $this->resolvePackageSources($entries, $accumulator, null);
+        $failures = $this->resolvePackageSources($entries, $accumulator, null);
 
-        return $accumulator->toResolvedPaths();
+        return $accumulator->toResolvedPaths()->withInstallFailures($failures);
     }
 
     /**
@@ -240,9 +240,12 @@ final class PackageManager
     /**
      * @param list<array{package: string|array<string, mixed>, scope: string}> $sources
      * @param (Closure(string): string)|null $onMissing
+     * @return list<PackageInstallFailure> the packages left out because installing them failed
      */
-    private function resolvePackageSources(array $sources, ResourceAccumulator $accumulator, ?Closure $onMissing): void
+    private function resolvePackageSources(array $sources, ResourceAccumulator $accumulator, ?Closure $onMissing): array
     {
+        $failures = [];
+
         foreach ($sources as ['package' => $package, 'scope' => $scope]) {
             $sourceString = self::sourceOf($package);
             $filter = is_array($package) ? $package : null;
@@ -259,7 +262,7 @@ final class PackageManager
             }
 
             // Upstream's `installMissing()`: false when the package is to be left out.
-            $installMissing = function () use ($onMissing, $resolvedSource, $parsed, $resolvedScope): bool {
+            $installMissing = function () use ($onMissing, $resolvedSource, $parsed, $resolvedScope, &$failures): bool {
                 if (self::offline()) {
                     return false;
                 }
@@ -274,9 +277,19 @@ final class PackageManager
                     throw new PackageError("Missing source: {$resolvedSource}");
                 }
 
-                $parsed instanceof ComposerSource
-                    ? $this->installComposer($parsed, $resolvedScope)
-                    : $this->installGit($parsed, $resolvedScope);
+                // "A source that cannot be installed (no network, missing package, failing git prepare
+                // step) must not abort startup. Skip its resources, like offline mode does, and report
+                // the failure." Before, one bad package lost every package's resources: the whole
+                // resolution threw, and the caller fell back to none.
+                try {
+                    $parsed instanceof ComposerSource
+                        ? $this->installComposer($parsed, $resolvedScope)
+                        : $this->installGit($parsed, $resolvedScope);
+                } catch (PackageError $error) {
+                    $failures[] = new PackageInstallFailure($resolvedSource, $resolvedScope, $error->getMessage());
+
+                    return false;
+                }
 
                 return true;
             };
@@ -305,6 +318,8 @@ final class PackageManager
 
             $this->collectPackageResources($installedPath, $accumulator, $filter, $metadata->with($installedPath, $installedPath));
         }
+
+        return $failures;
     }
 
     /**

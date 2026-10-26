@@ -1144,7 +1144,11 @@ final class Anthropic
                 'display' => $options?->thinkingDisplay ?? 'summarized',
                 'block_binding' => ['prefix_mismatch_behavior' => 'drop_block'],
             ];
-            $body['output_config'] = ['effort' => 'high'];
+            // "Effort markers set the level for every reply. The top-level effort is part of the
+            // cached prompt, so it stays fixed. It is "low" because organizations can cap effort and
+            // reject requests containing any level above the cap" — `high` here was refused on such
+            // accounts even at low or medium thinking.
+            $body['output_config'] = ['effort' => 'low'];
         } elseif ($model->reasoning) {
             if ($options?->thinkingEnabled === true) {
                 // "Default to "summarized" so Opus 4.7 and Mythos Preview behave like older Claude 4

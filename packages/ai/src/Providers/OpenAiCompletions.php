@@ -700,7 +700,7 @@ final class OpenAiCompletions
     private function appendCustomInput(AssistantMessageBuilder $builder, array &$open, string $next, bool $close): ?string
     {
         $delta = ConstrainedSampling::appendGrammarToolInputJsonDelta($open[3]['buffer'], $open[3]['property'], $next, $close);
-        $builder->setJson($open[0], self::customArguments($open[3]['property'], $next));
+        $builder->setCustomInput($open[0], $open[3]['property'], $next);
 
         return $delta;
     }

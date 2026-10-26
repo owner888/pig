@@ -759,6 +759,10 @@ if ($packageSources !== []) {
         // Every `-e`, as upstream's "can be used multiple times".
         $temporaryResources = $manager->resolveExtensionSources($packageSources, temporary: true);
         $cliExtensionPaths = [...$cliExtensionPaths, ...$temporaryResources->enabled('extensions')];
+
+        foreach ($temporaryResources->installFailures as $failure) {
+            fwrite(STDERR, Style::yellow("Warning: {$failure->warning()}\n"));
+        }
     } catch (\Pig\CodingAgent\Packages\PackageError $error) {
         fwrite(STDERR, Style::red("--extension: {$error->getMessage()}\n"));
 
@@ -779,6 +783,11 @@ $resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources
     } catch (\Pig\CodingAgent\Packages\PackageError $error) {
         fwrite(STDERR, Style::yellow("packages: {$error->getMessage()}\n"));
         $resolved = new \Pig\CodingAgent\Packages\ResolvedPaths();
+    }
+
+    // A package that would not install is left out, and only that one; the rest still load.
+    foreach ($resolved->installFailures as $failure) {
+        fwrite(STDERR, Style::yellow("Warning: {$failure->warning()}\n"));
     }
 
     // The temporary package's other resources ride along; its extensions went to the loader

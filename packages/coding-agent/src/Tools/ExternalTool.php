@@ -95,8 +95,9 @@ final class ExternalTool
         }
 
         $install = self::INSTALL[$tool];
-        $how = match (PHP_OS_FAMILY) {
-            'Darwin' => $install['brew'],
+        $how = match (true) {
+            ToolInstaller::termux() => 'pkg install fd ripgrep',
+            PHP_OS_FAMILY === 'Darwin' => $install['brew'],
             default => "{$install['apt']}  (or {$install['pacman']} on Arch)",
         };
 

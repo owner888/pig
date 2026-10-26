@@ -279,8 +279,21 @@ final class Markdown implements Component
     private function quote(Blockquote $token, int $width): array
     {
         $lines = [];
+
+        // "With no room for another border (`│ ` plus at least one content column), render the
+        // nested content without one. Otherwise each extra level re-wraps every child line at
+        // width 1 and the output grows exponentially with nesting depth" — a line of 45 `>` was
+        // 128 rows and 0.6s at 80 columns, and it tripled with every `>` after that.
+        if ($width < 3) {
+            foreach ($token->children as $index => $child) {
+                array_push($lines, ...$this->block($child, $width, $token->children[$index + 1] ?? null));
+            }
+
+            return $lines;
+        }
+
         $border = ($this->theme->quoteBorder)('│ ');
-        $inner = max(1, $width - 2);
+        $inner = $width - 2;
 
         foreach ($token->children as $index => $child) {
             foreach ($this->block($child, $inner, $token->children[$index + 1] ?? null) as $line) {

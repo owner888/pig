@@ -136,6 +136,27 @@ final class PiMessagesTest extends TestCase
         self::assertSame('a', $done->message->content[0]->text);
     }
 
+    public function testTheTerminalEventSaysWhichModelAnswered(): void
+    {
+        // Upstream #11265: a virtual model (Radius's `cheap`) is answered by a real one, and the
+        // terminal event names it — on `done` and on `error` alike, and on nothing when it does not.
+        $usage = ['input' => 1, 'output' => 1, 'totalTokens' => 2];
+        $model = new Model('auto', 'auto', Api::PiMessages, 'radius', 'https://x.test', 1, 1);
+
+        $done = (new PiMessagesEventConverter($model))->convert(['type' => 'done', 'reason' => 'stop', 'usage' => $usage, 'responseModel' => 'claude-opus-5-5']);
+        self::assertInstanceOf(DoneEvent::class, $done);
+        self::assertSame('claude-opus-5-5', $done->message->responseModel);
+        self::assertSame('auto', $done->message->model);
+
+        $error = (new PiMessagesEventConverter($model))->convert(['type' => 'error', 'reason' => 'error', 'usage' => $usage, 'errorMessage' => 'Upstream failed', 'responseModel' => 'claude-opus-5-5']);
+        self::assertInstanceOf(\Pig\Ai\ErrorEvent::class, $error);
+        self::assertSame('claude-opus-5-5', $error->error->responseModel);
+
+        $silent = (new PiMessagesEventConverter($model))->convert(['type' => 'done', 'reason' => 'stop', 'usage' => $usage]);
+        self::assertInstanceOf(DoneEvent::class, $silent);
+        self::assertNull($silent->message->responseModel);
+    }
+
     public function testADeltaForABlockThatNeverStartedIsV8sTypeError(): void
     {
         $converter = new PiMessagesEventConverter(new Model('m', 'm', Api::PiMessages, 'radius', 'https://x.test', 1, 1));

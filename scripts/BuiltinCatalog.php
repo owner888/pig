@@ -1509,9 +1509,9 @@ final class BuiltinCatalog
     private const array KIMI_CODING_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'k3' => ['Kimi K3', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'k3-256k' => ['Kimi K3-256K', 262_144, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3-256k' => ['Kimi K3-256K', 262_144, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 131_072, true, true, 2.0, 10.0, 0.2, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 131_072, true, true, 4.0, 20.0, 0.2, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'kimi-for-coding' => ['kimi-for-coding', 1_048_576, 32_768, true, true, 0.95, 4.0, 0.19, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'kimi-for-coding-highspeed' => ['Kimi For Coding HighSpeed', 262_144, 32_768, true, true, 1.9, 8.0, 0.38, 0.0],
         // <<< generated
@@ -1570,8 +1570,8 @@ final class BuiltinCatalog
         'kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.95, 4.0, 0.19, 0.0],
         'kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code HighSpeed', 262_144, 262_144, true, true, 1.9, 8.0, 0.38, 0.0],
         'kimi-k3' => ['Kimi K3', 1_048_576, 1_048_576, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 2.0, 10.0, 0.2, 2.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 4.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 2.0, 10.0, 0.2, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -1582,8 +1582,8 @@ final class BuiltinCatalog
         'kimi-k2.7-code' => ['Kimi K2.7 Code', 262_144, 262_144, true, true, 0.9711, 4.0337, 0.1942, 0.0],
         'kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code HighSpeed', 262_144, 262_144, true, true, 1.9421, 8.0673, 0.3884, 0.0],
         'kimi-k3' => ['Kimi K3', 1_048_576, 1_048_576, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 1.9437, 10.1671, 0.1944, 1.9437, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 3.8874, 20.3342, 0.1944, 3.8874, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 1.9437, 10.1671, 0.1944, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 3.8874, 20.3342, 0.1944, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -1924,7 +1924,7 @@ final class BuiltinCatalog
         'moonshotai/kimi-k2.6' => ['MoonshotAI: Kimi K2.6', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.65, 3.41, 0.15, 0.0],
         'moonshotai/kimi-k2.7-code' => ['MoonshotAI: Kimi K2.7 Code', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.6712, 3.35, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'moonshotai/kimi-k3' => ['MoonshotAI: Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.239, 10.8, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'moonshotai/kimi-k3.1-pro' => ['MoonshotAI: Kimi K3.1 Pro', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'moonshotai/kimi-k3.1-pro' => ['MoonshotAI: Kimi K3.1 Pro', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 2.0, 10.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'moonshotai/kimi-k3:batch' => ['MoonshotAI: Kimi K3 (batch)', Api::OpenAiCompletions, 1_048_576, 16_384, true, true, 2.28, 11.4, 0.228, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'nex-agi/nex-n2.5-pro' => ['Nex AGI: Nex-N2.5-Pro', Api::OpenAiCompletions, 262_144, 235_929, true, true, 0.075, 0.25, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'nvidia/nemotron-3-nano-30b-a3b' => ['NVIDIA: Nemotron 3 Nano 30B A3B', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.06, 0.24, 0.0, 0.0],
@@ -2429,8 +2429,8 @@ final class BuiltinCatalog
         'moonshotai/kimi-k2.7-code-highspeed' => ['Kimi K2.7 Code High Speed', 262_144, 32_768, true, true, 1.9, 8.0, 0.38, 0.0],
         'moonshotai/kimi-k3' => ['Kimi K3', 1_000_000, 131_072, true, true, 3.0, 15.0, 0.3, 0.0],
         'moonshotai/kimi-k3-fast' => ['Kimi K3 Fast', 1_000_000, 131_072, true, true, 4.5, 22.5, 0.45, 0.0],
-        'moonshotai/kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 1_048_576, true, true, 2.0, 10.0, 0.2, 2.0],
-        'moonshotai/kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 1_048_576, true, true, 4.0, 20.0, 0.2, 4.0],
+        'moonshotai/kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 131_072, true, true, 2.0, 10.0, 0.2, 2.0],
+        'moonshotai/kimi-k3.1-pro-highspeed' => ['Kimi K3.1 Pro Highspeed', 1_048_576, 131_072, true, true, 4.0, 20.0, 0.2, 4.0],
         'nvidia/nemotron-3-nano-30b-a3b' => ['Nemotron 3 Nano 30B A3B', 262_144, 262_144, true, false, 0.05, 0.2, 0.025, 0.0],
         'nvidia/nemotron-3-super-120b-a12b' => ['NVIDIA Nemotron 3 Super 120B A12B', 256_000, 32_000, true, false, 0.15, 0.65, 0.0, 0.0],
         'nvidia/nemotron-3-ultra-550b-a55b' => ['Nemotron 3 Ultra', 1_000_000, 65_000, true, false, 0.6, 2.4, 0.12, 0.0],
@@ -2816,7 +2816,10 @@ final class BuiltinCatalog
             // loading (tools declared in later system messages). Highspeed reports neither and
             // rejects tool-bearing system messages with a 400." "All models accept system text after
             // the conversation starts."
-            'kimi-coding' => self::kimiCodingCompat(in_array($id, ['k3', 'k3-256k', 'kimi-for-coding'], true)),
+            // Which ones are K3-style is now read off the row: "K3-style models report effort levels
+            // and dynamic tool loading … models.dev mirrors the effort levels" — an id list missed
+            // K3.1 Pro and its Highspeed, which went out with K2's settings.
+            'kimi-coding' => self::kimiCodingCompat(isset($row['effortLevelMap'])),
             'meta' => null,
             // A row with models.dev effort levels takes adaptive thinking with `output_config.effort`
             // (upstream #11121: MiniMax-M3.1-Flash rejects `thinking.type: "disabled"`).
@@ -2826,11 +2829,11 @@ final class BuiltinCatalog
             'moonshotai', 'moonshotai-cn' => new OpenAiCompat(
                 store: false,
                 developerRole: false,
-                reasoningEffort: $id === 'kimi-k3',
+                reasoningEffort: self::isKimiK3FamilyId($id),
                 maxTokensField: 'max_tokens',
-                reasoningContentOnAssistantMessages: $id === 'kimi-k3' ? true : null,
+                reasoningContentOnAssistantMessages: self::isKimiK3FamilyId($id) ? true : null,
                 strictMode: false,
-                thinkingFormat: $id === 'kimi-k3' ? 'openai' : 'deepseek',
+                thinkingFormat: self::isKimiK3FamilyId($id) ? 'openai' : 'deepseek',
             ),
             // `NVIDIA_OPENAI_COMPAT`.
             'nvidia' => new OpenAiCompat(
@@ -2993,6 +2996,15 @@ final class BuiltinCatalog
         );
     }
 
+    /**
+     * Upstream's `isKimiK3FamilyId()`: "Kimi K3 and its point releases (kimi-k3.1-pro,
+     * kimi-k3.1-pro-highspeed) share K3's request format."
+     */
+    public static function isKimiK3FamilyId(string $id): bool
+    {
+        return preg_match('/^kimi-k3(?:\.\d+)?(?:-|$)/', $id) === 1;
+    }
+
     /** Upstream's generator compat for a Kimi For Coding model (`createKimiCodingModels()`). */
     private static function kimiCodingCompat(bool $k3Style): OpenAiCompat
     {
@@ -3022,9 +3034,9 @@ final class BuiltinCatalog
     {
         $compat = self::overlaid(self::detectedCompletionsCompat($provider, $baseUrl, $id), $own);
 
-        $kimiK3 = (str_starts_with($provider, 'moonshot') && $id === 'kimi-k3')
+        $kimiK3 = (str_starts_with($provider, 'moonshot') && self::isKimiK3FamilyId($id))
             || ($provider === 'fireworks' && str_contains($id, 'kimi-k3'))
-            || (($provider === 'opencode' || $provider === 'opencode-go') && $id === 'kimi-k3');
+            || (($provider === 'opencode' || $provider === 'opencode-go') && self::isKimiK3FamilyId($id));
         $textOnly = (str_starts_with($provider, 'moonshot') && in_array($id, ['kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed'], true))
             || ($provider === 'deepseek' && $id === 'deepseek-v4-pro')
             || ($provider === 'openrouter' && str_starts_with($id, 'openai/') && in_array(substr($id, strlen('openai/')), self::OPENAI_TOOL_SEARCH_MODEL_IDS, true));

@@ -132,6 +132,19 @@ final class ToolInstallerTest extends ToolTestCase
         }
     }
 
+    public function testOnTermuxNothingIsDownloadedAndPkgIsNamed(): void
+    {
+        // Linux by `uname`, Android by its C library: the glibc builds on GitHub do not run there.
+        putenv('TERMUX_VERSION=0.118');
+
+        try {
+            $error = $this->assertThrows(AgentError::class, static fn () => ToolInstaller::install('fd'), 'pkg install fd ripgrep');
+            $this->assertSame('Install fd and ripgrep with: pkg install fd ripgrep', strtok($error->getMessage(), "\n"));
+        } finally {
+            putenv('TERMUX_VERSION');
+        }
+    }
+
     public function testAnUnknownToolIsNotDownloaded(): void
     {
         $this->assertThrows(

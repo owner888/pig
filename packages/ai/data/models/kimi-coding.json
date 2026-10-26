@@ -72,9 +72,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.3,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -110,16 +110,22 @@
         "baseUrl": "https://api.kimi.com/coding/v1",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": null
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
         },
         "input": [
             "text",
             "image"
         ],
         "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.2,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -127,11 +133,13 @@
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
+            "supportsReasoningEffort": true,
             "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
             "supportsStrictMode": false,
-            "thinkingFormat": "deepseek",
-            "supportsMidConvoSystemMessages": true
+            "thinkingFormat": "openai",
+            "supportsMidConvoSystemMessages": true,
+            "supportsMidConvoToolAdditions": true
         },
         "inputLimits": {
             "images": {
@@ -153,16 +161,22 @@
         "baseUrl": "https://api.kimi.com/coding/v1",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": null
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
         },
         "input": [
             "text",
             "image"
         ],
         "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
+            "input": 4.0,
+            "output": 20.0,
+            "cacheRead": 0.2,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -170,11 +184,13 @@
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
+            "supportsReasoningEffort": true,
             "maxTokensField": "max_tokens",
+            "requiresReasoningContentOnAssistantMessages": true,
             "supportsStrictMode": false,
-            "thinkingFormat": "deepseek",
-            "supportsMidConvoSystemMessages": true
+            "thinkingFormat": "openai",
+            "supportsMidConvoSystemMessages": true,
+            "supportsMidConvoToolAdditions": true
         },
         "inputLimits": {
             "images": {

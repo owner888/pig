@@ -83,6 +83,27 @@ final class ModelResolverTest extends TestCase
         $this->assertSame('zzp-plain', ModelResolver::parse('anthropic/zzp-plain')?->model->id);
     }
 
+    public function testAProviderIdWithASlashInItIsNamedWhole(): void
+    {
+        // Upstream #11394: a provider named after its URL, `llama=http://host:10800`, split at the
+        // first slash became a provider `llama=http:`, and `--model` said not found. The longest
+        // known id wins, so the plain `llama` beside it does not take the reference either.
+        \Pig\Ai\Models::register([
+            self::probe('llama', 'zzp-local', 'Probe Local'),
+            self::probe('llama=http://host:10800', 'zzp-local', 'Probe Local (URL)'),
+        ]);
+
+        $choice = ModelResolver::parse('llama=http://host:10800/zzp-local');
+        $this->assertSame('llama=http://host:10800', $choice?->model->provider);
+        $this->assertSame('zzp-local', $choice?->model->id);
+
+        $thinking = ModelResolver::parse('llama=http://host:10800/zzp-local:high');
+        $this->assertSame('llama=http://host:10800', $thinking?->model->provider);
+        $this->assertSame(ThinkingLevel::High, $thinking?->thinking);
+
+        $this->assertSame('llama', ModelResolver::parse('llama/zzp-local')?->model->provider);
+    }
+
     public function testNothingMatchingIsNullRatherThanAGuess(): void
     {
         // Falling back to "something close enough" would spend the person's money on a
