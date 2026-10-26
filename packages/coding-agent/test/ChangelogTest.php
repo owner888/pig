@@ -165,6 +165,7 @@ final class ChangelogTest extends TestCase
         $entries = Changelog::parse();
 
         $this->assertNotSame([], $entries);
-        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+\z/', $entries[0]->version);
+        // A release or a pre-release (`1.0.0-rc.2`): whatever a tag can be.
+        $this->assertMatchesRegularExpression(\Pig\CodingAgent\Version::A_RELEASE, $entries[0]->version);
     }
 }
