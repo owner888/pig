@@ -15,6 +15,30 @@ use RuntimeException;
  */
 final class ScreenScaler
 {
+    /**
+     * Where screenshots go: the extension's `artifactsDirectory()`, which in an incognito session is a
+     * scratch directory removed with the session instead of `~/.pig/agent/artifacts`.
+     *
+     * @var (\Closure(): string)|null
+     */
+    private static ?\Closure $directory = null;
+
+    /** @param \Closure(): string $directory asked on every screenshot, so `/incognito` takes effect at once */
+    public static function useDirectory(\Closure $directory): void
+    {
+        self::$directory = $directory;
+    }
+
+    private static function directory(): string
+    {
+        $directory = self::$directory !== null ? (self::$directory)() : Config::home() . '/artifacts';
+        if (!is_dir($directory)) {
+            mkdir($directory, 0o700, true);
+        }
+
+        return $directory;
+    }
+
     public const int MAX_LONG_SIDE = 1568;
     public const int MAX_SHORT_SIDE = 980;
     public const int JPEG_QUALITY = 80;
@@ -110,10 +134,7 @@ final class ScreenScaler
         $targetW = $fitted['width'];
         $targetH = $fitted['height'];
 
-        $artifactsDir = Config::home() . '/artifacts';
-        if (!is_dir($artifactsDir)) {
-            mkdir($artifactsDir, 0o700, true);
-        }
+        $artifactsDir = self::directory();
 
         $timestamp = gmdate('Ymd\THis\Z');
         $hash = substr(md5_file($rawPngPath) ?: uniqid(), 0, 8);

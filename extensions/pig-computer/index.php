@@ -7,7 +7,6 @@ namespace Pig\Extensions\Computer;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
-use Pig\CodingAgent\Config;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 
@@ -24,16 +23,17 @@ return static function (ExtensionApi $pi): void {
     require_once __DIR__ . '/src/InputManager.php';
 
     $desktop = new DesktopClient();
+    ScreenScaler::useDirectory($pi->artifactsDirectory(...));
     /** @var array{float, float} Last observed pixel-to-point scaling ratio */
     $lastScale = [1.0, 1.0];
 
     // -------------------------------------------------------------------------
     // Helper: capture and process screen observation
     // -------------------------------------------------------------------------
-    $observeScreen = static function () use ($desktop, &$lastScale): array {
+    $observeScreen = static function () use ($desktop, &$lastScale, $pi): array {
         $screenSize = $desktop->screenSize();
 
-        $artifactsDir = Config::home() . '/artifacts';
+        $artifactsDir = $pi->artifactsDirectory();
         if (!is_dir($artifactsDir)) {
             mkdir($artifactsDir, 0o700, true);
         }

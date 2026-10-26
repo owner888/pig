@@ -23,6 +23,7 @@ return static function (ExtensionApi $pi): void {
     require_once __DIR__ . '/src/TreeParser.php';
 
     $adb = new AdbClient();
+    ScreenCapture::useDirectory($pi->artifactsDirectory(...));
     /** @var array{float, float} Last observed pixel-to-point scaling ratio */
     $lastScale = [1.0, 1.0];
 

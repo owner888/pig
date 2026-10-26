@@ -19,6 +19,30 @@ final class ScreenCapture
     public const int JPEG_QUALITY = 80;
 
     /**
+     * Where screenshots go: the extension's `artifactsDirectory()`, which in an incognito session is a
+     * scratch directory removed with the session instead of `~/.pig/agent/artifacts`.
+     *
+     * @var (\Closure(): string)|null
+     */
+    private static ?\Closure $directory = null;
+
+    /** @param \Closure(): string $directory asked on every screenshot, so `/incognito` takes effect at once */
+    public static function useDirectory(\Closure $directory): void
+    {
+        self::$directory = $directory;
+    }
+
+    private static function directory(): string
+    {
+        $directory = self::$directory !== null ? (self::$directory)() : Config::home() . '/artifacts';
+        if (!is_dir($directory)) {
+            mkdir($directory, 0o700, true);
+        }
+
+        return $directory;
+    }
+
+    /**
      * Parse PNG width and height from the IHDR chunk.
      *
      * @return array{width: int, height: int}|null
@@ -80,10 +104,7 @@ final class ScreenCapture
      */
     public static function createArtifactPath(): array
     {
-        $artifactsDir = Config::home() . '/artifacts';
-        if (!is_dir($artifactsDir)) {
-            mkdir($artifactsDir, 0o700, true);
-        }
+        $artifactsDir = self::directory();
 
         $timestamp = gmdate('Ymd\THis\Z');
         $hash = bin2hex(random_bytes(4));

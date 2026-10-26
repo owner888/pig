@@ -10,6 +10,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\BashOutputComponent;
 use Pig\CodingAgent\Tools\Run;
 use Pig\Tui\Ansi;
+use Pig\Tui\TextWrap;
 use Pig\Tui\Width;
 
 /**
@@ -146,16 +147,17 @@ final class BashOutputTest extends TestCase
         // A 50KB build log kept to five rows was wrapped whole at every new width: 280 of them
         // in one resumed session made a resize frame take 560ms, and the right-hand side of a
         // widened window stayed blank for that long. A ratio, for the reason the test above
-        // gives — the gap it stands in for is about 50×.
-        $short = new BashOutputComponent(5, null);
-        $short->setText(str_repeat(str_repeat('x', 200) . "\n", 5));
+        // gives, and against wrapping the whole output — what the bug did — the gap it stands in
+        // for being about 25×. Against the cost of a short output it was once, until the tail's own
+        // wrap got twice as fast and the rows still counted for the head became most of the time.
+        $text = str_repeat(str_repeat('x', 200) . "\n", 2000);
         $long = new BashOutputComponent(5, null);
-        $long->setText(str_repeat(str_repeat('x', 200) . "\n", 2000));
+        $long->setText($text);
 
-        $tail = self::milliseconds(static fn () => $short->render(120));
-        $whole = self::milliseconds(static fn () => $long->render(120));
+        $collapsed = self::milliseconds(static fn () => $long->render(120));
+        $wrapped = self::milliseconds(static fn () => TextWrap::wrap($text, 120));
 
-        $this->assertLessThan(max(1.0, $tail * 20), $whole, 'the whole output was wrapped to show its tail');
+        $this->assertLessThan($wrapped / 5, $collapsed, 'the whole output was wrapped to show its tail');
     }
 
     public function testNewOutputAndANewRowCountBothReachTheScreen(): void

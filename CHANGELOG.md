@@ -56,6 +56,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - A resize, or `ctrl+o`, on a long session lays the transcript out again in about 60% of the time it took: a cluster's width is remembered instead of measured on every frame, and wrapping walks a line a run of characters at a time rather than a byte at a time.
 - The README says what 1.0 promises to keep stable: the extension API, the files in `~/.pig/agent`, the session file, the RPC protocol and the command line. Everything else is internal.
+- `pig-computer` and `pig-android-use` keep their screenshots in the extension's `artifactsDirectory()`, so an incognito session's are removed with it instead of left in `~/.pig/agent/artifacts`.
 
 ## [1.0.0-rc.2] - 2026-10-26
 

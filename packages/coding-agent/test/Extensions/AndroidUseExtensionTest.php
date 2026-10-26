@@ -113,6 +113,19 @@ final class AndroidUseExtensionTest extends TestCase
         $this->assertNull(ScreenCapture::pngDimensions("\x89PNG\r\n\x1a\nshort"));
     }
 
+    public function testScreenshotsGoWhereTheExtensionIsTold(): void
+    {
+        // The extension hands over `artifactsDirectory()`, which an incognito session points at
+        // a scratch directory it removes; asked on each screenshot, not once at load.
+        $directory = $this->tempHome . '/scratch-' . uniqid();
+        ScreenCapture::useDirectory(static fn(): string => $directory);
+
+        $paths = ScreenCapture::createArtifactPath();
+
+        $this->assertStringStartsWith($directory . '/android-', $paths['jpg']);
+        $this->assertDirectoryExists($directory);
+    }
+
     public function testScreenCaptureFitDimensions(): void
     {
         // Vertical mobile: 1080 x 2400
