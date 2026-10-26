@@ -136,6 +136,19 @@ final class InstallScriptTest extends TestCase
         $this->assertSame('', $this->call('ensure_image_resizer', ['TERMUX_VERSION' => '0.118']));
     }
 
+    public function testOnTermuxItIsPhpGdThatIsInstalled(): void
+    {
+        // A `php` without GD until `pkg` has installed `php-gd`, and a `pkg` that says what it was asked.
+        $bin = $this->fakeBin(['pkg', 'php']);
+        file_put_contents("{$bin}/pkg", "#!/bin/sh\necho \"pkg \$*\"\n: > {$bin}/gd-installed\n");
+        file_put_contents("{$bin}/php", "#!/bin/sh\n[ -f {$bin}/gd-installed ]\n");
+
+        $out = $this->call('ensure_image_resizer', ['PATH' => $bin, 'TERMUX_VERSION' => '0.118'], $bin);
+
+        $this->assertStringContainsString('pkg install -y php-gd', $out);
+        $this->assertStringNotContainsString('imagemagick', $out, 'GD came with it, so nothing else is installed');
+    }
+
     /** What one of the script's functions prints, with everything but the last line defined. */
     private function call(string $function, array $env, ?string $cleanUp = null): string
     {

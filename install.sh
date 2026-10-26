@@ -13,8 +13,8 @@
 #     no phar and no second artifact here on purpose: pig's version comes from the git tag through
 #     Composer, and a second install route would be a second answer to "which version am I running"
 #     — plus an update command that does not work for half the people who see it.
-#   - Where PHP has no GD extension (Termux's has none), it installs ImageMagick, which pig then
-#     resizes pictures with — otherwise a photo over 2000px could not be sent to the model.
+#   - Where PHP has no GD extension, it installs one: Termux's `php-gd`, or elsewhere ImageMagick,
+#     which pig then resizes pictures with — otherwise a photo over 2000px could not be sent.
 #   - It fixes the one thing Composer says nothing about: its global bin directory is not on
 #     anybody's PATH. This is why the installer exists at all; `composer global require` on its own
 #     ends in `command not found`.
@@ -323,11 +323,26 @@ install_pig_package() {
 # ---- pictures ---------------------------------------------------------------------------
 
 # pig fits a picture inside the provider's limits with PHP's GD extension, and with ImageMagick where
-# PHP has none — Termux's PHP among them. With neither, a photo over 2000px cannot be sent, and the
-# model is left to shrink it with whatever command it can find. Never fatal: pig runs without it.
+# PHP has none. With neither, a photo over 2000px cannot be sent, and the model is left to shrink it
+# with whatever command it can find. Never fatal: pig runs without it.
+#
+# Termux's PHP is built without GD and ships it as a package of its own, `php-gd`: that first, since
+# GD works inside PHP and ImageMagick is a process per picture. Checked after installing, and
+# ImageMagick is still the answer if PHP did not pick the extension up.
 ensure_image_resizer() {
-  if php -r 'exit(extension_loaded("gd") ? 0 : 1);' 2>/dev/null; then
+  if php_has_gd; then
     return 0
+  fi
+
+  if is_termux; then
+    printf '\n  PHP has no GD extension, which pig resizes pictures with. Installing it:\n'
+    printf '    pkg install -y php-gd\n\n'
+
+    if pkg install -y php-gd && php_has_gd; then
+      return 0
+    fi
+
+    printf '\n  note: php-gd did not give PHP the GD extension; trying ImageMagick instead.\n'
   fi
 
   if command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; then
@@ -352,6 +367,10 @@ ensure_image_resizer() {
   printf '\n  note: ImageMagick was not installed, so pig cannot resize large pictures.\n'
   printf '        Install it later with: %s\n' "$install_command"
   return 0
+}
+
+php_has_gd() {
+  php -r 'exit(extension_loaded("gd") ? 0 : 1);' 2>/dev/null
 }
 
 # The command that installs ImageMagick here, or nothing when there is no package manager this knows
