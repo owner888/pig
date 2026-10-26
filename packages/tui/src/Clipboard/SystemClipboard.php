@@ -35,8 +35,16 @@ final class SystemClipboard implements Clipboard
     /** Upstream's `MAX_OSC52_ENCODED_LENGTH`: the longest base64 an OSC 52 copy carries. */
     private const int MAX_OSC52_ENCODED_LENGTH = 100_000;
 
-    public function __construct(private readonly ?string $platform = null)
-    {
+    /**
+     * @param (\Closure(string): void)|null $toTerminal where an OSC 52 copy is written — the
+     *        screen's own terminal, so the sequence goes out in order with the frames rather than
+     *        into the middle of one still being written (`BufferedTerminal`); standard output
+     *        when there is none
+     */
+    public function __construct(
+        private readonly ?string $platform = null,
+        private readonly ?\Closure $toTerminal = null,
+    ) {
     }
 
     public static function default(): self
@@ -90,7 +98,7 @@ final class SystemClipboard implements Clipboard
         $headless = $platform === 'linux' && !Env::isSet('DISPLAY') && !Env::isSet('WAYLAND_DISPLAY') && !Env::isSet('TERMUX_VERSION');
 
         if (self::isRemoteSession() || (!$copied && $headless)) {
-            $copied = self::emitOsc52($text) || $copied;
+            $copied = $this->emitOsc52($text) || $copied;
         }
 
         return $copied;
@@ -123,7 +131,7 @@ final class SystemClipboard implements Clipboard
     }
 
     /** Upstream's `emitOsc52()`: false, and nothing written, for text past the size limit. */
-    private static function emitOsc52(string $text): bool
+    private function emitOsc52(string $text): bool
     {
         $encoded = base64_encode($text);
 
@@ -131,7 +139,8 @@ final class SystemClipboard implements Clipboard
             return false;
         }
 
-        fwrite(STDOUT, "\x1b]52;c;{$encoded}\x07");
+        $sequence = "\x1b]52;c;{$encoded}\x07";
+        $this->toTerminal !== null ? ($this->toTerminal)($sequence) : fwrite(STDOUT, $sequence);
 
         return true;
     }

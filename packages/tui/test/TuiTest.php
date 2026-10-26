@@ -87,6 +87,59 @@ final class TuiTest extends TestCase
         $this->assertSame('', $this->frame());
     }
 
+    public function testAFrameWaitsForTheTerminalToTakeTheLastOneAndThenDrawsEverything(): void
+    {
+        $text = new TextComponent('first');
+        $this->tui->addChild($text);
+        $this->tui->start();
+        $this->frame();
+
+        // A terminal still taking a big frame: nothing is drawn behind it — a frame is a diff
+        // against the one before, so piling them up is all the terminal would get, and none can
+        // be dropped.
+        $this->terminal->busy = true;
+        $text->text = 'second';
+        $this->tui->requestRender();
+        $this->assertSame('', $this->frame());
+        $text->text = 'third';
+        $this->tui->requestRender();
+        $this->assertSame('', $this->frame());
+
+        // Caught up: one frame, with what is there now.
+        $this->terminal->drain();
+        $this->terminal->clearWrites();
+
+        for ($turn = 0; $turn < 3 && $this->terminal->output() === ''; $turn++) {
+            Loop::get()->tick();
+        }
+
+        $output = $this->terminal->output();
+        $this->assertStringContainsString('third', $output);
+        $this->assertStringNotContainsString('second', $output);
+    }
+
+    public function testTypingWaitsForTheTerminalToo(): void
+    {
+        $text = new TextComponent('before');
+        $this->tui->addChild($text);
+        $this->tui->start();
+        $this->frame();
+
+        $this->terminal->busy = true;
+        $text->text = 'after';
+        $this->tui->requestRender(true);
+        $this->assertSame('', $this->frame(), 'the immediate frame waits as well');
+
+        $this->terminal->drain();
+        $this->terminal->clearWrites();
+
+        for ($turn = 0; $turn < 3 && $this->terminal->output() === ''; $turn++) {
+            Loop::get()->tick();
+        }
+
+        $this->assertStringContainsString('after', $this->terminal->output());
+    }
+
     public function testOnlyTheLinesThatChangedAreRewritten(): void
     {
         $top = new TextComponent('unchanged');

@@ -49,6 +49,67 @@ final class ProcessTerminalTest extends TestCase
         $this->assertSame('hello', $this->throughATerminal('hello'));
     }
 
+    public function testAFrameTheTerminalCannotTakeAtOnceDoesNotHoldTheLoop(): void
+    {
+        \Pig\Async\Loop::reset();
+        [$output, $screen] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        stream_set_blocking($output, false);
+        $terminal = new ProcessTerminal(STDIN, $output);
+        $frame = str_repeat('x', 4_000_000);
+
+        // Nobody is reading: a write that waited would wait here until it gave up.
+        $started = microtime(true);
+        $terminal->write($frame);
+        $terminal->write('TAIL');
+        $this->assertLessThan(0.5, microtime(true) - $started, 'the write waited for the terminal');
+        $this->assertTrue($terminal->hasPendingOutput());
+
+        $drained = false;
+        $terminal->whenDrained(static function () use (&$drained): void {
+            $drained = true;
+        });
+
+        // The terminal reads, on the same loop, and the loop writes the rest as it does — in order.
+        $received = '';
+        stream_set_blocking($screen, false);
+        $loop = \Pig\Async\Loop::get();
+        $reader = $loop->onReadable($screen, static function () use ($screen, &$received): void {
+            $received .= (string) fread($screen, 1 << 20);
+        });
+
+        for ($turns = 0; !$drained && $turns < 100_000; $turns++) {
+            $loop->tick();
+        }
+
+        $loop->cancel($reader);
+
+        // What the terminal has been given and not yet read.
+        while (($chunk = (string) fread($screen, 1 << 20)) !== '') {
+            $received .= $chunk;
+        }
+        $this->assertTrue($drained, 'whenDrained() was not called');
+        $this->assertFalse($terminal->hasPendingOutput());
+        $this->assertSame(strlen($frame) + 4, strlen($received));
+        $this->assertSame('TAIL', substr($received, -4));
+        fclose($output);
+        fclose($screen);
+    }
+
+    public function testWhenDrainedWithNothingWaitingIsCalledOnTheNextTurn(): void
+    {
+        \Pig\Async\Loop::reset();
+        $terminal = new ProcessTerminal(STDIN, fopen('php://memory', 'w'));
+        $called = false;
+
+        $terminal->whenDrained(static function () use (&$called): void {
+            $called = true;
+        });
+
+        $this->assertFalse($called, 'not inside the caller');
+        \Pig\Async\Loop::get()->tick();
+        $this->assertTrue($called);
+    }
+
     public function testNormalizeNativeInputPreservesNonReturnData(): void
     {
         $ref = new \ReflectionMethod(ProcessTerminal::class, 'normalizeNativeInput');
@@ -215,7 +276,10 @@ final class ProcessTerminalTest extends TestCase
         $this->assertTrue($reader !== false, 'could not start the reader');
         stream_set_blocking($pipes[0], false);
 
-        (new ProcessTerminal(STDIN, $pipes[0]))->write($data);
+        $terminal = new ProcessTerminal(STDIN, $pipes[0]);
+        $terminal->write($data);
+        // What the pipe did not take at once waits for the loop; nothing runs it here.
+        $terminal->flush();
 
         fclose($pipes[0]);
         fclose($pipes[1]);

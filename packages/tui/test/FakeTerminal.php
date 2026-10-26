@@ -6,6 +6,7 @@ namespace Pig\Tui\Test;
 
 use Closure;
 use Pig\Async\Loop;
+use Pig\Tui\BufferedTerminal;
 use Pig\Tui\ProgramStatus;
 use Pig\Tui\Terminal;
 
@@ -15,7 +16,7 @@ use Pig\Tui\Terminal;
  * The differential renderer's whole job is deciding what *not* to write, so the only way
  * to test it is to keep every byte it emitted and look at them.
  */
-final class FakeTerminal implements Terminal
+final class FakeTerminal implements Terminal, BufferedTerminal
 {
     /** @var list<string> one entry per write() call */
     public array $writes = [];
@@ -33,6 +34,15 @@ final class FakeTerminal implements Terminal
     private ?Closure $onInput = null;
 
     private ?Closure $onResize = null;
+
+    /**
+     * A terminal still taking an earlier frame, as `ProcessTerminal` is while its output drains:
+     * set by a test, and `drain()` is the terminal catching up.
+     */
+    public bool $busy = false;
+
+    /** @var list<Closure(): void> */
+    private array $onDrained = [];
 
     /** @var list<string> typed before the screen opened, waiting for it to */
     private array $queued = [];
@@ -194,5 +204,35 @@ final class FakeTerminal implements Terminal
     {
         $this->progress[] = $active;
         $this->write($active ? "\x1b]9;4;3\x07" : "\x1b]9;4;0\x07");
+    }
+
+    #[\Override]
+    public function hasPendingOutput(): bool
+    {
+        return $this->busy;
+    }
+
+    #[\Override]
+    public function whenDrained(Closure $callback): void
+    {
+        $this->busy ? $this->onDrained[] = $callback : Loop::get()->defer($callback);
+    }
+
+    #[\Override]
+    public function flush(): void
+    {
+        $this->drain();
+    }
+
+    /** The terminal has caught up: whoever was waiting for it is told, on the loop. */
+    public function drain(): void
+    {
+        $this->busy = false;
+
+        foreach ($this->onDrained as $callback) {
+            Loop::get()->defer($callback);
+        }
+
+        $this->onDrained = [];
     }
 }

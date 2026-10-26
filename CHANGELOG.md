@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed the terminal UI freezing while the terminal took a big frame: a resize or ctrl+o on a long conversation redraws megabytes, and writing them used to wait until the terminal had taken every byte — seconds in which no key was read and Escape did nothing (`PIG_STALL_LOG` measured 4 and 16 seconds). Output the terminal does not take at once is now written from the event loop as it reads, and the next frame is drawn once it has caught up, with everything that changed meanwhile.
+
 ## [1.0.0-rc.1] - 2026-10-26
 
 ### Added

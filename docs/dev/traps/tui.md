@@ -66,6 +66,7 @@ Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md
 - [`Ansi::at()` did not know OSC/APC, so `\e]8;;\a` counted as 4 visible columns](#ansiat-did-not-know-oscapc-so-e8a-counted-as-4-visible-columns)
 - [agent_settled fired early while Working (the "task done" notification over a screen still working)](#agent_settled-fired-early-while-working-the-task-done-notification-over-a-screen-still-working)
 - [The retry notice reads `(escape to cancel)` and counts down by the second, as upstream](#the-retry-notice-reads-escape-to-cancel-and-counts-down-by-the-second-as-upstream)
+- [A resize held the loop for four seconds, waiting on the terminal](#a-resize-held-the-loop-for-four-seconds-waiting-on-the-terminal)
 
 ## A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
 
@@ -2144,3 +2145,28 @@ reporting, raw mode and the alternate screen stayed on.
   leaving the alt screen.
 - Tests: `TuiAltScreenTest::testARetiredFrameIsFreedWithoutWaitingForACycleCollection`,
   `ExitRestoreTest` (both red on the old code).
+
+## A resize held the loop for four seconds, waiting on the terminal
+
+**Symptom**: `PIG_STALL_LOG` logged `Event loop held for 4083ms` in `TuiBase.php:1196`, the render
+timer, on a session of 1,747 messages. Nothing was drawn and no key was read for those seconds.
+
+**Root cause**: a width change (or ctrl+o) in the regular screen redraws the whole transcript —
+`scripts/bench-tui.php` measured 0.4–1.1s of PHP and 2–4MB of output for that session — and
+`ProcessTerminal::write()` did not return until the terminal had taken every byte, waiting on
+`select()` whenever its buffer was full. A terminal parses megabytes of escape sequences in seconds,
+and all of that was spent inside the render callback. `FakeTerminal` takes everything at once, so
+the bench never saw the second half.
+
+**Trap rules**:
+- `ProcessTerminal::write()` hands the terminal what it takes now and keeps the rest, written from
+  the loop as the terminal reads (`BufferedTerminal`). It never waits; `flush()` does, and only
+  `stop()`, `restoreOnExit()` and process shutdown call it — every hand-over of the terminal goes
+  through `stop()` (suspend, the external editor, quitting).
+- The renderer draws nothing while output is waiting (`TuiBase::waitForTerminal()`), and draws once
+  when it has drained. Frames are diffs against the frame before, so none may be dropped from the
+  queue; waiting draws every change made meanwhile in one frame.
+- Anything else written to the terminal goes through the same `write()`, or it lands in the middle
+  of a frame still draining — `SystemClipboard`'s OSC 52 copy takes the terminal's `write` for this.
+- Tests: `ProcessTerminalTest::testAFrameTheTerminalCannotTakeAtOnceDoesNotHoldTheLoop`,
+  `TuiTest::testAFrameWaitsForTheTerminalToTakeTheLastOneAndThenDrawsEverything`.

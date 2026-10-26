@@ -103,6 +103,9 @@ abstract class TuiBase extends Container implements TUI
 
     private bool $immediateRenderScheduled = false;
 
+    /** A frame is waiting for the terminal to take the last one (`waitForTerminal()`). */
+    private bool $waitingForTerminal = false;
+
     private float $lastRenderAt = 0.0;
 
     private ?string $renderTimer = null;
@@ -1170,10 +1173,38 @@ abstract class TuiBase extends Container implements TUI
             // A previously queued scheduleRender() can create a timer before this runs; input
             // preempts that throttled frame.
             $this->cancelRenderTimer();
+
+            if ($this->waitForTerminal()) {
+                return;
+            }
+
             $this->renderRequested = false;
             $this->lastRenderAt = microtime(true);
             $this->doRender();
         });
+    }
+
+    /**
+     * Whether the frame has to wait for the terminal to take the last one — and if so, draw it once
+     * it has (`BufferedTerminal`). Not drawn behind it: a frame is a diff against the one before,
+     * so frames cannot be dropped from a queue, and one drawn after the terminal caught up holds
+     * every change made meanwhile. True while waiting; the request stays standing.
+     */
+    private function waitForTerminal(): bool
+    {
+        if (!$this->terminal instanceof BufferedTerminal || !$this->terminal->hasPendingOutput()) {
+            return false;
+        }
+
+        if (!$this->waitingForTerminal) {
+            $this->waitingForTerminal = true;
+            $this->terminal->whenDrained(function (): void {
+                $this->waitingForTerminal = false;
+                $this->scheduleRender();
+            });
+        }
+
+        return true;
     }
 
     private function cancelRenderTimer(): void
@@ -1195,7 +1226,7 @@ abstract class TuiBase extends Container implements TUI
         $delay = max(0.0, self::MIN_RENDER_INTERVAL - (microtime(true) - $this->lastRenderAt));
         $this->renderTimer = Loop::get()->delay($delay, function (): void {
             $this->renderTimer = null;
-            if ($this->stopped || !$this->renderRequested) {
+            if ($this->stopped || !$this->renderRequested || $this->waitForTerminal()) {
                 return;
             }
             $this->renderRequested = false;

@@ -16,9 +16,9 @@ use Pig\Async\Loop;
  * same `select()` waits on the keyboard and on the model's socket, so a keystroke can
  * interrupt a response that is still streaming.
  */
-final class ProcessTerminal implements Terminal
+final class ProcessTerminal implements Terminal, BufferedTerminal
 {
-    /** How long to keep waiting for a full output buffer to drain, in seconds. */
+    /** How long `flush()` keeps waiting for a full output buffer to drain, in seconds. */
     private const float DRAIN_TIMEOUT = 5.0;
 
     /** How much is handed to one `fwrite()`; see the loop in `write()`. */
@@ -84,6 +84,20 @@ final class ProcessTerminal implements Terminal
     /** The end of a read that may be a reply still arriving, held for the next read. */
     private string $programStatusReplyBuffer = '';
 
+    /** What was written and the terminal has not taken yet, from `$pendingAt` on. */
+    private string $pending = '';
+
+    private int $pendingAt = 0;
+
+    /** The watcher writing `$pending` out as the terminal takes it; null while nothing waits. */
+    private ?string $drainWatcher = null;
+
+    /** @var list<Closure(): void> `whenDrained()`'s callbacks */
+    private array $onDrained = [];
+
+    /** Once taken, `$pending` is cut back when this much of its front has been written. */
+    private const int COMPACT_AFTER = 1 << 20;
+
     /**
      * @param resource|null $input
      * @param resource|null $output
@@ -93,6 +107,15 @@ final class ProcessTerminal implements Terminal
         $this->input = $input ?? STDIN;
         $this->output = $output ?? STDOUT;
         $this->writeLogPath = self::resolveWriteLogPath();
+
+        // A process that ends without `stop()` — a fatal error — still gets its last bytes out.
+        register_shutdown_function(function (): void {
+            try {
+                $this->flush();
+            } catch (\Throwable) {
+                // The terminal is gone; there is nobody to tell.
+            }
+        });
     }
 
     /**
@@ -360,6 +383,10 @@ final class ProcessTerminal implements Terminal
 
         $this->onResize = null;
 
+        // On the screen before the terminal is handed back: whatever comes next — the shell, an
+        // editor, the suspended prompt — writes after it, never into the middle of a frame.
+        $this->flush();
+
         if ($this->savedState !== null) {
             $this->stty($this->savedState);
             $this->savedState = null;
@@ -379,6 +406,7 @@ final class ProcessTerminal implements Terminal
         }
         $sequence .= "\x1b[?2004l\x1b[<u" . $after;
         $this->write($sequence);
+        $this->flush();
 
         if ($this->savedState !== null) {
             $this->stty($this->savedState);
@@ -387,16 +415,19 @@ final class ProcessTerminal implements Terminal
     }
 
     /**
-     * Write all of it, however many calls that takes.
+     * Hand $data to the terminal, and return without waiting for it to be taken.
      *
-     * `fwrite()` to a terminal returns short. It has to: the tty has a buffer of a few
-     * kilobytes and a frame is bigger than that. Taking the return value as "done" drops
-     * the rest of the frame — usually in the middle of an escape sequence — and from
-     * there every cursor move is against a screen that holds something else.
+     * `fwrite()` to a terminal returns short. It has to: the tty has a buffer of a few kilobytes
+     * and a frame is bigger than that. Taking the return value as "done" drops the rest of the
+     * frame — usually in the middle of an escape sequence — and from there every cursor move is
+     * against a screen that holds something else. So what the terminal does not take now is kept,
+     * in order, and written from the loop as it reads (`BufferedTerminal`). This used to wait for
+     * it instead, and a resize redrawing a long conversation — megabytes, which a terminal takes
+     * seconds to parse — held the loop for all of them: `PIG_STALL_LOG` measured 4083ms.
      *
-     * Non-blocking is not optional here either: STDIN and STDOUT are dups of the same
-     * open file description when both are the terminal, so putting the input in
-     * non-blocking mode does the same to the output whether or not anyone asked.
+     * Non-blocking is not optional here either: STDIN and STDOUT are dups of the same open file
+     * description when both are the terminal, so putting the input in non-blocking mode does the
+     * same to the output whether or not anyone asked.
      */
     #[\Override]
     public function write(string $data): void
@@ -410,33 +441,64 @@ final class ProcessTerminal implements Terminal
             file_put_contents($this->writeLogPath, $data, FILE_APPEND);
         }
 
-        $length = strlen($data);
-        $written = 0;
+        // Behind what is already waiting, never past it.
+        if ($this->pending !== '') {
+            $this->pending .= $data;
+
+            return;
+        }
+
+        $written = $this->writeSome($data, 0);
+
+        if ($written < strlen($data)) {
+            $this->pending = $data;
+            $this->pendingAt = $written;
+            $this->drainWatcher = Loop::get()->onWritable($this->output, $this->drain(...));
+        }
+    }
+
+    #[\Override]
+    public function hasPendingOutput(): bool
+    {
+        return $this->pending !== '';
+    }
+
+    #[\Override]
+    public function whenDrained(Closure $callback): void
+    {
+        if ($this->pending === '') {
+            Loop::get()->defer($callback);
+
+            return;
+        }
+
+        $this->onDrained[] = $callback;
+    }
+
+    #[\Override]
+    public function flush(): void
+    {
         $waited = 0.0;
 
-        while ($written < $length) {
-            // A slice, not the whole remainder: a tty takes a frame about a kilobyte at a time,
-            // and `substr($data, $written)` copies everything still to go on each of those
-            // writes — 2,400 copies of a 2.5MB frame, 72ms of memcpy, measured. Nothing a
-            // terminal does wants more than this per call.
-            $count = fwrite($this->output, substr($data, $written, self::WRITE_SLICE));
+        while ($this->pending !== '') {
+            $this->pendingAt = $this->writeSome($this->pending, $this->pendingAt);
 
-            if ($count === false) {
-                throw new TuiError("Writing to the terminal failed after {$written} of {$length} bytes");
+            if ($this->pendingAt >= strlen($this->pending)) {
+                $this->drained();
+
+                return;
             }
 
-            if ($count > 0) {
-                $written += $count;
-                $waited = 0.0;
-
-                continue;
-            }
-
-            // The buffer is full. Wait for the terminal to read some of it — briefly,
-            // because a terminal that has stopped draining is not coming back, and
-            // spinning here would hang the whole program with a half-drawn screen.
+            // The buffer is full. Wait for the terminal to read some of it — briefly, because a
+            // terminal that has stopped draining is not coming back, and spinning here would hang
+            // the whole program with a half-drawn screen.
             if ($waited >= self::DRAIN_TIMEOUT) {
-                throw new TuiError("Terminal stopped accepting output after {$written} of {$length} bytes");
+                $left = strlen($this->pending) - $this->pendingAt;
+                $this->pending = '';
+                $this->pendingAt = 0;
+                $this->cancelDrain();
+
+                throw new TuiError("Terminal stopped accepting output with {$left} bytes still to write");
             }
 
             $read = $except = null;
@@ -456,6 +518,75 @@ final class ProcessTerminal implements Terminal
 
             $waited += 0.05;
         }
+    }
+
+    /** The loop's turn: as much as the terminal takes now. */
+    private function drain(): void
+    {
+        $this->pendingAt = $this->writeSome($this->pending, $this->pendingAt);
+
+        if ($this->pendingAt >= strlen($this->pending)) {
+            $this->drained();
+
+            return;
+        }
+
+        // Written from the front and appended at the back: the front is let go of now and then,
+        // or a terminal that never quite catches up keeps everything ever written.
+        if ($this->pendingAt >= self::COMPACT_AFTER) {
+            $this->pending = substr($this->pending, $this->pendingAt);
+            $this->pendingAt = 0;
+        }
+    }
+
+    private function drained(): void
+    {
+        $this->pending = '';
+        $this->pendingAt = 0;
+        $this->cancelDrain();
+        $callbacks = $this->onDrained;
+        $this->onDrained = [];
+
+        foreach ($callbacks as $callback) {
+            Loop::get()->defer($callback);
+        }
+    }
+
+    private function cancelDrain(): void
+    {
+        if ($this->drainWatcher !== null) {
+            Loop::get()->cancel($this->drainWatcher);
+            $this->drainWatcher = null;
+        }
+    }
+
+    /**
+     * As much of $data from $offset as the terminal takes now, without waiting; the new offset.
+     *
+     * A slice at a time, not the whole remainder: a tty takes a frame about a kilobyte at a time,
+     * and `substr($data, $written)` copies everything still to go on each of those writes — 2,400
+     * copies of a 2.5MB frame, 72ms of memcpy, measured. Nothing a terminal does wants more than
+     * this per call.
+     */
+    private function writeSome(string $data, int $offset): int
+    {
+        $length = strlen($data);
+
+        while ($offset < $length) {
+            $count = fwrite($this->output, substr($data, $offset, self::WRITE_SLICE));
+
+            if ($count === false) {
+                throw new TuiError("Writing to the terminal failed after {$offset} of {$length} bytes");
+            }
+
+            if ($count === 0) {
+                break;
+            }
+
+            $offset += $count;
+        }
+
+        return $offset;
     }
 
     #[\Override]

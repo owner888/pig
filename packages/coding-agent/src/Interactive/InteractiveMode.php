@@ -440,7 +440,8 @@ final class InteractiveMode
         $this->hideThinking = $this->settings->hideThinking();
         $this->showImages = $this->settings->showImages();
         $this->outputPad = $this->settings->outputPad();
-        $this->clipboard = $clipboard ?? new SystemClipboard();
+        // The OSC 52 copy goes to the screen's terminal, in order with the frames.
+        $this->clipboard = $clipboard ?? new SystemClipboard(toTerminal: fn (string $sequence) => $this->renderer->terminal->write($sequence));
 
         // Upstream's `options.tuiMode ?? settingsManager.getTuiMode()`: no environment variable.
         if ($tuiMode !== null) {
