@@ -169,28 +169,6 @@ final class TextWrap
 
     private const string CJK_PATTERN = '/^[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Bopomofo}]\z/u';
 
-    /** The most bytes one grapheme cluster is looked for in; see `clusterAt()`. */
-    private const int CLUSTER_WINDOW = 128;
-
-    /**
-     * The grapheme cluster that starts at byte `$pos`.
-     *
-     * Split from a window, not from the rest of the line. Splitting everything after `$pos` to
-     * keep its first cluster made a line cost n² in its non-ASCII characters — one 50KB line of
-     * scraped Chinese page text in a bash result held a resize frame for 12.8 seconds. The window ends
-     * on a character boundary, and a cluster longer than it (no real one is) comes out in pieces.
-     */
-    private static function clusterAt(string $text, int $pos, int $length): string
-    {
-        $end = min(self::CLUSTER_WINDOW, $length - $pos);
-
-        while ($pos + $end < $length && $end > 1 && (ord($text[$pos + $end]) & 0xC0) === 0x80) {
-            $end--;
-        }
-
-        return Graphemes::split(substr($text, $pos, $end))[0] ?? $text[$pos];
-    }
-
     /**
      * Split into runs of spaces, words, and CJK characters with escape codes attached to what follows.
      *
@@ -211,58 +189,71 @@ final class TextWrap
         $pos = 0;
         $length = strlen($text);
 
+        // A run at a time rather than a byte at a time: a run of spaces or of other ASCII is one
+        // token's worth of the same decision, and a run of non-ASCII is split into its clusters
+        // in one pass. Byte by byte, with a call to `Ansi::at()` for each and a grapheme split
+        // for each non-ASCII character, this was the largest part of a resize frame. A run is
+        // split once, not from each character to its end: that made a line cost n² in its
+        // non-ASCII characters — one 50KB line of scraped Chinese page text in a bash result held
+        // a resize frame for 12.8 seconds.
         while ($pos < $length) {
-            $code = Ansi::at($text, $pos);
+            if ($text[$pos] === "\x1b") {
+                $code = Ansi::at($text, $pos);
 
-            if ($code !== null) {
-                $pending .= $code[0];
-                $pos += $code[1];
+                if ($code !== null) {
+                    $pending .= $code[0];
+                    $pos += $code[1];
 
-                continue;
+                    continue;
+                }
             }
 
             $byte = ord($text[$pos]);
+
             if ($byte < 0x80) {
-                $char = $text[$pos];
-                $pos++;
-                $isSpace = $char === ' ';
+                $isSpace = $byte === 0x20;
+                // An escape byte that starts no sequence is a character of its own, as before.
+                $run = $isSpace ? strspn($text, ' ', $pos) : ($byte === 0x1b ? 1 : strcspn($text, self::stopsAscii(), $pos));
 
                 if ($isSpace !== $inWhitespace && $current !== '') {
                     $tokens[] = $current;
                     $current = '';
                 }
 
-                $current .= $pending;
+                $current .= $pending . substr($text, $pos, $run);
                 $pending = '';
                 $inWhitespace = $isSpace;
-                $current .= $char;
+                $pos += $run;
 
                 continue;
             }
 
-            $cluster = self::clusterAt($text, $pos, $length);
-            $pos += strlen($cluster);
+            $run = strcspn($text, self::stopsNonAscii(), $pos);
 
-            if (preg_match(self::CJK_PATTERN, $cluster) === 1) {
-                if ($current !== '') {
+            foreach (Graphemes::split(substr($text, $pos, $run)) as $cluster) {
+                if (self::isCjk($cluster)) {
+                    if ($current !== '') {
+                        $tokens[] = $current;
+                        $current = '';
+                    }
+                    $tokens[] = $pending . $cluster;
+                    $pending = '';
+                    $inWhitespace = false;
+
+                    continue;
+                }
+
+                if ($inWhitespace && $current !== '') {
                     $tokens[] = $current;
                     $current = '';
                 }
-                $tokens[] = $pending . $cluster;
+
+                $current .= $pending . $cluster;
                 $pending = '';
                 $inWhitespace = false;
-
-                continue;
             }
 
-            if ($inWhitespace && $current !== '') {
-                $tokens[] = $current;
-                $current = '';
-            }
-
-            $current .= $pending . $cluster;
-            $pending = '';
-            $inWhitespace = false;
+            $pos += $run;
         }
 
         $current .= $pending;
@@ -272,6 +263,38 @@ final class TextWrap
         }
 
         return $tokens;
+    }
+
+    /** What ends a run of ASCII that is not spaces: a space, an escape, any non-ASCII byte. */
+    private static function stopsAscii(): string
+    {
+        static $mask = null;
+
+        return $mask ??= " \x1b" . implode('', array_map(chr(...), range(0x80, 0xFF)));
+    }
+
+    /** What ends a run of non-ASCII: any ASCII byte. */
+    private static function stopsNonAscii(): string
+    {
+        static $mask = null;
+
+        return $mask ??= implode('', array_map(chr(...), range(0x00, 0x7F)));
+    }
+
+    /** @var array<string, bool> */
+    private static array $cjk = [];
+
+    private static function isCjk(string $cluster): bool
+    {
+        if (isset(self::$cjk[$cluster])) {
+            return self::$cjk[$cluster];
+        }
+
+        if (count(self::$cjk) >= 8192) {
+            self::$cjk = [];
+        }
+
+        return self::$cjk[$cluster] = preg_match(self::CJK_PATTERN, $cluster) === 1;
     }
 
     /**

@@ -67,20 +67,21 @@ final class AnsiTracker
     /** Feed a run of text, picking out whatever escape sequences it holds. */
     public function processText(string $text): void
     {
-        $pos = 0;
-        $length = strlen($text);
+        // From escape to escape: the text between them cannot change the style, and asking
+        // `Ansi::at()` about every byte of it was a call per character of every wrapped token.
+        $pos = strpos($text, "\x1b");
 
-        while ($pos < $length) {
+        while ($pos !== false) {
             $code = Ansi::at($text, $pos);
 
             if ($code === null) {
-                $pos++;
+                $pos = strpos($text, "\x1b", $pos + 1);
 
                 continue;
             }
 
             $this->process($code[0]);
-            $pos += $code[1];
+            $pos = strpos($text, "\x1b", $pos + $code[1]);
         }
     }
 

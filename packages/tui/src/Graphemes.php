@@ -86,8 +86,8 @@ final class Graphemes
             return null;
         }
 
-        $codepoints = mb_str_split($text, 1, 'UTF-8');
-
-        return mb_ord($codepoints[0], 'UTF-8') ?: null;
+        // `mb_ord()` reads the first character and no further, where splitting the whole cluster
+        // first built an array to keep one element of.
+        return mb_ord($text, 'UTF-8') ?: null;
     }
 }

@@ -93,6 +93,29 @@ final class Width
      */
     private static function grapheme(string $grapheme): int
     {
+        // Remembered: a cluster's width never changes, and a transcript is a few thousand distinct
+        // clusters used over and over — every frame at a new width asked about each again, through
+        // three regular expressions and a codepoint split. On a resize of a 1,747-message session in
+        // Chinese this was the largest share of the frame.
+        if (isset(self::$graphemeCache[$grapheme])) {
+            return self::$graphemeCache[$grapheme];
+        }
+
+        if (count(self::$graphemeCache) >= self::GRAPHEME_CACHE_SIZE) {
+            self::$graphemeCache = [];
+        }
+
+        return self::$graphemeCache[$grapheme] = self::measureGrapheme($grapheme);
+    }
+
+    /** How many distinct clusters `grapheme()` remembers before starting over. */
+    private const int GRAPHEME_CACHE_SIZE = 8192;
+
+    /** @var array<string, int> */
+    private static array $graphemeCache = [];
+
+    private static function measureGrapheme(string $grapheme): int
+    {
         if ($grapheme === '') {
             return 0;
         }
@@ -236,6 +259,7 @@ final class Width
     public static function clearCache(): void
     {
         self::$cache = [];
+        self::$graphemeCache = [];
     }
 
     /**

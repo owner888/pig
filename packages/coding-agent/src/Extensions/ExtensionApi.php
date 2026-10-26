@@ -627,10 +627,6 @@ final class ExtensionApi extends HookApi
     }
 
     /**
-     * @return list<CustomTool>
-     * @internal
-     */
-    /**
      * Register a keyboard shortcut. Upstream's `registerShortcut()`.
      *
      * @param callable(\Pig\CodingAgent\Hooks\HookContext): void $handler
@@ -684,6 +680,10 @@ final class ExtensionApi extends HookApi
         return $this->toolRenderers;
     }
 
+    /**
+     * @return list<CustomTool>
+     * @internal
+     */
     public function tools(): array
     {
         return $this->tools;

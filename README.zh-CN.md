@@ -358,6 +358,18 @@ Logger::timeEnd('benchmark');
 
 令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 删除已保存的登录或 API Key，环境变量和 `models.json` 不受影响。
 
+## 1.0 承诺什么
+
+从 1.0 起，下面这些（且只有这些）遵循语义化版本：小版本只增不改，删除或改变只在大版本里发生。
+
+- **扩展 API**：`ExtensionApi`（扩展里的 `$pig`）、`HookApi` 与 `HookContext`（处理函数里的 `$ctx`）、`CustomTool` 与 `CustomToolApi`、事件名及 `Hooks/Events` 下的事件类，以及扩展实现的 `Provider` / `StreamApi` / `OauthFlow`。标了 `@internal` 的 public 方法属于宿主，不属于扩展。
+- **`~/.pig/agent` 里的文件**：`settings.json`、`models.json`、`keybindings.json` 和主题，以已发布的 JSON Schema 为准；`auth.json`、`mcp.json`、`trust.json`。
+- **会话文件**：`.jsonl` 格式第 3 版，与 pi 相同——任一方写的会话另一方都能打开。
+- **RPC 协议**：`--mode rpc` 的命令、响应与事件，以及 `--mode json` 输出的 JSON 行。
+- **命令行**：参数、子命令和 `PIG_*` 环境变量。
+
+其余一切——这些背后的 PHP 类、Web UI 的 HTTP 路由、TUI 组件、日志行——都是内部实现，任何版本都可能改变。
+
 ---
 
 ## 系统架构与包划分

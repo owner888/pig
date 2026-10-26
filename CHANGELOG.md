@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- A resize, or `ctrl+o`, on a long session lays the transcript out again in about 60% of the time it took: a cluster's width is remembered instead of measured on every frame, and wrapping walks a line a run of characters at a time rather than a byte at a time.
+- The README says what 1.0 promises to keep stable: the extension API, the files in `~/.pig/agent`, the session file, the RPC protocol and the command line. Everything else is internal.
+
 ## [1.0.0-rc.2] - 2026-10-26
 
 ### Fixed

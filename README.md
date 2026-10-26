@@ -378,6 +378,18 @@ The account sign-ins — `/login`, or `pig-ai login <provider>` from a shell wit
 
 Tokens are renewed automatically when they expire; the file is the same one pi reads, so a sign-in in either tool is a sign-in in both. `/logout` removes a stored sign-in or API key; environment variables and `models.json` are left as they are.
 
+## What 1.0 Promises
+
+From 1.0, pig follows semantic versioning for these, and only these — a minor release adds to them, only a major release takes away or changes:
+
+- **The extension API**: `ExtensionApi` (`$pig` in an extension), `HookApi` and `HookContext` (`$ctx` in a handler), `CustomTool` and `CustomToolApi`, the event names with their event classes under `Hooks/Events`, and the `Provider` / `StreamApi` / `OauthFlow` an extension implements. A public method marked `@internal` is the host's, not an extension's.
+- **The files in `~/.pig/agent`**: `settings.json`, `models.json`, `keybindings.json` and themes, as their published JSON Schemas describe them; `auth.json`, `mcp.json` and `trust.json`.
+- **The session file**: the `.jsonl` format, version 3, which is pi's — a session written by either opens in the other.
+- **The RPC protocol** of `--mode rpc` (commands, responses, events) and the JSON lines of `--mode json`.
+- **The command line**: flags, subcommands and the `PIG_*` environment variables.
+
+Everything else — the PHP classes behind these, the Web UI's HTTP routes, the TUI components, log lines — is internal and may change in any release.
+
 ---
 
 ## Packages Architecture
