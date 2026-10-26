@@ -61,6 +61,15 @@ final class ChangelogTest extends TestCase
         $this->assertSame(['1.0.0', '0.9.0'], self::versions($this->parse("## [1.0.0]\n\nx\n\n## 0.9.0\n\ny\n")));
     }
 
+    public function testAPreReleaseHeadingKeepsItsSuffix(): void
+    {
+        $entries = $this->parse("## [1.0.0]\n\nfinal\n\n## [1.0.0-rc.1] - 2026-10-26\n\ncandidate\n\n## 0.12.1\n\nold\n");
+
+        $this->assertSame(['1.0.0', '1.0.0-rc.1', '0.12.1'], self::versions($entries));
+        // On the candidate, the release is news and the candidate's own notes are not.
+        $this->assertSame(['1.0.0'], self::versions(Changelog::newerThan($entries, '1.0.0-rc.1')));
+    }
+
     public function testAHeadingWithNoVersionEndsTheEntryAndStartsNothing(): void
     {
         $entries = $this->parse("## [0.2.0]\n\n- Released.\n\n## Unreleased\n\n- Not versioned.\n");

@@ -136,13 +136,15 @@ final readonly class Changelog
      * The version a `##` line names, and the line itself as the start of its content.
      *
      * `## [0.2.0] — 2026-01-02` and `## 0.2.0` both work: the brackets are Keep a Changelog's
-     * and optional here, as they are upstream.
+     * and optional here, as they are upstream. A pre-release keeps its suffix — `## [1.0.0-rc.1]`
+     * is `1.0.0-rc.1`, not `1.0.0`, or somebody on the release candidate would be shown its notes
+     * again as news when the release came, as an entry newer than the one they were on.
      *
      * @return array{0: self|null, 1: list<string>}
      */
     private static function heading(string $line): array
     {
-        if (preg_match('/##\s+\[?(\d+\.\d+\.\d+)\]?/', $line, $match) !== 1) {
+        if (preg_match('/##\s+\[?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?/', $line, $match) !== 1) {
             return [null, []];
         }
 
