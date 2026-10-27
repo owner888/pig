@@ -58,6 +58,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Added
+
+- The footer shows how fast an answer streams, as the developer's `token-speed` extension did: `⚡ …` while it comes in, then `⚡ <tok/s> · avg <n> · TTFT <ms>` after the session name. Not upstream's. `tokenSpeed.enabled: false` in `settings.json`, or the *Token speed* row in `/settings`, turns it off; nothing of it is written to the session file. An extension that still sets the `token-speed` status shares the same place rather than showing it twice.
+
 ### Changed
 
 - A resize, `ctrl+o` or a theme change no longer parses every message's Markdown again: the parse depends on the text alone, so the most recent 512 messages keep theirs in one shared cache and are only laid out again at the new width — about 7% of a resize frame on a long session. Upstream holds each message's parse weakly; a PHP object held only weakly is freed at once, hence the cap instead. A streaming answer takes one place in the cache, not one per token.

@@ -967,6 +967,37 @@ final class InteractiveModeTest extends TestCase
     }
 
     #[DataProvider('shownOrNot')]
+    public function testTheFooterSaysHowFastTheAnswerCameUnlessTurnedOff(bool $shown): void
+    {
+        // An answer delivered at once is past any plausible rate, so the reading is its token count.
+        $this->start([self::costing(new Usage(output: 500), 'an answer')], settings: Settings::inMemory(['tokenSpeed' => ['enabled' => $shown]]));
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $shown
+            ? $this->assertStringContainsString('• ⚡ 500 tok', $this->screenText())
+            : $this->assertStringNotContainsString('⚡', $this->screenText());
+    }
+
+    public function testAnotherSessionDoesNotShowThisOnesSpeed(): void
+    {
+        $this->start([self::costing(new Usage(output: 500), 'an answer')], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertStringContainsString('⚡ 500 tok', $this->screenText());
+
+        $this->type('/new');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringNotContainsString('⚡', $this->screenText());
+    }
+
+    #[DataProvider('shownOrNot')]
     public function testACacheMissIsSaidWhenTheSettingAsksForIt(bool $shown): void
     {
         $this->start([

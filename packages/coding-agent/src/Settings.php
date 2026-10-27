@@ -1104,6 +1104,21 @@ final class Settings
         $this->set('terminal.imageWidthCells', max(1, $width));
     }
 
+    /**
+     * pig's own: the footer's token-speed reading (`Interactive\TokenSpeed`), on unless
+     * `tokenSpeed.enabled` is false — the key the developer's extension read, so a settings file
+     * written for it keeps meaning the same thing.
+     */
+    public function tokenSpeedEnabled(): bool
+    {
+        return $this->get('tokenSpeed.enabled') !== false;
+    }
+
+    public function setTokenSpeedEnabled(bool $enabled): void
+    {
+        $this->set('tokenSpeed.enabled', $enabled);
+    }
+
     /** Upstream's `getShowTerminalProgress()`: OSC 9;4 progress in the terminal's tab while working. */
     public function showTerminalProgress(): bool
     {

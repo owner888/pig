@@ -795,6 +795,17 @@
       ],
       "description": "Lines scrolled per wheel event in fullscreen mode; numeric values are clamped from 1 to 100.",
       "default": "auto"
+    },
+    "tokenSpeed": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show how fast the model writes in the footer: tok/s, the session's average and the time to the first token. pig's own."
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": true,

@@ -252,6 +252,12 @@ final class InteractiveMode
 
     private readonly FooterComponent $footer;
 
+    /** The footer's `⚡` reading, behind `tokenSpeed.enabled`. */
+    private readonly TokenSpeed $tokenSpeed;
+
+    /** The session `$tokenSpeed`'s average belongs to; another one starts it over. */
+    private ?string $tokenSpeedFor = null;
+
     private ?Loader $working = null;
 
     /**
@@ -489,6 +495,7 @@ final class InteractiveMode
         // `$this->settings` rather than the argument: with none given it is the in-memory one
         // that `/settings` writes to, and the footer has to read what that screen changes.
         $this->footer = new FooterComponent($session, $cwd, $this->settings, $auth);
+        $this->tokenSpeed = new TokenSpeed();
 
         $this->programStatus = new ProgramStatusReporter(
             fn (): Terminal => $this->renderer->terminal,
@@ -7148,6 +7155,13 @@ final class InteractiveMode
             values: ['3', '5', '7', '10', '15', '20'],
         );
         $rows[] = new SettingItem(
+            'tokenSpeed',
+            'Token speed',
+            $this->settings->tokenSpeedEnabled() ? 'true' : 'false',
+            'Show how fast the model writes in the footer (tok/s, average, time to first token)',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
             'showTerminalProgress',
             'Terminal progress',
             $this->settings->showTerminalProgress() ? 'true' : 'false',
@@ -7409,6 +7423,7 @@ final class InteractiveMode
             'imageWidthCells' => $this->useImageWidthCells((int) $value),
             'autocompleteMaxVisible' => $this->useAutocompleteMaxVisible((int) $value),
             'showTerminalProgress' => $this->settings->setShowTerminalProgress($value === 'true'),
+            'tokenSpeed' => $this->useTokenSpeed($value === 'true'),
             'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
             'fullscreenScrollbar' => $this->useFullscreenScrollbar($value),
             'fullscreenCopyOnSelect' => $this->useFullscreenCopyOnSelect($value === 'true'),
@@ -7537,6 +7552,7 @@ final class InteractiveMode
     {
         $this->footer->invalidate();
         $this->programStatus->handleEvent($event);
+        $this->measureTokenSpeed($event);
 
         match (true) {
             $event instanceof AgentStartEvent => $this->onStart(),
@@ -7656,6 +7672,49 @@ final class InteractiveMode
         $this->editor->setWorkingStatus(null);
         $this->status->clear();
         $this->paintBorder();
+    }
+
+    /** `/settings`' row: off takes the reading off the footer at once rather than at the next answer. */
+    private function useTokenSpeed(bool $enabled): void
+    {
+        $this->settings->setTokenSpeedEnabled($enabled);
+
+        if (!$enabled) {
+            $this->footer->setStatus(FooterComponent::INLINE_STATUS, null);
+        }
+    }
+
+    /**
+     * The footer's `⚡` reading: started when an answer starts, fed its chunks, read off when it
+     * ends. Only answers — a user or hook message has no speed — and set as a status under the key
+     * an extension measuring the same would use, so the two replace each other rather than both
+     * showing.
+     */
+    private function measureTokenSpeed(AgentEvent $event): void
+    {
+        $isAnswer = ($event instanceof MessageStartEvent || $event instanceof MessageUpdateEvent || $event instanceof MessageEndEvent)
+            && $event->message instanceof AssistantMessage;
+
+        if (!$isAnswer || !$this->settings->tokenSpeedEnabled()) {
+            return;
+        }
+
+        $session = $this->session->sessionId();
+        if ($session !== $this->tokenSpeedFor) {
+            $this->tokenSpeed->reset();
+            $this->tokenSpeedFor = $session;
+        }
+
+        if ($event instanceof MessageStartEvent) {
+            $this->footer->setStatus(FooterComponent::INLINE_STATUS, $this->tokenSpeed->start());
+        } elseif ($event instanceof MessageUpdateEvent) {
+            $this->tokenSpeed->chunk();
+        } else {
+            $reading = $this->tokenSpeed->end($event->message->usage->output);
+            if ($reading !== null) {
+                $this->footer->setStatus(FooterComponent::INLINE_STATUS, $reading);
+            }
+        }
     }
 
     private function onMessageStart(MessageStartEvent $event): void

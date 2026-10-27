@@ -54,14 +54,18 @@ final class FooterComponent implements Component
 
     /**
      * The one status key that belongs on the top line, after the session name, rather than
-     * on a line of its own: `smart-session.php`'s token-speed meter (`⚡ 90.8 tok/s · TTFT 8ms`).
-     * It was the session name's suffix before `SessionManager::cleanSessionName()` started
+     * on a line of its own: the token-speed meter (`⚡ 90.8 tok/s · TTFT 8ms`), built in now as
+     * `TokenSpeed` and still the key an extension that measures the same thing would use. It
+     * began as the session name's suffix, until `SessionManager::cleanSessionName()` started
      * stripping telemetry out of what gets written to the file — right, since a speed is not a
-     * name — and the extension then had nowhere to put it but `setStatus()`, which draws a third
-     * footer line. A line appearing and vanishing with every turn is exactly what a transient
-     * reading should not do, so it goes back where it read well: `… (main) • <name> • ⚡ …`.
+     * name — and then had nowhere to go but `setStatus()`, which draws a third footer line. A
+     * line appearing and vanishing with every turn is exactly what a transient reading should
+     * not do, so it goes where it read well: `… (main) • <name> • ⚡ …`.
      */
-    private const string INLINE_STATUS = 'token-speed';
+    public const string INLINE_STATUS = 'token-speed';
+
+    /** The session the inline reading was taken in: another session's speed is not this one's. */
+    private ?string $inlineFor = null;
 
     /**
      * @param Settings|null $settings for the auto-compaction marker; absent means the default,
@@ -115,6 +119,10 @@ final class FooterComponent implements Component
         }
 
         $this->statuses[$key] = (string) preg_replace('/[\r\n\t]+/', ' ', $text);
+
+        if ($key === self::INLINE_STATUS) {
+            $this->inlineFor = $this->session->sessionId();
+        }
     }
 
     #[\Override]
@@ -180,7 +188,8 @@ final class FooterComponent implements Component
 
         $speed = $this->statuses[self::INLINE_STATUS] ?? null;
 
-        if ($speed !== null) {
+        // Left behind by a `/new`, `/resume` or fork until the next answer replaces it otherwise.
+        if ($speed !== null && $this->inlineFor === $this->session->sessionId()) {
             $path .= " • {$speed}";
         }
 

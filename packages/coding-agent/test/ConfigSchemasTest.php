@@ -162,6 +162,7 @@ final class ConfigSchemasTest extends TestCase
             'fullscreenScrollbar' => $settings->fullscreenScrollbar(),
             'fullscreenCopyOnSelect' => $settings->fullscreenCopyOnSelect(),
             'fullscreenWheelScrollLines' => $settings->fullscreenWheelScrollLines(),
+            'tokenSpeed.enabled' => $settings->tokenSpeedEnabled(),
         ];
 
         $defaults = $this->defaults(ConfigSchemas::load('settings'));
