@@ -56,6 +56,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - The OAuth fallback port test safely handles port 53692 when already bound by the OS or another runner process, suppressing unhandled socket bind warnings in CI test suites.
 
+## Unreleased
+
+### Changed
+
+- A resize, `ctrl+o` or a theme change no longer parses every message's Markdown again: the parse depends on the text alone, so the most recent 512 messages keep theirs in one shared cache and are only laid out again at the new width — about 7% of a resize frame on a long session. Upstream holds each message's parse weakly; a PHP object held only weakly is freed at once, hence the cap instead. A streaming answer takes one place in the cache, not one per token.
+
 ## [1.0.3] - 2026-10-27
 
 ### Added

@@ -726,4 +726,39 @@ final class MarkdownTest extends TestCase
 
         $this->assertSame(['Map ℂ³'], $strip($markdown->render(80)));
     }
+
+    // ---- the shared token cache ---------------------------------------------------------------
+
+    public function testANewWidthLaysOutTheCachedTokensTheSameAsAFreshParse(): void
+    {
+        $text = "# Title\n\nSome **bold** text and a [link](https://example.com).\n\n- one\n- two\n\n```php\necho 1;\n```";
+        Markdown::clearTokenCache();
+        $component = new Markdown($text);
+        $component->render(60);
+
+        $reused = $component->render(40);
+        Markdown::clearTokenCache();
+
+        $this->assertSame((new Markdown($text))->render(40), $reused);
+    }
+
+    public function testAStreamingAnswerHoldsOnePlaceAndTheCacheHasACap(): void
+    {
+        Markdown::clearTokenCache();
+        $size = static fn (): int => count((new \ReflectionProperty(Markdown::class, 'tokens'))->getValue());
+
+        $streaming = new Markdown('');
+        for ($i = 1; $i <= 50; $i++) {
+            $streaming->setText(str_repeat('word ', $i));
+            $streaming->render(80);
+        }
+        $this->assertSame(1, $size());
+
+        for ($i = 0; $i < 600; $i++) {
+            (new Markdown("message {$i}"))->render(80);
+        }
+        $this->assertSame(512, $size());
+
+        Markdown::clearTokenCache();
+    }
 }

@@ -55,6 +55,25 @@ final class Markdown implements Component
 
     private ?string $stylePrefix = null;
 
+    /**
+     * Upstream's `cachedTokens`: a parse depends on the text alone, so a new width or theme lays
+     * the same tokens out again instead of parsing again. Upstream holds them in a `WeakRef` — a
+     * token tree is several times its text, and a long transcript keeps a component per message —
+     * so they live through a burst of re-renders and are collected after. A PHP object held only
+     * weakly is freed at once, so here every component shares one cache with a cap instead: the
+     * messages laid out most recently keep their tokens, and memory stays bounded however long the
+     * session.
+     *
+     * @var array<string, list<\Pig\Tui\Markdown\BlockToken>> by text, least recently used first
+     */
+    private static array $tokens = [];
+
+    /** How many texts' tokens the shared cache keeps. */
+    private const int TOKEN_CACHE_SIZE = 512;
+
+    /** The text this component last put in the shared cache, taken out again when it changes. */
+    private ?string $tokensFor = null;
+
     private readonly MarkdownTheme $theme;
 
     public function __construct(
@@ -144,7 +163,7 @@ final class Markdown implements Component
     private function lines(int $width): array
     {
         $contentWidth = max(1, $width - $this->paddingX * 2);
-        $tokens = Lexer::lex($this->text);
+        $tokens = $this->tokens();
         $drawn = [];
 
         foreach ($tokens as $index => $token) {
@@ -178,6 +197,40 @@ final class Markdown implements Component
         }
 
         return $lines;
+    }
+
+    /** @return list<\Pig\Tui\Markdown\BlockToken> */
+    private function tokens(): array
+    {
+        $text = $this->text;
+
+        if (isset(self::$tokens[$text])) {
+            $tokens = self::$tokens[$text];
+            // To the end: the most recently used are the last to go.
+            unset(self::$tokens[$text]);
+
+            return self::$tokens[$text] = $tokens;
+        }
+
+        // A streaming answer is a new text with every token: its last parse makes way for this one,
+        // so one answer holds one place in the cache rather than pushing every other message out.
+        if ($this->tokensFor !== null) {
+            unset(self::$tokens[$this->tokensFor]);
+        }
+
+        if (count(self::$tokens) >= self::TOKEN_CACHE_SIZE) {
+            unset(self::$tokens[array_key_first(self::$tokens)]);
+        }
+
+        $this->tokensFor = $text;
+
+        return self::$tokens[$text] = Lexer::lex($text);
+    }
+
+    /** @internal for tests */
+    public static function clearTokenCache(): void
+    {
+        self::$tokens = [];
     }
 
     private function pad(string $line, int $width): string
