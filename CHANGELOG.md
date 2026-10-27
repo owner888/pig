@@ -57,6 +57,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Copying works under Termux without the Termux:API app: when `termux-clipboard-set` is not there, the copy goes out as OSC 52, which Termux's own terminal puts on the clipboard. Upstream sends nothing there, so `/copy` — and an extension's copy — silently did nothing unless both Termux:API and its `termux-api` package were installed. An extension's `new SystemClipboard()` now writes that sequence through the screen's terminal too, in order with the frames.
 - A collapsed command output whose note is omitted (such as the running preview) stops wrapping once its visual row budget is satisfied, instead of continuing backwards across every earlier line counting dropped rows that are never displayed.
 - The test asserting that collapsing a long command output costs only the tail warms up the component and text wrapping classes first, avoiding timing failures from class autoloading under CI runner load.
+- Running `phpunit` no longer launches Chrome or opens background `/web` daemon tabs: removed the intrusive `/web restart` daemon tests and guarded `WebMode` browser opening under test and offline environments.
 
 ## [1.0.1] - 2026-10-27
 

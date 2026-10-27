@@ -96,6 +96,10 @@ final class WebMode
 
     private function openBrowserAt(string $url): void
     {
+        if (getenv('PIG_TESTING') || getenv('PIG_OFFLINE')) {
+            return;
+        }
+
         if (PHP_OS_FAMILY === 'Darwin') {
             Process::run(['open', $url]);
         } elseif (PHP_OS_FAMILY === 'Linux') {
