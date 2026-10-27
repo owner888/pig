@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.0.4] - 2026-10-27
+
+### Fixed
+
+- The OAuth fallback port test safely handles port 53692 when already bound by the OS or another runner process, suppressing unhandled socket bind warnings in CI test suites.
+
 ## [1.0.3] - 2026-10-27
 
 ### Added

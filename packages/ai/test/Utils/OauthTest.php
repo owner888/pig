@@ -277,7 +277,13 @@ final class OauthTest extends TestCase
         // Upstream #10571: 53692 first, then any free loopback port — Windows reserves port ranges
         // under Hyper-V and WSL — and the authorize URL, the paste box and the exchange all name
         // the port that was taken.
-        $holder = stream_socket_server('tcp://127.0.0.1:' . Anthropic::CALLBACK_PORT);
+        $holder = null;
+        set_error_handler(static fn (): bool => true);
+        try {
+            $holder = stream_socket_server('tcp://127.0.0.1:' . Anthropic::CALLBACK_PORT);
+        } finally {
+            restore_error_handler();
+        }
         $url = $this->serve(['access_token' => 'sk-ant-oat-f', 'refresh_token' => 'r', 'expires_in' => 3600]);
         $shown = null;
         $placeholder = null;

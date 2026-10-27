@@ -22,6 +22,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [Headless Chrome launch timeout was too tight for CI runner contention](#headless-chrome-launch-timeout-was-too-tight-for-ci-runner-contention)
 - [`uncapturedClosureReads()` falsely flagged static class property accesses](#uncapturedclosurereads-falsely-flagged-static-class-property-accesses)
 - [A collapsed bash output test asserted on tail timing without warmup and with redundant row counting](#a-collapsed-bash-output-test-asserted-on-tail-timing-without-warmup-and-with-redundant-row-counting)
+- [Binding a fixed callback port in a test triggered an unhandled PHP warning when already taken by the OS](#binding-a-fixed-callback-port-in-a-test-triggered-an-unhandled-php-warning-when-already-taken-by-the-os)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1142,6 +1143,15 @@ and reporting trailing seen bytes if the launch fails or times out.
 **Cause**: Two factors combined: (1) `BashOutputComponent::lines()` continued iterating backwards across all remaining logical lines computing `TextWrap::rows()` to track `$dropped` even when `$this->note === null` where the count is unused; (2) the test measured sub-millisecond execution times without warming up class autoloading (`TextWrap`, `Width`, Unicode tables), so the first measurement paid for cold-start class loading while the second had warm classes.
 
 **Rule**: When visual row budget is satisfied and `$note === null`, exit early (`break`) without counting dropped head rows; performance assertions on sub-millisecond components must warm up the component and text wrapping classes before timing.
+
+## Binding a fixed callback port in a test triggered an unhandled PHP warning when already taken by the OS
+
+**Symptom**: `OauthTest::testTheBrowserFlowFallsBackToAFreePortWhenTheRegisteredOneIsTaken` triggered `E_WARNING: stream_socket_server(): Unable to connect to tcp://127.0.0.1:53692 (Address already in use)` on CI runners, failing `failOnWarning="true"`.
+
+**Cause**: The test intentionally occupied port 53692 with `stream_socket_server()` to verify fallback to port 0. When port 53692 happened to be held by an ephemeral socket or TIME_WAIT on the CI runner, `stream_socket_server()` failed and emitted an unhandled warning.
+
+**Rule**: Always wrap intentional collision bindings with `set_error_handler` to suppress PHP warnings when the port is already taken by the environment.
+
 
 
 
