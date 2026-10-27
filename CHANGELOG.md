@@ -50,6 +50,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.0.2] - 2026-10-27
+
+### Fixed
+
+- Copying works under Termux without the Termux:API app: when `termux-clipboard-set` is not there, the copy goes out as OSC 52, which Termux's own terminal puts on the clipboard. Upstream sends nothing there, so `/copy` — and an extension's copy — silently did nothing unless both Termux:API and its `termux-api` package were installed. An extension's `new SystemClipboard()` now writes that sequence through the screen's terminal too, in order with the frames.
+- A collapsed command output whose note is omitted (such as the running preview) stops wrapping once its visual row budget is satisfied, instead of continuing backwards across every earlier line counting dropped rows that are never displayed.
+- The test asserting that collapsing a long command output costs only the tail warms up the component and text wrapping classes first, avoiding timing failures from class autoloading under CI runner load.
+
 ## [1.0.1] - 2026-10-27
 
 ### Fixed

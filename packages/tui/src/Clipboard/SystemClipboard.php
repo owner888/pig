@@ -52,6 +52,23 @@ final class SystemClipboard implements Clipboard
         return new self();
     }
 
+    /** @var (\Closure(string): void)|null the screen's terminal, for a clipboard made without one */
+    private static ?\Closure $screen = null;
+
+    /**
+     * Where an OSC 52 copy goes for every clipboard not given a terminal of its own — an
+     * extension's `new SystemClipboard()` — so it too waits its turn behind a frame still being
+     * written instead of landing in the middle of it. Set by the interactive mode; null again for
+     * standard output.
+     *
+     * @param (\Closure(string): void)|null $terminal
+     * @internal
+     */
+    public static function useScreen(?\Closure $terminal): void
+    {
+        self::$screen = $terminal;
+    }
+
     #[\Override]
     public function text(): ?string
     {
@@ -96,8 +113,13 @@ final class SystemClipboard implements Clipboard
         // route (containers, WSL without WSLg), and remote sessions always emit it to reach the
         // client clipboard."
         $headless = $platform === 'linux' && !Env::isSet('DISPLAY') && !Env::isSet('WAYLAND_DISPLAY') && !Env::isSet('TERMUX_VERSION');
+        // Not upstream: under Termux without Termux:API, OSC 52 rather than nothing. Upstream leaves
+        // Termux out of the headless case because `termux-clipboard-set` is its clipboard, but that
+        // needs a second app and a package, and Termux's own terminal takes an OSC 52 copy — so
+        // `/copy` worked only for whoever had installed both.
+        $termuxWithoutApi = !$copied && $platform === 'linux' && Env::isSet('TERMUX_VERSION');
 
-        if (self::isRemoteSession() || (!$copied && $headless)) {
+        if (self::isRemoteSession() || (!$copied && $headless) || $termuxWithoutApi) {
             $copied = $this->emitOsc52($text) || $copied;
         }
 
@@ -140,7 +162,8 @@ final class SystemClipboard implements Clipboard
         }
 
         $sequence = "\x1b]52;c;{$encoded}\x07";
-        $this->toTerminal !== null ? ($this->toTerminal)($sequence) : fwrite(STDOUT, $sequence);
+        $terminal = $this->toTerminal ?? self::$screen;
+        $terminal !== null ? $terminal($sequence) : fwrite(STDOUT, $sequence);
 
         return true;
     }

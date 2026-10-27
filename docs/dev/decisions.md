@@ -123,6 +123,7 @@ same thing either way — "this machine has no `wl-paste`" is a capability, not 
 |---|---|---|
 | `pbpaste`, `pngpaste`, `osascript` | clipboard text and images | macOS |
 | `wl-paste`, `xclip` | clipboard text and images | Wayland, X11 |
+| `termux-clipboard-set`, `termux-clipboard-get` | clipboard text | Termux, with the Termux:API app and its `termux-api` package; without them a copy goes out as OSC 52, which Termux's own terminal takes — upstream sends nothing there, so copying worked only with both installed |
 | `powershell.exe`, `wslpath` | clipboard images | WSL |
 | `fd` | the `@` file picker in `pig/tui` | anywhere; `@` offers nothing without it |
 | `ext-gd` (an extension, not a binary) | fitting an image inside the provider's limits | anywhere; without it ImageMagick below |

@@ -78,6 +78,28 @@ final class ClipboardTest extends TestCase
         }
     }
 
+    public function testUnderTermuxWithoutTermuxApiTheTerminalIsTheClipboard(): void
+    {
+        // Not upstream: with no `termux-clipboard-set`, an OSC 52 copy for Termux's own terminal,
+        // through the screen given to every clipboard made without one.
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $this->directory);
+        putenv('TERMUX_VERSION=0.118.0');
+        $written = [];
+        \Pig\Tui\Clipboard\SystemClipboard::useScreen(static function (string $sequence) use (&$written): void {
+            $written[] = $sequence;
+        });
+
+        try {
+            $this->assertTrue((new \Pig\Tui\Clipboard\SystemClipboard('linux'))->write('from pig'));
+            $this->assertSame(["\x1b]52;c;" . base64_encode('from pig') . "\x07"], $written);
+        } finally {
+            \Pig\Tui\Clipboard\SystemClipboard::useScreen(null);
+            putenv('PATH=' . $path);
+            putenv('TERMUX_VERSION');
+        }
+    }
+
     // ---- running other programs ----------------------------------------------------
 
     public function testCaptureTakesWhatTheCommandPrinted(): void

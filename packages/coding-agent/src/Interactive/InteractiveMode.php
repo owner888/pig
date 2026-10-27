@@ -442,6 +442,8 @@ final class InteractiveMode
         $this->outputPad = $this->settings->outputPad();
         // The OSC 52 copy goes to the screen's terminal, in order with the frames.
         $this->clipboard = $clipboard ?? new SystemClipboard(toTerminal: fn (string $sequence) => $this->renderer->terminal->write($sequence));
+        // An extension's own `new SystemClipboard()` copies through the same terminal.
+        SystemClipboard::useScreen(fn (string $sequence) => $this->renderer->terminal->write($sequence));
 
         // Upstream's `options.tuiMode ?? settingsManager.getTuiMode()`: no environment variable.
         if ($tuiMode !== null) {
