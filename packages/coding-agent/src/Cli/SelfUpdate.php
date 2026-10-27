@@ -15,6 +15,7 @@ use Pig\Tui\Style;
  * - In a Composer global installation: executes `composer global update pigagent/pig`.
  * - In a git checkout / development environment: executes `git pull`.
  * - With `--extensions`: updates installed extensions (git pull, composer, and core built-ins).
+ * - Either way, a bundled extension added since the last update is installed (`installNewBundled()`).
  * - With `--models`: refreshes model catalog tables.
  */
 final class SelfUpdate
@@ -64,6 +65,7 @@ final class SelfUpdate
             }
 
             echo Style::green("✔ pig has been updated to the latest commit.\n");
+            self::announceInstalled(self::installNewBundled());
             echo Style::dim("Changelog: " . self::CHANGELOG_URL . "\n");
 
             return 0;
@@ -93,6 +95,7 @@ final class SelfUpdate
         }
 
         echo Style::green("✔ pig has been updated to the latest version.\n");
+        self::announceInstalled(self::installNewBundled());
         echo Style::dim("Changelog: " . self::CHANGELOG_URL . "\n");
 
         return 0;
@@ -175,6 +178,9 @@ final class SelfUpdate
                     }
                 }
             }
+
+            // Asked for by name, so every one counts as offered from here on.
+            self::writeOffered($userDir, [...self::readOffered($userDir) ?? [], ...self::bundledFolders($coreDir)]);
         }
 
         if ($updated > 0) {
@@ -221,7 +227,106 @@ final class SelfUpdate
             }
         }
 
+        self::writeOffered($userDir, [...self::readOffered($userDir) ?? [], ...self::bundledFolders($coreDir)]);
+
         return $synced;
+    }
+
+    /**
+     * The bundled extensions shipped before pig kept a record of which it had offered: an install
+     * that has no record yet already had its chance at each of these, so one missing from it was
+     * removed on purpose and stays removed. Only what came after is new to it.
+     */
+    private const array BUNDLED_BEFORE_RECORD = ['pig-android-use', 'pig-antigravity', 'pig-computer', 'pig-vless', 'pig-web-search'];
+
+    /** Where the record of offered bundled extensions lives, beside them. */
+    private const string OFFERED_FILE = '.bundled.json';
+
+    /**
+     * Install the bundled extensions this install has never been offered, and only those — run by
+     * every `pig update`, not just `--extensions`.
+     *
+     * The first-run copy (`ensureBundledExtensions()`) happens once, when there is no extensions
+     * directory, and after that only `pig update --extensions` installed anything: a bundled
+     * extension added in a release reached nobody who already had pig until they knew to ask —
+     * `pig-gemini-video` was the case. So a plain update installs what is new. "New" is kept in a
+     * record rather than read off what is missing, because a missing one may have been deleted on
+     * purpose, and an update that put it back every time would be one nobody could say no to.
+     *
+     * @return list<string> the folders installed
+     */
+    public static function installNewBundled(?string $home = null): array
+    {
+        $coreDir = self::coreExtensionsDir();
+        $userDir = ($home ?? Config::home()) . '/extensions';
+
+        // A machine that has never run pig gets everything on first run instead.
+        if ($coreDir === null || !is_dir($userDir)) {
+            return [];
+        }
+
+        $offered = self::readOffered($userDir) ?? self::BUNDLED_BEFORE_RECORD;
+        $installed = [];
+
+        foreach (self::bundledFolders($coreDir) as $folder) {
+            if (in_array($folder, $offered, true)) {
+                continue;
+            }
+
+            if (!file_exists("{$userDir}/{$folder}") && self::syncDirectory("{$coreDir}/{$folder}", "{$userDir}/{$folder}") > 0) {
+                $installed[] = $folder;
+            }
+
+            $offered[] = $folder;
+        }
+
+        self::writeOffered($userDir, $offered);
+
+        return $installed;
+    }
+
+    /** @param list<string> $installed */
+    private static function announceInstalled(array $installed): void
+    {
+        foreach ($installed as $folder) {
+            echo Style::green("✔ Installed new built-in extension '{$folder}'\n");
+        }
+    }
+
+    /** @return list<string> the bundled extension folders that are copied out, not loaded from pig */
+    private static function bundledFolders(string $coreDir): array
+    {
+        $folders = [];
+
+        foreach (scandir($coreDir) ?: [] as $item) {
+            if ($item !== '.' && $item !== '..' && is_dir("{$coreDir}/{$item}")
+                && !in_array($item, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) {
+                $folders[] = $item;
+            }
+        }
+
+        return $folders;
+    }
+
+    /** @return list<string>|null null when there is no record yet */
+    private static function readOffered(string $userDir): ?array
+    {
+        $path = "{$userDir}/" . self::OFFERED_FILE;
+        $decoded = is_file($path) ? json_decode((string) file_get_contents($path), true) : null;
+
+        return is_array($decoded) ? array_values(array_filter($decoded, 'is_string')) : null;
+    }
+
+    /** @param list<string> $offered */
+    private static function writeOffered(string $userDir, array $offered): void
+    {
+        if (!is_dir($userDir)) {
+            return;
+        }
+
+        $offered = array_values(array_unique($offered));
+        sort($offered);
+        file_put_contents("{$userDir}/" . self::OFFERED_FILE, json_encode($offered, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     }
 
     /**

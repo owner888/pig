@@ -120,4 +120,53 @@ final class SelfUpdateTest extends TestCase
         // Clean up
         SelfUpdate::deleteRecursive($tempHome);
     }
+
+    public function testAnUpdateInstallsABundledExtensionAddedSinceAndLeavesARemovedOneRemoved(): void
+    {
+        // An install from before the record: it had pig-antigravity and deleted pig-vless.
+        $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        mkdir("{$home}/extensions/pig-antigravity", 0o755, true);
+
+        try {
+            $installed = SelfUpdate::installNewBundled($home);
+
+            $this->assertContains('pig-gemini-video', $installed);
+            $this->assertFileExists("{$home}/extensions/pig-gemini-video/index.php");
+            $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-vless");
+            $this->assertNotContains('pig-antigravity', $installed);
+
+            // Offered once: the next update installs nothing, and a deleted one stays deleted.
+            SelfUpdate::deleteRecursive("{$home}/extensions/pig-gemini-video");
+            $this->assertSame([], SelfUpdate::installNewBundled($home));
+            $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-gemini-video");
+            $this->assertContains('pig-gemini-video', json_decode((string) file_get_contents("{$home}/extensions/.bundled.json"), true));
+        } finally {
+            SelfUpdate::deleteRecursive($home);
+        }
+    }
+
+    public function testAMachineThatNeverRanPigIsLeftToTheFirstRunCopy(): void
+    {
+        $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+
+        $this->assertSame([], SelfUpdate::installNewBundled($home));
+        $this->assertDirectoryDoesNotExist("{$home}/extensions");
+    }
+
+    public function testTheFirstRunCopyRecordsWhatItOffered(): void
+    {
+        $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+
+        try {
+            SelfUpdate::ensureBundledExtensions($home);
+            $offered = json_decode((string) file_get_contents("{$home}/extensions/.bundled.json"), true);
+
+            $this->assertContains('pig-gemini-video', $offered);
+            $this->assertContains('pig-antigravity', $offered);
+            $this->assertNotContains('pig-mcp', $offered);
+            $this->assertSame([], SelfUpdate::installNewBundled($home));
+        } finally {
+            SelfUpdate::deleteRecursive($home);
+        }
+    }
 }

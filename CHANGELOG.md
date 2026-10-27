@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- A plain `pig update` installs a bundled extension added since the last update — before, only the first run on a new machine or `pig update --extensions` did, so a release's new extension reached nobody who already had pig until they knew to ask. What has been offered is kept in `~/.pig/agent/extensions/.bundled.json`, so a bundled extension you deleted stays deleted; for an install from before the record, the five shipped until now count as offered already.
+
 ## [1.2.0] - 2026-10-27
 
 ### Added
