@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- `pig-gemini-video`, a bundled extension: any model can watch a local video through Gemini — the `analyze_video` tool returns Gemini's answer as text, and `/gemini-video <path> [prompt]` puts it into the conversation. It goes through an Antigravity subscription when one is signed in (the video sent inline, up to 14MB) and otherwise, or for a larger file, or when that fails, through a Gemini API key, uploading big files through the Files API and deleting them after. `geminiVideo.via` (`auto`, `gemini`, `antigravity`), `geminiVideo.model` and `geminiVideo.antigravityModel` choose; `PIG_GEMINI_VIDEO_DEBUG=1` logs failed responses, secrets removed. Existing installs get it with `pig update --extensions`.
+
 ## [1.1.0] - 2026-10-27
 
 ### Added

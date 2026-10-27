@@ -19,6 +19,7 @@
 - **完善的纯 PHP 内置扩展生态**：
   - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板、`generate_image` 生图工具与 `google_search` 搜索增强工具。
   - `pig-web-search`：DuckDuckGo 实时网络搜索（`web_search`）、网页文本内容提取（`fetch_web_page`）与无头 Chrome 动态渲染（`browse_web_page`）。
+  - `pig-gemini-video`：借 Gemini 让任何模型都能看视频——`analyze_video` 工具和 `/gemini-video` 命令，走 Antigravity 订阅或 Gemini API Key。
   - `pig-computer`：防检测无头浏览器自动化控制，支持精准鼠标移动、点击、滚动、文本键入、高清截图与按域名持久化 Cookie。
   - `pig-vless`：最简 VLESS 入站（仅 TCP，可选 TLS），让手机（Shadowrocket、v2rayNG）通过跑 pig 的这台机器上网。
   - `pig-codemode`：PHP 原生沙盒批量执行代码模式（`open_basedir`、`disable_functions`），成倍降低长上下文消耗。
@@ -262,6 +263,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | :--- | :--- | :--- |
 | **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts`、`generate_image` 生图工具与基于 Google Search Grounding 的 `google_search` 搜索工具（`/antigravity.search`）。 |
 | **`pig-web-search`** | `extensions/pig-web-search/` | 实时网络搜索（`web_search`）、网页文本抓取（`fetch_web_page`）、无头 Chrome 动态渲染（`browse_web_page`）、`/search <query>` 命令。 |
+| **`pig-gemini-video`** | `extensions/pig-gemini-video/` | 借 Gemini 理解视频，不管当前用哪个模型：`analyze_video` 工具把本地视频交给 Gemini、返回它的回答，`/gemini-video <路径> [提示词]` 把回答放进对话。两条路，`geminiVideo.via`（`PIG_GEMINI_VIDEO_VIA`）选：`antigravity`——`/login antigravity` 登录的订阅，14MB 以内的视频随请求发送；`gemini`——Gemini API Key（`/login` 配置 Google，或 `GEMINI_API_KEY`），更大的视频走 Files API。默认 `auto`：能走 Antigravity 就走，走不了（没登录、太大、这次失败）再用 Key。`geminiVideo.model`、`geminiVideo.antigravityModel` 选模型（默认 `gemini-3.8-flash`）；`PIG_GEMINI_VIDEO_DEBUG=1` 把失败的回应记到 `~/.pig/agent/logs/gemini-video-debug.log`。pig 自有。 |
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | `llama.cpp` provider：模型来自运行中的 `llama-server` router，`/login llama.cpp` 填地址和 key，`/llama` 加载、卸载、下载模型（含 Hugging Face 搜索）。 |
 | **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
