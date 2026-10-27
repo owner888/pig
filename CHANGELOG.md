@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.0.3] - 2026-10-27
+
+### Added
+
+- `/copycode`, or `/cc`, copies one code block of the last answer, picked from a list that also offers the whole answer; an answer with no code block is copied whole. Fences are read as Markdown reads them — a ```` block that shows a ``` block stays one block — and a block inside a list item comes back without the list's indentation.
+
 ## [1.0.2] - 2026-10-27
 
 ### Fixed

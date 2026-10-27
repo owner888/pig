@@ -2350,6 +2350,46 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Error: No agent messages to copy yet', $this->screen());
     }
 
+    public function testCopyCodePicksOneBlockOfTheLastAnswer(): void
+    {
+        $this->start(["Two:\n\n```php\necho 1;\n```\n\n```sh\nls\n```"]);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/cc');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Copy which code block?', $this->screen());
+        $this->assertStringContainsString('[1] php (1 line)  echo 1;', $this->screen());
+        $this->assertStringContainsString('The whole answer', $this->screen());
+
+        $this->type("\e[B");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame('ls', $this->clipboard->written);
+        $this->assertStringContainsString('Copied code block 2 (sh, 1 line)', $this->screen());
+    }
+
+    public function testCopyCodeWithNoBlockCopiesTheWholeAnswer(): void
+    {
+        $this->start(['no code here']);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/copycode');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame('no code here', $this->clipboard->written);
+        $this->assertStringContainsString('No code blocks in the last answer', $this->screen());
+    }
+
     public function testAMachineWithNoClipboardToolIsToldWhatToInstall(): void
     {
         $this->start(['the whole answer']);

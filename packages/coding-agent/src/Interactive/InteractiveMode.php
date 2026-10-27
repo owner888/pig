@@ -2506,6 +2506,7 @@ final class InteractiveMode
         ['scoped-models', 'Enable/disable models for Ctrl+P cycling'],
         ['skills', 'What the model can reach for, and where it came from'],
         ['copy', 'Put the last answer on the clipboard'],
+        ['copycode', 'Pick a code block from the last answer and copy it (/cc for short)'],
         ['export', 'Export session (HTML default, or specify path: .html/.jsonl; /export md|pr for Markdown or a PR description)'],
         ['import', 'Import and resume a session from a JSONL file'],
         ['share', 'Share session as a secret GitHub gist'],
@@ -2574,7 +2575,8 @@ final class InteractiveMode
         // `debug` is a third: it is for reporting a fault rather than for using pig, and
         // shift+ctrl+d is the route worth advertising — it works whatever holds the focus, which
         // is the whole point of a key that captures the screen.
-        if ($name === 'exit' || $name === 'hotkeys' || $name === 'arminsayshi' || $name === 'debug') {
+        // `cc` is `copycode` for short, which its description names instead of listing it twice.
+        if ($name === 'exit' || $name === 'hotkeys' || $name === 'arminsayshi' || $name === 'debug' || $name === 'cc') {
             return true;
         }
 
@@ -2609,6 +2611,7 @@ final class InteractiveMode
             'thinking' => $this->handleThinkingCommand(trim(substr($text, strlen($name) + 1))),
             'skills' => $this->say($this->skillList()),
             'copy' => $this->copyLastAnswer(),
+            'copycode', 'cc' => $this->copyCodeBlock(),
             'scoped-models' => $this->showScopedModels(),
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'import' => $this->importSession(trim(substr($text, strlen($name) + 1))),
@@ -3504,12 +3507,6 @@ final class InteractiveMode
     }
 
     /**
-     * Put the last answer on the clipboard.
-     *
-     * The last thing the *assistant* said, not the last thing on screen: what someone
-     * wants after reading an answer is the answer, not the status line under it.
-     */
-    /**
      * Write down what is on the screen and what was said, for somebody to look at later.
      *
      * Upstream's `/debug`, on upstream's key, and the reason to port it rather than leave it is
@@ -3605,6 +3602,70 @@ final class InteractiveMode
         }
 
         $this->say('Copied the last answer — ' . number_format(mb_strlen($text)) . ' characters');
+    }
+
+    /**
+     * `/copycode`, `/cc`: one code block of the last answer, picked from a list, or the whole answer
+     * from the bottom of the same list. Not upstream's — an extension the developer wrote for pi and
+     * then for pig, made built-in so it is there on every machine pig is, not only the one that kept
+     * the file. An answer with no code block is copied whole, which is what asking for its code
+     * almost always means.
+     */
+    private function copyCodeBlock(): void
+    {
+        $text = $this->session->lastAssistantText();
+
+        if ($text === null) {
+            $this->sayError('No agent messages to copy yet.');
+
+            return;
+        }
+
+        $blocks = CodeBlocks::extract($text);
+        $lineCount = count(explode("\n", $text));
+
+        if ($blocks === []) {
+            $this->copyText($text, "No code blocks in the last answer — copied all of it ({$lineCount} lines)");
+
+            return;
+        }
+
+        $labels = [];
+        foreach ($blocks as $i => $block) {
+            $labels[] = '[' . ($i + 1) . "] {$block['language']} ({$block['lines']} " . ($block['lines'] === 1 ? 'line' : 'lines') . ")  {$block['preview']}";
+        }
+        $whole = "The whole answer ({$lineCount} lines)";
+        $labels[] = $whole;
+
+        Async::spawn(function () use ($blocks, $labels, $whole, $text, $lineCount): void {
+            $picked = $this->ui->select(count($blocks) === 1 ? 'Copy the code block, or the whole answer?' : 'Copy which code block?', $labels);
+
+            if ($picked === null) {
+                return;
+            }
+
+            if ($picked === $whole) {
+                $this->copyText($text, "Copied the whole answer ({$lineCount} lines)");
+
+                return;
+            }
+
+            $index = array_search($picked, $labels, true);
+            $block = $blocks[$index];
+            $this->copyText($block['code'], 'Copied code block ' . ($index + 1) . " ({$block['language']}, {$block['lines']} " . ($block['lines'] === 1 ? 'line' : 'lines') . ')');
+        });
+    }
+
+    /** Onto the clipboard and say so, or say what to install. */
+    private function copyText(string $text, string $done): void
+    {
+        if (!$this->clipboard->write($text)) {
+            $this->sayError(SystemClipboard::unavailableReason());
+
+            return;
+        }
+
+        $this->say($done);
     }
 
     /**
