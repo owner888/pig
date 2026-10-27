@@ -20,6 +20,8 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [The test suite wrote into the developer's real home](#the-test-suite-wrote-into-the-developers-real-home)
 - [MCP startup notice test asserted before asynchronous servers settled](#mcp-startup-notice-test-asserted-before-asynchronous-servers-settled)
 - [Headless Chrome launch timeout was too tight for CI runner contention](#headless-chrome-launch-timeout-was-too-tight-for-ci-runner-contention)
+- [`uncapturedClosureReads()` falsely flagged static class property accesses](#uncapturedclosurereads-falsely-flagged-static-class-property-accesses)
+- [A collapsed bash output test asserted on tail timing without warmup and with redundant row counting](#a-collapsed-bash-output-test-asserted-on-tail-timing-without-warmup-and-with-redundant-row-counting)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1132,6 +1134,15 @@ and reporting trailing seen bytes if the launch fails or times out.
 **Cause**: `test/lint.php`'s closure static analysis swept for `T_VARIABLE` tokens inside closure bodies, but did not check if the preceding non-ignorable token was `T_DOUBLE_COLON` (`::`), mistaking static class property accesses (`self::$prop`, `Class::$prop`) for uncaptured local variables.
 
 **Rule**: Static property accesses preceded by `T_DOUBLE_COLON` belong to class scope, not closure variable scope; static analysis must skip them when checking uncaptured closure variables.
+
+## A collapsed bash output test asserted on tail timing without warmup and with redundant row counting
+
+**Symptom**: `BashOutputTest::testCollapsingALongOutputCostsTheTailAndNotTheWholeOfIt` failed in CI with `Failed asserting that <collapsed> is less than <wrapped / 5>`.
+
+**Cause**: Two factors combined: (1) `BashOutputComponent::lines()` continued iterating backwards across all remaining logical lines computing `TextWrap::rows()` to track `$dropped` even when `$this->note === null` where the count is unused; (2) the test measured sub-millisecond execution times without warming up class autoloading (`TextWrap`, `Width`, Unicode tables), so the first measurement paid for cold-start class loading while the second had warm classes.
+
+**Rule**: When visual row budget is satisfied and `$note === null`, exit early (`break`) without counting dropped head rows; performance assertions on sub-millisecond components must warm up the component and text wrapping classes before timing.
+
 
 
 

@@ -145,6 +145,10 @@ final class BashOutputComponent implements Component
 
         for ($index = count($logical) - 1; $index >= 0; $index--) {
             if (count($kept) >= $this->rows) {
+                if ($this->note === null) {
+                    break;
+                }
+
                 $dropped += TextWrap::rows($logical[$index], $width);
 
                 continue;

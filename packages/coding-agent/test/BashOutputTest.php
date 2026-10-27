@@ -154,6 +154,10 @@ final class BashOutputTest extends TestCase
         $long = new BashOutputComponent(5, null);
         $long->setText($text);
 
+        $warm = new BashOutputComponent(1, null);
+        $warm->setText("x\n");
+        $warm->render(80);
+
         $collapsed = self::milliseconds(static fn () => $long->render(120));
         $wrapped = self::milliseconds(static fn () => TextWrap::wrap($text, 120));
 
