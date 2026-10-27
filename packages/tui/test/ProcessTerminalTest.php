@@ -49,6 +49,32 @@ final class ProcessTerminalTest extends TestCase
         $this->assertSame('hello', $this->throughATerminal('hello'));
     }
 
+    public function testFlushDoesNotTimeoutWhileTerminalIsActivelyAcceptingOutput(): void
+    {
+        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        // Read in small chunks with a brief micro-delay so draining requires more than 100 write/select iterations.
+        $reader = proc_open(
+            ['php', '-r', '$out = fopen($argv[1], "wb"); while (!feof(STDIN)) { $c = fread(STDIN, 1024); if ($c !== "") { fwrite($out, $c); } usleep(50); } fclose($out);', $this->target],
+            $descriptors,
+            $pipes,
+        );
+
+        $this->assertTrue($reader !== false, 'could not start the reader');
+        stream_set_blocking($pipes[0], false);
+
+        $terminal = new ProcessTerminal(STDIN, $pipes[0]);
+        $data = str_repeat('z', 200_000);
+        $terminal->write($data);
+        $terminal->flush();
+
+        fclose($pipes[0]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($reader);
+
+        $this->assertSame($data, file_get_contents($this->target));
+    }
+
     public function testAFrameTheTerminalCannotTakeAtOnceDoesNotHoldTheLoop(): void
     {
         \Pig\Async\Loop::reset();

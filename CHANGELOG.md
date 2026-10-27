@@ -50,10 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [1.2.1] - 2026-10-27
 
 ### Fixed
 
+- `ProcessTerminal::flush()` no longer falsely times out with "Terminal stopped accepting output with N bytes still to write" when draining large buffers (such as long conversation transcripts on `/quit` or mode switch) across fast chunked writes. Draining now measures true idle starvation time rather than incrementing a fixed timeout per loop iteration.
+- When the terminal really does stop taking output while pig exits or suspends, it is still put back the way pig found it: the failed write used to skip that, leaving the shell in raw mode — no echo, Enter not starting a new line — until `reset`.
 - A plain `pig update` installs a bundled extension added since the last update — before, only the first run on a new machine or `pig update --extensions` did, so a release's new extension reached nobody who already had pig until they knew to ask. What has been offered is kept in `~/.pig/agent/extensions/.bundled.json`, so a bundled extension you deleted stays deleted; for an install from before the record, the five shipped until now count as offered already.
 
 ## [1.2.0] - 2026-10-27

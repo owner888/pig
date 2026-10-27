@@ -384,12 +384,16 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
         $this->onResize = null;
 
         // On the screen before the terminal is handed back: whatever comes next — the shell, an
-        // editor, the suspended prompt — writes after it, never into the middle of a frame.
-        $this->flush();
-
-        if ($this->savedState !== null) {
-            $this->stty($this->savedState);
-            $this->savedState = null;
+        // editor, the suspended prompt — writes after it, never into the middle of a frame. And the
+        // terminal is handed back even when that fails: a shell left in raw mode — no echo, no
+        // newline on Enter, `reset` to get out — is worse than a transcript cut short.
+        try {
+            $this->flush();
+        } finally {
+            if ($this->savedState !== null) {
+                $this->stty($this->savedState);
+                $this->savedState = null;
+            }
         }
     }
 
@@ -478,9 +482,10 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
     #[\Override]
     public function flush(): void
     {
-        $waited = 0.0;
+        $lastProgressAt = microtime(true);
 
         while ($this->pending !== '') {
+            $previous = $this->pendingAt;
             $this->pendingAt = $this->writeSome($this->pending, $this->pendingAt);
 
             if ($this->pendingAt >= strlen($this->pending)) {
@@ -489,10 +494,10 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
                 return;
             }
 
-            // The buffer is full. Wait for the terminal to read some of it — briefly, because a
-            // terminal that has stopped draining is not coming back, and spinning here would hang
-            // the whole program with a half-drawn screen.
-            if ($waited >= self::DRAIN_TIMEOUT) {
+            if ($this->pendingAt > $previous) {
+                $lastProgressAt = microtime(true);
+            } elseif (microtime(true) - $lastProgressAt >= self::DRAIN_TIMEOUT) {
+                // The buffer is full and has stopped accepting output for DRAIN_TIMEOUT seconds.
                 $left = strlen($this->pending) - $this->pendingAt;
                 $this->pending = '';
                 $this->pendingAt = 0;
@@ -515,8 +520,6 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
             } finally {
                 restore_error_handler();
             }
-
-            $waited += 0.05;
         }
     }
 

@@ -67,6 +67,7 @@ Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md
 - [agent_settled fired early while Working (the "task done" notification over a screen still working)](#agent_settled-fired-early-while-working-the-task-done-notification-over-a-screen-still-working)
 - [The retry notice reads `(escape to cancel)` and counts down by the second, as upstream](#the-retry-notice-reads-escape-to-cancel-and-counts-down-by-the-second-as-upstream)
 - [A resize held the loop for four seconds, waiting on the terminal](#a-resize-held-the-loop-for-four-seconds-waiting-on-the-terminal)
+- [Terminal flush falsely timed out when draining large pending buffers across fast chunked writes](#terminal-flush-falsely-timed-out-when-draining-large-pending-buffers-across-fast-chunked-writes)
 
 ## A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
 
@@ -2170,3 +2171,23 @@ the bench never saw the second half.
   of a frame still draining — `SystemClipboard`'s OSC 52 copy takes the terminal's `write` for this.
 - Tests: `ProcessTerminalTest::testAFrameTheTerminalCannotTakeAtOnceDoesNotHoldTheLoop`,
   `TuiTest::testAFrameWaitsForTheTerminalToTakeTheLastOneAndThenDrawsEverything`.
+
+## Terminal flush falsely timed out when draining large pending buffers across fast chunked writes
+
+**Symptom**: `TuiError: Terminal stopped accepting output with N bytes still to write` thrown from
+`ProcessTerminal::flush()` when dumping long conversation transcripts upon quitting or stopping
+the TUI, crashing the session exit handler.
+
+**Cause**: `ProcessTerminal::flush()` blindly incremented `$waited += 0.05` on every write
+iteration regardless of whether bytes were written or how quickly `stream_select()` returned. On a
+macOS PTY with small buffer chunks (4–8KB), draining a 400KB+ transcript took ~100 iterations in
+under 60 milliseconds of real time. Because `$waited` never reset upon making write progress, it
+hit `DRAIN_TIMEOUT = 5.0` (100 * 0.05) and falsely aborted an actively draining terminal.
+
+**Rule**: Measure idle starvation rather than loop counts: track the timestamp of the last successful
+byte written (`$lastProgressAt = microtime(true)`). As long as writes make progress, keep draining;
+only throw `TuiError` when the buffer remains completely stalled with no progress for `DRAIN_TIMEOUT`
+seconds.
+
+**Tests**: `ProcessTerminalTest::testFlushDoesNotTimeoutWhileTerminalIsActivelyAcceptingOutput`.
+
