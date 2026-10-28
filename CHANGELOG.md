@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.2.2] - 2026-10-28
+
+### Fixed
+
+- Mermaid parser tolerates whitespace in node style class annotations (such as `node["Label"] ::: className` or `::: className`): spaces after the closing bracket and between `:::` and the class identifier are no longer treated as unparsed statement remnants, preventing spurious `dropped, expected a link` warnings and keeping terminal diagram rendering enabled.
+
 ## [1.2.1] - 2026-10-27
 
 ### Fixed

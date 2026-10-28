@@ -91,4 +91,14 @@ final class MermaidTransformerTest extends TestCase
 
         $this->assertStringContainsString('│ A ├', $out);
     }
+
+    public function testNodeWithSpacedClassAnnotationRendersWithoutWarning(): void
+    {
+        $src = "```mermaid\ngraph TD\n  A[\"Start\"] ::: myClass\n  B[\"End\"]:::other\n  A --> B\n```";
+        $out = Ansi::strip(MermaidTransformer::transform($src, false, 80));
+
+        $this->assertStringNotContainsString('Mermaid diagram not rendered', $out);
+        $this->assertStringContainsString('Start', $out);
+        $this->assertStringContainsString('End', $out);
+    }
 }

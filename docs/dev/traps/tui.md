@@ -68,6 +68,7 @@ Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md
 - [The retry notice reads `(escape to cancel)` and counts down by the second, as upstream](#the-retry-notice-reads-escape-to-cancel-and-counts-down-by-the-second-as-upstream)
 - [A resize held the loop for four seconds, waiting on the terminal](#a-resize-held-the-loop-for-four-seconds-waiting-on-the-terminal)
 - [Terminal flush falsely timed out when draining large pending buffers across fast chunked writes](#terminal-flush-falsely-timed-out-when-draining-large-pending-buffers-across-fast-chunked-writes)
+- [Mermaid parser dropped spaced style class annotations on nodes and reported spurious link warnings](#mermaid-parser-dropped-spaced-style-class-annotations-on-nodes-and-reported-spurious-link-warnings)
 
 ## A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
 
@@ -2190,4 +2191,22 @@ only throw `TuiError` when the buffer remains completely stalled with no progres
 seconds.
 
 **Tests**: `ProcessTerminalTest::testFlushDoesNotTimeoutWhileTerminalIsActivelyAcceptingOutput`.
+
+## Mermaid parser dropped spaced style class annotations on nodes and reported spurious link warnings
+
+**Symptom**: Valid Mermaid diagrams containing style class annotations with spaces, such as
+`node["Label"] ::: className` or `::: className`, failed to render in the terminal and displayed
+raw markdown code blocks or emitted `dropped, expected a link: "::: className"` warnings.
+
+**Cause**: `Parse::parseNode()` and `Parse::dropStyleTags()` assumed the triple colon `:::` was
+immediately followed by the class identifier without intervening spaces, and that no spaces
+preceded `:::` after a node shape bracket. When whitespace existed between the node bracket and
+`:::`, or between `:::` and the class name, `parseNode()` stopped early at the shape boundary,
+leaving `::: className` in the statement stream. The parser then treated it as an unrecognized link,
+recorded a warning on the graph, and aborted rendering.
+
+**Rule**: Skip optional whitespace before and after `:::` when parsing node style classes, matching
+Mermaid's tolerant syntax.
+
+**Tests**: `MermaidTransformerTest::testNodeWithSpacedClassAnnotationRendersWithoutWarning`.
 

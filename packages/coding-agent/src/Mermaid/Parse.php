@@ -446,20 +446,22 @@ final class Parse
         // `id:::name` (after any shape) attaches a style class; swallow it so the statement keeps
         // parsing.
         $next = $shaped['after'];
+        $styleStart = self::skipSpaces($chars, $next);
 
-        if (($chars[$next] ?? null) === ':' && ($chars[$next + 1] ?? null) === ':' && ($chars[$next + 2] ?? null) === ':') {
-            $k = $next + 3;
+        if (($chars[$styleStart] ?? null) === ':' && ($chars[$styleStart + 1] ?? null) === ':' && ($chars[$styleStart + 2] ?? null) === ':') {
+            $nameStart = self::skipSpaces($chars, $styleStart + 3);
+            $k = $nameStart;
 
             while ($k < $n && (Labels::isIdChar($chars[$k]) || $chars[$k] === '-')) {
                 $k++;
             }
 
             // A name never ends in `-`: back off so `A:::x-->B` keeps its link.
-            while ($k > $next + 3 && $chars[$k - 1] === '-') {
+            while ($k > $nameStart && $chars[$k - 1] === '-') {
                 $k--;
             }
 
-            if ($k > $next + 3) {
+            if ($k > $nameStart) {
                 $next = $k;
             }
         }
@@ -895,17 +897,23 @@ final class Parse
 
         for ($i = 0; $i < $n;) {
             if ($chars[$i] === ':' && ($chars[$i + 1] ?? null) === ':' && ($chars[$i + 2] ?? null) === ':') {
-                $k = $i + 3;
+                $nameStart = $i + 3;
+
+                while ($nameStart < $n && ($chars[$nameStart] === ' ' || $chars[$nameStart] === "\t")) {
+                    $nameStart++;
+                }
+
+                $k = $nameStart;
 
                 while ($k < $n && (Labels::isIdChar($chars[$k]) || $chars[$k] === '-')) {
                     $k++;
                 }
 
-                while ($k > $i + 3 && $chars[$k - 1] === '-') {
+                while ($k > $nameStart && $chars[$k - 1] === '-') {
                     $k--;
                 }
 
-                if ($k > $i + 3) {
+                if ($k > $nameStart) {
                     $i = $k;
 
                     continue;
