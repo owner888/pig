@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Opening a long session in `pig web` no longer waits for all of a long run: the first page started at the last prompt, so one prompt followed by hundreds of tool calls sent and drew every one of them before anything showed (5.4MB and 2.4s on a 1,500-call run, now 329KB and 0.6s). A page now starts at a prompt only when one is within reach, otherwise at the nearest message that is not a tool result, so a call and its result stay together; scrolling up still brings back the rest. While it loads, the tab says so instead of showing the new-session welcome screen.
+
 ## [1.2.2] - 2026-10-28
 
 ### Fixed

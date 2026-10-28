@@ -1342,6 +1342,15 @@
       white-space: pre-wrap;
     }
 
+    /* A conversation still on its way from its process: said in place of the welcome screen. */
+    .chat-loading {
+      margin: auto;
+      padding: 40px 20px;
+      color: var(--color-text-secondary);
+      font-size: var(--text-sm);
+      animation: fadeIn 0.25s ease-out;
+    }
+
     /* Empty state hero greeting */
     .empty-state-hero {
       margin: auto;

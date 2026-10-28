@@ -668,6 +668,36 @@ final class RpcModeTest extends TestCase
         $this->assertSame(['system', 'user', 'assistant'], array_column($first['messages'], 'role'));
     }
 
+    public function testOnePromptAndALongRunIsCutBetweenCallsRatherThanAtThePrompt(): void
+    {
+        // One prompt, then 50 tool calls and their results: a page of 10 used to walk back to the
+        // prompt and answer the whole run. It stops at the nearest message that is not a tool
+        // result instead — a call, with its result after it.
+        $file = SessionManager::create($this->cwd);
+        $file->append(new UserMessage('upload them all'));
+        for ($n = 0; $n < 50; $n++) {
+            $file->append(new AssistantMessage([new \Pig\Ai\ToolCall("call_{$n}", 'read', ['path' => "v{$n}.mp4"])], Api::AnthropicMessages, 'anthropic', 'claude-test', new Usage(), StopReason::ToolUse));
+            $file->append(new \Pig\Ai\ToolResultMessage("call_{$n}", 'read', [new TextContent("uploaded {$n}")]));
+        }
+        $file->append(self::message('all done'));
+
+        $this->start(resume: $file->path);
+
+        $page = $this->data(['type' => 'get_messages', 'limit' => 10]);
+        $roles = array_column($page['messages'], 'role');
+        $this->assertLessThanOrEqual(11, count($roles));
+        $this->assertSame('assistant', $roles[0], 'cut before a call, never before a result');
+        $this->assertNotContains('user', $roles);
+
+        // The parts before it keep the pairs together, down to the prompt.
+        $before = $page['start'];
+        while ($before > 0) {
+            $part = $this->data(['type' => 'get_messages', 'limit' => 10, 'before' => $before]);
+            $this->assertNotSame('toolResult', $part['messages'][0]['role']);
+            $before = $part['start'];
+        }
+    }
+
     public function testHistoryImagesComeAsRefsAndOneAtATimeOnRequest(): void
     {
         // pig's own: a page draws a history of screenshots fetching each as it comes into view.

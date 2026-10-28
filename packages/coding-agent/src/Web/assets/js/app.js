@@ -2131,13 +2131,23 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (!tab.bound) tab.subscribe();
       else if (tab.needsMessages) tab.loadMessages();
 
-      // Show friendly EmptyState if tab has no messages yet
+      // Show friendly EmptyState if tab has no messages yet — but not for a conversation that is
+      // only still loading: the welcome screen over a long one's file, for as long as its process
+      // took to read it, looked like a conversation that had lost everything. `renderMessages()`
+      // replaces this either way.
       if (tab.scroller.children.length === 0 && !tab.emptyState) {
-        tab.emptyState = new EmptyState((prompt) => {
-          promptInput.value = prompt;
-          promptInput.focus();
-        });
-        tab.scroller.appendChild(tab.emptyState.element);
+        if (tab.sessionFile && !tab.messagesLoaded) {
+          const waiting = document.createElement("div");
+          waiting.className = "chat-loading";
+          waiting.textContent = t("loading_session");
+          tab.scroller.appendChild(waiting);
+        } else {
+          tab.emptyState = new EmptyState((prompt) => {
+            promptInput.value = prompt;
+            promptInput.focus();
+          });
+          tab.scroller.appendChild(tab.emptyState.element);
+        }
       }
 
       applyActiveTabToChrome();
@@ -3099,7 +3109,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
      * before it is reached. Every block is a real one when it comes into view (the stutter
      * `content-visibility` had, drawing each block as it scrolled in, is not back), and a
      * conversation nobody scrolls back through does not cost its whole history in the page.
-     * Cuts are made at a user message, so a tool call and its result are always drawn together.
+     * Cuts are made at a user message, so a tool call and its result are always drawn together —
+     * or, when the nearest is more than another `count` back (one prompt, then a long run of tool
+     * calls), at the nearest message that is not a tool result, which keeps them together too.
+     * Walking back to the prompt drew the whole run at once, thousands of cards, before anything
+     * showed; `RpcMode::messagesPage()` cuts its pages the same way.
      */
     const FIRST_DRAW = 60;
     const PREFILL = 120;
@@ -3111,8 +3125,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /** Where to cut `msgs` so that about `count` messages are after it: at a user message. */
     function cutBefore(msgs, end, count) {
-      for (let i = Math.max(0, end - count); i > 0; i--) {
+      const from = Math.max(0, end - count);
+      for (let i = from; i > 0 && i >= from - count; i--) {
         if (msgs[i].role === "user") return i;
+      }
+      if (from - count <= 0) return 0;
+      for (let i = from; i > 0; i--) {
+        if (msgs[i].role !== "toolResult") return i;
       }
       return 0;
     }

@@ -10,6 +10,7 @@ use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\JsJson;
 use Pig\Async\Async;
@@ -1396,8 +1397,15 @@ final class RpcMode
      * `get_messages`: every message, as upstream's — or, with `limit`, only the last of them, pig's
      * own and additive. `limit` asks for about that many, ending before index `before` (the end
      * when there is none), and the part starts at a user message so a tool call and its result
-     * are never on two sides of the cut; `total` and `start` say where it sits. Indices count the
-     * conversation's messages, so `start` is the next part's `before`.
+     * are never on two sides of the cut — the one before it, when it is no more than another `limit`
+     * back; otherwise the nearest message that is not a tool result, so the call is still drawn with
+     * its result. `total` and `start` say where it sits. Indices count the conversation's messages,
+     * so `start` is the next part's `before`.
+     *
+     * The second rule is for one prompt followed by a long run — a thousand tool calls without the
+     * person saying anything: walking back to the user message turned a page of 180 into the
+     * whole run, 3,000 messages and 5MB for the page to wait for and draw before it showed
+     * anything (measured), and the developer watched the empty welcome screen meanwhile.
      *
      * A page draws a long conversation from its end (`app.js`); the whole of it in one answer —
      * screenshots and all, hundreds of megabytes — was more than `pig web` could hold to pass on,
@@ -1421,9 +1429,19 @@ final class RpcMode
         $before = $command['before'] ?? null;
         $end = is_int($before) ? max(0, min($total, $before)) : $total;
         $start = max(0, $end - $limit);
+        $at = $start;
+        $floor = max(0, $start - $limit);
 
-        while ($start > 0 && !$all[$start] instanceof UserMessage) {
-            $start--;
+        while ($at > $floor && !$all[$at] instanceof UserMessage) {
+            $at--;
+        }
+
+        if ($at === 0 || $all[$at] instanceof UserMessage) {
+            $start = $at;
+        } else {
+            while ($start > 0 && $all[$start] instanceof ToolResultMessage) {
+                $start--;
+            }
         }
 
         return [

@@ -73,4 +73,36 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(0, $code, implode("\n", $out));
         $this->assertStringContainsString('Web message blocks: passed', implode("\n", $out));
     }
+
+    public function testADrawnPartIsCutBetweenCallsWhenThePromptIsFarBack(): void
+    {
+        // `cutBefore()` in app.js, run as it is: a user message within reach is still where the
+        // cut goes; one prompt and then a long run is cut at a call, never before a result.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8');
+            const fn = src.match(/function cutBefore\(msgs, end, count\) \{[\s\S]*?\n    \}/)[0];
+            const cutBefore = eval('(' + fn + ')');
+            const roles = (list) => list.map((role) => ({ role }));
+            const run = roles(['user', ...Array.from({ length: 100 }, (_, i) => (i % 2 ? 'toolResult' : 'assistant')), 'assistant']);
+            const near = roles(['user', 'assistant', 'user', 'assistant', 'toolResult', 'assistant']);
+            const out = { run: cutBefore(run, run.length, 10), near: cutBefore(near, near.length, 3), roleAtRun: null };
+            out.roleAtRun = run[out.run].role;
+            console.log(JSON.stringify(out));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $result = json_decode(implode('', $out), true);
+
+        $this->assertSame(2, $result['near'], 'the user message within reach');
+        $this->assertSame('assistant', $result['roleAtRun']);
+        $this->assertGreaterThan(80, $result['run'], 'about ten from the end, not back at the prompt');
+    }
 }
