@@ -1030,6 +1030,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantBlock = document.createElement("div");
         currentAssistantBlock.className = "msg-block msg-assistant prose";
         chatScroll.appendChild(currentAssistantBlock);
+      } else if (!currentAssistantBlock.isConnected) {
+        // A reconnect mid-answer (`onBound()`) redraws the conversation from `get_messages`, which
+        // has no answer still streaming — and drawing it took this block, the answer so far, off
+        // the page. The rest of the answer kept arriving into it there. Put back, it goes on.
+        chatScroll.appendChild(currentAssistantBlock);
       }
       return currentAssistantBlock;
     }
@@ -1082,6 +1087,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantText = "";
       } else if (evt.type === "message_end") {
         const message = evt.message;
+        // Ended with nothing more to draw since a reconnect took it off the page: back on it.
+        if (message?.role === "assistant" && currentAssistantBlock && !currentAssistantBlock.isConnected) ensureAssistantBlock();
         if (message?.role === "assistant" && currentAssistantBlock && currentAssistantText.trim()) {
           attachTranslate(currentAssistantBlock, currentAssistantText, currentAssistantBlock.querySelector(".assistant-prose"));
         }
@@ -1161,15 +1168,17 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
         scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
+        // A card from before a reconnect was redrawn by `get_messages`; the one on the page is the
+        // redrawn one, so that is the one to update.
         const card = tab?.toolCards?.get(evt.toolCallId);
-        if (card) {
+        if (card?.element.isConnected) {
           card.updateProgress(textOf(evt.partialResult?.content));
         } else {
           updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partialResult?.content) });
         }
       } else if (evt.type === "tool_execution_end") {
         const card = tab?.toolCards?.get(evt.toolCallId);
-        if (card) {
+        if (card?.element.isConnected) {
           card.finish({ result: evt.result, isError: evt.isError });
         } else {
           updateToolCard({ toolCallId: evt.toolCallId, result: evt.result, isError: evt.isError });

@@ -181,6 +181,60 @@ final class SocketTest extends TestCase
         );
     }
 
+    public function testAReadTheComputerSleptThroughGivesUpOnWaking(): void
+    {
+        // A sleep is the wall clock running on while the monotonic clock stands still; here the
+        // monotonic clock is made to fall a minute behind, which is what the loop sees after the
+        // lid was closed for a minute. The read waits 300s — the default idle timeout — and must
+        // not: it gives up on the next tick, in words the agent's retry recognises.
+        [$host, $port] = $this->server(null);
+        $behind = 0.0;
+        Loop::get()->useMonotonicClock(static function () use (&$behind): float {
+            return hrtime(true) / 1e9 - $behind;
+        });
+        $started = microtime(true);
+
+        $error = $this->assertThrows(SocketError::class, static function () use ($host, $port, &$behind): void {
+            Async::run(static function () use ($host, $port, &$behind): void {
+                $socket = Socket::connect($host, $port);
+                Loop::get()->delay(0.05, static function () use (&$behind): void {
+                    $behind = 60.0;
+                });
+                // Something else to wake the loop soon after, as there always is in pig; alone, the
+                // poll would wait its `MAX_POLL` first.
+                Loop::get()->delay(0.1, static fn () => null);
+                $socket->read(8192, 300.0);
+            });
+        }, 'timed out');
+
+        $this->assertStringContainsString('slept for 60s', $error->getMessage());
+        $this->assertLessThan(2.0, microtime(true) - $started);
+    }
+
+    public function testAReadWithNoTimeoutIsLeftAloneBySleep(): void
+    {
+        // No timeout is a wait that expects nothing in particular — a server's accept, a pipe —
+        // and a sleep is no reason to end it.
+        $behind = 0.0;
+        Loop::get()->useMonotonicClock(static function () use (&$behind): float {
+            return hrtime(true) / 1e9 - $behind;
+        });
+        [$host, $port] = $this->server(static function ($connection): void {
+            Loop::get()->delay(0.2, static fn () => fwrite($connection, 'still here'));
+        });
+
+        $read = Async::run(static function () use ($host, $port, &$behind): ?string {
+            $socket = Socket::connect($host, $port);
+            Loop::get()->delay(0.05, static function () use (&$behind): void {
+                $behind = 60.0;
+            });
+
+            return $socket->read(8192);
+        });
+
+        $this->assertSame('still here', $read);
+    }
+
     public function testAbortingStopsAReadInFlight(): void
     {
         [$host, $port] = $this->server(null);

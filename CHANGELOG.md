@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.2.4] - 2026-10-31
+
+### Fixed
+
+- After the computer sleeps, a run carries on within seconds of waking instead of up to five minutes later. A model's stream that died while the lid was shut was waited on for the whole idle timeout, because a wait counts only time awake; pig now notices that the clock jumped past the time it was awake, fails the reads it was waiting on as timed out, and the usual retry continues the run.
+- `pig web` reconnects after the computer sleeps, rather than trusting a connection that still says it is open, and an answer that was streaming when the page reconnected keeps appearing instead of stopping at what had arrived before.
+
 ## [1.2.3] - 2026-10-28
 
 ### Fixed

@@ -289,6 +289,7 @@ final class Socket
         $deferred = new Deferred();
         $watcher = null;
         $timer = null;
+        $sleeper = null;
         $abortListener = null;
 
         $settle = function (?Throwable $error) use (
@@ -297,6 +298,7 @@ final class Socket
             $signal,
             &$watcher,
             &$timer,
+            &$sleeper,
             &$abortListener,
         ): void {
             // Timeout, abort and readiness can all land in the same tick; first one wins.
@@ -310,6 +312,10 @@ final class Socket
 
             if ($timer !== null) {
                 $loop->cancel($timer);
+            }
+
+            if ($sleeper !== null) {
+                $loop->cancel($sleeper);
             }
 
             if ($abortListener !== null && $signal !== null) {
@@ -337,6 +343,15 @@ final class Socket
         if ($timeout > 0.0) {
             $timer = $loop->delay($timeout, static fn () => $settle(
                 new SocketError(sprintf('Socket timed out after %.1fs', $timeout)),
+            ));
+
+            // A wait with a timeout is a wait on a peer that is expected to answer — an HTTP
+            // response, the model's stream. One the computer slept through is given up at once
+            // (`Loop::onSleep()`): the connection rarely survives the sleep, and waiting out the
+            // timeout after waking is what left a run standing still. "Timed out" in the message
+            // is what makes it a retryable error to the agent, as an idle timeout is.
+            $sleeper = $loop->onSleep(static fn (float $slept) => $settle(
+                new SocketError(sprintf('Socket timed out: the computer slept for %ds while waiting, and the connection is not trusted after that', (int) round($slept))),
             ));
         }
 

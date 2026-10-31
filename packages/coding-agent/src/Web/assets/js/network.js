@@ -17,6 +17,20 @@ export const clientId = (() => {
   }
 })();
 
+/** How often the page looks at the clock to tell that the computer slept. */
+const CLOCK_TICK = 5000;
+
+/**
+ * A gap between two looks at the clock longer than this is a sleep (or a tab the browser stopped
+ * running for as long). Timers do not run while the computer sleeps, so the gap is the sleep.
+ */
+const SLEPT_AFTER = 30000;
+
+/** Whether two looks at the clock `CLOCK_TICK` apart were really this far apart: a sleep between. */
+export function sleptBetween(before, now) {
+  return now - before > SLEPT_AFTER;
+}
+
 export class SharedNetwork {
   constructor() {
     this.ws = null;
@@ -35,8 +49,45 @@ export class SharedNetwork {
 
     window.addEventListener("online", () => this.reconnectNow());
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") this.reconnectNow();
+      if (document.visibilityState !== "visible") return;
+      if (this.slept) this.restart();
+      else this.reconnectNow();
     });
+
+    // After a sleep the socket may still say OPEN and be dead — the server's half dropped by its
+    // own heartbeat, or a network between them gone — and nothing tells the page until it writes:
+    // the developer opened his laptop on a run that never moved again. A new connection costs
+    // little and its `onBound()` reloads the conversation and asks the child what it is doing, so
+    // a sleep is answered with one. While the page is hidden the browser may run its timers once a
+    // minute, which looks the same; that is left until the page is looked at again.
+    this.slept = false;
+    this.lastTick = Date.now();
+    setInterval(() => {
+      const now = Date.now();
+      if (sleptBetween(this.lastTick, now)) this.slept = true;
+      this.lastTick = now;
+      if (this.slept && document.visibilityState === "visible") this.restart();
+    }, CLOCK_TICK);
+  }
+
+  /** A new connection whatever the old one says it is: after a sleep, OPEN is not to be believed. */
+  restart() {
+    this.slept = false;
+    if (this.closed) return;
+    if (this.ws) {
+      try {
+        this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
+      this.connectionLost();
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectDelay = 1000;
+    this.connect();
   }
 
   init({ getTabs, getActiveTab, showStatus, hideStatus, onReachable }) {

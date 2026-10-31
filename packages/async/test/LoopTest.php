@@ -417,4 +417,38 @@ final class LoopTest extends TestCase
         $this->assertCount(1, $stalls);
         $this->assertMatchesRegularExpression('/^Async\.php:\d+ → LoopTest\.php:\d+$/', $stalls[0]);
     }
+
+    public function testASleepIsToldOnceWithHowLongItLasted(): void
+    {
+        $loop = Loop::get();
+        $behind = 0.0;
+        $loop->useMonotonicClock(static function () use (&$behind): float {
+            return hrtime(true) / 1e9 - $behind;
+        });
+        $told = [];
+        $loop->onSleep(static function (float $slept) use (&$told): void {
+            $told[] = $slept;
+        });
+
+        $loop->delay(0.02, static function () use (&$behind): void {
+            $behind = 90.0;
+        });
+        $loop->delay(0.05, static fn () => null);
+        $loop->delay(0.08, static fn () => null);
+        $loop->run();
+
+        $this->assertCount(1, $told);
+        $this->assertEqualsWithDelta(90.0, $told[0], 1.0);
+    }
+
+    public function testAPollWaitsNoLongerThanAFewSecondsWhateverTheTimer(): void
+    {
+        // A sleep is only noticed when a poll returns; a poll that waited out a five-minute timer
+        // on a clock that does not count the sleep is what kept a run standing after the lid opened.
+        $loop = Loop::get();
+        $loop->delay(300.0, static fn () => null);
+        $timeout = (new \ReflectionMethod($loop, 'pollTimeout'))->invoke($loop);
+
+        $this->assertLessThanOrEqual(5.0, $timeout);
+    }
 }

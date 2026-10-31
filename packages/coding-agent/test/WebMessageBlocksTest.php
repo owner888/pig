@@ -105,4 +105,62 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame('assistant', $result['roleAtRun']);
         $this->assertGreaterThan(80, $result['run'], 'about ten from the end, not back at the prompt');
     }
+
+    public function testAfterASleepThePageOpensANewConnectionAndBindsItsTabsAgain(): void
+    {
+        // `network.js` run as it is, with a browser made of stubs: its socket still says OPEN, as
+        // one can after the lid was closed, and the clock jumps a minute between two of the page's
+        // looks at it. The page must not believe the old socket: a new one, every tab bound again.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            let src = fs.readFileSync(process.argv[1], 'utf8')
+                .replace(/^import .*$/m, 'const t = (k) => k;')
+                .replace(/^export /gm, '');
+            let now = 1_000_000;
+            const intervals = [];
+            const sockets = [];
+            const listeners = {};
+            const sandbox = {
+                Date: { now: () => now },
+                setInterval: (fn) => intervals.push(fn),
+                setTimeout: () => 0, clearTimeout: () => {},
+                sessionStorage: { getItem: () => 'id', setItem: () => {} },
+                fetch: () => Promise.reject(new Error('offline')),
+                location: { protocol: 'http:', host: 'localhost' },
+                window: { addEventListener: () => {} },
+                document: { visibilityState: 'visible', addEventListener: (type, fn) => { listeners[type] = fn; } },
+                WebSocket: class { static OPEN = 1; static CONNECTING = 0; constructor() { this.readyState = 1; this.closed = false; sockets.push(this); } close() { this.closed = true; } send() {} },
+                console,
+            };
+            const make = new Function(...Object.keys(sandbox), src + '\nreturn network;');
+            const network = make(...Object.values(sandbox));
+            let binds = 0, lost = 0;
+            const tab = { subscribe: () => binds++, onConnectionLost: () => lost++ };
+            network.init({ getTabs: () => [tab] });
+            network.connect();
+            sockets[0].onopen();
+            intervals.forEach((fn) => fn());          // an ordinary five seconds: nothing happens
+            const quiet = sockets.length;
+            now += 60_000;                             // the lid was closed for a minute
+            intervals.forEach((fn) => fn());
+            sockets[sockets.length - 1].onopen?.();
+            console.log(JSON.stringify({ quiet, sockets: sockets.length, oldClosed: sockets[0].closed, binds, lost }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/network.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $result = json_decode(implode('', $out), true);
+
+        $this->assertSame(1, $result['quiet'], 'no new connection without a sleep');
+        $this->assertSame(2, $result['sockets'], 'a new connection after it');
+        $this->assertTrue($result['oldClosed']);
+        $this->assertSame(1, $result['lost'], 'what waited on the old one is told it is gone');
+        $this->assertSame(2, $result['binds'], 'the tab bound again, which reloads its conversation and state');
+    }
 }

@@ -64,6 +64,35 @@ final class Loop
 
     private int $suspends = 0;
 
+    /** @var array<string, Closure(float): void> `onSleep()`'s callbacks */
+    private array $sleepers = [];
+
+    /** The wall clock and the monotonic clock at the end of the last tick, to tell a sleep by. */
+    private ?float $lastWall = null;
+
+    private ?float $lastMonotonic = null;
+
+    /** @var (Closure(): float)|null the monotonic clock in seconds, for tests; hrtime otherwise */
+    private ?Closure $monotonic = null;
+
+    /**
+     * How far the wall clock may run ahead of the monotonic one in a tick before it counts as the
+     * computer having slept. A tick lasts as long as the longest poll (`MAX_POLL`) plus whatever a
+     * callback holds the loop for; an NTP correction is milliseconds. Ten seconds is neither.
+     */
+    private const float SLEEP_THRESHOLD = 10.0;
+
+    /**
+     * The longest one poll waits while a timer is pending, however far off it is.
+     *
+     * Timers are kept on the wall clock, which goes on while the computer sleeps; `select()`'s
+     * timeout does not — on macOS, and for Linux's monotonic clock, a sleep is time that never
+     * happened. A poll begun with five minutes to wait therefore waits five more minutes after the
+     * lid is opened, with every timer long overdue and nothing yet noticing the sleep. Waking at
+     * least this often bounds that to a few seconds.
+     */
+    private const float MAX_POLL = 5.0;
+
     public function __construct()
     {
         $this->suspendedAt = new \WeakMap();
@@ -118,10 +147,47 @@ final class Loop
         return $id;
     }
 
-    /** Disarm a reader, a writer or a timer. Unknown ids are a no-op. */
+    /** Disarm a reader, a writer, a timer or a sleep callback. Unknown ids are a no-op. */
     public function cancel(string $id): void
     {
-        unset($this->readers[$id], $this->writers[$id], $this->timers[$id]);
+        unset($this->readers[$id], $this->writers[$id], $this->timers[$id], $this->sleepers[$id]);
+    }
+
+    /**
+     * Run $callback when the loop finds the computer has slept, with how long it slept.
+     *
+     * pig's own. A connection that was open when the lid closed is, on waking, very often dead
+     * without saying so: the peer or a NAT on the way gave up on it, and no FIN reaches a machine
+     * that is asleep. What waits on it — the model's stream, mostly — would sit there until its
+     * idle timeout ran out, and on macOS that timeout's poll does not count the sleep at all: the
+     * developer opened the lid on a run that stood still for up to five minutes. Told of the sleep,
+     * a reader can give up at once, and the run's retry starts while it is still worth one.
+     *
+     * Not a watcher: it keeps nothing alive and the loop is idle without it.
+     *
+     * @param Closure(float): void $callback given the seconds slept
+     * @return string id for cancel()
+     */
+    public function onSleep(Closure $callback): string
+    {
+        $id = 's' . $this->nextId++;
+        $this->sleepers[$id] = $callback;
+
+        return $id;
+    }
+
+    /**
+     * The monotonic clock to tell a sleep by, in seconds. For tests, which cannot put the machine
+     * to sleep but can make the monotonic clock fall behind the wall clock as a sleep does.
+     *
+     * @param (Closure(): float)|null $clock null for `hrtime()`
+     * @internal
+     */
+    public function useMonotonicClock(?Closure $clock): void
+    {
+        $this->monotonic = $clock;
+        $this->lastWall = null;
+        $this->lastMonotonic = null;
     }
 
     /**
@@ -158,7 +224,35 @@ final class Loop
     {
         $this->runQueue();
         $this->poll($this->pollTimeout());
+        $this->noticeSleep();
         $this->runTimers();
+    }
+
+    /**
+     * Whether the computer slept since the last tick: the wall clock ran on, the monotonic clock
+     * did not. Told before the timers run, so a reader that gives up on a sleep does it with its
+     * own words rather than as an idle timeout that happened to be overdue.
+     */
+    private function noticeSleep(): void
+    {
+        $wall = microtime(true);
+        $monotonic = $this->monotonic !== null ? ($this->monotonic)() : hrtime(true) / 1e9;
+
+        if ($this->lastWall !== null && $this->lastMonotonic !== null) {
+            $slept = ($wall - $this->lastWall) - ($monotonic - $this->lastMonotonic);
+
+            if ($slept > self::SLEEP_THRESHOLD) {
+                foreach ($this->sleepers as $id => $callback) {
+                    // A callback may cancel the ones after it, as a reader settling does.
+                    if (isset($this->sleepers[$id])) {
+                        $this->safely($callback, $slept);
+                    }
+                }
+            }
+        }
+
+        $this->lastWall = $wall;
+        $this->lastMonotonic = $monotonic;
     }
 
     /** Tick until stop() is called or there is no work left. */
@@ -431,7 +525,7 @@ final class Loop
         // Floor at zero: an overdue timer yields a negative delay, and stream_select()
         // rejects a negative timeout. Zero means "poll once and move on", which is what
         // an overdue timer wants anyway.
-        return max(0.0, $next - microtime(true));
+        return min(self::MAX_POLL, max(0.0, $next - microtime(true)));
     }
 
     private function poll(?float $timeout): void
