@@ -73,6 +73,8 @@ export class SharedNetwork {
   /** A new connection whatever the old one says it is: after a sleep, OPEN is not to be believed. */
   restart() {
     this.slept = false;
+    // The sleep is answered; the next connection's messages are measured from now.
+    this.lastTick = Date.now();
     if (this.closed) return;
     if (this.ws) {
       try {
@@ -152,6 +154,15 @@ export class SharedNetwork {
     };
 
     ws.onmessage = (e) => {
+      // Read just after a sleep, a message is the first of what piled up while it lasted — a
+      // frozen page measured busy for seconds per look drawing that backlog one event at a time.
+      // Like Telegram's "too long" answer, the backlog is dropped with its connection and the new
+      // one's `onBound()` loads the last page instead. Hidden, the page is not drawing anyway
+      // (`catchup.js`), and the clock check waits until it is seen.
+      if (document.visibilityState === "visible" && sleptBetween(this.lastTick, Date.now())) {
+        this.restart();
+        return;
+      }
       let m;
       try {
         m = JSON.parse(e.data);

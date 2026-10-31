@@ -163,4 +163,103 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(1, $result['lost'], 'what waited on the old one is told it is gone');
         $this->assertSame(2, $result['binds'], 'the tab bound again, which reloads its conversation and state');
     }
+
+    public function testAPageAwayKeepsOnlyWhatTheNextDrawNeedsAndALongLiveRunDrawsItsLastPageAgain(): void
+    {
+        // `catchup.js` run as it is: hidden for a moment draws as ever, hidden past `AWAY_AFTER`
+        // does not; what is kept of a skipped answer is its text, the whole of it; and a tab in view
+        // draws afresh after `LIVE_CAP` live messages — not while the reader is scrolled up.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8').replace(/^export /gm, '');
+            const m = new Function(src + '\nreturn { AWAY_AFTER, LIVE_CAP, DRAWS_MESSAGES, away, catchUp, overCap };')();
+            const tab = { currentAssistantText: 'old', currentThinkingText: '' };
+            const delta = (type, text) => ({ type: 'message_update', assistantMessageEvent: { type, delta: text } });
+            for (const evt of [{ type: 'message_start' }, delta('thinking_delta', 'hmm'), delta('text_delta', 'Hello, '), delta('text_delta', 'world')]) m.catchUp(tab, evt);
+            const kept = { text: tab.currentAssistantText, thinking: tab.currentThinkingText };
+            m.catchUp(tab, { type: 'tool_execution_start' });
+            console.log(JSON.stringify({
+                shown: m.away(null, 1e9),
+                brief: m.away(1000, 1000 + 5000),
+                long: m.away(1000, 1000 + m.AWAY_AFTER + 1),
+                drawsMessages: m.DRAWS_MESSAGES.has('message_update'),
+                drawsState: m.DRAWS_MESSAGES.has('agent_start') || m.DRAWS_MESSAGES.has('extension_ui_request') || m.DRAWS_MESSAGES.has('queue_update'),
+                kept, afterTool: tab.currentAssistantText,
+                under: m.overCap({ liveMessages: m.LIVE_CAP - 1 }),
+                over: m.overCap({ liveMessages: m.LIVE_CAP }),
+                reading: m.overCap({ liveMessages: m.LIVE_CAP, userScrolledUp: true }),
+            }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/catchup.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $r = json_decode(implode('', $out), true);
+
+        $this->assertFalse($r['shown']);
+        $this->assertFalse($r['brief'], 'a few seconds elsewhere changes nothing');
+        $this->assertTrue($r['long']);
+        $this->assertTrue($r['drawsMessages']);
+        $this->assertFalse($r['drawsState'], 'running state, dialogs and the queue are handled while away');
+        $this->assertSame(['text' => 'Hello, world', 'thinking' => 'hmm'], $r['kept']);
+        $this->assertSame('', $r['afterTool']);
+        $this->assertFalse($r['under']);
+        $this->assertTrue($r['over']);
+        $this->assertFalse($r['reading'], 'not while the reader is scrolled up');
+    }
+
+    public function testAMessageReadJustAfterASleepDropsTheBacklogForANewConnection(): void
+    {
+        // `network.js` as it is: the page's timers did not run (asleep), the clock moved on, and
+        // the first thing to arrive is a message from the backlog. It is not handed to a tab; the
+        // connection is replaced, and the next message on the new one is.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            let src = fs.readFileSync(process.argv[1], 'utf8')
+                .replace(/^import .*$/m, 'const t = (k) => k;')
+                .replace(/^export /gm, '');
+            let now = 1_000_000;
+            const sockets = [];
+            const sandbox = {
+                Date: { now: () => now },
+                setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {},
+                sessionStorage: { getItem: () => 'id', setItem: () => {} },
+                fetch: () => Promise.reject(new Error('offline')),
+                location: { protocol: 'http:', host: 'localhost' },
+                window: { addEventListener: () => {} },
+                document: { visibilityState: 'visible', addEventListener: () => {} },
+                WebSocket: class { static OPEN = 1; static CONNECTING = 0; constructor() { this.readyState = 1; this.closed = false; sockets.push(this); } close() { this.closed = true; } send() {} },
+                console,
+            };
+            const network = new Function(...Object.keys(sandbox), src + '\nreturn network;')(...Object.values(sandbox));
+            const got = [];
+            const tab = { id: 'tab-1', subscribe: () => {}, onConnectionLost: () => {}, onServerMessage: (m) => got.push(m.n) };
+            network.init({ getTabs: () => [tab], getActiveTab: () => tab });
+            network.connect();
+            sockets[0].onmessage({ data: JSON.stringify({ tabId: 'tab-1', n: 1 }) });
+            now += 90_000;                            // asleep: no tick of the page's clock
+            sockets[0].onmessage({ data: JSON.stringify({ tabId: 'tab-1', n: 2 }) });
+            sockets[1].onmessage({ data: JSON.stringify({ tabId: 'tab-1', n: 3 }) });
+            console.log(JSON.stringify({ got, sockets: sockets.length, oldClosed: sockets[0].closed }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/network.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $r = json_decode(implode('', $out), true);
+
+        $this->assertSame([1, 3], $r['got'], 'the backlog message is dropped, the new connection\'s is not');
+        $this->assertSame(2, $r['sockets']);
+        $this->assertTrue($r['oldClosed']);
+    }
 }

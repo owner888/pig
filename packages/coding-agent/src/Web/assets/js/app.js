@@ -15,6 +15,7 @@ import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
 import { primeAttention, notifyAway } from "./attention.js";
+import { away, catchUp, overCap, DRAWS_MESSAGES } from "./catchup.js";
 import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
 import { NodeWorkbench } from "./components/NodeWorkbench.js";
@@ -99,6 +100,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.historyIndex = -1;         // -1: not browsing; 0: the newest; 1: the one before …
         this.historyDraft = null;       // what was being typed when browsing began
         this.messagesLoaded = false;    // until the first `get_messages` is drawn, which clears the chat
+        this.stale = false;             // events not drawn while away (`catchup.js`): the last page is loaded when seen
+        this.liveMessages = 0;          // messages added live since the last page was drawn (`LIVE_CAP`)
         this.earlyNotices = [];         // `notify` lines that arrived before that, drawn after it
 
         this.scroller = document.createElement("div");
@@ -252,7 +255,49 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           this.render(() => appendErrorMessage((evt.extensionPath ? evt.extensionPath + ": " : "") + evt.error));
           return;
         }
+        // Away (`catchup.js`): a message is kept as far as the next draw needs it, not drawn; the
+        // tab loads its last page when it is seen. Everything else — running state, the queue, an
+        // extension's notification — goes on as ever.
+        if (DRAWS_MESSAGES.has(evt.type) && (this.stale || away(pageHiddenAt, Date.now()))) {
+          this.markStale();
+          catchUp(this, evt);
+          return;
+        }
         this.render(() => onEvent(evt));
+        if (evt.type === "message_end") this.messageAdded();
+      }
+
+      /** Stop drawing until the tab is seen: what is on its page is from before, and is replaced then. */
+      markStale() {
+        if (this.stale) return;
+        this.stale = true;
+        this.needsMessages = true;
+        // The answer that was streaming is drawn afresh from its text, not continued in its block.
+        this.currentAssistantBlock = null;
+        this.currentThinkingBox = null;
+      }
+
+      /** Seen again after being away: the last page, as after a reconnect, and what the child is doing. */
+      async catchUpNow() {
+        if (!this.stale) return;
+        // A reconnect in progress (`network.js` after a sleep) binds the tab, and `onBound()` loads
+        // the same page; asking over a connection that is gone only fails.
+        if (!this.bound) return;
+        await this.loadMessages();
+        await this.refreshState();
+      }
+
+      /**
+       * A message added live. A tab in view that has had `LIVE_CAP` of them draws its last page
+       * afresh, which takes the oldest off the page — scrolling up brings them back (`fetchOlder()`);
+       * one out of view stops drawing and does the same when it is opened.
+       */
+      messageAdded() {
+        this.liveMessages++;
+        if (!overCap(this)) return;
+        this.liveMessages = 0;
+        if (this === active) this.loadMessages();
+        else this.markStale();
       }
 
       /** Run `fn` with this tab as the one the DOM helpers draw into. */
@@ -353,16 +398,25 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
           // `limit` answers with everything and no `start`, which is drawn as it was.
           this.needsMessages = false;
+          this.stale = false;
+          this.liveMessages = 0;
           const token = this.remoteToken = {};
           const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD, ...imageRefs(this) });
           if (this.remoteToken !== token) return;
           this.render(() => renderMessages(withImageUrls(this, d.messages || [])));
+          // The answer still streaming is not among them (`get_messages` holds ended messages), but
+          // its text so far is known: drawn whole, and the rest of it follows into the same block.
+          if (this.isRunning && this.currentAssistantText.trim()) this.render(() => drawStreamingText());
           // The prompts of the conversation, for Up — upstream's `renderInitialMessages()` fills
-          // the editor's history the same way. What was typed since is in it already.
+          // the editor's history the same way. What was typed since is in it already. The page is the
+          // last part only, so prompts remembered from before it — drawn afresh after `LIVE_CAP`, or
+          // after a reconnect — are kept behind it rather than forgotten.
+          const remembered = this.promptHistory;
           this.promptHistory = [];
           for (const m of d.messages || []) {
             if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
           }
+          for (const prompt of remembered) if (!this.promptHistory.includes(prompt)) this.promptHistory.push(prompt);
           this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
           // A `session_start` handler's `notify` arrives before the conversation does, and drawing
           // the conversation clears the chat; the TUI keeps those lines, so they are put back.
@@ -394,6 +448,18 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     let active = null;        // the tab the person is looking at
     let slashAutocomplete = null;
     let renderingTab = null;  // the tab an event is being drawn into right now (see Tab.render)
+
+    // Since when the page has been hidden (`catchup.js`); null while it is shown. Seen again, the
+    // tab in view loads its last page if it stopped drawing; the others do when they are opened.
+    let pageHiddenAt = document.visibilityState === "hidden" ? Date.now() : null;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        pageHiddenAt ??= Date.now();
+        return;
+      }
+      pageHiddenAt = null;
+      active?.catchUpNow();
+    });
 
     // The old page-wide names, resolved against the tab being rendered into (an event) or the
     // active one (a keystroke). Reads and writes both go to the same tab, so the helpers below
@@ -838,6 +904,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     function setRunningState(running) {
+      const was = isRunning;
       isRunning = running;
       // The buttons are the page's, so only the tab being looked at drives them; a background
       // tab finishing its turn must not flip the stop button under a foreground one still running.
@@ -845,7 +912,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         sendBtn.style.display = running ? "none" : "flex";
         stopBtn.style.display = running ? "flex" : "none";
       }
-      agentWorkingChanged();
+      // The tab bar is drawn afresh for a change only: `turn_start` and `turn_end` come with every
+      // tool call, and a run of thousands redrew it thousands of times with nothing different.
+      if (was !== running) agentWorkingChanged();
     }
 
     // The header of a skill, summary or hook block can be selected; the click that ends that
@@ -1039,6 +1108,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       return currentAssistantBlock;
     }
 
+    /** The answer streaming so far, into its block. */
+    function drawStreamingText() {
+      const box = ensureAssistantBlock();
+      let prose = box.querySelector(".assistant-prose");
+      if (!prose) {
+        prose = document.createElement("div");
+        prose.className = "assistant-prose";
+        box.appendChild(prose);
+      }
+      prose.innerHTML = renderMarkdown(currentAssistantText);
+      scrollToBottomIfNeeded();
+    }
+
     // ---- events from a tab's child -----------------------------------------------------------
     //
     // Always called inside `Tab.render()`, so `chatScroll`, `currentAssistantBlock` and the rest
@@ -1142,15 +1224,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             currentThinkingBox.finish();
           }
           currentAssistantText += d.delta || "";
-          const box = ensureAssistantBlock();
-          let prose = box.querySelector(".assistant-prose");
-          if (!prose) {
-            prose = document.createElement("div");
-            prose.className = "assistant-prose";
-            box.appendChild(prose);
-          }
-          prose.innerHTML = renderMarkdown(currentAssistantText);
-          scrollToBottomIfNeeded();
+          drawStreamingText();
         }
       } else if (evt.type === "tool_execution_start") {
         if (currentThinkingBox?.finish) {

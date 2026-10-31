@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.2.5] - 2026-10-31
+
+### Fixed
+
+- A `pig web` page that was away — hidden for more than 30 seconds, a laptop locked or asleep while the conversation went on from another device — no longer draws everything it missed one message at a time. It keeps what it needs (whether a run is going, the stop button, notifications) and, when it is looked at again, loads the last page only, as a reconnect does; older messages come back when scrolled to. A backlog delivered all at once on waking is dropped the same way. On 3,000 tool rounds in a hidden tab: 7s of work instead of 90s, and the latest answer on screen 28ms after the tab is shown.
+- A tab left open and visible through a long run redraws its last page every 300 messages instead of growing without end (110,000 page nodes on 3,000 rounds, now 17,600), and keeps up with the run instead of falling minutes behind. Never while you are scrolled up reading.
+
 ## [1.2.4] - 2026-10-31
 
 ### Fixed
