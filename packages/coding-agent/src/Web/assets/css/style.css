@@ -1927,6 +1927,12 @@
     .diff-add { background: var(--color-tool-success-bg); color: var(--color-tool-diff-added); }
     .diff-del { background: var(--color-tool-error-bg); color: var(--color-tool-diff-removed); }
     .diff-ctx { color: var(--color-dim); }
+    /* A diff inside command output (`difftext.js`): the edit card's colours, as spans in the text. */
+    .tdiff-add { background: var(--color-tool-success-bg); color: var(--color-tool-diff-added); }
+    .tdiff-del { background: var(--color-tool-error-bg); color: var(--color-tool-diff-removed); }
+    .tdiff-hunk { color: var(--color-accent); }
+    .tdiff-meta { color: var(--color-dim); font-weight: 600; }
+    .tdiff-ctx { color: inherit; }
 
     /* Prose / Markdown with code block header, tables and copy button */
     .prose p { margin-bottom: 0.75em; }

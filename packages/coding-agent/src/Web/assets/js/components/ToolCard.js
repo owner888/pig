@@ -1,6 +1,7 @@
 import { escapeHtml, copyText } from "../utils.js";
 import { t } from "../i18n.js";
 import { renderDiff, renderDiffFromUnified } from "../markdown.js";
+import { highlightDiffs } from "../difftext.js";
 
 /** Browser affordances; all tools use the active theme's execution colors. */
 const TOOL_CONFIGS = {
@@ -158,7 +159,12 @@ export class ToolCard {
     if (this.toolName === "edit") return; // keep diff view intact
     if (this.toolName === "codemode") return; // the script stays until the result
 
-    body.innerHTML = `<div class="tool-terminal">${escapeHtml(this.rawOutput)}</div>`;
+    body.innerHTML = `<div class="tool-terminal">${this.#terminalHtml(this.rawOutput)}</div>`;
+  }
+
+  /** A command's output, with any unified diff in it coloured (`difftext.js`). */
+  #terminalHtml(text) {
+    return this.toolName === "bash" ? highlightDiffs(text, escapeHtml) : escapeHtml(text);
   }
 
   finish({ result, isError }) {
@@ -303,7 +309,7 @@ export class ToolCard {
       return shown + failure + imagesHtml;
     }
 
-    return `<div class="tool-terminal">${escapeHtml(textOutput)}</div>${imagesHtml}`;
+    return `<div class="tool-terminal">${this.#terminalHtml(textOutput)}</div>${imagesHtml}`;
   }
 }
 

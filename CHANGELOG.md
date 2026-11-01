@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.3.0] - 2026-11-01
+
+### Changed
+
+- In `pig web`, a unified diff in a command's output — `git diff`, `git show`, `diff -u` — is coloured like the edit tool's: removed and added lines, file headers and hunk headers. git colours only for a terminal, and the colour is added when the card is drawn rather than asked of git, so what the model reads stays plain. Output that only has lines starting with `-` or `+` (a listing, a list) stays plain; copying the card still copies the output exactly.
+
 ## [1.2.5] - 2026-10-31
 
 ### Fixed

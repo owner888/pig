@@ -262,4 +262,55 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(2, $r['sockets']);
         $this->assertTrue($r['oldClosed']);
     }
+
+    public function testADiffInCommandOutputIsColouredAndOtherOutputIsNot(): void
+    {
+        // `difftext.js` as it is. git colours only on a terminal and pig runs commands without
+        // one, so a bash card's `git diff` is coloured when drawn — by structure, with hunks read by
+        // their counts, so a listing or a list that merely starts lines with `-` stays plain.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8').replace(/^export /gm, '');
+            const m = new Function(src + '\nreturn { classifyDiffLines, highlightDiffs };')();
+            const kinds = (t) => m.classifyDiffLines(t.split('\n')).map((x) => x ?? '.').join(' ');
+            const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            console.log(JSON.stringify({
+                git: kinds("$ git diff\ndiff --git a/r.php b/r.php\nindex 1a2b3c4..5d6e7f8 100644\n--- a/r.php\n+++ b/r.php\n@@ -1,4 +1,3 @@\n keep\n-old one\n-old two\n+new\n keep2\ndone"),
+                twoFiles: kinds("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y b/y\n--- a/y\n+++ b/y\n@@ -2,0 +3 @@\n+c"),
+                plain: kinds("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file\nafter"),
+                ls: kinds("total 8\n-rw-r--r-- 1 a b 0 x\n-rw-r--r-- 1 a b 0 y"),
+                list: kinds("--- a\n+++ b\n- item\n+ other\n- third"),
+                npm: kinds("app@1.0.0\n├── a@1.0.0\n└─┬ b@2.0.0\n  └── c@3.0.0"),
+                miscount: kinds("--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n-a\nplain text"),
+                cut: kinds("--- a/x\n+++ b/x\n@@ -1,5 +1,5 @@\n ctx\n-cut"),
+                html: m.highlightDiffs("a<b\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-<i>\n+&", esc),
+                untouched: m.highlightDiffs("- one\n+ two <x>", esc),
+            }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/difftext.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $r = json_decode(implode('', $out), true);
+
+        $this->assertSame('. meta meta meta meta hunk ctx del del add ctx .', $r['git']);
+        $this->assertSame('meta meta meta hunk del add meta meta meta hunk add', $r['twoFiles']);
+        $this->assertSame('meta meta hunk del add meta .', $r['plain']);
+        $this->assertSame('. . .', $r['ls']);
+        $this->assertSame('. . . . .', $r['list'], 'no hunk header, no diff');
+        $this->assertSame('. . . .', $r['npm']);
+        $this->assertSame('. . . . .', $r['miscount'], 'lines that do not add up were never a hunk');
+        $this->assertSame('meta meta hunk ctx del', $r['cut'], 'output cut short colours what there is');
+        $this->assertSame(
+            "a&lt;b\n<span class=\"tdiff tdiff-meta\">--- a/x</span>\n<span class=\"tdiff tdiff-meta\">+++ b/x</span>\n"
+            . "<span class=\"tdiff tdiff-hunk\">@@ -1 +1 @@</span>\n<span class=\"tdiff tdiff-del\">-&lt;i&gt;</span>\n<span class=\"tdiff tdiff-add\">+&amp;</span>",
+            $r['html'],
+        );
+        $this->assertSame("- one\n+ two &lt;x&gt;", $r['untouched']);
+    }
 }
