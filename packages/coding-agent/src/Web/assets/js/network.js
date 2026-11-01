@@ -4,6 +4,9 @@
 
 import { t } from "./i18n.js";
 
+/** Reconnects that may fail before the banner says it is an error rather than a hiccup. */
+const RECONNECT_TRIES_BEFORE_ERROR = 3;
+
 export const clientId = (() => {
   try {
     let v = sessionStorage.getItem("pig-client-id");
@@ -43,7 +46,13 @@ export class SharedNetwork {
     // Callbacks provided by app.js / tabs
     this.getTabs = () => [];
     this.getActiveTab = () => null;
-    this.showStatus = (msg) => {};
+    this.showStatus = (msg, level) => {};
+    // Whether this page has been connected at all, and how many tries since it last was: the first
+    // "connecting" of a page is routine and drawn as such, a connection lost is a warning, and one
+    // that keeps failing is an error — one colour for all three made the routine one look as
+    // alarming as the real one, or the real one as calm as the routine.
+    this.everOpened = false;
+    this.failedTries = 0;
     this.hideStatus = () => {};
     this.onReachable = () => {};
 
@@ -111,6 +120,12 @@ export class SharedNetwork {
     return () => this.closeListeners.delete(fn);
   }
 
+  /** The banner for where the connection stands: first time, lost, or lost and not coming back. */
+  showConnecting() {
+    const level = this.failedTries >= RECONNECT_TRIES_BEFORE_ERROR ? "error" : this.everOpened || this.failedTries > 0 ? "warning" : "info";
+    this.showStatus(t(this.everOpened ? "disconnected" : "connecting"), level);
+  }
+
   connectionLost() {
     // A connection refused or dropped because the session is gone (logged out elsewhere, a new
     // password) is a trip to the login page, not a reconnect loop.
@@ -137,12 +152,14 @@ export class SharedNetwork {
         this.ws.close();
       } catch (e) {}
     }
-    this.showStatus(t("connecting"));
+    this.showConnecting();
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${location.host}/ws`);
     this.ws = ws;
 
     ws.onopen = () => {
+      this.everOpened = true;
+      this.failedTries = 0;
       this.hideStatus();
       this.onReachable();
       this.reconnectDelay = 1000;
@@ -212,7 +229,8 @@ export class SharedNetwork {
 
   scheduleReconnect() {
     if (this.reconnectTimer || this.closed) return;
-    this.showStatus(t("connecting"));
+    this.failedTries++;
+    this.showConnecting();
     const delay = this.reconnectDelay + Math.floor(Math.random() * 500);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

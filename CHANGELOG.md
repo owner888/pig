@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.3.1] - 2026-11-01
+
+### Changed
+
+- `pig web`'s banner says how much to worry: a page's first "connecting" stays in the usual colour, a connection lost and being retried is drawn as a warning and says so ("Disconnected from server. Retrying..."), and after three failed reconnects, or when pig cannot be reached, it turns to an error. A model request being retried is a warning too. One colour for all of them made the routine look as alarming as the real thing.
+
 ## [1.3.0] - 2026-11-01
 
 ### Changed

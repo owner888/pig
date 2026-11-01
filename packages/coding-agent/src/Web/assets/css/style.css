@@ -995,6 +995,18 @@
       justify-content: space-between;
       animation: fadeIn 0.15s ease-out;
     }
+    /* A connection lost, a request being retried: worth noticing, likely to pass. */
+    .status-banner[data-level="warning"] {
+      background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+      border-bottom-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+      color: var(--color-warning);
+    }
+    /* pig cannot be reached, or the connection keeps failing: look at it. */
+    .status-banner[data-level="error"] {
+      background: color-mix(in srgb, var(--color-error) 15%, transparent);
+      border-bottom-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+      color: var(--color-error);
+    }
 
     /* Messages container */
     /* One scroller per tab, stacked in #chat-area; only the active tab's is visible. A

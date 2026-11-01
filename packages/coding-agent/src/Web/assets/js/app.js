@@ -1260,7 +1260,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "auto_retry_start") {
-        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage }));
+        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage }), "warning");
       } else if (evt.type === "auto_retry_end") {
         if (tab === active) hideStatusBanner();
         tab?.refreshState();
@@ -1280,7 +1280,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Upstream's three summarization retry events: a compaction or branch summary hit a
         // transient error and will be tried again — the same banner the turn's own retry uses.
         if (evt.errorMessage) appendErrorMessage(evt.errorMessage);
-        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage || "" }));
+        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage || "" }), "warning");
       } else if (evt.type === "summarization_retry_attempt_start") {
         if (tab === active) showStatusBanner(t(evt.source === "branchSummary" ? "summarising_branch_banner" : "compacting_banner"));
       } else if (evt.type === "summarization_retry_finished") {
@@ -1361,10 +1361,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
-    function showStatusBanner(text) {
+    /** @param {"info"|"warning"|"error"} level how much it needs looking at — the banner's colour */
+    function showStatusBanner(text, level = "info") {
       const banner = document.getElementById("status-banner");
       if (banner) {
         banner.innerText = text;
+        banner.dataset.level = level;
         banner.style.display = "flex";
       }
     }
@@ -1377,7 +1379,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function pigUnreachable(what, err) {
       const why = err && err.message ? err.message : String(err);
       unreachable = t("unreachable", { error: `${what}: ${why}` });
-      showStatusBanner(unreachable);
+      showStatusBanner(unreachable, "error");
       setTimeout(() => { refreshState(); active?.loadMessages(); if (availableModels.length === 0) loadModels(); }, 3000);
     }
     function pigReachable() {
@@ -1397,6 +1399,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (banner) {
         banner.style.display = "none";
         banner.innerText = "";
+        delete banner.dataset.level;
       }
     }
 

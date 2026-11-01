@@ -213,6 +213,55 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertFalse($r['reading'], 'not while the reader is scrolled up');
     }
 
+    public function testTheConnectionBannerSaysHowMuchToWorry(): void
+    {
+        // The first connection of a page is routine; a connection lost is a warning; one that
+        // keeps failing is an error. Same text and colour for all three hid the one that mattered.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            let src = fs.readFileSync(process.argv[1], 'utf8')
+                .replace(/^import .*$/m, 'const t = (k) => k;')
+                .replace(/^export /gm, '');
+            const sockets = [];
+            const timers = [];
+            const sandbox = {
+                Date: { now: () => 0 },
+                setInterval: () => 0,
+                setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+                sessionStorage: { getItem: () => 'id', setItem: () => {} },
+                fetch: () => Promise.reject(new Error('offline')),
+                location: { protocol: 'http:', host: 'localhost' },
+                window: { addEventListener: () => {} },
+                document: { visibilityState: 'visible', addEventListener: () => {} },
+                WebSocket: class { static OPEN = 1; constructor() { this.readyState = 0; sockets.push(this); } close() {} send() {} },
+                console,
+            };
+            const network = new Function(...Object.keys(sandbox), src + '\nreturn network;')(...Object.values(sandbox));
+            const seen = [];
+            network.init({ getTabs: () => [], showStatus: (text, level) => seen.push(text + ':' + level), hideStatus: () => seen.push('hidden') });
+            const failOnce = () => { sockets[sockets.length - 1].onclose(); timers.shift()(); };
+            network.connect();                    // the page opens
+            sockets[0].onopen();                  // and is connected
+            failOnce(); failOnce(); failOnce();   // then the connection drops and keeps failing
+            console.log(JSON.stringify(seen));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/network.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $seen = json_decode(implode('', $out), true);
+
+        $this->assertSame('connecting:info', $seen[0], 'the first connection is routine');
+        $this->assertSame('hidden', $seen[1]);
+        $this->assertSame('disconnected:warning', $seen[2], 'a connection lost is a warning');
+        $this->assertSame('disconnected:error', end($seen), 'and an error when it keeps failing');
+    }
+
     public function testAMessageReadJustAfterASleepDropsTheBacklogForANewConnection(): void
     {
         // `network.js` as it is: the page's timers did not run (asleep), the clock moved on, and
