@@ -1356,7 +1356,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       const body = card.querySelector(".tool-body");
       if (body && evt.output) {
-        body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.output)}</div>`;
+        body.innerHTML = ToolCard.bodyCopyButton() + `<div class="tool-terminal">${escapeHtml(evt.output)}</div>`;
         body.scrollTop = body.scrollHeight;
       }
     }

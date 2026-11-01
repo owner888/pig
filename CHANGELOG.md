@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.3.2] - 2026-11-01
+
+### Changed
+
+- In `pig web`, a command card's header button copies the command — the thing one most often wants to run again — and the output has a copy button of its own at its top right, which stays in view while the output scrolls (shown on hover, always on a touch screen). Other tools' cards keep the header button for their output and get the same one over it.
+
 ## [1.3.1] - 2026-11-01
 
 ### Changed

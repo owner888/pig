@@ -32,7 +32,21 @@ const TOOL_CONFIGS = {
  * - Output copy action button
  * - Clean collapsible container
  */
+/**
+ * The copy button over a card's output, top right, staying in view as the output scrolls. The
+ * header's button copies the command for `bash` — the thing one most often wants to run again —
+ * so the output gets a button of its own, where code blocks keep theirs.
+ */
+function bodyCopyButton() {
+  return `<button class="tool-body-copy" title="${escapeHtml(t("copy_output"))}" onclick="event.stopPropagation(); window.copyToolOutput?.(this)">📋</button>`;
+}
+
 export class ToolCard {
+  /** For a body drawn outside this class (`app.js`), so it gets the same button. */
+  static bodyCopyButton() {
+    return bodyCopyButton();
+  }
+
   constructor(evt) {
     this.toolCallId = evt.toolCallId;
     this.toolName = evt.toolName || "";
@@ -113,6 +127,7 @@ export class ToolCard {
       bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_running"))}</div>`;
     }
 
+    if (this.toolName === "bash") this.element.dataset.command = String(this.args.command ?? "");
     this.element.innerHTML = `
       <div class="tool-header">
         <div class="tool-header-left">
@@ -121,7 +136,9 @@ export class ToolCard {
           <span class="tool-header-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
         </div>
         <div class="tool-header-right">
-          <button class="tool-copy-btn" title="${escapeHtml(t("copy"))}" onclick="event.stopPropagation(); window.copyToolOutput?.(this)">📋</button>
+          ${this.toolName === "bash" && typeof this.args.command === "string" && this.args.command !== ""
+            ? `<button class="tool-copy-btn" title="${escapeHtml(t("copy_command"))}" onclick="event.stopPropagation(); window.copyToolCommand?.(this)">📋</button>`
+            : `<button class="tool-copy-btn" title="${escapeHtml(t("copy"))}" onclick="event.stopPropagation(); window.copyToolOutput?.(this)">📋</button>`}
           <span class="tool-header-status running">
             <span class="tool-status-dot"></span>
             ${escapeHtml(t("tool_running"))}
@@ -159,7 +176,7 @@ export class ToolCard {
     if (this.toolName === "edit") return; // keep diff view intact
     if (this.toolName === "codemode") return; // the script stays until the result
 
-    body.innerHTML = `<div class="tool-terminal">${this.#terminalHtml(this.rawOutput)}</div>`;
+    body.innerHTML = bodyCopyButton() + `<div class="tool-terminal">${this.#terminalHtml(this.rawOutput)}</div>`;
   }
 
   /** A command's output, with any unified diff in it coloured (`difftext.js`). */
@@ -185,7 +202,7 @@ export class ToolCard {
     this.element.dataset.status = this.isError ? "error" : "done";
     const body = this.element.querySelector(".tool-body");
     if (body) {
-      body.innerHTML = this.formatResultBody();
+      body.innerHTML = bodyCopyButton() + this.formatResultBody();
       if (this.isError) {
         body.classList.add("expanded");
         this.element.querySelector(".tool-header-chevron")?.classList.add("expanded");
@@ -313,16 +330,9 @@ export class ToolCard {
   }
 }
 
-// Global copy handler for tool output
+// Global copy handlers: the output, and a command's own text.
 if (typeof window !== "undefined") {
-  window.copyToolOutput = function(btn) {
-    const card = btn.closest(".tool-card");
-    if (!card) return;
-    const terminal = card.querySelector(".tool-terminal") || card.querySelector(".diff-container");
-    // textContent, not innerText: a collapsed card's body is not rendered, and what innerText
-    // answers for that differs between browsers.
-    const text = terminal ? terminal.textContent : "";
-    if (!text) return;
+  const copyWithMark = (btn, text) => {
     const show = (mark, color) => {
       btn.innerText = mark;
       btn.style.color = color;
@@ -338,6 +348,19 @@ if (typeof window !== "undefined") {
         show("✗", "var(--color-error)");
       },
     );
+  };
+  window.copyToolOutput = function(btn) {
+    const card = btn.closest(".tool-card");
+    if (!card) return;
+    const terminal = card.querySelector(".tool-terminal") || card.querySelector(".diff-container");
+    // textContent, not innerText: a collapsed card's body is not rendered, and what innerText
+    // answers for that differs between browsers.
+    const text = terminal ? terminal.textContent : "";
+    if (text) copyWithMark(btn, text);
+  };
+  window.copyToolCommand = function(btn) {
+    const command = btn.closest(".tool-card")?.dataset.command ?? "";
+    if (command) copyWithMark(btn, command);
   };
 }
 

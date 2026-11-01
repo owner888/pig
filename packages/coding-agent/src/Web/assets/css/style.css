@@ -1295,6 +1295,29 @@
       justify-content: center;
       transition: all 0.15s ease;
     }
+    /* The output's own copy button: top right, and still there when the output is scrolled. */
+    .tool-body-copy {
+      position: sticky;
+      top: 0;
+      float: right;
+      margin: -6px -8px 0 8px;
+      background: var(--color-background);
+      border: 1px solid var(--color-border);
+      color: var(--color-dim);
+      border-radius: var(--radius-sm);
+      padding: 2px 5px;
+      font-size: var(--text-sm);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 1;
+    }
+    .tool-body:hover .tool-body-copy, .tool-body-copy:focus-visible { opacity: 1; }
+    .tool-body-copy:hover { color: var(--color-text-primary); background: var(--color-hover-strong); }
+    /* No hover on a touch screen: always shown, faintly. */
+    @media (hover: none) {
+      .tool-body-copy { opacity: .7; }
+    }
     .tool-copy-btn:hover {
       background: var(--color-hover-strong);
       border-color: var(--color-border);
