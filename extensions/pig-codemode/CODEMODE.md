@@ -65,8 +65,9 @@ What a call answers depends on the tool:
 - Other tools, such as `read`, `edit`, `write` and `bash`, answer their text output as a string.
 - A result that carries pictures — `read` on a PNG, `generate_image` — answers
   `['text' => '...', 'images' => [['type' => 'image', 'data' => <base64>, 'mimeType' => 'image/png'], ...]]`.
-  Show one with `image($r['images'][0])`; do not `text()` or `return` the `data`, it is large and
-  the model cannot read it as text.
+  Show one with `image($r['images'][0])`. An image block inside a value you `return` or pass to
+  `text()` — a whole result returned as it is — is shown the same way, once per picture, and the
+  text says `[image: image/png, shown as an image]` where it was; its base64 never goes out as text.
 
 A call that fails, is blocked, or gets invalid arguments throws an exception carrying the
 tool's error text — except a tool with an output schema that answered its structured array on
@@ -165,8 +166,8 @@ return array_map(fn ($r, $i) => $r['stopReason'] === 'stop'
 The context is `['input' => [block, ...]]`: the prompt as `['type' => 'text', 'text' => ...]`
 blocks, plus `['type' => 'image', 'data' => <base64>, 'mimeType' => ...]` blocks to edit or use
 as references. The result's `output` is the same kind of list. Show generated images with
-`image($block)`; do not `text()` or `return` the `data`, it is large and the model cannot read
-it as text. `image()` also saves each image to a temp file and names its path in the result.
+`image($block)`, or return them: a block in a returned or `text()` value is shown as an image, never
+sent as base64. `image()` also saves each image to a temp file and names its path in the result.
 
 ```php
 // @options: {"timeout_ms": 300000}
