@@ -49,18 +49,27 @@ final class CannedResponse
                 return;
             }
 
-            // Read the request head, so the client is not writing into a closed socket, then answer.
-            stream_set_blocking($peer, true);
-            stream_set_timeout($peer, 2);
-            $head = '';
-
-            while (!str_contains($head, "\r\n\r\n") && ($chunk = fread($peer, 8192)) !== false && $chunk !== '') {
-                $head .= $chunk;
-            }
-
-            fwrite($peer, $payload);
-            fclose($peer);
             Loop::get()->cancel((string) $watcher);
+
+            // Read the request head, so the client is not writing into a closed socket, then answer.
+            // On the loop, a chunk at a time: the client is on this loop too, and a blocking read
+            // here kept it from sending its request until the read timed out — 2s a response.
+            stream_set_blocking($peer, false);
+            $head = '';
+            $reader = null;
+            $reader = Loop::get()->onReadable($peer, static function (mixed $peer) use ($payload, &$head, &$reader): void {
+                $chunk = fread($peer, 8192);
+                $head .= is_string($chunk) ? $chunk : '';
+
+                if (!str_contains($head, "\r\n\r\n") && $chunk !== '' && $chunk !== false && !feof($peer)) {
+                    return;
+                }
+
+                Loop::get()->cancel((string) $reader);
+                stream_set_blocking($peer, true);
+                fwrite($peer, $payload);
+                fclose($peer);
+            });
         });
         self::$servers[] = $socket;
         self::$watchers[] = $watcher;

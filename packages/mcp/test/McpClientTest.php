@@ -42,11 +42,13 @@ final class McpClientTest extends TestCase
      * test looks at what the server received. One more turn of the loop is the fix, and a real
      * transport writes to a pipe where the question does not arise.
      */
+    /** Two ticks that run what is ready and wait for nothing: a slow answer still due is not waited out. */
     private function settle(): void
     {
-        Loop::get()->delay(0.0, static fn () => null);
-        Loop::get()->tick();
-        Loop::get()->tick();
+        for ($tick = 0; $tick < 2; $tick++) {
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
     }
 
     /** @return list<string> the methods the server was sent, in order */

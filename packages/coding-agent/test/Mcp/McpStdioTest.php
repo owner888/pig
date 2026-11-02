@@ -156,12 +156,15 @@ final class McpStdioTest extends TestCase
         fclose($this->hostIn);
         $this->hostIn = fopen('php://memory', 'r') ?: throw new RuntimeException('no stand-in');
 
-        // Returns only because the server stopped the loop on EOF; a hang here is the failure.
-        Async::run(function (): void {
-            Async::delay(5.0);
-        });
+        // The server reads the EOF and stops watching its stdin. (This used to wait out a 5s
+        // `Async::delay()` and assert nothing: `Async::run()` returns when its coroutine does, not
+        // when the loop is stopped, so it passed after five seconds whether or not the server stopped.)
+        for ($tick = 0; $tick < 10 && Loop::get()->isWatchingStreams(); $tick++) {
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
 
-        $this->assertTrue(true);
+        $this->assertFalse(Loop::get()->isWatchingStreams(), 'the server stopped reading at EOF');
     }
 
     /**

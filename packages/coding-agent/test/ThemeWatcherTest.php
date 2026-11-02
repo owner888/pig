@@ -76,7 +76,11 @@ final class ThemeWatcherTest extends TestCase
 
         $json['colors']['accent'] = '#123456';
         $this->write($path, $json);
-        self::runUntil(static fn (): bool => $changes >= 2);
+        // By reference: an arrow function takes `$changes` by value, and waited the whole five
+        // seconds for a 1 that could never become 2 — the reload had long happened.
+        self::runUntil(static function () use (&$changes): bool {
+            return $changes >= 2;
+        });
         $this->assertSame(2, $changes);
         $this->assertSame('#123456', Colors::colorToHex(Themes::theme()->colors()['accent']));
 
