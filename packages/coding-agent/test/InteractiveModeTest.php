@@ -595,10 +595,22 @@ final class InteractiveModeTest extends TestCase
     }
 
     /** Run the loop until it has nothing left to do, so a spawned prompt can finish. */
+    /**
+     * Run what the loop has to do now and soon — callbacks, I/O, a render a few milliseconds off —
+     * and stop at what is far off. A working loader's next frame is always 80ms away, so waiting
+     * for the loop to go idle while the agent works meant fifty ticks of waiting for frames: 1.9s
+     * a call, most of this file's minute and a half.
+     */
     private function settle(): void
     {
-        for ($tick = 0; $tick < 50 && !Loop::get()->isIdle(); $tick++) {
-            Loop::get()->tick();
+        $loop = Loop::get();
+
+        for ($tick = 0; $tick < 50 && !$loop->isIdle(); $tick++) {
+            $next = $loop->nextTimerIn();
+            if (!$loop->isWatchingStreams() && ($next === null || $next > 0.05)) {
+                return;
+            }
+            $loop->tick();
         }
     }
 

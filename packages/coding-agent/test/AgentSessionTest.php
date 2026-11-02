@@ -734,7 +734,7 @@ final class AgentSessionTest extends TestCase
             });
 
             return $stream;
-        });
+        }, settings: Settings::inMemory(['retry' => ['baseDelayMs' => 1]])); // the retries between, without their seconds
 
         foreach (range(1, 6) as $ignored) {
             $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));

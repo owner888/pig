@@ -210,6 +210,23 @@ final class Loop
         return $id;
     }
 
+    /**
+     * Seconds until the next tick has something to run: 0 with a callback queued or a timer
+     * overdue, null with no timer set at all. For a test settling the loop, which runs what is
+     * about to happen and stops at what is far off — an animation's next frame — rather than
+     * waiting it out.
+     */
+    public function nextTimerIn(): ?float
+    {
+        return $this->pollTimeout();
+    }
+
+    /** Whether a stream is watched: something outside the loop (a process, a socket) may still answer. */
+    public function isWatchingStreams(): bool
+    {
+        return $this->readers !== [] || $this->writers !== [];
+    }
+
     /** True when nothing is left to run — no queue, no watchers, no timers. */
     public function isIdle(): bool
     {
