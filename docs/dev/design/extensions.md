@@ -342,10 +342,10 @@ quota monitoring (`/antigravity.usage`, `/antigravity.models`), account manageme
 (`/antigravity.refresh`), image command (`/antigravity.image`), and the `generate_image` agent tool.
 All extensions in pig are pure PHP implementations without Node.js or npm dependencies.
 
-`extensions/pig-web-search/index.php` provides real-time web search via DuckDuckGo HTML scraping
-(`web_search`), readable page text extraction (`fetch_web_page`), and `/search <query>`. Future
-headless browser or Puppeteer / CDP scraping extensions belong in this extension, preserving core
-agent minimalism.
+Web search (`web_search` over DuckDuckGo's HTML, `fetch_web_page`, the headless-Chrome
+`browse_web_page`, `/search`) is the package `pig-web-search`
+(`pig install git:github.com/owner888/pig-web-search`), no longer bundled; browser scraping belongs
+there rather than in the core.
 
 ## MCP servers, and the tool that arrives after startup
 

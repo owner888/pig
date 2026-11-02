@@ -304,6 +304,7 @@ final class SelfUpdate
     public const array MOVED_TO_PACKAGES = [
         'pig-android-use' => 'git:github.com/owner888/pig-android-use',
         'pig-computer' => 'git:github.com/owner888/pig-computer',
+        'pig-web-search' => 'git:github.com/owner888/pig-web-search',
     ];
 
     /**

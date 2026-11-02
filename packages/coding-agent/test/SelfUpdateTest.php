@@ -184,6 +184,7 @@ final class SelfUpdateTest extends TestCase
                 $this->assertDirectoryDoesNotExist(SelfUpdate::coreExtensionsDir() . '/' . $moved, "{$moved} is no longer bundled");
             }
             $this->assertArrayHasKey('pig-computer', SelfUpdate::MOVED_TO_PACKAGES);
+            $this->assertArrayHasKey('pig-web-search', SelfUpdate::MOVED_TO_PACKAGES);
 
             $this->assertSame(['pig-android-use'], SelfUpdate::removeMovedBundled($home));
             $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-android-use");
