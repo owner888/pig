@@ -66,6 +66,7 @@ final class SelfUpdate
 
             echo Style::green("✔ pig has been updated to the latest commit.\n");
             self::announceInstalled(self::installNewBundled());
+            self::announceMoved(self::removeMovedBundled());
             echo Style::dim("Changelog: " . self::CHANGELOG_URL . "\n");
 
             return 0;
@@ -96,6 +97,7 @@ final class SelfUpdate
 
         echo Style::green("✔ pig has been updated to the latest version.\n");
         self::announceInstalled(self::installNewBundled());
+        self::announceMoved(self::removeMovedBundled());
         echo Style::dim("Changelog: " . self::CHANGELOG_URL . "\n");
 
         return 0;
@@ -111,6 +113,7 @@ final class SelfUpdate
         $updated = 0;
 
         echo Style::dim("Updating extensions in {$userDir}...\n");
+        self::announceMoved(self::removeMovedBundled());
 
         if (is_dir($userDir)) {
             $items = scandir($userDir) ?: [];
@@ -290,6 +293,45 @@ final class SelfUpdate
     {
         foreach ($installed as $folder) {
             echo Style::green("✔ Installed new built-in extension '{$folder}'\n");
+        }
+    }
+
+    /**
+     * Bundled extensions that left pig to become packages of their own, and the source each is
+     * installed from now. An older pig copied them into `~/.pig/agent/extensions`; nothing syncs
+     * that copy any more, and beside the installed package it would register the same tools twice.
+     */
+    public const array MOVED_TO_PACKAGES = ['pig-android-use' => 'git:github.com/owner888/pig-android-use'];
+
+    /**
+     * Remove the copies of bundled extensions that are packages now — run by every `pig update`,
+     * `--extensions` included. A folder with its own `.git` is a checkout the person made, not a
+     * copy pig made, and stays; so does a symlink.
+     *
+     * @return list<string> the folders removed
+     */
+    public static function removeMovedBundled(?string $home = null): array
+    {
+        $userDir = ($home ?? Config::home()) . '/extensions';
+        $removed = [];
+
+        foreach (array_keys(self::MOVED_TO_PACKAGES) as $folder) {
+            $path = "{$userDir}/{$folder}";
+
+            if (is_dir($path) && !is_link($path) && !is_dir("{$path}/.git")) {
+                self::deleteRecursive($path);
+                $removed[] = $folder;
+            }
+        }
+
+        return $removed;
+    }
+
+    /** @param list<string> $removed */
+    private static function announceMoved(array $removed): void
+    {
+        foreach ($removed as $folder) {
+            echo Style::yellow("Removed the old bundled copy of '{$folder}': it is a package now. Install it with: pig install " . self::MOVED_TO_PACKAGES[$folder] . "\n");
         }
     }
 

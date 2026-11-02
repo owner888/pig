@@ -169,4 +169,38 @@ final class SelfUpdateTest extends TestCase
             SelfUpdate::deleteRecursive($home);
         }
     }
+
+    public function testAnUpdateRemovesTheCopyOfABundledExtensionThatIsAPackageNow(): void
+    {
+        // pig-android-use left pig for its own repository: the copy an older pig made is synced
+        // from nowhere, and beside the package it would register the android_* tools twice.
+        $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        mkdir("{$home}/extensions/pig-android-use/src", 0o755, true);
+        file_put_contents("{$home}/extensions/pig-android-use/index.php", '<?php');
+        file_put_contents("{$home}/extensions/pig-android-use/src/AdbClient.php", '<?php');
+
+        try {
+            $this->assertArrayHasKey('pig-android-use', SelfUpdate::MOVED_TO_PACKAGES);
+            $this->assertDirectoryDoesNotExist(SelfUpdate::coreExtensionsDir() . '/pig-android-use', 'no longer bundled');
+
+            $this->assertSame(['pig-android-use'], SelfUpdate::removeMovedBundled($home));
+            $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-android-use");
+            $this->assertSame([], SelfUpdate::removeMovedBundled($home));
+        } finally {
+            SelfUpdate::deleteRecursive($home);
+        }
+    }
+
+    public function testACheckoutOfAMovedExtensionIsThePersonsAndStays(): void
+    {
+        $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        mkdir("{$home}/extensions/pig-android-use/.git", 0o755, true);
+
+        try {
+            $this->assertSame([], SelfUpdate::removeMovedBundled($home));
+            $this->assertDirectoryExists("{$home}/extensions/pig-android-use/.git");
+        } finally {
+            SelfUpdate::deleteRecursive($home);
+        }
+    }
 }

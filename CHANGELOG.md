@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Android use is no longer bundled with pig: it is the package `pig-android-use`, licensed Apache-2.0, installed with `pig install git:github.com/owner888/pig-android-use`. Same tools, `/android` command, skill and web page, plus notes on 23 common apps. `pig update` (with or without `--extensions`) removes the old bundled copy from `~/.pig/agent/extensions/` and prints the install line; a copy that is a git checkout of its own is left alone. The extension keeps its name, so `disabledExtensions: ["pig-android-use"]` still reaches the package.
+
 ## [1.3.2] - 2026-11-01
 
 ### Changed
