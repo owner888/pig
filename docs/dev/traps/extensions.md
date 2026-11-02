@@ -21,6 +21,7 @@ Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensio
 - [An extension tool's constrainedSampling was dropped](#an-extension-tools-constrainedsampling-was-dropped)
 - [It just stopped: a TypeError in a listener walked into `Agent`'s catch and the whole turn vanished silently](#it-just-stopped-a-typeerror-in-a-listener-walked-into-agents-catch-and-the-whole-turn-vanished-silently)
 - [The Antigravity accounts panel said "no accounts" while the conversation used one](#the-antigravity-accounts-panel-said-no-accounts-while-the-conversation-used-one)
+- [A screenshot went out as 30,000 tokens of base64 because a codemode script returned it](#a-screenshot-went-out-as-30000-tokens-of-base64-because-a-codemode-script-returned-it)
 
 ## A hook's message was the one long thing in the transcript ctrl+o could not fold
 
@@ -476,3 +477,22 @@ terminal never reached it.
 
 **Rule**: everything in `pig-antigravity` that lists or picks accounts calls `$sync()` first
 (`Accounts::syncCurrentAuth()`, with `auth.json` read again).
+
+## A screenshot went out as 30,000 tokens of base64 because a codemode script returned it
+
+**Symptom**: a script did `return ['tree' => $t, 'observe' => $tools->android_observe([...])]`; the
+codemode result was "Warning: truncated output (original token count: 29910)", most of it the
+screenshot's base64, and the model had to `read` the JPEG to see the picture it had asked for.
+
+**Cause**: pig hands a script the pictures of a tool result (`['text' => ..., 'images' => [block]]`)
+so `image($r['images'][0])` can show them; upstream does not — its `toScriptValue()` resolves a
+tool to its text only, so a returned value never holds a picture. pig kept upstream's
+`JSON.stringify` of the returned value (`json_encode`), and of `text()`'s argument, and a block
+went out as its `data`.
+
+**Rule**: a value that becomes text in the child — the returned value and `text()`'s argument —
+goes through `__codemode_lift_images()` first: every image block in it is shown with `image()`,
+once per picture, and replaced by `[image: <mime>, shown as an image]`. Anything pig adds to what a
+script receives must be checked against every way a script can send a value back.
+
+**Tests**: `CodemodeExtensionTest::testAPictureInAReturnedOrPrintedValueIsShownNotSentAsBase64`.

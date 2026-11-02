@@ -339,7 +339,42 @@ final class __CodemodeTools
 /** Appends a text item. Non-strings are JSON-encoded. */
 function text(mixed $value): void
 {
-    __CodemodeBridge::output('text', __codemode_format($value));
+    __CodemodeBridge::output('text', __codemode_format(__codemode_lift_images($value)));
+}
+
+/**
+ * Image blocks inside a value that becomes text — `text($r)`, `return [... 'shot' => $r]` — shown
+ * as images, each replaced in the value by a line saying so.
+ *
+ * pig hands a script the pictures of a tool result (`['text' => ..., 'images' => [block, ...]]`),
+ * which upstream does not: there a tool resolves to its text only. Encoded as JSON, a block is its
+ * whole base64 — tens of thousands of tokens of a screenshot the model then cannot see, cut off
+ * by the output limit. A script that returns or prints a picture means to show it, so it is shown.
+ */
+function __codemode_lift_images(mixed $value): mixed
+{
+    if (!is_array($value)) {
+        return $value;
+    }
+
+    // A picture is shown once, however many places it sits in: the model would pay for each copy.
+    static $shown = [];
+
+    if (($value['type'] ?? null) === 'image' && is_string($value['data'] ?? null) && is_string($value['mimeType'] ?? null)) {
+        $key = md5($value['data']);
+        if (!isset($shown[$key])) {
+            image($value);
+            $shown[$key] = true;
+        }
+
+        return "[image: {$value['mimeType']}, shown as an image]";
+    }
+
+    foreach ($value as $key => $item) {
+        $value[$key] = __codemode_lift_images($item);
+    }
+
+    return $value;
 }
 
 /**
@@ -757,7 +792,7 @@ $body = preg_replace('/^\s*<\?php\s*/', '', $code) ?? $code;
 
 try {
     $run = eval('return static function ($tools, $models) { ' . $body . "\n};");
-    $value = $run($tools, new __CodemodeModels());
+    $value = __codemode_lift_images($run($tools, new __CodemodeModels()));
     ob_get_level() > 0 && ob_flush();
     __CodemodeBridge::done(true, $value);
 } catch (__CodemodeExit) {

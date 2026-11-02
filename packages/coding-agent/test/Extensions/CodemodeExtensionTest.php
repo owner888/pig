@@ -634,6 +634,39 @@ PHP));
         $this->stop($started);
     }
 
+    public function testAPictureInAReturnedOrPrintedValueIsShownNotSentAsBase64(): void
+    {
+        // A script that returned a tool result whole — `return ['shot' => $tools->android_observe(...)]`
+        // — sent the picture as base64 text: 30,000 tokens of a screenshot, cut off by the output
+        // limit, that the model could not see. Upstream never hands a script a picture, so it
+        // never had this; pig does, so a block inside a returned or printed value is shown.
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+        file_put_contents($this->cwd . '/dot.png', $png);
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
+            $r = $tools->read(['path' => 'dot.png']);
+            text(['printed' => $r]);
+            return ['returned' => $r];
+            PHP], null, $started->hooks->context(), null));
+
+        $images = array_values(array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\ImageContent));
+        $this->assertCount(1, $images, 'the same picture twice is one image');
+        $this->assertSame(base64_encode($png), $images[0]->data);
+
+        $text = implode("\n", array_map(static fn ($b): string => $b->text, array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\TextContent)));
+        $this->assertStringNotContainsString(base64_encode($png), $text, 'no base64 in the text');
+        $this->assertSame(2, substr_count($text, '"[image: image/png, shown as an image]"'), 'each place the block was says what became of it');
+        foreach (glob(sys_get_temp_dir() . '/pig-codemode-*.png') ?: [] as $saved) {
+            if (file_get_contents($saved) === $png) {
+                unlink($saved);
+            }
+        }
+        $this->stop($started);
+    }
+
     public function testBashResolvesToItsStructuredOutputEvenWhenTheCommandFails(): void
     {
         // Upstream's `bashOutputSchema` and `toScriptValue()`: `{ output, truncated,

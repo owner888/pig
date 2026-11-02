@@ -52,6 +52,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Fixed
+
+- Fixed codemode sending a picture as base64 text when a script returned or printed a tool result that had one — `return ['shot' => $tools->android_observe(...)]` put a whole screenshot into the output as text, tens of thousands of tokens the model could not see, cut off by the output limit. An image block inside a returned value or a `text()` argument is now shown as an image, and the text says `[image: image/jpeg, shown as an image]` where it was. Upstream never hands a script a picture (a tool resolves to its text), so this follows pig's own `['text', 'images']` results.
+
 ### Changed
 
 - Android use is no longer bundled with pig: it is the package `pig-android-use`, licensed Apache-2.0, installed with `pig install git:github.com/owner888/pig-android-use`. Same tools, `/android` command, skill and web page, plus notes on 23 common apps. `pig update` (with or without `--extensions`) removes the old bundled copy from `~/.pig/agent/extensions/` and prints the install line; a copy that is a git checkout of its own is left alone. The extension keeps its name, so `disabledExtensions: ["pig-android-use"]` still reaches the package.
