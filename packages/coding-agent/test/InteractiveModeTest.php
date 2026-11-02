@@ -221,6 +221,9 @@ final class InteractiveModeTest extends TestCase
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
+        // The session would ask the scripted model for its name after the first prompt, and take an
+        // answer meant for the next one: off here, its own tests are in AgentSettledTest.
+        $this->settings->setAutoSessionNameEnabled(false);
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
         $agent->setModel(new Model(

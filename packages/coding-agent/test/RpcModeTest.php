@@ -179,6 +179,10 @@ final class RpcModeTest extends TestCase
             default => null,
         };
 
+        // The session would ask the scripted model for its name after the first prompt, and take an
+        // answer meant for the next one: off here, its own tests are in AgentSettledTest.
+        $settings?->setAutoSessionNameEnabled(false);
+
         // With the settings, as `CodingAgent::session()` builds it: the session is what writes
         // the chosen model and thinking level down for next time.
         $this->session = new AgentSession(

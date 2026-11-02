@@ -173,6 +173,7 @@ final class RpcMode
     {
         $this->session->subscribe($this->onAgentEvent(...));
         $this->session->enableCacheWarming();
+        $this->session->enableAutoSessionName();
 
         $this->session->setMode('rpc');
         $this->session->onShutdownRequest(function (): void {

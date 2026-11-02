@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- A session names itself, as Claude Code's do: after the first prompt settles, pig asks the session's model, in the background, for a few words on what the first exchange is about — in the language the person writes in — and makes them the session's name, for the footer, the session list and the Web UI's tabs. Asked once per session, never over a name given with `/name` (or a scheduled task's), never in `-p`; the question is the first message and the first answer cut to 300 characters each, so it costs a few hundred tokens once, written to the session file as a `session_title` usage entry so it is on the bill. Off with `autoSessionName.enabled: false` in `settings.json` or the *Name sessions* row in `/settings` — the key the developer's `smart-session` extension read, which this replaces: delete `~/.pig/agent/extensions/smart-session.php`, or both will name the session.
+- The terminal's window and tab title is the session's name (`pig` while it has none), and follows `/name`, a new session and `/resume`.
+
 ## [1.4.0] - 2026-11-02
 
 ### Changed

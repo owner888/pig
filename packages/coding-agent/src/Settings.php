@@ -1119,6 +1119,21 @@ final class Settings
         $this->set('tokenSpeed.enabled', $enabled);
     }
 
+    /**
+     * pig's own: a session names itself after its first prompt (`Session\SessionTitle`), on unless
+     * `autoSessionName.enabled` is false — the key the developer's `smart-session` extension read,
+     * so a settings file written for it keeps meaning the same thing.
+     */
+    public function autoSessionNameEnabled(): bool
+    {
+        return $this->get('autoSessionName.enabled') !== false;
+    }
+
+    public function setAutoSessionNameEnabled(bool $enabled): void
+    {
+        $this->set('autoSessionName.enabled', $enabled);
+    }
+
     /** Upstream's `getShowTerminalProgress()`: OSC 9;4 progress in the terminal's tab while working. */
     public function showTerminalProgress(): bool
     {

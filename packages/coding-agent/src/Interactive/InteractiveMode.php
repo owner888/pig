@@ -620,11 +620,28 @@ final class InteractiveMode
         $this->session->onSessionNameChanged(function (): void {
             // The session name is part of working and done reports.
             $this->programStatus->report();
+            $this->showTitle();
             $this->tui->requestRender();
         });
-        $this->session->onSessionSwitched(fn () => $this->programStatus->reset());
+        $this->session->onSessionSwitched(function (): void {
+            $this->programStatus->reset();
+            $this->showTitle();
+        });
         $this->session->subscribe($this->onEvent(...));
         $this->session->enableCacheWarming();
+        $this->session->enableAutoSessionName();
+        $this->showTitle();
+    }
+
+    /**
+     * The session's name as the terminal's window and tab title, `pig` while it has none — pig's
+     * own, so a tab says which conversation is in it. Control characters are left out: a name is
+     * text from a model, and an escape in it would end the title and write to the screen.
+     */
+    private function showTitle(): void
+    {
+        $name = (string) preg_replace('/[\x00-\x1f\x7f]+/', ' ', $this->session->sessionName() ?? '');
+        $this->tui->terminal->setTitle(trim($name) !== '' ? trim($name) : 'pig');
     }
 
     /** Wire everything up and draw the first frame. */
@@ -7162,6 +7179,13 @@ final class InteractiveMode
             values: ['true', 'false'],
         );
         $rows[] = new SettingItem(
+            'autoSessionName',
+            'Name sessions',
+            $this->settings->autoSessionNameEnabled() ? 'true' : 'false',
+            'Name a session after its first prompt with a short title from the model (one small request); a name given with /name is kept',
+            values: ['true', 'false'],
+        );
+        $rows[] = new SettingItem(
             'showTerminalProgress',
             'Terminal progress',
             $this->settings->showTerminalProgress() ? 'true' : 'false',
@@ -7424,6 +7448,7 @@ final class InteractiveMode
             'autocompleteMaxVisible' => $this->useAutocompleteMaxVisible((int) $value),
             'showTerminalProgress' => $this->settings->setShowTerminalProgress($value === 'true'),
             'tokenSpeed' => $this->useTokenSpeed($value === 'true'),
+            'autoSessionName' => $this->settings->setAutoSessionNameEnabled($value === 'true'),
             'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
             'fullscreenScrollbar' => $this->useFullscreenScrollbar($value),
             'fullscreenCopyOnSelect' => $this->useFullscreenCopyOnSelect($value === 'true'),

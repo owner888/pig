@@ -156,6 +156,12 @@ final class AgentSession
     /** Upstream's `_cacheWarmer`; null until a mode with a next request turns it on. */
     private ?CacheWarmer $cacheWarmer = null;
 
+    /** Whether a session names itself (`SessionTitle`): off until a mode with a person in it turns it on. */
+    private bool $autoSessionName = false;
+
+    /** @var array<string, true> sessions a name has been asked for, so a failure is not asked again each prompt */
+    private array $titleAsked = [];
+
     /** @var array<string, true> `prompt()`'s request ids taken, or being taken, by this process */
     private array $requests = [];
 
@@ -942,6 +948,81 @@ final class AgentSession
         $this->cacheWarmer?->cancel();
         $this->closeSessionResources();
         $this->removeScratch();
+    }
+
+    /**
+     * Let the session name itself after its first prompt — pig's own (`SessionTitle`). A mode
+     * turns it on, as it does cache warming: the terminal and RPC (and so the Web UI) do; `-p`
+     * does not, since it ends with its answer and its session is seldom looked at again.
+     */
+    public function enableAutoSessionName(): void
+    {
+        $this->autoSessionName = true;
+    }
+
+    /**
+     * After a prompt settles: ask the model for a name if the session has none yet, once per
+     * session, in the background — the person's next prompt does not wait for it.
+     */
+    private function nameItself(): void
+    {
+        // Without settings (a bare SDK session) nothing extra is asked of the model.
+        $store = $this->store;
+        $model = $this->model();
+
+        if (!$this->autoSessionName || $store === null || $model === null || isset($this->titleAsked[$store->id])
+            || $this->sessionName() !== null || !($this->settings?->autoSessionNameEnabled() ?? false)) {
+            return;
+        }
+
+        $excerpt = SessionTitle::excerpt($this->messages());
+        if ($excerpt === null) {
+            return;
+        }
+
+        $this->titleAsked[$store->id] = true;
+        $inner = $this->innerStream;
+        $key = $this->keyFor($model);
+
+        Async::spawn(function () use ($store, $model, $key, $excerpt, $inner): void {
+            try {
+                $context = Transcript::normalizeContext(new Context([new UserMessage(SessionTitle::prompt($excerpt))]));
+                // The session's headers, timeouts and transport, as a turn's request has them.
+                $options = $this->buildRequestOptions($model, new SimpleStreamOptions(maxTokens: 1000, apiKey: $key, maxRetries: 0));
+                $response = $inner !== null ? $inner($model, $context, $options) : Stream::simple($model, $context, $options);
+
+                foreach ($response as $ignored) {
+                    // Only the whole answer is used.
+                }
+
+                $message = $response->result()->await();
+                if (!$message instanceof AssistantMessage || $message->stopReason === StopReason::Error || $message->stopReason === StopReason::Aborted) {
+                    return;
+                }
+
+                $text = '';
+                foreach ($message->content as $part) {
+                    if ($part instanceof TextContent) {
+                        $text .= $part->text;
+                    }
+                }
+
+                // The session may have moved on meanwhile: another one opened, or a name given.
+                if ($this->store !== $store) {
+                    return;
+                }
+
+                $store->appendUsage('session_title', $message->provider, $message->responseModel ?? $message->model, $message->usage);
+                $this->announceAppendedEntry();
+
+                $title = SessionTitle::clean($text);
+                if ($title !== null && $this->sessionName() === null) {
+                    $this->setSessionName($title);
+                }
+            } catch (Throwable) {
+                // Best effort, as cache warming is: a session without a name is still a session.
+            }
+        });
     }
 
     /** Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket is the one there is. */
@@ -4608,6 +4689,8 @@ final class AgentSession
         } finally {
             $this->emittingSettled = false;
         }
+
+        $this->nameItself();
 
         $deferred = $this->deferredSettledActions;
         $this->deferredSettledActions = [];

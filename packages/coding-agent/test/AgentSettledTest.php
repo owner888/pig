@@ -477,6 +477,55 @@ final class AgentSettledTest extends TestCase
         exec('rm -rf ' . escapeshellarg($dir));
     }
 
+    public function testASessionNamesItselfAfterItsFirstPromptWhenTheModeAsks(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-settle-' . bin2hex(random_bytes(4));
+        $session = $this->start(['Here is the fix.', '"Fix the login bug."', 'More.'], store: SessionManager::create($dir));
+        $session->enableAutoSessionName();
+
+        Async::run(static fn () => $session->prompt('the login page returns 500'));
+        self::settle();
+
+        $this->assertSame('Fix the login bug', $session->sessionName(), 'the answer, without its quotes and full stop');
+        $this->assertSame(2, $this->calls, 'one request for the answer, one for the name');
+
+        Async::run(static fn () => $session->prompt('and the logout page?'));
+        self::settle();
+
+        $this->assertSame(3, $this->calls, 'asked once: a named session is not asked again');
+        exec('rm -rf ' . escapeshellarg($dir));
+    }
+
+    public function testNoNameIsAskedForWithoutTheModeOrTheSettingOrOverAGivenOne(): void
+    {
+        $dir = sys_get_temp_dir() . '/pig-settle-' . bin2hex(random_bytes(4));
+
+        $session = $this->start(['answer'], store: SessionManager::create($dir));
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+        $this->assertNull($session->sessionName(), '-p never turns it on');
+        $this->assertSame(1, $this->calls, 'and nothing was asked');
+
+        $this->calls = 0;
+        $session = $this->start(['answer'], settings: Settings::inMemory(['autoSessionName' => ['enabled' => false]]), store: SessionManager::create($dir));
+        $session->enableAutoSessionName();
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+        $this->assertNull($session->sessionName(), 'autoSessionName.enabled: false');
+        $this->assertSame(1, $this->calls, 'and nothing was asked');
+
+        $this->calls = 0;
+        $session = $this->start(['answer'], store: SessionManager::create($dir));
+        $session->enableAutoSessionName();
+        $session->setSessionName('Mine');
+        Async::run(static fn () => $session->prompt('hi'));
+        self::settle();
+        $this->assertSame('Mine', $session->sessionName(), 'a name given with /name stays');
+        $this->assertSame(1, $this->calls);
+
+        exec('rm -rf ' . escapeshellarg($dir));
+    }
+
     // ---- helpers ------------------------------------------------------------------------
 
     private function assertSettledOnceAtTheEnd(): void
