@@ -730,10 +730,10 @@ final class TerminalUi implements HookUi
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $nodes[] = new ThemedText(
+            // Half the screen at most, so what is being chosen from is never pushed off it.
+            $nodes[] = new DialogTitle(
                 static fn (): string => Themes::theme()->fg('muted', $title instanceof Closure ? $title() : $title),
-                1,
-                0,
+                fn (): int => intdiv($this->tui->terminal->rows(), 2),
             );
         }
 

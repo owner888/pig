@@ -271,6 +271,37 @@ final class HookUiTest extends TestCase
         $this->assertTrue($answer);
     }
 
+    /**
+     * A hundred-line command in the permission gate's confirm: in fullscreen the dock cut what did
+     * not fit from the bottom, which was the Yes / No — a dialog with the keys and nothing to answer.
+     * The title now keeps its first and last lines within half the screen, and says what is between.
+     */
+    public function testALongMessageLeavesTheChoicesOnScreen(): void
+    {
+        $answer = null;
+        $command = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 100)));
+
+        Async::spawn(function () use (&$answer, $command): void {
+            $answer = $this->ui->confirm('Run this?', $command);
+        });
+
+        $this->settle();
+        $lines = $this->tui->render(80);
+        $screen = implode("\n", array_map(Ansi::strip(...), $lines));
+
+        $this->assertMatchesRegularExpression('/→ Yes\s+No/s', $screen);
+        $this->assertStringContainsString('Run this?', $screen, 'the head stays');
+        $this->assertStringContainsString('line 100', $screen, 'and the tail');
+        $this->assertStringNotContainsString('line 50', $screen);
+        $this->assertMatchesRegularExpression('/… \d+ more lines …/', $screen);
+        $this->assertLessThan(24, count($lines), 'a dialog that fits the 24-row terminal');
+
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertTrue($answer);
+    }
+
     public function testTheDefaultChoiceIsYesAndNoIsOneKeyDown(): void
     {
         $answer = null;

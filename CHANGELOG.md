@@ -50,16 +50,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
-
-### Fixed
-
-- Fixed codemode sending a picture as base64 text when a script returned or printed a tool result that had one — `return ['shot' => $tools->android_observe(...)]` put a whole screenshot into the output as text, tens of thousands of tokens the model could not see, cut off by the output limit. An image block inside a returned value or a `text()` argument is now shown as an image, and the text says `[image: image/jpeg, shown as an image]` where it was. Upstream never hands a script a picture (a tool resolves to its text), so this follows pig's own `['text', 'images']` results.
+## [1.4.0] - 2026-11-02
 
 ### Changed
 
 - Android use is no longer bundled with pig: it is the package `pig-android-use`, licensed Apache-2.0, installed with `pig install git:github.com/owner888/pig-android-use`. Same tools, `/android` command, skill and web page, plus notes on 23 common apps. `pig update` (with or without `--extensions`) removes the old bundled copy from `~/.pig/agent/extensions/` and prints the install line; a copy that is a git checkout of its own is left alone. The extension keeps its name, so `disabledExtensions: ["pig-android-use"]` still reaches the package.
 - Computer use is no longer bundled with pig either: it is the package `pig-computer` (MIT), installed with `pig install git:github.com/owner888/pig-computer` — same tools, `/computer` command, skill and web page. `pig update` removes the old bundled copy the same way and prints the install line; without it installed, pig has no desktop tools, so a request about an app is not taken for the Mac's. The README no longer calls it browser automation: it drives the macOS desktop.
+
+### Fixed
+
+- Fixed codemode sending a picture as base64 text when a script returned or printed a tool result that had one — `return ['shot' => $tools->android_observe(...)]` put a whole screenshot into the output as text, tens of thousands of tokens the model could not see, cut off by the output limit. An image block inside a returned value or a `text()` argument is now shown as an image, and the text says `[image: image/jpeg, shown as an image]` where it was. Upstream never hands a script a picture (a tool resolves to its text), so this follows pig's own `['text', 'images']` results.
+- Fixed a confirmation with a long message leaving nothing to answer: the permission gate puts the whole command in its question, and a hundred-line heredoc pushed Yes / No out of the fullscreen dock — the dialog had the keys and the turn waited on it, but there was nothing on screen to choose. A dialog's title now takes at most half the screen, keeping its first and last lines and saying how many are between (`… 87 more lines …`); select and input dialogs get the same.
 
 ## [1.3.2] - 2026-11-01
 
