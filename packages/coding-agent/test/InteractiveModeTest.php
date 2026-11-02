@@ -4818,6 +4818,11 @@ final class InteractiveModeTest extends TestCase
             $this->type(self::ENTER);
             $this->settle();
 
+            // The opener is started and left to run, not waited on, so nothing in the loop says
+            // when it is done: wait for what it writes, a while at most.
+            for ($waited = 0; $waited < 500 && (string) @file_get_contents($marker) === ''; $waited++) {
+                usleep(10_000);
+            }
             $this->assertFileExists($marker, 'online, the URL is handed to the opener');
             $this->assertStringContainsString('claude.ai', (string) file_get_contents($marker));
 
