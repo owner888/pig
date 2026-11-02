@@ -55,6 +55,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Changed
 
 - Android use is no longer bundled with pig: it is the package `pig-android-use`, licensed Apache-2.0, installed with `pig install git:github.com/owner888/pig-android-use`. Same tools, `/android` command, skill and web page, plus notes on 23 common apps. `pig update` (with or without `--extensions`) removes the old bundled copy from `~/.pig/agent/extensions/` and prints the install line; a copy that is a git checkout of its own is left alone. The extension keeps its name, so `disabledExtensions: ["pig-android-use"]` still reaches the package.
+- Computer use is no longer bundled with pig either: it is the package `pig-computer` (MIT), installed with `pig install git:github.com/owner888/pig-computer` — same tools, `/computer` command, skill and web page. `pig update` removes the old bundled copy the same way and prints the install line; without it installed, pig has no desktop tools, so a request about an app is not taken for the Mac's. The README no longer calls it browser automation: it drives the macOS desktop.
 
 ## [1.3.2] - 2026-11-01
 

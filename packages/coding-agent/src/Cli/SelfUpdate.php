@@ -301,7 +301,10 @@ final class SelfUpdate
      * installed from now. An older pig copied them into `~/.pig/agent/extensions`; nothing syncs
      * that copy any more, and beside the installed package it would register the same tools twice.
      */
-    public const array MOVED_TO_PACKAGES = ['pig-android-use' => 'git:github.com/owner888/pig-android-use'];
+    public const array MOVED_TO_PACKAGES = [
+        'pig-android-use' => 'git:github.com/owner888/pig-android-use',
+        'pig-computer' => 'git:github.com/owner888/pig-computer',
+    ];
 
     /**
      * Remove the copies of bundled extensions that are packages now — run by every `pig update`,

@@ -613,11 +613,11 @@ final class SettingsTest extends TestCase
     public function testDisabledExtensionsAreReadFromSettings(): void
     {
         $this->writeGlobal([
-            'disabledExtensions' => ['pig-vless', 'pig-computer'],
+            'disabledExtensions' => ['pig-vless', 'pig-web-search'],
         ]);
 
         $settings = $this->load();
-        $this->assertSame(['pig-vless', 'pig-computer'], $settings->disabledExtensions());
+        $this->assertSame(['pig-vless', 'pig-web-search'], $settings->disabledExtensions());
 
         $this->writeGlobal(['disabledExtensions' => 'not an array']);
         $settings = $this->load();
