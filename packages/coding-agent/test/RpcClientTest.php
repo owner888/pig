@@ -1057,6 +1057,36 @@ final class RpcClientTest extends TestCase
         $this->assertSame('pig ' . Version::current(), trim($this->saidBy(['--version'])));
     }
 
+    public function testADeletedWorkingDirectoryIsOneLineAndExitOne(): void
+    {
+        $binary = RpcClient::defaultBinary();
+
+        if (!is_file($binary) || !is_file(dirname($binary) . '/../vendor/autoload.php') || PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('bin/pig needs to be there with its autoloader, and a directory that can be removed under it');
+        }
+
+        $gone = sys_get_temp_dir() . '/pig-gone-' . bin2hex(random_bytes(4));
+        mkdir($gone);
+
+        // Upstream #11509: removed under the shell that is still in it, then `--version` from there.
+        $process = proc_open(
+            ['sh', '-c', 'cd "$1" && rmdir "$1" && exec "$2" "$3" --version', 'sh', $gone, PHP_BINARY, $binary],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        $this->assertTrue(is_resource($process), 'bin/pig would not start');
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $code = proc_close($process);
+
+        $this->assertDirectoryDoesNotExist($gone);
+        $this->assertSame('', $out);
+        $this->assertStringContainsString('Error: The current working directory no longer exists. Change to an existing directory and try again.', $err);
+        $this->assertSame(1, $code);
+    }
+
     public function testTheHelpNamesTheFlagThatTurnsTheUpdateCheckOff(): void
     {
         // A flag nobody can find is a flag that is not there, and this one is the only way to skip

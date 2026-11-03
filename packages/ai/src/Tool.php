@@ -21,12 +21,6 @@ final readonly class Tool
      *        provider has it, and `['type' => 'grammar', 'variants' => ['openai_lark' => '…']]` (or
      *        `openai_regex`) for an OpenAI custom grammar tool (`Utils\ConstrainedSampling`). Null and
      *        false both mean no.
-     * @param bool $typeBox the schema stands for one upstream builds with TypeBox — pig's built-in
-     *        tools, whose upstream schemas are `Type.Object(…)`. Upstream's `validateToolArguments()`
-     *        runs TypeBox's `Value.Convert` over the arguments first, and that only converts nodes
-     *        TypeBox made, so it does something for the built-ins and nothing for a plain JSON
-     *        schema (an extension's, an MCP server's). `Agent\ToolArguments` reads this to take the
-     *        same path. Never sent to a provider.
      * @param array<string, mixed>|null $outputSchema upstream's `AgentTool.outputSchema`: the JSON
      *        Schema of the tool's `AgentToolResult::$structuredContent`. Codemode declares a tool
      *        that has one as resolving to that shape rather than to a string, and hands a script
@@ -37,7 +31,6 @@ final readonly class Tool
         public string $description,
         public array $parameters,
         public array|false|null $constrainedSampling = null,
-        public bool $typeBox = false,
         public ?array $outputSchema = null,
     ) {
     }

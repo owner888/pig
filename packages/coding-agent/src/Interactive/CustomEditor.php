@@ -8,6 +8,7 @@ use Closure;
 use Pig\CodingAgent\Keybindings;
 use Pig\Tui\Ansi;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Focusable;
 use Pig\Tui\Component;
@@ -38,7 +39,7 @@ use Pig\Tui\TuiMouseEventResult;
  *
  * Ported from upstream's `components/custom-editor.ts`.
  */
-class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
+class CustomEditor implements Component, Focusable, InputHandler, MouseHandler, CapturesViewportInput
 {
     /** Set by the renderer and handed to the wrapped editor, which is what draws the cursor. */
     public bool $focused = false;
@@ -96,7 +97,9 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
     }
 
     /**
-     * Upstream's `CustomEditor.handleInput()`, in its order: the paste key, interrupt (unless the
+     * Upstream's `CustomEditor.handleInput()`, in its order: the selection page keys while the
+     * completion list is open (so a page key bound to Ctrl+V pages the list rather than pasting an
+     * image), the paste key, interrupt (unless the
      * completion list is open, where Escape closes it), exit (only from an empty prompt — with
      * text in it the key is the editor's delete-forward), the dedicated history keys (which win
      * over an app action on the same key, so `ctrl+p` can be bound to history), then every other
@@ -109,6 +112,12 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
     public function handleInput(string $data): void
     {
         $kb = $this->keybindings;
+
+        if ($this->editor->isShowingSuggestions() && ($kb->matches($data, 'tui.select.pageUp') || $kb->matches($data, 'tui.select.pageDown'))) {
+            $this->editor->handleInput($data);
+
+            return;
+        }
 
         if ($kb->matches($data, 'app.clipboard.pasteImage')) {
             if (isset($this->handlers['app.clipboard.pasteImage'])) {
@@ -262,6 +271,13 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
     public function invalidate(): void
     {
         $this->editor->invalidate();
+    }
+
+    /** The wrapped editor's answer: an open completion list receives fullscreen PageUp/PageDown. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return $this->editor->capturesViewportInput();
     }
 
     #[\Override]

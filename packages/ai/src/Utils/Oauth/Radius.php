@@ -116,9 +116,9 @@ final readonly class Radius
         }
 
         $json = JsJson::parse($text);
-        $endpoint = is_array($json) ? ($json['authorizationEndpoint'] ?? null) : null;
+        $endpoint = TrustedUrl::trustedHttpUrl(is_array($json) ? ($json['authorizationEndpoint'] ?? null) : null);
 
-        if (!is_string($endpoint)) {
+        if ($endpoint === null) {
             throw new OauthError("Invalid Radius OAuth config from {$this->gateway}");
         }
 
@@ -193,8 +193,11 @@ final readonly class Radius
             }
         }
 
+        $verificationUri = TrustedUrl::trustedHttpUrl($device['verification_uri'])
+            ?? throw new OauthError('Untrusted verification_uri in Radius OAuth device authorization response');
+
         // `notify({type: "device_code", userCode, verificationUri, …})`.
-        $onAuth((string) $device['verification_uri'], "Enter code: {$device['user_code']}");
+        $onAuth($verificationUri, "Enter code: {$device['user_code']}");
         $interval = $device['interval'] ?? null;
 
         return DeviceCodeFlow::pollOAuthDeviceCodeFlow(

@@ -224,7 +224,12 @@ final class GithubCopilot
             throw new OauthError('GitHub answered the device-code request without the codes in it.');
         }
 
-        return new DeviceCode($code, $user, $uri, $interval, $expires);
+        // The verification URI is opened in the person's browser, and the launcher would open a
+        // file or a custom protocol just as readily.
+        $trustedUri = TrustedUrl::trustedHttpUrl($uri)
+            ?? throw new OauthError('Untrusted verification_uri in device code response');
+
+        return new DeviceCode($code, $user, $trustedUri, $interval, $expires);
     }
 
     /**

@@ -136,11 +136,25 @@ final class ProcessTerminalTest extends TestCase
         $this->assertTrue($called);
     }
 
+    /** Session names come from session files: a BEL or ESC in one would end the OSC and send the rest as sequences. */
+    public function testTheTitleCannotEndItsOscSequence(): void
+    {
+        $output = fopen('php://memory', 'w+');
+        $this->assertIsResource($output);
+        $terminal = new ProcessTerminal(STDIN, $output);
+
+        $terminal->setTitle("pi - work\x07\x1b]52;c;Zm9v\x07\u{009b}2J - repo");
+
+        $this->assertSame("\x1b]0;pi - work ]52;c;Zm9v 2J - repo\x07", stream_get_contents($output, -1, 0));
+    }
+
     public function testNormalizeNativeInputPreservesNonReturnData(): void
     {
         $ref = new \ReflectionMethod(ProcessTerminal::class, 'normalizeNativeInput');
         $this->assertSame('abc', $ref->invoke(null, 'abc'));
         $this->assertSame("\n", $ref->invoke(null, "\n"));
+        // ESC+CR is a Shift+Enter candidate (upstream #11559); with no Shift held it stays itself.
+        $this->assertSame("\x1b\r", $ref->invoke(null, "\x1b\r"));
     }
 
     // ---- OSC 7501, the support query's answers sifted out of the input (#10607) --------------

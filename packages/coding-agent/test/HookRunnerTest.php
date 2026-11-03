@@ -29,6 +29,7 @@ use Pig\CodingAgent\Session\FileOperations;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
+use Pig\CodingAgent\Hooks\ExecResult;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookError;
@@ -674,6 +675,44 @@ final class HookRunnerTest extends TestCase
         $this->assertFalse($result->ok());
         $this->assertSame(3, $result->exitCode);
         $this->assertStringContainsString('oops', $result->stderr);
+    }
+
+    public function testExecOutputPastMaxBufferIsCutAndTheCommandStopped(): void
+    {
+        // A descendant that keeps writing must not keep the call waiting either.
+        $command = ['sh', '-c', 'printf abc; printf def >&2; yes'];
+        $blocking = (new HookApi('.'))->exec($command, maxBuffer: 6);
+        $onLoop = null;
+        Async::run(static function () use (&$onLoop, $command): void {
+            $onLoop = (new HookApi('.'))->exec($command, maxBuffer: 6);
+        });
+
+        foreach ([$blocking, $onLoop] as $result) {
+            $this->assertInstanceOf(ExecResult::class, $result);
+            $this->assertTrue($result->truncated);
+            $this->assertTrue($result->stopped());
+            $this->assertFalse($result->ok());
+            $this->assertSame(6, strlen($result->stdout) + strlen($result->stderr));
+        }
+
+        $this->assertFalse((new HookApi('.'))->exec(['echo', 'hi'], maxBuffer: 3)->truncated);
+        $this->assertSame(ExecResult::MAX_BUFFER, 128 * 1024 * 1024);
+    }
+
+    public function testExecDropsACharacterTheCapCutThrough(): void
+    {
+        // "é" is two bytes; a cap of 2 keeps "a" and half of it, and half is dropped.
+        $result = (new HookApi('.'))->exec(['sh', '-c', 'printf "a\303\251"; sleep 5'], maxBuffer: 2);
+
+        $this->assertTrue($result->truncated);
+        $this->assertSame('a', $result->stdout);
+    }
+
+    public function testANegativeMaxBufferIsRefusedBeforeAnythingRuns(): void
+    {
+        $this->expectException(\Pig\Tui\TuiError::class);
+
+        (new HookApi('.'))->exec(['echo', 'hi'], maxBuffer: -1);
     }
 
     public function testAHooksCommandDoesNotFreezeTheScreenWhileItRuns(): void

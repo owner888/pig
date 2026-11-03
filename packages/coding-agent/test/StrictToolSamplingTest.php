@@ -129,18 +129,12 @@ final class StrictToolSamplingTest extends ToolTestCase
     }
 
     /**
-     * Upstream's built-in tools are TypeBox schemas, so `validateToolArguments()` runs `Value.Convert`
-     * over their arguments; a plain JSON schema is not converted. Every built-in here says so
-     * (`Tool::$typeBox`), and `ToolArguments` then converts the way TypeBox does: a null for the
-     * required `path` is the string "null", where pig made it "", and an empty string for a number
-     * is 0, where pig refused it.
+     * Upstream converts every tool's arguments with TypeBox's rules (pi-schema, 6536f80), the
+     * built-ins' included: a null for the required `path` is the string "null", where pig made it
+     * "", and an empty string for a number is 0, where pig refused it.
      */
     public function testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre(): void
     {
-        foreach ($this->tools() as $tool) {
-            $this->assertTrue($tool->definition()->typeBox, $tool->definition()->name);
-        }
-
         $read = new ReadTool($this->cwd);
 
         $this->assertSame(

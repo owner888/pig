@@ -117,6 +117,7 @@ final class BuiltinCatalog
         'gpt-6-sol',
         'gpt-6-luna',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     ];
 
     /**
@@ -216,19 +217,17 @@ final class BuiltinCatalog
      * for the GPT-6 family." Only the `openai` provider on the Responses API: "Not enabled for
      * openai-codex (Codex CLI keeps it behind a flag that is off by default) or proxies."
      */
-    private const array OPENAI_MID_CONVO_EFFORT_MODEL_IDS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'];
+    private const array OPENAI_MID_CONVO_EFFORT_MODEL_IDS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'];
 
     /**
      * Upstream's generator `OPENAI_TOOL_SEARCH_MODEL_IDS`, which is also its
-     * `OPENAI_ADDITIONAL_TOOLS_MODEL_IDS` and `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS`: the OpenAI
-     * models that take client-executed tool search, message-anchored `additional_tools`, and system
-     * messages after the conversation has started. See `transcriptCompat()`.
+     * `OPENAI_ADDITIONAL_TOOLS_MODEL_IDS`: the OpenAI models that take client-executed tool search and
+     * message-anchored `additional_tools`. "GPT-5.5 and older put tools loaded through tool search or
+     * additional_tools in a namespace named after the tool and reject replayed calls without it, so
+     * history from other models fails there (#11415). Like Codex, dynamic tool loading therefore
+     * starts with GPT-5.6, which does not do this."
      */
     private const array OPENAI_TOOL_SEARCH_MODEL_IDS = [
-        'gpt-5.4',
-        'gpt-5.4-mini',
-        'gpt-5.4-pro',
-        'gpt-5.5',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
@@ -236,6 +235,20 @@ final class BuiltinCatalog
         'gpt-6-sol',
         'gpt-6-luna',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
+    ];
+
+    /**
+     * Upstream's generator `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS`: the OpenAI models that take
+     * system messages after the conversation has started — GPT-5.4 and GPT-5.5 as well as every
+     * `OPENAI_TOOL_SEARCH_MODEL_IDS` one.
+     */
+    private const array OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = [
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.4-pro',
+        'gpt-5.5',
+        ...self::OPENAI_TOOL_SEARCH_MODEL_IDS,
     ];
 
     /**
@@ -425,6 +438,7 @@ final class BuiltinCatalog
         'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6.1-terra' => ['GPT-6.1 Terra', 272_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25, 'tiers' => [[272_000, 2.0, 7.5, 0.1, 2.5]]],
         'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
@@ -839,6 +853,7 @@ final class BuiltinCatalog
         'gpt-6-luna' => ['GPT-6 Luna', Api::AzureOpenAiResponses, 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125],
         'gpt-6-sol' => ['GPT-6 Sol', Api::AzureOpenAiResponses, 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
         'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::AzureOpenAiResponses, 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'gpt-6.1-terra' => ['GPT-6.1 Terra', Api::AzureOpenAiResponses, 272_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25],
         'gpt-daybreak-blue-latest' => ['Daybreak Blue', Api::AzureOpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
         'gpt-daybreak-red-latest' => ['Daybreak Red', Api::AzureOpenAiResponses, 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625],
         'gpt-realtime-2.1' => ['GPT-Realtime-2.1', Api::AzureOpenAiResponses, 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0],
@@ -855,7 +870,7 @@ final class BuiltinCatalog
      * ChatGPT's Codex backend (`Providers\OpenAiCodexResponses`), signed in with a ChatGPT Plus/Pro
      * subscription. Not from models.dev: upstream's generator keeps "a small, explicit list to avoid
      * aliases" (`codexModels`), only those the backend accepts for ChatGPT accounts (#11173), at Codex's
-     * 272k window — GPT-6.1 Sol's is 500k, the default `/backend-api/codex/models` returns — and 128k
+     * 272k window — GPT-6.1 Sol's and Terra's is 500k, the default `/backend-api/codex/models` returns — and 128k
      * output, priced at
      * `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])` — the generator's `CODEX_MODELS`.
      *
@@ -870,6 +885,7 @@ final class BuiltinCatalog
         'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
         'gpt-6.1-sol' => ['GPT-6.1 Sol', 500_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
+        'gpt-6.1-terra' => ['GPT-6.1 Terra', 500_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25, 'tiers' => [[272_000, 2.0, 7.5, 0.1, 2.5]]],
         // <<< generated
     ];
 
@@ -902,8 +918,8 @@ final class BuiltinCatalog
         'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
         'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
         'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
-        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
-        'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
+        'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/systemone/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
+        'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/systemone/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
         'openrouter/baseten/elephant-1:free' => ['Baseten: Elephant 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
         'openrouter/baseten/mammoth-1:free' => ['Baseten: Mammoth 1 (free)', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 16_384, ['text'], 0.0, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
         'openrouter/cloudflare/clef' => ['Cloudflare: Clef', ClassifierApi::TypesafeSystemOne, 'https://openrouter.ai/api/v1', 65_536, ['text', 'image'], 0.24, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'state-image-urls', 'sendImageOptInHeader' => false]],
@@ -1139,21 +1155,24 @@ final class BuiltinCatalog
         'moonshotai' => [self::MOONSHOTAI_MODELS, ['openai-completions' => 'https://api.moonshot.ai/v1']],
         'moonshotai-cn' => [self::MOONSHOTAI_CN_MODELS, ['openai-completions' => 'https://api.moonshot.cn/v1']],
         'nvidia' => [self::NVIDIA_MODELS, ['openai-completions' => 'https://integrate.api.nvidia.com/v1']],
-        // "Anthropic SDK appends /v1/messages to baseURL"; the other three APIs are under `/v1`. The
-        // `inference` endpoints, not `zen`: "/zen/go has no Gemini route (404)".
+        // The documented protocol-specific endpoints, which models.dev also lists per model (upstream
+        // #11434): "Anthropic SDK appends /v1/messages to baseURL", so Messages is `/anthropic`; both
+        // OpenAI APIs are under `/openai/v1`, Gemini under `/google/v1beta`. The `inference` endpoints,
+        // not `zen`: "/zen/go has no Gemini route (404)".
         'opencode' => [self::OPENCODE_MODELS, [
-            'anthropic-messages' => 'https://opencode.ai/inference',
-            'google-generative-ai' => 'https://opencode.ai/inference/v1',
-            'openai-completions' => 'https://opencode.ai/inference/v1',
-            'openai-responses' => 'https://opencode.ai/inference/v1',
+            'anthropic-messages' => 'https://opencode.ai/inference/anthropic',
+            'google-generative-ai' => 'https://opencode.ai/inference/google/v1beta',
+            'openai-completions' => 'https://opencode.ai/inference/openai/v1',
+            'openai-responses' => 'https://opencode.ai/inference/openai/v1',
         ]],
         'opencode-go' => [self::OPENCODE_GO_MODELS, [
-            'anthropic-messages' => 'https://opencode.ai/inference/go',
-            'google-generative-ai' => 'https://opencode.ai/inference/go/v1',
-            'openai-completions' => 'https://opencode.ai/inference/go/v1',
-            'openai-responses' => 'https://opencode.ai/inference/go/v1',
+            'anthropic-messages' => 'https://opencode.ai/inference/go/anthropic',
+            'google-generative-ai' => 'https://opencode.ai/inference/go/google/v1beta',
+            'openai-completions' => 'https://opencode.ai/inference/go/openai/v1',
+            'openai-responses' => 'https://opencode.ai/inference/go/openai/v1',
         ]],
-        // `buildOpenRouterCatalog()`: `anthropic/…` models (but not `:batch` ones) on the Messages API.
+        // `buildOpenRouterCatalog()`: `anthropic/…` models and the `~anthropic/claude-*-latest` aliases (but
+        // not `:batch` ones) on the Messages API.
         'openrouter' => [self::OPENROUTER_MODELS, [
             'anthropic-messages' => 'https://openrouter.ai/api',
             'openai-completions' => 'https://openrouter.ai/api/v1',
@@ -1199,6 +1218,7 @@ final class BuiltinCatalog
     /** Upstream's generator `OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS`, keyed `provider:id`. */
     private const array OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = [
         'opencode:deepseek-v4-flash',
+        'opencode:deepseek-v4.1-flash',
         'opencode:deepseek-v4-pro',
         'opencode:kimi-k2.5',
         'opencode:kimi-k2.6',
@@ -2143,10 +2163,10 @@ final class BuiltinCatalog
         'z-ai/glm-5.3-prime' => ['Z.ai: GLM 5.3 Prime', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 2.8, 8.8, 0.56, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3:batch' => ['Z.ai: GLM 5.3 (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.45, 2.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5v-turbo' => ['Z.ai: GLM 5V Turbo', Api::OpenAiCompletions, 202_752, 131_072, true, true, 1.2, 4.0, 0.24, 0.0],
-        '~anthropic/claude-fable-latest' => ['Anthropic: Claude Fable Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        '~anthropic/claude-haiku-latest' => ['Anthropic: Claude Haiku Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
-        '~anthropic/claude-opus-latest' => ['Anthropic: Claude Opus Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        '~anthropic/claude-sonnet-latest' => ['Anthropic: Claude Sonnet Latest', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        '~anthropic/claude-fable-latest' => ['Anthropic: Claude Fable Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        '~anthropic/claude-haiku-latest' => ['Anthropic: Claude Haiku Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        '~anthropic/claude-opus-latest' => ['Anthropic: Claude Opus Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        '~anthropic/claude-sonnet-latest' => ['Anthropic: Claude Sonnet Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         '~deepseek/deepseek-flash-latest' => ['DeepSeek: DeepSeek Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.02, 1.0, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~deepseek/deepseek-pro-latest' => ['DeepSeek: DeepSeek Pro Latest', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.1188, 8.0, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0422, 0.1763, 0.027, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -3039,7 +3059,7 @@ final class BuiltinCatalog
             || (($provider === 'opencode' || $provider === 'opencode-go') && self::isKimiK3FamilyId($id));
         $textOnly = (str_starts_with($provider, 'moonshot') && in_array($id, ['kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed'], true))
             || ($provider === 'deepseek' && $id === 'deepseek-v4-pro')
-            || ($provider === 'openrouter' && str_starts_with($id, 'openai/') && in_array(substr($id, strlen('openai/')), self::OPENAI_TOOL_SEARCH_MODEL_IDS, true));
+            || ($provider === 'openrouter' && str_starts_with($id, 'openai/') && in_array(substr($id, strlen('openai/')), self::OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS, true));
 
         if ($kimiK3 || $textOnly) {
             $compat = self::overlaid($compat, new OpenAiCompat(
@@ -3146,8 +3166,11 @@ final class BuiltinCatalog
             $compat = self::overlaid($compat, new OpenAiCompat(grammarTools: true));
         }
 
-        if (($provider === 'opencode' || $provider === 'opencode-go') && in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true)) {
-            $compat = self::overlaid($compat, new OpenAiCompat(supportsMidConvoSystemMessages: true, supportsAdditionalTools: true));
+        if (($provider === 'opencode' || $provider === 'opencode-go') && in_array($id, self::OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS, true)) {
+            $compat = self::overlaid($compat, new OpenAiCompat(
+                supportsMidConvoSystemMessages: true,
+                supportsAdditionalTools: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
+            ));
         }
 
         return array_filter(get_object_vars($compat), static fn (mixed $value): bool => $value !== null) === [] ? null : $compat;
@@ -3192,7 +3215,7 @@ final class BuiltinCatalog
      *    `{off: null, minimal: null, low, medium, high, xhigh, max}`;
      * 2. `applyAnthropicMessagesCompatMetadata()` — `{off: null}` on a `supportsMidConvoEffort` model;
      * 3. `applyThinkingLevelMetadata()`, every arm that can match a provider pig has:
-     *    - a Responses or Azure Responses `gpt-5…` gets `{off: null}`; GPT-6 Astra/Sol/Luna and 6.1 Sol
+     *    - a Responses or Azure Responses `gpt-5…` gets `{off: null}`; GPT-6 Astra/Sol/Luna and 6.1 Sol/Terra
      *      on the Responses, Azure Responses or Codex API get `{off: "none" | null, minimal: null, low,
      *      medium, high, xhigh, max}` (Astra and 6.1 Sol reject `none`, so `off: null`);
      *    - a Copilot `gpt-5…` gets `{minimal: "low"}`;
@@ -3282,10 +3305,11 @@ final class BuiltinCatalog
             $map = [...$map, 'off' => null];
         }
 
-        if (($responses || $azure || $codex) && in_array($id, ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'], true)) {
+        if (($responses || $azure || $codex) && in_array($id, ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'], true)) {
             $map = [
                 ...$map,
-                // `// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".`
+                // `// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none"; GPT-6.1 Terra accepts it. All reject`
+                // `// "minimal" (verified on Codex, October 2026).`
                 'off' => $id === 'gpt-6-astra' || $id === 'gpt-6.1-sol' ? null : 'none',
                 'minimal' => null,
                 'low' => 'low',
@@ -3561,13 +3585,14 @@ final class BuiltinCatalog
      * A Copilot Responses model's compat: the grammar-tools flag where it applies, and upstream's
      * `applyOpenAIResponsesTranscriptMetadata()` — "OpenCode Zen, OpenCode Go, and GitHub Copilot pass
      * both those messages and `additional_tools` items through to OpenAI unchanged; tool search is not
-     * verified through those proxies" — so mid-conversation system messages and additional tools for
-     * the ids in `OPENAI_TOOL_SEARCH_MODEL_IDS`, and no tool search.
+     * verified through those proxies" — so mid-conversation system messages for the ids in
+     * `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS`, additional tools for those in
+     * `OPENAI_TOOL_SEARCH_MODEL_IDS`, and no tool search.
      */
     private static function copilotResponsesCompat(string $id): ?OpenAiCompat
     {
         $grammar = self::isGrammarToolModel($id);
-        $transcript = in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true);
+        $transcript = in_array($id, self::OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS, true);
 
         if (!$grammar && !$transcript) {
             return null;
@@ -3576,7 +3601,7 @@ final class BuiltinCatalog
         return new OpenAiCompat(
             grammarTools: $grammar ? true : null,
             supportsMidConvoSystemMessages: $transcript ? true : null,
-            supportsAdditionalTools: $transcript ? true : null,
+            supportsAdditionalTools: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
         );
     }
 
@@ -3745,7 +3770,7 @@ final class BuiltinCatalog
                     grammarTools: self::isGrammarToolModel($id) ? true : null,
                     supportsExplicitPromptCacheMode: $write > 0 ? true : null,
                     // `applyOpenAIToolSearchMetadata()` and `applyOpenAIResponsesTranscriptMetadata()`.
-                    supportsMidConvoSystemMessages: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
+                    supportsMidConvoSystemMessages: in_array($id, self::OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS, true) ? true : null,
                     supportsToolSearch: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
                     supportsAdditionalTools: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
                     // `applyOpenAIMidConvoEffortMetadata()` (#10853).

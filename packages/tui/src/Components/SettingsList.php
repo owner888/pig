@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Tui\Components;
 
 use Closure;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keybindings;
@@ -31,7 +32,7 @@ use Pig\Tui\Width;
  *
  * Ported from upstream's `tui/components/settings-list.ts`.
  */
-final class SettingsList implements Component, InputHandler, MouseHandler
+final class SettingsList implements Component, InputHandler, MouseHandler, CapturesViewportInput
 {
     /** @var list<SettingItem> */
     private array $items;
@@ -309,6 +310,13 @@ final class SettingsList implements Component, InputHandler, MouseHandler
         return $lines;
     }
 
+    /** Upstream's `capturesViewportInput = true`: in fullscreen, PageUp/PageDown page the list. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
+
     #[\Override]
     public function handleInput(string $data): void
     {
@@ -325,6 +333,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler
 
         $last = count($this->items) - 1;
         $kb = Keybindings::getKeybindings();
+        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, count($this->items), $this->maxVisible);
 
         match (true) {
             // Any key leaves a list with nothing in it, where upstream answers only Escape and
@@ -334,6 +343,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler
             $last < 0 => $this->close(),
             $kb->matches($data, 'tui.select.up') => $this->selected = $this->selected === 0 ? $last : $this->selected - 1,
             $kb->matches($data, 'tui.select.down') => $this->selected = $this->selected === $last ? 0 : $this->selected + 1,
+            $pageIndex !== null => $this->selected = $pageIndex,
             // Space as well as Enter, as upstream does: a row that is a switch reads like
             // a checkbox, and a checkbox is toggled with the space bar.
             $kb->matches($data, 'tui.select.confirm') || $data === ' ' => $this->activate(),

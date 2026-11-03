@@ -11,6 +11,7 @@ use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Utils\Ansi;
 use Pig\Tui\Process;
 
 /**
@@ -31,9 +32,6 @@ final class Run
     private const int KEEP_BYTES = Truncate::MAX_BYTES * 2;
 
     private const int READ_CHUNK = 65536;
-
-    /** Upstream's `MAX_PENDING_ANSI_LENGTH`: the longest unfinished escape sequence held back between reads. */
-    private const int MAX_PENDING_ANSI_LENGTH = 256;
 
     /**
      * The least time between two live updates of the output (`$onUpdate`).
@@ -364,22 +362,9 @@ final class Run
     {
         $whole = self::withoutPartialEnd($text);
         $partial = substr($text, strlen($whole));
+        [$complete, $pending] = Ansi::splitIncompleteSuffix($whole);
 
-        if (!str_contains($whole, "\x1b")) {
-            return [$whole, $partial];
-        }
-
-        // The sequences `Ansi::strip()` takes out, unfinished at the end: OSC or APC without its
-        // BEL or ST (a trailing ESC may start the ST), a CSI without its final byte, a bare ESC.
-        $windowStart = max(0, strlen($whole) - self::MAX_PENDING_ANSI_LENGTH);
-
-        if (preg_match('/(?:\x1b[\]_](?:[^\x07\x1b]|\x1b(?!\\\\))*|\x1b\[[0-9;]*|\x1b)$/', substr($whole, $windowStart), $match, PREG_OFFSET_CAPTURE) !== 1) {
-            return [$whole, $partial];
-        }
-
-        $splitAt = $windowStart + $match[0][1];
-
-        return [substr($whole, 0, $splitAt), substr($whole, $splitAt) . $partial];
+        return [$complete, $pending . $partial];
     }
 
     /** Clean what was read, spill it, keep the tail, and tell the UI. */

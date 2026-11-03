@@ -23,6 +23,7 @@ use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\ThinkingLevelChange;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keybindings;
@@ -61,7 +62,7 @@ use Pig\Tui\Width;
  * reverses it, `app.tree.editLabel` names a point, `app.tree.toggleLabelTimestamp` shows when each
  * name was given, and `app.message.copy` copies the selected entry's text.
  */
-final class TreeList implements Component, InputHandler
+final class TreeList implements Component, InputHandler, CapturesViewportInput
 {
     private const string DEFAULT = 'default';
     private const string NO_TOOLS = 'no-tools';
@@ -852,6 +853,16 @@ final class TreeList implements Component, InputHandler
     }
 
     // ---- keys ----------------------------------------------------------------------------------
+
+    /**
+     * Upstream's tree selector's `capturesViewportInput`, true while no label is being typed —
+     * this list has no label field, so always: in fullscreen, PageUp/PageDown page the tree.
+     */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
 
     /** Upstream's `TreeList.handleInput()`, every key by its keybinding id and in upstream's order. */
     #[\Override]

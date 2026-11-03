@@ -131,6 +131,7 @@ final class OverflowTest extends TestCase
         // The examples upstream's table gained after pig's copy was made, from its own comment.
         yield 'Anthropic byte size' => ['413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}'];
         yield 'LiteLLM' => ["Requested token count exceeds the model's maximum context length of 131072 tokens"];
+        yield 'LiteLLM pre-call check' => ['400: {"message":"litellm.ContextWindowExceededError: litellm.BadRequestError: litellm._pre_call_checks: Context Window exceeded for given call. No models have context window large enough for this call.\nModel=Qwen3.8-Flash-Next, Max Input Tokens=262144, Got=265262\nmodel=Qwen3.8-Flash-Next. context_window_fallbacks=None. fallbacks=[]."}'];
         yield 'OpenAI-compatible' => ["Input length (265330) exceeds model's maximum context length (262144)."];
         yield 'Ollama MLX, with the unit inside the parentheses' => ['400: {"message":"input length (282201 tokens) exceeds the model\'s maximum context length (262144 tokens)","type":"invalid_request_error","param":null,"code":null}'];
         yield 'Poolside' => ['Input length 300000 exceeds the maximum allowed input length of 262144 tokens.'];

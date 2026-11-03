@@ -104,6 +104,14 @@ final class SystemPromptTest extends ToolTestCase
 
         $this->assertStringContainsString('Use read to examine files before editing', $full);
         $this->assertStringContainsString('Use write only for new files', $full);
+        // Upstream's tightened edit guidelines (705d047), for `edits[]`.
+        $this->assertStringContainsString(
+            "- Use edit for targeted changes. Batch changes to one file in a single call.\n"
+                . '- Each edits[].oldText must exactly and uniquely match the original file. Keep matches short '
+                . "and non-overlapping; merge nearby changes without including large unchanged regions.\n",
+            $full,
+        );
+        $this->assertStringStartsWith('You are a coding assistant. Help users inspect files, run commands, and modify code.', $full);
 
         $readOnly = $this->prompt(ToolSet::READ_ONLY);
 
@@ -180,7 +188,7 @@ final class SystemPromptTest extends ToolTestCase
         $prompt = SystemPrompt::build($this->cwd, ToolSet::CODING, custom: 'Speak only in haiku.');
 
         $this->assertStringStartsWith('Speak only in haiku.', $prompt);
-        $this->assertStringNotContainsString('expert coding assistant', $prompt);
+        $this->assertStringNotContainsString('You are a coding assistant.', $prompt);
         $this->assertStringContainsString('Current working directory:', $prompt);
     }
 
@@ -188,7 +196,7 @@ final class SystemPromptTest extends ToolTestCase
     {
         $prompt = SystemPrompt::build($this->cwd, ToolSet::CODING, append: 'Always use tabs.');
 
-        $this->assertStringContainsString('expert coding assistant', $prompt);
+        $this->assertStringContainsString('You are a coding assistant.', $prompt);
         $this->assertStringContainsString('Always use tabs.', $prompt);
     }
 

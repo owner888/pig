@@ -12,6 +12,7 @@ use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentLoopConfig;
 use Pig\Agent\AgentLoopTurnUpdate;
 use Pig\Agent\PrepareNextTurnContext;
+use Pig\Agent\PreparesArguments;
 use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Agent\AgentMessage;
@@ -282,6 +283,49 @@ final class AgentLoopTest extends TestCase
 
         $this->assertFalse($messages[2]->isError, $messages[2]->content[0]->text);
         $this->assertSame([['path' => '/tmp/a.php']], $tool->calls, 'the null is gone, not passed on');
+    }
+
+    /**
+     * Upstream's `prepareToolCallArguments()`: a tool's `prepareArguments()` runs before the
+     * schema, so arguments in an older shape are validated — and run — as the new one.
+     */
+    public function testAToolThatReshapesItsArgumentsHasThemReshapedBeforeTheSchemaSeesThem(): void
+    {
+        $inner = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([new TextContent('ok')]));
+        $tool = new class ($inner) implements AgentTool, PreparesArguments {
+            public function __construct(private readonly ScriptedTool $inner)
+            {
+            }
+
+            public function prepareArguments(array $arguments): array
+            {
+                return isset($arguments['file']) ? ['path' => $arguments['file']] : $arguments;
+            }
+
+            public function definition(): Tool
+            {
+                return $this->inner->definition();
+            }
+
+            public function label(): string
+            {
+                return $this->inner->label();
+            }
+
+            public function execute(string $toolCallId, array $arguments, ?\Pig\Async\AbortSignal $signal = null, ?Closure $onUpdate = null): AgentToolResult
+            {
+                return $this->inner->execute($toolCallId, $arguments, $signal, $onUpdate);
+            }
+        };
+
+        [, $messages] = $this->drive(
+            [$this->wantsTool('read', ['file' => '/tmp/a.php']), $this->answer('done')],
+            [new UserMessage('read it')],
+            tools: [$tool],
+        );
+
+        $this->assertFalse($messages[2]->isError, $messages[2]->content[0]->text);
+        $this->assertSame([['path' => '/tmp/a.php']], $inner->calls);
     }
 
     public function testSteeringSkipsTheToolsThatHaveNotRunYet(): void

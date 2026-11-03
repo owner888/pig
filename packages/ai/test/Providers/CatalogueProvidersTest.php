@@ -271,14 +271,17 @@ final class CatalogueProvidersTest extends TestCase
         $this->assertSame([1.4, 4.4, 0.26], [self::model('zai-coding-cn', 'glm-5.3')->pricing->input, self::model('zai-coding-cn', 'glm-5.3')->pricing->output, self::model('zai-coding-cn', 'glm-5.3')->pricing->cacheRead]);
     }
 
-    public function testOpenRoutersAnthropicLatestAliasesKeepCompletionsCacheControl(): void
+    public function testOpenRoutersAnthropicLatestAliasesUseMessagesWithAdaptiveThinking(): void
     {
+        // Upstream 44f6851: on Chat Completions the thinking signature was dropped and OpenRouter
+        // ignored the unsigned thinking on replay, so the aliases go over Messages as the versioned
+        // Claude models do.
         foreach (['~anthropic/claude-fable-latest', '~anthropic/claude-haiku-latest', '~anthropic/claude-opus-latest', '~anthropic/claude-sonnet-latest'] as $id) {
             $model = self::model('openrouter', $id);
 
-            $this->assertSame(Api::OpenAiCompletions, $model->api, $id);
-            $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
-            $this->assertSame('anthropic', $model->compat->cacheControlFormat, $id);
+            $this->assertSame([Api::AnthropicMessages, 'https://openrouter.ai/api'], [$model->api, $model->baseUrl], $id);
+            $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+            $this->assertTrue($model->compat->forceAdaptiveThinking, $id);
         }
     }
 

@@ -66,7 +66,7 @@ const { escapeHtml } = await import(`${root}/utils.js`);
 // The page's own translate button and its rules (`attachTranslate()` in app.js), not a stub.
 const { t, needsTranslation, translateSettings, translateRequest } = await import(`${root}/i18n.js`);
 const { renderMarkdown } = await import(`${root}/markdown.js`);
-const { ToolCard } = await import(`${root}/components/ToolCard.js`);
+const { ToolCard, editPairs } = await import(`${root}/components/ToolCard.js`);
 const { ThinkingBlock } = await import(`${root}/components/ThinkingBlock.js`);
 const { EmptyState } = await import(`${root}/components/EmptyState.js`);
 
@@ -136,6 +136,15 @@ edit.result = { content: [{ type: 'text', text: 'Edited' }], details: { diff: '-
 const editBody = edit.formatResultBody();
 assert.match(editBody, /actual-old/);
 assert.doesNotMatch(editBody, /preview-old/);
+
+// The arguments' preview, before a result: `edits[]`, each pair drawn, and the top-level
+// `oldText`/`newText` a session saved before `edits[]` has.
+const multi = new ToolCard({ toolCallId: 'edit2', toolName: 'edit', arguments: { path: 'a.php', edits: [{ oldText: 'first-old', newText: 'first-new' }, { oldText: 'second-old', newText: 'second-new' }] } });
+assert.match(multi.element.innerHTML, /first-old[\s\S]*first-new[\s\S]*second-old[\s\S]*second-new/);
+assert.match(edit.element.innerHTML, /preview-old[\s\S]*preview-new/, 'a saved session\'s edit lost its preview');
+const stringly = new ToolCard({ toolCallId: 'edit3', toolName: 'edit', arguments: { path: 'a.php', edits: '[{"oldText":"json-old","newText":"json-new"}]' } });
+assert.match(stringly.element.innerHTML, /json-old[\s\S]*json-new/);
+assert.equal(editPairs({ path: 'a.php', edits: [{ oldText: 'half' }] }), null, 'a half-written edit was drawn');
 
 const write = new ToolCard({ toolCallId: 'write1', toolName: 'write', arguments: { path: 'b.php', content: 'written contents' } });
 write.result = { content: [{ type: 'text', text: 'Wrote 16 bytes' }] };

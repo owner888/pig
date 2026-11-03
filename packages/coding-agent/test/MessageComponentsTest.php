@@ -162,6 +162,18 @@ final class MessageComponentsTest extends TestCase
         $this->assertStringNotContainsString('private train', $text);
     }
 
+    public function testHiddenThinkingWithAnEmptyLabelDrawsNothingNotEvenItsGaps(): void
+    {
+        $rows = fn (array $lines): array => array_map(static fn (string $line): string => trim(Ansi::strip($line)), $lines);
+        $beforeATool = $this->assistant([new ThinkingContent('reasoning'), new ToolCall('1', 'read', ['path' => 'file.txt'])], StopReason::ToolUse);
+        $beforeText = $this->assistant([new ThinkingContent('reasoning'), new TextContent('answer')]);
+
+        $this->assertSame([], (new AssistantMessageComponent($beforeATool, true, [], ''))->render(self::WIDTH));
+        $this->assertSame(['', 'answer'], $rows((new AssistantMessageComponent($beforeText, true, [], ''))->render(self::WIDTH)));
+        // The default label keeps its row and the gaps either side of it.
+        $this->assertSame(['', 'Thinking...', '', 'answer'], $rows((new AssistantMessageComponent($beforeText, true))->render(self::WIDTH)));
+    }
+
     public function testEmptyContentDrawsNoBlankLine(): void
     {
         // A message that is only tool calls gets no spacing of its own: the tools draw

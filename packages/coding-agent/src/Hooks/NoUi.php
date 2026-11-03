@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
 
@@ -49,7 +50,7 @@ final readonly class NoUi implements HookUi
 
     /** The factory is never called: there is no screen to put what it would build on. */
     #[\Override]
-    public function custom(Closure $factory): mixed
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed
     {
         return null;
     }

@@ -87,9 +87,22 @@ final class PiMessagesEventConverter
      */
     public function convert(array $event): ?AssistantMessageEvent
     {
-        $index = is_int($event['contentIndex'] ?? null) ? $event['contentIndex'] : 0;
+        $type = $event['type'] ?? null;
+        $index = 0;
 
-        switch ($event['type'] ?? null) {
+        if (array_key_exists('contentIndex', $event)) {
+            // Upstream: "The index comes from the wire and keys the content array … A start adds the
+            // next block; other events need one." Here a string fell back to block 0, and a huge or
+            // skipped index left a hole that the blocks around it closed up over.
+            $index = $event['contentIndex'];
+            $limit = is_string($type) && str_ends_with($type, '_start') ? count($this->content) : count($this->content) - 1;
+
+            if (!is_int($index) || $index < 0 || $index > $limit) {
+                throw new ProviderError('Invalid contentIndex ' . json_encode($index) . ' in pi-messages ' . (is_string($type) ? $type : json_encode($type)) . ' event');
+            }
+        }
+
+        switch ($type) {
             case 'done':
                 $this->stopReason = self::stopReason($event['reason'] ?? null);
                 $this->usage = MessageJson::decodeUsage(is_array($event['usage'] ?? null) ? $event['usage'] : []);

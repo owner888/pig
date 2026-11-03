@@ -1234,6 +1234,49 @@ final class WebModeTest extends TestCase
     }
 
     /**
+     * The page's assets: gzipped for a browser that takes it, and answered with a 304 for one that
+     * has the same version already — the page used to download all 894KB of them on every load.
+     */
+    public function testAssetsAreGzippedAndAnUnchangedOneIsNotSentAgain(): void
+    {
+        $port = 28104;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port): void {
+            $server->start();
+            $http = new HttpClient();
+            $url = "http://127.0.0.1:{$port}/assets/js/app.js";
+            $source = (string) file_get_contents(__DIR__ . '/../src/Web/assets/js/app.js');
+
+            $plain = $http->send(new Request('GET', $url));
+            $this->assertSame(200, $plain->status);
+            $this->assertArrayNotHasKey('content-encoding', $plain->headers, 'not gzip to a client that did not ask for it');
+            $this->assertSame($source, $plain->body->all());
+            $etag = $plain->headers['etag'] ?? '';
+            $this->assertMatchesRegularExpression('/^W\/"[0-9a-f]+-[0-9a-f]+"$/', $etag);
+            $this->assertSame('no-cache', $plain->headers['cache-control'] ?? null, 'still asked about every time, so an update is seen at once');
+
+            $gzip = $http->send(new Request('GET', $url, ['Accept-Encoding' => 'gzip, deflate, br']));
+            $this->assertSame('gzip', $gzip->headers['content-encoding'] ?? null);
+            $this->assertSame('Accept-Encoding', $gzip->headers['vary'] ?? null);
+            $compressed = $gzip->body->all();
+            $this->assertSame($source, gzdecode($compressed));
+            $this->assertLessThan(strlen($source) / 2, strlen($compressed));
+
+            $again = $http->send(new Request('GET', $url, ['If-None-Match' => $etag, 'Accept-Encoding' => 'gzip']));
+            $this->assertSame(304, $again->status);
+            $this->assertSame('', $again->body->all());
+            $this->assertSame($etag, $again->headers['etag'] ?? null);
+
+            // Another version is sent whole.
+            $stale = $http->send(new Request('GET', $url, ['If-None-Match' => 'W/"0-0"']));
+            $this->assertSame(200, $stale->status);
+
+            $server->stop();
+        });
+    }
+
+    /**
      * Every JS module the page loads must parse. A stray brace from a botched edit shipped once
      * and left the whole UI stuck on "Loading session…" — nothing in the PHP suite could see it,
      * because the server happily serves a file whether or not a browser can execute it.
@@ -1306,6 +1349,7 @@ final class WebModeTest extends TestCase
           ["read", { path: "a.php", offset: 10, limit: 30 }],
           ["bash", { command: "ls -la", timeout: 5 }],
           ["edit", { path: "a.php", oldText: "a", newText: "b" }],
+          ["edit", { path: "a.php", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] }],
           ["write", { path: "a.php", content: "x\ny" }],
           ["grep", { pattern: "foo", path: "src" }],
           ["find", { pattern: "*.php", path: "." }],
@@ -1335,7 +1379,7 @@ final class WebModeTest extends TestCase
             $code = 0;
             exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
             $this->assertSame(0, $code, "components threw while rendering:\n" . implode("\n", $out));
-            $this->assertStringContainsString('rendered 17 tool cards', implode("\n", $out));
+            $this->assertStringContainsString('rendered 18 tool cards', implode("\n", $out));
         } finally {
             unlink($file);
         }

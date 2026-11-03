@@ -218,6 +218,7 @@ final class InteractiveModeTest extends TestCase
         ?string $tuiMode = null,
         ?Closure $createRuntime = null,
         bool $incognito = false,
+        array $extensions = [],
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -289,6 +290,7 @@ final class InteractiveModeTest extends TestCase
             $initialImages,
             $auth,
             $changelog,
+            extensions: $extensions,
             projectTrusted: $projectTrusted,
             keybindings: $keybindings ?? new \Pig\CodingAgent\Keybindings(),
             tuiMode: $tuiMode,
@@ -3639,6 +3641,42 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('keptZ', $this->screen());
     }
 
+    /** Upstream #11431: replacing the prompt while a dialog is open took the dialog's keys. */
+    public function testReplacingThePromptLeavesAnOpenDialogAnswerable(): void
+    {
+        $answer = null;
+        $api = new HookApi($this->cwd, 'swap.php');
+        $api->registerCommand('swap', static function (string $arguments, $ctx) use (&$answer): void {
+            Async::spawn(static function () use ($ctx, &$answer): void {
+                $answer = $ctx->ui->confirm('Keep going?', '');
+            });
+            // Once the confirm is open.
+            Async::spawn(static function () use ($ctx): void {
+                $ctx->ui->setEditorComponent(static fn ($tui, $theme, $keybindings): CustomEditor => new class(new Editor($theme), $keybindings) extends CustomEditor {
+                    #[\Override]
+                    public function handleInput(string $data): void
+                    {
+                        parent::handleInput($data === 'Z' ? 'new' : $data);
+                    }
+                });
+            });
+        });
+
+        $this->start(hooks: $this->runner($api, 'swap.php'));
+        $this->type('/swap');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Keep going?', $this->screen());
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->assertTrue($answer);
+
+        // The new prompt has the keys once the dialog is gone.
+        $this->type('Z');
+        $this->assertStringContainsString('new', $this->screen());
+    }
+
     private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner
     {
         return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
@@ -3789,7 +3827,7 @@ final class InteractiveModeTest extends TestCase
         });
 
         $this->start(
-            answers: [self::wants('edit', ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']), 'done'],
+            answers: [self::wants('edit', ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]), 'done'],
             hooks: $this->runner($api, 'guard.php'),
             tools: ['edit'],
         );
@@ -4820,7 +4858,7 @@ final class InteractiveModeTest extends TestCase
 
             // The opener is started and left to run, not waited on, so nothing in the loop says
             // when it is done: wait for what it writes, a while at most.
-            for ($waited = 0; $waited < 500 && (string) @file_get_contents($marker) === ''; $waited++) {
+            for ($waited = 0; $waited < 500 && (!is_file($marker) || (string) file_get_contents($marker) === ''); $waited++) {
                 usleep(10_000);
             }
             $this->assertFileExists($marker, 'online, the URL is handed to the opener');
@@ -4886,6 +4924,96 @@ final class InteractiveModeTest extends TestCase
             $this->assertStringContainsString('PROBE_CLIENT_ID', $screen);
             $this->assertStringNotContainsString('Open this and approve it', $screen);
         } finally {
+            ProviderRegistry::forget();
+        }
+    }
+
+    public function testASignInOpensOnlyWebUrlsAndKeepsControlCharactersOffTheTerminal(): void
+    {
+        // Upstream 89c921d's login dialog: a URL from a server is opened only when it is http(s), and
+        // never reaches the terminal with its control characters — a BEL in it ended the OSC 8 link
+        // early and what followed (here OSC 52, a clipboard write) ran as the terminal's own.
+        $injected = "x\x07\e]52;c;Zm9v\x07";
+        $flow = new class($injected) implements OauthFlow {
+            public function __construct(private readonly string $injected)
+            {
+            }
+
+            public function id(): string
+            {
+                return 'zzp-provider';
+            }
+
+            public function label(): string
+            {
+                return 'Probe Sign-in';
+            }
+
+            public function isSubscription(): bool
+            {
+                return false;
+            }
+
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            {
+                $onAuth("file:///tmp/{$this->injected}", null);
+                $onAuth("https://example.com/device/{$this->injected}?u", null);
+
+                return null;
+            }
+
+            public function refresh(Credentials $credentials): Credentials
+            {
+                return $credentials;
+            }
+
+            public function apiKey(Credentials $credentials): string
+            {
+                return $credentials->access;
+            }
+        };
+        ProviderRegistry::register(new \Pig\Ai\Extension\Provider('zzp-provider', 'Probe', [], oauth: $flow));
+
+        $bin = $this->cwd . '-bin';
+        mkdir($bin, 0700, true);
+        $opener = match (PHP_OS_FAMILY) {
+            'Darwin' => 'open',
+            'Windows' => self::markTestSkipped('a stand-in for `cmd /c start` is not a shell script'),
+            default => 'xdg-open',
+        };
+        $marker = $bin . '/opened';
+        file_put_contents($bin . '/' . $opener, "#!/bin/sh\necho \"\$1\" >> " . escapeshellarg($marker) . "\n");
+        chmod($bin . '/' . $opener, 0700);
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $bin . ':' . $path);
+
+        try {
+            $this->start(auth: Auth::inMemory());
+            putenv('PIG_OFFLINE');
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->type(self::ENTER);
+            $this->type('probe');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $raw = implode("\n", $this->mode->screen()->render(400));
+            $this->assertStringNotContainsString("\e]52", $raw);
+            $this->assertStringNotContainsString("\x07\e]52", $raw);
+            // Not a web URL: shown as text, each run of controls one space, and not linked.
+            $this->assertStringContainsString('file:///tmp/x ]52;c;Zm9v ', $this->screenText());
+            $this->assertStringNotContainsString("\e]8;;file:", $raw);
+            // A web URL: linked and shown in its normalized form.
+            $this->assertStringContainsString("\e]8;;https://example.com/device/x%07%1B]52;c;Zm9v%07?u\x07", $raw);
+
+            for ($waited = 0; $waited < 500 && (!is_file($marker) || file_get_contents($marker) === ''); $waited++) {
+                usleep(10_000);
+            }
+            $this->assertSame("https://example.com/device/x%07%1B]52;c;Zm9v%07?u\n", (string) file_get_contents($marker), 'only the web URL is opened');
+        } finally {
+            putenv('PATH=' . $path);
+            self::remove($bin);
             ProviderRegistry::forget();
         }
     }
@@ -5013,6 +5141,66 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('Updated to v0.2.0. Use /changelog to view full changelog.', $screen);
         $this->assertStringNotContainsString('Something changed.', $screen);
+    }
+
+    /** Upstream b4b72a3: a package's changelog after it was updated, under pig's own notes. */
+    public function testAnUpdatedPackagesChangelogIsShownOnceAndItsVersionRemembered(): void
+    {
+        [$settings, $extensions, $key] = $this->packageWithChangelog('1.2.0');
+        $settings->setExtensionChangelogVersion($key, '1.0.0');
+        $this->start(changelog: "## 0.2.0\n\n- Something changed.", settings: $settings, extensions: $extensions);
+
+        $screen = $this->screenText();
+        $this->assertStringContainsString("What's New", $screen);
+        $this->assertStringContainsString('Extension Updates', $screen);
+        $this->assertStringContainsString('acme/tools [1.2.0]', $screen);
+        $this->assertStringContainsString('Faster lookups.', $screen);
+        $this->assertStringContainsString('Second release.', $screen);
+        $this->assertStringNotContainsString('First release.', $screen);
+        $this->assertSame('1.2.0', $settings->extensionChangelogVersion($key));
+    }
+
+    public function testAPackageSeenForTheFirstTimeIsRecordedAndNotShown(): void
+    {
+        [$settings, $extensions, $key] = $this->packageWithChangelog('1.2.0');
+        $this->start(settings: $settings, extensions: $extensions);
+
+        $this->assertStringNotContainsString('Extension Updates', $this->screenText());
+        $this->assertSame('1.2.0', $settings->extensionChangelogVersion($key));
+    }
+
+    public function testACollapsedPackageChangelogIsOneLinePerPackage(): void
+    {
+        [$settings, $extensions, $key] = $this->packageWithChangelog('1.2.0', ['collapseChangelog' => true]);
+        $settings->setExtensionChangelogVersion($key, '1.0.0');
+        $this->start(settings: $settings, extensions: $extensions);
+
+        $screen = $this->screenText();
+        $this->assertStringContainsString('Updated acme/tools to v1.2.0.', $screen);
+        $this->assertStringNotContainsString('Faster lookups.', $screen);
+    }
+
+    /**
+     * A local package with a loaded extension, a `composer.json` at $version and a changelog.
+     *
+     * @param array<string, mixed> $values
+     * @return array{0: Settings, 1: list<\Pig\CodingAgent\Extensions\LoadedExtension>, 2: string}
+     */
+    private function packageWithChangelog(string $version, array $values = []): array
+    {
+        $root = "{$this->cwd}/tools";
+        mkdir("{$root}/extensions", 0o755, true);
+        file_put_contents("{$root}/extensions/tools.php", '<?php return static fn () => null;');
+        file_put_contents("{$root}/composer.json", json_encode(['name' => 'acme/tools', 'version' => $version]));
+        file_put_contents("{$root}/CHANGELOG.md", "# Changelog\n\n## [1.2.0]\n\n- Faster lookups.\n\n## [1.1.0]\n\n- Second release.\n\n## [1.0.0]\n\n- First release.\n");
+        $path = "{$root}/extensions/tools.php";
+        $extension = new \Pig\CodingAgent\Extensions\LoadedExtension($path, $path, 'tools', new \Pig\CodingAgent\Extensions\ExtensionApi($this->cwd, $path, 'tools'));
+
+        return [
+            Settings::inMemory(['packages' => [$root], ...$values]),
+            [$extension],
+            json_encode(['source' => $root, 'scope' => 'user'], JSON_UNESCAPED_SLASHES),
+        ];
     }
 
     public function testTheChangelogAndTrustRowsAreInSlashSettings(): void
@@ -5535,6 +5723,19 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         self::turnTheLoop(2);
         $this->assertStringContainsString('Web UI server stopped.', $this->screen());
+    }
+
+    /** Upstream #11592: the redraw used to cover the failure, so Ctrl+G seemed to do nothing. */
+    public function testAnExternalEditorThatCannotBeStartedIsReported(): void
+    {
+        $this->start();
+        $this->settings->setExternalEditor('pig-external-editor-does-not-exist');
+        $this->type('draft');
+        $this->type("\x07");
+        $this->settle();
+
+        $this->assertStringContainsString('Failed to launch external editor: pig-external-editor-does-not-exist', $this->screen());
+        $this->assertSame('draft', $this->editorText());
     }
 
     public function testExternalEditorCommandResolution(): void

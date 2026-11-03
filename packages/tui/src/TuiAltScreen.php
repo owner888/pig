@@ -914,8 +914,14 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         return $rest === $data ? null : ['data' => $rest];
     }
 
-    private function shouldDeferViewportInputToOverlay(): bool
+    /** Focused overlays and components that capture viewport input receive viewport keys instead of the transcript. */
+    private function shouldDeferViewportInput(): bool
     {
+        $focused = $this->getFocusedComponent();
+        if ($focused instanceof CapturesViewportInput && $focused->capturesViewportInput()) {
+            return true;
+        }
+
         return $this->isOverlayFocused() && ($this->activeSearch['overlay'] ?? null)?->isFocused() !== true;
     }
 
@@ -962,7 +968,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
                 return true;
             }
         }
-        if ($this->shouldDeferViewportInputToOverlay()) {
+        if ($this->shouldDeferViewportInput()) {
             return false;
         }
         if ($keybindings->matches($data, 'tui.altScreen.pageUp')) {

@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Closure;
 use Pig\Ai\Model;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Focusable;
@@ -37,7 +38,7 @@ use Pig\Tui\Width;
  * An id in the list that no available model has any more (a pattern saved for a provider whose key
  * has gone) is kept, struck through and marked `[unavailable]`, so saving does not drop it.
  */
-final class ScopedModelsSelector implements Component, Focusable, InputHandler
+final class ScopedModelsSelector implements Component, Focusable, InputHandler, CapturesViewportInput
 {
     public bool $focused = false;
 
@@ -285,6 +286,12 @@ final class ScopedModelsSelector implements Component, Focusable, InputHandler
     }
 
     #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
+
+    #[\Override]
     public function handleInput(string $data): void
     {
         $kb = Keybindings::getKeybindings();
@@ -301,6 +308,16 @@ final class ScopedModelsSelector implements Component, Focusable, InputHandler
         if ($kb->matches($data, 'tui.select.down')) {
             if ($count > 0) {
                 $this->selected = $this->selected === $count - 1 ? 0 : $this->selected + 1;
+            }
+
+            return;
+        }
+
+        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, $count, self::MAX_VISIBLE);
+
+        if ($pageIndex !== null) {
+            if ($count > 0) {
+                $this->selected = $pageIndex;
             }
 
             return;

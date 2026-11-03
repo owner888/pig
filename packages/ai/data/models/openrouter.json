@@ -15099,9 +15099,9 @@
         "type": "chat",
         "id": "~anthropic/claude-fable-latest",
         "name": "Anthropic: Claude Fable Latest",
-        "api": "openai-completions",
+        "api": "anthropic-messages",
         "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
+        "baseUrl": "https://openrouter.ai/api",
         "reasoning": true,
         "thinkingLevelMap": {
             "off": null,
@@ -15125,11 +15125,7 @@
         "contextWindow": 1000000,
         "maxTokens": 128000,
         "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true,
-            "cacheControlFormat": "anthropic"
+            "forceAdaptiveThinking": true
         },
         "inputLimits": {
             "images": {
@@ -15146,9 +15142,9 @@
         "type": "chat",
         "id": "~anthropic/claude-haiku-latest",
         "name": "Anthropic: Claude Haiku Latest",
-        "api": "openai-completions",
+        "api": "anthropic-messages",
         "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
+        "baseUrl": "https://openrouter.ai/api",
         "reasoning": true,
         "thinkingLevelMap": {
             "off": "none",
@@ -15181,11 +15177,7 @@
         "contextWindow": 1000000,
         "maxTokens": 128000,
         "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true,
-            "cacheControlFormat": "anthropic"
+            "forceAdaptiveThinking": true
         },
         "inputLimits": {
             "images": {
@@ -15202,9 +15194,9 @@
         "type": "chat",
         "id": "~anthropic/claude-opus-latest",
         "name": "Anthropic: Claude Opus Latest",
-        "api": "openai-completions",
+        "api": "anthropic-messages",
         "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
+        "baseUrl": "https://openrouter.ai/api",
         "reasoning": true,
         "thinkingLevelMap": {
             "off": null,
@@ -15228,11 +15220,7 @@
         "contextWindow": 1000000,
         "maxTokens": 128000,
         "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true,
-            "cacheControlFormat": "anthropic"
+            "forceAdaptiveThinking": true
         },
         "inputLimits": {
             "images": {
@@ -15249,9 +15237,9 @@
         "type": "chat",
         "id": "~anthropic/claude-sonnet-latest",
         "name": "Anthropic: Claude Sonnet Latest",
-        "api": "openai-completions",
+        "api": "anthropic-messages",
         "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
+        "baseUrl": "https://openrouter.ai/api",
         "reasoning": true,
         "thinkingLevelMap": {
             "off": null,
@@ -15275,11 +15263,7 @@
         "contextWindow": 1000000,
         "maxTokens": 128000,
         "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true,
-            "cacheControlFormat": "anthropic"
+            "forceAdaptiveThinking": true
         },
         "inputLimits": {
             "images": {

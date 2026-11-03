@@ -36,8 +36,8 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Theme\CodeHighlighter;
 use Pig\CodingAgent\Theme\Theme;
-use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\Tui\Components\Text;
 use PigCodemode\CodemodeDescription;
@@ -184,30 +184,67 @@ return static function (ExtensionApi $pi): void {
      * knows, that a script can call it too. The arguments are the tool's own parameters, so they
      * are not repeated; what a call resolves to is upstream's `describeOutput()` of the tool's
      * output schema — "a string" without one, the field list for an object (`bash`'s
-     * `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`), else the type.
+     * `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`), each variant's
+     * fields for a union of objects, the type when it holds no object shape, and otherwise a pointer to
+     * `describe_tool()`: the whole type of a large schema would go out with every request (#11501).
      */
-    $describeOutput = static function (?array $schema): string {
-        if ($schema === null) {
+    // Upstream's `describeFields()`: an object schema's field names, an object-typed field's own
+    // `$depth` levels deep, and a `const` field's value (`{ action: "start", id }`); null otherwise.
+    $describeFields = static function (mixed $schema, int $depth) use (&$describeFields): ?string {
+        if (!is_array($schema) || ($schema['type'] ?? null) !== 'object' || !is_array($schema['properties'] ?? null)) {
+            return null;
+        }
+
+        $required = is_array($schema['required'] ?? null) ? $schema['required'] : [];
+        $fields = [];
+
+        foreach ($schema['properties'] as $name => $field) {
+            $nested = is_array($field) && array_key_exists('const', $field)
+                ? json_encode($field['const'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+                : ($depth > 0 ? $describeFields($field, $depth - 1) : null);
+            $fields[] = $name . (in_array((string) $name, $required, true) ? '' : '?') . ($nested !== null && $nested !== '' ? ": {$nested}" : '');
+        }
+
+        return '{ ' . implode(', ', $fields) . ' }';
+    };
+    // Upstream's `describeUnionFields()`: each variant's fields, when every variant of an
+    // `anyOf` / `oneOf` is an object.
+    $describeUnionFields = static function (mixed $schema) use ($describeFields): ?string {
+        $variants = is_array($schema) ? ($schema['anyOf'] ?? $schema['oneOf'] ?? null) : null;
+
+        if (!is_array($variants) || $variants === []) {
+            return null;
+        }
+
+        $described = array_map(static fn (mixed $variant): ?string => $describeFields($variant, 0), array_values($variants));
+
+        return in_array(null, $described, true) ? null : implode(' | ', $described);
+    };
+    $describeOutput = static function (string $name, ?array $schema) use ($describeFields, $describeUnionFields): string {
+        $type = $schema === null ? 'string' : Declarations::schemaToType($schema);
+
+        if ($type === 'string') {
             return 'a string';
         }
 
-        if (($schema['type'] ?? null) === 'object' && is_array($schema['properties'] ?? null)) {
-            $required = is_array($schema['required'] ?? null) ? $schema['required'] : [];
-            $fields = array_map(
-                static fn (string|int $field): string => in_array((string) $field, $required, true) ? (string) $field : "{$field}?",
-                array_keys($schema['properties']),
-            );
+        $fields = $describeFields($schema, 1) ?? $describeUnionFields($schema);
 
-            return '`{ ' . implode(', ', $fields) . ' }`';
+        if ($fields !== null) {
+            return "`{$fields}`";
         }
 
-        $type = Declarations::schemaToType($schema);
+        // Upstream inlines a type that renders on one line. pig's PHPDoc types are always one line,
+        // so the line upstream draws is drawn where it falls: an object shape (`array{…}`) is what
+        // TypeScript renders over several lines, with a line per field.
+        if (!str_contains($type, 'array{')) {
+            return "`{$type}`";
+        }
 
-        return $type === 'string' ? 'a string' : '`' . preg_replace('/\s+/', ' ', $type) . '`';
+        return 'a value; `describe_tool(' . json_encode($name, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . ')` shows its type';
     };
     $describeScriptCall = static fn (AgentTool $tool): string => trim($tool->definition()->description)
         . "\n\nCodemode: `\$tools->" . Identifier::of($tool->definition()->name) . '([...])` resolves to '
-        . $describeOutput($tool->definition()->outputSchema) . '.';
+        . $describeOutput($tool->definition()->name, $tool->definition()->outputSchema) . '.';
 
     /**
      * Upstream's `isNamespaceName()` (24382bedd): "Whether `query` names the namespace: its name or one
@@ -1083,7 +1120,12 @@ return static function (ExtensionApi $pi): void {
     // Cents for larger amounts, two significant digits for the fractions of a cent classifier calls cost.
     $formatCost = static fn (float $cost): string => '$' . ($cost >= 0.01 ? number_format($cost, 2, '.', '') : sprintf('%.' . max(0, 1 - (int) floor(log10($cost))) . 'f', $cost));
 
-    $renderCall = static function (array $args, Theme $theme, ?RenderOptions $options = null) use ($codePreviewLines, $expandHint): Text {
+    // Progress, timer ticks and expanding redraw the call, so the script's highlighting is reused —
+    // upstream's per-row `scriptHighlighter`; a renderer here has no per-row state, and the row that
+    // redraws is the running one.
+    $scriptHighlighter = new CodeHighlighter();
+
+    $renderCall = static function (array $args, Theme $theme, ?RenderOptions $options = null) use ($codePreviewLines, $expandHint, $scriptHighlighter): Text {
         $code = $args['code'] ?? '';
         $title = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
 
@@ -1094,7 +1136,7 @@ return static function (ExtensionApi $pi): void {
         $text = $title;
 
         if ($code !== '') {
-            $lines = Themes::highlightCode(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php');
+            $lines = $scriptHighlighter->highlight(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php');
             $shown = ($options?->expanded ?? false) ? $lines : array_slice($lines, 0, $codePreviewLines);
             $text .= "\n" . implode("\n", $shown);
 

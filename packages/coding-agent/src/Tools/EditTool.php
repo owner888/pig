@@ -8,14 +8,17 @@ use Closure;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\PreparesArguments;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 
 /**
- * Change part of a file by replacing exact text.
+ * Change parts of a file by replacing exact text — upstream's `edits[]` shape, one or more
+ * `{oldText, newText}` pairs per call, every one matched against the file as it was before the
+ * call (`EditDiff::apply()`).
  *
- * The text must appear exactly once. Both halves of that are deliberate: matching
+ * Each text must appear exactly once. Both halves of that are deliberate: matching
  * nothing means the model is working from something other than the file as it is, and
  * matching twice means it does not know which one it meant. Either way the right answer
  * is to say so and let it read the file again, not to guess and edit the wrong line.
@@ -24,7 +27,8 @@ use Pig\Async\AbortSignal;
  * lone CR, overlapping matches, `$1` in the replacement, invalid UTF-8, and 260 random
  * files with a random slice of each as `oldText`. **The bytes on disk agree everywhere but
  * the three cases below**, and the diffs differ only in the three ways `EditDiff::render()`
- * already documents. Four deviations, all deliberate:
+ * already documents. That run was of the single-edit tool; each of the four deviations below
+ * applies to every edit of a call. Four deviations, all deliberate:
  *
  * - **Bytes that are not UTF-8 survive an edit.** Upstream reads with
  *   `readFile(path, "utf-8")`, so every such byte becomes U+FFFD *and is written back that
@@ -41,7 +45,7 @@ use Pig\Async\AbortSignal;
  *   to say what to do about it — the reader is the model, and it is about to correct itself
  *   from the sentence.
  */
-final class EditTool implements AgentTool
+final class EditTool implements AgentTool, PreparesArguments
 {
     public function __construct(private readonly string $cwd)
     {
@@ -52,27 +56,110 @@ final class EditTool implements AgentTool
     {
         return new Tool(
             'edit',
-            'Edit a file by replacing exact text. oldText must match the file exactly, whitespace '
-                . 'and all, and must appear exactly once — include the surrounding lines if it does not. '
-                . 'Use this for surgical changes; use write to replace a whole file.',
+            'Edit a file by replacing exact text. Each edits[].oldText must match the original file '
+                . 'exactly, whitespace and all, and appear exactly once — include the surrounding lines '
+                . 'if it does not. Edits are matched against the file as it was, not one after another, '
+                . 'and must not overlap: merge changes to the same or nearby lines into one edit, without '
+                . 'large unchanged regions in between. Use write to replace a whole file.',
             [
                 'type' => 'object',
                 'properties' => [
                     'path' => ['type' => 'string', 'description' => 'Path to the file, relative or absolute'],
-                    'oldText' => ['type' => 'string', 'description' => 'The exact text to replace'],
-                    'newText' => ['type' => 'string', 'description' => 'What to put in its place'],
+                    'edits' => [
+                        'type' => 'array',
+                        'description' => 'One or more replacements, each matched against the original file. '
+                            . 'No two may overlap; merge changes to the same or nearby lines into one.',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'oldText' => [
+                                    'type' => 'string',
+                                    'description' => 'The exact text to replace, unique in the original file',
+                                ],
+                                'newText' => ['type' => 'string', 'description' => 'What to put in its place'],
+                            ],
+                            'required' => ['oldText', 'newText'],
+                        ],
+                    ],
                 ],
-                'required' => ['path', 'oldText', 'newText'],
+                'required' => ['path', 'edits'],
             ],
             // Upstream's `constrainedSampling: { type: "json_schema", strict: "prefer" }` on bash,
             // edit, read and write (and on none of grep, find or ls): strict sampling where the
             // provider has it, the schema as written where it does not. Under strict sampling an
             // optional parameter arrives as null, which `ToolArguments` drops before validation.
             ['type' => 'json_schema', 'strict' => 'prefer'],
-            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
-            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
-            typeBox: true,
         );
+    }
+
+    /**
+     * Upstream's `prepareEditArguments()`: arguments in an older or looser shape, made into
+     * `edits[]` before the schema sees them.
+     *
+     * - `edits` as a JSON string, as some models send it, is decoded: a list is used as it is,
+     *   one `{oldText, newText}` object becomes a list of one. Anything else is left for the
+     *   schema to refuse.
+     * - `edits` as one object rather than a list of one becomes that list.
+     * - Top-level `oldText` and `newText` — the shape this tool had before, which a saved
+     *   session's calls still have — become one more edit, after any in `edits`.
+     *
+     * Public and static because the renderers read a call's arguments the same way: a session
+     * saved before `edits[]` must still draw its edits (`ToolExecutionComponent`).
+     *
+     * @param array<string, mixed> $arguments
+     * @return array<string, mixed>
+     */
+    #[\Override]
+    public function prepareArguments(array $arguments): array
+    {
+        return self::prepare($arguments);
+    }
+
+    /**
+     * `prepareArguments()`, for a caller without a tool.
+     *
+     * @param array<string, mixed> $arguments
+     * @return array<string, mixed>
+     */
+    public static function prepare(array $arguments): array
+    {
+        $edits = $arguments['edits'] ?? null;
+
+        if (is_string($edits)) {
+            $parsed = json_decode($edits, true);
+
+            // `json_decode()` gives an array for a JSON object too; only `[…]` is a list.
+            if (is_array($parsed) && str_starts_with(ltrim($edits), '[')) {
+                $arguments['edits'] = $parsed;
+            } elseif (self::isSingleEdit($parsed)) {
+                $arguments['edits'] = [$parsed];
+            }
+        } elseif (self::isSingleEdit($edits)) {
+            $arguments['edits'] = [$edits];
+        }
+
+        $oldText = $arguments['oldText'] ?? null;
+        $newText = $arguments['newText'] ?? null;
+
+        if (!is_string($oldText) || !is_string($newText)) {
+            return $arguments;
+        }
+
+        $edits = is_array($arguments['edits'] ?? null) && array_is_list($arguments['edits']) ? $arguments['edits'] : [];
+        $edits[] = ['oldText' => $oldText, 'newText' => $newText];
+        unset($arguments['oldText'], $arguments['newText']);
+        $arguments['edits'] = $edits;
+
+        return $arguments;
+    }
+
+    /** One `{oldText, newText}` object with both texts strings — upstream's `isSingleEditInput()`. */
+    private static function isSingleEdit(mixed $value): bool
+    {
+        return is_array($value)
+            && ($value === [] || !array_is_list($value))
+            && is_string($value['oldText'] ?? null)
+            && is_string($value['newText'] ?? null);
     }
 
     #[\Override]
@@ -89,6 +176,13 @@ final class EditTool implements AgentTool
         ?Closure $onUpdate = null,
     ): AgentToolResult {
         $signal?->throwIfAborted();
+
+        // Upstream's `validateEditInput()`: the schema has no `minItems`, so an empty list gets here.
+        $edits = $arguments['edits'] ?? null;
+
+        if (!is_array($edits) || $edits === []) {
+            throw new AgentError('Edit tool input is invalid. edits must contain at least one replacement.');
+        }
 
         $path = (string) $arguments['path'];
         $absolute = Paths::resolve($path, $this->cwd);
@@ -113,10 +207,8 @@ final class EditTool implements AgentTool
         // Matched with LF throughout, so a model that wrote `\n` can still edit a file
         // saved with CRLF — and the file gets its own endings back on the way out.
         $old = EditDiff::toLf($content);
-        $find = EditDiff::toLf((string) $arguments['oldText']);
-        $replace = EditDiff::toLf((string) $arguments['newText']);
 
-        $new = EditDiff::apply($old, $find, $replace, $path);
+        [$new, $replacements] = EditDiff::apply($old, array_values($edits), $path);
 
         $signal?->throwIfAborted();
 
@@ -124,10 +216,10 @@ final class EditTool implements AgentTool
             throw new AgentError("Could not write {$path}");
         }
 
-        [$diff, $firstChangedLine] = EditDiff::render($old, $new);
+        [$diff, $firstChangedLine] = EditDiff::renderEdits($old, $new, $replacements);
 
         return new AgentToolResult(
-            [new TextContent("Replaced text in {$path}.")],
+            [new TextContent('Successfully replaced ' . count($edits) . " block(s) in {$path}.")],
             ['diff' => $diff, 'firstChangedLine' => $firstChangedLine],
         );
     }

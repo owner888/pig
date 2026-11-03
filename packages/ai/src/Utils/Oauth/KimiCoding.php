@@ -96,15 +96,13 @@ final class KimiCoding
         $json = self::json($text);
         $deviceCode = $json['device_code'] ?? null;
         $userCode = $json['user_code'] ?? null;
-        $verificationUri = $json['verification_uri'] ?? null;
-        $verificationUriComplete = $json['verification_uri_complete'] ?? null;
+        $verificationUri = TrustedUrl::trustedHttpUrl($json['verification_uri'] ?? null);
+        $verificationUriComplete = TrustedUrl::trustedHttpUrl($json['verification_uri_complete'] ?? null);
 
-        if (!is_string($deviceCode) || !is_string($userCode) || !self::trustedHttpUrl($verificationUri) || !self::trustedHttpUrl($verificationUriComplete)) {
+        if (!is_string($deviceCode) || !is_string($userCode) || $verificationUri === null || $verificationUriComplete === null) {
             throw new OauthError('Invalid Kimi Code device authorization response: ' . self::stringify($json));
         }
 
-        /** @var string $verificationUri */
-        /** @var string $verificationUriComplete */
         $interval = $json['interval'] ?? null;
         $expiresIn = $json['expires_in'] ?? null;
 
@@ -267,18 +265,6 @@ final class KimiCoding
         }
 
         return ['access' => $access, 'refresh' => $refresh, 'expires' => (int) (Timestamp::nowMs() + $expiresIn * 1000)];
-    }
-
-    /** Upstream's `trustedHttpUrl()`: "The verification URI is opened in the user's browser; only http(s) URLs are trusted." */
-    private static function trustedHttpUrl(mixed $value): bool
-    {
-        if (!is_string($value) || $value === '') {
-            return false;
-        }
-
-        $scheme = parse_url($value, PHP_URL_SCHEME);
-
-        return ($scheme === 'https' || $scheme === 'http') && parse_url($value, PHP_URL_HOST) !== null;
     }
 
     private static function positiveNumber(mixed $value): int|float|null

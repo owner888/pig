@@ -5,10 +5,16 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Http\HttpClient;
 use Pig\CodingAgent\Cli\SelfUpdate;
+use Pig\CodingAgent\Cli\UpdateCheck;
+use Pig\CodingAgent\CodingAgentError;
+use Pig\Test\AssertsThrows;
 
 final class SelfUpdateTest extends TestCase
 {
+    use AssertsThrows;
+
     public function testHelpOutputsUsageAndReturnsZero(): void
     {
         $updater = new SelfUpdate();
@@ -103,6 +109,78 @@ final class SelfUpdateTest extends TestCase
         ob_end_clean();
 
         $this->assertSame(127, $code);
+    }
+
+    /** Upstream 8bc94b1: the person's own command in place of pig's, with its placeholders filled in. */
+    public function testAConfiguredCommandReplacesPigsOwnUpdate(): void
+    {
+        $executed = [];
+        $runner = static function (array $command, ?string $cwd = null) use (&$executed): int {
+            $executed[] = $command;
+
+            return 0;
+        };
+        putenv('PIG_SELF_UPDATE_COMMAND=mise  use -g composer:{packageName}@{version} {installSpec}');
+
+        try {
+            ob_start();
+            $code = (new SelfUpdate($runner, static fn (): string => 'v99.0.0', static fn (): string => '99.0.0'))->run(['self']);
+            $output = (string) ob_get_clean();
+        } finally {
+            putenv('PIG_SELF_UPDATE_COMMAND');
+        }
+
+        $this->assertSame(0, $code);
+        $this->assertSame([['mise', 'use', '-g', 'composer:pigagent/pig@99.0.0', 'pigagent/pig:99.0.0']], $executed);
+        $this->assertStringContainsString('Updating pig with mise use -g composer:pigagent/pig@99.0.0 pigagent/pig:99.0.0...', $output);
+        $this->assertStringContainsString('to 99.0.0', $output);
+    }
+
+    public function testTheEnvironmentWinsOverTheSettingAndAnUnchangedVersionIsSaid(): void
+    {
+        $this->assertSame(['nix', 'profile', 'upgrade', 'pig'], SelfUpdate::configuredCommand(['nix', 'profile', 'upgrade', 'pig']));
+        $this->assertNull(SelfUpdate::configuredCommand(null));
+
+        putenv('PIG_SELF_UPDATE_COMMAND=true');
+
+        try {
+            $this->assertSame(['true'], SelfUpdate::configuredCommand(['nix']));
+            ob_start();
+            $code = (new SelfUpdate(static fn (): int => 0, static fn (): ?string => null, static fn (): string => '99.0.0'))->updatePigWith(['true']);
+            $output = (string) ob_get_clean();
+        } finally {
+            putenv('PIG_SELF_UPDATE_COMMAND');
+        }
+
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('Ran true, but `pig --version` reports no version, not 99.0.0.', $output);
+    }
+
+    /** Upstream's `getSelfUpdatePlan()`: no newest release to name means nothing is run. */
+    public function testAConfiguredCommandIsNotRunWhenTheNewestReleaseIsUnknown(): void
+    {
+        $executed = [];
+        $runner = static function (array $command) use (&$executed): int {
+            $executed[] = $command;
+
+            return 0;
+        };
+        $latest = static fn (): string => throw new CodingAgentError('Could not determine latest pig version.');
+
+        $code = (new SelfUpdate($runner, static fn (): ?string => null, $latest))->updatePigWith(['true']);
+
+        $this->assertSame(1, $code);
+        $this->assertSame([], $executed);
+    }
+
+    /** The newest release lookup fails loudly, where the startup check stays quiet. */
+    public function testTheNewestReleaseLookupThrowsWhenPackagistCannotBeReached(): void
+    {
+        $check = new UpdateCheck(new HttpClient(0.5), 'http://127.0.0.1:9/');
+
+        $error = $this->assertThrows(CodingAgentError::class, static fn () => $check->latest());
+
+        $this->assertStringStartsWith('Could not determine latest pig version', $error->getMessage());
     }
 
     public function testEnsureBundledExtensionsCopiesCoreExtensionsToUserDirectory(): void

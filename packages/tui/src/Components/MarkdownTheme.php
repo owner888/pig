@@ -26,7 +26,8 @@ final readonly class MarkdownTheme
      * @param Closure(string): string             $strikethrough
      * @param Closure(string): string             $underline
      * @param Closure(string, string): list<string>|null $highlightCode
-     *        given the code and its language, the lines to draw instead of plain ones
+     *        given the code and its language, the lines to draw instead of plain ones; a `Markdown`
+     *        reuses the result for the same code until `invalidate()`
      */
     public function __construct(
         public Closure $heading,

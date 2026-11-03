@@ -30,6 +30,7 @@ final class Overflow
      *   `413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}`
      * - OpenAI: "Your input exceeds the context window of this model"
      * - OpenAI/LiteLLM: "Requested token count exceeds the model's maximum context length of 131072 tokens"
+     * - LiteLLM pre-call check: "litellm.ContextWindowExceededError: ... Context Window exceeded for given call."
      * - OpenAI-compatible: "Input length (265330) exceeds model's maximum context length (262144)."
      * - Ollama (MLX): "input length (282201 tokens) exceeds the model's maximum context length (262144 tokens)"
      * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
@@ -62,6 +63,7 @@ final class Overflow
         // tokens) exceeds the model's maximum context length (262144 tokens)". Upstream's pattern
         // stops at the digits, so that overflow was an ordinary error, with no compact-and-retry.
         ["/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\\d,]+ tokens?|\\s*\\([\\d,]+(?: tokens?)?\\))/i", 'OpenAI-compatible proxies (LiteLLM)'],
+        ['/context window exceeded/i', 'LiteLLM pre-call check (ContextWindowExceededError)'],
         ['/input token count.*exceeds the maximum/i', 'Google (Gemini)'],
         ['/maximum prompt length is \d+/i', 'xAI (Grok)'],
         ['/reduce the length of the messages/i', 'Groq'],

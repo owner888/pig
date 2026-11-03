@@ -271,6 +271,26 @@ final class TuiMainScreenTest extends TestCase
         $tui->stop();
     }
 
+    /** Terminals read 133;A as a new shell prompt and drop the OSC 7501 program status. */
+    public function testDoesNotWriteOsc133PromptMarkersToTheTerminal(): void
+    {
+        $terminal = new VirtualTerminal(40, 10);
+        [$tui, $component] = $this->start($terminal, ["\x1b]133;A\x07prompt", "\x1b]133;B\x07\x1b]133;C\x07output"]);
+
+        $component->lines = [...$component->lines, "\x1b]133;A\x1b\\reply", "\x1b]133;B\x1b\\\x1b]133;C\x1b\\done"];
+        $tui->requestRender();
+        $terminal->waitForRender();
+
+        $output = $terminal->output();
+        $this->assertStringNotContainsString("\x1b]133;", $output);
+
+        foreach (['prompt', 'output', 'reply', 'done'] as $text) {
+            $this->assertStringContainsString($text, $output);
+        }
+
+        $tui->stop();
+    }
+
     public function testRendersCorrectlyWhenFirstLineChangesButRestStaysSame(): void
     {
         $terminal = new VirtualTerminal(40, 10);

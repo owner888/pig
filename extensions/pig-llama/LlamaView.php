@@ -12,6 +12,7 @@ use Pig\Async\Future;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Interactive\ThemedText;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
@@ -42,7 +43,7 @@ use Throwable;
  * @phpstan-import-type LlamaProgress from LlamaClient
  * @phpstan-import-type ProgressState from LlamaUi
  */
-final class LlamaView implements LlamaUi, Component, InputHandler, Focusable
+final class LlamaView implements LlamaUi, Component, InputHandler, Focusable, CapturesViewportInput
 {
     private const string DOWNLOAD_VALUE = "\0download";
 
@@ -157,6 +158,13 @@ final class LlamaView implements LlamaUi, Component, InputHandler, Focusable
         $container->addChild(new Rule($border));
 
         return $container;
+    }
+
+    /** Whatever takes the keys now decides: a list or the search pages with PageUp/PageDown. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return $this->inputHandler instanceof CapturesViewportInput && $this->inputHandler->capturesViewportInput();
     }
 
     private function setContent(Container $content, ?InputHandler $inputHandler = null, ?Focusable $inputTarget = null): void

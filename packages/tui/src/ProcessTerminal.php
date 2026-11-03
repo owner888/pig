@@ -292,11 +292,12 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
     /**
      * If the terminal (such as macOS Terminal.app) does not report extended keys and sends a bare
      * "\r" when Shift, Command, Control or Option is held, inspect the local macOS modifier state via CoreGraphics.
-     * Matches upstream's `normalizeNativeShiftEnterInput` in `ProcessTerminal.ts`.
+     * Matches upstream's `normalizeNativeShiftEnterInput` in `ProcessTerminal.ts`. Some Apple Terminal
+     * setups send ESC+CR for Shift+Enter (upstream #11559), so that is Shift+Enter too when Shift is held.
      */
     private static function normalizeNativeInput(string $data): string
     {
-        if ($data !== "\r" || PHP_OS_FAMILY !== 'Darwin') {
+        if (($data !== "\r" && $data !== "\x1b\r") || PHP_OS_FAMILY !== 'Darwin') {
             return $data;
         }
 
@@ -328,6 +329,10 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
 
             if (($flags & 0x00020000) !== 0) { // kCGEventFlagMaskShift
                 return "\x1b[13;2u"; // Shift+Enter
+            }
+
+            if ($data !== "\r") {
+                return $data;
             }
 
             if (($flags & 0x00100000) !== 0) { // kCGEventFlagMaskCommand
@@ -713,7 +718,9 @@ final class ProcessTerminal implements Terminal, BufferedTerminal
     #[\Override]
     public function setTitle(string $title): void
     {
-        $this->write("\x1b]0;{$title}\x07");
+        // A BEL or ESC in the title would end the sequence early and send the rest to the terminal
+        // as escape sequences (session names come from session files).
+        $this->write("\x1b]0;" . Width::replaceControlCharacters($title) . "\x07");
     }
 
     /**

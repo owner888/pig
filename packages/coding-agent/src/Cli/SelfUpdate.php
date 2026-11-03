@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Cli;
 
+use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Version;
 use Pig\Tui\Style;
@@ -17,6 +18,8 @@ use Pig\Tui\Style;
  * - With `--extensions`: updates installed extensions (git pull, composer, and core built-ins).
  * - Either way, a bundled extension added since the last update is installed (`installNewBundled()`).
  * - With `--models`: refreshes model catalog tables.
+ * - With `PIG_SELF_UPDATE_COMMAND` or the global `selfUpdateCommand` setting: runs that instead of
+ *   either, for a pig another tool installed (`updatePigWith()`).
  */
 final class SelfUpdate
 {
@@ -24,9 +27,13 @@ final class SelfUpdate
 
     /**
      * @param (callable(list<string>, ?string=): int)|null $runner execution handler for commands, injectable for tests
+     * @param (callable(): ?string)|null $versionReader what `pig --version` on the PATH answers, injectable for tests
+     * @param (callable(): string)|null $latestReader the newest release (`UpdateCheck::latest()`), injectable for tests
      */
     public function __construct(
         private readonly mixed $runner = null,
+        private readonly mixed $versionReader = null,
+        private readonly mixed $latestReader = null,
     ) {
     }
 
@@ -101,6 +108,120 @@ final class SelfUpdate
         echo Style::dim("Changelog: " . self::CHANGELOG_URL . "\n");
 
         return 0;
+    }
+
+    /**
+     * Upstream's `getConfiguredSelfUpdateArgv()`: `PIG_SELF_UPDATE_COMMAND`, split on whitespace with
+     * no quoting, else the global `selfUpdateCommand` setting — argv, for an argument with a space.
+     *
+     * @param list<string>|null $setting `Settings::selfUpdateCommand()`
+     * @return list<string>|null
+     */
+    public static function configuredCommand(?array $setting): ?array
+    {
+        $fromEnv = preg_split('/\s+/', trim((string) getenv('PIG_SELF_UPDATE_COMMAND')), -1, PREG_SPLIT_NO_EMPTY);
+
+        if (is_array($fromEnv) && $fromEnv !== []) {
+            return $fromEnv;
+        }
+
+        return $setting === [] ? null : $setting;
+    }
+
+    /**
+     * Upstream's `getSelfUpdatePlan()` and `runConfiguredSelfUpdate()`: the person's own command in
+     * place of pig's update logic, for the newest release Packagist lists.
+     *
+     * `{packageName}`, `{version}` and `{installSpec}` are filled as upstream fills them, the spec in
+     * Composer's `name:version` form where upstream writes npm's `name@version`. A pig already at that
+     * release runs nothing unless `--force`. Exit code 0 does not prove an update, so the pig on the
+     * `PATH` is asked its version afterwards, as upstream asks — a wrapper such as mise installs each
+     * version somewhere new.
+     *
+     * @param list<string> $argv
+     */
+    public function updatePigWith(array $argv, bool $force = false): int
+    {
+        $current = Version::current();
+
+        try {
+            $version = $this->latestReader !== null ? ($this->latestReader)() : (new UpdateCheck())->latest();
+        } catch (CodingAgentError $e) {
+            fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
+
+            return 1;
+        }
+
+        if (!$force && Version::isRelease($current) && version_compare($version, Version::plain($current), '<=')) {
+            echo Style::green("pig is already up to date (v{$current})\n");
+
+            return 0;
+        }
+
+        $values = [
+            '{packageName}' => Version::PACKAGE,
+            '{version}' => $version,
+            '{installSpec}' => Version::PACKAGE . ':' . $version,
+        ];
+        $command = array_map(static fn (string $arg): string => strtr($arg, $values), $argv);
+        $display = implode(' ', array_map(static fn (string $arg): string => preg_match('/\s/', $arg) === 1 ? "\"{$arg}\"" : $arg, $command));
+        echo Style::dim("Updating pig with {$display}...\n");
+        $code = $this->execute($command);
+
+        if ($code !== 0) {
+            fwrite(STDERR, Style::red("Error: {$display} exited with code {$code}\n"));
+
+            return 1;
+        }
+
+        $installed = $this->versionOnPath();
+
+        if ($installed !== null && Version::plain($installed) === $version) {
+            echo Style::green("Updated pig from {$current} to {$version}\n");
+
+            return 0;
+        }
+
+        echo Style::yellow('Ran ' . $display . ', but `pig --version` reports ' . ($installed ?? 'no version') . ", not {$version}.\n");
+
+        return 0;
+    }
+
+    /**
+     * Upstream's `readVersionOnPath()`: what `pig --version` from the `PATH` says, the pig the person
+     * runs next. Without `PIG_PACKAGE_DIR`, which points at this installation.
+     */
+    private function versionOnPath(): ?string
+    {
+        if ($this->versionReader !== null) {
+            return ($this->versionReader)();
+        }
+
+        $environment = getenv();
+        unset($environment['PIG_PACKAGE_DIR']);
+        // Caught rather than suppressed: a pig not on the PATH makes proc_open warn, and the value decides.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open(['pig', '--version'], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes, null, $environment);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!is_resource($process)) {
+            return null;
+        }
+
+        $output = (string) stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+
+        if (proc_close($process) !== 0) {
+            return null;
+        }
+
+        $version = trim((string) preg_replace('/^pig\s+/', '', trim($output)));
+
+        return $version === '' ? null : $version;
     }
 
     /**

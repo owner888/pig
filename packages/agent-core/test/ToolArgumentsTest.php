@@ -10,6 +10,7 @@ use Pig\Agent\InvalidToolArguments;
 use Pig\Agent\ToolArguments;
 use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
+use Pig\Test\AssertsThrows;
 
 /**
  * Upstream's `normalizeOptionalNulls()` and `coerceWithJsonSchema()`, the two steps
@@ -18,6 +19,8 @@ use Pig\Ai\ToolCall;
  */
 final class ToolArgumentsTest extends TestCase
 {
+    use AssertsThrows;
+
     public function testArgumentsThatWereNotAJsonObjectFailWithWhatWasSent(): void
     {
         // #10897: upstream's `validateToolCall()` reports `argumentsError` before the schema.
@@ -37,12 +40,10 @@ final class ToolArgumentsTest extends TestCase
     public function testANullForARequiredParameterIsNotDroppedButCoerced(): void
     {
         // Only an *optional* parameter's null means "left out". A required one is kept — and then
-        // coerced like any other value: upstream's `coercePrimitiveByType(null, "string")` is "".
-        // This test used to expect "path: must be string"; that was before the coercion step was
-        // ported, and upstream does not refuse it either. A plain JSON schema — an extension's, an
-        // MCP server's — and so no `Value.Convert` first; a built-in tool's gives "null" instead,
-        // see `testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`.
-        $this->assertSame(['path' => ''], $this->validate(['path' => null]));
+        // converted like any other value. A plain JSON schema — an extension's, an MCP server's —
+        // now goes through TypeBox's rules too (pi-schema, 6536f80), whose `TryString` makes null
+        // "null"; it used to skip them and get the old coercion's "".
+        $this->assertSame(['path' => 'null'], $this->validate(['path' => null]));
     }
 
     /**
@@ -69,7 +70,7 @@ final class ToolArgumentsTest extends TestCase
                 'gone' => ['type' => 'null'],
             ],
             'required' => ['pattern'],
-        ], typeBox: true);
+        ]);
 
         if (is_string($expected)) {
             $this->expectException(InvalidToolArguments::class);
@@ -112,6 +113,38 @@ final class ToolArgumentsTest extends TestCase
         // `TryNull`.
         yield 'null from NULL' => [['pattern' => 'x', 'gone' => 'NULL'], ['pattern' => 'x', 'gone' => null]];
         yield 'null from 0' => [['pattern' => 'x', 'gone' => 0], ['pattern' => 'x', 'gone' => null]];
+    }
+
+    /**
+     * Upstream's "coerces serialized plain JSON schemas like TypeBox schemas" (6536f80): a plain
+     * schema — no `typeBox` mark — gets TypeBox's conversion rules too, and its failing cases.
+     */
+    public function testAPlainSchemaIsConvertedLikeABuiltInOne(): void
+    {
+        $passing = [
+            [['type' => 'boolean'], '1', true],
+            [['type' => 'boolean'], '0', false],
+            [['type' => 'null'], 'null', null],
+            [['type' => 'integer'], '42.1', 42],
+            [['type' => 'array', 'items' => ['type' => 'number']], '7', [7]],
+            [['type' => 'string'], null, 'null'],
+            [['enum' => ['low', 'high']], 'high', 'high'],
+            [['const' => 3], '3', 3],
+            [['anyOf' => [['type' => 'string', 'enum' => ['auto']], ['type' => 'integer']]], '12', 12],
+            [['type' => 'object', 'patternProperties' => ['^n_' => ['type' => 'integer']]], ['n_a' => '5'], ['n_a' => 5]],
+        ];
+
+        foreach ($passing as [$schema, $input, $expected]) {
+            $tool = new Tool('echo', 'Echo', ['type' => 'object', 'properties' => ['value' => $schema], 'required' => ['value']]);
+
+            $this->assertSame(['value' => $expected], ToolArguments::validate($tool, new ToolCall('c1', 'echo', ['value' => $input])), json_encode($schema));
+        }
+
+        foreach ([[['type' => 'boolean'], 'yes'], [['type' => 'number'], 'abc'], [['type' => 'null'], 'nil'], [['type' => 'integer'], '4x']] as [$schema, $input]) {
+            $tool = new Tool('echo', 'Echo', ['type' => 'object', 'properties' => ['value' => $schema], 'required' => ['value']]);
+
+            $this->assertThrows(InvalidToolArguments::class, static fn () => ToolArguments::validate($tool, new ToolCall('c1', 'echo', ['value' => $input])));
+        }
     }
 
     public function testAValueNoCoercionCanFixIsStillAnError(): void
@@ -184,9 +217,10 @@ final class ToolArgumentsTest extends TestCase
     public function testAUnionThatFitsNoneIsCoercedForTheFirstTypeThatChangesIt(): void
     {
         // `["integer", "null"]` with "4": not an integer, not null — the integer coercion is the
-        // first to change it. `anyOf: [{integer}, {boolean}]` with "false": the integer branch
-        // cannot take it, the boolean one can once coerced.
-        $this->assertSame(['maybe' => 4, 'mixed' => false], $this->coerce(['maybe' => '4', 'mixed' => 'false']));
+        // first to change it. `anyOf: [{integer}, {boolean}]` with "false": no branch takes it as it
+        // is, and the first branch's conversion the union accepts wins — TypeBox's `TryNumber`
+        // makes "false" 0 (pi-schema's `convertUnion()`, which runs before the coercion by type).
+        $this->assertSame(['maybe' => 4, 'mixed' => 0], $this->coerce(['maybe' => '4', 'mixed' => 'false']));
     }
 
     public function testCoercionReachesIntoArraysAndAdditionalProperties(): void
@@ -199,11 +233,12 @@ final class ToolArgumentsTest extends TestCase
 
     public function testWhatCannotBeConvertedIsRefusedShowingWhatTheModelSent(): void
     {
-        // "abc" is no number and "2.5" no integer, so both reach the schema as they were; the
-        // message prints the model's own arguments, as upstream prints `toolCall.arguments` —
-        // the "10" that *was* coerced is shown as the string it arrived as.
+        // "abc" is no number and "4x" no integer, so both reach the schema as they were ("2.5" is
+        // 2 now: TypeBox's `FromInteger` truncates); the message prints the model's own arguments,
+        // as upstream prints `toolCall.arguments` — the "10" that *was* coerced is shown as the
+        // string it arrived as.
         try {
-            $this->coerce(['count' => 'abc', 'whole' => '2.5', 'ratio' => '10']);
+            $this->coerce(['count' => 'abc', 'whole' => '4x', 'ratio' => '10']);
             $this->fail('expected the call to be refused');
         } catch (InvalidToolArguments $error) {
             $this->assertStringContainsString('count: must be number', $error->getMessage());

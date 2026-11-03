@@ -187,7 +187,7 @@ final class TextWrapTest extends TestCase
         // its closing style on its last.
         $this->assertSame(["\e[31mabcd", "\e[31mefgh", "\e[31mij\e[39m"], TextWrap::wrap("\e[31mabcdefghij\e[39m", 4));
         $this->assertSame(["\e[4mabc\e[24m", "\e[4mdef\e[24m", "\e[4mghi\e[24m", "\e[4mj"], TextWrap::wrap("\e[4mabcdefghij", 3));
-        $this->assertSame(['abc' . "\e[31mde", "\e[31mfghij", "\e[31mklmno", "\e[31m\e[39m pqr"], TextWrap::wrap("abc\e[31mdefghijklmno\e[39m pqr", 5));
+        $this->assertSame(['abc' . "\e[31mde", "\e[31mfghij", "\e[31mklmno\e[39m", 'pqr'], TextWrap::wrap("abc\e[31mdefghijklmno\e[39m pqr", 5));
 
         // A word with a code *inside* it takes the slow path and is cut the same way.
         $this->assertSame(["\e[1mab\e[31mc", "\e[1;31mdef", "\e[1;31mgh\e[39mi", "\e[1mj\e[22m"], TextWrap::wrap("\e[1mab\e[31mcdefgh\e[39mij\e[22m", 3));
@@ -227,5 +227,43 @@ final class TextWrapTest extends TestCase
 
             $this->assertSame(Graphemes::split($text), $clusters, "width {$width}");
         }
+    }
+
+    /**
+     * The code closing a styled word rides on the space after it (`\e[22m `). That token is still
+     * a space: dropped at the wrap, with its code kept on the line it closes.
+     */
+    public function testTheCodeClosingAWordAtTheBoundaryStaysOnItsLine(): void
+    {
+        $this->assertSame(["aaaa \x1b[1mbold\x1b[22m", 'next word'], TextWrap::wrap("aaaa \x1b[1mbold\x1b[22m next word", 9));
+        $this->assertSame(["aaaa \x1b[31mred\x1b[39m", 'next'], TextWrap::wrap("aaaa \x1b[31mred\x1b[39m  next", 8));
+    }
+
+    public function testStyledSpacesWiderThanTheLineNeverOverflowIt(): void
+    {
+        foreach ([
+            "\x1b[41m" . str_repeat(' ', 20) . "\x1b[0m",
+            "ab\x1b[41m" . str_repeat(' ', 20) . "\x1b[49mcd",
+            "\x1b[33m" . str_repeat(' ', 20) . "x\x1b[39m",
+            str_repeat(' ', 20),
+        ] as $text) {
+            foreach (TextWrap::wrap($text, 10) as $line) {
+                $this->assertLessThanOrEqual(10, Width::visible($line), json_encode($line));
+            }
+        }
+    }
+
+    public function testSpacesBeforeALongWordAreTrimmedBeforeTheLineEndReset(): void
+    {
+        $this->assertSame(
+            ["aaa\x1b[9m\x1b[29m", "\x1b[9mabcdefghi\x1b[29m", "\x1b[9mj\x1b[29m"],
+            TextWrap::wrap("aaa\x1b[9m    abcdefghij\x1b[29m", 9),
+        );
+    }
+
+    public function testStrikethroughIsReopenedAfterTheWrapAndTheBackgroundKept(): void
+    {
+        $this->assertSame(["aaaa \x1b[9mstrike\x1b[29m", "\x1b[9mme\x1b[29m next"], TextWrap::wrap("aaaa \x1b[9mstrike me\x1b[29m next", 12));
+        $this->assertSame(["\x1b[41;9mstrike\x1b[29m", "\x1b[9;41mme\x1b[0m"], TextWrap::wrap("\x1b[41;9mstrike me\x1b[0m", 6));
     }
 }

@@ -72,6 +72,9 @@ final class HttpServer
     private mixed $serverSocket = null;
     private ?string $serverWatcher = null;
 
+    /** @var array<string, array{0: string, 1: string}> an asset's gzip, by path: its ETag and the bytes */
+    private array $gzipped = [];
+
     /** @var array<int, Connection> */
     private array $connections = [];
 
@@ -648,10 +651,43 @@ final class HttpServer
                     default => 'application/octet-stream',
                 };
 
-                $conn->sendResponse(200, [
-                    'Content-Type' => $mime,
-                    'Cache-Control' => 'no-cache',
-                ], file_get_contents($target) ?: '');
+                // `no-cache` still: a page must see the assets of the pig it talks to, the moment
+                // `pig update` has replaced them. What was missing was a way to ask cheaply — with no
+                // validator, every load downloaded all of them again, 894KB in 28 requests. The ETag
+                // is the file's mtime and size, weak because the gzip below is the same file encoded.
+                $stat = stat($target);
+                $etag = sprintf('W/"%x-%x"', $stat['mtime'] ?? 0, $stat['size'] ?? 0);
+                $compressible = in_array($ext, ['css', 'js', 'mjs', 'svg', 'json'], true);
+                $headers = ['Content-Type' => $mime, 'Cache-Control' => 'no-cache', 'ETag' => $etag];
+
+                if ($compressible) {
+                    $headers['Vary'] = 'Accept-Encoding';
+                }
+
+                if (str_contains($req['headers']['if-none-match'] ?? '', $etag)) {
+                    $conn->sendResponse(304, $headers, '');
+
+                    return;
+                }
+
+                $body = file_get_contents($target) ?: '';
+
+                // Text compresses to about a quarter (899KB of assets to 239KB), which is the whole
+                // load on a phone over a VPN. Each file once per version, then from memory.
+                if ($compressible && preg_match('/\bgzip\b/i', $req['headers']['accept-encoding'] ?? '') === 1 && function_exists('gzencode')) {
+                    $cached = $this->gzipped[$target] ?? null;
+                    if ($cached === null || $cached[0] !== $etag) {
+                        $cached = [$etag, gzencode($body, 6) ?: $body];
+                        $this->gzipped[$target] = $cached;
+                    }
+
+                    if ($cached[1] !== $body) {
+                        $body = $cached[1];
+                        $headers['Content-Encoding'] = 'gzip';
+                    }
+                }
+
+                $conn->sendResponse(200, $headers, $body);
 
                 return;
             }

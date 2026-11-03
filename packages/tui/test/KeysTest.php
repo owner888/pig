@@ -54,4 +54,24 @@ final class KeysTest extends TestCase
         // A shifted letter is not a symbol: Ctrl+Shift+A is not `ctrl+A`'s logical twin.
         $this->assertTrue(Keys::matchesName("\x1b[97:65;6u", 'ctrl+shift+a'));
     }
+
+    public function testKittyFunctionKeysMatchWithAndWithoutModifiers(): void
+    {
+        $this->assertTrue(Keys::matchesName("\x1b[P", 'f1'));
+        $this->assertTrue(Keys::matchesName("\x1b[Q", 'f2'));
+        $this->assertTrue(Keys::matchesName("\x1b[13~", 'f3'));
+        $this->assertTrue(Keys::matchesName("\x1b[S", 'f4'));
+        $this->assertTrue(Keys::matchesName("\x1bOP", 'f1'), 'the legacy spelling still holds');
+        $this->assertTrue(Keys::matchesName("\x1b[1;5P", 'ctrl+f1'));
+        $this->assertFalse(Keys::matchesName("\x1b[1;5P", 'f1'));
+        $this->assertTrue(Keys::matchesName("\x1b[1;2S", 'shift+f4'));
+        $this->assertTrue(Keys::matchesName("\x1b[15;5~", 'ctrl+f5'));
+        $this->assertTrue(Keys::matchesName("\x1b[24;3~", 'alt+f12'));
+        $this->assertTrue(Keys::matchesName("\x1b[15;1:2~", 'f5'));
+        $this->assertTrue(Keys::matchesName("\x1b[21;2~", 'shift+f10'));
+        $this->assertTrue(Keys::isKeyName('ctrl+f5'));
+        // `\e[1;5R` is a cursor position report, never Ctrl+F3.
+        $this->assertFalse(Keys::matchesName("\x1b[1;5R", 'ctrl+f3'));
+        $this->assertTrue(Keys::isKeyRelease("\x1b[1;1:3P"));
+    }
 }

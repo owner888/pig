@@ -1564,7 +1564,7 @@ final class AgentSession
             }
 
             $id = 'extension-' . (++$this->extensionCalls);
-            $arguments = ToolArguments::validate($tool->definition(), new ToolCall($id, $name, $arguments));
+            $arguments = ToolArguments::validate($tool->definition(), ToolArguments::prepare($tool, new ToolCall($id, $name, $arguments)));
 
             return $tool->execute($id, $arguments, $signal ?? $this->signal());
         }
@@ -1622,7 +1622,7 @@ final class AgentSession
         $durationMs = null;
 
         try {
-            $arguments = ToolArguments::validate($tool->definition(), new ToolCall($toolCallId, $name, $arguments));
+            $arguments = ToolArguments::validate($tool->definition(), ToolArguments::prepare($tool, new ToolCall($toolCallId, $name, $arguments)));
             $startedAt = hrtime(true);
             $result = $tool->execute(
                 $toolCallId,
@@ -3632,13 +3632,16 @@ final class AgentSession
         ?bool $replaceInstructions,
         AbortSignal $signal,
     ): ?BranchSummary {
-        $model = $this->directModel($this->model() ?? throw new AgentError('No model to write the summary with.'), $signal)->model;
+        // The routed level with the routed model, as upstream's `_getSummarizationRequestAuth()`.
+        $direct = $this->directModel($this->model() ?? throw new AgentError('No model to write the summary with.'), $signal);
+        $model = $direct->model;
 
         $result = BranchSummarization::generateBranchSummary(
             $entries,
             $model,
             $this->keyFor($model),
             signal: $signal,
+            thinkingLevel: $direct->thinkingLevel,
             customInstructions: $instructions,
             replaceInstructions: $replaceInstructions,
             reserveTokens: $this->settings?->branchSummaryReserveTokens(BranchSummarization::RESERVE_TOKENS) ?? BranchSummarization::RESERVE_TOKENS,

@@ -1,9 +1,8 @@
 import { network } from "../network.js";
 import { escapeHtml, openModal } from "../utils.js";
 import { t, applyI18n } from "../i18n.js";
-import { Terminal } from "../vendor/xterm.mjs";
-import { FitAddon } from "../vendor/addon-fit.mjs";
 import { terminalTheme } from "../theme.js";
+import { loadXterm } from "../xterm-loader.js";
 
 /**
  * NodeWorkbench Component
@@ -424,7 +423,20 @@ export class NodeWorkbench {
     }
   }
 
-  openRemoteTerminal(nodeId) {
+  async openRemoteTerminal(nodeId) {
+    // xterm on first use (`xterm-loader.js`); one at a time, so a double open is not two tabs.
+    if (this.loadingTerminal) return;
+    this.loadingTerminal = true;
+    let Terminal, FitAddon;
+    try {
+      ({ Terminal, FitAddon } = await loadXterm());
+    } catch (e) {
+      console.error("Could not load the terminal:", e);
+      return;
+    } finally {
+      this.loadingTerminal = false;
+    }
+
     const termId = "ssh-" + Math.random().toString(36).slice(2, 9);
     const container = document.createElement("div");
     container.className = "node-xterm-instance";

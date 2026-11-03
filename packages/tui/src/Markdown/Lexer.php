@@ -50,6 +50,17 @@ final class Lexer
      */
     public static function lex(string $markdown): array
     {
+        return array_column(self::lexBlocks($markdown), 0);
+    }
+
+    /**
+     * The top-level blocks, each with the source lines it was read from — upstream's `token.raw`,
+     * which `Markdown` keys a rendered block by so a streamed answer lays out only its last block.
+     *
+     * @return list<array{0: BlockToken, 1: string}>
+     */
+    public static function lexBlocks(string $markdown): array
+    {
         $lines = explode("\n", str_replace(["\r\n", "\r", "\t"], ["\n", "\n", '    '], $markdown));
 
         return self::blocks($lines);
@@ -57,7 +68,7 @@ final class Lexer
 
     /**
      * @param list<string> $lines
-     * @return list<BlockToken>
+     * @return list<array{0: BlockToken, 1: string}> each block and its source lines
      */
     private static function blocks(array $lines): array
     {
@@ -69,7 +80,7 @@ final class Lexer
             $line = $lines[$index];
 
             if (trim($line) === '') {
-                $tokens[] = new Blank();
+                $tokens[] = [new Blank(), $line];
                 $index++;
 
                 continue;
@@ -86,7 +97,7 @@ final class Lexer
                 ?? self::paragraph($lines, $index);
 
             [$block, $consumed] = $token;
-            $tokens[] = $block;
+            $tokens[] = [$block, implode("\n", array_slice($lines, $index, $consumed))];
             $index += $consumed;
         }
 
@@ -201,7 +212,7 @@ final class Lexer
             $cursor++;
         }
 
-        return [new Blockquote(self::blocks($inner)), $cursor - $index];
+        return [new Blockquote(array_column(self::blocks($inner), 0)), $cursor - $index];
     }
 
     /**
@@ -299,7 +310,7 @@ final class Lexer
             // class docblock.
             if ($marker !== null && $marker[0] === $indent && $marker[2] === $ordered) {
                 if ($current !== null) {
-                    $items[] = new ListItem(self::blocks($current));
+                    $items[] = new ListItem(array_column(self::blocks($current), 0));
                 }
 
                 $current = [$marker[1]];
@@ -355,7 +366,7 @@ final class Lexer
         }
 
         if ($current !== null) {
-            $items[] = new ListItem(self::blocks($current));
+            $items[] = new ListItem(array_column(self::blocks($current), 0));
         }
 
         return $items === [] ? null : [new ListBlock($items, $ordered, $start, $loose), $cursor - $index];

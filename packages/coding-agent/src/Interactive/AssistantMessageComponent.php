@@ -66,6 +66,13 @@ final class AssistantMessageComponent extends Container
     /** Which slot `keep()` is filling, for the length of one update. */
     private int $slot = 0;
 
+    /**
+     * Upstream's `needsSpacer`: spacers are added lazily, right before the next visible block. That
+     * puts a blank line before the first visible block and after each visible thought followed by
+     * more, while a hidden thought without a label contributes nothing.
+     */
+    private bool $needsSpacer = true;
+
     private ?string $hiddenThinkingLabel = null;
 
     /** What `update()` was last given, so `invalidate()` can rebuild it in the current theme. */
@@ -154,9 +161,7 @@ final class AssistantMessageComponent extends Container
             }
         }
 
-        if (self::hasSomethingToSay($message)) {
-            $this->keep('gap', static fn (): Component => new Spacer(1));
-        }
+        $this->needsSpacer = true;
 
         foreach ($message->content as $index => $block) {
             if ($block instanceof TextContent && trim($block->text) !== '') {
@@ -169,20 +174,19 @@ final class AssistantMessageComponent extends Container
                 }
 
                 $parts = self::extractInlineThinking($saidText);
-                foreach ($parts as $partIndex => $part) {
+                foreach ($parts as $part) {
                     $partText = trim($part['text']);
                     if ($partText === '') {
                         continue;
                     }
 
                     if ($part['type'] === 'thinking') {
-                        $hasTextAfter = $partIndex < count($parts) - 1 || self::hasTextAfter($message, $index);
-                        $this->thinking($partText, $hasTextAfter);
+                        $this->thinking($partText);
 
                         continue;
                     }
 
-                    $said = $this->keep('said', fn (): Component => new Markdown('', $this->outputPad, 0, Themes::getMarkdownTheme()));
+                    $said = $this->keepVisible('said', fn (): Component => new Markdown('', $this->outputPad, 0, Themes::getMarkdownTheme()));
 
                     if ($said instanceof Markdown) {
                         $said->setText($partText);
@@ -195,18 +199,15 @@ final class AssistantMessageComponent extends Container
             // Upstream's: a run of thinking blocks is one thought, joined by a blank line.
             if ($block instanceof ThinkingContent && !($message->content[$index - 1] ?? null) instanceof ThinkingContent) {
                 $run = [];
-                $last = $index;
 
                 for ($i = $index; ($message->content[$i] ?? null) instanceof ThinkingContent; $i++) {
-                    $last = $i;
-
                     if (trim($message->content[$i]->thinking) !== '') {
                         $run[] = trim($message->content[$i]->thinking);
                     }
                 }
 
                 if ($run !== []) {
-                    $this->thinking(implode("\n\n", $run), self::hasTextAfter($message, $last));
+                    $this->thinking(implode("\n\n", $run));
                 }
             }
         }
@@ -237,21 +238,40 @@ final class AssistantMessageComponent extends Container
         return $child;
     }
 
-    private function thinking(string $thinking, bool $textAfter): void
+    /**
+     * `keep()` for a block that shows, with the spacer owed before it.
+     *
+     * @param Closure(): Component $make
+     */
+    private function keepVisible(string $tag, Closure $make): Component
+    {
+        if ($this->needsSpacer) {
+            $this->keep('gap', static fn (): Component => new Spacer(1));
+            $this->needsSpacer = false;
+        }
+
+        return $this->keep($tag, $make);
+    }
+
+    private function thinking(string $thinking): void
     {
         if ($this->hideThinking) {
             $txt = $this->hiddenThinkingLabel ?? 'Thinking...';
-            $label = Themes::theme()->fg('thinkingText', "\e[3m{$txt}\e[23m");
-            $this->keep('thought-label', fn (): Component => new Text($label, $this->outputPad, 0));
 
-            if ($textAfter) {
-                $this->keep('thought-gap', static fn (): Component => new Spacer(1));
+            // A hidden thought with an empty label renders nothing, spacing included.
+            if (trim($txt) === '') {
+                return;
             }
+
+            $label = Themes::theme()->fg('thinkingText', "\e[3m{$txt}\e[23m");
+            $this->keepVisible('thought-label', fn (): Component => new Text($label, $this->outputPad, 0));
+            // A gap only if another visible block follows: none above a tool's own block.
+            $this->needsSpacer = true;
 
             return;
         }
 
-        $thought = $this->keep('thought', fn (): Component => new Markdown(
+        $thought = $this->keepVisible('thought', fn (): Component => new Markdown(
             '',
             $this->outputPad,
             0,
@@ -264,9 +284,7 @@ final class AssistantMessageComponent extends Container
         }
 
         // Only above something: a thought that ends the message leaves no hole under it.
-        if ($textAfter) {
-            $this->keep('thought-gap', static fn (): Component => new Spacer(1));
-        }
+        $this->needsSpacer = true;
     }
 
     /**
@@ -317,42 +335,6 @@ final class AssistantMessageComponent extends Container
                 $error->setText(Themes::theme()->fg('error', 'Error: ' . ($message->errorMessage ?? 'Unknown error')));
             }
         }
-    }
-
-    /**
-     * Whether there is anything worth a blank line above.
-     *
-     * A message that is only tool calls gets none: the tools draw their own spacing, and
-     * an empty line above the first one leaves a hole where text never arrived.
-     */
-    private static function hasSomethingToSay(AssistantMessage $message): bool
-    {
-        foreach ($message->content as $block) {
-            if ($block instanceof TextContent && trim($block->text) !== '') {
-                return true;
-            }
-
-            if ($block instanceof ThinkingContent && trim($block->thinking) !== '') {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static function hasTextAfter(AssistantMessage $message, int $index): bool
-    {
-        foreach (array_slice($message->content, $index + 1) as $block) {
-            if ($block instanceof TextContent && trim($block->text) !== '') {
-                return true;
-            }
-
-            if ($block instanceof ThinkingContent && trim($block->thinking) !== '') {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

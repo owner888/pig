@@ -18,6 +18,15 @@ final class Inline
     /** Characters a backslash may escape, from the CommonMark set. */
     private const string ESCAPABLE = '\\`*_{}[]()#+-.!|~<>"\'$';
 
+    /**
+     * Upstream's `cjkPunctuationRegex`: punctuation of the CJK scripts, plus the fullwidth forms
+     * and quotes CJK text writes. CJK letters stay part of a URL; only punctuation ends one.
+     * `·` is listed by hand: PCRE2 10.42's Unicode tables do not yet give it the Han script
+     * extension that JavaScript's do.
+     */
+    private const string CJK_PUNCTUATION =
+        '/(?:(?=\p{P})[\p{scx:Han}\p{scx:Hiragana}\p{scx:Katakana}\p{scx:Hangul}\p{scx:Bopomofo}]|[，．：；！？（）［］｛｝“”‘’…—·])/u';
+
     /** @return list<InlineToken> */
     public static function tokenize(string $text): array
     {
@@ -214,7 +223,9 @@ final class Inline
      * A URL written on its own, which is how anyone actually writes one.
      *
      * Trailing punctuation is left out of the link: a URL at the end of a sentence is
-     * followed by a full stop that is not part of it.
+     * followed by a full stop that is not part of it. CJK punctuation ends it wherever it
+     * stands, since CJK prose puts no space after a URL (`见 https://example.com，然后`);
+     * an explicit link and an angle autolink keep theirs.
      *
      * @return array{0: InlineToken, 1: int, 2: int}|null
      */
@@ -224,7 +235,13 @@ final class Inline
             return null;
         }
 
-        $url = rtrim($match[0], '.,;:!?');
+        $url = $match[0];
+
+        if (preg_match(self::CJK_PUNCTUATION, $url, $punctuation, PREG_OFFSET_CAPTURE) === 1) {
+            $url = substr($url, 0, $punctuation[0][1]);
+        }
+
+        $url = rtrim($url, '.,;:!?');
 
         if ($url === '' || !str_contains($url, '://')) {
             return null;

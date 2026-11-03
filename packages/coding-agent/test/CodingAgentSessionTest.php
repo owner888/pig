@@ -807,7 +807,7 @@ final class CodingAgentSessionTest extends TestCase
         $prompt = $this->start()->session->systemPrompt();
 
         $this->assertStringStartsWith('You are a pirate.', $prompt);
-        $this->assertStringNotContainsString('You are an expert coding assistant', $prompt);
+        $this->assertStringNotContainsString('You are a coding assistant', $prompt);
         $this->assertStringContainsString('Say arr.', $prompt);
 
         // Untrusted, the project's file is not read and the person's still is.

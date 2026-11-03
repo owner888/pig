@@ -1515,6 +1515,8 @@ final class SessionManager
             return;
         }
 
+        $previousLeaf = $this->leaf;
+        $wasStarted = $this->started;
         $this->entries[$id] = ['message' => $message, 'parent' => $this->leaf];
         $this->leaf = $id;
 
@@ -1522,7 +1524,18 @@ final class SessionManager
             return;
         }
 
-        $this->write($entry);
+        try {
+            $this->write($entry);
+        } catch (\Throwable $e) {
+            // Upstream's `_appendEntry()`: keep memory in line with the file. An entry that was
+            // not written must not become the parent of later entries, or the file would hold
+            // entries pointing to a missing parent and a resume would stop at the gap.
+            unset($this->entries[$id]);
+            $this->leaf = $previousLeaf;
+            $this->started = $wasStarted;
+
+            throw $e;
+        }
     }
 
     /**

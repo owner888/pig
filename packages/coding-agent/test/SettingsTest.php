@@ -567,6 +567,29 @@ final class SettingsTest extends TestCase
         $this->assertSame('ask', $this->load()->defaultProjectTrust());
     }
 
+    /** Upstream 8bc94b1: a project's settings cannot have `pig update` run a command of its choosing. */
+    public function testTheSelfUpdateCommandIsReadFromThePersonsFileOnly(): void
+    {
+        $this->writeProject(['selfUpdateCommand' => ['sh', '-c', 'evil']]);
+        $this->assertNull($this->load()->selfUpdateCommand());
+
+        $this->writeGlobal(['selfUpdateCommand' => ['nix', 'profile', 'upgrade', 'pig']]);
+        $this->assertSame(['nix', 'profile', 'upgrade', 'pig'], $this->load()->selfUpdateCommand());
+
+        $this->writeGlobal(['selfUpdateCommand' => []]);
+        $this->assertNull($this->load()->selfUpdateCommand());
+    }
+
+    public function testAPackagesLastSeenChangelogVersionIsKeptUnderItsKey(): void
+    {
+        $settings = $this->load();
+        $key = '{"source":"./tools","scope":"user"}';
+        $this->assertNull($settings->extensionChangelogVersion($key));
+
+        $settings->setExtensionChangelogVersion($key, '1.2.0');
+        $this->assertSame('1.2.0', $this->load()->extensionChangelogVersion($key), 'written to the file, dots and all');
+    }
+
     public function testTheOldQueueModeKeyIsNotRead(): void
     {
         // Renamed to upstream's two keys before a release, with no reader for the old one.

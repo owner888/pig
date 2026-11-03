@@ -140,6 +140,21 @@ if (($argv[1] ?? '') === 'auth') {
     ))->run(array_slice($argv, 1)));
 }
 
+// Upstream's (#11509): started from a directory that has since been deleted, every command after
+// `auth` needs a working directory there is not. One line and exit 1 rather than going on in `.`;
+// `getcwd()` cannot say why it failed, so `posix_getcwd()`'s errno tells ENOENT from the rest.
+$startCwd = getcwd();
+
+if ($startCwd === false) {
+    if (function_exists('posix_getcwd') && posix_getcwd() === false && posix_get_last_error() !== 2) {
+        throw new RuntimeException('Could not read the current working directory: ' . posix_strerror(posix_get_last_error()));
+    }
+
+    fwrite(STDERR, Style::red("Error: The current working directory no longer exists. Change to an existing directory and try again.\n"));
+
+    exit(1);
+}
+
 // Upstream's `setThemeJsonValidator(validateThemeJson)` at the top of `main()` (#9880): commands and
 // startup selectors can load user-authored themes before any mode starts, and every one of them is
 // held to the theme schema.
@@ -148,7 +163,7 @@ Themes::setThemeJsonValidator(\Pig\CodingAgent\Theme\ThemeJson::validateThemeJso
 // `pig install | remove | uninstall | update | list` — the package commands, upstream's
 // `package-manager-cli.ts`. `update` without a target is still the self-update.
 if (in_array($argv[1] ?? '', PackageCommands::COMMANDS, true)) {
-    exit(PackageCommands::main(array_slice($argv, 1), getcwd() ?: '.'));
+    exit(PackageCommands::main(array_slice($argv, 1), $startCwd));
 }
 
 // `pig web start|stop|status|restart|password` — the browser UI as a daemon, and its password. `start` without `-d` becomes
@@ -161,7 +176,7 @@ if (($argv[1] ?? '') === 'web') {
 // extension rather than in a package, because what it reads and writes is the extension's.
 if (($argv[1] ?? '') === 'mcp') {
     require __DIR__ . '/../extensions/pig-mcp/McpCli.php';
-    exit(\PigMcp\McpCli::main(array_slice($argv, 2), getcwd() ?: '.'));
+    exit(\PigMcp\McpCli::main(array_slice($argv, 2), $startCwd));
 }
 
 $arguments = Arguments::parse(array_slice($argv, 1));
@@ -309,13 +324,14 @@ if (isset($options['help'])) {
     Environment:
       PIG_OFFLINE=1               no startup network activity, as --offline
       PIG_SKIP_VERSION_CHECK=1    do not ask Packagist whether there is a newer pig
+      PIG_SELF_UPDATE_COMMAND     the command `pig update` runs to update pig itself ({packageName}, {version}, {installSpec})
 
     TEXT;
 
     exit(0);
 }
 
-$cwd = $options['cwd'] ?? (getcwd() ?: '.');
+$cwd = $options['cwd'] ?? $startCwd;
 
 if (!is_dir($cwd)) {
     fwrite(STDERR, Style::red("No such directory: {$cwd}\n"));
@@ -326,7 +342,7 @@ if (!is_dir($cwd)) {
 // Upstream's `resolveCliPaths()`: `--skill`, `--prompt-template` and `--theme` paths are the
 // shell's, so a relative one is from where pig was started — not `--cwd`'s directory.
 $cliPaths = static fn (string $option): array => array_map(
-    static fn (string $path): string => Pig\CodingAgent\Tools\Paths::resolve($path, getcwd() ?: '.'),
+    static fn (string $path): string => Pig\CodingAgent\Tools\Paths::resolve($path, $startCwd),
     $arguments->values($option),
 );
 
@@ -873,8 +889,10 @@ if ($trustUndecided && $preloadedExtensions === null) {
     $settleTrust(ProjectTrust::resolve($cwd, $askTrust, default: $settings->defaultProjectTrust(), override: $trustOverride));
 }
 
+// Nothing to gate: `--approve` / `--no-approve`, then a saved answer, then yes — upstream's
+// `cachedProjectTrust ?? projectTrustOverride ?? trustStore.get(cwd) ?? !hasTrustRequiringResources`.
 if (!$trustUndecided) {
-    $settleTrust(true);
+    $settleTrust(ProjectTrust::resolve($cwd, null, override: $trustOverride));
 }
 
 Timings::time('extensions');

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
@@ -27,7 +28,7 @@ use Pig\Tui\InputHandler;
  * The title and the hint arrive already painted, because the caller is the one that paints
  * them — this is arrangement, not a second place that knows which theme is on.
  */
-final class SettingsSubmenu extends Container implements InputHandler
+final class SettingsSubmenu extends Container implements InputHandler, CapturesViewportInput
 {
     public function __construct(
         private readonly SelectList $list,
@@ -45,5 +46,12 @@ final class SettingsSubmenu extends Container implements InputHandler
     public function handleInput(string $data): void
     {
         $this->list->handleInput($data);
+    }
+
+    /** The list inside takes PageUp/PageDown; focused on its own (the thinking picker), so does this. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return $this->list->capturesViewportInput();
     }
 }

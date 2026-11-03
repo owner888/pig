@@ -8,6 +8,7 @@ use Closure;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\PreparesArguments;
 use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Ai\TextContent;
@@ -34,7 +35,7 @@ use Throwable;
  * The alternative — carry on when the guard is broken — is a `rm -rf` guard that stops
  * working the day someone leaves a typo in it, which is exactly the day it matters.
  */
-final readonly class HookedTool implements AgentTool, ReplayableTool
+final readonly class HookedTool implements AgentTool, ReplayableTool, PreparesArguments
 {
     public function __construct(
         private AgentTool $tool,
@@ -67,6 +68,13 @@ final readonly class HookedTool implements AgentTool, ReplayableTool
     public function replay(): ToolReplay
     {
         return ToolReplay::of($this->tool);
+    }
+
+    /** What the tool underneath makes of the arguments, or the arguments when it reshapes none. */
+    #[\Override]
+    public function prepareArguments(array $arguments): array
+    {
+        return $this->tool instanceof PreparesArguments ? $this->tool->prepareArguments($arguments) : $arguments;
     }
 
     public function label(): string

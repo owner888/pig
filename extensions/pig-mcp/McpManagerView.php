@@ -9,6 +9,7 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Interactive\ThemedText;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
@@ -32,12 +33,17 @@ use Pig\Tui\Width;
  * A `Container` **and** an `InputHandler`: a container given the focus eats every key, which is
  * the trap `SettingsSubmenu` exists for.
  */
-final class McpManagerView extends Container implements InputHandler
+final class McpManagerView extends Container implements InputHandler, CapturesViewportInput
 {
     private const int MAX_VISIBLE_ITEMS = 12;
 
-    /** @var Closure(string): void|null what the current screen does with a key */
-    private ?Closure $onKey = null;
+    /**
+     * What the current screen does with a key: a closure, or the list itself — which, as
+     * upstream's `inputHandler`, also says whether it takes the fullscreen PageUp/PageDown.
+     *
+     * @var (Closure(string): void)|InputHandler|null
+     */
+    private Closure|InputHandler|null $onKey = null;
 
     private ?Input $inputTarget = null;
 
@@ -120,7 +126,7 @@ final class McpManagerView extends Container implements InputHandler
             $list->setCancelHandler(static fn () => $finish(null));
             $body[] = $list;
 
-            $this->show($this->frame($menu['title'], $body, $footer), static fn (string $data) => $list->handleInput($data));
+            $this->show($this->frame($menu['title'], $body, $footer), $list);
         };
 
         $render();
@@ -217,9 +223,17 @@ final class McpManagerView extends Container implements InputHandler
     }
 
     #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return $this->onKey instanceof CapturesViewportInput && $this->onKey->capturesViewportInput();
+    }
+
+    #[\Override]
     public function handleInput(string $data): void
     {
-        if ($this->onKey !== null) {
+        if ($this->onKey instanceof InputHandler) {
+            $this->onKey->handleInput($data);
+        } elseif ($this->onKey !== null) {
             ($this->onKey)($data);
         }
 
@@ -254,9 +268,9 @@ final class McpManagerView extends Container implements InputHandler
 
     /**
      * @param list<\Pig\Tui\Component> $children
-     * @param Closure(string): void|null $onKey
+     * @param (Closure(string): void)|InputHandler|null $onKey
      */
-    private function show(array $children, ?Closure $onKey, ?Input $inputTarget = null): void
+    private function show(array $children, Closure|InputHandler|null $onKey, ?Input $inputTarget = null): void
     {
         $this->clear();
 

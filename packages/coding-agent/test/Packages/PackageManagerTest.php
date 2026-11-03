@@ -94,6 +94,54 @@ final class PackageManagerTest extends TestCase
         $this->assertSame([], $resolved->enabled('themes'), 'a manifest replaces the conventional directories');
     }
 
+    /** Upstream b4b72a3: an `extra.pig` that lists no resources left the package with none at all. */
+    public function testAManifestWithOnlyAChangelogPathKeepsTheConventionalDirectories(): void
+    {
+        $package = $this->package('notes', [
+            'composer.json' => json_encode(['extra' => ['pig' => ['changelogPath' => './docs/CHANGES.md']]]),
+            'docs/CHANGES.md' => "## 1.0.0\n",
+            'extensions/a.php' => '<?php',
+        ], inHome: true);
+
+        $resolved = $this->manager(['packages' => ['./notes']])->resolve();
+
+        $this->assertSame(["{$package}/extensions/a.php"], $resolved->enabled('extensions'));
+        $this->assertSame("{$package}/docs/CHANGES.md", $resolved->extensions[0]->metadata->changelogPath);
+    }
+
+    public function testTheChangelogIsCHANGELOGmdInsideThePackageAndAnEmptyPathTurnsItOff(): void
+    {
+        $default = $this->package('default', ['extensions/a.php' => '<?php', 'CHANGELOG.md' => "## 1.0.0\n"], inHome: true);
+        $off = $this->package('off', [
+            'extensions/a.php' => '<?php',
+            'CHANGELOG.md' => "## 1.0.0\n",
+            'composer.json' => json_encode(['extra' => ['pig' => ['changelogPath' => '']]]),
+        ], inHome: true);
+        $outside = $this->package('outside', [
+            'extensions/a.php' => '<?php',
+            'composer.json' => json_encode(['extra' => ['pig' => ['changelogPath' => '../default/CHANGELOG.md']]]),
+        ], inHome: true);
+        $linked = $this->package('linked', [
+            'extensions/a.php' => '<?php',
+            'composer.json' => json_encode(['extra' => ['pig' => ['changelogPath' => 'LINKED.md']]]),
+        ], inHome: true);
+        symlink("{$default}/CHANGELOG.md", "{$linked}/LINKED.md");
+
+        $resolved = $this->manager(['packages' => ['./default', './off', './outside', './linked']])->resolve();
+        $changelogs = [];
+
+        foreach ($resolved->extensions as $resource) {
+            $changelogs[$resource->metadata->source] = $resource->metadata->changelogPath;
+        }
+
+        $this->assertSame([
+            './default' => "{$default}/CHANGELOG.md",
+            './off' => null,
+            './outside' => null,
+            './linked' => null,
+        ], $changelogs);
+    }
+
     public function testASettingsFilterNarrowsAPackageAndAnEmptyListTurnsATypeOff(): void
     {
         $package = $this->package('filtered', [
@@ -330,6 +378,66 @@ final class PackageManagerTest extends TestCase
         $this->assertSame('<?php // one', file_get_contents("{$installed}/extensions/a.php"));
     }
 
+    /** Upstream bec60c5: `-e git:…@main` stayed on its first checkout, since a ref read as pinned. */
+    public function testATemporarySourceOnABranchIsRefreshedAndOneOnItsCommitIsNotAsked(): void
+    {
+        $repo = $this->bareRepository(['extensions/a.php' => '<?php // one']);
+        $first = trim((string) shell_exec('git -C ' . escapeshellarg($this->work) . ' rev-parse HEAD'));
+        $manager = $this->manager();
+
+        $extension = $manager->resolveExtensionSources(["git:{$repo}@main"], temporary: true)->enabled('extensions')[0];
+        $this->commit(['extensions/a.php' => '<?php // two']);
+        $manager->resolveExtensionSources(["git:{$repo}@main"], temporary: true);
+        $this->assertSame('<?php // two', file_get_contents($extension));
+
+        $pulled = [];
+        $manager->setProgressCallback(static function (string $type, string $action) use (&$pulled): void {
+            $pulled[] = "{$type} {$action}";
+        });
+        $short = substr($first, 0, 7);
+        $extension = $manager->resolveExtensionSources(["git:{$repo}@{$short}"], temporary: true)->enabled('extensions')[0];
+        $this->assertSame('<?php // one', file_get_contents($extension));
+        $pulled = [];
+        $manager->resolveExtensionSources(["git:{$repo}@{$short}"], temporary: true);
+        $this->assertSame([], $pulled, 'a commit already checked out is not fetched again');
+    }
+
+    /** Upstream e3da248: a clean that fails (a file another session holds) no longer stops the update. */
+    public function testAFailedCleanIsAWarningAndTheUpdateGoesOn(): void
+    {
+        $repo = $this->bareRepository(['extensions/a.php' => '<?php // one']);
+        $installed = "{$this->home}/git/localhost/pig-test/repo";
+        $manager = $this->manager(['packages' => ["git:{$repo}"]]);
+        $manager->install("git:{$repo}");
+        $this->commit(['extensions/a.php' => '<?php // two']);
+
+        // A `git` whose `clean` fails, ahead of the real one on the PATH.
+        $bin = "{$this->root}/bin";
+        mkdir($bin, 0o700, true);
+        $real = trim((string) shell_exec('command -v git'));
+        file_put_contents("{$bin}/git", "#!/bin/sh\nfor a in \"\$@\"; do [ \"\$a\" = clean ] && { echo 'warning: failed to remove x' >&2; exit 1; }; done\nexec {$real} \"\$@\"\n");
+        chmod("{$bin}/git", 0o700);
+        $path = (string) getenv('PATH');
+        putenv("PATH={$bin}:{$path}");
+
+        $told = [];
+        $manager->setProgressCallback(static function (string $type, string $action, string $source, ?string $message) use (&$told): void {
+            if ($type === 'progress') {
+                $told[] = $message;
+            }
+        });
+
+        try {
+            $manager->update();
+        } finally {
+            putenv("PATH={$path}");
+        }
+
+        $this->assertSame('<?php // two', file_get_contents("{$installed}/extensions/a.php"));
+        $this->assertCount(1, $told);
+        $this->assertStringStartsWith("Could not remove all untracked files in {$installed} (git clean -fdx failed: warning: failed to remove x).", (string) $told[0]);
+    }
+
     // ---- composer -----------------------------------------------------------------------------
 
     public function testAComposerPackageIsRequiredIntoTheSharedProjectAndRemovedFromIt(): void
@@ -425,6 +533,24 @@ final class PackageManagerTest extends TestCase
         $unconstrained->update('composer:acme/tools');
         $this->assertSame('2.0.0', $this->installedComposerVersion('acme/tools'));
         $this->assertFalse($unconstrained->composerHasAvailableUpdate('composer:acme/tools', 'user'));
+    }
+
+    /** Upstream cd6a8f7: an unpinned `-e composer:…` was installed once and kept forever. */
+    public function testATemporaryUnpinnedComposerSourceIsRefreshedWhenThereIsANewerRelease(): void
+    {
+        $this->composerRepository([
+            ['acme/tools', '1.2.0', ['extensions/one.php' => '<?php']],
+        ]);
+        $manager = $this->manager();
+        $first = $manager->resolveExtensionSources(['composer:acme/tools'], temporary: true);
+        $this->assertStringEndsWith('/vendor/acme/tools/extensions/one.php', $first->enabled('extensions')[0]);
+
+        $this->package('../repository/1', [
+            'extensions/two.php' => '<?php',
+            'composer.json' => json_encode(['name' => 'acme/tools', 'version' => '1.3.0']),
+        ]);
+        $second = $manager->resolveExtensionSources(['composer:acme/tools'], temporary: true);
+        $this->assertStringEndsWith('/vendor/acme/tools/extensions/two.php', $second->enabled('extensions')[0]);
     }
 
     public function testUpdatingByTheBareNameSuggestsTheConfiguredSource(): void

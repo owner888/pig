@@ -33,7 +33,7 @@ final class ToolSet
         'read' => 'Read a file, or look at an image',
         'bash' => 'Run a bash command',
         'powershell' => 'Run a PowerShell command',
-        'edit' => 'Change part of a file by replacing exact text',
+        'edit' => 'Change parts of a file by replacing exact text, several separate places in one call',
         'write' => 'Create a file, or replace one outright',
         'grep' => 'Search file contents for a pattern (respects .gitignore)',
         'find' => 'Find files by glob pattern (respects .gitignore)',

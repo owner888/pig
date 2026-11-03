@@ -119,8 +119,9 @@ export class ToolCard {
     const isExpanded = this.config.defaultOpen;
 
     let bodyHtml = "";
-    if (this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {
-      bodyHtml = renderDiff(this.args.oldText, this.args.newText);
+    const edits = this.toolName === "edit" ? editPairs(this.args) : null;
+    if (edits) {
+      bodyHtml = edits.map((edit) => renderDiff(edit.oldText, edit.newText)).join("");
     } else if (this.toolName === "codemode" && typeof this.args.code === "string") {
       bodyHtml = codemodeScript(this.args.code);
     } else {
@@ -312,8 +313,9 @@ export class ToolCard {
       this.rawOutput = textOutput;
       return codemodeResult(this.args.code, result, this.isError) + imagesHtml;
     }
-    if (!this.isError && this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {
-      return renderDiff(this.args.oldText, this.args.newText) + imagesHtml;
+    const edits = !this.isError && this.toolName === "edit" ? editPairs(this.args) : null;
+    if (edits) {
+      return edits.map((edit) => renderDiff(edit.oldText, edit.newText)).join("") + imagesHtml;
     }
     // Upstream's write: the content without `\r` or trailing blank lines; a failure under it in red.
     if (this.toolName === "write") {
@@ -368,6 +370,30 @@ if (typeof window !== "undefined") {
 const COMPACT_RESOURCE_FILES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 
 /** Upstream's `formatCompactReadCall()`: a skill or an AGENTS/CLAUDE file as one label, or null. */
+/**
+ * An edit call's `{oldText, newText}` pairs, in whichever shape its arguments came — `edits[]`,
+ * `edits` as a JSON string or as one object, or the top-level `oldText`/`newText` of a session
+ * saved before `edits[]` — as `EditTool::prepare()` reads them. Null when they are not (yet) whole.
+ */
+export function editPairs(args) {
+  const isPair = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
+    && typeof value.oldText === "string" && typeof value.newText === "string";
+  let edits = args?.edits;
+  if (typeof edits === "string") {
+    try {
+      edits = JSON.parse(edits);
+    } catch {
+      // Not JSON: the tool leaves it for its schema to refuse, so there are no edits to draw.
+      edits = undefined;
+    }
+  }
+  edits = isPair(edits) ? [edits] : Array.isArray(edits) ? [...edits] : [];
+  if (typeof args?.oldText === "string" && typeof args?.newText === "string") {
+    edits.push({ oldText: args.oldText, newText: args.newText });
+  }
+  return edits.length > 0 && edits.every(isPair) ? edits : null;
+}
+
 function compactRead(path) {
   if (!path) return null;
   const parts = path.split(/[\\/]/).filter(Boolean);

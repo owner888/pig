@@ -509,6 +509,25 @@ final class Settings
         $this->set('defaultProjectTrust', $value);
     }
 
+    /**
+     * Upstream's `selfUpdateCommand`: what `pig update` runs to update pig itself, as argv. The
+     * person's file alone, as upstream reads it from the global settings: a project's
+     * `.pig/settings.json` cannot have `pig update` run a command of its choosing. Null when unset,
+     * empty, or not a list of strings.
+     *
+     * @return list<string>|null
+     */
+    public function selfUpdateCommand(): ?array
+    {
+        $command = $this->global['selfUpdateCommand'] ?? null;
+
+        if (!is_array($command) || $command === [] || !array_is_list($command) || array_filter($command, is_string(...)) !== $command) {
+            return null;
+        }
+
+        return $command;
+    }
+
     /** Upstream's `getImageAutoResize()`: images are fitted inside the provider's limits on the way in. On by default. */
     public function imageAutoResize(): bool
     {
@@ -753,6 +772,27 @@ final class Settings
     public function setLastChangelogVersion(string $version): void
     {
         $this->set('lastChangelogVersion', $version);
+    }
+
+    /** Upstream's `getExtensionChangelogVersion()`: the last version of a package whose changelog was seen. */
+    public function extensionChangelogVersion(string $key): ?string
+    {
+        $versions = $this->get('extensionChangelogVersions');
+        $version = is_array($versions) && isset($versions[$key]) ? $versions[$key] : null;
+
+        return is_string($version) && $version !== '' ? $version : null;
+    }
+
+    /**
+     * Upstream's `setExtensionChangelogVersion()`, in the person's file. The whole map is written
+     * at once: a key is `{"source":"./x","scope":"user"}`, and `set()` would read its dots as a path.
+     */
+    public function setExtensionChangelogVersion(string $key, string $version): void
+    {
+        $versions = $this->global['extensionChangelogVersions'] ?? [];
+        $versions = is_array($versions) ? $versions : [];
+        $versions[$key] = $version;
+        $this->set('extensionChangelogVersions', $versions);
     }
 
     /** Upstream's `getSteeringMode()`: how steering messages typed mid-run are handed over. */

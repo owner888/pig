@@ -211,8 +211,8 @@ final class ProjectTrust
     }
 
     /**
-     * Decide: nothing to gate means yes, an extension that answers wins, then a saved answer,
-     * otherwise ask — and with nobody to ask, **no**. That last one is upstream's and the only
+     * Decide: this run's override first; nothing to gate means the saved answer, or yes without
+     * one; then an extension that answers wins, then a saved answer, otherwise ask — and with nobody to ask, **no**. That last one is upstream's and the only
      * safe direction: `-p` on a stranger's repository must not run its hooks because there was
      * no terminal to refuse on.
      *
@@ -230,12 +230,14 @@ final class ProjectTrust
      */
     public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?HookRunner $extensions = null, string $default = 'ask', ?bool $override = null): bool
     {
-        if (!self::hasResources($cwd)) {
-            return true;
-        }
-
         if ($override !== null) {
             return $override;
+        }
+
+        // Nothing to gate is trusted unless a saved decision says otherwise (upstream #10947): a
+        // "do not trust" stays the answer `isProjectTrusted()` gives after the resources go.
+        if (!self::hasResources($cwd)) {
+            return self::decision($cwd, $home) ?? true;
         }
 
         $answer = $extensions?->emitProjectTrust(new ProjectTrustEvent($cwd));

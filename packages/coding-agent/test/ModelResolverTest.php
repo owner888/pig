@@ -390,6 +390,12 @@ final class ModelResolverTest extends TestCase
         $this->assertSame([], $warnings);
     }
 
+    public function testOpenAisDefaultModelIsGpt61SolAndIsInTheCatalogue(): void
+    {
+        $this->assertSame('gpt-6.1-sol', ModelResolver::DEFAULT_MODEL_PER_PROVIDER['openai']);
+        $this->assertNotNull(Models::find('openai', ModelResolver::DEFAULT_MODEL_PER_PROVIDER['openai']));
+    }
+
     private static function model(string $provider, string $id): \Pig\Ai\Model
     {
         return new \Pig\Ai\Model($id, $id, \Pig\Ai\Api::OpenAiCompletions, $provider, 'http://127.0.0.1:1', 100_000, 8_000);

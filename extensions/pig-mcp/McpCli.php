@@ -28,8 +28,8 @@ final class McpCli
           pig mcp add <server> [options] --url <url>
           pig mcp remove <server> [-l]
           pig mcp list [--json]
-          pig mcp login <server> [--timeout <seconds>]
-          pig mcp logout <server>
+          pig mcp login <server> [-l] [--timeout <seconds>]
+          pig mcp logout <server> [-l]
 
         Configure and check MCP servers and sign in to OAuth servers without starting a session.
         Reads ~/.pig/agent/mcp.json and, in trusted projects, .pig/mcp.json.
@@ -41,7 +41,7 @@ final class McpCli
           login <server>          Sign in through the browser
           logout <server>         Delete the stored OAuth credentials
 
-        Options for add and remove:
+        Options for add, remove, login, and logout:
           -l, --local             Use .pig/mcp.json in the current project instead of the global file
 
         Options for add:
@@ -129,7 +129,7 @@ final class McpCli
         }
 
         if ($command === 'login' || $command === 'logout') {
-            $parsed = $this->parse($rest, $command === 'login' ? ['timeout' => 'value'] : []);
+            $parsed = $this->parse($rest, $command === 'login' ? ['local' => 'flag', 'timeout' => 'value'] : ['local' => 'flag']);
 
             if ($parsed === null) {
                 return 1;
@@ -138,7 +138,7 @@ final class McpCli
             $name = $parsed['positional'][0] ?? null;
 
             if ($name === null || count($parsed['positional']) > 1) {
-                ($this->err)("Usage: pig mcp {$command} <server>\n" . self::HELP_HINT);
+                ($this->err)("Usage: pig mcp {$command} <server> [-l]\n" . self::HELP_HINT);
 
                 return 1;
             }
@@ -155,8 +155,25 @@ final class McpCli
 
             if ($entry === null) {
                 $note = !$trusted && file_exists($projectConfig) ? " {$projectConfig} is ignored because the project is not trusted. Start pig in the project to trust it." : '';
-                $configured = implode(', ', array_map(static fn (ServerEntry $e): string => $e->name, $loaded->servers)) ?: 'none';
-                ($this->err)("No MCP server named \"{$name}\".{$note} Configured: {$configured}.");
+                $names = array_map(static fn (ServerEntry $e): string => $e->name, $loaded->servers);
+                $suggestion = null;
+
+                foreach ($names as $candidate) {
+                    if (levenshtein($candidate, $name) <= 2) {
+                        $suggestion = $candidate;
+                        break;
+                    }
+                }
+
+                $didYouMean = $suggestion !== null ? " Did you mean \"{$suggestion}\"?" : '';
+                $configured = implode(', ', $names) ?: 'none';
+                ($this->err)("No MCP server named \"{$name}\".{$didYouMean}{$note} Configured: {$configured}.");
+
+                return 1;
+            }
+
+            if (isset($parsed['values']['local']) && $entry->scope !== 'project') {
+                ($this->err)("MCP server \"{$name}\" is defined in {$entry->source}, not in the project; omit --local.");
 
                 return 1;
             }
@@ -632,7 +649,8 @@ final class McpCli
         $count = count($args);
 
         for ($index = 0; $index < $count; $index++) {
-            $arg = self::ALIASES[$args[$index]] ?? $args[$index];
+            $typed = $args[$index];
+            $arg = self::ALIASES[$typed] ?? $typed;
 
             if ($arg === '--' || count($positional) >= $maxPositionals) {
                 $positional = [...$positional, ...array_slice($args, $arg === '--' ? $index + 1 : $index)];
@@ -648,7 +666,7 @@ final class McpCli
             $kind = $known[$name] ?? null;
 
             if ($kind === null) {
-                ($this->err)("Unknown option {$arg}.\n" . self::HELP_HINT);
+                ($this->err)("Unknown option {$typed}.\n" . self::HELP_HINT);
 
                 return null;
             }

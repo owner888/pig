@@ -24,6 +24,9 @@ class TuiMainScreen extends TuiBase
 
     private const string KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
+    /** OSC 133 prompt markers at the start of a rendered line. Fullscreen uses them for prompt navigation. */
+    private const string OSC133_ZONE_PREFIX = '/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\\\))+/';
+
     /** @var list<string> */
     private array $previousLines = [];
 
@@ -262,7 +265,11 @@ class TuiMainScreen extends TuiBase
             return ($targetRow - $viewportTop) - ($hardwareCursorRow - $prevViewportTop);
         };
 
-        $newLines = $this->resolveFakeCursors($this->render($width));
+        // Drop OSC 133 markers: the terminal reads 133;A as a new shell prompt, which ends program status (OSC 7501).
+        $newLines = $this->resolveFakeCursors(array_map(
+            static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line),
+            $this->render($width),
+        ));
         if ($this->hasOverlayEntries()) {
             $newLines = $this->compositeOverlays($newLines, $width, $height);
         }

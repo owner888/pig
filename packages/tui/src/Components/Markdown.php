@@ -36,10 +36,10 @@ use Pig\Tui\Width;
 /**
  * Markdown, drawn.
  *
- * The whole document is laid out every time the text changes, which sounds wasteful and
- * is not: a streaming answer grows by a token at a time, the renderer only rewrites the
- * lines that differ, and the alternative — keeping a partial parse — would have to cope
- * with a fence that is open now and closed a token later.
+ * The whole document is parsed every time the text changes — keeping a partial parse would
+ * have to cope with a fence that is open now and closed a token later — but a top-level block
+ * whose source, width and following block are what they were last render is not laid out again:
+ * a streaming answer grows at its end, so only its last block is.
  */
 final class Markdown implements Component
 {
@@ -64,7 +64,7 @@ final class Markdown implements Component
      * messages laid out most recently keep their tokens, and memory stays bounded however long the
      * session.
      *
-     * @var array<string, list<\Pig\Tui\Markdown\BlockToken>> by text, least recently used first
+     * @var array<string, list<array{0: BlockToken, 1: string}>> by text, least recently used first
      */
     private static array $tokens = [];
 
@@ -73,6 +73,26 @@ final class Markdown implements Component
 
     /** The text this component last put in the shared cache, taken out again when it changes. */
     private ?string $tokensFor = null;
+
+    /**
+     * Upstream's `blocks`: the last render's top-level blocks by their source — the lines drawn,
+     * the width and the following block's kind (which decides the spacing) they were drawn for,
+     * and the code block's highlighting by language and code, which survives a resize. Each render
+     * keeps only the blocks it used, which drops a streamed block's earlier versions. Upstream holds
+     * them weakly; a PHP object held only weakly is freed at once, so they are held here, and the
+     * lines are the same strings `$cachedLines` holds.
+     *
+     * @var array<string, array{width: int, next: ?string, lines: list<string>, code: array<string, list<string>>}>
+     */
+    private array $blocks = [];
+
+    /**
+     * The highlighted code of the block being drawn, by language and code — set only while
+     * `drawBlock()` runs.
+     *
+     * @var array<string, list<string>>
+     */
+    private array $blockCode = [];
 
     private readonly MarkdownTheme $theme;
 
@@ -109,7 +129,8 @@ final class Markdown implements Component
         }
 
         $this->text = $text;
-        $this->invalidate();
+        // Not `invalidate()`: the blocks drawn so far and the style prefix stay good for new text.
+        $this->clearRenderCache();
     }
 
     public function text(): string
@@ -134,13 +155,20 @@ final class Markdown implements Component
     #[\Override]
     public function invalidate(): void
     {
+        $this->clearRenderCache();
+        // The theme may have changed, which changes every styled line. The default style's opening
+        // escapes are sampled from its closures, which read the theme when called — so a theme
+        // change has to sample them again, or text after an inline span goes back to the old
+        // theme's colour.
+        $this->blocks = [];
+        $this->stylePrefix = null;
+    }
+
+    private function clearRenderCache(): void
+    {
         $this->cachedLines = null;
         $this->cachedText = null;
         $this->cachedWidth = null;
-        // The default style's opening escapes are sampled from its closures, which read the theme
-        // when called — so a theme change has to sample them again, or text after an inline span
-        // goes back to the old theme's colour.
-        $this->stylePrefix = null;
     }
 
     #[\Override]
@@ -150,7 +178,12 @@ final class Markdown implements Component
             return $this->cachedLines;
         }
 
-        $lines = trim($this->text) === '' ? [] : $this->lines($width);
+        if (trim($this->text) === '') {
+            $this->blocks = [];
+            $lines = [];
+        } else {
+            $lines = $this->lines($width);
+        }
 
         $this->cachedText = $this->text;
         $this->cachedWidth = $width;
@@ -164,19 +197,50 @@ final class Markdown implements Component
     {
         $contentWidth = max(1, $width - $this->paddingX * 2);
         $tokens = $this->tokens();
-        $drawn = [];
+        $blank = $this->pad('', $width);
+        $lines = array_fill(0, $this->paddingY, $blank);
+        $previous = $this->blocks;
+        $blocks = [];
 
-        foreach ($tokens as $index => $token) {
-            foreach ($this->block($token, $contentWidth, $tokens[$index + 1] ?? null) as $line) {
-                $drawn[] = $line;
+        foreach ($tokens as $index => [$token, $source]) {
+            $next = $tokens[$index + 1][0] ?? null;
+            $nextKind = $next === null ? null : $next::class;
+            $block = $blocks[$source] ?? $previous[$source] ?? null;
+
+            if ($block === null || $block['width'] !== $width || $block['next'] !== $nextKind) {
+                $block = $this->drawBlock($token, $next, $width, $contentWidth, $block['code'] ?? []);
+            }
+
+            $blocks[$source] = $block;
+
+            foreach ($block['lines'] as $line) {
+                $lines[] = $line;
             }
         }
 
-        $margin = str_repeat(' ', $this->paddingX);
-        $blank = $this->pad('', $width);
-        $lines = array_fill(0, $this->paddingY, $blank);
+        $this->blocks = $blocks;
 
-        foreach ($drawn as $line) {
+        for ($index = 0; $index < $this->paddingY; $index++) {
+            $lines[] = $blank;
+        }
+
+        return $lines;
+    }
+
+    /**
+     * One top-level block as output lines: wrapped, with margins, and padded or given the
+     * background to the width — upstream's `renderBlock()`.
+     *
+     * @param array<string, list<string>> $code the block's highlighting from its last render
+     * @return array{width: int, next: ?string, lines: list<string>, code: array<string, list<string>>}
+     */
+    private function drawBlock(BlockToken $token, ?BlockToken $next, int $width, int $contentWidth, array $code): array
+    {
+        $this->blockCode = $code;
+        $margin = str_repeat(' ', $this->paddingX);
+        $lines = [];
+
+        foreach ($this->block($token, $contentWidth, $next) as $line) {
             // Image protocols (Kitty / iTerm2) put tens of kilobytes inline;
             // skip wrapping and padding them to avoid huge CPU overhead and broken sequences.
             if (TerminalImage::isImageLine($line)) {
@@ -192,14 +256,13 @@ final class Markdown implements Component
             }
         }
 
-        for ($index = 0; $index < $this->paddingY; $index++) {
-            $lines[] = $blank;
-        }
+        $code = $this->blockCode;
+        $this->blockCode = [];
 
-        return $lines;
+        return ['width' => $width, 'next' => $next === null ? null : $next::class, 'lines' => $lines, 'code' => $code];
     }
 
-    /** @return list<\Pig\Tui\Markdown\BlockToken> */
+    /** @return list<array{0: BlockToken, 1: string}> each top-level block and its source */
     private function tokens(): array
     {
         $text = $this->text;
@@ -224,7 +287,7 @@ final class Markdown implements Component
 
         $this->tokensFor = $text;
 
-        return self::$tokens[$text] = Lexer::lex($text);
+        return self::$tokens[$text] = Lexer::lexBlocks($text);
     }
 
     /** @internal for tests */
@@ -260,7 +323,7 @@ final class Markdown implements Component
             $token instanceof Heading => [$this->heading($token)],
             $token instanceof Paragraph => [$this->inline($token->children)],
             $token instanceof CodeBlock => $this->code($token),
-            $token instanceof LatexBlock => $this->latexBlock($token),
+            $token instanceof LatexBlock => $this->latexBlock($token, $width),
             $token instanceof ListBlock => $this->list($token, 0, $width),
             $token instanceof Table => $this->table($token, $width),
             $token instanceof Blockquote => $this->quote($token, $width),
@@ -306,7 +369,10 @@ final class Markdown implements Component
         $lines = [$border('```' . $token->language)];
 
         if ($this->theme->highlightCode !== null) {
-            foreach (($this->theme->highlightCode)($token->code, $token->language) as $line) {
+            $key = $token->language . "\0" . $token->code;
+            $this->blockCode[$key] ??= ($this->theme->highlightCode)($token->code, $token->language);
+
+            foreach ($this->blockCode[$key] as $line) {
                 $lines[] = $this->theme->codeBlockIndent . $line;
             }
         } else {
@@ -632,15 +698,18 @@ final class Markdown implements Component
 
     /**
      * Display math, one drawn line per rendered line; the source as written when it does not
-     * render, has not closed yet, or rendering is off.
+     * render, has not closed yet, rendering is off, or it is wider than $width — a 2D layout
+     * cannot be wrapped row by row.
      *
      * @return list<string>
      */
-    private function latexBlock(LatexBlock $token): array
+    private function latexBlock(LatexBlock $token, int $width): array
     {
-        $rendered = !$token->pending && $this->renderLatex
-            ? (Latex::render($token->text, true) ?? self::trimRaw($token->raw))
-            : self::trimRaw($token->raw);
+        $rendered = !$token->pending && $this->renderLatex ? Latex::render($token->text, true) : null;
+
+        if ($rendered === null || max(array_map(Width::visible(...), explode("\n", $rendered))) > $width) {
+            $rendered = self::trimRaw($token->raw);
+        }
 
         return array_map(fn (string $line): string => $this->styled($line), explode("\n", $rendered));
     }

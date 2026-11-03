@@ -1234,6 +1234,71 @@ final class SessionManagerTest extends TestCase
         $this->assertStringContainsString('Could not write the session', $problem->getMessage());
     }
 
+    public function testAnEntryThatFailedToWriteIsNotKeptAndTheNextOneChainsToTheLastWritten(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('first question'));
+        $session->append($this->answer('first answer'));
+        $written = $session->leaf();
+        $path = $session->path;
+
+        // A directory where the file is makes the append fail, as ENOSPC or EBUSY would.
+        rename($path, "{$path}.bak");
+        mkdir($path);
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $this->assertThrows(AgentError::class, fn () => $session->append(new UserMessage('lost question')));
+        } finally {
+            restore_error_handler();
+        }
+
+        rmdir($path);
+        rename("{$path}.bak", $path);
+
+        $this->assertSame($written, $session->leaf());
+        $this->assertCount(2, $session->entries());
+
+        $session->append(new UserMessage('second question'));
+        $this->assertSame($written, $session->entry((string) $session->leaf())['parent'] ?? null);
+
+        $reopened = SessionManager::open($path);
+        $this->assertSame(
+            ['first question', 'first answer', 'second question'],
+            array_map(static fn (mixed $m): string => is_string($m->content) ? $m->content : $m->content[0]->text, $reopened->messages()),
+        );
+    }
+
+    public function testAFirstWriteThatFailedIsRetriedWithEverythingHeldBack(): void
+    {
+        $directory = SessionManager::directory('/some/project');
+        mkdir($directory, 0o700, true);
+        $path = "{$directory}/2026-01-01T00-00-00-000Z_taken.jsonl";
+        mkdir($path);
+
+        $session = SessionManager::create('/some/project', $path);
+        $session->append(new UserMessage('a question'));
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $this->assertThrows(AgentError::class, fn () => $session->append($this->answer('lost answer')));
+        } finally {
+            restore_error_handler();
+        }
+
+        rmdir($path);
+        $this->assertFalse($session->isPersisted());
+
+        // Still not started, so the next write puts the header and the held-back question first.
+        $session->append($this->answer('second answer'));
+
+        $reopened = SessionManager::open($path);
+        $this->assertSame(
+            ['a question', 'second answer'],
+            array_map(static fn (mixed $m): string => is_string($m->content) ? $m->content : $m->content[0]->text, $reopened->messages()),
+        );
+    }
+
     public function testACompactionDoesNotReplayTheMessagesThatCameAfterIt(): void
     {
         $session = SessionManager::create('/some/project');

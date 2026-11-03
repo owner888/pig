@@ -460,6 +460,22 @@ final class EditorTest extends TestCase
         $this->assertFalse($this->editor->isShowingSuggestions());
     }
 
+    /** Upstream #7629: PageDown pages an open list, and the list says it takes the fullscreen viewport keys. */
+    public function testPageKeysPageTheCommandListWhileItIsOpen(): void
+    {
+        $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider(
+            array_map(static fn (int $index): SlashCommand => new SlashCommand("command-{$index}"), range(0, 11)),
+        ));
+        $this->assertFalse($this->editor->capturesViewportInput());
+
+        $this->typeText('/');
+        $this->assertTrue($this->editor->capturesViewportInput());
+        $this->type("\x1b[6~", "\t");
+
+        $this->assertSame('/command-5 ', $this->editor->text());
+        $this->assertFalse($this->editor->capturesViewportInput());
+    }
+
     public function testTheCommandListIsDrawnUnderTheEditor(): void
     {
         $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider([

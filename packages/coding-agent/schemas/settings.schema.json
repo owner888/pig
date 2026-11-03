@@ -11,6 +11,15 @@
     "lastChangelogVersion": {
       "type": "string"
     },
+    "extensionChangelogVersions": {
+      "type": "object",
+      "patternProperties": {
+        "^.*$": {
+          "type": "string"
+        }
+      },
+      "description": "Last seen changelog version per extension package."
+    },
     "defaultProvider": {
       "type": "string"
     },
@@ -250,6 +259,14 @@
     "shellCommandPrefix": {
       "type": "string",
       "description": "Prefix prepended to every bash command, for example to enable shell aliases."
+    },
+    "selfUpdateCommand": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Command `pig update` runs to update pig itself, in argv form such as [\"mise\", \"use\", \"-g\", \"composer:{packageName}\"]. Placeholders: {packageName}, {version} (the newest release) and {installSpec} ({packageName}:{version}). PIG_SELF_UPDATE_COMMAND takes precedence. Global setting only."
     },
     "collapseChangelog": {
       "type": "boolean",

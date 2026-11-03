@@ -9,6 +9,7 @@ use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\ToolProgress;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Focusable;
@@ -44,7 +45,7 @@ use Pig\Tui\Width;
  * prefix per row, and a named session, the current one and the one being deleted each have their
  * own colour.
  */
-final class SessionList implements Component, Focusable, InputHandler
+final class SessionList implements Component, Focusable, InputHandler, CapturesViewportInput
 {
     private const string CURRENT = 'current';
     private const string ALL = 'all';
@@ -508,6 +509,13 @@ final class SessionList implements Component, Focusable, InputHandler
         $home = (string) getenv('HOME');
 
         return $home !== '' && str_starts_with($path, $home) ? '~' . substr($path, strlen($home)) : $path;
+    }
+
+    /** Upstream's: in fullscreen, PageUp/PageDown page the list — except while a rename is typed. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return $this->renaming === null;
     }
 
     /**

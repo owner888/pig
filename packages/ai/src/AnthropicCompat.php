@@ -120,6 +120,12 @@ final readonly class AnthropicCompat
      */
     public static function isAdaptiveThinkingModel(string $modelId): bool
     {
+        // "OpenRouter's `~anthropic/claude-*-latest` aliases follow the newest model of each family,
+        // all of which use adaptive thinking."
+        if (preg_match('#^~anthropic/claude-[a-z]+-latest$#', $modelId) === 1) {
+            return true;
+        }
+
         foreach ([
             'opus-4-6', 'opus-4.6', 'opus-4-7', 'opus-4.7', 'opus-4-8', 'opus-4.8', 'opus-5', 'opus.5',
             'sonnet-4-6', 'sonnet-4.6', 'sonnet-5', 'sonnet.5', 'haiku-5', 'haiku.5', 'fable-5', 'mythos-5',

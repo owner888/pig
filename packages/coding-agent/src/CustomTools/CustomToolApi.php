@@ -93,18 +93,21 @@ final class CustomToolApi
      * `Process::runAsync()`, and `HookApi::exec()`'s docblock is where the three differences
      * from upstream's `execCommand` are written down, since both go through the same thing.
      *
-     * @param list<string> $command the program and its arguments, unquoted
-     * @param string|null  $cwd     defaults to the directory pig is working in
+     * @param list<string> $command   the program and its arguments, unquoted
+     * @param string|null  $cwd       defaults to the directory pig is working in
+     * @param int          $maxBuffer upstream's `ExecOptions.maxBuffer`: stdout and stderr together past
+     *                                this stop the command, and the result says `truncated`
      */
-    public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
+    public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT, int $maxBuffer = ExecResult::MAX_BUFFER): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::runAsync(
+        [$exit, $stdout, $stderr, $truncated] = Process::runAsync(
             $command,
             $timeout,
             $cwd ?? $this->cwd,
             $this->context === null ? null : ($this->context)()->signal,
+            $maxBuffer,
         );
 
-        return new ExecResult($exit, $stdout, $stderr);
+        return new ExecResult($exit, $stdout, $stderr, $truncated);
     }
 }

@@ -383,8 +383,8 @@ final class ModelsTest extends TestCase
         // Pinned from upstream's published catalogue (`azure.json`, pi-ai 1.1.0): OpenAI's Responses
         // rows cloned before the metadata — no strict mode, no tool search, no models.dev efforts, no
         // tiers — at Azure's larger window for the ids it names, and no base URL.
-        // Less the models models.dev has since retired.
-        $this->assertCount(43, self::of(Models::AZURE));
+        // Less the models models.dev has since retired, plus GPT-6.1 Terra (upstream 363ad78).
+        $this->assertCount(44, self::of(Models::AZURE));
 
         $gpt = Models::find(Models::AZURE, 'gpt-5.5');
         $this->assertNotNull($gpt);
@@ -425,8 +425,8 @@ final class ModelsTest extends TestCase
     public function testCodexRowsAreUpstreamsCatalogueRows(): void
     {
         // Pinned from upstream's published catalogue (`openai-codex.json`, pi-ai 1.1.0), less the two
-        // models the backend rejects for ChatGPT accounts (#11173).
-        $this->assertCount(7, self::of(Models::OPENAI_CODEX));
+        // models the backend rejects for ChatGPT accounts (#11173), plus GPT-6.1 Terra (363ad78).
+        $this->assertCount(8, self::of(Models::OPENAI_CODEX));
 
         $luna = Models::find(Models::OPENAI_CODEX, 'gpt-5.6-luna');
         $this->assertNotNull($luna);
@@ -450,6 +450,35 @@ final class ModelsTest extends TestCase
             ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
             Models::find(Models::OPENAI_CODEX, 'gpt-6-astra')?->thinkingLevelMap,
         );
+    }
+
+    public function testGpt61TerraIsOfferedByOpenAiAzureAndCodexWithOffButNotMinimal(): void
+    {
+        // Upstream 363ad78: official pricing ($1 input, $0.05 cached, $1.25 cache writes, $5 output,
+        // a long-context tier past 272k), tool search, additional tools and mid-conversation effort
+        // as for GPT-6.1 Sol. "Unlike Sol it accepts reasoning.effort "none", so off is supported;
+        // both reject "minimal"" — Codex sends its `minimal` as `low`. Codex serves it at 500k.
+        foreach ([Models::OPENAI_CODEX, 'openai', Models::AZURE] as $provider) {
+            $model = Models::find($provider, 'gpt-6.1-terra');
+            $this->assertNotNull($model, $provider);
+            $this->assertArrayHasKey('minimal', $model->thinkingLevelMap, $provider);
+            $this->assertSame('none', $model->thinkingLevelMap['off'], $provider);
+            $this->assertSame($provider === Models::OPENAI_CODEX ? 'low' : null, $model->thinkingLevelMap['minimal'], $provider);
+            $this->assertTrue($model->hasThinkingLevel('xhigh'), $provider);
+            $this->assertTrue($model->hasThinkingLevel('max'), $provider);
+        }
+
+        foreach (['openai' => 272_000, Models::OPENAI_CODEX => 500_000] as $provider => $window) {
+            $model = Models::find($provider, 'gpt-6.1-terra');
+            $this->assertSame([$window, 128_000], [$model?->contextWindow, $model?->maxTokens], $provider);
+            $this->assertEquals(new Pricing(1.0, 5.0, 0.05, 1.25, [new PricingTier(272_000, 2.0, 7.5, 0.1, 2.5)]), $model->pricing, $provider);
+            $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+            $this->assertSame([true, true, true], [$model->compat->supportsToolSearch, $model->compat->supportsAdditionalTools, $model->compat->supportsMidConvoSystemMessages], $provider);
+        }
+
+        $this->assertTrue(Models::find('openai', 'gpt-6.1-terra')?->compat?->supportsMidConvoEffort);
+        // "does not enable cache warming from the documented TTL alone".
+        $this->assertNull(Models::find('openai', 'gpt-6.1-terra')?->promptCache);
     }
 
     public function testRadiusRowsAreUpstreamsCatalogueRows(): void
@@ -551,14 +580,36 @@ final class ModelsTest extends TestCase
         }
 
         // OpenCode Zen's Responses models: no session id in the body, and OpenAI's grammar tools and
-        // transcript additions passed through for the ids that take them.
+        // transcript additions passed through for the ids that take them — GPT-5.5 mid-conversation
+        // system messages only, since it takes no `additional_tools` (upstream #11415).
         $gpt = Models::find('opencode', 'gpt-5.5');
         $this->assertNotNull($gpt);
-        $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/inference/v1'], [$gpt->api, $gpt->baseUrl]);
-        $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $gpt->compat);
-        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
+        $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/inference/openai/v1'], [$gpt->api, $gpt->baseUrl]);
+        $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true), $gpt->compat);
+        $sol = Models::find('opencode', 'gpt-6.1-sol');
+        $this->assertNotNull($sol);
+        $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $sol->compat);
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go/anthropic'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
         // OpenCode Go no longer lists MiniMax M2.7, whose rule sent it to Anthropic Messages; M3 is there.
-        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go'], [Models::find('opencode-go', 'minimax-m3')?->api, Models::find('opencode-go', 'minimax-m3')?->baseUrl]);
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go/anthropic'], [Models::find('opencode-go', 'minimax-m3')?->api, Models::find('opencode-go', 'minimax-m3')?->baseUrl]);
+        // `OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS`: no
+        // `prompt_cache_retention` for these, DeepSeek V4.1 Flash (renamed from V4 Flash) included.
+        foreach (['deepseek-v4-flash', 'deepseek-v4.1-flash', 'deepseek-v4-pro', 'kimi-k2.6'] as $id) {
+            $compat = Models::find('opencode', $id)?->compat;
+            $this->assertInstanceOf(OpenAiCompat::class, $compat, $id);
+            $this->assertFalse($compat->supportsLongCacheRetention, $id);
+        }
+
+        // The protocol-specific endpoints (upstream #11434), one per API.
+        foreach (['opencode' => 'https://opencode.ai/inference', 'opencode-go' => 'https://opencode.ai/inference/go'] as $provider => $root) {
+            foreach (self::of($provider) as $model) {
+                $this->assertSame(match ($model->api) {
+                    Api::AnthropicMessages => "{$root}/anthropic",
+                    Api::GoogleGenerativeAi => "{$root}/google/v1beta",
+                    default => "{$root}/openai/v1",
+                }, $model->baseUrl, "{$provider}/{$model->id}");
+            }
+        }
 
         // Meta's own, on the Responses API.
         $this->assertSame([Api::OpenAiResponses, 'https://api.meta.ai/v1'], [Models::find('meta', 'muse-spark-1.3')?->api, Models::find('meta', 'muse-spark-1.3')?->baseUrl]);
@@ -895,7 +946,7 @@ final class ModelsTest extends TestCase
         // default" — `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` get a 272,000 window. A window is where
         // compaction fires, so pig used to let a gpt-5.5 conversation grow to 1,050,000 tokens and
         // bill every turn past 272k at the long-context rate, which no row of the table recorded.
-        foreach (['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'] as $id) {
+        foreach (['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'] as $id) {
             $model = Models::find('openai', $id);
             $this->assertNotNull($model, $id);
             $this->assertSame(272_000, $model->contextWindow, $id);
@@ -1187,18 +1238,22 @@ final class ModelsTest extends TestCase
     {
         // Upstream's generator writes two things into a Copilot Responses model's compat:
         // `supportsOpenAIGrammarTools`, for `gpt-<n>` with n >= 5, and — for the ids in its
-        // `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS` — `supportsMidConvoSystemMessages` and
-        // `supportsAdditionalTools` (`applyOpenAIResponsesTranscriptMetadata()`; no tool search,
-        // which is "not verified through those proxies"). Everything else is left to the Responses
-        // runtime's defaults — so `grok-…` and `mai-…` carry no compat at all.
-        $transcript = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'];
+        // `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS` — `supportsMidConvoSystemMessages`, and for those
+        // also in `OPENAI_ADDITIONAL_TOOLS_MODEL_IDS` `supportsAdditionalTools`
+        // (`applyOpenAIResponsesTranscriptMetadata()`; no tool search, which is "not verified through
+        // those proxies"). Everything else is left to the Responses runtime's defaults — so `grok-…`
+        // and `mai-…` carry no compat at all.
+        $topLevelTools = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro', 'gpt-5.5'];
+        $transcript = [...$topLevelTools, 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'];
 
         foreach (self::of(Models::COPILOT) as $model) {
             if ($model->api !== Api::OpenAiResponses) {
                 continue;
             }
 
-            if (in_array($model->id, $transcript, true)) {
+            if (in_array($model->id, $topLevelTools, true)) {
+                $this->assertEquals(new OpenAiCompat(grammarTools: true, supportsMidConvoSystemMessages: true), $model->compat, $model->id);
+            } elseif (in_array($model->id, $transcript, true)) {
                 $this->assertEquals(new OpenAiCompat(grammarTools: true, supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $model->compat, $model->id);
             } elseif (preg_match('/^gpt-(\d+)/', $model->id, $match) === 1 && (int) $match[1] >= 5) {
                 $this->assertEquals(new OpenAiCompat(grammarTools: true), $model->compat, $model->id);
@@ -1214,11 +1269,22 @@ final class ModelsTest extends TestCase
         // OpenAI: tool search, additional tools and mid-conversation system messages, for the ids
         // in `OPENAI_TOOL_SEARCH_MODEL_IDS` and no others. Carried for the session file and a
         // gateway; pig has no tool search or mid-conversation tool additions to read them.
-        $search = Models::find('openai', 'gpt-5.5')?->compat;
+        $search = Models::find('openai', 'gpt-5.6-luna')?->compat;
         $this->assertInstanceOf(OpenAiCompat::class, $search);
         $this->assertTrue($search->supportsToolSearch);
         $this->assertTrue($search->supportsAdditionalTools);
         $this->assertTrue($search->supportsMidConvoSystemMessages);
+
+        // Upstream #11415: GPT-5.5 and older put tools loaded through tool search or
+        // `additional_tools` in a namespace and reject replayed calls without it, so they declare
+        // their tools at the top level — and keep mid-conversation system messages.
+        foreach (['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro', 'gpt-5.5'] as $id) {
+            $topLevel = Models::find('openai', $id)?->compat;
+            $this->assertInstanceOf(OpenAiCompat::class, $topLevel, $id);
+            $this->assertNull($topLevel->supportsToolSearch, $id);
+            $this->assertNull($topLevel->supportsAdditionalTools, $id);
+            $this->assertTrue($topLevel->supportsMidConvoSystemMessages, $id);
+        }
 
         $plain = Models::find('openai', 'gpt-5.2')?->compat;
         $this->assertInstanceOf(OpenAiCompat::class, $plain);

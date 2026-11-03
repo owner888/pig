@@ -579,14 +579,13 @@ tool's own schema still says `number`. **Then the arguments are coerced** — up
 `coerceWithJsonSchema()`, ported line for line in `ToolArguments`: `"10"` for a number is 10, `"true"`
 for a boolean is true, `5` for a string is `"5"`, a null for a required primitive is that type's zero
 (`""`, 0, false), through `allOf`/`anyOf`/`oneOf`, properties, `additionalProperties` and items. The
-error still prints the arguments the model sent. **A built-in tool is converted first** the way
-TypeBox's `Value.Convert` converts upstream's built-in (`Type.Object`) schemas — `Tool::$typeBox`
-marks them, `ToolArguments::valueConvert()` is the part of typebox 1.3.27's conversion their schemas
-reach: a null for a required string is `"null"`, `""` for a number is 0, `"TRUE"`/`"1"` are true, a
+error still prints the arguments the model sent. **Every tool is converted first**, as upstream's
+pi-schema `Coercer` converts every schema (6536f80) — `ToolArguments::valueConvert()` is typebox
+1.3.27's conversion, keyed on the schema's own keywords: a null for a required string is `"null"`, `""` for a number is 0, `"TRUE"`/`"1"` are true, a
 lone value where an array belongs is wrapped. Upstream skips `coerceWithJsonSchema()` only for a
 schema carrying `Symbol.for("TypeBox.Kind")`, which typebox 1.x no longer sets (it marks schemas with
 a hidden `~kind`), so every schema, the built-ins' included, is coerced after that — pig does the
-same. A plain JSON schema (extension, MCP) gets no `Value.Convert` work, upstream or here.
+same.
 
 **An unknown keyword is ignored, never a failure.** That is the most important line in the file: a
 schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the

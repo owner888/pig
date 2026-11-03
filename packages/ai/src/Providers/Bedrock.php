@@ -8,6 +8,7 @@ use Pig\Ai\ClientIdentity;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\BedrockCompat;
+use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -250,27 +251,65 @@ final class Bedrock
                 $inferenceConfig['temperature'] = $options->temperature;
             }
 
-            $commandInput = [
-                'modelId' => $model->id,
-                'messages' => self::convertMessages($normalizedContext, $model, $cacheRetention, $env),
-                'system' => self::buildSystemPrompt($initialSystemPrompt, $model, $cacheRetention, $env),
-                'inferenceConfig' => $inferenceConfig,
-                'toolConfig' => self::convertToolConfig(Transcript::getCurrentTools($normalizedContext->messages), $options->toolChoice, $supportsStrictMode),
-                'additionalModelRequestFields' => self::buildAdditionalModelRequestFields($model, $options),
-            ];
-
-            if ($options->requestMetadata !== null) {
-                $commandInput['requestMetadata'] = $options->requestMetadata;
-            }
-
-            $nextCommandInput = $options->onPayload !== null ? ($options->onPayload)($commandInput, $model) : null;
-
-            if ($nextCommandInput !== null) {
-                $commandInput = (array) $nextCommandInput;
-            }
-
             $client = new BedrockRuntimeClient($config, $this->http, $this->now, $this->sleep);
-            $response = $client->converseStream($commandInput, $signal);
+            $disablePreferredStrictTools = false;
+
+            // Upstream's loop (#11416), as the Anthropic provider has it: a request rejected for
+            // Claude's strict tool limits is sent once more with the `prefer` tools non-strict;
+            // `require` tools stay strict.
+            for (;;) {
+                [$toolConfig, $hasPreferredStrictTools] = self::convertToolConfig(
+                    Transcript::getCurrentTools($normalizedContext->messages),
+                    $options->toolChoice,
+                    $supportsStrictMode,
+                    $disablePreferredStrictTools,
+                );
+                $commandInput = [
+                    'modelId' => $model->id,
+                    'messages' => self::convertMessages($normalizedContext, $model, $cacheRetention, $env),
+                    'system' => self::buildSystemPrompt($initialSystemPrompt, $model, $cacheRetention, $env),
+                    'inferenceConfig' => $inferenceConfig,
+                    'toolConfig' => $toolConfig,
+                    'additionalModelRequestFields' => self::buildAdditionalModelRequestFields($model, $options),
+                ];
+
+                if ($options->requestMetadata !== null) {
+                    $commandInput['requestMetadata'] = $options->requestMetadata;
+                }
+
+                $nextCommandInput = $options->onPayload !== null ? ($options->onPayload)($commandInput, $model) : null;
+
+                if ($nextCommandInput !== null) {
+                    $commandInput = (array) $nextCommandInput;
+                }
+
+                try {
+                    $response = $client->converseStream($commandInput, $signal);
+
+                    break;
+                } catch (Throwable $error) {
+                    // "Bedrock checks the tool schemas before it starts the stream, so a retry never
+                    // repeats streamed output."
+                    if (($signal?->aborted() ?? false)
+                        || $disablePreferredStrictTools
+                        || !$hasPreferredStrictTools
+                        || !$error instanceof ServiceError
+                        || !$error->bedrock
+                        || $error->name !== 'ValidationException'
+                        || !ConstrainedSampling::isStrictToolLimitErrorMessage($error->getMessage())) {
+                        throw $error;
+                    }
+
+                    $disablePreferredStrictTools = true;
+                    $builder->addDiagnostic(new AssistantMessageDiagnostic(
+                        'bedrock_strict_tools_fallback',
+                        Timestamp::nowMs(),
+                        new DiagnosticErrorInfo($error->getMessage()),
+                        ['reason' => 'strict_tool_limits_exceeded'],
+                    ));
+                }
+            }
+
             $responseRequestId = self::normalizeDiagnosticValue($response->requestId);
 
             foreach ($response->items() as $item) {
@@ -1048,20 +1087,30 @@ final class Bedrock
     }
 
     /**
-     * Upstream's `convertToolConfig()`.
+     * Upstream's `convertToolConfig()`: the tool config (null when there is none to send) and whether
+     * a `prefer` tool went out strict. With `$disablePreferredStrictTools` a `prefer` tool goes
+     * non-strict.
      *
      * @param list<Tool> $tools
      * @param string|array{type: 'tool', name: string}|null $toolChoice
-     * @return array<string, mixed>|null
+     * @return array{0: array<string, mixed>|null, 1: bool}
      */
-    private static function convertToolConfig(array $tools, string|array|null $toolChoice, bool $supportsStrictMode): ?array
+    private static function convertToolConfig(array $tools, string|array|null $toolChoice, bool $supportsStrictMode, bool $disablePreferredStrictTools): array
     {
         if ($tools === [] || $toolChoice === 'none') {
-            return null;
+            return [null, false];
         }
 
-        $bedrockTools = array_map(static function (Tool $tool) use ($supportsStrictMode): array {
-            $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode);
+        $hasPreferredStrictTools = false;
+        $bedrockTools = array_map(static function (Tool $tool) use ($supportsStrictMode, $disablePreferredStrictTools, &$hasPreferredStrictTools): array {
+            $preferred = ConstrainedSampling::prefersJsonSchemaStrictSampling($tool);
+            $strict = $disablePreferredStrictTools && $preferred
+                ? null
+                : ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode);
+
+            if ($strict === true && $preferred) {
+                $hasPreferredStrictTools = true;
+            }
 
             return ['toolSpec' => [
                 'name' => $tool->name,
@@ -1078,7 +1127,7 @@ final class Bedrock
             default => null,
         };
 
-        return ['tools' => $bedrockTools, 'toolChoice' => $bedrockToolChoice];
+        return [['tools' => $bedrockTools, 'toolChoice' => $bedrockToolChoice], $hasPreferredStrictTools];
     }
 
     /**

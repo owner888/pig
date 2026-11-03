@@ -390,6 +390,34 @@ final class ComponentsTest extends TestCase
         $this->assertStringContainsString('(11/20)', $lines[5]);
     }
 
+    /** Upstream's `tui.select.pageUp`/`pageDown`: a visible page at a time, clamped to the ends. */
+    public function testPageKeysMoveTheSelectionAVisiblePageAndStopAtTheEnds(): void
+    {
+        $list = new SelectList(
+            array_map(static fn (int $n): SelectItem => new SelectItem("item{$n}"), range(1, 12)),
+            maxVisible: 5,
+            theme: SelectListTheme::default(),
+        );
+        $seen = [];
+        $list->setSelectionChangeHandler(static function (SelectItem $item) use (&$seen): void {
+            $seen[] = $item->value;
+        });
+
+        $list->handleInput("\x1b[6~");
+        $this->assertSame('item6', $list->selectedItem()?->value);
+        $list->handleInput("\x1b[6~");
+        $list->handleInput("\x1b[6~");
+        $this->assertSame('item12', $list->selectedItem()?->value);
+        $list->handleInput("\x1b[5~");
+        $this->assertSame('item7', $list->selectedItem()?->value);
+        $list->handleInput("\x1b[5~");
+        $list->handleInput("\x1b[5~");
+        $this->assertSame('item1', $list->selectedItem()?->value);
+        // Already at the top: no move, and nothing said about one.
+        $this->assertSame(['item6', 'item11', 'item12', 'item7', 'item2', 'item1'], $seen);
+        $this->assertTrue($list->capturesViewportInput());
+    }
+
     public function testDescriptionsAreDroppedOnANarrowTerminal(): void
     {
         $list = new SelectList([new SelectItem('run', 'run', 'execute the thing')], theme: SelectListTheme::default());

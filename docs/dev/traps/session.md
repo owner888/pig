@@ -889,7 +889,7 @@ Profiling found four (then five) heavy hitters:
 **Root cause**: upstream's `createSummarizationOptions()` sets `reasoning = thinkingLevel` (the session's current level) only when `model.reasoning && thinkingLevel && thinkingLevel !== "off"`; `generateBranchSummary()`'s request options are `{ apiKey, headers, env, signal, maxTokens }` with no reasoning and `maxTokens = Math.min(4096, model.maxTokens)`; compaction is `Math.min(floor(0.8 * reserveTokens), model.maxTokens)`.
 
 **Trap rules**:
-- A null `$thinkingLevel` in `AgentSession::summarise()` means no reasoning; compaction passes `thinkingLevel()`, the branch summary passes nothing.
+- A null `$thinkingLevel` means no reasoning; compaction and (since upstream #11444) the branch summary both pass the routed level — see "A branch summary asks at the session's thinking level" below.
 - Tests: `SystemMessageTranscriptTest::testACompactionAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasons`, `testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens`.
 
 ## The `cwd` section is the directory alone, with no date or time
@@ -915,3 +915,23 @@ Profiling found four (then five) heavy hitters:
 - Extra sections go only through `SystemPrompt::withSections()`: the name matches `/^[a-z][a-z0-9_-]*$/` and is not `preamble`, the content is wrapped as `<name>\n…\n</name>`, and empty content does not appear; pig's own sections are not tagged.
 - The turn's options live in `AgentSession::$runSystemPromptOptions`, cleared when `runAgentPrompt()` ends; the projection is installed on `Agent::$transformContext` (now public, as upstream).
 - Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
+
+## A failed session write left the entry in memory, and the next one pointed at a missing parent
+
+**Symptom**: after one append failed (ENOSPC, EBUSY, a network drive timing out) the session carried on; the next entry written named a parent that was not in the file, and a resume followed the branch only back to that gap — the first system message, which declares the tools, went with it.
+
+**Root cause**: `SessionManager::append()` put the entry in `$entries` and moved `$leaf` before `write()`, and `write()` set `$started` before `appendLines()` threw. Upstream's `_appendEntry()` (807a5c0) undoes the in-memory append and rethrows.
+
+**Trap rules**:
+- A write that throws undoes the entry, the leaf and `$started`, then rethrows; the caller still sees the error. Restoring `$started` matters: a first write that failed must write the header and the held-back entries again next time.
+- Tests: `SessionManagerTest::testAnEntryThatFailedToWriteIsNotKeptAndTheNextOneChainsToTheLastWritten`, `testAFirstWriteThatFailedIsRetriedWithEverythingHeldBack`.
+
+## A branch summary asks at the session's thinking level
+
+**Symptom**: `/tree`'s summary of the branch being left ignored the thinking level; on OpenAI/Azure Responses a reasoning model then got `effort: "none"`, which some reject with a 400.
+
+**Root cause**: upstream's `generateBranchSummary()` gained `thinkingLevel` (269afc6) and sets `reasoning` when `model.reasoning && thinkingLevel !== "off"`, compaction's rule; `navigateTree()` passes the level `_getSummarizationRequestAuth()` routed with the model.
+
+**Trap rules**:
+- `BranchSummarization::generateBranchSummary()` takes `?ThinkingLevel $thinkingLevel` (null and `Off` mean no reasoning); `AgentSession::generateBranchSummary()` passes `directModel()->thinkingLevel`, never the unrouted session level.
+- Tests: `SystemMessageTranscriptTest::testABranchSummaryAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasonsAndHasNoOutputCap`.

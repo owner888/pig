@@ -350,7 +350,7 @@ final class InteractiveMode
     private readonly Container $loadedResourcesContainer;
 
     /**
-     * What the last `/reload` found wrong with the skills, for upstream's `[Skill conflicts]` block.
+     * What the last `/reload` found wrong with the skills, for upstream's `[Skill warnings]` block.
      * Startup's go to standard error before the screen exists (see `CodingAgent`), so this starts empty.
      *
      * @var list<array{type: 'error'|'warning', message: string, path: string}>
@@ -512,7 +512,8 @@ final class InteractiveMode
             $this->footer,
             // The same `$VISUAL` hand-off Ctrl+G at the prompt uses, so the key means one
             // thing in both places and there is one piece of code to get right.
-            fn (string $text): ?string => $this->externalEditor($text),
+            // Upstream shows a failure inline in the dialog; here it goes to the transcript.
+            fn (string $text): ?string => $this->externalEditor($text, fn (string $message) => $this->say($message)),
             $this->keybindings,
             $this->widgetsAbove,
             $this->widgetsBelow,
@@ -683,9 +684,8 @@ final class InteractiveMode
         // than above it. `bin/pig` is what decides there is one: it knows the version, holds the
         // settings the last-seen number is written to, and knows whether this is a resumed
         // session — where a release note nobody asked for is an interruption.
-        if ($this->changelog !== null && $this->changelog !== '') {
-            $this->settings->collapseChangelog() ? $this->sayChangelogCollapsed($this->changelog) : $this->sayChangelog($this->changelog);
-        }
+        // The packages' own notes join pig's in the same block, as upstream draws them.
+        $this->sayStartupChangelogs($this->changelog, $this->extensionChangelogUpdates());
 
         // Upstream's `renderProjectTrustWarningIfNeeded()`: hooks that are not running have to
         // say so on the screen, or a guard somebody wrote reads as broken rather than off.
@@ -1335,7 +1335,7 @@ final class InteractiveMode
             if ($skillDiagnostics !== []) {
                 $warningLines = fn (): string => $this->formatDiagnostics($skillDiagnostics);
                 $this->loadedResourcesContainer->addChild(
-                    new ThemedText(static fn (): string => Themes::theme()->fg('warning', '[Skill conflicts]') . "\n" . $warningLines(), 0, 0),
+                    new ThemedText(static fn (): string => Themes::theme()->fg('warning', '[Skill warnings]') . "\n" . $warningLines(), 0, 0),
                 );
                 $this->loadedResourcesContainer->addChild(new Spacer(1));
             }
@@ -1843,7 +1843,8 @@ final class InteractiveMode
      */
     private function editPromptExternally(): void
     {
-        $edited = $this->externalEditor($this->editor->text());
+        // Upstream's `showStatus(result.message)`: a failure used to be redrawn over at once.
+        $edited = $this->externalEditor($this->editor->text(), fn (string $message) => $this->say($message));
 
         if ($edited === null) {
             return;
@@ -1858,7 +1859,8 @@ final class InteractiveMode
      *
      * Null when there is no editor configured, when it could not be started, or when it
      * exited non-zero — all three mean "keep what was there", which is what someone who
-     * quit vim with `:cq` meant.
+     * quit vim with `:cq` meant. The last two are told to $onFailed in upstream's words, which
+     * the caller shows: the redraw on the way back would otherwise cover whatever the editor said.
      *
      * The `.md` suffix is upstream's, and it is what makes an editor turn on the syntax
      * highlighting and the soft wrap that a prompt wants.
@@ -1872,8 +1874,10 @@ final class InteractiveMode
      * is nothing to lose by not reading.
      *
      * Must be called from a fiber. Both callers spawn one.
+     *
+     * @param Closure(string): void $onFailed
      */
-    private function externalEditor(string $text): ?string
+    private function externalEditor(string $text, Closure $onFailed): ?string
     {
         $command = $this->resolveExternalEditorCommand();
 
@@ -1896,21 +1900,44 @@ final class InteractiveMode
         $argv = [...preg_split('/\s+/', trim($command)), $file];
 
         $this->tui->stop();
+        // Upstream's notice, for an editor that takes a moment or opens in another window.
+        $this->tui->terminal->write("Launching external editor: {$command}\nPig will resume when the editor exits.\n");
 
         try {
             $exit = Process::interactive($argv, static function (): void {
                 Async::delay(Process::ttyPollSeconds());
             });
 
+            // `Process::interactive()` answers STOPPED for a program it could not start —
+            // upstream's spawn `error`. (A signal also ends there, which PHP does not tell apart.)
+            if ($exit === Process::STOPPED) {
+                $onFailed("Failed to launch external editor: {$command}");
+
+                return null;
+            }
+
             if ($exit !== 0) {
+                $onFailed("External editor exited with code {$exit}; prompt unchanged");
+
                 return null;
             }
 
             $edited = file_get_contents($file);
 
+            if ($edited === false) {
+                $onFailed("Could not read {$file}; prompt unchanged");
+
+                return null;
+            }
+
+            // Upstream's `stripBom()`: an editor on Windows writes one.
+            if (str_starts_with($edited, "\u{FEFF}")) {
+                $edited = substr($edited, 3);
+            }
+
             // One trailing newline removed, because every editor adds one and a prompt
             // that grew a blank line each time it was edited would be a nuisance.
-            return $edited === false ? null : preg_replace('/\n$/', '', $edited);
+            return preg_replace('/\n$/', '', $edited);
         } finally {
             // Before the TUI comes back, so a failure to delete is not drawn over.
             if (is_file($file)) {
@@ -2168,7 +2195,12 @@ final class InteractiveMode
             $this->editor->setWorkingStatus($this->working, fn (string $t): string => $this->borderColour()($t));
         }
 
-        $this->tui->setFocus($this->editor);
+        // An open extension dialog keeps the keys; the dialog gives them to the new prompt when
+        // the last one closes. Taking them here left the dialog on screen and unanswerable.
+        if (!$this->ui->hasOpenDialogs()) {
+            $this->tui->setFocus($this->editor);
+        }
+
         $this->tui->requestRender();
     }
 
@@ -6195,8 +6227,13 @@ final class InteractiveMode
                         ));
 
                         // Said before it is opened, so the URL is on screen whatever the
-                        // browser does — including not existing.
-                        self::openInBrowser($url);
+                        // browser does — including not existing. Only a web URL is opened: the
+                        // launcher would run a `file:` URL or a custom protocol's program as
+                        // readily, and an extension's flow can hand over anything.
+                        $target = \Pig\Ai\Utils\Oauth\TrustedUrl::trustedHttpUrl($url);
+                        if ($target !== null) {
+                            self::openInBrowser($target);
+                        }
                     },
                     // `$allowEmpty` is part of upstream's contract and is enforced by the flow
                     // that asked, not here: an empty answer is `github.com` for Copilot's
@@ -6387,10 +6424,23 @@ final class InteractiveMode
      * than upstream's "Click here to login": a terminal that does not understand the sequence
      * ignores it and shows the label, and a label is not something anybody can copy.
      * `Ansi::strip()` already knew about OSC 8, so the width of this line measures correctly.
+     *
+     * Upstream's `displayUrl()` and `webLink()` in `login-dialog.ts`: a web URL is linked in its
+     * normalized form, whose control characters are percent-encoded; anything else is plain text
+     * with each run of C0 and C1 control characters replaced by one space (upstream's
+     * `replaceControlCharacters()`). The URL comes from a server, and a BEL in it would end the
+     * hyperlink early and hand what follows to the terminal as its own escape sequence.
      */
     private static function link(string $url): string
     {
-        return "\e]8;;{$url}\x07" . $url . "\e]8;;\x07";
+        $target = \Pig\Ai\Utils\Oauth\TrustedUrl::trustedHttpUrl($url);
+
+        if ($target === null) {
+            return preg_replace('/(?:[\x00-\x1f\x7f]|\xc2[\x80-\x9f])+/', ' ', $url)
+                ?? throw new \RuntimeException('Could not replace control characters: ' . preg_last_error_msg());
+        }
+
+        return "\e]8;;{$target}\x07" . $target . "\e]8;;\x07";
     }
 
     /**
@@ -6410,6 +6460,10 @@ final class InteractiveMode
      * Anthropic's authorize page — a sign-in nobody asked for, against an account that can be
      * suspended for exactly that. `InteractiveModeTest::setUp()` sets it; the URL is still said
      * on screen, which is what the tests read.
+     *
+     * **It opens whatever it is given**, as upstream's `openBrowser()` does: a fullscreen click on a
+     * `file://` hyperlink comes through here and should open the file. A caller holding a URL a
+     * server supplied passes it through `TrustedUrl::trustedHttpUrl()` first, as sign-in does.
      */
     private static function openInBrowser(string $url): void
     {
@@ -6782,28 +6836,170 @@ final class InteractiveMode
     }
 
     /**
-     * A block of release notes in the transcript, titled and ruled off.
+     * Upstream's `showStartupNoticesIfNeeded()`: pig's notes and the packages' updates, in one pair of
+     * rules. `collapseChangelog` makes each one line — the newest version pig's notes name and where
+     * the rest is, and `Updated <package> to v<version>.` per package.
      *
-     * Rules around it because it is a block of somebody else's prose dropped into a
-     * conversation, and markdown rather than text because that is what it is written in. Both
-     * callers — `/changelog` and the line `bin/pig` shows once after an upgrade — draw it the
-     * same way, because they are the same thing arriving for two reasons.
+     * @param list<array{name: string, version: string, markdown: string}> $updates
      */
-    /**
-     * Upstream's `collapseChangelog` arm: one line in the same rules — the newest version the notes
-     * name, and where the rest is.
-     */
-    private function sayChangelogCollapsed(string $markdown): void
+    private function sayStartupChangelogs(?string $markdown, array $updates): void
     {
-        $latest = preg_match('/##\s+\[?(\d+\.\d+\.\d+)\]?/', $markdown, $match) === 1 ? $match[1] : $this->version;
+        $markdown = $markdown === '' ? null : $markdown;
 
+        if ($markdown === null && $updates === []) {
+            return;
+        }
+
+        $collapsed = $this->settings->collapseChangelog();
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
-        $this->chat->addChild(new ThemedText(static fn (): string => "Updated to v{$latest}. Use " . Style::bold('/changelog') . ' to view full changelog.', 1, 0));
+
+        if ($markdown !== null && $collapsed) {
+            $latest = preg_match('/##\s+\[?(\d+\.\d+\.\d+)\]?/', $markdown, $match) === 1 ? $match[1] : $this->version;
+            $this->chat->addChild(new ThemedText(static fn (): string => "Updated to v{$latest}. Use " . Style::bold('/changelog') . ' to view full changelog.', 1, 0));
+        } elseif ($markdown !== null) {
+            $this->addChangelogSection('What\'s New', $markdown);
+        }
+
+        if ($updates !== []) {
+            if ($markdown !== null) {
+                $this->chat->addChild(new Spacer(1));
+            }
+
+            if ($collapsed) {
+                $lines = implode("\n", array_map(static fn (array $update): string => "Updated {$update['name']} to v{$update['version']}.", $updates));
+                $this->chat->addChild(new ThemedText(static fn (): string => $lines, 1, 0));
+            } else {
+                $this->addChangelogSection('Extension Updates', implode("\n\n", array_column($updates, 'markdown')));
+            }
+        }
+
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->tui->requestRender();
     }
 
+    /**
+     * Upstream's `getExtensionChangelogUpdates()`: for each configured package that loads an
+     * extension and has a changelog (`PackageManager::changelogPath()`), the entries newer than the
+     * version last seen, with the package's name before each heading. A package seen for the first
+     * time has its version recorded and nothing shown, as pig's own notes on a fresh install.
+     *
+     * Not for a resumed session, as upstream, nor a private one, which writes nothing to the settings
+     * it did not ask to (pig's own notes wait the same way). The version is `composer.json`'s
+     * `version`, upstream's `package.json` one, so a package without one shows no changelog.
+     *
+     * @return list<array{name: string, version: string, markdown: string}>
+     */
+    private function extensionChangelogUpdates(): array
+    {
+        if ($this->session->messages() !== [] || $this->session->isIncognito() || $this->extensions === []) {
+            return [];
+        }
+
+        try {
+            // Nothing is installed here: what is not on disk was not loaded either.
+            $resolved = (new PackageManager($this->cwd, $this->settings))->resolve(static fn (): string => 'skip');
+        } catch (PackageError $error) {
+            $this->sayWarning("Extension changelogs: {$error->getMessage()}");
+
+            return [];
+        }
+
+        $seen = [];
+        $updates = [];
+
+        foreach ($resolved->extensions as $resource) {
+            $metadata = $resource->metadata;
+
+            if ($metadata->origin !== 'package' || $metadata->baseDir === null || $metadata->changelogPath === null || !$this->loadsFrom($metadata->baseDir)) {
+                continue;
+            }
+
+            $key = $metadata->packageKey();
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            ['name' => $name, 'version' => $version] = self::composerIdentity($metadata->baseDir);
+
+            if ($version === null) {
+                continue;
+            }
+
+            $lastVersion = $this->settings->extensionChangelogVersion($key);
+
+            if ($lastVersion === null) {
+                $this->settings->setExtensionChangelogVersion($key, $version);
+
+                continue;
+            }
+
+            $entries = Changelog::newerThan(Changelog::parse($metadata->changelogPath), $lastVersion);
+
+            if ($entries === []) {
+                continue;
+            }
+
+            $this->settings->setExtensionChangelogVersion($key, $version);
+            $name ??= $metadata->source;
+            // Each `## [x.y.z]` heading with the package's name before it, so the entries read as pig's own do.
+            $markdown = trim(implode("\n\n", array_map(
+                static fn (Changelog $entry): string => (string) preg_replace_callback('/^##\s+/', static fn (): string => "## {$name} ", $entry->content, 1),
+                $entries,
+            )));
+            $updates[] = ['name' => $name, 'version' => $version, 'markdown' => $markdown];
+        }
+
+        return $updates;
+    }
+
+    /** Whether an extension that is loaded comes from under $root. */
+    private function loadsFrom(string $root): bool
+    {
+        foreach ($this->extensions as $extension) {
+            if (str_starts_with($extension->path, rtrim($root, '/') . '/') || str_starts_with($extension->resolved, rtrim($root, '/') . '/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Upstream's `readPackageJson()`: a package's `name` and `version`, from its `composer.json`;
+     * null for what is missing, not a string, or in a file that cannot be read as JSON.
+     *
+     * @return array{name: ?string, version: ?string}
+     */
+    private static function composerIdentity(string $root): array
+    {
+        $raw = is_file("{$root}/composer.json") ? file_get_contents("{$root}/composer.json") : false;
+        $json = $raw === false ? null : json_decode(ltrim($raw, "\xEF\xBB\xBF"), true);
+        $name = is_array($json) && isset($json['name']) && is_string($json['name']) && $json['name'] !== '' ? $json['name'] : null;
+        $version = is_array($json) && isset($json['version']) && is_string($json['version']) && $json['version'] !== '' ? $json['version'] : null;
+
+        return ['name' => $name, 'version' => $version];
+    }
+
+    /** A titled block of markdown inside the startup changelog's rules. */
+    private function addChangelogSection(string $title, string $markdown): void
+    {
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('accent', Style::bold($title)), 1, 0));
+        // Upstream's spacer between the title and the notes, on top of the markdown's own top
+        // padding: two blank rows, as `/changelog` draws it.
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
+    }
+
+    /**
+     * A block of release notes in the transcript, titled and ruled off.
+     *
+     * Rules around it because it is a block of somebody else's prose dropped into a
+     * conversation, and markdown rather than text because that is what it is written in. `/changelog`'s;
+     * the notes `bin/pig` shows once after an upgrade are drawn the same way by `sayStartupChangelogs()`.
+     */
     private function sayChangelog(string $markdown): void
     {
         $this->chat->addChild(new Spacer(1));

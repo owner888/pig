@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\CodingAgent\Interactive\CustomEditor;
 use Pig\CodingAgent\Keybindings;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
@@ -94,10 +95,15 @@ interface HookUi
      * killed. Whatever is returned must have a path to `done()` for a person who has
      * changed their mind — usually escape, which is what every other dialog here uses.
      *
+     * A component is not reported as waiting for the person, because `custom()` also hosts
+     * loaders and other things that ask nothing. One that waits for an answer passes $blocked
+     * (`new BlockedStatus('question', 'Pick a color')`), and a terminal that shows program
+     * status (OSC 7501) shows pig as blocked while it is on screen.
+     *
      * @param Closure(\Pig\Tui\TUI, Theme, Closure(mixed): void): \Pig\Tui\Component $factory
      * @return mixed whatever was passed to `done()`, or null when there is no UI
      */
-    public function custom(Closure $factory): mixed;
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed;
 
     /** Put a line in the transcript. @param 'info'|'warning'|'error' $level */
     public function notify(string $message, string $level = 'info'): void;

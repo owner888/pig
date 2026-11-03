@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Tools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\PreparesArguments;
 use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
@@ -21,7 +22,7 @@ use Pig\Async\AbortSignal;
  * decorator for `HookedTool`'s reason: PHP has interfaces where upstream spreads the tool
  * into a literal with one field replaced.
  */
-final readonly class DescribedTool implements AgentTool, ReplayableTool
+final readonly class DescribedTool implements AgentTool, ReplayableTool, PreparesArguments
 {
     public function __construct(
         private AgentTool $tool,
@@ -44,7 +45,6 @@ final readonly class DescribedTool implements AgentTool, ReplayableTool
             $this->description,
             $definition->parameters,
             $definition->constrainedSampling,
-            $definition->typeBox,
             $definition->outputSchema,
         );
     }
@@ -53,6 +53,13 @@ final readonly class DescribedTool implements AgentTool, ReplayableTool
     public function replay(): ToolReplay
     {
         return ToolReplay::of($this->tool);
+    }
+
+    /** What the tool underneath makes of the arguments, or the arguments when it reshapes none. */
+    #[\Override]
+    public function prepareArguments(array $arguments): array
+    {
+        return $this->tool instanceof PreparesArguments ? $this->tool->prepareArguments($arguments) : $arguments;
     }
 
     public function label(): string

@@ -121,6 +121,7 @@ final class Http implements ProtocolInterface
             200 => 'OK',
             101 => 'Switching Protocols',
             204 => 'No Content',
+            304 => 'Not Modified',
             400 => 'Bad Request',
             404 => 'Not Found',
             500 => 'Internal Server Error',

@@ -985,6 +985,30 @@ final class TuiAltScreenTest extends TestCase
         $this->assertSame(['line 5', 'line 6', 'line 7', 'line 8', 'line 9', 'line 10', 'line 11', 'line 12'], self::viewport($tui));
     }
 
+    /** Upstream #7629: a focused list takes PageUp/PageDown instead of the transcript scrolling. */
+    public function testDefersViewportKeysToAFocusedListInsteadOfScrollingTheTranscript(): void
+    {
+        $terminal = new FakeTerminal(20, 6);
+        $tui = new TuiAltScreen($terminal);
+        $list = new SelectList(
+            array_map(static fn (int $index): SelectItem => new SelectItem("item-{$index}"), range(0, 11)),
+            maxVisible: 3,
+            theme: SelectListTheme::default(),
+        );
+        $tui->addChild(new Text(self::lines(12), 0, 0));
+        $tui->addChild($list);
+        $tui->setFocus($list);
+        $this->start($tui);
+        $topBefore = $tui->viewportTop();
+
+        $terminal->type("\x1b[6~");
+        $terminal->type("\x1b[1;5H");
+        self::settle();
+
+        $this->assertSame('item-3', $list->selectedItem()?->value);
+        $this->assertSame($topBefore, $tui->viewportTop());
+    }
+
     public function testScrollsTheTranscriptByHalfAPageWithCustomBindings(): void
     {
         $terminal = new FakeTerminal(20, 10);

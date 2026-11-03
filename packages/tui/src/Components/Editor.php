@@ -10,6 +10,7 @@ use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\Suggestions;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Chars;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Clipboard\ClipboardFile;
@@ -42,7 +43,7 @@ use Pig\Tui\Width;
  * line, up and down move between visual ones, because that is what the cursor looks like
  * it is doing.
  */
-final class Editor implements Component, Focusable, InputHandler, MouseHandler
+final class Editor implements Component, Focusable, InputHandler, MouseHandler, CapturesViewportInput
 {
     /** Set by the renderer; while true the cursor carries `TUI::CURSOR_MARKER` for the input method. */
     public bool $focused = false;
@@ -305,6 +306,13 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
     }
 
     public function isShowingSuggestions(): bool
+    {
+        return $this->suggestionList !== null;
+    }
+
+    /** The open completion list receives fullscreen viewport keys, such as PageUp/PageDown. */
+    #[\Override]
+    public function capturesViewportInput(): bool
     {
         return $this->suggestionList !== null;
     }
@@ -667,7 +675,12 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler
             return true;
         }
 
-        if ($kb->matches($data, 'tui.select.up') || $kb->matches($data, 'tui.select.down')) {
+        if (
+            $kb->matches($data, 'tui.select.up')
+            || $kb->matches($data, 'tui.select.down')
+            || $kb->matches($data, 'tui.select.pageUp')
+            || $kb->matches($data, 'tui.select.pageDown')
+        ) {
             $this->suggestionList?->handleInput($data);
 
             return true;

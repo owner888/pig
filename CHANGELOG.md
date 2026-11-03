@@ -50,6 +50,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.3] - 2026-11-03
+
+### Added
+
+- Added `PIG_SELF_UPDATE_COMMAND` environment variable and `selfUpdateCommand` setting (`string[]`) to configure custom commands for self-updating pig in external package managers (such as mise or Nix), supporting `{packageName}`, `{version}`, and `{installSpec}` placeholders.
+- Added `extra.pig.changelogPath` configuration in package `composer.json` to present extension release notes under "Extension Updates" when package versions change.
+- Added `PreparesArguments` interface allowing tools to prepare, normalize, and validate arguments before execution.
+- Added `TrustedUrl` validator to verify OAuth redirect targets and callback schemes.
+
+### Changed
+
+- `pig web` sends its page in a quarter of the bytes, and a reload in almost none: scripts and stylesheets are gzipped for a browser that takes it (894KB to 218KB for a first load, the API answers included), and each carries an ETag, so a reload is answered with 304s instead of the same files again (94KB, most of it the API). They are still checked on every load, so a page sees the files of a `pig update` at once.
+- The terminal's xterm (344KB with its stylesheet, more than a third of the page) is fetched when a terminal is first opened — the local one or a node's SSH one — instead of with every page.
+- Updated built-in model catalogs for Azure, OpenAI, OpenAI Codex, OpenCode, and OpenRouter aligned with upstream pi.
+
+### Fixed
+
+- Fixed `EditTool` and `EditDiff` multi-block replacements, fuzzy matching, and trailing newline preservation, resolving line offset reconciliation issues aligned with upstream pi.
+- Fixed `Process::run` and `Process::runAsync` hanging or corrupting multi-byte text on high-volume output by enforcing `$maxBuffer` with UTF-8 safe boundary truncation.
+- Fixed Bedrock strict tool calling fallback handling and parameter schemas.
+- Fixed TUI Markdown rendering edge cases for nested lists, table alignments, and inline formatting boundaries.
+
 ## [1.5.2] - 2026-11-03
 
 ### Fixed

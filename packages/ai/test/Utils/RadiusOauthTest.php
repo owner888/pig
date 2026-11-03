@@ -121,6 +121,46 @@ final class RadiusOauthTest extends TestCase
         $this->assertSame('Invalid Radius OAuth config from ' . rtrim($base, '/'), $thrown);
     }
 
+    public function testAnAuthorizationEndpointThatIsNotHttpIsRefused(): void
+    {
+        // Upstream: "rejects an authorization endpoint that is not an http(s) URL".
+        $server = new CannedServer();
+        $base = $server->startSequence([self::reply(200, ['authorizationEndpoint' => 'file:///Users/victim/Downloads/payload.app'])]);
+        $shown = [];
+
+        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+            static function (string $url) use (&$shown): void {
+                $shown[] = $url;
+            },
+            onSelect: static fn (): string => Radius::METHOD_BROWSER,
+        ));
+        $server->stop();
+
+        $this->assertSame('Invalid Radius OAuth config from ' . rtrim($base, '/'), $thrown);
+        $this->assertSame([], $shown);
+    }
+
+    public function testADeviceVerificationUriThatIsNotHttpIsRefused(): void
+    {
+        // Upstream: "rejects a device verification URI that is not an http(s) URL".
+        $server = new CannedServer();
+        $base = $server->startSequence([
+            self::reply(200, ['device_code' => 'device-code', 'user_code' => 'ABCD-1234', 'verification_uri' => 'file:///Users/victim/Downloads/payload.app', 'expires_in' => 600]),
+        ]);
+        $shown = [];
+
+        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+            static function (string $url) use (&$shown): void {
+                $shown[] = $url;
+            },
+            onSelect: static fn (): string => Radius::METHOD_DEVICE_CODE,
+        ));
+        $server->stop();
+
+        $this->assertSame('Untrusted verification_uri in Radius OAuth device authorization response', $thrown);
+        $this->assertSame([], $shown);
+    }
+
     public function testAGatewayWithoutASchemeIsHttps(): void
     {
         $this->assertSame('https://radius.example', Radius::normalizeGatewayUrl('radius.example/'));

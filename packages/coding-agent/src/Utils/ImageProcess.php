@@ -16,9 +16,9 @@ use Pig\Tui\Images\TerminalImage;
  * of base64 by default, or the model's `inputLimits.images.resize`. One oversized picture makes a
  * provider refuse the whole conversation, not just the turn it arrived in.
  *
- * The strategy is upstream's to the step: fit the dimensions, try PNG and then JPEG at falling
- * qualities, and shrink by a quarter until something fits or the picture is one pixel. A resized
- * image comes with upstream's note on how to map coordinates back.
+ * The strategy is upstream's to the step: fit the dimensions, try the smaller of PNG and JPEG,
+ * then the other, then JPEG at falling qualities, and shrink by a quarter until something fits or
+ * the picture is one pixel. A resized image comes with upstream's note on how to map coordinates back.
  *
  * **GD is the codec, ImageMagick the other one, and neither is required.** Upstream bundles Photon
  * (Rust compiled to WASM), so it can always resize; PHP has nothing it can bundle, and its equivalent
@@ -268,27 +268,38 @@ final class ImageProcess
                 return null;
             }
 
-            $candidates = [['image/png', null], ...array_map(static fn (int $q): array => ['image/jpeg', $q], $qualities)];
+            // Upstream's order (#11551): the smaller of PNG and JPEG at the configured quality, then
+            // the other, and the lower JPEG qualities only if neither fits — PNG first whenever it
+            // fit sent photos as PNGs many times the JPEG's size.
+            $encoded = static function (string $type, ?int $q) use ($scaled): ?array {
+                $bytes = self::encode($scaled, $type, $q);
 
-            foreach ($candidates as [$type, $q]) {
-                $encoded = self::encode($scaled, $type, $q);
+                return $bytes === null ? null : [$type, base64_encode($bytes)];
+            };
+            $png = $encoded('image/png', null);
+            $jpeg = $encoded('image/jpeg', $qualities[0]);
+            $preferred = $jpeg !== null && ($png === null || strlen($jpeg[1]) < strlen($png[1])) ? [$jpeg, $png] : [$png, $jpeg];
+            $fitted = static fn (array $candidate): array => [
+                'data' => $candidate[1],
+                'mimeType' => $candidate[0],
+                'originalWidth' => $originalWidth,
+                'originalHeight' => $originalHeight,
+                'width' => $targetWidth,
+                'height' => $targetHeight,
+                'wasResized' => true,
+            ];
 
-                if ($encoded === null) {
-                    continue;
+            foreach ($preferred as $candidate) {
+                if ($candidate !== null && strlen($candidate[1]) < $maxBytes) {
+                    return $fitted($candidate);
                 }
+            }
 
-                $data = base64_encode($encoded);
+            foreach (array_slice($qualities, 1) as $q) {
+                $candidate = $encoded('image/jpeg', $q);
 
-                if (strlen($data) < $maxBytes) {
-                    return [
-                        'data' => $data,
-                        'mimeType' => $type,
-                        'originalWidth' => $originalWidth,
-                        'originalHeight' => $originalHeight,
-                        'width' => $targetWidth,
-                        'height' => $targetHeight,
-                        'wasResized' => true,
-                    ];
+                if ($candidate !== null && strlen($candidate[1]) < $maxBytes) {
+                    return $fitted($candidate);
                 }
             }
 
@@ -309,8 +320,8 @@ final class ImageProcess
     }
 
     /**
-     * `resize()`'s steps through ImageMagick: the same fit, PNG then JPEG at the same falling
-     * qualities, and the same shrinking by a quarter. Each size is scaled once from the original
+     * `resize()`'s steps through ImageMagick: the same fit, the smaller of PNG and JPEG first, then
+     * JPEG at the same falling qualities, and the same shrinking by a quarter. Each size is scaled once from the original
      * (`-auto-orient` turning it as `ExifOrientation` would) into a PNG, and the JPEG attempts are
      * encoded from that small file rather than by decoding the photo again.
      *
@@ -377,16 +388,30 @@ final class ImageProcess
                     return null;
                 }
 
-                if (strlen($data = base64_encode($png)) < $maxBytes) {
-                    return self::fitted($data, 'image/png', $width, $height, $targetWidth, $targetHeight);
-                }
-
-                foreach ($qualities as $q) {
-                    // Over white, as a picture with transparency has to be for JPEG.
+                // Over white, as a picture with transparency has to be for JPEG.
+                $jpegAt = static function (int $q) use ($magick, $scaledPath): ?array {
                     $jpeg = self::runMagick([$magick, $scaledPath, '-background', 'white', '-alpha', 'remove', '-quality', (string) $q, 'jpeg:-']);
 
-                    if ($jpeg !== null && strlen($data = base64_encode($jpeg)) < $maxBytes) {
-                        return self::fitted($data, 'image/jpeg', $width, $height, $targetWidth, $targetHeight);
+                    return $jpeg === null ? null : ['image/jpeg', base64_encode($jpeg)];
+                };
+                $pngCandidate = ['image/png', base64_encode($png)];
+                $jpegCandidate = $jpegAt($qualities[0]);
+                // The smaller of the two first, as on GD's path.
+                $preferred = $jpegCandidate !== null && strlen($jpegCandidate[1]) < strlen($pngCandidate[1])
+                    ? [$jpegCandidate, $pngCandidate]
+                    : [$pngCandidate, $jpegCandidate];
+
+                foreach ($preferred as $candidate) {
+                    if ($candidate !== null && strlen($candidate[1]) < $maxBytes) {
+                        return self::fitted($candidate[1], $candidate[0], $width, $height, $targetWidth, $targetHeight);
+                    }
+                }
+
+                foreach (array_slice($qualities, 1) as $q) {
+                    $candidate = $jpegAt($q);
+
+                    if ($candidate !== null && strlen($candidate[1]) < $maxBytes) {
+                        return self::fitted($candidate[1], 'image/jpeg', $width, $height, $targetWidth, $targetHeight);
                     }
                 }
 

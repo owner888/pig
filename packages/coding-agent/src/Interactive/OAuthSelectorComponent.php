@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Interactive;
 
 use Closure;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\Spacer;
@@ -24,7 +25,7 @@ use Pig\Tui\Style;
  * position when it scrolls. Up and down move, Enter picks, Escape cancels, anything else is typed
  * into the search.
  */
-final class OAuthSelectorComponent extends Container implements Focusable, InputHandler
+final class OAuthSelectorComponent extends Container implements Focusable, InputHandler, CapturesViewportInput
 {
     public bool $focused = false;
 
@@ -125,9 +126,16 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
     }
 
     #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
+
+    #[\Override]
     public function handleInput(string $data): void
     {
         $kb = Keybindings::getKeybindings();
+        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, count($this->filtered), self::MAX_VISIBLE);
 
         if ($kb->matches($data, 'tui.select.up')) {
             if ($this->filtered !== []) {
@@ -136,6 +144,10 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
         } elseif ($kb->matches($data, 'tui.select.down')) {
             if ($this->filtered !== []) {
                 $this->selected = min(count($this->filtered) - 1, $this->selected + 1);
+            }
+        } elseif ($pageIndex !== null) {
+            if ($this->filtered !== []) {
+                $this->selected = $pageIndex;
             }
         } elseif ($kb->matches($data, 'tui.select.confirm')) {
             $this->pick();

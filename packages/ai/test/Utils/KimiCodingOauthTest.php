@@ -73,6 +73,32 @@ final class KimiCodingOauthTest extends TestCase
         Async::run(static fn () => (new KimiCoding(new HttpClient(5.0), $host))->login(static fn () => null));
     }
 
+    public function testAVerificationAddressIsShownWithItsControlCharactersEncoded(): void
+    {
+        // This check used to accept the address as it came, so the BEL and the OSC in it reached
+        // the terminal inside the sign-in link. The normalized form is what the dialog is handed.
+        $server = new CannedServer();
+        $host = rtrim($server->startSequence([
+            [self::json(200, [
+                'device_code' => 'd',
+                'user_code' => 'u',
+                'verification_uri' => 'https://kimi.test/d',
+                'verification_uri_complete' => "https://auth.kimi.com/x\x07\x1b]0;pwned\x07?u",
+                'interval' => 1,
+            ])],
+            [self::json(200, ['access_token' => 'acc', 'refresh_token' => 'ref', 'expires_in' => 3600])],
+        ]), '/');
+        $shown = null;
+
+        Async::run(static function () use ($host, &$shown): Credentials {
+            return (new KimiCoding(new HttpClient(5.0), $host))->login(static function (string $url) use (&$shown): void {
+                $shown = $url;
+            });
+        });
+
+        $this->assertSame('https://auth.kimi.com/x%07%1B]0;pwned%07?u', $shown);
+    }
+
     public function testARenewalThatIsRefusedOutrightIsNotRetried(): void
     {
         $server = new CannedServer();

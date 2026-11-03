@@ -62,6 +62,10 @@ pig update <source>      # Update one package
 pig update --models      # Refresh and update model catalogs
 ```
 
+A pig installed by another tool (mise, Nix…) updates with your own command: `PIG_SELF_UPDATE_COMMAND`, or
+`selfUpdateCommand` in `~/.pig/agent/settings.json` as argv, e.g. `["mise", "use", "-g", "composer:{packageName}@{version}"]`.
+`{packageName}`, `{version}` (the newest release) and `{installSpec}` (`{packageName}:{version}`) are filled in.
+
 ### Packages
 
 Extensions, skills, prompt templates and themes travel together as a **package** — a Composer
@@ -114,7 +118,8 @@ every GitHub repository with the topic `pig-package` is listed, with no registra
    this way declares its libraries in `require` and does not commit `vendor/`.
 
 Optional `extra.pig.image` / `extra.pig.video` in `composer.json` (a path in the repository or an `https://`
-URL) give the card a preview; pig itself ignores them. Removing the topic removes the package. Only GitHub is
+URL) give the card a preview; pig itself ignores them. `extra.pig.changelogPath` (default `CHANGELOG.md`, `""`
+for none) is shown under "Extension Updates" the first time pig starts after the package's version changes. Removing the topic removes the package. Only GitHub is
 indexed — packages on other hosts install fine but are not listed.
 
 The settings entry can narrow what loads, with pi's syntax — omit a type to load all of it, `[]`

@@ -19,6 +19,7 @@ use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 use Pig\CodingAgent\Hooks\NoUi;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\CodingAgent\Interactive\CustomEditor;
 use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\TerminalUi;
@@ -636,6 +637,46 @@ final class HookUiTest extends TestCase
         $this->settle();
 
         $this->assertSame(8, $answer);
+    }
+
+    /** Upstream's `custom(..., { blocked })`: reported while it is on screen, and only when asked. */
+    public function testACustomDialogReportsBlockedOnlyWhenItSaysSo(): void
+    {
+        $reported = [];
+        $ui = new TerminalUi(
+            $this->tui,
+            $this->chat,
+            $this->overlay,
+            fn () => $this->editor,
+            new FooterComponent(
+                new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
+                sys_get_temp_dir(),
+            ),
+            onBlocked: static function (?BlockedStatus $blocked) use (&$reported): void {
+                $reported[] = $blocked;
+            },
+        );
+        $list = static function (TUI $tui, Theme $theme, callable $done): SelectList {
+            $list = new SelectList([new SelectItem('a', 'only')], 2, Themes::getSelectListTheme());
+            $list->setSelectHandler(static fn () => $done('a'));
+
+            return $list;
+        };
+
+        Async::spawn(static fn (): mixed => $ui->custom($list));
+        $this->settle();
+        $this->type("\r");
+        $this->settle();
+        $this->assertSame([null, null], $reported);
+
+        $reported = [];
+        $asked = new BlockedStatus('question', 'Pick one');
+        Async::spawn(static fn (): mixed => $ui->custom($list, $asked));
+        $this->settle();
+        $this->assertSame([$asked], $reported);
+        $this->type("\r");
+        $this->settle();
+        $this->assertSame([$asked, null], $reported);
     }
 
     public function testACustomDialogIsTakenDownWhenItIsDone(): void

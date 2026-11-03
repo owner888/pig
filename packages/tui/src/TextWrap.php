@@ -124,12 +124,15 @@ final class TextWrap
 
         foreach (self::tokenize($line) as $token) {
             $tokenWidth = Width::visible($token);
-            $isWhitespace = trim($token) === '';
+            // The codes closing a styled word ride on the space after it (`\e[22m `), so they are
+            // not what decides whether a token is whitespace.
+            $isWhitespace = trim(Ansi::strip($token)) === '';
 
             // A single word wider than the line has to be cut mid-word.
             if ($tokenWidth > $width && !$isWhitespace) {
                 if ($current !== '') {
-                    $lines[] = $current . $tracker->lineEndReset();
+                    // Trimmed before the reset goes on, which would otherwise keep the spaces in.
+                    $lines[] = rtrim($current) . $tracker->lineEndReset();
                 }
 
                 $broken = self::breakWord($token, $width, $tracker);
@@ -146,11 +149,31 @@ final class TextWrap
             }
 
             if ($currentWidth + $tokenWidth > $width && $currentWidth > 0) {
-                $lines[] = rtrim($current) . $tracker->lineEndReset();
+                $wrapped = rtrim($current);
+
+                if ($isWhitespace) {
+                    // The space dropped here may carry the code closing a styled word: it goes on
+                    // this line, so the style ends here and is not reopened on the next one.
+                    $wrapped .= self::codesOf($token);
+                    $tracker->processText($token);
+                }
+
+                $lines[] = $wrapped . $tracker->lineEndReset();
 
                 // A line never starts with the space that pushed it over.
-                $current = $tracker->activeCodes() . ($isWhitespace ? '' : $token);
-                $currentWidth = $isWhitespace ? 0 : $tokenWidth;
+                if ($isWhitespace) {
+                    $current = $tracker->activeCodes();
+                    $currentWidth = 0;
+
+                    continue;
+                }
+
+                $current = $tracker->activeCodes() . $token;
+                $currentWidth = $tokenWidth;
+            } elseif ($isWhitespace && $currentWidth + $tokenWidth > $width && str_contains($token, "\x1b")) {
+                // Spaces wider than an empty line: the trailing trim takes plain ones, but a code
+                // after them (a closing reset) would keep them in, so only the codes are kept.
+                $current .= self::codesOf($token);
             } else {
                 $current .= $token;
                 $currentWidth += $tokenWidth;
@@ -164,7 +187,30 @@ final class TextWrap
             $lines[] = $current;
         }
 
-        return $lines === [] ? [''] : $lines;
+        // Trailing spaces are what would make a line wider than $width.
+        return $lines === [] ? [''] : array_map(rtrim(...), $lines);
+    }
+
+    /** The escape sequences in $text, in order, without the text between them. */
+    private static function codesOf(string $text): string
+    {
+        $codes = '';
+        $pos = strpos($text, "\x1b");
+
+        while ($pos !== false) {
+            $code = Ansi::at($text, $pos);
+
+            if ($code !== null) {
+                $codes .= $code[0];
+                $pos += $code[1];
+            } else {
+                $pos++;
+            }
+
+            $pos = strpos($text, "\x1b", $pos);
+        }
+
+        return $codes;
     }
 
     private const string CJK_PATTERN = '/^[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Bopomofo}]\z/u';

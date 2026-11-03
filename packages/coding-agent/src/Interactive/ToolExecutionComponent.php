@@ -12,9 +12,11 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Theme\CodeHighlighter;
 use Pig\CodingAgent\Theme\Highlight;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\EditDiff;
+use Pig\CodingAgent\Tools\EditTool;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\Truncate;
@@ -97,13 +99,13 @@ final class ToolExecutionComponent extends Container
     private bool $reported = false;
 
     /**
-     * The three arguments the preview was computed for, or null before there is one.
+     * The path and edits the preview was computed for, or null before there is one.
      *
      * Compared rather than a flag, because `setArgsComplete()` can be called again for the
      * same call and the file read is not free — upstream keys the same cache on a
-     * `JSON.stringify` of the three.
+     * `JSON.stringify` of them.
      *
-     * @var array{0: string, 1: string, 2: string}|null
+     * @var array{0: string, 1: list<array{oldText: string, newText: string}>}|null
      */
     private ?array $previewOf = null;
 
@@ -117,6 +119,12 @@ final class ToolExecutionComponent extends Container
 
     /** Upstream's `result.durationMs`: the recorded execution time of a final result, when it has one. */
     private ?int $durationMs = null;
+
+    /**
+     * Upstream's write row `highlighter`: a streamed call highlights the file on every delta and a
+     * complete one on every update and expand toggle, so the row reuses its last highlighting.
+     */
+    private ?CodeHighlighter $writeHighlighter = null;
 
     /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
@@ -197,23 +205,22 @@ final class ToolExecutionComponent extends Container
         }
 
         $path = $this->arguments['path'] ?? null;
-        $old = $this->arguments['oldText'] ?? null;
-        $new = $this->arguments['newText'] ?? null;
+        $edits = self::edits($this->arguments);
 
-        // Any of the three may still be missing: a turn can end on a call whose arguments
-        // never finished arriving, and then there is nothing to preview.
-        if (!is_string($path) || !is_string($old) || !is_string($new)) {
+        // Either may still be missing: a turn can end on a call whose arguments never
+        // finished arriving, and then there is nothing to preview.
+        if (!is_string($path) || $edits === null) {
             return;
         }
 
-        if ($this->previewOf === [$path, $old, $new]) {
+        if ($this->previewOf === [$path, $edits]) {
             return;
         }
 
-        $this->previewOf = [$path, $old, $new];
+        $this->previewOf = [$path, $edits];
 
         try {
-            [$this->previewDiff, $this->previewLine] = EditDiff::preview($path, $old, $new, $this->cwd);
+            [$this->previewDiff, $this->previewLine] = EditDiff::preview($path, $edits, $this->cwd);
             $this->previewError = null;
         } catch (AgentError $problem) {
             $this->previewDiff = '';
@@ -222,6 +229,32 @@ final class ToolExecutionComponent extends Container
         }
 
         $this->draw();
+    }
+
+    /**
+     * An edit call's replacements, in whichever shape its arguments came: `edits[]`, the same
+     * loosened as the tool loosens it (a JSON string, one object), or the top-level
+     * `oldText`/`newText` of a session saved before `edits[]` — upstream's
+     * `getRenderablePreviewInput()`, which reads both. Null when they are not (yet) whole.
+     *
+     * @param array<string, mixed> $arguments
+     * @return list<array{oldText: string, newText: string}>|null
+     */
+    private static function edits(array $arguments): ?array
+    {
+        $edits = EditTool::prepare($arguments)['edits'] ?? null;
+
+        if (!is_array($edits) || $edits === [] || !array_is_list($edits)) {
+            return null;
+        }
+
+        foreach ($edits as $edit) {
+            if (!is_string($edit['oldText'] ?? null) || !is_string($edit['newText'] ?? null)) {
+                return null;
+            }
+        }
+
+        return array_map(static fn (array $edit): array => ['oldText' => $edit['oldText'], 'newText' => $edit['newText']], $edits);
     }
 
     /** @param int|null $durationMs the execution time of a final result — the end event's, or the saved message's */
@@ -717,7 +750,8 @@ final class ToolExecutionComponent extends Container
             $raw = $this->rawPath();
             $language = $raw === '' ? null : Highlight::languageFromPath($raw);
             $display = str_replace("\r", '', $content);
-            $lines = self::trimTrailingEmpty($language === null ? explode("\n", $display) : Themes::highlightCode(self::tabs($display), $language));
+            $this->writeHighlighter ??= new CodeHighlighter();
+            $lines = self::trimTrailingEmpty($language === null ? explode("\n", $display) : $this->writeHighlighter->highlight(self::tabs($display), $language));
             $total = count($lines);
             $shown = $this->expanded ? $lines : array_slice($lines, 0, self::FILE_LINES);
             $remaining = $total - count($shown);

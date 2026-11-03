@@ -157,13 +157,69 @@ final class PiMessagesTest extends TestCase
         self::assertNull($silent->message->responseModel);
     }
 
-    public function testADeltaForABlockThatNeverStartedIsV8sTypeError(): void
+    public function testADeltaForABlockThatNeverStartedIsAnInvalidContentIndex(): void
     {
+        // Was V8's TypeError until upstream 89c921d checked the index before using it.
         $converter = new PiMessagesEventConverter(new Model('m', 'm', Api::PiMessages, 'radius', 'https://x.test', 1, 1));
 
         $this->expectException(ProviderError::class);
-        $this->expectExceptionMessage("Cannot read properties of undefined (reading 'text')");
+        $this->expectExceptionMessage('Invalid contentIndex 3 in pi-messages text_delta event');
         $converter->convert(['type' => 'text_delta', 'contentIndex' => 3, 'delta' => 'a']);
+    }
+
+    /**
+     * Upstream's "rejects content indexes that are not the next or an existing block".
+     *
+     * @param list<array<string, mixed>> $events
+     */
+    #[DataProvider('invalidContentIndexes')]
+    public function testAContentIndexThatIsNotTheNextOrAnExistingBlockIsRefused(array $events, string $message): void
+    {
+        $converter = new PiMessagesEventConverter(new Model('m', 'm', Api::PiMessages, 'radius', 'https://x.test', 1, 1));
+        $converter->convert(['type' => 'start']);
+        $last = array_pop($events);
+
+        foreach ($events as $event) {
+            $converter->convert($event);
+        }
+
+        $this->expectException(ProviderError::class);
+        $this->expectExceptionMessage($message);
+        $converter->convert($last);
+    }
+
+    /** @return array<string, array{list<array<string, mixed>>, string}> */
+    public static function invalidContentIndexes(): array
+    {
+        return [
+            'a huge start' => [[['type' => 'text_start', 'contentIndex' => 4294967000]], 'Invalid contentIndex 4294967000 in pi-messages text_start event'],
+            'a string start' => [[['type' => 'text_start', 'contentIndex' => '__proto__']], 'Invalid contentIndex "__proto__" in pi-messages text_start event'],
+            'a string end' => [[
+                ['type' => 'text_start', 'contentIndex' => 0],
+                ['type' => 'toolcall_end', 'contentIndex' => '__proto__', 'toolCall' => ['polluted' => true]],
+            ], 'Invalid contentIndex "__proto__" in pi-messages toolcall_end event'],
+            'a delta before any start' => [[['type' => 'text_delta', 'contentIndex' => 0, 'delta' => 'x']], 'Invalid contentIndex 0 in pi-messages text_delta event'],
+            'a start that skips a block' => [[
+                ['type' => 'text_start', 'contentIndex' => 0],
+                ['type' => 'thinking_start', 'contentIndex' => 2],
+            ], 'Invalid contentIndex 2 in pi-messages thinking_start event'],
+            'a negative start' => [[['type' => 'text_start', 'contentIndex' => -1]], 'Invalid contentIndex -1 in pi-messages text_start event'],
+            'a float start' => [[['type' => 'text_start', 'contentIndex' => 0.5]], 'Invalid contentIndex 0.5 in pi-messages text_start event'],
+        ];
+    }
+
+    public function testAStartMayBeTheNextBlockOrAnExistingOne(): void
+    {
+        $converter = new PiMessagesEventConverter(new Model('m', 'm', Api::PiMessages, 'radius', 'https://x.test', 1, 1));
+
+        $converter->convert(['type' => 'text_start', 'contentIndex' => 0]);
+        $converter->convert(['type' => 'text_delta', 'contentIndex' => 0, 'delta' => 'a']);
+        $converter->convert(['type' => 'thinking_start', 'contentIndex' => 1]);
+        $converter->convert(['type' => 'text_start', 'contentIndex' => 0]);
+        $done = $converter->convert(['type' => 'done', 'reason' => 'stop', 'usage' => ['input' => 1, 'output' => 1, 'totalTokens' => 2]]);
+
+        self::assertInstanceOf(DoneEvent::class, $done);
+        self::assertCount(2, $done->message->content);
     }
 
     /** @return array<string, mixed> */

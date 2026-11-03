@@ -102,7 +102,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
         // What the provider was handed renders to exactly the prompt pig has always built.
         $this->assertSame($session->systemPrompt(), Transcript::getCurrentSystemPrompt($this->requests[0]->messages));
-        $this->assertStringStartsWith('You are an expert coding assistant.', $session->systemPrompt());
+        $this->assertStringStartsWith('You are a coding assistant.', $session->systemPrompt());
 
         // And the file has it first: a resumed session replays the same prompt and tools.
         $saved = SessionManager::open($store->path)->messages();
@@ -159,7 +159,7 @@ final class SystemMessageTranscriptTest extends TestCase
         $this->assertSame([], array_filter(array_slice($messages, 2), static fn ($m): bool => $m instanceof SystemMessage), 'the kept part keeps no system message of its own');
 
         // The summariser was never shown the prompt as conversation.
-        $this->assertStringNotContainsString('You are an expert coding assistant', (string) json_encode(array_map(static fn ($m) => $m instanceof UserMessage ? $m->content[0]->text : '', $this->requests[1]->messages)));
+        $this->assertStringNotContainsString('You are a coding assistant', (string) json_encode(array_map(static fn ($m) => $m instanceof UserMessage ? $m->content[0]->text : '', $this->requests[1]->messages)));
 
         // Read back from the file: the same state, in the same place.
         $saved = SessionManager::open($store->path)->messages();
@@ -223,14 +223,15 @@ final class SystemMessageTranscriptTest extends TestCase
         }
     }
 
-    public function testABranchSummaryAsksForNoReasoningAndNoOutputCap(): void
+    public function testABranchSummaryAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasonsAndHasNoOutputCap(): void
     {
-        // Upstream's `generateBranchSummary()`: `{ apiKey, headers, env, signal }` — no reasoning,
-        // whatever the session's level, and the model's output limit (#9512).
-        foreach ([64_000, 1_024] as $modelMax) {
+        // Upstream's `generateBranchSummary()`: `{ apiKey, headers, env, signal }`, the model's output
+        // limit (#9512), and reasoning at the session's level when the model reasons and the level
+        // is not off (#11444) — expected `["xhigh", undefined, undefined]` there.
+        foreach ([[true, ThinkingLevel::Xhigh, ReasoningEffort::Xhigh, 64_000], [true, ThinkingLevel::Off, null, 1_024], [false, ThinkingLevel::Xhigh, null, 64_000]] as [$reasons, $level, $expected, $modelMax]) {
             $this->options = [];
-            [$session, $store] = $this->session(['one', 'two', 'the summary'], reasoning: true, maxTokens: $modelMax);
-            $session->agent->state->thinkingLevel = ThinkingLevel::High;
+            [$session, $store] = $this->session(['one', 'two', 'the summary'], reasoning: $reasons, maxTokens: $modelMax);
+            $session->agent->state->thinkingLevel = $level;
 
             Async::run(static fn () => $session->prompt('first'));
             Async::run(static fn () => $session->prompt('second'));
@@ -238,7 +239,7 @@ final class SystemMessageTranscriptTest extends TestCase
             $jump = Async::run(static fn () => $session->goTo($store->branch()[1]['id'], summarise: true));
 
             $this->assertTrue($jump->moved);
-            $this->assertNull($this->options[2]->reasoning);
+            $this->assertSame($expected, $this->options[2]->reasoning);
             $this->assertNull($this->options[2]->maxTokens);
             $this->assertSame('none', $this->options[2]->cacheRetention);
         }

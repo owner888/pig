@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Session;
 
 use Closure;
+use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -202,8 +203,8 @@ final class BranchSummarization
      *
      * The budget is the model's window (128k when it states none) less `$reserveTokens`.
      * `$customInstructions` are added as "Additional focus", or replace the prompt outright with
-     * `$replaceInstructions`. No reasoning is asked for, and the output is capped at 4096 tokens or
-     * the model's own cap. The summary comes back with `PREAMBLE` in front; an abort and an error
+     * `$replaceInstructions`. Reasoning at `$thinkingLevel` when the model reasons and the level is
+     * not `off` (upstream #11444, compaction's rule); no output cap but the model's own. The summary comes back with `PREAMBLE` in front; an abort and an error
      * come back as such rather than thrown.
      *
      * @param list<SessionEntry> $entries oldest first
@@ -219,6 +220,7 @@ final class BranchSummarization
         ?array $headers = null,
         ?array $env = null,
         ?AbortSignal $signal = null,
+        ?ThinkingLevel $thinkingLevel = null,
         ?string $customInstructions = null,
         ?bool $replaceInstructions = null,
         int $reserveTokens = self::RESERVE_TOKENS,
@@ -250,6 +252,7 @@ final class BranchSummarization
             new SimpleStreamOptions(
                 signal: $signal,
                 apiKey: $apiKey,
+                reasoning: $model->reasoning && $thinkingLevel !== null ? $thinkingLevel->toReasoning() : null,
                 headers: $headers,
                 env: $env,
             ),

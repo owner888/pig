@@ -1229,6 +1229,49 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.1-terra",
+        "name": "GPT-6.1 Terra",
+        "api": "azure-openai-responses",
+        "provider": "azure",
+        "baseUrl": "",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cacheRead": 0.05,
+            "cacheWrite": 1.25
+        },
+        "contextWindow": 272000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "gpt-daybreak-blue-latest",
         "name": "Daybreak Blue",
         "api": "azure-openai-responses",

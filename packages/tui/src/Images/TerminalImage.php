@@ -113,6 +113,13 @@ final class TerminalImage
             return new TerminalCapabilities(ImageProtocol::Kitty, true, true);
         }
 
+        // Orca supports Kitty graphics but only advertises it through ORCA_IMAGE_PROTOCOL. Require
+        // both signals so Orca releases predating that advertisement keep the text fallback instead
+        // of reserving image rows that nothing renders.
+        if ($termProgram === 'orca' && getenv('ORCA_IMAGE_PROTOCOL') === 'kitty') {
+            return new TerminalCapabilities(ImageProtocol::Kitty, true, true);
+        }
+
         if (Env::isSet('KITTY_WINDOW_ID') || $termProgram === 'kitty') {
             return new TerminalCapabilities(ImageProtocol::Kitty, true, true);
         }

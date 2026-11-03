@@ -137,6 +137,25 @@ final class SettingsListTest extends TestCase
         $this->assertStringContainsString('(1/12)', $rendered);
     }
 
+    public function testPageKeysMoveTheCursorAVisiblePage(): void
+    {
+        $items = [];
+
+        for ($at = 0; $at < 12; $at++) {
+            $items[] = new SettingItem("s{$at}", "Setting {$at}", 'on', values: ['on', 'off']);
+        }
+
+        $list = $this->list($items, 4);
+        $list->handleInput("\x1b[6~");
+        $this->assertStringContainsString('(5/12)', implode("\n", $list->render(60)));
+        $list->handleInput("\x1b[6~");
+        $list->handleInput("\x1b[6~");
+        $this->assertStringContainsString('(12/12)', implode("\n", $list->render(60)));
+        $list->handleInput("\x1b[5~");
+        $this->assertStringContainsString('(8/12)', implode("\n", $list->render(60)));
+        $this->assertTrue($list->capturesViewportInput());
+    }
+
     public function testAnEmptyListSaysSoRatherThanDrawingNothing(): void
     {
         $this->assertStringContainsString('Nothing to set', implode("\n", $this->list([])->render(60)));

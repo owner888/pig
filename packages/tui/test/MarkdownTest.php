@@ -250,6 +250,37 @@ final class MarkdownTest extends TestCase
         $this->assertSame('https://example.com', $tokens[1]->href);
     }
 
+    public function testABareUrlStopsAtCjkPunctuationAndKeepsWhatFollows(): void
+    {
+        foreach (mb_str_split('。，；：！？、“”‘’（）【】《》「」『』…—·・〈〉［］｛｝．｡｢｣､･') as $punctuation) {
+            foreach (['https://example.com', 'https://example.com/中文?q=搜索#片段'] as $url) {
+                $tokens = Inline::tokenize("{$url}{$punctuation}后面的中文");
+
+                $this->assertInstanceOf(Link::class, $tokens[0], $punctuation);
+                $this->assertSame($url, $tokens[0]->href, $punctuation);
+                $this->assertEquals(new Text("{$punctuation}后面的中文"), $tokens[1], $punctuation);
+            }
+        }
+
+        // English punctuation before it is still trimmed.
+        $tokens = Inline::tokenize('https://example.com.，后面的中文');
+        $this->assertSame('https://example.com', $tokens[0]->href);
+        $this->assertEquals(new Text('.，后面的中文'), $tokens[1]);
+    }
+
+    public function testCjkLettersStayInABareUrlAndPunctuationInAnExplicitOne(): void
+    {
+        foreach (['https://example.com紧接着中文', 'https://example.com/テストー한글'] as $url) {
+            $this->assertSame($url, Inline::tokenize($url)[0]->href);
+        }
+
+        $url = 'https://example.com/中文，路径·テスト・한글…—。';
+
+        foreach (["[文档]({$url})", "<{$url}>"] as $source) {
+            $this->assertSame($url, Inline::tokenize($source)[0]->href, $source);
+        }
+    }
+
     public function testAnAngleBracketedUrlBecomesALink(): void
     {
         $this->assertInstanceOf(Link::class, Inline::tokenize('<https://example.com>')[0]);
@@ -508,6 +539,22 @@ final class MarkdownTest extends TestCase
         $this->assertSame('[hi        ]', $markdown->render(10)[0]);
     }
 
+    /** A styled word ending at the wrap: its closing code stays on its line, the space after it goes. */
+    public function testAStyledWordAtTheWrapBoundaryLeavesNoStyleInThePadding(): void
+    {
+        $markdown = new Markdown(
+            'aaaa **bold** next ~~strk~~ more words',
+            defaultStyle: new DefaultTextStyle(background: static fn (string $s): string => "\x1b[44m{$s}\x1b[49m"),
+        );
+
+        $this->assertSame([
+            "\x1b[44m aaaa \x1b[1mbold\x1b[22m \x1b[49m",
+            "\x1b[44m next \x1b[9mstrk\x1b[29m \x1b[49m",
+            "\x1b[44m more      \x1b[49m",
+            "\x1b[44m words     \x1b[49m",
+        ], $markdown->render(11));
+    }
+
     public function testRenderingIsCachedUntilSomethingChanges(): void
     {
         $markdown = new Markdown('# Title');
@@ -642,6 +689,27 @@ final class MarkdownTest extends TestCase
         $this->assertSame(['Escaped $x-y$.', '', '```text', '  $\mathbb{C}^3$', '```'], $this->mathRows($source));
     }
 
+    /** A 2D layout cannot be wrapped row by row, so display math wider than the line is shown as written. */
+    public function testDisplayMathWiderThanTheLineFallsBackToTheSource(): void
+    {
+        $source = "\\[\n\\frac{\\partial^2 u}{\\partial x^2} + \\frac{\\partial^2 u}{\\partial y^2} = \\sum_{i=1}^{n} \\frac{1}{i^2} + \\int_0^1 f(x)\\,dx\n\\]";
+        $render = static fn (int $width): array => array_map(
+            static fn (string $line): string => rtrim(Ansi::strip($line)),
+            (new Markdown($source, 0))->render($width),
+        );
+
+        $this->assertSame([
+            '∂² u   ∂² u   n   1   1',
+            '──── + ──── = ∑   ── +∫ f(x) dx',
+            '∂ x²   ∂ y²  i=1  i²  0',
+        ], $render(40));
+
+        $narrow = $render(30);
+        $this->assertSame('\\[', $narrow[0]);
+        $this->assertSame('\\]', $narrow[count($narrow) - 1]);
+        $this->assertStringNotContainsString('─', implode("\n", $narrow));
+    }
+
     public function testAllowsLatexRenderingToBeDisabled(): void
     {
         $this->assertSame(
@@ -760,5 +828,61 @@ final class MarkdownTest extends TestCase
         $this->assertSame(512, $size());
 
         Markdown::clearTokenCache();
+    }
+
+    /** @param list<string> $calls */
+    private static function countingTheme(array &$calls): MarkdownTheme
+    {
+        $theme = MarkdownTheme::default();
+
+        return new MarkdownTheme(
+            $theme->heading, $theme->link, $theme->linkUrl, $theme->code, $theme->codeBlock, $theme->codeBlockBorder,
+            $theme->quote, $theme->quoteBorder, $theme->rule, $theme->listBullet, $theme->bold, $theme->italic,
+            $theme->strikethrough, $theme->underline,
+            static function (string $code, ?string $language) use (&$calls): array {
+                $calls[] = "{$language}:{$code}";
+
+                return explode("\n", $code);
+            },
+        );
+    }
+
+    /** Upstream's block reuse: a streamed answer lays out its last block, not all of them. */
+    public function testACodeBlockIsHighlightedOnceAcrossStreamedTextAndResizesAndAgainAfterInvalidate(): void
+    {
+        $calls = [];
+        $markdown = new Markdown("```ts\nx\n```", 0, 0, self::countingTheme($calls));
+        $markdown->render(80);
+        $markdown->setText("```ts\nx\n```\n\nafter");
+        $markdown->render(40);
+        $this->assertSame(['ts:x'], $calls);
+
+        $markdown->invalidate();
+        $markdown->render(40);
+        $this->assertSame(['ts:x', 'ts:x'], $calls);
+    }
+
+    public function testABlockIsDrawnAgainWhenTheBlockAfterItChangesItsSpacing(): void
+    {
+        $markdown = new Markdown('# Title', 0);
+        $markdown->render(80);
+        $markdown->setText("# Title\nfoo");
+
+        $this->assertSame(['Title', '', 'foo'], array_map(static fn (string $line): string => trim(Ansi::strip($line)), $markdown->render(80)));
+    }
+
+    /** A streamed answer drawn block by block draws what a fresh component draws, prefix by prefix. */
+    public function testReusedBlocksDrawWhatAFreshRenderDraws(): void
+    {
+        $text = "# Head\n\npara **bold**\n- a\n  - nested\n\n```php\necho 1;\n```\n> quote\n> more\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\\[\nx^2\n\\]\n---\n1. one\n2. two\nlast words";
+        $streamed = new Markdown('', 1);
+
+        for ($length = 1; $length <= strlen($text); $length++) {
+            $prefix = substr($text, 0, $length);
+            $width = 20 + $length % 30;
+            $streamed->setText($prefix);
+
+            $this->assertSame((new Markdown($prefix, 1))->render($width), $streamed->render($width), json_encode($prefix));
+        }
     }
 }

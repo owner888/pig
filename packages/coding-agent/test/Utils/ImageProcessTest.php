@@ -44,6 +44,30 @@ final class ImageProcessTest extends TestCase
     }
 
     #[RequiresFunction('imagecreatetruecolor')]
+    public function testAPhotoIsResizedToTheSmallerJpegEvenWhenThePngWouldFit(): void
+    {
+        // Upstream #11551: PNG went first whenever it fit, so photos went out as PNGs many times
+        // the size. Noise fits under the limit as either at this size, and is far smaller as JPEG.
+        $photo = self::png(600, 400, noise: true);
+
+        foreach (['gd' => null, 'magick' => $this->withoutGd(...)] as $codec => $setUp) {
+            if ($setUp !== null) {
+                $setUp();
+            }
+
+            $result = ImageProcess::process($photo, 'image/png', resize: ['maxWidth' => 500]);
+
+            $this->assertTrue($result['ok'], $codec);
+            $this->assertSame('image/jpeg', $result['mimeType'], $codec);
+            $size = TerminalImage::getImageDimensions($result['data'], $result['mimeType']);
+            $this->assertSame([500, 333], [$size?->widthPx, $size?->heightPx], $codec);
+        }
+
+        // A picture PNG keeps smaller — a black screenshot — still goes out as PNG.
+        $this->assertSame('image/png', ImageProcess::process(self::png(600, 400), 'image/png', resize: ['maxWidth' => 500])['mimeType']);
+    }
+
+    #[RequiresFunction('imagecreatetruecolor')]
     public function testTheModelsResizeProfileIsTheLimit(): void
     {
         $result = ImageProcess::process(self::png(300, 100), 'image/png', resize: ['maxWidth' => 150]);

@@ -678,6 +678,27 @@ final class OauthTest extends TestCase
         );
     }
 
+    public function testAVerificationUriThatIsNotAWebUrlIsRefused(): void
+    {
+        // It is opened in the person's browser, and the launcher opens a file just as readily.
+        $url = $this->serve(['device_code' => 'dev-1', 'user_code' => 'U', 'verification_uri' => 'file:///Users/victim/Downloads/payload.app', 'interval' => 5, 'expires_in' => 900]);
+
+        $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->onTheLoop(fn (): DeviceCode => $this->copilot($url)->start()),
+            'Untrusted verification_uri in device code response',
+        );
+    }
+
+    public function testAVerificationUriComesBackNormalized(): void
+    {
+        $url = $this->serve(['device_code' => 'dev-1', 'user_code' => 'U', 'verification_uri' => "https://github.com/login/device\x07\x1b]8;;x\x07", 'interval' => 5, 'expires_in' => 900]);
+
+        $device = $this->onTheLoop(fn (): DeviceCode => $this->copilot($url)->start());
+
+        $this->assertSame('https://github.com/login/device%07%1B]8;;x', $device->verificationUri);
+    }
+
     public function testAnApprovedCodeComesBackAsAGitHubToken(): void
     {
         $url = $this->serve(['access_token' => 'gho_abc']);

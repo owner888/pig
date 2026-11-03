@@ -5,10 +5,20 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use Pig\Agent\AgentError;
+use Pig\Agent\AgentTool;
+use Pig\Agent\AgentToolResult;
+use Pig\Agent\InvalidToolArguments;
+use Pig\Agent\ToolArguments;
+use Pig\Ai\ToolCall;
+use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Async\AbortController;
 use Pig\Async\AbortError;
+use Pig\CodingAgent\Hooks\HookedTool;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Tools\DescribedTool;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\EditTool;
+use Pig\CodingAgent\Tools\ResultImagesTool;
 use Pig\Test\AssertsThrows;
 
 final class EditToolTest extends ToolTestCase
@@ -18,6 +28,18 @@ final class EditToolTest extends ToolTestCase
     private function edit(): EditTool
     {
         return new EditTool($this->cwd);
+    }
+
+    /**
+     * The arguments go the way the loop sends them: `prepareArguments()`, then the schema, then
+     * the tool — so a shape the tool only accepts through its shim is tested through it.
+     */
+    #[\Override]
+    protected function execute(AgentTool $tool, array $arguments): AgentToolResult
+    {
+        $call = ToolArguments::prepare($tool, new ToolCall('call-1', 'edit', $arguments));
+
+        return $tool->execute('call-1', ToolArguments::validate($tool->definition(), $call));
     }
 
     /** @param array<string, mixed> $arguments */
@@ -43,7 +65,7 @@ final class EditToolTest extends ToolTestCase
             AbortError::class,
             fn () => (new EditTool($this->cwd))->execute(
                 'call-1',
-                ['path' => 'a.php', 'oldText' => '$x = 1;', 'newText' => '$x = 2;'],
+                ['path' => 'a.php', 'edits' => [['oldText' => '$x = 1;', 'newText' => '$x = 2;']]],
                 $controller->signal,
             ),
         );
@@ -65,7 +87,7 @@ final class EditToolTest extends ToolTestCase
         // the same file as unreadable, which sends somebody looking at the wrong permission.
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'locked.php', 'oldText' => '$x = 1;', 'newText' => '$x = 2;']),
+            fn () => $this->execute($this->edit(), ['path' => 'locked.php', 'edits' => [['oldText' => '$x = 1;', 'newText' => '$x = 2;']]]),
             'Not readable and writable',
         );
     }
@@ -76,7 +98,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.php', "<?php\n\$x = 1;\n");
 
-        $after = $this->apply(['path' => 'a.php', 'oldText' => '$x = 1;', 'newText' => '$x = 2;']);
+        $after = $this->apply(['path' => 'a.php', 'edits' => [['oldText' => '$x = 1;', 'newText' => '$x = 2;']]]);
 
         $this->assertSame("<?php\n\$x = 2;\n", $after);
     }
@@ -85,7 +107,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.php', "one\ntwo\nthree\nfour\n");
 
-        $after = $this->apply(['path' => 'a.php', 'oldText' => "two\nthree", 'newText' => 'TWO']);
+        $after = $this->apply(['path' => 'a.php', 'edits' => [['oldText' => "two\nthree", 'newText' => 'TWO']]]);
 
         $this->assertSame("one\nTWO\nfour\n", $after);
     }
@@ -96,7 +118,7 @@ final class EditToolTest extends ToolTestCase
 
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'nope', 'newText' => 'x']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'edits' => [['oldText' => 'nope', 'newText' => 'x']]]),
             'Could not find',
         );
 
@@ -110,7 +132,7 @@ final class EditToolTest extends ToolTestCase
 
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'return null;', 'newText' => 'return 1;']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'edits' => [['oldText' => 'return null;', 'newText' => 'return 1;']]]),
             'Found 2 occurrences',
         );
 
@@ -125,7 +147,7 @@ final class EditToolTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'same', 'newText' => 'same']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'edits' => [['oldText' => 'same', 'newText' => 'same']]]),
             'identical',
         );
     }
@@ -134,7 +156,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'nope.php', 'oldText' => 'a', 'newText' => 'b']),
+            fn () => $this->execute($this->edit(), ['path' => 'nope.php', 'edits' => [['oldText' => 'a', 'newText' => 'b']]]),
             'File not found',
         );
     }
@@ -146,7 +168,7 @@ final class EditToolTest extends ToolTestCase
         // It matches everywhere, so "exactly once" would be meaningless.
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => '', 'newText' => 'x']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'edits' => [['oldText' => '', 'newText' => 'x']]]),
             'oldText is empty',
         );
     }
@@ -157,7 +179,7 @@ final class EditToolTest extends ToolTestCase
 
         // `substr_count` does not count overlaps, and neither does the `split(old).length - 1`
         // upstream counts with — so `aa` in `aaa` is one match on both sides, not two.
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'aa', 'newText' => 'b']);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'aa', 'newText' => 'b']]]);
 
         $this->assertSame("ba\n", $after);
     }
@@ -166,7 +188,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "header\n\x80stray\nfooter\n");
 
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'footer', 'newText' => 'FOOTER']);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'footer', 'newText' => 'FOOTER']]]);
 
         // The deliberate divergence: upstream decodes the file as UTF-8, so the stray byte
         // comes back as U+FFFD and is written over — an edit at the bottom of the file
@@ -178,7 +200,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.sh', "echo OLD\n");
 
-        $after = $this->apply(['path' => 'a.sh', 'oldText' => 'OLD', 'newText' => '$1 and ${2} and \\0']);
+        $after = $this->apply(['path' => 'a.sh', 'edits' => [['oldText' => 'OLD', 'newText' => '$1 and ${2} and \\0']]]);
 
         // Spliced rather than passed to a replace function that reads backreferences.
         $this->assertSame("echo \$1 and \${2} and \\0\n", $after);
@@ -192,7 +214,7 @@ final class EditToolTest extends ToolTestCase
 
         // The model writes \n; rewriting the whole file with LF would turn a one-line
         // edit into a whole-file change in the person's version control.
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $this->assertSame("one\r\nTWO\r\nthree\r\n", $after);
     }
@@ -201,7 +223,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\r\ntwo\r\nthree\r\n");
 
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => "one\ntwo", 'newText' => "ONE\nTWO"]);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => "one\ntwo", 'newText' => "ONE\nTWO"]]]);
 
         $this->assertSame("ONE\r\nTWO\r\nthree\r\n", $after);
     }
@@ -210,7 +232,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\ntwo\r\nthree\n");
 
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'one', 'newText' => 'ONE']);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'one', 'newText' => 'ONE']]]);
 
         $this->assertStringStartsWith("ONE\n", $after);
     }
@@ -221,7 +243,7 @@ final class EditToolTest extends ToolTestCase
 
         // The mark is invisible, so the model will not have included it; leaving it on
         // would make a match against the first line fail for no visible reason.
-        $after = $this->apply(['path' => 'a.php', 'oldText' => '<?php', 'newText' => '<?php declare(strict_types=1);']);
+        $after = $this->apply(['path' => 'a.php', 'edits' => [['oldText' => '<?php', 'newText' => '<?php declare(strict_types=1);']]]);
 
         $this->assertSame("\u{FEFF}<?php declare(strict_types=1);\necho 1;\n", $after);
     }
@@ -234,9 +256,326 @@ final class EditToolTest extends ToolTestCase
         // whose endings have already been put back. Upstream detects the ending on the
         // mark-stripped text and so does this, though nothing can tell: the three bytes of
         // the mark hold no CR and no LF, so they cannot move where the first one is found.
-        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $this->assertSame("\u{FEFF}one\r\nTWO\r\n", $after);
+    }
+
+    // ---- several edits in one call ------------------------------------------------
+
+    public function testSeveralSeparateRegionsAreReplacedInOneCall(): void
+    {
+        $this->file('a.txt', "alpha\nbeta\ngamma\ndelta\n");
+
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+            ['oldText' => "alpha\n", 'newText' => "ALPHA\n"],
+            ['oldText' => "gamma\n", 'newText' => "GAMMA\n"],
+        ]]);
+
+        $this->assertSame('Successfully replaced 2 block(s) in a.txt.', $this->textOf($result));
+        $this->assertSame("ALPHA\nbeta\nGAMMA\ndelta\n", file_get_contents($this->cwd . '/a.txt'));
+        $this->assertSame(
+            ['-1 alpha', '+1 ALPHA', ' 2 beta', '-3 gamma', '+3 GAMMA', ' 4 delta', ' 5 '],
+            explode("\n", $result->details['diff']),
+        );
+        $this->assertSame(1, $result->details['firstChangedLine']);
+    }
+
+    public function testEditsAreMatchedAgainstTheOriginalNotOneAfterAnother(): void
+    {
+        $this->file('a.txt', "foo\nbar\nbaz\n");
+
+        // Applied one after another, the second would find `bar` inside `foo bar` and fail as
+        // ambiguous; against the original each has its one place.
+        $this->apply(['path' => 'a.txt', 'edits' => [
+            ['oldText' => "foo\n", 'newText' => "foo bar\n"],
+            ['oldText' => "bar\n", 'newText' => "BAR\n"],
+        ]]);
+
+        $this->assertSame("foo bar\nBAR\nbaz\n", file_get_contents($this->cwd . '/a.txt'));
+    }
+
+    public function testOverlappingEditsAreRefusedAndNothingIsWritten(): void
+    {
+        $this->file('a.txt', "one\ntwo\nthree\n");
+
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+                ['oldText' => "one\ntwo\n", 'newText' => "ONE\nTWO\n"],
+                ['oldText' => "two\nthree\n", 'newText' => "TWO\nTHREE\n"],
+            ]]),
+            'edits[0] and edits[1] overlap in a.txt',
+        );
+
+        $this->assertSame("one\ntwo\nthree\n", file_get_contents($this->cwd . '/a.txt'));
+    }
+
+    public function testTheSameEditTwiceIsRefusedAsAnOverlap(): void
+    {
+        $this->file('a.txt', "one\ntwo\n");
+
+        // Both match the one place, so neither knows which text it is replacing.
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+                ['oldText' => 'two', 'newText' => 'TWO'],
+                ['oldText' => 'two', 'newText' => 'TWO'],
+            ]]),
+            'edits[0] and edits[1] overlap',
+        );
+    }
+
+    public function testEditsThatOnlyTouchAreNotAnOverlap(): void
+    {
+        $this->file('a.txt', "abcd\n");
+
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [
+            ['oldText' => 'cd', 'newText' => 'CD'],
+            ['oldText' => 'ab', 'newText' => 'AB'],
+        ]]);
+
+        $this->assertSame("ABCD\n", $after);
+    }
+
+    public function testOneEditThatFailsLeavesTheWholeFileAlone(): void
+    {
+        $this->file('a.txt', "alpha\nbeta\ngamma\n");
+
+        $error = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+                ['oldText' => "alpha\n", 'newText' => "ALPHA\n"],
+                ['oldText' => "missing\n", 'newText' => "MISSING\n"],
+            ]]),
+            'Could not find edits[1].oldText in a.txt',
+        );
+
+        $this->assertStringContainsString('read the file', $error->getMessage());
+        $this->assertSame("alpha\nbeta\ngamma\n", file_get_contents($this->cwd . '/a.txt'));
+    }
+
+    public function testWhichEditIsAmbiguousOrEmptyIsNamed(): void
+    {
+        $this->file('a.txt', "x\nx\ny\n");
+
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+                ['oldText' => 'y', 'newText' => 'Y'],
+                ['oldText' => 'x', 'newText' => 'X'],
+            ]]),
+            'Found 2 occurrences of edits[1].oldText in a.txt',
+        );
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+                ['oldText' => 'y', 'newText' => 'Y'],
+                ['oldText' => '', 'newText' => 'X'],
+            ]]),
+            'edits[1].oldText is empty',
+        );
+    }
+
+    public function testAnEmptyListOfEditsIsRefused(): void
+    {
+        $this->file('a.txt', "hello\n");
+
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => []]),
+            'edits must contain at least one replacement',
+        );
+    }
+
+    public function testCrlfAndAByteOrderMarkSurviveSeveralEdits(): void
+    {
+        $this->file('a.txt', "\u{FEFF}first\r\nsecond\r\nthird\r\nfourth\r\n");
+
+        $after = $this->apply(['path' => 'a.txt', 'edits' => [
+            ['oldText' => "second\n", 'newText' => "SECOND\n"],
+            ['oldText' => "fourth\n", 'newText' => "FOURTH\n"],
+        ]]);
+
+        $this->assertSame("\u{FEFF}first\r\nSECOND\r\nthird\r\nFOURTH\r\n", $after);
+    }
+
+    public function testDistantEditsAreDrawnAsSeparateHunks(): void
+    {
+        $lines = array_map(static fn (int $n): string => sprintf('line %03d', $n), range(1, 600));
+        $this->file('a.txt', implode("\n", $lines) . "\n");
+
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+            ['oldText' => "line 300\n", 'newText' => "LINE 300\n"],
+            ['oldText' => "line 100\n", 'newText' => "LINE 100\n"],
+            ['oldText' => "line 500\n", 'newText' => "LINE 500\n"],
+        ]]);
+        $diff = $result->details['diff'];
+
+        // Upstream's case: three hunks with an ellipsis between, not one block of 400 lines.
+        $this->assertStringContainsString('+100 LINE 100', $diff);
+        $this->assertStringContainsString('+300 LINE 300', $diff);
+        $this->assertStringContainsString('+500 LINE 500', $diff);
+        $this->assertStringNotContainsString('line 250', $diff);
+        $this->assertLessThan(50, count(explode("\n", $diff)));
+        $this->assertSame(100, $result->details['firstChangedLine']);
+        $this->assertSame(
+            [' 104 line 104', '     ...', ' 296 line 296'],
+            array_slice(explode("\n", $diff), 10, 3),
+        );
+    }
+
+    public function testHunksWithLittleBetweenThemShowAllOfIt(): void
+    {
+        $lines = array_map(static fn (int $n): string => "l{$n}", range(1, 20));
+        $this->file('a.txt', implode("\n", $lines));
+
+        // Eight unchanged lines between: twice the context, so drawn whole, no ellipsis.
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [
+            ['oldText' => "l2\n", 'newText' => "L2\nadded\n"],
+            ['oldText' => "l11\n", 'newText' => ''],
+        ]]);
+        $diff = explode("\n", $result->details['diff']);
+
+        $this->assertSame(
+            ['  1 l1', '- 2 l2', '+ 2 L2', '+ 3 added', '  4 l3', '  5 l4', '  6 l5', '  7 l6', '  8 l7', '  9 l8',
+                ' 10 l9', ' 11 l10', '-11 l11', ' 12 l12', ' 13 l13', ' 14 l14', ' 15 l15', '    ...'],
+            $diff,
+        );
+    }
+
+    public function testAPreviewOfSeveralEditsIsTheDiffTheyWouldProduce(): void
+    {
+        $this->file('a.txt', "one\ntwo\nthree\nfour\n");
+        $edits = [['oldText' => 'one', 'newText' => 'ONE'], ['oldText' => 'four', 'newText' => 'FOUR']];
+
+        [$diff, $line] = EditDiff::preview('a.txt', $edits, $this->cwd);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => $edits]);
+
+        $this->assertSame($result->details['diff'], $diff);
+        $this->assertSame($result->details['firstChangedLine'], $line);
+    }
+
+    // ---- the shapes the arguments arrive in ------------------------------------------
+
+    public function testTheSchemaHasEditsAndNotTheOldTopLevelFields(): void
+    {
+        $parameters = $this->edit()->definition()->parameters;
+
+        $this->assertSame(['path', 'edits'], $parameters['required']);
+        $this->assertArrayNotHasKey('oldText', $parameters['properties']);
+        $this->assertArrayNotHasKey('newText', $parameters['properties']);
+        $this->assertSame(['oldText', 'newText'], $parameters['properties']['edits']['items']['required']);
+    }
+
+    public function testTheSchemaHoldsUpUnderStrictSampling(): void
+    {
+        // Sent with `strict: prefer`: strict JSON-schema mode wants every object closed and every
+        // property required, the nested `edits[]` objects included.
+        $strict = ConstrainedSampling::makeStrictJsonSchema($this->edit()->definition()->parameters);
+        $item = $strict['properties']['edits']['items'];
+
+        $this->assertFalse($strict['additionalProperties']);
+        $this->assertFalse($item['additionalProperties']);
+        $this->assertSame(['oldText', 'newText'], $item['required']);
+    }
+
+    public function testTopLevelOldAndNewTextBecomeOneEdit(): void
+    {
+        $this->assertSame(
+            ['path' => 'file.txt', 'edits' => [['oldText' => 'before', 'newText' => 'after']]],
+            EditTool::prepare(['path' => 'file.txt', 'oldText' => 'before', 'newText' => 'after']),
+        );
+    }
+
+    public function testTopLevelOldAndNewTextAreAddedAfterTheEdits(): void
+    {
+        $this->assertSame(
+            ['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b'], ['oldText' => 'c', 'newText' => 'd']]],
+            EditTool::prepare(['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']], 'oldText' => 'c', 'newText' => 'd']),
+        );
+    }
+
+    public function testArgumentsInTheRightShapePassThroughUnchanged(): void
+    {
+        $arguments = ['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']]];
+
+        $this->assertSame($arguments, EditTool::prepare($arguments));
+        $call = new ToolCall('call-1', 'edit', $arguments);
+        $this->assertSame($call, ToolArguments::prepare($this->edit(), $call));
+    }
+
+    public function testEditsSentAsAJsonStringAreDecoded(): void
+    {
+        $this->assertSame(
+            ['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']]],
+            EditTool::prepare(['path' => 'file.txt', 'edits' => '[{"oldText":"a","newText":"b"}]']),
+        );
+        $this->assertSame(
+            ['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']]],
+            EditTool::prepare(['path' => 'file.txt', 'edits' => '{"oldText":"a","newText":"b"}']),
+        );
+    }
+
+    public function testEditsThatAreNotJsonAreLeftForTheSchemaToRefuse(): void
+    {
+        $this->file('a.txt', "a\n");
+
+        $this->assertSame(['path' => 'a.txt', 'edits' => 'not json'], EditTool::prepare(['path' => 'a.txt', 'edits' => 'not json']));
+        $this->assertThrows(
+            InvalidToolArguments::class,
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => 'not json']),
+            'edits',
+        );
+    }
+
+    public function testTheToolsWrappersReshapeItsArgumentsAsTheToolWould(): void
+    {
+        $legacy = new ToolCall('call-1', 'edit', ['path' => 'a.txt', 'oldText' => 'a', 'newText' => 'b']);
+
+        // The loop meets the edit tool only through these, so one that did not pass the shim
+        // on would leave every saved session's edits to fail the schema.
+        foreach ([
+            new HookedTool($this->edit(), new HookRunner()),
+            new DescribedTool($this->edit(), 'described'),
+            new ResultImagesTool($this->edit(), static fn (array $content): array => $content),
+        ] as $wrapper) {
+            $this->assertSame(
+                ['path' => 'a.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']]],
+                ToolArguments::prepare($wrapper, $legacy)->arguments,
+                $wrapper::class,
+            );
+        }
+    }
+
+    public function testOneEditObjectBecomesAListOfOne(): void
+    {
+        $this->assertSame(
+            ['path' => 'file.txt', 'edits' => [['oldText' => 'a', 'newText' => 'b']]],
+            EditTool::prepare(['path' => 'file.txt', 'edits' => ['oldText' => 'a', 'newText' => 'b']]),
+        );
+    }
+
+    /** @param array<string, mixed> $arguments */
+    #[\PHPUnit\Framework\Attributes\DataProvider('looserShapes')]
+    public function testEveryShapeTheToolAcceptsEditsTheFile(array $arguments): void
+    {
+        $this->file('a.txt', "before\n");
+
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', ...$arguments]);
+
+        $this->assertSame('Successfully replaced 1 block(s) in a.txt.', $this->textOf($result));
+        $this->assertSame("after\n", file_get_contents($this->cwd . '/a.txt'));
+    }
+
+    /** @return array<string, array{0: array<string, mixed>}> */
+    public static function looserShapes(): array
+    {
+        return [
+            'top-level oldText/newText, as a saved session has it' => [['oldText' => 'before', 'newText' => 'after']],
+            'edits as a JSON string' => [['edits' => '[{"oldText":"before","newText":"after"}]']],
+            'edits as one object' => [['edits' => ['oldText' => 'before', 'newText' => 'after']]],
+        ];
     }
 
     // ---- the same edit, previewed ---------------------------------------------------
@@ -245,14 +584,14 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\ntwo\nthree\n");
 
-        [$diff, $line] = EditDiff::preview('a.txt', 'two', 'TWO', $this->cwd);
+        [$diff, $line] = EditDiff::preview('a.txt', [['oldText' => 'two', 'newText' => 'TWO']], $this->cwd);
 
         $this->assertSame("one\ntwo\nthree\n", file_get_contents($this->cwd . '/a.txt'));
         $this->assertSame(2, $line);
 
         // And it is the diff, not an approximation of it: the edit goes through the same
         // `apply()`, so the preview cannot show one change and the tool make another.
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
         $this->assertSame($diff, $result->details['diff']);
         $this->assertSame($line, $result->details['firstChangedLine']);
     }
@@ -263,13 +602,13 @@ final class EditToolTest extends ToolTestCase
 
         $previewed = $this->assertThrows(
             AgentError::class,
-            fn () => EditDiff::preview('a.txt', 'same', 'other', $this->cwd),
+            fn () => EditDiff::preview('a.txt', [['oldText' => 'same', 'newText' => 'other']], $this->cwd),
             'Found 2 occurrences',
         );
 
         $attempted = $this->assertThrows(
             AgentError::class,
-            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'same', 'newText' => 'other']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'same', 'newText' => 'other']]]),
         );
 
         // One sentence, not two that can drift — upstream's have already drifted.
@@ -280,7 +619,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->assertThrows(
             AgentError::class,
-            fn () => EditDiff::preview('nope.txt', 'a', 'b', $this->cwd),
+            fn () => EditDiff::preview('nope.txt', [['oldText' => 'a', 'newText' => 'b']], $this->cwd),
             'File not found',
         );
     }
@@ -291,7 +630,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\ntwo\nthree\n");
 
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $this->assertSame(2, $result->details['firstChangedLine']);
         $this->assertSame(
@@ -304,10 +643,10 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\n");
 
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'one', 'newText' => 'two']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'one', 'newText' => 'two']]]);
 
         // Two audiences: the model gets the outcome, the UI gets the diff.
-        $this->assertSame('Replaced text in a.txt.', $this->textOf($result));
+        $this->assertSame('Successfully replaced 1 block(s) in a.txt.', $this->textOf($result));
     }
 
     public function testDistantContextIsElidedWithAnEllipsis(): void
@@ -315,7 +654,7 @@ final class EditToolTest extends ToolTestCase
         $lines = array_map(static fn (int $n): string => "line{$n}", range(1, 30));
         $this->file('a.txt', implode("\n", $lines));
 
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'line15', 'newText' => 'CHANGED']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'line15', 'newText' => 'CHANGED']]]);
         $diff = explode("\n", $result->details['diff']);
 
         // Four lines of context either side, and an ellipsis for the rest.
@@ -331,7 +670,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', implode("\n", array_fill(0, 120, 'x')) . "\nneedle\n");
 
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'needle', 'newText' => 'found']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'needle', 'newText' => 'found']]]);
 
         // Three digits in the file, so every number is three wide and the gutter lines up.
         $this->assertStringContainsString('-121 needle', $result->details['diff']);
@@ -342,7 +681,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "a\nb\nc\n");
 
-        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'b', 'newText' => "x\ny\nz"]);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'edits' => [['oldText' => 'b', 'newText' => "x\ny\nz"]]]);
 
         $this->assertSame("a\nx\ny\nz\nc\n", file_get_contents($this->cwd . '/a.txt'));
         $this->assertSame(

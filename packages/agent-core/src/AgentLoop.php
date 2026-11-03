@@ -705,7 +705,7 @@ final class AgentLoop
                         throw new AgentError("Tool {$toolCall->name} not found");
                     }
 
-                    $arguments = ToolArguments::validate($tool->definition(), $toolCall);
+                    $arguments = ToolArguments::validate($tool->definition(), ToolArguments::prepare($tool, $toolCall));
 
                     $startedAt = hrtime(true);
                     $result = $tool->execute(

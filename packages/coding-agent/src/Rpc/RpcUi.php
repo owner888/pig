@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Rpc;
 
 use Closure;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\Ai\Utils\Uuid;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
@@ -150,7 +151,7 @@ final class RpcUi implements HookUi
      * one of the four above.
      */
     #[\Override]
-    public function custom(Closure $factory): mixed
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed
     {
         return null;
     }

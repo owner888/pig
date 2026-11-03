@@ -10,12 +10,14 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\ThemedText;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Container;
 use Pig\Tui\Focusable;
 use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
+use Pig\Tui\Keybindings;
 use Pig\Tui\KeybindingsManager;
 use Pig\Tui\TUI;
 use Throwable;
@@ -30,8 +32,10 @@ use Throwable;
  *
  * @phpstan-import-type HuggingFaceModel from HuggingFaceClient
  */
-final class HuggingFaceSearch extends Container implements Focusable, InputHandler
+final class HuggingFaceSearch extends Container implements Focusable, InputHandler, CapturesViewportInput
 {
+    private const int SEARCH_MAX_VISIBLE = 10;
+
     public bool $focused = false;
 
     private readonly Input $input;
@@ -93,10 +97,9 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
     private function updateResults(): void
     {
         $this->resultsContainer->clear();
-        $maxVisible = 10;
         $count = count($this->filteredResults);
-        $start = max(0, min($this->selectedIndex - intdiv($maxVisible, 2), $count - $maxVisible));
-        $end = min($start + $maxVisible, $count);
+        $start = max(0, min($this->selectedIndex - intdiv(self::SEARCH_MAX_VISIBLE, 2), $count - self::SEARCH_MAX_VISIBLE));
+        $end = min($start + self::SEARCH_MAX_VISIBLE, $count);
 
         for ($index = $start; $index < $end; $index++) {
             $model = $this->filteredResults[$index];
@@ -225,6 +228,12 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
     }
 
     #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
+
+    #[\Override]
     public function handleInput(string $data): void
     {
         if ($this->keybindings->matches($data, 'tui.select.up')) {
@@ -239,6 +248,17 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         if ($this->keybindings->matches($data, 'tui.select.down')) {
             if ($this->filteredResults !== []) {
                 $this->selectedIndex = $this->selectedIndex === count($this->filteredResults) - 1 ? 0 : $this->selectedIndex + 1;
+                $this->updateResults();
+            }
+
+            return;
+        }
+
+        $pageIndex = Keybindings::getSelectPageIndex($this->keybindings, $data, $this->selectedIndex, count($this->filteredResults), self::SEARCH_MAX_VISIBLE);
+
+        if ($pageIndex !== null) {
+            if ($this->filteredResults !== []) {
+                $this->selectedIndex = $pageIndex;
                 $this->updateResults();
             }
 

@@ -1,9 +1,8 @@
 import { network } from "../network.js";
 import { __t } from "../i18n.js";
 import { escapeHtml, copyText } from "../utils.js";
-import { Terminal } from "../vendor/xterm.mjs";
-import { FitAddon } from "../vendor/addon-fit.mjs";
 import { terminalTheme } from "../theme.js";
+import { loadXterm } from "../xterm-loader.js";
 
 /**
  * WebTerminal Component
@@ -151,7 +150,20 @@ export class WebTerminal {
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   }
 
-  createTab(command = null, name = null) {
+  async createTab(command = null, name = null) {
+    // One at a time: a second open while xterm is still on its way would make a second tab.
+    if (this.loadingTab) return;
+    this.loadingTab = true;
+    let Terminal, FitAddon;
+    try {
+      ({ Terminal, FitAddon } = await loadXterm());
+    } catch (e) {
+      console.error("Could not load the terminal:", e);
+      return;
+    } finally {
+      this.loadingTab = false;
+    }
+
     const id = "term-" + Math.random().toString(36).slice(2, 9);
     const tabName = name || `Term ${this.tabCounter++}`;
     const targetCwd = this.getActiveCwd() || this.cwd || "/";

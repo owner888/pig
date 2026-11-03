@@ -308,7 +308,7 @@ final class TerminalUi implements HookUi
      * `HookUi::custom()`.
      */
     #[\Override]
-    public function custom(Closure $factory): mixed
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed
     {
         if (!$this->canAsk()) {
             return null;
@@ -342,7 +342,7 @@ final class TerminalUi implements HookUi
         }
 
         $component = $built;
-        $this->open('', $component);
+        $this->open('', $component, blocked: $blocked);
 
         return $answer->future->await();
     }
@@ -456,7 +456,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function setTitle(string $title): void
     {
-        $this->tui->terminal->write("\033]0;{$title}\007");
+        $this->tui->terminal->write("\033]0;" . \Pig\Tui\Width::replaceControlCharacters($title) . "\007");
     }
 
     #[\Override]
@@ -720,7 +720,7 @@ final class TerminalUi implements HookUi
      * own component knows its own keys, and pig does not.
      *
      * `$blocked` is what the terminal is told the dialog waits for (OSC 7501). `custom()` passes
-     * none, as upstream reports none for it.
+     * what its caller gave, and none unless asked, as upstream: it also hosts loaders that ask nothing.
      */
     /** @param string|Closure(): string $title a closure for one that changes — a countdown */
     private function open(string|Closure $title, object $component, string $hint = '', ?BlockedStatus $blocked = null): void
@@ -767,6 +767,12 @@ final class TerminalUi implements HookUi
 
             return;
         }
+    }
+
+    /** Whether a dialog of this object's is open — upstream's `extensionDialogs.length > 0`. */
+    public function hasOpenDialogs(): bool
+    {
+        return $this->dialogs !== [];
     }
 
     /** Upstream's `showTopExtensionDialog()`. */

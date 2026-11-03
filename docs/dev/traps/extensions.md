@@ -496,3 +496,31 @@ once per picture, and replaced by `[image: <mime>, shown as an image]`. Anything
 script receives must be checked against every way a script can send a value back.
 
 **Tests**: `CodemodeExtensionTest::testAPictureInAReturnedOrPrintedValueIsShownNotSentAsBase64`.
+
+## A package whose `extra.pig` held only a `changelogPath` had no resources at all
+
+**Symptom**: a package that added `"extra": {"pig": {"changelogPath": "…"}}` to point at its
+changelog stopped loading its `extensions/`, `skills/`, `prompts/` and `themes/`.
+
+**Cause**: `collectPackageResources()` took any `extra.pig` as the manifest, and a manifest replaces
+the conventional directories; one that lists no resources replaced them with nothing. Upstream's
+`hasManifestResourceFields()` counts a manifest only when it names a resource type.
+
+**Rule**: metadata in `extra.pig` (`changelogPath`, and whatever comes next) never decides where the
+resources are; `PackageManifest::hasResourceFields()` does.
+
+**Test**: `PackageManagerTest::testAManifestWithOnlyAChangelogPathKeepsTheConventionalDirectories`.
+
+## An extension that swapped the prompt while its dialog was open left the dialog unanswerable
+
+**Symptom**: an extension opened a `confirm()` and then called `setEditorComponent()` (or a second
+extension did, at `session_start`): the dialog stayed on screen, but the keys went to the new prompt
+and the question hung until its timeout, or for ever.
+
+**Cause**: `setCustomEditorComponent()` always ended with `setFocus()` on the new prompt (upstream
+#11431). The dialog stack in `TerminalUi` gives the keys back to the prompt when its last dialog
+closes, so the swap does not need to take them.
+
+**Rule**: anything that focuses the prompt checks `TerminalUi::hasOpenDialogs()` first.
+
+**Test**: `InteractiveModeTest::testReplacingThePromptLeavesAnOpenDialogAnswerable`.

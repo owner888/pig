@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\Async\AbortSignal;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\UiPromptEndEvent;
@@ -59,9 +60,9 @@ final class PromptingUi implements HookUi
     }
 
     #[\Override]
-    public function custom(Closure $factory): mixed
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed
     {
-        return $this->prompting('custom', null, fn (): mixed => $this->ui->custom($factory));
+        return $this->prompting('custom', null, fn (): mixed => $this->ui->custom($factory, $blocked));
     }
 
     /**

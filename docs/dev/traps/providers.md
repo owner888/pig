@@ -1895,3 +1895,63 @@ API's `parametersJsonSchema` is full JSON Schema.
 declaration carries no non-string `enum` (say it in the description instead).
 
 **Test**: `GoogleTest::testAToolWithNoParametersDeclaresAnEmptyMapAndNotAList`.
+
+## GPT-5.4/5.5 loaded their tools dynamically and failed after another model's tool calls
+
+**Symptom**: switching to `openai/gpt-5.4` or `gpt-5.5` (or OpenCode's) after another model had
+called tools failed with a 400 `Missing namespace for function_call`.
+
+**Cause**: `OPENAI_TOOL_SEARCH_MODEL_IDS` doubled as the additional-tools and the mid-conversation
+system-message set. GPT-5.5 and older put tools loaded through tool search or `additional_tools` in
+a namespace named after the tool and reject replayed calls without it (upstream #11415).
+
+**Rule**: three sets, as upstream's generator has them: tool search and `additional_tools` start
+with GPT-5.6 (`OPENAI_TOOL_SEARCH_MODEL_IDS`); `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS` is GPT-5.4,
+5.4-mini, 5.4-pro, 5.5 plus that set. A proxy (OpenCode, Copilot) and OpenRouter's text-only rule read
+the mid-conversation set; `supportsAdditionalTools` reads the tool-search one.
+
+**Test**: `ModelsTest::testOpenAisToolSearchModelsSayTheyTakeToolSearchAndTranscriptAdditions`,
+`testCopilotsResponsesModelsSayOnlyThatGptFiveAndLaterTakeGrammarTools`.
+
+## OpenRouter's `~anthropic/*-latest` aliases went over Chat Completions
+
+**Symptom**: on `openrouter/~anthropic/claude-opus-latest` and its siblings the thinking was not
+replayed — pig dropped the signature on Chat Completions and OpenRouter ignored unsigned thinking.
+
+**Cause**: `buildOpenRouterCatalog()` put only `^anthropic/` on the Messages API; the `~` aliases
+fell through to completions.
+
+**Rule**: `^~?anthropic/` (not `:batch`) goes on Messages, and `isAdaptiveThinkingModel()` matches
+`^~anthropic/claude-[a-z]+-latest$` — each alias follows the newest model of its family, all
+adaptive (upstream 44f6851).
+
+**Test**: `CatalogueProvidersTest::testOpenRoutersAnthropicLatestAliasesUseMessagesWithAdaptiveThinking`.
+
+## OpenCode requests went to the shared base instead of the protocol endpoints
+
+**Symptom**: every `opencode`/`opencode-go` request, Jev included, went to `/inference/v1` (or
+`/inference` for Messages) rather than the documented per-protocol endpoints models.dev lists.
+
+**Rule**: `CATALOGUE_PROVIDERS` maps each API to its own path (upstream #11434): Chat Completions and
+Responses `…/openai/v1`, Messages `…/anthropic` (the SDK appends `/v1/messages`), Gemini
+`…/google/v1beta`, Jev `https://opencode.ai/inference/systemone/v1`; Go the same under
+`/inference/go`. A base URL for these providers is never shared between APIs.
+
+**Test**: `ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`,
+`SystemOneTest::testTheGatewaysAndOpenCodesJevGoToTheirTypesafeCompatibleEndpoints`.
+
+## Bedrock failed outright when `prefer` strict tools exceeded Claude's limits
+
+**Symptom**: a Bedrock Claude request with more than 16 optional or union-typed parameters across
+strict tools (or more than 20 strict tools) ended with `Validation error: … Schemas contains too
+many parameters with union types …`, where the Anthropic provider retried and went on.
+
+**Cause**: only `Anthropic.php` had upstream's `anthropic_strict_tools_fallback` loop.
+
+**Rule**: both providers share `ConstrainedSampling::isStrictToolLimitErrorMessage()` and
+`prefersJsonSchemaStrictSampling()`. Bedrock retries once, only for a Bedrock `ValidationException`
+with one of those messages and only when a `prefer` tool went out strict, rebuilding the request
+(and calling `onPayload` again) with `prefer` tools non-strict; `require` tools stay strict, and a
+`bedrock_strict_tools_fallback` diagnostic records it (upstream #11416).
+
+**Test**: `BedrockStrictToolFallbackTest`.

@@ -62,6 +62,10 @@ pig update <source>      # 只更新一个包
 pig update --models      # 刷新并重新对齐模型目录
 ```
 
+用别的工具（mise、Nix…）装的 pig，可以用你自己的命令更新：`PIG_SELF_UPDATE_COMMAND`，或 `~/.pig/agent/settings.json`
+里 argv 形式的 `selfUpdateCommand`，比如 `["mise", "use", "-g", "composer:{packageName}@{version}"]`。
+会填入 `{packageName}`、`{version}`（最新版本）和 `{installSpec}`（`{packageName}:{version}`）。
+
 ### 包管理
 
 扩展、技能、提示模板、主题可以打成一个**包**一起分发——和 pi 一样，可以是 Composer 包、git 仓库或本地目录，Composer 对应 pi 的 npm：
@@ -107,7 +111,7 @@ pig -e git:github.com/user/pig-tools             # 只在这一次运行里试�
 3. 在仓库页面（About → Topics）加上 topic `pig-package`。列表每小时刷新；卡片上的描述、star、最后推送时间都来自 GitHub，所以仓库 description 就是卡片文案。
 4. 也可以再提交到 [Packagist](https://packagist.org)，这样就能用 `pig install composer:user/repo` 安装并带版本约束——相当于 pi 的 `npm publish`。这样发布的包把依赖写在 `require` 里，不提交 `vendor/`。
 
-`composer.json` 里可选的 `extra.pig.image` / `extra.pig.video`（仓库内路径或 `https://` 地址）给卡片加预览，pig 本体忽略它们。去掉 topic 就下架。只收录 GitHub——别的 git 托管上的包能装，但市场里搜不到。
+`composer.json` 里可选的 `extra.pig.image` / `extra.pig.video`（仓库内路径或 `https://` 地址）给卡片加预览，pig 本体忽略它们。`extra.pig.changelogPath`（默认 `CHANGELOG.md`，`""` 表示不显示）会在包版本变化后 pig 第一次启动时显示在 "Extension Updates" 下。去掉 topic 就下架。只收录 GitHub——别的 git 托管上的包能装，但市场里搜不到。
 
 settings 里的条目可以收窄要加载的内容，语法与 pi 相同——省略某类=全部加载，`[]`=一个不要，`!glob` 排除，`+path` / `-path` 精确增减一个文件：
 

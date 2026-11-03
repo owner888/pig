@@ -863,7 +863,7 @@ final class CompactionTest extends TestCase
         $this->assertSame(BranchSummarization::PREAMBLE . 'what happened', $result->summary);
         $this->assertStringContainsString("## Goal\n[What was the user trying to accomplish in this branch?]", $asked[0][0]);
         $this->assertStringContainsString('Additional focus: the parser', $asked[0][0]);
-        $this->assertNull($asked[0][2]->reasoning, 'a branch summary asks for no reasoning');
+        $this->assertNull($asked[0][2]->reasoning, 'without a thinking level a branch summary asks for no reasoning');
 
         $replaced = new \ArrayObject();
         Async::run(static fn () => BranchSummarization::generateBranchSummary(

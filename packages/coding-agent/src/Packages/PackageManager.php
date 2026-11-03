@@ -64,7 +64,7 @@ final class PackageManager
      * Told what is happening, for a CLI that prints it — upstream's `setProgressCallback()`.
      *
      * @param (Closure(string, string, string, ?string): void)|null $callback type (`start` /
-     *        `complete` / `error`), action (`install` / `remove` / `update` / `pull`), source, message
+     *        `progress` / `complete` / `error`), action (`install` / `remove` / `update` / `pull`), source, message
      */
     public function setProgressCallback(?Closure $callback): void
     {
@@ -296,8 +296,20 @@ final class PackageManager
 
             if ($parsed instanceof ComposerSource) {
                 $installedPath = $this->composerInstallPath($parsed, $resolvedScope);
+                $needsInstall = !is_dir($installedPath) || !$this->composerMatchesConfigured($parsed, $resolvedScope);
 
-                if ((!is_dir($installedPath) || !$this->composerMatchesConfigured($parsed, $resolvedScope)) && !$installMissing()) {
+                // A temporary (`-e`) source has no `pig update` to move it, so an unpinned one is
+                // refreshed on load as a temporary git source is: `composer require` again, which is
+                // what `update` does.
+                if (!$needsInstall && $resolvedScope === 'temporary' && !$parsed->pinned() && $this->composerHasAvailableUpdate($resolvedSource, $resolvedScope)) {
+                    try {
+                        $this->installComposer($parsed, $resolvedScope);
+                    } catch (PackageError) {
+                        // The cached install is kept when a refresh fails, as upstream keeps it.
+                    }
+                }
+
+                if ($needsInstall && !$installMissing()) {
                     continue;
                 }
 
@@ -312,8 +324,8 @@ final class PackageManager
                 if (!$installMissing()) {
                     continue;
                 }
-            } elseif ($resolvedScope === 'temporary' && !$parsed->pinned() && !self::offline()) {
-                $this->refreshTemporary($parsed, $resolvedSource);
+            } elseif ($resolvedScope === 'temporary' && !self::offline()) {
+                $this->refreshTemporary($parsed, $resolvedSource, $installedPath);
             }
 
             $this->collectPackageResources($installedPath, $accumulator, $filter, $metadata->with($installedPath, $installedPath));
@@ -379,6 +391,9 @@ final class PackageManager
      */
     private function collectPackageResources(string $root, ResourceAccumulator $accumulator, ?array $filter, PathMetadata $metadata): bool
     {
+        $manifest = PackageManifest::read($root);
+        $metadata = $metadata->withChangelogPath(self::changelogPath($root, $manifest));
+
         if ($filter !== null) {
             foreach (ResolvedPaths::TYPES as $type) {
                 $patterns = $filter[$type] ?? null;
@@ -396,9 +411,9 @@ final class PackageManager
             return true;
         }
 
-        $manifest = PackageManifest::read($root);
-
-        if ($manifest !== null) {
+        // Only a manifest that lists resources replaces the directories: one with nothing but a
+        // `changelogPath` used to leave the package with no resources at all.
+        if ($manifest !== null && $manifest->hasResourceFields()) {
             foreach (ResolvedPaths::TYPES as $type) {
                 $this->addManifestEntries($manifest->of($type), $root, $type, $accumulator, $metadata);
             }
@@ -421,6 +436,30 @@ final class PackageManager
         }
 
         return $any;
+    }
+
+    /**
+     * Upstream's `resolvePackageChangelogPath()`: the manifest's `changelogPath`, else
+     * `CHANGELOG.md`; `""` turns it off. Only a file inside the package root, symbolic links
+     * resolved, so a package cannot point pig at a file of the person's.
+     */
+    private static function changelogPath(string $root, ?PackageManifest $manifest): ?string
+    {
+        $changelogPath = $manifest?->changelogPath ?? 'CHANGELOG.md';
+
+        if ($changelogPath === '') {
+            return null;
+        }
+
+        $resolved = Paths::resolve($changelogPath, $root);
+        $canonicalRoot = realpath($root);
+        $canonical = realpath($resolved);
+
+        if ($canonicalRoot === false || $canonical === false || !str_starts_with($canonical, rtrim($canonicalRoot, '/') . '/')) {
+            return null;
+        }
+
+        return is_file($canonical) ? $resolved : null;
     }
 
     private function collectDefault(string $root, string $type, ResourceAccumulator $accumulator, PathMetadata $metadata): void
@@ -1020,7 +1059,20 @@ final class PackageManager
         }
 
         $this->git(['reset', '--hard', $commit], $target);
-        $this->git(['clean', '-fdx'], $target);
+
+        // Upstream's `cleanAndInstallGitDependencies()`: files another pig has open (Windows will
+        // not delete them) fail the clean, and the update goes on rather than stopping there —
+        // the checkout is already at the new commit, and the next update cleans again.
+        try {
+            $this->git(['clean', '-fdx'], $target);
+        } catch (PackageError $error) {
+            $this->progress(
+                'progress',
+                'update',
+                $target,
+                "Could not remove all untracked files in {$target} ({$error->getMessage()}). Files may be in use by another pig session; close it and run the update again.",
+            );
+        }
     }
 
     /**
@@ -1072,8 +1124,18 @@ final class PackageManager
         return $answer !== null && preg_match('/^([0-9a-f]{40})\s+HEAD$/m', $answer, $match) === 1 ? $match[1] : null;
     }
 
-    private function refreshTemporary(GitSource $source, string $sourceString): void
+    private function refreshTemporary(GitSource $source, string $sourceString, string $installedPath): void
     {
+        // A ref can name a moving branch, so a pinned source is refreshed too — all but a commit
+        // hash that is already checked out, which no fetch can move.
+        if ($source->ref !== null && preg_match('/^[0-9a-f]{7,64}$/i', $source->ref) === 1) {
+            $head = $this->capture(['git', 'rev-parse', 'HEAD'], $installedPath);
+
+            if ($head !== null && str_starts_with(strtolower(trim($head)), strtolower($source->ref))) {
+                return;
+            }
+        }
+
         try {
             $this->withProgress('pull', $sourceString, "Refreshing {$sourceString}...", function () use ($source): void {
                 $this->updateGit($source, 'temporary');

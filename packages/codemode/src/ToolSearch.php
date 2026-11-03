@@ -28,22 +28,78 @@ final class ToolSearch
         'or', 'that', 'the', 'this', 'to', 'with',
     ];
 
-    /** Lowercase terms, split at camelCase boundaries and non-alphanumerics, without stop words. */
+    /**
+     * A query term in the name counts this many times its IDF — upstream's `NAME_WEIGHT`. The text
+     * part of a term is at most `k1 + 1` (2.2) times its IDF and about 1 for a single mention, so a
+     * name match beats any number of mentions in the description.
+     */
+    private const float NAME_WEIGHT = 3.0;
+
+    /**
+     * A query term in the namespace's name or description counts this many times its IDF —
+     * upstream's `NAMESPACE_WEIGHT`. Every tool of the server shares them, so they help find the
+     * server but not the tool in it.
+     */
+    private const float NAMESPACE_WEIGHT = 0.5;
+
+    /**
+     * Unicode words, split at identifier boundaries, lowercased, without English stop words and
+     * with English plurals singular — upstream's `tokenize()`.
+     *
+     * NFC first, so `cafe\u{301}` and `café` are one word. Plain ASCII is split at spaces, as
+     * upstream splits it; any other text goes through a word segmenter, so Chinese or Thai written
+     * without spaces comes apart into words. Upstream's is `Intl.Segmenter`; PHP's is
+     * `IntlBreakIterator`, which is ext-intl — not required (decisions.md, "Extensions"), so without
+     * it the text is split at spaces as ASCII is, and NFC is skipped: a run of a script written
+     * without spaces is then one term, which still matches the same run.
+     *
+     * @return list<string>
+     */
     public static function tokenize(string $text): array
     {
+        $text = mb_scrub($text, 'UTF-8');
+
+        if (class_exists(\Normalizer::class)) {
+            $text = (string) \Normalizer::normalize($text, \Normalizer::FORM_C);
+        }
+
         $text = (string) preg_replace('/([a-z0-9])([A-Z])/', '$1 $2', $text);
         $text = (string) preg_replace('/([A-Z]+)([A-Z][a-z])/', '$1 $2', $text);
-        $terms = preg_split('/[^a-z0-9]+/', strtolower($text), -1, PREG_SPLIT_NO_EMPTY) ?: [];
-
+        $text = (string) preg_replace('/[^\p{L}\p{M}\p{N}]+/u', ' ', mb_strtolower($text, 'UTF-8'));
+        $words = preg_match('/^[a-z0-9 ]*$/', $text) === 1 || !class_exists(\IntlBreakIterator::class)
+            ? explode(' ', $text)
+            : self::segment($text);
         $out = [];
 
-        foreach ($terms as $term) {
-            if (!in_array($term, self::STOP_WORDS, true)) {
-                $out[] = self::stem($term);
+        foreach ($words as $word) {
+            if ($word !== '' && !in_array($word, self::STOP_WORDS, true)) {
+                $out[] = preg_match('/^[a-z0-9]+$/', $word) === 1 ? self::stem($word) : $word;
             }
         }
 
         return $out;
+    }
+
+    /**
+     * The word-like segments of $text, `Intl.Segmenter`'s `isWordLike`: ICU's rule status at or
+     * above `WORD_NONE_LIMIT` (letters, numbers, kana, ideographs).
+     *
+     * @return list<string>
+     */
+    private static function segment(string $text): array
+    {
+        $iterator = \IntlBreakIterator::createWordInstance();
+        $iterator->setText($text);
+        $words = [];
+        $start = $iterator->first();
+
+        for ($end = $iterator->next(); $end !== \IntlBreakIterator::DONE; $start = $end, $end = $iterator->next()) {
+            if ($iterator->getRuleStatus() >= \IntlBreakIterator::WORD_NONE_LIMIT) {
+                $words[] = substr($text, $start, $end - $start);
+            }
+        }
+
+        return $words;
     }
 
     /** Naive singular form, so `issues` matches `issue` and `searches` matches `search`. */
@@ -67,23 +123,24 @@ final class ToolSearch
     }
 
     /**
-     * Search text of a tool: the name, the name with `_` as spaces, the description, schema
-     * descriptions and property names, and the server's name.
+     * Search text of a tool — upstream's `createToolSearchDocument()`: `text` is the description and
+     * the schema's descriptions and property names, `namespaceText` the server's name and description
+     * (pig's namespace description is the server's instructions). The ranker reads the name from
+     * `name`, and weighs the three apart.
      *
      * @param array<string, mixed> $tool an MCP tool as listed, plus the pig name it goes by
-     * @return array{name: string, text: string}
+     * @return array{name: string, text: string, namespaceText: string}
      */
     public static function document(string $name, array $tool, ?string $namespace = null, ?string $namespaceDescription = null): array
     {
-        $parts = [$name, str_replace('_', ' ', $name), (string) ($tool['description'] ?? '')];
+        $parts = [(string) ($tool['description'] ?? '')];
         self::schemaText($tool['inputSchema'] ?? null, $parts);
 
-        if ($namespace !== null) {
-            $parts[] = $namespace;
-            $parts[] = $namespaceDescription ?? '';
-        }
-
-        return ['name' => $name, 'text' => implode(' ', array_filter($parts, static fn (string $p): bool => trim($p) !== ''))];
+        return [
+            'name' => $name,
+            'text' => implode(' ', array_filter($parts, static fn (string $p): bool => trim($p) !== '')),
+            'namespaceText' => $namespace !== null ? "{$namespace} " . ($namespaceDescription ?? '') : '',
+        ];
     }
 
     /** @param list<string> $parts */
@@ -116,13 +173,21 @@ final class ToolSearch
     }
 
     /**
-     * Okapi BM25 with the usual parameters (k1 = 1.2, b = 0.75). Ties keep document order.
+     * Okapi BM25 over the description, with the name and the namespace as fields of their own —
+     * upstream's `Bm25Ranker` (k1 = 1.2, b = 0.75):
+     * - a tool that matches more of the query's terms, in any field, ranks above one that matches
+     *   fewer, whatever their scores: for `screenshot window`, a tool whose description has both
+     *   words beats `window`, whose name has one;
+     * - a query term in the name scores more than any number of mentions in the description;
+     * - a tool whose whole local name is in the query (`app` in `peekaboo app` for
+     *   `mcp__peekaboo__app`) gets a bonus worth one more match of every query term;
+     * - a query that *names* a tool — its full name, or what follows a `__` (`thread_read` for
+     *   `mcp__app__thread_read`) — ranks that tool first, before coverage (upstream #11331).
      *
-     * A query that *names* a tool — its full name, or what follows a `__` (`thread_read` for
-     * `mcp__app__thread_read`) — ranks that tool first: length normalization could otherwise put a
-     * short description sharing the name's words above it (upstream #11331).
+     * Only the description is length-normalized, so a long name or namespace does not lower a
+     * tool's score. Ties keep document order.
      *
-     * @param list<array{name: string, text: string}> $documents
+     * @param list<array{name: string, text: string, namespaceText?: string}> $documents
      * @return list<array{name: string, score: float}>
      */
     public static function rank(string $query, array $documents, int $limit, float $k1 = 1.2, float $b = 0.75): array
@@ -133,8 +198,7 @@ final class ToolSearch
             return [];
         }
 
-        $termCounts = [];
-        $lengths = [];
+        $indexed = [];
 
         foreach ($documents as $document) {
             $counts = [];
@@ -143,44 +207,63 @@ final class ToolSearch
                 $counts[$term] = ($counts[$term] ?? 0) + 1;
             }
 
-            $termCounts[] = $counts;
-            $lengths[] = array_sum($counts);
+            $segments = explode('__', $document['name']);
+            $indexed[] = [
+                'name' => $document['name'],
+                'nameTerms' => array_flip(self::tokenize($document['name'])),
+                'localNameTerms' => array_values(array_unique(self::tokenize($segments[count($segments) - 1]))),
+                'counts' => $counts,
+                'length' => array_sum($counts),
+                'namespaceTerms' => array_flip(self::tokenize($document['namespaceText'] ?? '')),
+            ];
         }
 
-        $count = count($documents);
-        $averageLength = (array_sum($lengths) / $count) ?: 1;
-
+        $count = count($indexed);
+        $averageLength = (array_sum(array_column($indexed, 'length')) / $count) ?: 1;
         $idf = [];
 
         foreach ($queryTerms as $term) {
-            $frequency = count(array_filter($termCounts, static fn (array $c): bool => isset($c[$term])));
+            $frequency = count(array_filter($indexed, static fn (array $d): bool => isset($d['nameTerms'][$term]) || isset($d['counts'][$term]) || isset($d['namespaceTerms'][$term])));
             $idf[$term] = log(1 + ($count - $frequency + 0.5) / ($frequency + 0.5));
         }
 
+        $fullNameBonus = array_sum($idf);
         $nameQuery = self::normalizeName($query);
         $matches = [];
 
-        foreach ($documents as $index => $document) {
+        foreach ($indexed as $document) {
+            $norm = $k1 * (1 - $b + ($b * $document['length']) / $averageLength);
             $score = 0.0;
+            $covered = 0;
 
             foreach ($queryTerms as $term) {
-                $occurrences = $termCounts[$index][$term] ?? 0;
+                $occurrences = $document['counts'][$term] ?? 0;
+                $weight = (isset($document['nameTerms'][$term]) ? self::NAME_WEIGHT : 0.0)
+                    + (isset($document['namespaceTerms'][$term]) ? self::NAMESPACE_WEIGHT : 0.0)
+                    + ($occurrences * ($k1 + 1)) / ($occurrences + $norm);
 
-                if ($occurrences === 0) {
-                    continue;
+                if ($weight > 0) {
+                    $covered++;
                 }
 
-                $norm = $k1 * (1 - $b + ($b * $lengths[$index]) / $averageLength);
-                $score += $idf[$term] * (($occurrences * ($k1 + 1)) / ($occurrences + $norm));
+                $score += $idf[$term] * $weight;
             }
 
-            if ($score > 0) {
-                $matches[] = ['name' => $document['name'], 'score' => $score, 'named' => self::names($nameQuery, $document['name'])];
+            if ($score === 0.0) {
+                continue;
             }
+
+            $local = $document['localNameTerms'];
+
+            if ($local !== [] && array_diff($local, $queryTerms) === []) {
+                $score += $fullNameBonus;
+            }
+
+            $matches[] = ['name' => $document['name'], 'score' => $score, 'covered' => $covered, 'exact' => self::names($nameQuery, $document['name'])];
         }
 
-        // usort is stable: equal scores keep document order, as upstream's sort does.
-        usort($matches, static fn (array $x, array $y): int => [$y['named'], $y['score']] <=> [$x['named'], $x['score']]);
+        // usort is stable: equal keys keep document order, as upstream's sort does.
+        usort($matches, static fn (array $x, array $y): int => [$y['exact'], $y['covered'], $y['score']] <=> [$x['exact'], $x['covered'], $x['score']]);
 
         return array_map(
             static fn (array $match): array => ['name' => $match['name'], 'score' => $match['score']],

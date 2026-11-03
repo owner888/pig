@@ -47,8 +47,19 @@ final class Keys
     private const int END = -15;
     private const int CLEAR = -16;
 
-    /** The function keys match by their legacy sequences only, so they share one codepoint nothing parses to. */
-    private const int FUNCTION_KEY = -100;
+    /** F1–F12 are upstream's `FUNCTIONAL_CODEPOINTS.f1` … `f12`: F1 is -21, F12 is -32. */
+    private const int F1 = -21;
+    private const int F2 = -22;
+    private const int F3 = -23;
+    private const int F4 = -24;
+    private const int F5 = -25;
+    private const int F6 = -26;
+    private const int F7 = -27;
+    private const int F8 = -28;
+    private const int F9 = -29;
+    private const int F10 = -30;
+    private const int F11 = -31;
+    private const int F12 = -32;
 
     /**
      * Kitty's keypad keys (`KP_Left` … `KP_Delete`) with Num Lock off are the navigation keys
@@ -359,7 +370,7 @@ final class Keys
             return false;
         }
 
-        foreach ([':3u', ':3~', ':3A', ':3B', ':3C', ':3D', ':3H', ':3F'] as $release) {
+        foreach ([':3u', ':3~', ':3A', ':3B', ':3C', ':3D', ':3H', ':3F', ':3P', ':3Q', ':3S'] as $release) {
             if (str_contains($data, $release)) {
                 return true;
             }
@@ -383,8 +394,8 @@ final class Keys
 
     /**
      * The legacy sequences of the keys that have no codepoint — upstream's `LEGACY_KEY_SEQUENCES`,
-     * `LEGACY_SHIFT_SEQUENCES` and `LEGACY_CTRL_SEQUENCES`. The function keys and `clear` are only
-     * ever these: no terminal reports them through the kitty protocol in a form `parse()` reads.
+     * `LEGACY_SHIFT_SEQUENCES` and `LEGACY_CTRL_SEQUENCES`. A function key with a modifier is only
+     * ever the kitty form `parse()` reads (`\e[15;5~`, `\e[1;5P`).
      *
      * @var array<string, array{0: int, 1: list<string>, 2: list<string>, 3: list<string>}> codepoint, plain, shift, ctrl
      */
@@ -407,18 +418,18 @@ final class Keys
         'pageup' => [self::PAGE_UP, ["\x1b[5~", "\x1b[[5~"], ["\x1b[5$"], ["\x1b[5^"]],
         'pagedown' => [self::PAGE_DOWN, ["\x1b[6~", "\x1b[[6~"], ["\x1b[6$"], ["\x1b[6^"]],
         'clear' => [self::CLEAR, ["\x1b[E", "\x1bOE"], ["\x1b[e"], ["\x1bOe"]],
-        'f1' => [self::FUNCTION_KEY, ["\x1bOP", "\x1b[11~", "\x1b[[A"], [], []],
-        'f2' => [self::FUNCTION_KEY, ["\x1bOQ", "\x1b[12~", "\x1b[[B"], [], []],
-        'f3' => [self::FUNCTION_KEY, ["\x1bOR", "\x1b[13~", "\x1b[[C"], [], []],
-        'f4' => [self::FUNCTION_KEY, ["\x1bOS", "\x1b[14~", "\x1b[[D"], [], []],
-        'f5' => [self::FUNCTION_KEY, ["\x1b[15~", "\x1b[[E"], [], []],
-        'f6' => [self::FUNCTION_KEY, ["\x1b[17~"], [], []],
-        'f7' => [self::FUNCTION_KEY, ["\x1b[18~"], [], []],
-        'f8' => [self::FUNCTION_KEY, ["\x1b[19~"], [], []],
-        'f9' => [self::FUNCTION_KEY, ["\x1b[20~"], [], []],
-        'f10' => [self::FUNCTION_KEY, ["\x1b[21~"], [], []],
-        'f11' => [self::FUNCTION_KEY, ["\x1b[23~"], [], []],
-        'f12' => [self::FUNCTION_KEY, ["\x1b[24~"], [], []],
+        'f1' => [self::F1, ["\x1bOP", "\x1b[11~", "\x1b[[A"], [], []],
+        'f2' => [self::F2, ["\x1bOQ", "\x1b[12~", "\x1b[[B"], [], []],
+        'f3' => [self::F3, ["\x1bOR", "\x1b[13~", "\x1b[[C"], [], []],
+        'f4' => [self::F4, ["\x1bOS", "\x1b[14~", "\x1b[[D"], [], []],
+        'f5' => [self::F5, ["\x1b[15~", "\x1b[[E"], [], []],
+        'f6' => [self::F6, ["\x1b[17~"], [], []],
+        'f7' => [self::F7, ["\x1b[18~"], [], []],
+        'f8' => [self::F8, ["\x1b[19~"], [], []],
+        'f9' => [self::F9, ["\x1b[20~"], [], []],
+        'f10' => [self::F10, ["\x1b[21~"], [], []],
+        'f11' => [self::F11, ["\x1b[23~"], [], []],
+        'f12' => [self::F12, ["\x1b[24~"], [], []],
     ];
 
     /**
@@ -516,12 +527,10 @@ final class Keys
 
         [$codepoint, $plain, $shifted, $ctrl] = self::NAMED_KEYS[$key];
 
-        if ($codepoint === self::FUNCTION_KEY && $modifier !== 0) {
-            return null;
-        }
-
         $legacy = match (true) {
             $modifier === 0 => $plain,
+            // A function key with a modifier has no legacy spelling here, as upstream's `matchesKey()`.
+            $codepoint <= self::F1 && $codepoint >= self::F12 => [],
             $modifier === self::SHIFT => $shifted,
             $modifier === self::CTRL => $ctrl,
             $modifier === self::ALT && $key === 'space' => ["\x1b "],
@@ -572,9 +581,10 @@ final class Keys
     /**
      * Read an escape sequence as a key and its modifiers.
      *
-     * Four shapes, because the protocol kept the legacy sequences and added modifiers to
+     * Five shapes, because the protocol kept the legacy sequences and added modifiers to
      * them rather than replacing them: `\e[<cp>;<mod>u` for ordinary keys, `\e[1;<mod>A`
-     * for arrows, `\e[<n>;<mod>~` for the editing keys, and `\e[1;<mod>H` for Home and End.
+     * for arrows, `\e[<n>;<mod>~` for the editing and function keys, `\e[1;<mod>H` for Home
+     * and End, and `\e[1;<mod>P` for F1, F2 and F4.
      *
      * @return array{0: int, 1: int, 2?: int}|null the codepoint, the modifier bits, and the shifted
      *         key when the alternate-key report carries one
@@ -610,6 +620,18 @@ final class Keys
                 6 => self::PAGE_DOWN,
                 7 => self::HOME,
                 8 => self::END,
+                11 => self::F1,
+                12 => self::F2,
+                13 => self::F3,
+                14 => self::F4,
+                15 => self::F5,
+                17 => self::F6,
+                18 => self::F7,
+                19 => self::F8,
+                20 => self::F9,
+                21 => self::F10,
+                23 => self::F11,
+                24 => self::F12,
             ];
 
             $codepoint = $keys[(int) $match[1]] ?? null;
@@ -631,6 +653,12 @@ final class Keys
 
         if (preg_match('/^\x1b\[1;(\d+)(?::\d+)?([HF])$/', $data, $match) === 1) {
             return [$match[2] === 'H' ? self::HOME : self::END, (int) $match[1] - 1];
+        }
+
+        // F1, F2, F4 as `\e[P` or `\e[1;<mod>[:<event>]P`. F3 is sent as `\e[13~` because
+        // `\e[1;<mod>R` collides with a cursor position report.
+        if (preg_match('/^\x1b\[(?:1;(\d+)(?::\d+)?)?([PQS])$/', $data, $match) === 1) {
+            return [['P' => self::F1, 'Q' => self::F2, 'S' => self::F4][$match[2]], (int) ($match[1] === '' ? 1 : $match[1]) - 1];
         }
 
         return null;

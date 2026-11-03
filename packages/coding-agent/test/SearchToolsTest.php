@@ -395,6 +395,19 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertSame(['a.txt-2- two', 'a.txt:3: NEEDLE', 'a.txt-4- four'], $found);
     }
 
+    public function testALoneCarriageReturnDoesNotPutContextLinesOneOffFromRipgrep(): void
+    {
+        $this->needsRipgrep();
+        $this->file('lone-cr.txt', "before\rprogress\nneedle\nafter");
+
+        $found = $this->lines($this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'path' => 'lone-cr.txt', 'context' => 1]),
+        ));
+
+        // rg counts lines at LF only; splitting on the CR too showed `progress` as the match.
+        $this->assertSame(['lone-cr.txt-1- beforeprogress', 'lone-cr.txt:2: needle', 'lone-cr.txt-3- after'], $found);
+    }
+
     public function testNoMatchesSaysSo(): void
     {
         $this->needsRipgrep();

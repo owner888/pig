@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Tui\Components;
 
 use Closure;
+use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
 use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
@@ -21,7 +22,7 @@ use Pig\Tui\Width;
  * The selection wraps at both ends, which matters more than it sounds: a command palette
  * with forty entries is faster to reach the last of by pressing Up once.
  */
-final class SelectList implements Component, InputHandler, MouseHandler
+final class SelectList implements Component, InputHandler, MouseHandler, CapturesViewportInput
 {
     /** @var list<SelectItem> */
     private array $items;
@@ -335,16 +336,26 @@ final class SelectList implements Component, InputHandler, MouseHandler
         return $isSelected ? ($this->theme->selectedText)($line) : $line;
     }
 
+    /** Upstream's `capturesViewportInput = true`: in fullscreen, PageUp/PageDown page the list. */
+    #[\Override]
+    public function capturesViewportInput(): bool
+    {
+        return true;
+    }
+
     #[\Override]
     public function handleInput(string $data): void
     {
         $last = count($this->filtered) - 1;
         $kb = Keybindings::getKeybindings();
+        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, count($this->filtered), $this->maxVisible);
 
         // Upstream's `SelectList.handleInput()` ids; the save key and the query are pig's.
         match (true) {
             $kb->matches($data, 'tui.select.up') => $this->moveTo($this->selected === 0 ? $last : $this->selected - 1),
             $kb->matches($data, 'tui.select.down') => $this->moveTo($this->selected === $last ? 0 : $this->selected + 1),
+            // A visible page at a time, clamped to the list's ends.
+            $pageIndex !== null => $last < 0 || $pageIndex === $this->selected ? null : $this->moveTo($pageIndex),
             $kb->matches($data, 'tui.select.confirm') => $this->choose(),
             $this->onSaveDefault !== null && $kb->matches($data, $this->saveDefaultKeybinding) => $this->saveDefault(),
             $kb->matches($data, 'tui.select.cancel') => $this->cancel(),

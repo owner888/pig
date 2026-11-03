@@ -93,4 +93,15 @@ final class KeybindingsTest extends TestCase
         );
         $this->assertSame(['left', 'ctrl+b'], $keybindings->getKeys('tui.editor.cursorLeft'));
     }
+
+    public function testSelectPageIndexMovesByAPageClampedToTheList(): void
+    {
+        $kb = self::manager();
+
+        $this->assertSame(5, Keybindings::getSelectPageIndex($kb, "\x1b[6~", 0, 20, 5));
+        $this->assertSame(19, Keybindings::getSelectPageIndex($kb, "\x1b[6~", 17, 20, 5));
+        $this->assertSame(0, Keybindings::getSelectPageIndex($kb, "\x1b[5~", 3, 20, 5));
+        $this->assertSame(0, Keybindings::getSelectPageIndex($kb, "\x1b[6~", 0, 0, 5), 'an empty list answers 0');
+        $this->assertNull(Keybindings::getSelectPageIndex($kb, "\x1b[B", 0, 20, 5));
+    }
 }

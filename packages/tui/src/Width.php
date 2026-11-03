@@ -485,6 +485,16 @@ final class Width
         return $result;
     }
 
+    /**
+     * Each run of C0 and C1 control characters (ESC, BEL, newlines, ...) as one space — upstream's
+     * `replaceControlCharacters()`. Bytes, not code points, so text that is not valid UTF-8 still
+     * loses its control bytes; a C1 character is its two-byte UTF-8 form.
+     */
+    public static function replaceControlCharacters(string $text): string
+    {
+        return (string) preg_replace('/(?:[\x00-\x1f\x7f]|\xc2[\x80-\x9f])+/', ' ', $text);
+    }
+
     /** Closes an overlay's styling and any hyperlink it opened — upstream's `SEGMENT_RESET`. */
     public const string SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 

@@ -20,8 +20,8 @@ use Pig\CodingAgent\Tools\ToolSet;
  */
 final class SystemPrompt
 {
-    private const string ROLE = 'You are an expert coding assistant. You help users with coding tasks by reading '
-        . 'files, executing commands, editing code, and writing new files.';
+    /** Upstream's preamble (tightened in 705d047) without its "running inside pi, a coding agent harness". */
+    private const string ROLE = 'You are a coding assistant. Help users inspect files, run commands, and modify code.';
 
     /**
      * The prompt as one string — upstream's `buildSystemPrompt()`: "rendered exactly as the
@@ -280,7 +280,10 @@ final class SystemPrompt
         }
 
         if ($has('edit')) {
-            $guidelines[] = 'Use edit for precise changes (old text must match exactly)';
+            // Upstream's `editToolSystemPromptContribution.guidelines`, as tightened in 705d047.
+            $guidelines[] = 'Use edit for targeted changes. Batch changes to one file in a single call.';
+            $guidelines[] = 'Each edits[].oldText must exactly and uniquely match the original file. Keep matches short '
+                . 'and non-overlapping; merge nearby changes without including large unchanged regions.';
         }
 
         if ($has('write')) {

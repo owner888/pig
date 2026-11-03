@@ -1060,7 +1060,7 @@ final class Anthropic
             );
 
             foreach (array_values($tools) as $index => $tool) {
-                if (($definitions[$index]['strict'] ?? null) === true && self::prefersStrict($tool)) {
+                if (($definitions[$index]['strict'] ?? null) === true && ConstrainedSampling::prefersJsonSchemaStrictSampling($tool)) {
                     $hasPreferredStrictTools = true;
                 }
             }
@@ -1252,7 +1252,7 @@ final class Anthropic
         // three keys laid over it (`{ ...parameters, ...legacyInputSchema }`) and `strict: true`;
         // any other tool sends the legacy three alone, as before. On the retry after a strict tool
         // limit (`$disablePreferredStrictTools`) a `prefer` tool goes non-strict.
-        $strict = $disablePreferredStrictTools && self::prefersStrict($tool)
+        $strict = $disablePreferredStrictTools && ConstrainedSampling::prefersJsonSchemaStrictSampling($tool)
             ? null
             : ConstrainedSampling::resolveJsonSchemaStrictSampling(
                 $tool,
@@ -1290,14 +1290,6 @@ final class Anthropic
         return $out;
     }
 
-    /** A tool whose constrained sampling is `json_schema` with `strict: "prefer"`. */
-    private static function prefersStrict(Tool $tool): bool
-    {
-        $config = $tool->constrainedSampling;
-
-        return is_array($config) && ($config['type'] ?? null) === 'json_schema' && ($config['strict'] ?? null) === 'prefer';
-    }
-
     /**
      * Upstream's retry condition after a rejected request: a 400 `invalid_request_error` saying the
      * strict tool set is past one of Anthropic's limits. The SDK error's `type` is the body's
@@ -1316,13 +1308,7 @@ final class Anthropic
             return false;
         }
 
-        foreach (['The compiled grammar is too large', 'Too many strict tools (', 'Schemas contains too many parameters with union types ('] as $limit) {
-            if (str_contains($message, $limit)) {
-                return true;
-            }
-        }
-
-        return false;
+        return ConstrainedSampling::isStrictToolLimitErrorMessage($message);
     }
 
     /**

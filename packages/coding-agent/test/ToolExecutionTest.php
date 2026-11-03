@@ -412,7 +412,7 @@ final class ToolExecutionTest extends TestCase
 
         $tool = $this->tool('edit', ['path' => 'a.php']);
         $tool->updateResult(new AgentToolResult(
-            [new TextContent('Replaced text in a.php.')],
+            [new TextContent('Successfully replaced 1 block(s) in a.php.')],
             ['diff' => $diff, 'firstChangedLine' => $line],
         ));
 
@@ -567,7 +567,7 @@ final class ToolExecutionTest extends TestCase
     {
         $tool = $this->tool('edit', ['path' => 'notes.txt']);
         $tool->updateResult(new AgentToolResult(
-            [new TextContent('Replaced text in notes.txt.')],
+            [new TextContent('Successfully replaced 1 block(s) in notes.txt.')],
             ['diff' => " 1 keep\n-2 {$content}\n+2 {$content} changed\n", 'firstChangedLine' => 2],
         ));
 
@@ -588,7 +588,7 @@ final class ToolExecutionTest extends TestCase
     public function testAnEditIsShownAsADiffBeforeItHappens(): void
     {
         $directory = $this->project('notes.txt', "one\ntwo\nthree\n");
-        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $tool->setArgsComplete();
         $shown = $this->text($tool);
@@ -604,7 +604,7 @@ final class ToolExecutionTest extends TestCase
     public function testAnEditThatCannotBeMadeSaysSoBeforeItIsTried(): void
     {
         $directory = $this->project('notes.txt', "same\nsame\n");
-        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'same', 'newText' => 'other']);
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'edits' => [['oldText' => 'same', 'newText' => 'other']]]);
 
         $tool->setArgsComplete();
 
@@ -616,11 +616,11 @@ final class ToolExecutionTest extends TestCase
     public function testTheToolsOwnDiffReplacesThePreviewOnceItHasRun(): void
     {
         $directory = $this->project('notes.txt', "one\ntwo\n");
-        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $tool->setArgsComplete();
         $tool->updateResult(new AgentToolResult(
-            [new TextContent('Replaced text in notes.txt.')],
+            [new TextContent('Successfully replaced 1 block(s) in notes.txt.')],
             ['diff' => " 1 one\n-2 two\n+2 WROTE\n", 'firstChangedLine' => 2],
         ));
 
@@ -634,7 +634,7 @@ final class ToolExecutionTest extends TestCase
     public function testThereIsNoPreviewWithoutSomewhereToReadFrom(): void
     {
         $this->project('notes.txt', "one\ntwo\n");
-        $tool = $this->tool('edit', ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $tool = $this->tool('edit', ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]);
 
         $tool->setArgsComplete();
 
@@ -647,14 +647,71 @@ final class ToolExecutionTest extends TestCase
     public function testArgumentsThatNeverFinishedArrivingAreNotPreviewed(): void
     {
         $directory = $this->project('notes.txt', "one\ntwo\n");
-        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two']);
-
-        $tool->setArgsComplete();
 
         // A turn can end on a half-written call; there is nothing to preview and nothing
-        // to complain about either.
-        $this->assertStringNotContainsString('Could not find', $this->text($tool));
-        $this->assertStringContainsString('notes.txt', $this->text($tool));
+        // to complain about either — in the shape a saved session has, or in `edits[]`.
+        foreach ([
+            ['path' => 'notes.txt', 'oldText' => 'two'],
+            ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO'], ['oldText' => 'one']]],
+            ['path' => 'notes.txt', 'edits' => []],
+        ] as $arguments) {
+            $tool = $this->editing($directory, $arguments);
+            $tool->setArgsComplete();
+
+            $this->assertStringNotContainsString('Could not find', $this->text($tool));
+            $this->assertStringNotContainsString('+2', $this->text($tool));
+            $this->assertStringContainsString('notes.txt', $this->text($tool));
+        }
+    }
+
+    public function testEveryEditOfACallIsPreviewedAsItsOwnHunk(): void
+    {
+        $lines = array_map(static fn (int $n): string => "line{$n}", range(1, 30));
+        $directory = $this->project('notes.txt', implode("\n", $lines) . "\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'edits' => [
+            ['oldText' => 'line25', 'newText' => 'LINE25'],
+            ['oldText' => "line3\n", 'newText' => "LINE3\n"],
+        ]]);
+
+        $tool->setArgsComplete();
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('- 3 line3', $shown);
+        $this->assertStringContainsString('+ 3 LINE3', $shown);
+        $this->assertStringContainsString('-25 line25', $shown);
+        $this->assertStringContainsString('+25 LINE25', $shown);
+        // The lines between the two are not drawn as removed and added again.
+        $this->assertStringNotContainsString('14 line14', $shown);
+    }
+
+    /**
+     * A session saved before `edit` took `edits[]` has calls with top-level `oldText` and
+     * `newText`, and a model may send `edits` as a JSON string; both still draw their diff.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    #[DataProvider('editArgumentShapes')]
+    public function testAnEditInAnyShapeTheToolAcceptsIsPreviewed(array $arguments): void
+    {
+        $directory = $this->project('notes.txt', "one\ntwo\nthree\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', ...$arguments]);
+
+        $tool->setArgsComplete();
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('-2 two', $shown);
+        $this->assertStringContainsString('+2 TWO', $shown);
+    }
+
+    /** @return array<string, array{0: array<string, mixed>}> */
+    public static function editArgumentShapes(): array
+    {
+        return [
+            'edits[]' => [['edits' => [['oldText' => 'two', 'newText' => 'TWO']]]],
+            'top-level oldText/newText, as a saved session has it' => [['oldText' => 'two', 'newText' => 'TWO']],
+            'edits as a JSON string' => [['edits' => '[{"oldText":"two","newText":"TWO"}]']],
+            'edits as one object' => [['edits' => ['oldText' => 'two', 'newText' => 'TWO']]],
+        ];
     }
 
     public function testTheEarlierLinesNoteFitsANarrowTerminal(): void

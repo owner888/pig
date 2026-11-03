@@ -22,7 +22,7 @@ use Pig\Async\Loop;
 final class Process
 {
     /** How long to wait for a command by default. Long enough for a slow clipboard. */
-    private const float DEFAULT_TIMEOUT = 2.0;
+    public const float DEFAULT_TIMEOUT = 2.0;
 
     /** How long to sleep between reads while waiting. */
     private const int POLL_MICROSECONDS = 5_000;
@@ -207,10 +207,11 @@ final class Process
      * `run()` instead — conflating the two turns a broken command into an empty result.
      *
      * @param list<string> $command the program and its arguments, unquoted
+     * @param string|null  $cwd     where to run it; null means wherever pig was started
      */
-    public static function capture(array $command, float $timeout = self::DEFAULT_TIMEOUT): ?string
+    public static function capture(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): ?string
     {
-        [$exit, $output] = self::run($command, $timeout);
+        [$exit, $output] = self::run($command, $timeout, $cwd);
 
         return $exit === 0 ? $output : null;
     }
@@ -238,41 +239,110 @@ final class Process
      * is no use if escape then has nothing to stop. `STOPPED` covers both ends of that, since
      * "this was not allowed to finish" is what the caller acts on either way.
      *
+     * **`$maxBuffer` caps stdout and stderr together**, upstream's `ExecOptions.maxBuffer`: the
+     * bytes past it are not kept, the command is killed (STOPPED) and the fourth element is
+     * true. A multi-byte character the cut went through is dropped rather than left half there.
+     *
      * @param list<string>     $command
-     * @param string|null      $cwd    where to run it; null means wherever pig was started
-     * @param AbortSignal|null $signal kills the command and returns STOPPED
-     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out, was
-     *         aborted, or could not be started; 128 + the signal when something killed it
+     * @param string|null      $cwd       where to run it; null means wherever pig was started
+     * @param AbortSignal|null $signal    kills the command and returns STOPPED
+     * @param int|null         $maxBuffer combined output byte limit; null for none
+     * @return array{0: int, 1: string, 2: string, 3: bool} STOPPED as the code when it timed
+     *         out, was aborted, went over $maxBuffer or could not be started; 128 + the signal
+     *         when something killed it; whether the output was cut at $maxBuffer
      */
     public static function runAsync(
         array $command,
         float $timeout = self::DEFAULT_TIMEOUT,
         ?string $cwd = null,
         ?AbortSignal $signal = null,
+        ?int $maxBuffer = null,
     ): array {
         if ($command === []) {
             throw new TuiError('Process::runAsync() needs a command');
         }
 
+        self::checkMaxBuffer($maxBuffer);
+
         if (Fiber::getCurrent() === null) {
-            return self::run($command, $timeout, $cwd);
+            return self::run($command, $timeout, $cwd, $maxBuffer);
         }
 
         $collected = ['', ''];
+        $truncated = false;
 
         [$exit, $stopped] = self::pump(
             $command,
             $timeout,
             $cwd,
             $signal,
-            static function (int $fd, string $chunk) use (&$collected): bool {
-                $collected[$fd - 1] .= $chunk;
+            static function (int $fd, string $chunk) use (&$collected, &$truncated, $maxBuffer): bool {
+                $kept = self::withinCap($chunk, strlen($collected[0]) + strlen($collected[1]), $maxBuffer);
+                $collected[$fd - 1] .= $kept;
+
+                if ($kept !== $chunk) {
+                    // False kills the command and stops reading both pipes, so a descendant
+                    // still writing cannot keep this waiting.
+                    $truncated = true;
+
+                    return false;
+                }
 
                 return true;
             },
         );
 
-        return [$stopped ? self::STOPPED : $exit, $collected[0], $collected[1]];
+        if ($truncated) {
+            $collected = array_map(self::withoutPartialCharacter(...), $collected);
+        }
+
+        return [$stopped ? self::STOPPED : $exit, $collected[0], $collected[1], $truncated];
+    }
+
+    /** @throws TuiError for a negative limit, as upstream's RangeError rejects it before spawning */
+    private static function checkMaxBuffer(?int $maxBuffer): void
+    {
+        if ($maxBuffer !== null && $maxBuffer < 0) {
+            throw new TuiError("maxBuffer must be a nonnegative integer, got {$maxBuffer}");
+        }
+    }
+
+    /** The part of $chunk that still fits under $maxBuffer once $taken bytes are kept. */
+    private static function withinCap(string $chunk, int $taken, ?int $maxBuffer): string
+    {
+        if ($maxBuffer === null || strlen($chunk) <= $maxBuffer - $taken) {
+            return $chunk;
+        }
+
+        return substr($chunk, 0, max(0, $maxBuffer - $taken));
+    }
+
+    /**
+     * $bytes without a UTF-8 sequence the end cut short — upstream discards its decoders'
+     * incomplete suffix on truncation rather than flush it into a replacement character.
+     */
+    private static function withoutPartialCharacter(string $bytes): string
+    {
+        $length = strlen($bytes);
+
+        for ($back = 1; $back <= min(4, $length); $back++) {
+            $byte = ord($bytes[$length - $back]);
+
+            if (($byte & 0xC0) === 0x80) {
+                continue;
+            }
+
+            $needs = match (true) {
+                $byte >= 0xF0 => 4,
+                $byte >= 0xE0 => 3,
+                $byte >= 0xC0 => 2,
+                default => 1,
+            };
+
+            return $needs > $back ? substr($bytes, 0, $length - $back) : $bytes;
+        }
+
+        return $bytes;
     }
 
     /**
@@ -499,15 +569,19 @@ final class Process
      * `runAsync()`, which is the same thing on the loop.
      *
      * @param list<string> $command
-     * @param string|null  $cwd     where to run it; null means wherever pig was started
-     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out or
-     *         could not be started; 128 + the signal when something killed it
+     * @param string|null  $cwd       where to run it; null means wherever pig was started
+     * @param int|null     $maxBuffer combined output byte limit, as `runAsync()`'s; null for none
+     * @return array{0: int, 1: string, 2: string, 3: bool} STOPPED as the code when it timed
+     *         out, went over $maxBuffer or could not be started; 128 + the signal when
+     *         something killed it; whether the output was cut at $maxBuffer
      */
-    public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
+    public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null, ?int $maxBuffer = null): array
     {
         if ($command === []) {
             throw new TuiError('Process::run() needs a command');
         }
+
+        self::checkMaxBuffer($maxBuffer);
 
         // The array form: PHP builds the argv itself, so an argument with a space in it
         // stays one argument and nothing has to be quoted.
@@ -524,7 +598,7 @@ final class Process
         }
 
         if (!is_resource($process)) {
-            return [self::STOPPED, '', ''];
+            return [self::STOPPED, '', '', false];
         }
 
         stream_set_blocking($pipes[1], false);
@@ -534,12 +608,22 @@ final class Process
         $errors = '';
         $deadline = microtime(true) + $timeout;
         $timedOut = false;
+        $truncated = false;
+
+        // At most one byte past the cap off a pipe, which is enough to know it was passed.
+        $read = static function ($pipe, string &$into) use (&$output, &$errors, &$truncated, $maxBuffer): void {
+            $taken = strlen($output) + strlen($errors);
+            $chunk = (string) stream_get_contents($pipe, $maxBuffer === null ? null : max(0, $maxBuffer - $taken) + 1);
+            $kept = self::withinCap($chunk, $taken, $maxBuffer);
+            $into .= $kept;
+            $truncated = $truncated || $kept !== $chunk;
+        };
 
         while (true) {
-            $output .= (string) stream_get_contents($pipes[1]);
+            $read($pipes[1], $output);
             // Read stderr too, or a command that writes a lot to it fills the pipe and
             // blocks forever with nothing on stdout to show for it.
-            $errors .= (string) stream_get_contents($pipes[2]);
+            $read($pipes[2], $errors);
 
             $status = proc_get_status($process);
 
@@ -547,7 +631,7 @@ final class Process
                 break;
             }
 
-            if (microtime(true) >= $deadline) {
+            if ($truncated || microtime(true) >= $deadline) {
                 $timedOut = true;
                 // 9 rather than SIGKILL: the constant comes from ext-pcntl, and a command runner
                 // should not need an extension to give up on a command.
@@ -559,8 +643,10 @@ final class Process
             usleep(self::POLL_MICROSECONDS);
         }
 
-        $output .= (string) stream_get_contents($pipes[1]);
-        $errors .= (string) stream_get_contents($pipes[2]);
+        if (!$truncated) {
+            $read($pipes[1], $output);
+            $read($pipes[2], $errors);
+        }
 
         fclose($pipes[1]);
         fclose($pipes[2]);
@@ -571,7 +657,11 @@ final class Process
         $exit = self::codeOf($status);
         proc_close($process);
 
-        return [$timedOut ? self::STOPPED : $exit, $output, $errors];
+        if ($truncated) {
+            return [self::STOPPED, self::withoutPartialCharacter($output), self::withoutPartialCharacter($errors), true];
+        }
+
+        return [$timedOut ? self::STOPPED : $exit, $output, $errors, false];
     }
 
     /**
@@ -592,9 +682,10 @@ final class Process
      * where there is one (util-linux, which is where these writers live); without it nothing changes.
      *
      * @param list<string> $command
+     * @param string|null  $cwd     where to run it; null means wherever pig was started
      * @return bool whether it ran and exited cleanly
      */
-    public static function feed(array $command, string $input, float $timeout = self::DEFAULT_TIMEOUT, bool $detached = false): bool
+    public static function feed(array $command, string $input, float $timeout = self::DEFAULT_TIMEOUT, bool $detached = false, ?string $cwd = null): bool
     {
         if ($command === []) {
             throw new TuiError('Process::feed() needs a command');
@@ -613,6 +704,7 @@ final class Process
                 $command,
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
                 $pipes,
+                $cwd,
             );
         } finally {
             restore_error_handler();

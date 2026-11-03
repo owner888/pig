@@ -52,6 +52,26 @@ final class SystemClipboard implements Clipboard
         return new self();
     }
 
+    /**
+     * Upstream's `runClipboardCommand()` runs every clipboard tool from `/` (#11592): they ignore
+     * the working directory, and WSL cannot start a Windows executable (`powershell.exe`,
+     * `clip.exe`) from one whose `\\wsl.localhost\…` path passes MAX_PATH. It also keeps a
+     * daemonized writer from pinning pig's directory.
+     */
+    private const string ROOT = '/';
+
+    /** @param list<string> $command */
+    private static function capture(array $command, float $timeout = Process::DEFAULT_TIMEOUT): ?string
+    {
+        return Process::capture($command, $timeout, self::ROOT);
+    }
+
+    /** @param list<string> $command */
+    private static function feed(array $command, string $input, float $timeout, bool $detached = false): bool
+    {
+        return Process::feed($command, $input, $timeout, $detached, self::ROOT);
+    }
+
     /** @var (\Closure(string): void)|null the screen's terminal, for a clipboard made without one */
     private static ?\Closure $screen = null;
 
@@ -76,13 +96,13 @@ final class SystemClipboard implements Clipboard
         // nothing else — Node reports Termux as `android`, so none of the Linux readers are tried
         // after it, and PHP calls it Linux, which is why it is asked here before the platform is.
         if (Env::isSet('TERMUX_VERSION')) {
-            $text = Process::capture(['termux-clipboard-get']);
+            $text = self::capture(['termux-clipboard-get']);
 
             return $text === null || $text === '' ? null : $text;
         }
 
         $text = match ($this->platform()) {
-            'darwin' => Process::capture(['pbpaste']),
+            'darwin' => self::capture(['pbpaste']),
             'windows' => self::powerShell('Get-Clipboard -Raw'),
             default => $this->linuxText(),
         };
@@ -103,8 +123,8 @@ final class SystemClipboard implements Clipboard
         $platform = $this->platform();
         // "Direct writes precede OSC 52 so the terminal cannot race the native writer."
         $copied = match ($platform) {
-            'darwin' => Process::feed(['pbcopy'], $text, self::WRITE_TIMEOUT, detached: true),
-            'windows' => Process::feed(['clip.exe'], $text, self::WRITE_TIMEOUT),
+            'darwin' => self::feed(['pbcopy'], $text, self::WRITE_TIMEOUT, detached: true),
+            'windows' => self::feed(['clip.exe'], $text, self::WRITE_TIMEOUT),
             default => $this->linuxWrite($text),
         };
 
@@ -172,7 +192,7 @@ final class SystemClipboard implements Clipboard
     {
         // Upstream's `copyToClipboard()` tries `termux-clipboard-set` first when `TERMUX_VERSION` is
         // set, then whatever display tools there are.
-        if (Env::isSet('TERMUX_VERSION') && Process::feed(['termux-clipboard-set'], $text, self::WRITE_TIMEOUT, detached: true)) {
+        if (Env::isSet('TERMUX_VERSION') && self::feed(['termux-clipboard-set'], $text, self::WRITE_TIMEOUT, detached: true)) {
             return true;
         }
 
@@ -183,7 +203,7 @@ final class SystemClipboard implements Clipboard
         foreach ($commands as $command) {
             // Detached: the writer that stays behind to own the clipboard must not be stopped with
             // pig by Ctrl+Z (upstream #11179).
-            if (Process::feed($command, $text, self::WRITE_TIMEOUT, detached: true)) {
+            if (self::feed($command, $text, self::WRITE_TIMEOUT, detached: true)) {
                 return true;
             }
         }
@@ -204,7 +224,7 @@ final class SystemClipboard implements Clipboard
             return null;
         }
 
-        $output = Process::capture(['osascript', '-l', 'JavaScript', '-e', self::FILE_PATHS_SCRIPT]);
+        $output = self::capture(['osascript', '-l', 'JavaScript', '-e', self::FILE_PATHS_SCRIPT]);
 
         if ($output === null) {
             return null;
@@ -258,14 +278,14 @@ final class SystemClipboard implements Clipboard
     private function linuxText(): ?string
     {
         if (self::isWayland()) {
-            $text = Process::capture(['wl-paste', '--no-newline']);
+            $text = self::capture(['wl-paste', '--no-newline']);
 
             if ($text !== null) {
                 return $text;
             }
         }
 
-        $text = Process::capture(['xclip', '-selection', 'clipboard', '-o']);
+        $text = self::capture(['xclip', '-selection', 'clipboard', '-o']);
 
         if ($text !== null) {
             return $text;
@@ -285,7 +305,7 @@ final class SystemClipboard implements Clipboard
      */
     private function macImage(): ?ClipboardImage
     {
-        $bytes = Process::capture(['pngpaste', '-']);
+        $bytes = self::capture(['pngpaste', '-']);
 
         if ($bytes !== null && $bytes !== '') {
             return new ClipboardImage($bytes, 'image/png');
@@ -294,7 +314,7 @@ final class SystemClipboard implements Clipboard
         return self::viaTemporaryFile(
             'pig-clip-',
             '.png',
-            static fn (string $path): ?string => Process::capture([
+            static fn (string $path): ?string => self::capture([
                 'osascript',
                 '-e', 'set png to (the clipboard as «class PNGf»)',
                 '-e', 'set f to open for access POSIX file "' . $path . '" with write permission',
@@ -327,7 +347,7 @@ final class SystemClipboard implements Clipboard
 
     private function waylandImage(): ?ClipboardImage
     {
-        $types = Process::capture(['wl-paste', '--list-types'], self::LIST_TIMEOUT);
+        $types = self::capture(['wl-paste', '--list-types'], self::LIST_TIMEOUT);
 
         if ($types === null) {
             return null;
@@ -339,7 +359,7 @@ final class SystemClipboard implements Clipboard
             return null;
         }
 
-        $bytes = Process::capture(['wl-paste', '--type', $type, '--no-newline']);
+        $bytes = self::capture(['wl-paste', '--type', $type, '--no-newline']);
 
         return $bytes === null || $bytes === '' ? null : new ClipboardImage($bytes, $type);
     }
@@ -353,7 +373,7 @@ final class SystemClipboard implements Clipboard
      */
     private function x11Image(): ?ClipboardImage
     {
-        $targets = Process::capture(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'], self::LIST_TIMEOUT);
+        $targets = self::capture(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-o'], self::LIST_TIMEOUT);
         $advertised = $targets === null ? [] : (preg_split('/\r?\n/', trim($targets)) ?: []);
         $preferred = self::preferred($advertised);
 
@@ -366,7 +386,7 @@ final class SystemClipboard implements Clipboard
             : [$preferred, ...array_diff(self::IMAGE_TYPES, [$preferred])];
 
         foreach ($order as $type) {
-            $bytes = Process::capture(['xclip', '-selection', 'clipboard', '-t', $type, '-o']);
+            $bytes = self::capture(['xclip', '-selection', 'clipboard', '-t', $type, '-o']);
 
             if ($bytes !== null && $bytes !== '') {
                 return new ClipboardImage($bytes, $type);
@@ -382,7 +402,7 @@ final class SystemClipboard implements Clipboard
             'pig-clip-',
             '.png',
             static function (string $path): ?string {
-                $windowsPath = Process::capture(['wslpath', '-w', $path], self::LIST_TIMEOUT);
+                $windowsPath = self::capture(['wslpath', '-w', $path], self::LIST_TIMEOUT);
                 $target = $windowsPath === null ? $path : trim($windowsPath);
 
                 return self::powerShell(implode('; ', [
@@ -437,7 +457,7 @@ final class SystemClipboard implements Clipboard
 
     private static function powerShell(string $script, float $timeout = self::POWERSHELL_TIMEOUT): ?string
     {
-        return Process::capture(['powershell.exe', '-NoProfile', '-Command', $script], $timeout);
+        return self::capture(['powershell.exe', '-NoProfile', '-Command', $script], $timeout);
     }
 
     /**

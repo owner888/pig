@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Tools;
 
 use Pig\Agent\AgentError;
 use Pig\Ai\Utils\Utf8;
-use Pig\Tui\Ansi;
+use Pig\CodingAgent\Utils\Ansi;
 use Pig\Tui\Process;
 
 /**

@@ -9,11 +9,16 @@ namespace Pig\CodingAgent\Packages;
  * under `extra` because that is where composer keeps what is not its own:
  *
  *     "extra": { "pig": { "extensions": ["./src/Extension.php"], "skills": ["./resources/skills"],
- *                         "prompts": ["./prompts/*.md"], "themes": ["./themes/*.json"] } }
+ *                         "prompts": ["./prompts/*.md"], "themes": ["./themes/*.json"],
+                         "changelogPath": "./docs/CHANGELOG.md" } }
  *
  * Paths are relative to the package root; an entry may be a glob, or a `!`, `+`, `-` override
  * pattern as the settings use them. A field that is not a list of strings is as good as absent.
  * Null when there is no `composer.json`, it is not JSON, or it has no `extra.pig`.
+ *
+ * `changelogPath` is upstream's `pi.changelogPath`: the changelog shown after an update, read
+ * from `CHANGELOG.md` when absent and from nowhere when `""`. An `extra.pig` holding only that
+ * lists no resources, so the conventional directories still count (`hasResourceFields()`).
  */
 final readonly class PackageManifest
 {
@@ -28,6 +33,7 @@ final readonly class PackageManifest
         public ?array $skills = null,
         public ?array $prompts = null,
         public ?array $themes = null,
+        public ?string $changelogPath = null,
     ) {
     }
 
@@ -61,7 +67,24 @@ final readonly class PackageManifest
             $fields[$type] = is_array($entries) && array_is_list($entries) && array_filter($entries, is_string(...)) === $entries ? $entries : null;
         }
 
-        return new self($fields['extensions'], $fields['skills'], $fields['prompts'], $fields['themes']);
+        $changelogPath = $pig['changelogPath'] ?? null;
+
+        return new self($fields['extensions'], $fields['skills'], $fields['prompts'], $fields['themes'], is_string($changelogPath) ? $changelogPath : null);
+    }
+
+    /**
+     * Upstream's `hasManifestResourceFields()`: whether this manifest lists resources at all. One
+     * that holds only metadata (`changelogPath`) leaves the package to the conventional directories.
+     */
+    public function hasResourceFields(): bool
+    {
+        foreach (ResolvedPaths::TYPES as $type) {
+            if ($this->of($type) !== null) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return list<string>|null */

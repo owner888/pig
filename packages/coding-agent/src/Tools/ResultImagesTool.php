@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Tools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\PreparesArguments;
 use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
@@ -21,7 +22,7 @@ use Pig\Async\AbortSignal;
  *
  * Outside `HookedTool`, for that order. A decorator for `HookedTool`'s reason.
  */
-final readonly class ResultImagesTool implements AgentTool, ReplayableTool
+final readonly class ResultImagesTool implements AgentTool, ReplayableTool, PreparesArguments
 {
     /** @param Closure(list<mixed>): list<mixed> $normalize */
     public function __construct(
@@ -45,6 +46,13 @@ final readonly class ResultImagesTool implements AgentTool, ReplayableTool
     public function replay(): ToolReplay
     {
         return ToolReplay::of($this->tool);
+    }
+
+    /** What the tool underneath makes of the arguments, or the arguments when it reshapes none. */
+    #[\Override]
+    public function prepareArguments(array $arguments): array
+    {
+        return $this->tool instanceof PreparesArguments ? $this->tool->prepareArguments($arguments) : $arguments;
     }
 
     public function label(): string

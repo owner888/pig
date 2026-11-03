@@ -78,6 +78,35 @@ final class ClipboardTest extends TestCase
         }
     }
 
+    public function testClipboardToolsRunFromTheFilesystemRoot(): void
+    {
+        // Upstream #11592: WSL cannot start a Windows clipboard tool from a directory whose UNC
+        // path passes MAX_PATH, and no clipboard tool uses the directory, so all of them start in `/`.
+        $store = $this->directory . '/cwd';
+        file_put_contents($this->directory . '/termux-clipboard-set', "#!/bin/sh\npwd > " . escapeshellarg($store) . "\n");
+        file_put_contents($this->directory . '/termux-clipboard-get', "#!/bin/sh\nprintf %s \"\$(pwd)\"\n");
+        chmod($this->directory . '/termux-clipboard-set', 0o755);
+        chmod($this->directory . '/termux-clipboard-get', 0o755);
+
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $this->directory . ':' . $path);
+        putenv('TERMUX_VERSION=0.118.0');
+        $was = (string) getcwd();
+        chdir($this->directory);
+
+        try {
+            $clipboard = new \Pig\Tui\Clipboard\SystemClipboard('linux');
+
+            $this->assertSame('/', $clipboard->text());
+            $this->assertTrue($clipboard->write('anything'));
+            $this->assertSame("/\n", file_get_contents($store));
+        } finally {
+            chdir($was);
+            putenv('PATH=' . $path);
+            putenv('TERMUX_VERSION');
+        }
+    }
+
     public function testUnderTermuxWithoutTermuxApiTheTerminalIsTheClipboard(): void
     {
         // Not upstream: with no `termux-clipboard-set`, an OSC 52 copy for Termux's own terminal,

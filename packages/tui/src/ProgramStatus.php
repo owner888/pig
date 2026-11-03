@@ -20,8 +20,6 @@ final readonly class ProgramStatus
 
     private const string APP_PATTERN = '/^[A-Za-z0-9_.+-]{1,32}$/';
 
-    private const string CONTROL_CHARACTERS = '/[\x00-\x1f\x7f]+|\xc2[\x80-\x9f]+/';
-
     /** Decoded `msg` limit. Its base64 encoding stays under the 2732-byte encoded limit. */
     private const int MAX_MESSAGE_BYTES = 2048;
 
@@ -58,7 +56,7 @@ final readonly class ProgramStatus
             $pairs[] = "kind={$this->kind}";
         }
 
-        $message = self::truncateUtf8(trim((string) preg_replace(self::CONTROL_CHARACTERS, ' ', $this->message ?? '')), self::MAX_MESSAGE_BYTES);
+        $message = self::truncateUtf8(trim(Width::replaceControlCharacters($this->message ?? '')), self::MAX_MESSAGE_BYTES);
 
         if ($message !== '') {
             $pairs[] = 'msg=' . base64_encode($message);

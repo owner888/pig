@@ -317,6 +317,27 @@ final class McpCliTest extends TestCase
         $this->assertStringContainsString('Usage: pig mcp login <server>', end($this->err));
     }
 
+    /** Upstream be15fe3: a near miss is suggested, options are named as typed, and `-l` scopes login. */
+    public function testAMistypedServerIsSuggestedAndLocalScopesLoginToTheProject(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => ['fixture' => ['command' => 'x'], 'parked' => ['command' => 'y']]]));
+
+        $this->assertSame(1, $this->mcp('login', 'fixtures'));
+        $this->assertSame('No MCP server named "fixtures". Did you mean "fixture"? Configured: fixture, parked.', end($this->err));
+
+        $this->assertSame(1, $this->mcp('list', '-l'));
+        $this->assertStringContainsString('Unknown option -l.', end($this->err));
+
+        $this->assertSame(0, $this->mcp('add', '-l', 'local', '--', 'node', 'server.js'));
+        ProjectTrust::remember([$this->cwd => true], $this->home);
+        $this->assertSame(1, $this->mcp('logout', '-l', 'local'));
+        $this->assertSame('MCP server "local" does not use OAuth. Only HTTP servers without an Authorization header do.', end($this->err));
+        $this->assertSame(1, $this->mcp('login', '-l', 'fixture'));
+        $this->assertSame("MCP server \"fixture\" is defined in {$this->home}/mcp.json, not in the project; omit --local.", end($this->err));
+        $this->assertSame(1, $this->mcp('logout'));
+        $this->assertStringContainsString('Usage: pig mcp logout <server> [-l]', end($this->err));
+    }
+
     public function testAddingAnHttpServerSaysItMayNeedASignInAndTakesTheOauthOptions(): void
     {
         $this->assertSame(0, $this->mcp('add', 'gh', '--url', 'https://x/mcp', '--oauth-client-id', 'cid', '--oauth-client-secret', '${GH_SECRET}', '--oauth-callback-port', '8765'));

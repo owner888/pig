@@ -69,6 +69,12 @@ Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md
 - [A resize held the loop for four seconds, waiting on the terminal](#a-resize-held-the-loop-for-four-seconds-waiting-on-the-terminal)
 - [Terminal flush falsely timed out when draining large pending buffers across fast chunked writes](#terminal-flush-falsely-timed-out-when-draining-large-pending-buffers-across-fast-chunked-writes)
 - [Mermaid parser dropped spaced style class annotations on nodes and reported spurious link warnings](#mermaid-parser-dropped-spaced-style-class-annotations-on-nodes-and-reported-spurious-link-warnings)
+- [A styled word ending at the wrap took its closing code and the space after it to the next line](#a-styled-word-ending-at-the-wrap-took-its-closing-code-and-the-space-after-it-to-the-next-line)
+- [OSC 133 prompt marks reached the terminal in the regular screen and ended the program status](#osc-133-prompt-marks-reached-the-terminal-in-the-regular-screen-and-ended-the-program-status)
+- [Kitty's F1, F2, F4 and every F-key with a modifier matched no binding](#kittys-f1-f2-f4-and-every-f-key-with-a-modifier-matched-no-binding)
+- [A title is written inside an OSC, so a BEL in a session name ended it](#a-title-is-written-inside-an-osc-so-a-bel-in-a-session-name-ended-it)
+- [A streamed answer was laid out whole on every delta](#a-streamed-answer-was-laid-out-whole-on-every-delta)
+- [PageUp/PageDown scrolled the fullscreen transcript under an open list](#pageuppagedown-scrolled-the-fullscreen-transcript-under-an-open-list)
 
 ## A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
 
@@ -2210,3 +2216,92 @@ Mermaid's tolerant syntax.
 
 **Tests**: `MermaidTransformerTest::testNodeWithSpacedClassAnnotationRendersWithoutWarning`.
 
+## A styled word ending at the wrap took its closing code and the space after it to the next line
+
+**Symptom**: `aaaa **bold** next` wrapped at the end of `bold` drew `aaaa bold` with bold left
+open into the padding, and the next row started `\e[1m\e[22m next` — one column short.
+
+**Cause**: the tokenizer hangs pending codes on the next visible character, so the code closing a
+styled word rides on the space after it (`\e[22m `). `wrapLine()` asked `trim($token) === ''`, which
+that token is not, so the space was a word and moved down with its code (upstream #10925).
+
+**Rule**: a token is whitespace when its text without codes is (`trim(Ansi::strip($token))`). A
+space dropped at a wrap leaves its codes on the line it closes (`codesOf()`), and the tracker takes
+them, so nothing is reopened below. Spaces wider than an empty line keep only their codes; lines are
+right-trimmed before a line-end reset goes on, and every line at the end, as upstream's `trimEnd()`.
+
+**Tests**: `TextWrapTest::testTheCodeClosingAWordAtTheBoundaryStaysOnItsLine` and the three after it,
+`MarkdownTest::testAStyledWordAtTheWrapBoundaryLeavesNoStyleInThePadding`.
+
+## OSC 133 prompt marks reached the terminal in the regular screen and ended the program status
+
+**Symptom**: in the regular screen the terminal dropped pig's OSC 7501 status after each message.
+
+**Cause**: `UserMessageComponent`/`AssistantMessageComponent` put `133;A/B/C` at the start of their
+lines for fullscreen's prompt jumps. `Layout` and `TuiAltScreen` strip them; `TuiMainScreen` wrote
+them, and a terminal reads `133;A` as a new shell prompt.
+
+**Rule**: every renderer strips `OSC133_ZONE_PREFIX` from rendered lines before they are diffed or
+written; only fullscreen's navigation reads them.
+
+**Tests**: `TuiMainScreenTest::testDoesNotWriteOsc133PromptMarkersToTheTerminal`.
+
+## Kitty's F1, F2, F4 and every F-key with a modifier matched no binding
+
+**Symptom**: a binding on `f1` or `ctrl+f5` never fired under the kitty protocol.
+
+**Cause**: the F-keys matched only by their legacy bytes, and `spec()` refused any F-key with a
+modifier. Kitty sends F1/F2/F4 as `\e[P`/`\e[Q`/`\e[S` (`\e[1;<mod>P` with one) and the rest as
+`\e[<n>;<mod>~` (upstream #11468).
+
+**Rule**: F1–F12 have codepoints of their own (upstream's `-21`…`-32`); `parse()` reads `~` numbers
+11–15, 17–21, 23, 24 and the `P/Q/S` form. F3 is never `\e[1;<mod>R` — that is a cursor position
+report. A modified F-key has no legacy spelling. Releases on `P/Q/S` count as releases. F13+ arrive
+as PUA codepoints, which pig's editor already drops with every other unread sequence.
+
+**Tests**: `KeysTest::testKittyFunctionKeysMatchWithAndWithoutModifiers`.
+
+## A title is written inside an OSC, so a BEL in a session name ended it
+
+**Symptom**: a session name holding `\a` or `\e` (session files are input) ended the OSC 0 early
+and sent the rest to the terminal as escape sequences — an OSC 52 clipboard write included.
+
+**Rule**: `setTitle()` — `ProcessTerminal` and `TerminalUi` — writes
+`Width::replaceControlCharacters($title)`: each run of C0/C1 control characters becomes one space,
+as upstream's `replaceControlCharacters()`, which `ProgramStatus` uses for its message too. Byte
+based, so a C1 is its UTF-8 form `\xc2\x80`–`\xc2\x9f` and invalid UTF-8 still loses its controls.
+
+**Tests**: `ProcessTerminalTest::testTheTitleCannotEndItsOscSequence`.
+
+## A streamed answer was laid out whole on every delta
+
+**Symptom**: each delta of a 48KB answer cost ~43ms in `Markdown::render()`, all of it styling and
+wrapping blocks that had not changed.
+
+**Rule**: `Markdown` keeps its last render's top-level blocks by their source (`Lexer::lexBlocks()`,
+upstream's `token.raw`) with the width and the next block's kind they were drawn for, and draws only
+a block whose key or neighbour changed; a code block's highlighting is kept by language and code and
+survives a resize. `setText()` keeps the blocks; `invalidate()` (a theme change) drops them. Upstream
+holds them in a `WeakRef`; here they are held, and the lines are the strings `$cachedLines` already
+holds. Measured: 43ms → 7ms per delta (`MarkdownTest`'s streaming case checks the output against a
+fresh render prefix by prefix). Write and codemode rows keep their highlighting in a `CodeHighlighter`.
+
+**Tests**: `MarkdownTest::testACodeBlockIsHighlightedOnceAcrossStreamedTextAndResizesAndAgainAfterInvalidate`,
+`testReusedBlocksDrawWhatAFreshRenderDraws`, `CodeHighlighterTest`.
+
+## PageUp/PageDown scrolled the fullscreen transcript under an open list
+
+**Symptom**: `tui.select.pageUp`/`pageDown` were configurable and no list read them; in fullscreen
+the same default keys scrolled the transcript behind a focused picker (upstream #7629).
+
+**Rule**: `Keybindings::getSelectPageIndex()` moves a list by its visible page, clamped; `SelectList`,
+`SettingsList`, the editor's completion list and the coding-agent selectors use it. A focused
+component implementing `CapturesViewportInput` that answers true gets the `tui.altScreen.*` keys
+instead of the transcript (`TuiAltScreen::shouldDeferViewportInput()`) — a PHP interface cannot have
+upstream's optional property. A wrapper that is focused in a list's place (`CustomEditor`,
+`SettingsSubmenu`, `LlamaView`, `McpManagerView`) asks what it wraps. With completions open,
+`CustomEditor` hands page keys to the list before app actions, so one bound to Ctrl+V pages.
+
+**Tests**: `TuiAltScreenTest::testDefersViewportKeysToAFocusedListInsteadOfScrollingTheTranscript`,
+`ComponentsTest::testPageKeysMoveTheSelectionAVisiblePageAndStopAtTheEnds`,
+`EditorTest::testPageKeysPageTheCommandListWhileItIsOpen`, `CustomEditorPageKeysTest`.

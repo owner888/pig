@@ -198,8 +198,8 @@ final class Transcript
      * persistence. Upstream's `toToolDeclaration()`.
      *
      * pig's `Tool` is already the declaration, so what is stripped is its one field that is not:
-     * `$typeBox`, which only `Agent\ToolArguments` reads off the live tool. The parameters are a
-     * value copy already; upstream's JSON round trip exists to drop typebox's symbol keys, which a
+     * `$outputSchema`, which only codemode reads off the live tool. The parameters are a value copy
+     * already; upstream's JSON round trip exists to drop typebox's symbol keys, which a
      * PHP array cannot carry.
      */
     public static function toToolDeclaration(Tool $tool): Tool

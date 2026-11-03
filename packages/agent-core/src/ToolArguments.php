@@ -28,6 +28,24 @@ use Pig\Ai\Utils\JsonSchema;
 final class ToolArguments
 {
     /**
+     * Upstream's `prepareToolCallArguments()`: the call with the tool's `prepareArguments()` run
+     * over its arguments, for a tool that has one (`PreparesArguments`); the call itself otherwise,
+     * and for arguments that were not a JSON object, which `validate()` refuses as they are.
+     */
+    public static function prepare(AgentTool $tool, ToolCall $call): ToolCall
+    {
+        if (!$tool instanceof PreparesArguments || $call->argumentsError !== null) {
+            return $call;
+        }
+
+        $prepared = $tool->prepareArguments($call->arguments);
+
+        return $prepared === $call->arguments
+            ? $call
+            : new ToolCall($call->id, $call->name, $prepared, $call->thoughtSignature, $call->namespace);
+    }
+
+    /**
      * @return array<string, mixed> the arguments, with a null for an optional parameter dropped
      *         (see `normalizeOptionalNulls()`), when they check out
      * @throws InvalidToolArguments
@@ -45,33 +63,20 @@ final class ToolArguments
             $arguments = $call->arguments;
         }
 
-        // Upstream's next step: `Value.Convert(tool.parameters, args)`, TypeBox's own conversion,
-        // which converts only the schema nodes TypeBox built — so for upstream's built-in tools
-        // (`Type.Object(…)`) it does real work, and for a plain JSON schema (an extension's, an MCP
-        // server's) it does nothing. pig has no TypeBox; `Tool::$typeBox` marks the built-ins, and
-        // `valueConvert()` below is the part of `Value.Convert` their schemas reach. It is not the
-        // same as the coercion after it: a null for a required string becomes "null" here and ""
-        // there, an empty string for a number becomes 0, "TRUE" and "1" are booleans, and a lone
-        // value where an array belongs is wrapped in one — measured against typebox 1.3.27, the
-        // version upstream pins. Its return value is ignored upstream (it mutates `args` in place);
-        // PHP arrays are values, so the result is kept instead.
-        if ($tool->typeBox) {
-            $converted = self::valueConvert($tool->parameters, $arguments);
+        // Upstream's next two passes, pi-schema's `Coercer` (6536f80, which replaced TypeBox's
+        // `Value.Convert` and the old `coerceWithJsonSchema()`): TypeBox 1.3.27's conversion rules
+        // keyed on JSON Schema structure, then primitive coercion by `type`. **For every schema** —
+        // an extension's or an MCP server's as well as a built-in's; upstream used to convert only
+        // the nodes TypeBox built. PHP arrays are
+        // values, so each pass returns its result where upstream copies on write.
+        $converted = self::valueConvert($tool->parameters, $arguments);
 
-            if (is_array($converted)) {
-                $arguments = $converted;
-            }
+        if (is_array($converted)) {
+            $arguments = $converted;
         }
 
-        // Then `coerceWithJsonSchema(args, tool.parameters)` "for a schema that is not a TypeBox
-        // one" — upstream's test is `Object.getOwnPropertySymbols(tool.parameters).includes(
-        // Symbol.for("TypeBox.Kind"))`, and typebox 1.x marks its schemas with a hidden `~kind`
-        // string property instead of that symbol, so the test is never true and **every** schema,
-        // the built-ins' included, goes through it. Ported line for line below.
-        //
-        // Upstream's non-object branch (`return validator.Check(coerced) ? coerced : args`, no
-        // throw) cannot be reached here: the arguments are always an array, and no coercion turns an
-        // array into anything else.
+        // An object stays an object through both passes, so upstream's non-object branch cannot be
+        // reached here: the arguments are always an array.
         $coerced = self::coerceWithJsonSchema($arguments, $tool->parameters);
 
         if (is_array($coerced)) {
@@ -171,20 +176,44 @@ final class ToolArguments
         return $value;
     }
 
-    // ---- TypeBox's `Value.Convert`, for the schemas the built-in tools use -----------------------
+    // ---- pass 2: TypeBox's conversion rules, keyed on JSON Schema structure --------------------
 
     /**
-     * typebox 1.3.27's `Value.Convert` (`value/convert/*`), for the kinds pig's built-in tool schemas
-     * are made of: `Object`, `Array`, `String`, `Number`, `Integer`, `Boolean` and `Null`, each
-     * recognised here by its `type` (TypeBox recognises its own `~kind`, which a PHP array does not
-     * carry). Any other node — a union, a literal, an enum, a `$ref` — is left as it is, which is
-     * also what TypeBox does with a node it did not build. Each kind is its `From*` and `Try*`
-     * pair; a `Try*` that fails leaves the value unchanged.
+     * pi-schema's `Coercer::convert()`/`convertNode()`: TypeBox 1.3.27's `Value.Convert` rules, read
+     * off the schema's own keywords rather than TypeBox's kind marks — the node's first keyword
+     * among `const`, `enum`, `anyOf`/`oneOf`, `allOf` and `type` (a typeless node with properties
+     * is an object, one with items an array). Each kind is TypeBox's `From*`/`Try*` pair; a `Try*`
+     * that fails leaves the value unchanged.
+     *
+     * One difference: `$ref` is left as it is, because `Ai\Utils\JsonSchema` resolves no
+     * references (see why there); upstream converts through the referenced node.
      */
     private static function valueConvert(mixed $schema, mixed $value): mixed
     {
-        if (!is_array($schema)) {
+        if (!is_array($schema) || is_string($schema['$ref'] ?? null)) {
             return $value;
+        }
+
+        if (array_key_exists('const', $schema)) {
+            return self::convertLiteral($schema['const'], $value);
+        }
+
+        if (is_array($schema['enum'] ?? null)) {
+            return self::convertEnum($schema, $schema['enum'], $value);
+        }
+
+        foreach (['anyOf', 'oneOf'] as $union) {
+            if (is_array($schema[$union] ?? null) && array_is_list($schema[$union])) {
+                return self::convertUnion($schema, $schema[$union], $value);
+            }
+        }
+
+        if (is_array($schema['allOf'] ?? null) && array_is_list($schema['allOf'])) {
+            foreach ($schema['allOf'] as $member) {
+                $value = self::valueConvert($member, $value);
+            }
+
+            return self::convertMembers($schema, $value);
         }
 
         return match ($schema['type'] ?? null) {
@@ -196,15 +225,104 @@ final class ToolArguments
             'integer' => ($number = self::tryNumber($value)) === null ? $value : self::truncate($number),
             'boolean' => ($boolean = self::tryBoolean($value)) === null ? $value : $boolean['value'],
             'null' => self::tryNull($value) ? null : $value,
+            null => match (true) {
+                isset($schema['properties']) || isset($schema['patternProperties']) => self::convertObject($schema, $value),
+                isset($schema['items']) || isset($schema['prefixItems']) => self::convertArray($schema, $value),
+                default => $value,
+            },
             default => $value,
         };
     }
 
+    /** `convertLiteral()`: a value of another type that converts to exactly the literal becomes it. */
+    private static function convertLiteral(mixed $literal, mixed $value): mixed
+    {
+        if ($literal === $value) {
+            return $value;
+        }
+
+        $result = match (true) {
+            is_string($literal) => self::tryString($value),
+            is_int($literal), is_float($literal) => self::tryNumber($value),
+            is_bool($literal) => self::tryBoolean($value)['value'] ?? null,
+            default => null,
+        };
+
+        // JS `===` on numbers: 1 and 1.0 are one value.
+        $same = (is_int($literal) || is_float($literal)) && (is_int($result) || is_float($result))
+            ? $result == $literal
+            : $result === $literal;
+
+        return $result !== null && $same ? $literal : $value;
+    }
+
     /**
-     * `FromObject`: an object's declared properties that it has, each converted against its own
-     * schema; then, when `additionalProperties` is a schema, the keys no property names. TypeBox
-     * matches keys with `new RegExp(`^${key}$`)`, which for the built-ins' plain names is equality.
-     * Anything that is not an object comes back unchanged.
+     * `convertEnum()`: a member stays; else the first member the value converts to that the node
+     * accepts.
+     *
+     * @param array<string, mixed> $schema
+     * @param array<mixed>         $members
+     */
+    private static function convertEnum(array $schema, array $members, mixed $value): mixed
+    {
+        if (in_array($value, $members, true)) {
+            return $value;
+        }
+
+        foreach ($members as $member) {
+            $candidate = self::convertLiteral($member, $value);
+
+            if ($candidate !== $value && JsonSchema::errors($schema, $candidate) === []) {
+                return $candidate;
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * `convertUnion()`: a value one branch accepts stays; else the first branch's conversion the
+     * whole union accepts; else the value. A node that also declares members converts them into
+     * each candidate before it is checked.
+     *
+     * @param array<string, mixed> $schema
+     * @param list<mixed>          $branches
+     */
+    private static function convertUnion(array $schema, array $branches, mixed $value): mixed
+    {
+        foreach ($branches as $branch) {
+            if (is_array($branch) && JsonSchema::errors($branch, $value) === []) {
+                return self::convertMembers($schema, $value);
+            }
+        }
+
+        foreach ($branches as $branch) {
+            $candidate = self::convertMembers($schema, self::valueConvert($branch, $value));
+
+            if (JsonSchema::errors($schema, $candidate) === []) {
+                return $candidate;
+            }
+        }
+
+        return self::convertMembers($schema, $value);
+    }
+
+    /**
+     * `convertMembers()`: the object members of a union or intersection node, when it declares any.
+     *
+     * @param array<string, mixed> $schema
+     */
+    private static function convertMembers(array $schema, mixed $value): mixed
+    {
+        return isset($schema['properties']) || isset($schema['patternProperties']) || isset($schema['additionalProperties'])
+            ? self::convertObject($schema, $value)
+            : $value;
+    }
+
+    /**
+     * `convertObject()`: each key the object has, against its property, each `patternProperties`
+     * schema whose pattern matches it, and `additionalProperties` (when a schema) for a key neither
+     * names. Anything that is not an object comes back unchanged.
      *
      * @param array<string, mixed> $schema
      */
@@ -215,38 +333,80 @@ final class ToolArguments
         }
 
         $properties = is_array($schema['properties'] ?? null) ? $schema['properties'] : [];
+        $patterns = is_array($schema['patternProperties'] ?? null) ? $schema['patternProperties'] : [];
+        $additional = is_array($schema['additionalProperties'] ?? null) ? $schema['additionalProperties'] : null;
 
-        foreach ($properties as $key => $property) {
-            if (array_key_exists((string) $key, $value)) {
-                $value[(string) $key] = self::valueConvert($property, $value[(string) $key]);
+        foreach ($value as $key => $next) {
+            $matched = array_key_exists((string) $key, $properties);
+
+            if ($matched) {
+                $next = self::valueConvert($properties[(string) $key], $next);
             }
-        }
 
-        $additional = $schema['additionalProperties'] ?? null;
-
-        if (is_array($additional)) {
-            foreach ($value as $key => $propertyValue) {
-                if (!array_key_exists((string) $key, $properties)) {
-                    $value[$key] = self::valueConvert($additional, $propertyValue);
+            foreach ($patterns as $pattern => $patternSchema) {
+                if (self::matches((string) $pattern, (string) $key)) {
+                    $matched = true;
+                    $next = self::valueConvert($patternSchema, $next);
                 }
             }
+
+            if (!$matched && $additional !== null) {
+                $next = self::valueConvert($additional, $next);
+            }
+
+            $value[$key] = $next;
         }
 
         return $value;
     }
 
     /**
-     * `FromArray`: `TryArray` — an array as it is, **anything else wrapped in one** — then every
-     * item converted against `items`.
+     * `convertArray()`: a tuple (`prefixItems`, or an `items` list) converts the items of an array
+     * and never wraps; otherwise an array's items are converted against `items`, and **anything
+     * else is wrapped in one** and converted as its single item.
      *
      * @param array<string, mixed> $schema
-     * @return list<mixed>
      */
-    private static function convertArray(array $schema, mixed $value): array
+    private static function convertArray(array $schema, mixed $value): mixed
     {
-        $items = is_array($value) && array_is_list($value) ? $value : [$value];
+        $items = $schema['items'] ?? null;
+        // A draft-7 `items` list is the tuple and has no rest; after `prefixItems` the rest is `items`.
+        $draft7Tuple = is_array($items) && array_is_list($items) && $items !== [];
+        $prefix = $draft7Tuple ? $items : (is_array($schema['prefixItems'] ?? null) ? $schema['prefixItems'] : null);
+        $isList = is_array($value) && array_is_list($value);
 
-        return array_map(static fn (mixed $item): mixed => self::valueConvert($schema['items'] ?? null, $item), $items);
+        if ($prefix !== null) {
+            if (!$isList) {
+                return $value;
+            }
+
+            $rest = $draft7Tuple ? null : $items;
+
+            foreach ($value as $index => $item) {
+                $itemSchema = $prefix[$index] ?? $rest;
+                $value[$index] = $itemSchema === null ? $item : self::valueConvert($itemSchema, $item);
+            }
+
+            return $value;
+        }
+
+        if ($isList) {
+            return $items === null ? $value : array_map(static fn (mixed $item): mixed => self::valueConvert($items, $item), $value);
+        }
+
+        return [self::valueConvert($items, $value)];
+    }
+
+    /** A `patternProperties` key against a property name, as `JsonSchema` matches `pattern`. */
+    private static function matches(string $pattern, string $key): bool
+    {
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            return preg_match('#' . str_replace('#', '\\#', $pattern) . '#u', $key) === 1;
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /** `TryString`: a number or boolean as JS prints it, null as "null", a string as itself. */

@@ -31,13 +31,25 @@ final class VendoredXtermTest extends TestCase
         }
     }
 
-    public function testTheTerminalsImportTheOfficialModulesByTheirOwnNames(): void
+    /**
+     * By their own names, through `xterm-loader.js`: the terminals fetch xterm when one is opened,
+     * not with the page — 344KB of the page's 894KB. An `import` of it anywhere else would bring
+     * it back into every page load, so the loader is the only place that names it.
+     */
+    public function testTheTerminalsLoadTheOfficialModulesByTheirOwnNamesWhenOpened(): void
     {
+        $loader = (string) file_get_contents(self::assets() . 'js/xterm-loader.js');
+        $this->assertStringContainsString('import("./vendor/xterm.mjs")', $loader);
+        $this->assertStringContainsString('import("./vendor/addon-fit.mjs")', $loader);
+        $this->assertStringContainsString('"/assets/css/vendor/xterm.css"', $loader);
+
         foreach (['js/components/WebTerminal.js', 'js/components/NodeWorkbench.js'] as $component) {
             $source = (string) file_get_contents(self::assets() . $component);
-            $this->assertStringContainsString('import { Terminal } from "../vendor/xterm.mjs";', $source, $component);
-            $this->assertStringContainsString('import { FitAddon } from "../vendor/addon-fit.mjs";', $source, $component);
+            $this->assertStringContainsString('import { loadXterm } from "../xterm-loader.js";', $source, $component);
+            $this->assertStringNotContainsString('vendor/xterm.mjs', $source, $component);
         }
+
+        $this->assertStringNotContainsString('xterm.css', (string) file_get_contents(self::assets() . 'index.html'));
     }
 
     private static function assets(): string

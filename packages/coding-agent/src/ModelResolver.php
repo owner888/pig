@@ -35,7 +35,7 @@ final class ModelResolver
         'amazon-bedrock' => 'us.anthropic.claude-opus-4-6-v1',
         'ant-ling' => 'Ring-2.6-1T',
         'anthropic' => 'claude-opus-4-8',
-        'openai' => 'gpt-5.5',
+        'openai' => 'gpt-6.1-sol',
         'azure' => 'gpt-5.4',
         'openai-codex' => 'gpt-6.1-sol',
         'radius' => 'balanced',

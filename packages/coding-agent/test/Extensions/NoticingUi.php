@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use Closure;
+use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
@@ -62,7 +63,7 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
-    public function custom(Closure $factory): mixed
+    public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed
     {
         return null;
     }

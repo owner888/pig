@@ -9,15 +9,17 @@ use Pig\Agent\AgentError;
 /**
  * Working out what an edit changed, and drawing it.
  *
- * Upstream uses the `diff` npm package. Nothing general is needed here: an edit replaces
- * one contiguous run of text with another, so the lines before the change are identical
- * and so are the lines after it. Trimming the common head and tail gives the exact
- * minimal diff for that, in one pass and without an LCS table.
+ * Upstream uses the `diff` npm package. Nothing general is needed here: every edit replaces
+ * a run of text whose place in the file is known, so the lines between two edits are
+ * identical by construction. Each group of edits that touches the same lines becomes one
+ * hunk, trimmed of its common head and tail — the exact minimal diff for that, without an
+ * LCS table.
  *
- * It is not a general diff and does not pretend to be. Given two files that differ in
- * several places it produces one block covering all of them — correct, but not the
- * smallest description. If something ever needs a real diff, that is the point to write
- * one rather than to stretch this.
+ * `render()` is not a general diff and does not pretend to be. Given two files that differ
+ * in several places it produces one block covering all of them — correct, but not the
+ * smallest description. That is why `renderEdits()` takes the replacements rather than
+ * only the two texts: with several edits in one call the places are known, and a block
+ * from line 10 to line 900 would show 890 untouched lines as removed and re-added.
  */
 final class EditDiff
 {
@@ -86,9 +88,9 @@ final class EditDiff
      *   matters: `"a\nb\n"` against `"a\nb"` comes out of upstream as `-2 b` then `+2 b` — the
      *   same text removed and re-added, a diff that says a line changed while showing it did
      *   not. Here the empty last line goes away and is shown going away.
-     * - **Several separate edits come out as one block** (152 pairs), which is the limitation in
-     *   the class docblock above and cannot arise from `EditTool`: an edit replaces one
-     *   contiguous run, so those pairs only exist because the corpus made them.
+     * - **Several separate changes come out as one block** (152 pairs), which is the limitation in
+     *   the class docblock above. `EditTool` does not reach it: an edit call with several
+     *   separate changes is drawn by `renderEdits()`, one hunk each.
      *
      * @return array{0: string, 1: int|null}
      */
@@ -105,48 +107,170 @@ final class EditDiff
         $prefix = self::commonPrefix($oldLines, $newLines);
         $suffix = self::commonSuffix($oldLines, $newLines, $prefix);
 
-        $removed = array_slice($oldLines, $prefix, count($oldLines) - $suffix - $prefix);
-        $added = array_slice($newLines, $prefix, count($newLines) - $suffix - $prefix);
+        return self::emit($oldLines, $newLines, [[
+            $prefix,
+            count($oldLines) - $suffix - $prefix,
+            $prefix,
+            count($newLines) - $suffix - $prefix,
+        ]], $context);
+    }
 
-        if ($removed === [] && $added === []) {
+    /**
+     * The diff of an edit call, one hunk per group of replacements that share a line.
+     *
+     * Upstream's `generateDiffString()` gets the same hunks from a general line diff; here they
+     * are read off the replacements `apply()` matched, since each says where it is. A single
+     * group is `render()`'s case and goes there, so one edit draws exactly as it always has.
+     *
+     * Context between two hunks follows upstream: all of it when there are no more than twice
+     * `$context` lines, otherwise `$context` after the first, an ellipsis and `$context` before
+     * the second. Context is numbered in the new file, as `render()` explains.
+     *
+     * @param string                                  $old          the LF text the edits matched
+     * @param string                                  $new          what `apply()` made of it
+     * @param list<array{0: int, 1: int, 2: string}> $replacements `apply()`'s, in file order
+     * @return array{0: string, 1: int|null}
+     */
+    public static function renderEdits(string $old, string $new, array $replacements, int $context = self::CONTEXT): array
+    {
+        // Each replacement as the lines of the old text it touches: from the line it starts on to
+        // the line its end lands on, which is the next line when it ends on a line break — the
+        // replacement's tail is joined to whatever follows it there.
+        $groups = [];
+
+        foreach ($replacements as [$at, $length, $text]) {
+            $first = substr_count($old, "\n", 0, $at);
+            $last = substr_count($old, "\n", 0, $at + $length);
+            $current = count($groups) - 1;
+
+            if ($current >= 0 && $first <= $groups[$current][1]) {
+                $groups[$current][1] = max($groups[$current][1], $last);
+                $groups[$current][2][] = [$at, $length, $text];
+                continue;
+            }
+
+            $groups[] = [$first, $last, [[$at, $length, $text]]];
+        }
+
+        if (count($groups) <= 1) {
+            return self::render($old, $new, $context);
+        }
+
+        $oldLines = explode("\n", $old);
+        $newLines = explode("\n", $new);
+        $starts = [0];
+
+        foreach ($oldLines as $index => $line) {
+            $starts[$index + 1] = $starts[$index] + strlen($line) + 1;
+        }
+
+        $hunks = [];
+        $shift = 0;
+
+        foreach ($groups as [$first, $last, $inside]) {
+            $from = $starts[$first];
+            $region = substr($old, $from, $starts[$last + 1] - 1 - $from);
+
+            // Back to front, so each offset still points where it did in the original.
+            foreach (array_reverse($inside) as [$at, $length, $text]) {
+                $region = substr($region, 0, $at - $from) . $text . substr($region, $at - $from + $length);
+            }
+
+            $removed = array_slice($oldLines, $first, $last - $first + 1);
+            $added = explode("\n", $region);
+            $prefix = self::commonPrefix($removed, $added);
+            $suffix = self::commonSuffix($removed, $added, $prefix);
+
+            $hunks[] = [
+                $first + $prefix,
+                count($removed) - $suffix - $prefix,
+                $first + $shift + $prefix,
+                count($added) - $suffix - $prefix,
+            ];
+            $shift += count($added) - count($removed);
+        }
+
+        return self::emit($oldLines, $newLines, $hunks, $context);
+    }
+
+    /**
+     * Draw hunks, each `[old start, old count, new start, new count]` with 0-based starts. A hunk
+     * that changes nothing — a group whose replacements gave back their own text — is left out.
+     *
+     * @param list<string>                             $oldLines
+     * @param list<string>                             $newLines
+     * @param list<array{0: int, 1: int, 2: int, 3: int}> $hunks in file order
+     * @return array{0: string, 1: int|null}
+     */
+    private static function emit(array $oldLines, array $newLines, array $hunks, int $context): array
+    {
+        $hunks = array_values(array_filter($hunks, static fn (array $hunk): bool => $hunk[1] > 0 || $hunk[3] > 0));
+
+        if ($hunks === []) {
             return ['', null];
         }
 
         $width = strlen((string) max(count($oldLines), count($newLines)));
         $blank = str_repeat(' ', $width);
         $output = [];
+        $line = static fn (string $mark, int $index, string $text): string
+            => $mark . self::number($index + 1, $width) . ' ' . $text;
+        // Where the unchanged run before the next hunk starts, in the new file.
+        $after = null;
 
-        // Leading context: the last few unchanged lines, with an ellipsis for the rest.
-        $leading = min($prefix, $context);
+        foreach ($hunks as [$oldStart, $oldCount, $newStart, $newCount]) {
+            $gap = $newStart - ($after ?? 0);
 
-        if ($prefix > $leading) {
-            $output[] = " {$blank} ...";
+            if ($after === null) {
+                // Leading context: the last few unchanged lines, with an ellipsis for the rest.
+                $leading = min($gap, $context);
+
+                if ($gap > $leading) {
+                    $output[] = " {$blank} ...";
+                }
+
+                for ($index = $newStart - $leading; $index < $newStart; $index++) {
+                    $output[] = $line(' ', $index, $newLines[$index]);
+                }
+            } elseif ($gap <= $context * 2) {
+                for ($index = $after; $index < $newStart; $index++) {
+                    $output[] = $line(' ', $index, $newLines[$index]);
+                }
+            } else {
+                for ($index = $after; $index < $after + $context; $index++) {
+                    $output[] = $line(' ', $index, $newLines[$index]);
+                }
+
+                $output[] = " {$blank} ...";
+
+                for ($index = $newStart - $context; $index < $newStart; $index++) {
+                    $output[] = $line(' ', $index, $newLines[$index]);
+                }
+            }
+
+            for ($index = $oldStart; $index < $oldStart + $oldCount; $index++) {
+                $output[] = $line('-', $index, $oldLines[$index]);
+            }
+
+            for ($index = $newStart; $index < $newStart + $newCount; $index++) {
+                $output[] = $line('+', $index, $newLines[$index]);
+            }
+
+            $after = $newStart + $newCount;
         }
 
-        for ($index = $prefix - $leading; $index < $prefix; $index++) {
-            $output[] = ' ' . self::number($index + 1, $width) . ' ' . $oldLines[$index];
-        }
-
-        foreach ($removed as $offset => $line) {
-            $output[] = '-' . self::number($prefix + $offset + 1, $width) . ' ' . $line;
-        }
-
-        foreach ($added as $offset => $line) {
-            $output[] = '+' . self::number($prefix + $offset + 1, $width) . ' ' . $line;
-        }
-
+        $suffix = count($newLines) - $after;
         $trailing = min($suffix, $context);
-        $start = count($newLines) - $suffix;
 
-        for ($index = $start; $index < $start + $trailing; $index++) {
-            $output[] = ' ' . self::number($index + 1, $width) . ' ' . $newLines[$index];
+        for ($index = $after; $index < $after + $trailing; $index++) {
+            $output[] = $line(' ', $index, $newLines[$index]);
         }
 
         if ($suffix > $trailing) {
             $output[] = " {$blank} ...";
         }
 
-        return [implode("\n", $output), $prefix + 1];
+        return [implode("\n", $output), $hunks[0][2] + 1];
     }
 
     private static function number(int $line, int $width): string
@@ -155,58 +279,100 @@ final class EditDiff
     }
 
     /**
-     * The content with the one occurrence of $find swapped for $replace.
+     * The content with every edit's `oldText` swapped for its `newText`.
+     *
+     * Upstream's `applyEditsToNormalizedContent()`: **every edit is matched against the content
+     * as it was handed in, not against what the edits before it made of it**, each must match
+     * exactly once, and two edits whose matches overlap are refused rather than applied in some
+     * order — the model meant two regions, and if they overlap it does not know which text it
+     * is replacing. The same edit twice is that refusal too: both match the one place.
      *
      * Shared with `preview()` below and with `EditTool` rather than written twice: what
-     * counts as a match, how many is too many and what to say about it are the same three
+     * counts as a match, how many is too many and what to say about it are the same
      * questions whether or not the file is about to be written. Upstream has two readers
      * too, and the sentences have already drifted — `edit.ts` says `No changes made to`
      * where `computeEditDiff()` says `No changes would be made to`, which is one fact
      * worded twice and the beginning of them meaning different things.
      *
-     * @param string $path as the model wrote it — it is in every message
-     * @throws AgentError when the text is missing, is not unique, or changes nothing
+     * Without upstream's fuzzy pass (trailing whitespace, smart quotes, Unicode dashes), as
+     * before: a byte that is not UTF-8 survives here because nothing is normalised.
+     *
+     * @param string                                          $content LF text
+     * @param list<array{oldText: string, newText: string}> $edits   line endings are made LF here
+     * @param string                                          $path    as the model wrote it — it is in every message
+     * @return array{0: string, 1: list<array{0: int, 1: int, 2: string}>} the new content, and each
+     *         replacement as `[offset, length, newText]` in file order, for `renderEdits()`
+     * @throws AgentError when a text is empty, missing or not unique, two overlap, or nothing changes
      */
-    public static function apply(string $content, string $find, string $replace, string $path): string
+    public static function apply(string $content, array $edits, string $path): array
     {
-        if ($find === '') {
-            throw new AgentError('oldText is empty. Give the exact text to replace.');
+        $several = count($edits) > 1;
+        $replacements = [];
+
+        foreach (array_values($edits) as $index => $edit) {
+            $find = self::toLf($edit['oldText']);
+            // Which edit, when there is more than one to choose from.
+            $which = $several ? "edits[{$index}].oldText" : 'oldText';
+
+            if ($find === '') {
+                throw new AgentError("{$which} is empty. Give the exact text to replace.");
+            }
+
+            $count = substr_count($content, $find);
+
+            if ($count === 0) {
+                throw new AgentError(
+                    ($several ? "Could not find {$which} in {$path}." : "Could not find that exact text in {$path}.")
+                        . ' It must match the file exactly, including whitespace and line breaks — '
+                        . 'read the file and copy the text from it.',
+                );
+            }
+
+            if ($count > 1) {
+                throw new AgentError(
+                    ($several ? "Found {$count} occurrences of {$which} in {$path}." : "Found {$count} occurrences of that text in {$path}.")
+                        . ' It has to be unique — include the lines around it so there is only one match.',
+                );
+            }
+
+            $replacements[] = [(int) strpos($content, $find), strlen($find), self::toLf($edit['newText']), $index];
         }
 
-        $count = substr_count($content, $find);
+        usort($replacements, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
 
-        if ($count === 0) {
-            throw new AgentError(
-                "Could not find that exact text in {$path}. It must match the file exactly, "
-                    . 'including whitespace and line breaks — read the file and copy the text from it.',
-            );
+        for ($next = 1; $next < count($replacements); $next++) {
+            [$at, $length, , $earlier] = $replacements[$next - 1];
+
+            if ($at + $length > $replacements[$next][0]) {
+                throw new AgentError(
+                    "edits[{$earlier}] and edits[{$replacements[$next][3]}] overlap in {$path}. "
+                        . 'Merge them into one edit, or make each oldText cover a separate region.',
+                );
+            }
         }
 
-        if ($count > 1) {
-            throw new AgentError(
-                "Found {$count} occurrences of that text in {$path}. It has to be unique — "
-                    . 'include the lines around it so there is only one match.',
-            );
+        // Spliced rather than replaced, back to front so each offset still holds: str_replace
+        // is fine, but preg_replace and friends read `$1` in a replacement, and a model editing
+        // a shell script or a regex will sooner or later hand one over.
+        $new = $content;
+
+        foreach (array_reverse($replacements) as [$at, $length, $replace]) {
+            $new = substr($new, 0, $at) . $replace . substr($new, $at + $length);
         }
-
-        $at = strpos($content, $find);
-
-        // Spliced rather than replaced: str_replace is fine, but preg_replace and friends
-        // read `$1` in a replacement, and a model editing a shell script or a regex will
-        // sooner or later hand one over.
-        $new = substr($content, 0, (int) $at) . $replace . substr($content, (int) $at + strlen($find));
 
         if ($new === $content) {
-            throw new AgentError("No change made to {$path}: newText is identical to oldText.");
+            throw new AgentError($several
+                ? "No change made to {$path}: every newText is identical to its oldText."
+                : "No change made to {$path}: newText is identical to oldText.");
         }
 
-        return $new;
+        return [$new, array_map(static fn (array $replacement): array => array_slice($replacement, 0, 3), $replacements)];
     }
 
     /**
-     * What that edit would do, read off the file as it stands, without doing it.
+     * What those edits would do, read off the file as it stands, without doing them.
      *
-     * Upstream's `computeEditDiff`, and it is the reason this file reads from disk at all.
+     * Upstream's `computeEditsDiff`, and it is the reason this file reads from disk at all.
      * The diff is drawn as soon as the model has finished *writing* the call rather than
      * when the call returns, and the gap between those two is not the moment it sounds
      * like: it is however long a `tool_call` hook takes to ask whether the edit may run.
@@ -217,10 +383,11 @@ final class EditDiff
      * comes back as the same `AgentError` the tool would raise, from the same place, so the
      * preview cannot say one thing and the attempt another.
      *
+     * @param list<array{oldText: string, newText: string}> $edits
      * @return array{0: string, 1: int|null} the diff, and the line the change starts on
      * @throws AgentError
      */
-    public static function preview(string $path, string $find, string $replace, string $cwd): array
+    public static function preview(string $path, array $edits, string $cwd): array
     {
         $absolute = Paths::resolve($path, $cwd);
 
@@ -238,8 +405,9 @@ final class EditDiff
         // text either way. The mark still comes off, or a match on the first line fails.
         [, $content] = self::splitBom($raw);
         $old = self::toLf($content);
+        [$new, $replacements] = self::apply($old, $edits, $path);
 
-        return self::render($old, self::apply($old, self::toLf($find), self::toLf($replace), $path));
+        return self::renderEdits($old, $new, $replacements);
     }
 
     /**

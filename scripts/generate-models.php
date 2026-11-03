@@ -127,8 +127,8 @@ const DIRECT = [
     'moonshotai' => ['MOONSHOTAI_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.ai/v1'],
     'moonshotai-cn' => ['MOONSHOTAI_CN_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.cn/v1'],
     'nvidia' => ['NVIDIA_MODELS', Api::OpenAiCompletions, 'https://integrate.api.nvidia.com/v1'],
-    'opencode' => ['OPENCODE_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/v1'],
-    'opencode-go' => ['OPENCODE_GO_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/go/v1'],
+    'opencode' => ['OPENCODE_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/openai/v1'],
+    'opencode-go' => ['OPENCODE_GO_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/inference/go/openai/v1'],
     'qwen-token-plan' => ['QWEN_TOKEN_PLAN_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
@@ -209,6 +209,7 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = [
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-6.1-sol',
+    'gpt-6.1-terra',
 ];
 
 /** Upstream's `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS`: the `openai` rows that get the 272k tier. */
@@ -224,6 +225,7 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = [
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-6.1-sol',
+    'gpt-6.1-terra',
 ];
 
 /**
@@ -241,6 +243,7 @@ const OPENAI_STANDARD_COSTS = [
     'gpt-6-luna' => ['input' => 0.1, 'out' => 0.5, 'cacheRead' => 0.01, 'cacheWrite' => 0.125],
     'gpt-6-sol' => ['input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.2, 'cacheWrite' => 2.5],
     'gpt-6.1-sol' => ['input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.1, 'cacheWrite' => 2.5],
+    'gpt-6.1-terra' => ['input' => 1.0, 'out' => 5.0, 'cacheRead' => 0.05, 'cacheWrite' => 1.25],
 ];
 
 /**
@@ -269,6 +272,7 @@ const AZURE_DEEPSEEK_V4_PRO_COST = ['input' => 1.925, 'out' => 3.828, 'cacheRead
  * accepts for ChatGPT accounts. GPT-5.5 and GPT-5.3 Codex Spark are rejected with 'not supported
  * when using Codex with a ChatGPT account' (#11173). GPT-5.6 and GPT-6 use Codex's 272k default
  * catalog limit. GPT-6.1 Sol uses the 500k default returned by /backend-api/codex/models (#10840)."
+ * GPT-6.1 Terra is served with the same 500k window (`CODEX_GPT_61_CONTEXT`).
  * id => [name, window, takes images, price] — the price `withOpenAiLongContextPricing()` of
  * `OPENAI_STANDARD_COSTS[id]` where it names `standard`. `CODEX_MAX_TOKENS` (128000) for every one.
  *
@@ -276,6 +280,7 @@ const AZURE_DEEPSEEK_V4_PRO_COST = ['input' => 1.925, 'out' => 3.828, 'cacheRead
  */
 const CODEX_MODELS = [
     'gpt-6.1-sol' => ['GPT-6.1 Sol', 500_000, true, 'standard', true],
+    'gpt-6.1-terra' => ['GPT-6.1 Terra', 500_000, true, 'standard', true],
     'gpt-6-astra' => ['GPT-6 Astra', 272_000, true, 'standard', true],
     'gpt-6-sol' => ['GPT-6 Sol', 272_000, true, 'standard', true],
     'gpt-6-luna' => ['GPT-6 Luna', 272_000, true, 'standard', true],
@@ -486,8 +491,8 @@ const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
  * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float, compat?: array<string, string|bool>}>
  */
 const HAND_KEPT_CLASSIFIERS = [
-    'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
-    'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/systemone/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/systemone/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     // "Cloudflare-hosted Clef decision models. They take up to four PNG, JPEG, or WebP images as data
     // URLs. Clef Omni also takes audio and video, which classifier contexts do not carry."
     // Pricing and context: https://developers.cloudflare.com/workers-ai/models/clef/,
@@ -648,6 +653,11 @@ const OVERRIDES = [
         'kind' => 'add',
         'why' => 'upstream adds it until models.dev lists it',
         'row' => ['name' => 'GPT-6.1 Sol', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6.1-sol']],
+    ],
+    'openai/gpt-6.1-terra' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-6.1 Terra', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6.1-terra']],
     ],
     'openai/gpt-6-astra' => [
         'kind' => 'add',
@@ -1046,12 +1056,12 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
  * null/undefined/@ai-sdk/openai-compatible → openai-completions" (`@ai-sdk/alibaba` too), then its fix
  * for OpenCode Go: "models.dev reports these models as @ai-sdk/anthropic, but the OpenCode Go
  * endpoints either don't accept Anthropic SDK auth (MiniMax M2.7) or are served through the
- * OpenAI-compatible /v1/chat/completions path (Qwen 3.5/3.6)."
+ * OpenAI-compatible /openai/v1/chat/completions path (Qwen 3.5/3.6)."
  */
 function opencodeApi(string $provider, string $id, mixed $npm): Api
 {
     // "models.dev reports these models as @ai-sdk/anthropic, but OpenCode Go serves them through the
-    // OpenAI-compatible /v1/chat/completions path." MiniMax M2.7 is no longer one of them: on the
+    // OpenAI-compatible /openai/v1/chat/completions path." MiniMax M2.7 is no longer one of them: on the
     // inference endpoint Chat Completions answers `ModelProtocolUnsupported`.
     if ($provider === 'opencode-go' && in_array($id, ['qwen3.5-plus', 'qwen3.6-plus'], true)) {
         return Api::OpenAiCompletions;
@@ -1575,7 +1585,8 @@ function nvidiaIds(array $catalogue, ?string $file): array
 /**
  * Upstream's `fetchOpenRouterModels()`, the chat half of `buildOpenRouterCatalog()`: every model of
  * the default listing whose `supported_parameters` has `tools`; images when `architecture.modality`
- * mentions them; `anthropic/…` models (not `:batch` ones) on the Messages API; reasoning when
+ * mentions them; `anthropic/…` models and the `~anthropic/claude-*-latest` aliases (not `:batch` ones)
+ * on the Messages API; reasoning when
  * `supported_parameters` has `reasoning`; the map `getOpenRouterThinkingLevelMap()`'s; the price per
  * million from the price per token, its `min_prompt_tokens` overrides as tiers ("Time-of-day
  * overrides are skipped because ModelCost cannot express them"); the window and output cap
@@ -1601,7 +1612,8 @@ function openRouterRows(?string $file): array
         }
 
         $id = $model['id'];
-        $messages = str_starts_with($id, 'anthropic/') && !str_ends_with($id, ':batch');
+        // "Includes the `~anthropic/claude-*-latest` aliases, which OpenRouter's Messages endpoint accepts."
+        $messages = preg_match('#^~?anthropic/#', $id) === 1 && !str_ends_with($id, ':batch');
         $map = getOpenRouterThinkingLevelMap(is_array($model['reasoning'] ?? null) ? $model['reasoning'] : null);
         [$prices, $tiers] = openRouterCost(is_array($model['pricing'] ?? null) ? $model['pricing'] : []);
 

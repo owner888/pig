@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\Version;
 use Throwable;
 
@@ -93,6 +94,26 @@ final class UpdateCheck
 
         if ($newest === null || version_compare($newest, $current, '<=')) {
             return null;
+        }
+
+        return $newest;
+    }
+
+    /**
+     * Upstream's `getSelfUpdatePlan()` lookup, for `pig update` with a configured command: the
+     * newest release, where a failure is an error rather than nothing to say — the command is
+     * about to be run with this version in it.
+     */
+    public function latest(): string
+    {
+        try {
+            $newest = $this->newest();
+        } catch (Throwable $e) {
+            throw new CodingAgentError('Could not determine latest pig version: ' . $e->getMessage(), 0, $e);
+        }
+
+        if ($newest === null) {
+            throw new CodingAgentError('Could not determine latest pig version.');
         }
 
         return $newest;

@@ -793,6 +793,96 @@ On Unix, a process spawned by `proc_open` / `fork` inherits every open descripto
 **Root cause**: upstream's built-in tools are TypeBox schemas; `validateToolArguments()` runs `Value.Convert` first (converting only TypeBox-built nodes), then `coerceWithJsonSchema()` (whose TypeBox check uses `Symbol.for("TypeBox.Kind")`, which typebox 1.x no longer sets, so every schema goes through it). pig had no `Value.Convert`.
 
 **Trap rules**:
-- Built-in tools' `Tool` carries `typeBox: true`, and `ToolArguments::valueConvert()` runs only for them; plain schemas from extensions and MCP do not go through it.
+- Superseded by "Every tool schema is converted, not only the built-ins'" below: `valueConvert()` now runs for every schema.
 - Expected values are what typebox 1.3.27 (the version upstream pins) actually does, not what one remembers.
 - Tests: `ToolArgumentsTest::testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`, `StrictToolSamplingTest::testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre`.
+
+## Every tool schema is converted, not only the built-ins'
+
+**Symptom**: an extension's or an MCP server's tool got different argument conversion from a built-in: `null` for a required string became `""` rather than `"null"`, `"1"` was refused for a boolean, `"42.1"` for an integer, a lone `"7"` for an array.
+
+**Root cause**: upstream replaced TypeBox's `Value.Convert` plus `coerceWithJsonSchema()` with pi-schema's `Coercer` (6536f80): optional nulls, then TypeBox 1.3.27's rules keyed on JSON Schema structure (`const`, `enum`, `anyOf`/`oneOf`, `allOf`, `type`, typeless objects and arrays, `patternProperties`, tuples), then primitive coercion by type — for every schema. pig ran its `valueConvert()` only behind `Tool::$typeBox`.
+
+**Trap rules**:
+- `ToolArguments::validate()` runs `valueConvert()` then `coerceWithJsonSchema()` unconditionally; `Tool::$typeBox` is gone.
+- A union takes a value a branch accepts, else the first branch's *conversion* the union accepts — so `anyOf: [integer, boolean]` with `"false"` is `0`, not `false`.
+- `$ref` is not converted: `Ai\Utils\JsonSchema` resolves no references.
+- The messages are still `JsonSchema`'s AJV wording; upstream's are now pi-schema's (`expected number, got string`, `missing`) with dotted paths.
+- Tests: `ToolArgumentsTest::testAPlainSchemaIsConvertedLikeABuiltInOne`, `testAUnionThatFitsNoneIsCoercedForTheFirstTypeThatChangesIt`.
+
+## Hook and custom-tool `exec()` output is capped
+
+**Symptom**: a command that printed without end (`yes`, a runaway log) grew the hook's string until PHP hit `memory_limit` and the session died.
+
+**Root cause**: upstream's `execCommand()` caps stdout and stderr together at `maxBuffer` (c466a35, 256 MiB): the command is killed, `truncated: true`, the code nonzero, and an incomplete UTF-8 suffix dropped. pig read without a limit.
+
+**Trap rules**:
+- `Process::runAsync()`/`run()` take `?int $maxBuffer` (null: no cap) and return a fourth element, `truncated`; over the cap the command is STOPPED and the pipes are no longer read. `HookApi::exec()` and `CustomToolApi::exec()` pass `ExecResult::MAX_BUFFER` by default.
+- The default is 128 MiB, not upstream's 256: under `bin/pig`'s 512M limit a 256 MiB string and one copy of it do not fit (measured). Raise it only with the limit.
+- Tests: `HookRunnerTest::testExecOutputPastMaxBufferIsCutAndTheCommandStopped`, `testExecDropsACharacterTheCapCutThrough`.
+
+## Tool output stripped only the escapes the renderer writes
+
+**Symptom**: an SGR mouse report in a command's output (`ESC[<35;59;1M`) left `35;59;1M` in front of the text; `ESC[?2004h`, cursor moves, `ESC(0` and the like were left for the control-character pass, which took the ESC and kept the rest.
+
+**Root cause**: `Shell::sanitize()` used `Pig\Tui\Ansi::strip()`, which knows `m`/`G`/`K`/`H`/`J` CSIs and OSC/APC — the renderer's own set, which must agree with `Ansi::at()` for width measuring. Upstream cleans tool output with `utils/ansi.ts` (chalk's strip-ansi pattern, plus private-parameter CSIs since b5fc6dc).
+
+**Trap rules**:
+- Tool output goes through `Pig\CodingAgent\Utils\Ansi::strip()`, and `Run` holds an unfinished sequence back with its `splitIncompleteSuffix()`; `Tui\Ansi` stays the renderer's. Do not widen `Tui\Ansi::strip()` without `at()`.
+- The patterns are byte regexes (U+009B/U+009C as `\xc2\x9b`/`\xc2\x9c`): a read is not valid UTF-8 until `Run` has held back a split character.
+- A private prefix (`<`, `=`, `>`) only right after ESC [ or U+009B; after a bare ESC they are final bytes, so `ESC=123` keeps `123`.
+- Tests: `Utils\AnsiTest`.
+
+## A saved "do not trust" was ignored once a project had nothing to gate
+
+**Symptom**: with no `.pig/` resources in a directory, `isProjectTrusted()` answered yes even after the person had chosen not to trust it, and `--no-approve` did nothing there.
+
+**Root cause**: `ProjectTrust::resolve()` returned true for "no resources" before reading the override or the saved decision, and `bin/pig` called `$settleTrust(true)` outright. Upstream (31ade0e): the override first, then for no trust-requiring resources `trustStore.get(cwd) ?? true`; `main.ts` is `cached ?? override ?? saved ?? !hasResources`.
+
+**Trap rules**:
+- In `resolve()` the override comes before `hasResources()`, and a directory with nothing to gate answers `decision() ?? true`. `bin/pig` settles a no-resources directory through `resolve()` too, never with a literal `true`.
+- Tests: `ProjectTrustTest::testASavedDoNotTrustHoldsForADirectoryWithNothingToTrust`.
+
+## A resized photo went out as a PNG many times the JPEG's size
+
+**Symptom**: a photo over the size limits was sent as a multi-MB PNG whenever that PNG fitted under `maxBytes`, making requests large enough to fail or time out.
+
+**Root cause**: `ImageProcess` tried PNG and then JPEG at falling qualities, first fit wins. Upstream (e7a0df2) compares PNG with JPEG at the configured quality at each size step, tries the smaller first, then the other, then the lower JPEG qualities.
+
+**Trap rules**:
+- Both paths (GD and ImageMagick) order the candidates the same way; a screenshot whose PNG is smaller still goes out as PNG.
+- Tests: `ImageProcessTest::testAPhotoIsResizedToTheSmallerJpegEvenWhenThePngWouldFit`.
+
+## grep context lines were one off after a lone CR
+
+**Symptom**: with `context`, a file holding `before\rprogress\nneedle` showed `progress` as the match line and dropped the line after.
+
+**Root cause**: `GrepTool::read()` split on lone `\r` as well as `\n`; rg numbers lines at `\n` only (upstream fecc19e).
+
+**Trap rules**:
+- Normalise `\r\n` to `\n` and split on `\n` only; `block()` drops the leftover CR from what it shows.
+- Tests: `SearchToolsTest::testALoneCarriageReturnDoesNotPutContextLinesOneOffFromRipgrep` (skipped without pig's managed `rg`).
+
+## `edits[]`: two separate edits drawn as one block, and a shim lost behind a wrapper
+
+**Symptom** (caught while porting, not shipped): an edit call changing line 10 and line 900 drew every
+line between them as removed and added again; and a saved session's `edit` call with top-level
+`oldText`/`newText` failed the schema once the tool was wrapped for hooks.
+
+**Root cause**: `EditDiff::render()` trims the common head and tail of two texts, which is the exact
+diff for one contiguous change and one block for several. And `prepareArguments()` is an optional
+interface (`PreparesArguments`), like `ReplayableTool`: `HookedTool`, `DescribedTool` and
+`ResultImagesTool` sit between the loop and `EditTool`, and a wrapper that does not forward it hides it.
+
+**Trap rules**:
+- An edit's diff goes through `EditDiff::renderEdits()` with the replacements `apply()` matched — one
+  hunk per group of edits sharing a line; one group falls back to `render()`, so single edits draw as
+  before.
+- Every `AgentTool` wrapper forwards `prepareArguments()` as it forwards `replay()`; every place that
+  validates a call's arguments runs `ToolArguments::prepare()` first (the loop, `executeTool()`,
+  `executeNestedTool()`).
+- Renderers read an edit's arguments through `EditTool::prepare()` (TUI) or `editPairs()` (web), never
+  `arguments['oldText']` — `tool_execution_start` carries the arguments as the model sent them.
+- Tests: `EditToolTest::testDistantEditsAreDrawnAsSeparateHunks`,
+  `EditToolTest::testTheToolsWrappersReshapeItsArgumentsAsTheToolWould`,
+  `ToolExecutionTest::testAnEditInAnyShapeTheToolAcceptsIsPreviewed`.

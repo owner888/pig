@@ -67,6 +67,8 @@ final class RetryTest extends TestCase
         yield 'closed before the head' => ['Connection closed before the response head was complete'];
         yield 'closed mid-body' => ['Connection closed in the middle of a chunked body'];
         yield 'tls handshake' => ['TLS handshake with api.deepseek.com failed'];
+        // A longer code that starts with 1308 is not Zhipu's usage limit.
+        yield 'zhipu code 13081 is not 1308' => ['429 {"error":{"code":"13081","message":"slow down"}}'];
     }
 
     #[DataProvider('retryable')]
@@ -85,6 +87,8 @@ final class RetryTest extends TestCase
         yield 'billing' => ['429 check your billing details'];
         yield 'chatgpt limit' => ['429 subscription_sharing_usage_limit_exceeded'];
         yield 'chatgpt business workspace limit' => ['429 subscription_sharing_workplace_individual_usage_limit_exceeded'];
+        yield 'zhipu plan usage limit (code 1308)' => ['429 {"error":{"code":"1308","message":"Usage limit reached for 5 hour. Your limit will reset at 2026-10-29 20:00:00"}}'];
+        yield 'zhipu code 1308 as a number' => ['429 {"error":{"code":1308,"message":"Usage limit reached"}}'];
         // Nothing transient in it.
         yield 'a 400' => ['400 {"type":"error","error":{"type":"invalid_request_error","message":"bad"}}'];
         yield 'a 401' => ['401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'];

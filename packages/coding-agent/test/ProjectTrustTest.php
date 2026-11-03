@@ -45,6 +45,21 @@ final class ProjectTrustTest extends TestCase
         $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home));
     }
 
+    public function testASavedDoNotTrustHoldsForADirectoryWithNothingToTrust(): void
+    {
+        // Upstream #10947: the saved "no" was ignored once there was nothing to gate, so
+        // `isProjectTrusted()` answered yes.
+        ProjectTrust::remember([$this->project => false], $this->home);
+
+        $this->assertFalse(ProjectTrust::hasResources($this->project));
+        $this->assertFalse(ProjectTrust::resolve($this->project, null, $this->home));
+        $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home, override: true), 'the override still comes first');
+
+        ProjectTrust::remember([$this->project => true], $this->home);
+        $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home));
+        $this->assertFalse(ProjectTrust::resolve($this->project, null, $this->home, override: false));
+    }
+
     /** @return iterable<string, array{string}> */
     public static function resources(): iterable
     {

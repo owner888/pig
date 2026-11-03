@@ -416,21 +416,24 @@ class HookApi
      *   same reason: one a hook had to remember to pass is one whose author did not. A handler
      *   that waits on something of its own reads `$ctx->signal` and parks on that.
      *
-     * @param list<string> $command the program and its arguments, unquoted
-     * @param string|null  $cwd     defaults to the directory pig is working in
+     * @param list<string> $command   the program and its arguments, unquoted
+     * @param string|null  $cwd       defaults to the directory pig is working in
+     * @param int          $maxBuffer upstream's `ExecOptions.maxBuffer`: stdout and stderr together past
+     *                                this stop the command, and the result says `truncated`
      */
-    public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
+    public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT, int $maxBuffer = ExecResult::MAX_BUFFER): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::runAsync(
+        [$exit, $stdout, $stderr, $truncated] = Process::runAsync(
             $command,
             $timeout,
             $cwd ?? $this->cwd,
             // The turn's signal, without the hook having to pass it: escape means stop, and a
             // hook that had to remember to opt in is a hook whose author did not.
             $this->context === null ? null : ($this->context)()->signal,
+            $maxBuffer,
         );
 
-        return new ExecResult($exit, $stdout, $stderr);
+        return new ExecResult($exit, $stdout, $stderr, $truncated);
     }
 
     /**

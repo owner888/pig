@@ -91,6 +91,23 @@ final class Keybindings
         return self::$globalKeybindings ??= new KeybindingsManager(self::definitions());
     }
 
+    /**
+     * The selection index after a `tui.select.pageUp` or `tui.select.pageDown` key, moved by
+     * $pageSize and clamped to `0..$itemCount - 1` — upstream's `getSelectPageIndex()`. Null when
+     * $data is not a selection page key, and 0 for a page key on an empty list, so callers must
+     * still check that the list has items before selecting.
+     */
+    public static function getSelectPageIndex(KeybindingsManager $keybindings, string $data, int $selectedIndex, int $itemCount, int $pageSize): ?int
+    {
+        $direction = match (true) {
+            $keybindings->matches($data, 'tui.select.pageUp') => -1,
+            $keybindings->matches($data, 'tui.select.pageDown') => 1,
+            default => null,
+        };
+
+        return $direction === null ? null : max(0, min($itemCount - 1, $selectedIndex + $direction * $pageSize));
+    }
+
     /** Back to the defaults — for tests, which share the process-wide registry. */
     public static function reset(): void
     {

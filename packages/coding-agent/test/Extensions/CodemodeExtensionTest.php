@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Ai\TextContent;
+use Pig\Ai\Tool;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\Registry;
@@ -299,6 +301,7 @@ PHP);
         mkdir($this->home . '/extensions', 0o755, true);
         file_put_contents($this->home . '/extensions/spend.php', <<<'PHP'
 <?php
+use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\Cost;
 use Pig\Ai\TextContent;
@@ -664,6 +667,57 @@ PHP));
                 unlink($saved);
             }
         }
+        $this->stop($started);
+    }
+
+    /** Upstream #11501: a union or multi-line output type is summarised, not sent whole every request. */
+    public function testUnionAndMultiLineOutputTypesAreSummarised(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+        $tool = static fn (string $name, array $outputSchema): AgentTool => new class ($name, $outputSchema) implements AgentTool {
+            public function __construct(private string $name, private array $outputSchema)
+            {
+            }
+
+            #[\Override]
+            public function definition(): Tool
+            {
+                return new Tool($this->name, "{$this->name} tool", ['type' => 'object', 'properties' => []], outputSchema: $this->outputSchema);
+            }
+
+            #[\Override]
+            public function label(): string
+            {
+                return $this->name;
+            }
+
+            #[\Override]
+            public function execute(string $toolCallId, array $arguments, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onUpdate = null): AgentToolResult
+            {
+                return new AgentToolResult([]);
+            }
+        };
+        $process = $tool('process', ['anyOf' => [
+            ['type' => 'object', 'properties' => [
+                'action' => ['const' => 'start', 'type' => 'string'],
+                'process' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string', 'description' => 'Process id'], 'pid' => ['type' => 'integer']], 'required' => ['id', 'pid']],
+            ], 'required' => ['action', 'process']],
+            ['type' => 'object', 'properties' => [
+                'action' => ['const' => 'list', 'type' => 'string'],
+                'processes' => ['type' => 'array', 'items' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string']], 'required' => ['id']]],
+                'truncated' => ['type' => 'boolean'],
+            ], 'required' => ['action', 'processes']],
+        ]]);
+        $entries = $tool('entries', ['type' => 'array', 'items' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string'], 'size' => ['type' => 'integer']], 'required' => ['id', 'size']]]);
+        $count = $tool('count', ['type' => 'number']);
+
+        $descriptions = ($codemode->prepareLoadout)([$process, $entries, $count])['descriptions'];
+
+        $this->assertSame('process tool' . "\n\nCodemode: `\$tools->process([...])` resolves to `{ action: \"start\", process } | { action: \"list\", processes, truncated? }`.", $descriptions['process']);
+        $this->assertSame('entries tool' . "\n\nCodemode: `\$tools->entries([...])` resolves to a value; `describe_tool(\"entries\")` shows its type.", $descriptions['entries']);
+        $this->assertSame('count tool' . "\n\nCodemode: `\$tools->count([...])` resolves to `float`.", $descriptions['count']);
         $this->stop($started);
     }
 

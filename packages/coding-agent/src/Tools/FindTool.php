@@ -57,9 +57,6 @@ final class FindTool implements AgentTool, ReplayableTool
                 ],
                 'required' => ['pattern'],
             ],
-            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
-            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
-            typeBox: true,
         );
     }
 

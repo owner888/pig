@@ -1263,8 +1263,77 @@ final class McpExtensionTest extends TestCase
             'inputSchema' => ['type' => 'object', 'properties' => ['owner' => ['type' => 'string', 'description' => 'Repository owner'], 'number' => ['type' => 'integer']]],
         ], 'gh', 'GitHub tools');
 
+        // Upstream's fields: the name is read from `name`, the server apart from the tool's own text.
         $this->assertSame('mcp__gh__get_issue', $document['name']);
-        $this->assertSame('mcp__gh__get_issue mcp  gh  get issue Fetch one issue owner Repository owner number gh GitHub tools', $document['text']);
+        $this->assertSame('Fetch one issue owner Repository owner number', $document['text']);
+        $this->assertSame('gh GitHub tools', $document['namespaceText']);
+    }
+
+    /** Upstream ae823bc / cc44fa2: a query term in the name outweighs mentions in a description. */
+    public function testANameMatchRanksAboveMentionsInDescriptions(): void
+    {
+        $documents = [
+            ToolSearch::document('mcp__ci__status', ['description' => 'Deploy status: last deploy, deploy log, deploy errors.']),
+            ToolSearch::document('mcp__ci__deploy_release', ['description' => 'Start a release of the current branch to an environment, run the migrations, switch traffic over, and wait until the new version is live and healthy.']),
+        ];
+
+        $this->assertSame(['mcp__ci__deploy_release'], array_column(ToolSearch::rank('deploy', $documents, 1), 'name'));
+    }
+
+    public function testAToolWhoseWholeNameIsInTheQueryRanksFirst(): void
+    {
+        $peekaboo = static fn (string $name, string $description): array => ToolSearch::document($name, ['description' => $description], 'mcp__peekaboo', 'Peekaboo controls macOS apps by app name.');
+        $documents = [
+            $peekaboo('mcp__peekaboo__see', 'Capture the app window of the peekaboo app and describe the app.'),
+            $peekaboo('mcp__peekaboo__menu', 'Click a menu item of an app.'),
+            $peekaboo('mcp__peekaboo__app', 'Launch, quit, relaunch, focus, hide, or switch applications. Targets an application by name, bundle identifier, or process ID, and can wait until it is ready.'),
+            ToolSearch::document('mcp__app__queue_read', ['description' => 'Read a queued message of this thread.']),
+            ToolSearch::document('mcp__dev-app__thread_read', ['description' => 'Read durable state and a paginated timeline from any thread. The default view returns user messages, assistant messages and plans.']),
+        ];
+        $first = static fn (string $query): array => array_column(ToolSearch::rank($query, $documents, 1), 'name');
+
+        $this->assertSame(['mcp__peekaboo__app'], $first('peekaboo app'));
+        $this->assertSame(['mcp__peekaboo__app'], $first('open the peekaboo app tool'));
+        $this->assertSame(['mcp__dev-app__thread_read'], $first('read thread_read state'));
+        $this->assertSame(['mcp__peekaboo__see'], $first('describe window'), 'without the whole name, mentions decide');
+    }
+
+    /** Upstream e033f25: coverage of the query's terms comes before the score. */
+    public function testAToolMatchingMoreQueryTermsRanksFirstWhateverTheScores(): void
+    {
+        $documents = [
+            ToolSearch::document('mcp__peekaboo__app', ['description' => 'Launch, quit, focus, or switch applications by name or bundle identifier.']),
+            ToolSearch::document('mcp__peekaboo__see', ['description' => 'Capture the app window and describe the UI elements of the app.']),
+            ToolSearch::document('mcp__peekaboo__window', ['description' => 'Move, resize, or close a window of an app.']),
+            ToolSearch::document('mcp__peekaboo__image', ['description' => 'Take a screenshot of the screen, an app, or a window.']),
+        ];
+        $first = static fn (string $query): array => array_column(ToolSearch::rank($query, $documents, 1), 'name');
+
+        $this->assertSame(['mcp__peekaboo__image'], $first('screenshot window'));
+        $this->assertSame(['mcp__peekaboo__see'], $first('describe app'));
+        $this->assertSame(['mcp__peekaboo__window'], $first('window'), 'an exact name still ranks first');
+    }
+
+    /** Upstream 79006f0: words in any script, NFC, and no punctuation or emoji. */
+    public function testTokenizingSegmentsUnicodeWords(): void
+    {
+        $this->assertSame(['repo', 'issue', 'search', 'query'], ToolSearch::tokenize('repo.issues/search:queries'));
+        $this->assertSame(['поиск', 'документов'], ToolSearch::tokenize('Поиск документов'));
+        $this->assertSame(['éléments', 'cafés'], ToolSearch::tokenize('Éléments cafés'));
+        $this->assertSame([], ToolSearch::tokenize(" \t，。!? 😀 "));
+
+        if (!class_exists(\IntlBreakIterator::class)) {
+            $this->markTestSkipped('ext-intl segments text written without spaces, and normalizes to NFC');
+        }
+
+        $this->assertSame(['搜索', '仓库', '问题'], ToolSearch::tokenize('搜索仓库问题'));
+        $this->assertSame(['文書', 'を', '検索'], ToolSearch::tokenize('文書を検索'));
+        $this->assertSame(['ค้นหา', 'เอกสาร'], ToolSearch::tokenize('ค้นหาเอกสาร'));
+        $this->assertSame(['搜索', 'git', 'hub', 'repo', 'issue', 'résumé', 'cafés'], ToolSearch::tokenize('搜索GitHub_repoIssues résumé cafés'));
+        $this->assertSame(['café', 'café'], ToolSearch::tokenize("CAFÉ cafe\u{301}"));
+
+        $documents = [ToolSearch::document('a', ['description' => 'read a file']), ToolSearch::document('localized', ['description' => '搜索仓库问题'])];
+        $this->assertSame(['localized'], array_column(ToolSearch::rank('问题', $documents, 8), 'name'));
     }
 
     // ---- harness --------------------------------------------------------------------------------

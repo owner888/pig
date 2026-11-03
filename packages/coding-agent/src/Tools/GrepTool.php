@@ -60,9 +60,6 @@ final class GrepTool implements AgentTool, ReplayableTool
                 ],
                 'required' => ['pattern'],
             ],
-            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
-            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
-            typeBox: true,
         );
     }
 
@@ -304,6 +301,8 @@ final class GrepTool implements AgentTool, ReplayableTool
 
         // A file rg could read and this cannot — a race with a build, most likely. The
         // match is still reported, with a note instead of the line.
-        return $contents === false ? [] : explode("\n", str_replace(["\r\n", "\r"], "\n", $contents));
+        // Split on LF only, as rg counts lines: a lone CR made one more line here than there and
+        // put every later context line one off (upstream #11398). `block()` drops the CR it leaves.
+        return $contents === false ? [] : explode("\n", str_replace("\r\n", "\n", $contents));
     }
 }

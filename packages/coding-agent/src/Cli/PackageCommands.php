@@ -108,6 +108,8 @@ final class PackageCommands
         $manager->setProgressCallback(static function (string $type, string $action, string $packageSource, ?string $message): void {
             if ($type === 'start' && $message !== null) {
                 echo Style::dim($message), "\n";
+            } elseif ($type === 'progress' && $message !== null) {
+                echo Style::yellow($message), "\n";
             }
         });
 
@@ -136,7 +138,7 @@ final class PackageCommands
                     return 0;
 
                 case 'update':
-                    return self::update($manager, $target, $options['showExtensionsSkippedNote'], $options['force'], $selfUpdate);
+                    return self::update($manager, $target, $options['showExtensionsSkippedNote'], $options['force'], $selfUpdate, $settings->selfUpdateCommand());
             }
         } catch (PackageError $error) {
             fwrite(STDERR, Style::red("Error: {$error->getMessage()}") . "\n");
@@ -300,8 +302,11 @@ final class PackageCommands
         }
     }
 
-    /** @param array{type: string, source?: string} $target */
-    private static function update(PackageManager $manager, array $target, bool $skippedNote, bool $force, ?SelfUpdate $selfUpdate = null): int
+    /**
+     * @param array{type: string, source?: string} $target
+     * @param list<string>|null $selfUpdateCommand the global `selfUpdateCommand` setting
+     */
+    private static function update(PackageManager $manager, array $target, bool $skippedNote, bool $force, ?SelfUpdate $selfUpdate = null, ?array $selfUpdateCommand = null): int
     {
         if ($skippedNote) {
             echo Style::dim('Extensions are skipped. Run pig update --extensions to update extensions.'), "\n";
@@ -323,7 +328,9 @@ final class PackageCommands
         }
 
         if ($target['type'] === 'all' || $target['type'] === 'self') {
-            $selfStatus = $updater->updatePig();
+            // A configured command is the person's explicit choice, so it replaces pig's own update.
+            $configured = SelfUpdate::configuredCommand($selfUpdateCommand);
+            $selfStatus = $configured !== null ? $updater->updatePigWith($configured, $force) : $updater->updatePig();
             $status = $status === 0 ? $selfStatus : $status;
         }
 
