@@ -525,8 +525,10 @@ final class InteractiveMode
             getEditorComponent: fn (): ?Closure => $this->editorFactory,
             onWorkingMessage: function (?string $message): void {
                 $this->customWorkingMessage = $message;
+                // `setMessage()`, not `setText()`: the loader redraws its line from its message on
+                // every frame, which put `Working` back over what the extension had set.
                 if ($this->working !== null) {
-                    $this->working->setText($message ?? 'Working');
+                    $this->working->setMessage($message ?? 'Working');
                     $this->tui->requestRender();
                 }
             },

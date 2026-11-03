@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed an extension's `ctx.ui.setWorkingMessage()` during a run being overwritten by `Working` on the loader's next frame: the loader draws its line from its own message, and the new text was written past it.
+
 ## [1.5.0] - 2026-11-02
 
 ### New Features
