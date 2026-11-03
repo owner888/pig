@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web` reading the newest thirty conversations through, every one of them, each time a page opened, to list them in the sidebar — on the one thread that also answers the page, so opening a conversation waited behind it. A row needs the first thing said and the last name given, and now reads only those: the top of the file until the first prompt, and the file searched from its end for the last name. On the developer's machine that was 108MB read for the list, one conversation of it 63MB of screenshots; 48 real conversations now list in 40ms instead of 582ms, with the same rows. The terminal's `/resume`, which counts messages and searches what was said, reads files as before.
+
 ## [1.5.1] - 2026-11-03
 
 ### Fixed

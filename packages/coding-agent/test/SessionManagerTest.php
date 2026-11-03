@@ -690,6 +690,50 @@ final class SessionManagerTest extends TestCase
         $this->assertSame(['conversation C'], array_map(static fn (SessionInfo $info): string => $info->opening, $page));
     }
 
+    /**
+     * The web sidebar's rows: read from the two ends of the file, and the same as `describe()` gives
+     * for what the sidebar shows — the opening, the last name given, the header's id, cwd and time.
+     */
+    public function testAGlanceReadsTheOpeningAndTheLastNameWithoutTheMiddle(): void
+    {
+        $path = SessionManager::directory('/project/a') . '/2026-01-01T00-00-00-000Z_a.jsonl';
+        $session = SessionManager::create('/project/a', $path);
+        $session->append(new UserMessage('fix the build'));
+        $session->setSessionName('first name');
+        $session->append($this->answer());
+        // A tool result far bigger than a block, so the name is searched for across blocks.
+        $session->append(new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('x', 300_000))], false));
+        $session->setSessionName('the name now');
+        $session->append(new UserMessage('and another thing'));
+        $session->append(new ToolResultMessage('c2', 'read', [new TextContent(str_repeat('y', 200_000))], false));
+
+        $glance = SessionManager::glance($path);
+        $described = SessionManager::info($path);
+
+        $this->assertNotNull($glance);
+        $this->assertNotNull($described);
+        $this->assertSame('the name now', $glance->name);
+        $this->assertSame('the name now', $glance->opening, 'a name stands in for the opening, as in describe()');
+        $this->assertSame(
+            [$described->id, $described->cwd, $described->timestamp, $described->name, $described->opening],
+            [$glance->id, $glance->cwd, $glance->timestamp, $glance->name, $glance->opening],
+        );
+
+        // With no name, the first thing said.
+        $unnamed = SessionManager::directory('/project/b') . '/2026-01-01T00-00-00-000Z_b.jsonl';
+        $other = SessionManager::create('/project/b', $unnamed);
+        $other->append(new ToolResultMessage('c1', 'read', [new TextContent(str_repeat('z', 100_000))], false));
+        $other->append(new UserMessage('what is this'));
+        $other->append($this->answer());
+
+        $this->assertSame('what is this', SessionManager::glance($unnamed)?->opening);
+        $this->assertNull(SessionManager::glance($unnamed)?->name);
+
+        // And the sidebar's window asks for glances.
+        [$rows] = SessionManager::listAll(10, glance: true);
+        $this->assertEqualsCanonicalizing(['the name now', 'what is this'], array_map(static fn (SessionInfo $info): string => $info->opening, $rows));
+    }
+
     public function testSearchAllFindsAPhraseFromTheMiddleAndAGivenName(): void
     {
         $first = SessionManager::create('/project/a', SessionManager::directory('/project/a') . '/2026-01-01T00-00-00-000Z_a.jsonl');

@@ -1946,15 +1946,18 @@ final class SessionManager
      * does, with no directory to choose first. Only the rows in the window are described, so a long
      * history costs a stat per file and one read per row shown.
      *
+     * `$glance` describes each row with `glance()` instead: the name and the opening, without the
+     * count and the words to search, which are the parts that cost reading the whole file.
+     *
      * @return array{0: list<SessionInfo>, 1: int} the rows, and how many files there are altogether
      */
-    public static function listAll(int $limit, int $offset = 0): array
+    public static function listAll(int $limit, int $offset = 0, bool $glance = false): array
     {
         $paths = self::everyFile();
         $sessions = [];
 
         foreach (array_slice($paths, $offset, $limit) as $path) {
-            $info = self::describe($path);
+            $info = $glance ? self::glance($path) : self::describe($path);
 
             if ($info !== null) {
                 $sessions[] = $info;
@@ -2364,6 +2367,117 @@ final class SessionManager
             is_string($header['parentSession'] ?? null) && $header['parentSession'] !== '' ? $header['parentSession'] : null,
             ((int) filemtime($path)) * 1000,
         );
+    }
+
+    /**
+     * A session file as a list that only shows it needs it: its header, the first thing the person
+     * said and the name it was last given — read from the two ends, not the whole file.
+     *
+     * `describe()` decodes every line for a message count and the words to search. For the web
+     * sidebar that was the newest thirty conversations read through on every page load — 108MB on
+     * the developer's machine, one session of it 63MB of screenshots — on the one thread that also
+     * answers the page's WebSocket, so opening a conversation waited behind it. The opening is near
+     * the top: lines are read until the first user message, and a long line that is not one is not
+     * decoded. The name can be anywhere, the last one counts, so the file is searched backwards, as
+     * bytes, for the last `session_info` entry, and only that line is decoded. `messages` is 0 and
+     * `text` empty: nothing that glances needs them.
+     */
+    public static function glance(string $path): ?SessionInfo
+    {
+        if (!is_file($path) || !is_readable($path)) {
+            return null;
+        }
+
+        $fh = fopen($path, 'rb');
+        if ($fh === false) {
+            return null;
+        }
+
+        try {
+            $header = json_decode(trim((string) fgets($fh)), true);
+
+            if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+                return null;
+            }
+
+            $opening = '';
+
+            while (($line = fgets($fh)) !== false) {
+                // Every entry starts with its type, and a message with its role soon after; a
+                // screenshot several megabytes long is told from a prompt without decoding it.
+                $head = substr($line, 0, 200);
+                if (!str_starts_with($head, '{"type":"message"') || !str_contains($head, '"role":"user"')) {
+                    continue;
+                }
+
+                $entry = json_decode($line, true);
+                if (is_array($entry) && is_array($entry['message'] ?? null)) {
+                    $opening = self::opening($entry['message']);
+                    if ($opening !== '') {
+                        break;
+                    }
+                }
+            }
+
+            $name = self::lastSessionName($fh);
+        } finally {
+            fclose($fh);
+        }
+
+        return new SessionInfo(
+            $path,
+            (string) ($header['id'] ?? ''),
+            (string) ($header['cwd'] ?? ''),
+            SessionEntries::millis($header['timestamp'] ?? null),
+            0,
+            $name ?? ($opening === '' ? 'a conversation' : $opening),
+            '',
+            $name,
+            is_string($header['parentSession'] ?? null) && $header['parentSession'] !== '' ? $header['parentSession'] : null,
+            ((int) filemtime($path)) * 1000,
+        );
+    }
+
+    /**
+     * The name of the last `session_info` entry in the file, found from the end in blocks — the
+     * last one is the name in force, and a name given with `/name` is usually near the end.
+     *
+     * @param resource $fh
+     */
+    private static function lastSessionName($fh): ?string
+    {
+        $needle = "\n{\"type\":\"session_info\"";
+        $block = 1 << 16;
+        $end = (int) fstat($fh)['size'];
+        $carry = '';
+
+        while ($end > 0) {
+            $start = max(0, $end - $block);
+            fseek($fh, $start);
+            // The block, and the start of the one after it, so a needle cut in two is still found.
+            $chunk = (string) fread($fh, $end - $start) . $carry;
+            $carry = substr($chunk, 0, strlen($needle) - 1);
+            $end = $start;
+
+            $found = [];
+            for ($at = strpos($chunk, $needle); $at !== false; $at = strpos($chunk, $needle, $at + 1)) {
+                $found[] = $at;
+            }
+
+            foreach (array_reverse($found) as $at) {
+                fseek($fh, $start + $at + 1);
+                $entry = json_decode(trim((string) fgets($fh)), true);
+                $name = is_array($entry) && is_string($entry['name'] ?? null) ? self::cleanSessionName($entry['name']) : null;
+
+                // `describe()`'s rule: a name that cleans to nothing, or a line too broken to read,
+                // leaves the one before it in force.
+                if ($name !== null) {
+                    return $name;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

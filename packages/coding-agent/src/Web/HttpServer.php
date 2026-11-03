@@ -836,7 +836,7 @@ final class HttpServer
             $unread = $this->schedules->unread();
 
             if ($query === '') {
-                [$sessions, $total] = SessionManager::listAll($limit, $offset);
+                [$sessions, $total] = SessionManager::listAll($limit, $offset, glance: true);
             } else {
                 $sessions = SessionManager::searchAll($query, $limit);
                 $total = count($sessions);
