@@ -436,15 +436,26 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           // its text so far is known: drawn whole, and the rest of it follows into the same block.
           if (this.isRunning && this.currentAssistantText.trim()) this.render(() => drawStreamingText());
           // The prompts of the conversation, for Up — upstream's `renderInitialMessages()` fills
-          // the editor's history the same way. What was typed since is in it already. The page is the
-          // last part only, so prompts remembered from before it — drawn afresh after `LIVE_CAP`, or
-          // after a reconnect — are kept behind it rather than forgotten.
+          // the editor's history the same way. The page is the last part only, and what this tab
+          // remembers (newest first) is merged around it: a remembered prompt the page lacks is newer
+          // than the page when it comes before any the page has — the one just sent, still being
+          // answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) —
+          // and goes in front, so Up still brings back the last thing said; the rest is older than the
+          // page — drawn afresh after `LIVE_CAP`, or after a reconnect — and is kept behind it.
           const remembered = this.promptHistory;
           this.promptHistory = [];
           for (const m of d.messages || []) {
             if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
           }
-          for (const prompt of remembered) if (!this.promptHistory.includes(prompt)) this.promptHistory.push(prompt);
+          const onPage = this.promptHistory;
+          const newer = [];
+          const older = [];
+          let pastKnown = false;
+          for (const prompt of remembered) {
+            if (onPage.includes(prompt)) { pastKnown = true; continue; }
+            (pastKnown ? older : newer).push(prompt);
+          }
+          this.promptHistory = [...newer, ...onPage, ...older].slice(0, HISTORY_LIMIT);
           this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
           // A `session_start` handler's `notify` arrives before the conversation does, and drawing
           // the conversation clears the chat; the TUI keeps those lines, so they are put back.

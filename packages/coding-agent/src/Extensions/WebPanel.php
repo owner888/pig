@@ -51,6 +51,7 @@ final readonly class WebPanel
      * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
      * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Hooks\HookUi): ?string)|null $action
      *        null when it worked, else why it did not; a throw is the same as its message
+     * @param string $icon the glyph the sidebar shows before the title, as it is — an emoji, say; a default one when empty
      * @param list<string> $commands slash commands that open the panel in the page (`accounts` for `/accounts`)
      * @param 'sidebar'|'header' $placement where the page puts it unless the person moves it
      * @param string|array<string, string>|null $label the ⋯ menu entry's short name, by locale like the title

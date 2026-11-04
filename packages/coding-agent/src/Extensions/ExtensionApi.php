@@ -472,6 +472,7 @@ final class ExtensionApi extends HookApi
      * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
      * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Hooks\HookUi): ?string)|null $action
      *        its last argument asks the person, as `$ctx->ui` does: `confirm()`, `select()`, `input()`…
+     * @param string $icon the glyph the sidebar shows before the title, as it is — an emoji, say; a default one when empty
      * @param list<string> $commands slash commands that open it in the page, without the slash
      * @param 'sidebar'|'header' $placement where the page puts it by default; the person can move it
      * @param string|array<string, string>|null $label a short name for the header's ⋯ menu entry

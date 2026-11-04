@@ -50,6 +50,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.9] - 2026-11-05
+
+### Changed
+
+- `registerWebPanel()` and `WebPanel` say what `$icon` is: the glyph the sidebar shows before the title, as it is — an emoji, say — so a word there is drawn as a word.
+
+### Fixed
+
+- Fixed the footer showing `0.0%` of the context window right after a compaction, which read as the conversation having been emptied: until the next response measures the new context it shows `?`, as upstream's `getContextUsage()` does.
+- Fixed Up in the web page's prompt box sometimes bringing back the prompt before the last one: when the conversation is drawn afresh (after `LIVE_CAP` live messages, a reconnect, or opening the tab again) the history is rebuilt from the page's messages, and a prompt the page does not hold yet — the one just sent and still being answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) — went behind the page's prompts instead of in front of them.
+
 ## [1.5.7] - 2026-11-03
 
 ### Added

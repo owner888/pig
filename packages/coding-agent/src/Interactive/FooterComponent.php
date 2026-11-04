@@ -347,13 +347,16 @@ final class FooterComponent implements Component
         // Under a virtual model, the window is the physical model's that answered last.
         $model = $this->session->routedModel()?->model ?? $this->session->model();
         $window = $model?->contextWindow ?? 0;
-        $used = $this->session->contextTokens();
-        $percent = $window > 0 ? $used / $window * 100 : 0.0;
+        // Upstream's `getContextUsage()`: the last count plus an estimate of what was said since;
+        // null right after a compaction, when nothing has measured the new context yet — shown
+        // as `?` like upstream, not `0.0%`, which reads as the conversation having been emptied.
+        $used = $this->session->contextUsage()?->tokens;
+        $percent = $used !== null && $window > 0 ? $used / $window * 100 : 0.0;
 
         // What reaching the top *means*: a pause and a summary, or a request that gets refused.
         // `/settings` can change it mid-session, so it is read here rather than remembered.
         $auto = ($this->settings?->compactionEnabled() ?? true) ? ' (auto)' : '';
-        $display = number_format($percent, 1) . '%/' . self::tokens($window) . $auto;
+        $display = ($used === null ? '?' : number_format($percent, 1) . '%') . '/' . self::tokens($window) . $auto;
 
         return match (true) {
             $percent > self::ALARM_AT => Themes::theme()->fg('error', $display),

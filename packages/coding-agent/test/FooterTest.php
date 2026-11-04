@@ -24,6 +24,7 @@ use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 
@@ -264,6 +265,23 @@ final class FooterTest extends TestCase
         $this->spent($session, new Usage(1_000, 0, 0, 0), StopReason::Aborted);
 
         $this->assertStringContainsString('30.0%/200k', $this->lines($session)[1]);
+    }
+
+    public function testRightAfterACompactionTheContextIsUnknownNotZero(): void
+    {
+        // The last usage measured the context *before* it was summarised, and nothing has measured
+        // the one after — upstream shows `?` until the next response, not `0.0%`, which reads as
+        // the conversation having been emptied.
+        $session = $this->session();
+        $this->spent($session, new Usage(190_000, 0, 0, 0));
+        $session->agent->appendMessage(new CompactionSummary('what happened earlier'));
+
+        $line = $this->lines($session)[1];
+        $this->assertStringContainsString('?/200k', $line);
+        $this->assertStringNotContainsString('0.0%', $line);
+
+        $this->spent($session, new Usage(20_000, 0, 0, 0));
+        $this->assertStringContainsString('10.0%/200k', $this->lines($session)[1]);
     }
 
     public function testAutoCompactionSaysSoBesideThePercentage(): void
