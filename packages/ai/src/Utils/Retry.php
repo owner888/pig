@@ -79,6 +79,11 @@ final class Retry
         'connection closed',
         'cannot connect to',
         'tls handshake with \\S+ failed',
+        // Gemini 3 sometimes writes a tool call as raw `call:default_api:…` text with unquoted
+        // strings on a single sampling pass and terminates the candidate with one of these finish
+        // reasons; dropping the failed attempt and asking again succeeds.
+        'MALFORMED_FUNCTION_CALL',
+        'UNEXPECTED_TOOL_CALL',
     ];
 
     /** Upstream's `RETRYABLE_PROVIDER_ERROR_PATTERN` entries. */

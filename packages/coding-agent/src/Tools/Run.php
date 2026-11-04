@@ -130,7 +130,29 @@ final class Run
             2 => ['pipe', 'w'],
         ];
 
-        $process = proc_open($shell->argv($this->command), $descriptors, $pipes, $this->cwd, $this->env);
+        $argv = $shell->argv($this->command);
+
+        // Upstream's `spawn(..., { detached: true })` calls `setsid()` in the child before exec,
+        // which detaches `/dev/tty`. Without it, `proc_open()` leaves the child in pig's session
+        // with pig's controlling terminal, so a command that opens `/dev/tty` directly (`ssh`
+        // asking about a host key, `git` or `sudo` asking for a password) writes onto the raw TUI
+        // screen — scrolling the alternate screen behind the differential renderer's back — and
+        // hangs waiting for an answer nobody can type.
+        if (PHP_OS_FAMILY !== 'Windows' && str_contains($argv[0], '/')) {
+            if (is_executable('/usr/bin/setsid')) {
+                $argv = ['/usr/bin/setsid', ...$argv];
+            } elseif (function_exists('posix_setsid') && function_exists('pcntl_exec')) {
+                $argv = [
+                    PHP_BINARY,
+                    '-r',
+                    'if (function_exists("posix_setsid")) { posix_setsid(); } pcntl_exec($argv[1], array_slice($argv, 2)); exit(127);',
+                    '--',
+                    ...$argv,
+                ];
+            }
+        }
+
+        $process = proc_open($argv, $descriptors, $pipes, $this->cwd, $this->env);
 
         if (!is_resource($process)) {
             throw new AgentError("Could not start a shell ({$shell->shell})");

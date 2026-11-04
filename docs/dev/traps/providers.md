@@ -501,9 +501,12 @@ Gemini's `finishReason` (antigravity included, through `GoogleShared`), so the f
 carries `MALFORMED_FUNCTION_CALL`; `fail()` leaves it alone.
 
 A `MALFORMED_FUNCTION_CALL` itself is Gemini's doing, not pig's: Gemini 3 sometimes writes the call as
-text (`call:default_api:bash{command:…}`) instead of a `functionCall` part and then reports the turn
-malformed. pi shows the same error for it and does not retry it (`isRetryableAssistantError` has no
-pattern for it), and neither does pig.
+text (`call:default_api:bash{command:…}`) with unquoted string arguments instead of a `functionCall`
+part and then reports the turn malformed. Because it is a single-sample decoding glitch rather than a
+deterministic block (`SAFETY`, `RECITATION`), pig lists `MALFORMED_FUNCTION_CALL` and
+`UNEXPECTED_TOOL_CALL` in `Retry::PIG_TRANSPORT_ERROR_PATTERNS`, so `AgentSession::prepareRetry()`
+drops the failed attempt (and the Web UI removes its partial `call:default_api:…` bubble on
+`agent_end` with `willRetry: true`) and retries the turn automatically.
 
 Three things had to be got right and each has its own test:
 

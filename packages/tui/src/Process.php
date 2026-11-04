@@ -51,6 +51,15 @@ final class Process
             self::kill($child, $signal);
         }
 
+        // A command started with `setsid()` (`Run::start()`) leads its own process group (`-$pid`),
+        // never pig's own, so signalling the group catches grandchildren that reparented to init.
+        if (function_exists('posix_getpgid') && function_exists('posix_getpgrp')) {
+            $pgid = posix_getpgid($pid);
+            if ($pgid !== false && $pgid === $pid && $pgid !== posix_getpgrp()) {
+                self::kill(-$pid, $signal);
+            }
+        }
+
         self::kill($pid, $signal);
     }
 

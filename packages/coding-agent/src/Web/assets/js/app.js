@@ -1313,13 +1313,17 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (currentThinkingBox?.finish) {
           currentThinkingBox.finish();
         }
+        if (tab) tab.lastFailedAssistantBlock = null;
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "message_end") {
         const message = evt.message;
         // Ended with nothing more to draw since a reconnect took it off the page: back on it.
         if (message?.role === "assistant" && currentAssistantBlock && !currentAssistantBlock.isConnected) ensureAssistantBlock();
-        if (message?.role === "assistant" && currentAssistantBlock && currentAssistantText.trim()) {
+        if (message?.role === "assistant" && message.stopReason === "error" && tab) {
+          tab.lastFailedAssistantBlock = currentAssistantBlock;
+        }
+        if (message?.role === "assistant" && currentAssistantBlock && currentAssistantText.trim() && message.stopReason !== "error") {
           attachTranslate(currentAssistantBlock, currentAssistantText, currentAssistantBlock.querySelector(".assistant-prose"));
         }
         if (message?.role === "custom") appendHookMessage(message);
@@ -1336,7 +1340,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (tab?.state) tab.state.isStoppedMidRun = false;
         tab?.scroller.querySelector(".msg-stopped")?.remove();
       } else if (evt.type === "agent_end" || evt.type === "turn_end") {
-        setRunningState(false);
         if (currentThinkingBox?.finish) {
           currentThinkingBox.finish();
         }
@@ -1344,8 +1347,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantText = "";
         currentThinkingText = "";
         currentThinkingBox = null;
+        // A failed attempt that will be retried (`dropLastAssistantMessage()` on the server)
+        // removes its partial bubble (`call:default_api:…`) and waits for `auto_retry_start`.
+        if (evt.type === "agent_end" && evt.willRetry) {
+          tab?.lastFailedAssistantBlock?.remove();
+          if (tab) tab.lastFailedAssistantBlock = null;
+          return;
+        }
+        setRunningState(false);
         if (evt.type === "agent_end") {
-          if (tab) tab.delivering = [];
+          if (tab) {
+            tab.delivering = [];
+            tab.lastFailedAssistantBlock = null;
+          }
           tab?.refreshState();
           refreshSidebar();
         }
@@ -1412,10 +1426,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage }), "warning");
       } else if (evt.type === "auto_retry_end") {
         if (tab === active) hideStatusBanner();
-        tab?.refreshState();
-        if (!evt.success && evt.finalError) {
-          appendErrorMessage(evt.finalError);
+        if (!evt.success) {
+          setRunningState(false);
+          if (evt.finalError) appendErrorMessage(evt.finalError);
         }
+        tab?.refreshState();
       } else if (evt.type === "model_fallback") {
         // pig's own event (v0.5.4): the quota wall moved the session to a `fallbackModels` entry
         // and the turn is already running again on it. Same sentence as the TUI, and the model

@@ -740,6 +740,22 @@ final class BashToolTest extends ToolTestCase
         $this->assertSame("own shell\n", $this->textOf(Async::run(static fn (): AgentToolResult => $tool->execute('call-1', ['command' => 'x']))));
     }
 
+    public function testACommandHasNoControllingTerminalToCorruptTheTuiScreen(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows' || !function_exists('posix_setsid')) {
+            $this->markTestSkipped('POSIX setsid');
+        }
+
+        // A command (`ssh` asking about a host key, `sudo` asking for a password) opens `/dev/tty`
+        // directly when the child inherits pig's session, writing onto the raw TUI screen and
+        // scrolling the alternate screen behind the differential renderer's back.
+        $result = $this->bash([
+            'command' => 'if (echo "leaked" > /dev/tty) 2>/dev/null; then echo "OPENED_TTY"; else echo "NO_TTY"; fi',
+        ]);
+
+        $this->assertSame("NO_TTY\n", $this->textOf($result));
+    }
+
     /** Where `Run` put the whole output of a command that printed $bytes bytes, if anywhere. */
     private function spillOf(int $bytes): ?string
     {

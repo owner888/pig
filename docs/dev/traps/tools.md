@@ -30,6 +30,7 @@ Built-in tools, subprocesses, command-line flags, directories and configuration.
 - [The bash timer (Elapsed / Took) and batching `test/lint.php`](#the-bash-timer-elapsed--took-and-batching-testlintphp)
 - [An empty tool result was described as "see attached image"](#an-empty-tool-result-was-described-as-see-attached-image)
 - [Built-in tool argument conversion differed from upstream](#built-in-tool-argument-conversion-differed-from-upstream)
+- [A bash command (`ssh`) opened `/dev/tty`, wrote onto the TUI screen and scrolled the dock](#a-bash-command-ssh-opened-devtty-wrote-onto-the-tui-screen-and-scrolled-the-dock)
 
 ## An edit was approved with nothing on screen but a path
 
@@ -886,3 +887,26 @@ interface (`PreparesArguments`), like `ReplayableTool`: `HookedTool`, `Described
 - Tests: `EditToolTest::testDistantEditsAreDrawnAsSeparateHunks`,
   `EditToolTest::testTheToolsWrappersReshapeItsArgumentsAsTheToolWould`,
   `ToolExecutionTest::testAnEditInAnyShapeTheToolAcceptsIsPreviewed`.
+
+## A bash command (`ssh`) opened `/dev/tty`, wrote onto the TUI screen and scrolled the dock
+
+**Symptom**: after the agent ran `ssh -p 443 -T git@ssh.github.com` in fullscreen TUI mode, the
+bottom dock showed a duplicate `~/Development/owner/myphp (main) • ⚡ …` footer line above the real
+footer, with `This host key is known by the foll` at the right edge of that row, and the command
+hung until its timeout.
+
+**Root cause**: `Run::start()` pointed fd 0 at `/dev/null` and fds 1–2 at pipes, but `proc_open()`
+left the child in pig's session with pig's controlling terminal (`/dev/tty`). OpenSSH's
+`read_passphrase()` opens `/dev/tty` directly to print its host-key confirmation prompt; in
+`stty raw` mode with `DISABLE_AUTOWRAP`, each `\n` moved down a row without returning to column 1
+(leaving `This host key is known by the foll` at column ~108) and scrolled the alternate screen up
+by a row behind `TuiAltScreen`'s back, shifting the old footer top line onto the row of the static
+editor bottom border (`$unchanged` never redrew it). Upstream's `spawn(..., { detached: true })`
+calls `setsid()` in the child before exec, detaching `/dev/tty`.
+
+**Trap rules**:
+- `Run::start()` runs the shell in a new session (`setsid()` via `/usr/bin/setsid` or
+  `posix_setsid()` + `pcntl_exec()`) so the child has no controlling terminal (`/dev/tty` is
+  `ENXIO`) and leads its own process group (`Process::killTree()` signals `-$pid` too).
+- Tests: `BashToolTest::testACommandHasNoControllingTerminalToCorruptTheTuiScreen`.
+

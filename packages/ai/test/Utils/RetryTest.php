@@ -67,6 +67,8 @@ final class RetryTest extends TestCase
         yield 'closed before the head' => ['Connection closed before the response head was complete'];
         yield 'closed mid-body' => ['Connection closed in the middle of a chunked body'];
         yield 'tls handshake' => ['TLS handshake with api.deepseek.com failed'];
+        yield 'gemini malformed function call' => ['Provider stopped with: MALFORMED_FUNCTION_CALL'];
+        yield 'gemini unexpected tool call' => ['Provider stopped with: UNEXPECTED_TOOL_CALL'];
         // A longer code that starts with 1308 is not Zhipu's usage limit.
         yield 'zhipu code 13081 is not 1308' => ['429 {"error":{"code":"13081","message":"slow down"}}'];
     }
