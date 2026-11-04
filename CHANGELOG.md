@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.7] - 2026-11-03
+
+### Added
+
+- Added drag-over highlight and upload progress animation (`.pending-upload-chip` with spinner, filename, percentage, and progress bar, plus `.btn-attach.uploading`) when staging files in `pig web`.
+
 ## [1.5.6] - 2026-11-03
 
 ### Fixed

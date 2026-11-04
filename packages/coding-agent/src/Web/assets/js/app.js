@@ -876,12 +876,18 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     });
 
     // Drag and drop files / images (capture phase so dropping onto the textarea works too)
+    const inputWrapper = document.querySelector(".input-wrapper");
     window.addEventListener("dragover", (e) => {
       if (!Array.from(e.dataTransfer?.types || []).includes("Files")) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      inputWrapper?.classList.add("drag-over");
+    }, true);
+    window.addEventListener("dragleave", (e) => {
+      if (!e.relatedTarget) inputWrapper?.classList.remove("drag-over");
     }, true);
     window.addEventListener("drop", (e) => {
+      inputWrapper?.classList.remove("drag-over");
       if (!e.dataTransfer?.files?.length) return;
       e.preventDefault();
       e.stopPropagation();
@@ -897,6 +903,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     };
     const SUPPORTED_IMAGE_MIMES = new Set(Object.values(IMAGE_MIME_BY_EXT));
     const UPLOAD_CHUNK = 4 * 1024 * 1024;
+    let uploadingFiles = []; // list of { id, name, progress }
 
     function imageMimeOf(file) {
       if (SUPPORTED_IMAGE_MIMES.has(file.type)) return file.type;
@@ -929,7 +936,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       resizePrompt();
     }
 
-    async function uploadFile(file) {
+    async function uploadFile(file, onProgress = null) {
       const id = randomHex().slice(0, 16);
       const name = file.name || "file";
       let path = null;
@@ -945,6 +952,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
         path = data.path;
+        onProgress?.(Math.min(100, Math.round((Math.min(offset + UPLOAD_CHUNK, total) / total) * 100)));
       }
       return path;
     }
@@ -971,23 +979,46 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       }
       if (uploads.length === 0) return;
+      const entries = uploads.map((file) => ({
+        id: randomHex().slice(0, 16),
+        name: file.name || "file",
+        progress: 0,
+        file,
+      }));
+      uploadingFiles.push(...entries);
       attachBtn.disabled = true;
+      attachBtn.classList?.add("uploading");
+      attachBtn.innerHTML = `<span class="upload-spinner"></span>`;
+      renderPendingImages();
       try {
         const paths = [];
-        for (const f of uploads) {
-          const path = await uploadFile(f);
-          if (path) paths.push(path);
+        for (const entry of entries) {
+          try {
+            const path = await uploadFile(entry.file, (pct) => {
+              entry.progress = pct;
+              renderPendingImages();
+            });
+            if (path) paths.push(path);
+          } finally {
+            const idx = uploadingFiles.indexOf(entry);
+            if (idx !== -1) uploadingFiles.splice(idx, 1);
+            renderPendingImages();
+          }
         }
         insertPathsAtCursor(paths);
       } catch (err) {
         appendErrorMessage(err.message || t("send_failed"));
       } finally {
-        attachBtn.disabled = false;
+        if (uploadingFiles.length === 0) {
+          attachBtn.disabled = false;
+          attachBtn.classList?.remove("uploading");
+          attachBtn.textContent = "📎";
+        }
       }
     }
 
     function renderPendingImages() {
-      if (pendingImages.length === 0) {
+      if (pendingImages.length === 0 && uploadingFiles.length === 0) {
         pendingImagesBar.style.display = "none";
         pendingImagesBar.innerHTML = "";
         return;
@@ -1007,6 +1038,17 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         });
         pendingImagesBar.appendChild(item);
       });
+      for (const u of uploadingFiles) {
+        const chip = document.createElement("div");
+        chip.className = "pending-upload-chip";
+        chip.innerHTML = `
+          <span class="upload-spinner"></span>
+          <span class="pending-upload-name">${escapeHtml(u.name)}</span>
+          <span class="pending-upload-pct">${u.progress}%</span>
+          <div class="pending-upload-bar"><div style="width:${u.progress}%"></div></div>
+        `;
+        pendingImagesBar.appendChild(chip);
+      }
     }
 
     function setRunningState(running) {
