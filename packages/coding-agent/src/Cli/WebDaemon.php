@@ -187,6 +187,37 @@ final class WebDaemon
         return $pid;
     }
 
+    /**
+     * The `[host, port]` the running daemon was started with, from `web.pid` (or the startup
+     * banner in `web.log` for a daemon started before `web.pid` recorded them), or null.
+     *
+     * @return array{0: string, 1: int}|null
+     */
+    public function runningAddress(): ?array
+    {
+        if (is_file($this->pidFile())) {
+            $lines = explode("\n", trim((string) file_get_contents($this->pidFile())));
+            $host = trim($lines[1] ?? '');
+            $port = trim($lines[2] ?? '');
+            if ($host !== '' && ctype_digit($port) && (int) $port >= 1 && (int) $port <= 65535) {
+                return [$host, (int) $port];
+            }
+        }
+
+        if (is_file($this->logFile())) {
+            $head = (string) file_get_contents($this->logFile(), false, null, 0, 512);
+            $plain = preg_replace('/\x1b\[[0-9;]*m/', '', $head) ?? $head;
+            if (preg_match('#https?://(\[[^\]]+\]|[^:\s]+):(\d+)#', $plain, $m) === 1) {
+                $port = (int) $m[2];
+                if ($port >= 1 && $port <= 65535) {
+                    return [$m[1], $port];
+                }
+            }
+        }
+
+        return null;
+    }
+
     // ---- the four commands ----------------------------------------------------------------
 
     /** @param list<string> $args */
@@ -233,7 +264,7 @@ final class WebDaemon
         $code = WebLogin::at($home)->setupCode();
 
         try {
-            $pid = $this->daemonise($argv);
+            $pid = $this->daemonise($argv, $host, $port);
         } catch (\RuntimeException $e) {
             fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
 
@@ -294,7 +325,9 @@ final class WebDaemon
             return 3; // LSB's "program is not running"
         }
 
-        echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}, log {$this->logFile()})") . "\n";
+        $address = $this->runningAddress();
+        $at = $address !== null ? " at http://{$address[0]}:{$address[1]}" : '';
+        echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}{$at}, log {$this->logFile()})") . "\n";
         self::sayCode(WebLogin::at($this->home ?? Config::home())->setupCode());
 
         return 0;
@@ -364,11 +397,19 @@ final class WebDaemon
     /** @param list<string> $args */
     private function restart(array $args): int
     {
+        $previous = null;
         if ($this->runningPid() !== null) {
+            $previous = $this->runningAddress();
             $status = $this->stop();
             if ($status !== 0) {
                 return $status;
             }
+        }
+
+        // Keep the host and port the running daemon was started with unless `restart` was
+        // given new ones: `hostAndPort()` reads left to right, so `$args` after these wins.
+        if ($previous !== null) {
+            $args = ['--host', $previous[0], '--port', (string) $previous[1], ...$args];
         }
 
         // A restart is a daemon restart: nobody types `restart` for a foreground server, and
@@ -721,7 +762,7 @@ final class WebDaemon
      *
      * @param list<string> $argv
      */
-    private function daemonise(array $argv): int
+    private function daemonise(array $argv, string $host = self::DEFAULT_HOST, int $port = self::DEFAULT_PORT): int
     {
         // The pid has to travel back from the grandchild, and the parent cannot `wait()` for a
         // grandchild. A pipe is the channel: the grandchild writes its pid before exec and the
@@ -777,10 +818,11 @@ final class WebDaemon
             exit(0);
         }
 
-        // Grandchild: the daemon. Write the pid file and tell the parent, then point the three
-        // standard streams at the log and become `pig --mode web`.
+        // Grandchild: the daemon. Write the pid file (with its host and port so `status` and
+        // `restart` know where it listens) and tell the parent, then point the three standard
+        // streams at the log and become `pig --mode web`.
         $pid = getmypid();
-        file_put_contents($this->pidFile(), $pid . "\n");
+        file_put_contents($this->pidFile(), "{$pid}\n{$host}\n{$port}\n");
         fwrite($childEnd, $pid . "\n");
         fclose($childEnd);
 

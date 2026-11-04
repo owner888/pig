@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.6] - 2026-11-03
+
+### Fixed
+
+- Fixed `/model` and `/scoped-models` showing `Could not refresh <provider>; showing cached models.` for unconfigured built-in providers (such as `zai-coding-cn`): `ModelRefresh::remoteCatalog()` now skips the network phase when the provider has no configured credential (`!$auth->hasKeyFor($provider)`), matching upstream pi's `Models.refresh()` (`resolveRefreshCredential()`) instead of firing 40 concurrent catalog requests at once, and `RemoteCatalog::request()` now retries transient transport failures and `408`/`425`/`429`/`500`/`502`/`503`/`504` responses up to twice as upstream's `fetchWithRetry()` does.
+- Fixed `pig web restart` resetting a daemon started with `--host` or `--port` (such as `pig web start -d --host 0.0.0.0`) back to `127.0.0.1:8088`: `WebDaemon` now records the daemon's host and port in `web.pid` (falling back to the startup banner in `web.log` for older pid files), shows the listening address in `pig web status`, and preserves it across `pig web restart` unless new `--host` / `--port` flags are passed.
+
 ## [1.5.5] - 2026-11-03
 
 ### Fixed

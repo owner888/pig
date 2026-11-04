@@ -41,6 +41,12 @@ final class RemoteCatalog
     /** Upstream's `REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS`. */
     private const float TIMEOUT_SECONDS = 4.0;
 
+    /** Upstream's `fetchWithRetry()` (`management-http.ts`): two retries after the first attempt. */
+    private const int MAX_RETRIES = 2;
+
+    /** Upstream's `RETRYABLE_STATUS_CODES` in `management-http.ts`. */
+    private const array RETRYABLE_STATUS_CODES = [408, 425, 429, 500, 502, 503, 504];
+
     private function __construct()
     {
     }
@@ -61,20 +67,38 @@ final class RemoteCatalog
 
     /**
      * Upstream's `requestCatalog()`: the provider's catalog, revalidated with `$etag` when there is
-     * a cached body behind it. The body is read whatever the status, so the connection is done with.
+     * a cached body behind it, through `fetchWithRetry()` (`management-http.ts` — up to two
+     * immediate retries on a transport failure or a transient status, unless `$signal` aborted).
+     * The body is read whatever the status, so the connection is done with.
      *
      * @return array{0: Response, 1: string} the response and its body
      */
     public static function request(string $provider, string $baseUrl, ?string $etag = null, ?HttpClient $http = null, ?AbortSignal $signal = null): array
     {
         $url = rtrim($baseUrl, '/') . '/api/models/providers/' . rawurlencode($provider) . '?types=' . implode(',', self::MODEL_TYPES);
-        $response = ($http ?? new HttpClient(timeout: self::TIMEOUT_SECONDS))->send(new Request('GET', $url, [
+        $client = $http ?? new HttpClient(timeout: self::TIMEOUT_SECONDS);
+        $request = new Request('GET', $url, [
             'accept' => 'application/json',
             'user-agent' => PigUserAgent::get(),
             ...($etag !== null ? ['if-none-match' => $etag] : []),
-        ]), $signal);
+        ]);
 
-        return [$response, $response->body->all()];
+        for ($attempt = 0; ; $attempt++) {
+            $signal?->throwIfAborted();
+
+            try {
+                $response = $client->send($request, $signal);
+                $body = $response->body->all();
+
+                if ($attempt >= self::MAX_RETRIES || !in_array($response->status, self::RETRYABLE_STATUS_CODES, true)) {
+                    return [$response, $body];
+                }
+            } catch (\Throwable $error) {
+                if ($signal?->aborted() || $attempt >= self::MAX_RETRIES) {
+                    throw $error;
+                }
+            }
+        }
     }
 
     /**

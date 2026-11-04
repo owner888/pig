@@ -203,8 +203,9 @@ final class ModelRefresh
 
     /**
      * Upstream's `withRemoteCatalog()` refresh: the stored catalog laid over the built-in models when
-     * it is newer than them; then, with the network and a catalog server (`RemoteCatalog::baseUrl()`)
-     * and once the four-hour interval is up (or
+     * it is newer than them; then, with a credential (`resolveRefreshCredential()` in upstream's
+     * `Models.refresh()` stops before the network phase when there is none), the network and a
+     * catalog server (`RemoteCatalog::baseUrl()`) and once the four-hour interval is up (or
      * `$force`), the catalog server asked — revalidated with the stored `ETag` when a body backs it.
      * A 304 only moves the check time; a 404 or 501 (no catalog for this provider) is remembered as
      * one with nothing newer in it; any other failure keeps the stored catalog and its `ETag`, and is
@@ -215,7 +216,7 @@ final class ModelRefresh
         $stored = self::read($auth, $provider);
         Models::useProviderCatalog($provider, self::newer($provider, $stored));
 
-        if (!$allowNetwork || $baseUrl === null || $signal->aborted()) {
+        if (!$allowNetwork || $baseUrl === null || $signal->aborted() || !$auth->hasKeyFor($provider)) {
             return;
         }
 

@@ -265,6 +265,47 @@ final class WebDaemonTest extends TestCase
         $this->assertNull($daemon->runningPid());
     }
 
+    public function testRestartKeepsTheRunningDaemonsHostAndPortUnlessOverridden(): void
+    {
+        if (!function_exists('posix_setsid')) {
+            $this->markTestSkipped('ext-posix');
+        }
+
+        $daemon = new WebDaemon('/bin/sleep', $this->home, static function (array $argv): never {
+            pcntl_exec('/bin/sleep', ['30']);
+            exit(127);
+        });
+
+        try {
+            [$status, $out] = $this->invoke($daemon, ['start', '-d', '--host', '0.0.0.0', '--port', '9000']);
+            $this->assertSame(0, $status, $out);
+            $this->assertSame(['0.0.0.0', 9000], $daemon->runningAddress());
+
+            [, $statusOut] = $this->invoke($daemon, ['status']);
+            $this->assertStringContainsString('http://0.0.0.0:9000', $statusOut);
+
+            // A plain `pig web restart` preserves 0.0.0.0:9000 rather than falling back to 127.0.0.1:8088.
+            [$status, $restartOut] = $this->invoke($daemon, ['restart']);
+            $this->assertSame(0, $status, $restartOut);
+            $this->assertStringContainsString('http://0.0.0.0:9000', $restartOut);
+            $this->assertSame(['0.0.0.0', 9000], $daemon->runningAddress());
+
+            // An old pid file with only the pid falls back to the startup banner in web.log.
+            $pid = $daemon->runningPid();
+            file_put_contents($daemon->pidFile(), "{$pid}\n");
+            file_put_contents($daemon->logFile(), "\e[32m✔ Web UI running at: \e[39m\e[1mhttp://0.0.0.0:9000\e[22m\n");
+            $this->assertSame(['0.0.0.0', 9000], $daemon->runningAddress());
+
+            // Explicit flags on `restart` override what changed and keep the rest.
+            [$status, $overrideOut] = $this->invoke($daemon, ['restart', '--port', '9001']);
+            $this->assertSame(0, $status, $overrideOut);
+            $this->assertStringContainsString('http://0.0.0.0:9001', $overrideOut);
+            $this->assertSame(['0.0.0.0', 9001], $daemon->runningAddress());
+        } finally {
+            $this->invoke($daemon, ['stop']);
+        }
+    }
+
     // ---- the macOS service ----------------------------------------------------------------
 
     public function testInstallIsRefusedOffMacosAndTouchesNothing(): void

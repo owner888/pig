@@ -221,9 +221,11 @@ final class ModelRefreshTest extends TestCase
         $server = new CannedServer();
         $base = $server->start(["HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nLast-Modified: Sat, 01 Jan 2050 00:00:00 GMT\r\nETag: \"v1\"\r\nContent-Length: " . strlen($body) . "\r\n\r\n{$body}"]);
         putenv("PIG_MODEL_CATALOG_URL={$base}");
+        $auth = Auth::discover("{$this->home}/auth.json");
+        $auth->setApiKey('groq', 'sk-groq');
 
         try {
-            $result = Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['groq']));
+            $result = Async::run(fn () => ModelRefresh::refresh($auth, ['groq']));
 
             $this->assertSame([], $result->errors);
             $this->assertStringContainsString('GET /api/models/providers/groq?types=chat,image,classifier', $server->receivedHead());
@@ -233,11 +235,35 @@ final class ModelRefreshTest extends TestCase
             $this->assertSame('groq', $entry['models'][0]['provider']);
 
             // Checked a moment ago: not asked again within the interval, unless forced.
-            Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['groq']));
+            Async::run(fn () => ModelRefresh::refresh($auth, ['groq']));
             $this->assertSame(1, $server->connections());
         } finally {
             putenv('PIG_MODEL_CATALOG_URL=off');
             Models::useProviderCatalog('groq', null);
+        }
+    }
+
+    public function testABuiltInProviderWithoutACredentialRestoresItsStoredCatalogWithoutAskingTheServer(): void
+    {
+        $first = array_values(array_filter(Models::all(), static fn ($m): bool => $m->provider === 'zai-coding-cn'))[0];
+        $this->store('zai-coding-cn', [
+            'models' => [[...ModelJson::encode($first), 'name' => 'Stored Only']],
+            'checkedAt' => 1,
+            'lastModified' => 2524608000000,
+        ]);
+        $server = new CannedServer();
+        $base = $server->start(["HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"]);
+        putenv("PIG_MODEL_CATALOG_URL={$base}");
+
+        try {
+            $result = Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['zai-coding-cn'], force: true));
+
+            $this->assertSame([], $result->errors);
+            $this->assertSame(0, $server->connections());
+            $this->assertSame('Stored Only', array_values(array_filter(Models::all(), static fn ($m): bool => $m->provider === 'zai-coding-cn'))[0]->name);
+        } finally {
+            putenv('PIG_MODEL_CATALOG_URL=off');
+            Models::useProviderCatalog('zai-coding-cn', null);
         }
     }
 
@@ -248,9 +274,11 @@ final class ModelRefreshTest extends TestCase
         $server = new CannedServer();
         $base = $server->start(["HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n"]);
         putenv("PIG_MODEL_CATALOG_URL={$base}");
+        $auth = Auth::discover("{$this->home}/auth.json");
+        $auth->setApiKey('groq', 'sk-groq');
 
         try {
-            $result = Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['groq']));
+            $result = Async::run(fn () => ModelRefresh::refresh($auth, ['groq']));
 
             $this->assertSame([], $result->errors);
             $this->assertStringContainsStringIgnoringCase('if-none-match: "v1"', $server->receivedHead());
@@ -269,16 +297,19 @@ final class ModelRefreshTest extends TestCase
         $server = new CannedServer();
         $base = $server->start(["HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"]);
         putenv("PIG_MODEL_CATALOG_URL={$base}");
+        $auth = Auth::discover("{$this->home}/auth.json");
+        $auth->setApiKey('groq', 'sk-groq');
+        $auth->setApiKey('cerebras', 'sk-cerebras');
 
         try {
-            $result = Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['groq']));
+            $result = Async::run(fn () => ModelRefresh::refresh($auth, ['groq']));
             $this->assertSame([], $result->errors);
             $entry = json_decode((string) file_get_contents("{$this->home}/models-store.json"), true)['groq'];
             $this->assertSame([[], 0], [$entry['models'], $entry['lastModified']]);
 
             $failing = new CannedServer();
             putenv('PIG_MODEL_CATALOG_URL=' . $failing->start(["HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"]));
-            $result = Async::run(fn () => ModelRefresh::refresh(Auth::discover("{$this->home}/auth.json"), ['cerebras']));
+            $result = Async::run(fn () => ModelRefresh::refresh($auth, ['cerebras']));
             $this->assertSame(['cerebras'], array_keys($result->errors));
             $this->assertSame('Model catalog request failed for cerebras: 500', $result->errors['cerebras']->getMessage());
         } finally {

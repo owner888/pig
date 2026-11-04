@@ -87,6 +87,23 @@ final class RemoteCatalogTest extends TestCase
         );
     }
 
+    public function testTransientStatusesAreRetriedUpToTwice(): void
+    {
+        $server = new CannedServer();
+        $body = '[{"id":"m"}]';
+        $base = $server->startSequence([
+            ["HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"],
+            ["HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n"],
+            ["HTTP/1.1 200 OK\r\nContent-Length: " . strlen($body) . "\r\n\r\n{$body}"],
+        ]);
+
+        [$response, $text] = Async::run(static fn (): array => RemoteCatalog::request('groq', $base, null, new HttpClient(5.0)));
+
+        $this->assertSame(200, $response->status);
+        $this->assertSame($body, $text);
+        $this->assertSame(3, $server->connections());
+    }
+
     public function testAMergedCatalogReplacesAModelWhereItStandsAndAddsANewOneAfterTheProvidersLast(): void
     {
         $groq = array_values(array_filter(Models::all(), static fn (Model $m): bool => $m->provider === 'groq'));

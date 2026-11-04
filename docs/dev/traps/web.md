@@ -22,6 +22,7 @@ The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved ou
 - [A language pack installed with `pig install` was not in the web page's language list](#a-language-pack-installed-with-pig-install-was-not-in-the-web-pages-language-list)
 - [Chrome reached 20 GB of memory on a long `pig web` run with WebSocket reconnects](#chrome-reached-20-gb-of-memory-on-a-long-pig-web-run-with-websocket-reconnects)
 - [Non-image files could not be picked or dragged into the web UI](#non-image-files-could-not-be-picked-or-dragged-into-the-web-ui)
+- [`pig web restart` reset a `0.0.0.0` daemon back to `127.0.0.1`](#pig-web-restart-reset-a-0000-daemon-back-to-127001)
 
 ## A failed LLM send in Web mode showed no error at all (the error was swallowed)
 
@@ -379,6 +380,23 @@ inserted into `#prompt-input` (quoted in `!` commands, as `Editor::pasteFromClip
 
 Regression tests: `WebModeTest::testUploadedFilesAreStagedUnderTheirSafeFilenameAndSupportChunkedAppend`,
 `WebMessageBlocksTest::testAnyFileCanBePickedOrDroppedAndNonImagesInsertTheirStagedPath`.
+
+## `pig web restart` reset a `0.0.0.0` daemon back to `127.0.0.1`
+
+**Symptom**: a daemon started with `pig web start -d --host 0.0.0.0` came back on
+`http://127.0.0.1:8088` after `pig web restart`.
+
+**Cause**: `web.pid` recorded only the pid, and `WebDaemon::restart()` called `stop()` and then
+`start($args)` with no record of the running daemon's host or port, falling back to
+`DEFAULT_HOST` (`127.0.0.1`) and `DEFAULT_PORT` (`8088`).
+
+**Rule**: `daemonise()` writes `"{$pid}\n{$host}\n{$port}\n"` to `web.pid` (`runningAddress()`
+reads lines 2–3, or falls back to the startup banner in `web.log` for older pid files); `status()`
+includes the address, and `restart()` prepends the running daemon's `--host` and `--port` before
+`$args` so explicit flags override them and a plain `pig web restart` keeps them.
+
+Regression test: `WebDaemonTest::testRestartKeepsTheRunningDaemonsHostAndPortUnlessOverridden`.
+
 
 
 
