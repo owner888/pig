@@ -123,15 +123,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
-        const blockResized = new ResizeObserver(() => {
-          if (!this.userScrolledUp) this.scroller.scrollTop = this.scroller.scrollHeight;
-        });
-        new MutationObserver((records) => {
-          for (const r of records) {
-            for (const n of r.addedNodes) if (n.nodeType === Node.ELEMENT_NODE) blockResized.observe(n);
-            for (const n of r.removedNodes) if (n.nodeType === Node.ELEMENT_NODE) blockResized.unobserve(n);
+        this.blockResized = new ResizeObserver(() => {
+          if (!this.userScrolledUp) {
+            this.scroller.scrollTop = this.scroller.scrollHeight;
+            this.lastScrollTop = this.scroller.scrollTop;
           }
-        }).observe(this.scroller, { childList: true });
+        });
+        this.scrollerObserver = new MutationObserver((records) => {
+          for (const r of records) {
+            for (const n of r.addedNodes) if (n.nodeType === Node.ELEMENT_NODE) this.blockResized.observe(n);
+            for (const n of r.removedNodes) if (n.nodeType === Node.ELEMENT_NODE) this.blockResized.unobserve(n);
+          }
+        });
+        this.scrollerObserver.observe(this.scroller, { childList: true });
         chatArea.appendChild(this.scroller);
       }
 
@@ -162,6 +166,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
 
       close() {
+        this.closed = true;
+        this.olderMessages = null;
+        this.currentThinkingBox?.finish();
+        this.currentThinkingBox = null;
+        this.currentAssistantBlock = null;
+        this.toolCards.clear();
+        this.bashCards.clear();
+        this.blockResized?.disconnect();
+        this.scrollerObserver?.disconnect();
         network.send({ type: "detach_session", tabId: this.id });
         this.failPending("tab closed");
         this.scroller.remove();
@@ -273,8 +286,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.stale = true;
         this.needsMessages = true;
         // The answer that was streaming is drawn afresh from its text, not continued in its block.
+        this.currentThinkingBox?.finish();
         this.currentAssistantBlock = null;
         this.currentThinkingBox = null;
+        this.toolCards.clear();
       }
 
       /** Seen again after being away: the last page, as after a reconnect, and what the child is doing. */
@@ -283,8 +298,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // A reconnect in progress (`network.js` after a sleep) binds the tab, and `onBound()` loads
         // the same page; asking over a connection that is gone only fails.
         if (!this.bound) return;
-        await this.loadMessages();
         await this.refreshState();
+        await this.loadMessages();
       }
 
       /**
@@ -311,13 +326,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // A child someone else started — another browser, a scheduled run — draws in whatever
         // theme it was given; this page's is the one it should draw in now.
         this.tellTheme(currentTheme);
-        // A fresh child, or a reconnect to one: load what it has, then ask what it is. A tab in
-        // the background loads its conversation when it is opened (`openTab()`): after a reconnect
-        // every tab binds at once, and every history at once is the biggest thing a page asks
-        // the server to send it.
+        // State first, so a conversation started in this tab has its `sessionFile` (and the pool
+        // has remembered it from `get_state`) before `loadMessages()` asks for images by `refs`.
+        await this.refreshState();
+        // A fresh child, or a reconnect to one: load what it has. A tab in the background loads
+        // its conversation when it is opened (`openTab()`): after a reconnect every tab binds at
+        // once, and every history at once is the biggest thing a page asks the server to send it.
         if (this === active) await this.loadMessages();
         else this.needsMessages = true;
-        await this.refreshState();
         if (this === active) applyActiveTabToChrome();
       }
 
@@ -331,13 +347,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       /** The commands the `/` list offers beyond the built-ins, as the TUI's list does. */
       async loadCommands() {
+        if (!this.bound) return;
         try {
           this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
           if (this === active) slashAutocomplete?.setExtraCommands(extraCommands(this));
-        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_command_list"), err); }
+        } catch (err) { if (this === active && this.bound && !this.ended) pigUnreachable(t("what_command_list"), err); }
       }
 
       async refreshState() {
+        if (!this.bound) return;
         try {
           const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
           this.state = s;
@@ -358,7 +376,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           this.showStoppedMidRun();
           saveTabs(); renderTabs();
           if (this === active) applyActiveTabToChrome();
-        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_session_state"), err); }
+        } catch (err) {
+          if (this === active && this.bound && !this.ended) pigUnreachable(t("what_session_state"), err);
+          return;
+        }
         // Apart, so a child that cannot list its commands still has its state drawn — and after
         // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
         this.loadCommands();
@@ -392,7 +413,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
 
       async loadMessages() {
+        if (!this.bound) return;
         try {
+          // A new conversation's file is written on its first message; learn it before asking for
+          // messages so `imageRefs()` can ask for images by reference (`images: "refs"`).
+          if (!this.sessionFile && !this.incognito && (this.messagesLoaded || this.isRunning)) {
+            await this.refreshState();
+            if (!this.bound) return;
+          }
           // The end of the conversation only (`RpcMode::messagesPage()`): the whole of a long one —
           // screenshots and all — was hundreds of megabytes, more than the server could pass on.
           // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
@@ -429,15 +457,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           // top of it each time.
           if (this.incognito) this.render(() => prependIncognitoNotice());
           this.showStoppedMidRun();
-        } catch (err) { if (this === active && !this.ended) pigUnreachable(t("what_conversation"), err); }
-      }
-
-      close() {
-        this.closed = true;
-        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-        if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch (e) {} }
-        this.failPending("tab closed");
-        this.scroller.remove();
+        } catch (err) { if (this === active && this.bound && !this.ended) pigUnreachable(t("what_conversation"), err); }
       }
     }
 
@@ -722,6 +742,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function scrollToBottomIfNeeded() {
       if (!userScrolledUp) {
         chatScroll.scrollTop = chatScroll.scrollHeight;
+        if (T()) T().lastScrollTop = chatScroll.scrollTop;
       }
     }
 
@@ -1252,6 +1273,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       } else if (evt.type === "tool_execution_end") {
         const card = tab?.toolCards?.get(evt.toolCallId);
+        tab?.toolCards?.delete(evt.toolCallId);
         if (card?.element.isConnected) {
           card.finish({ result: evt.result, isError: evt.isError });
         } else {
@@ -1374,15 +1396,25 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // A page that cannot reach pig must say so. Every loader used to swallow its failure, so a
     // server that was not answering looked like a page that was still loading — "Loading
     // session..." in the header, for ever, with nothing to read. One function owns the sentence
-    // and retries; a later success clears it.
+    // and retries; a later success clears it. One timer at most: three failing loaders each
+    // scheduling one that retried all three multiplied by 3 every 3 seconds.
     let unreachable = null;
+    let unreachableTimer = null;
     function pigUnreachable(what, err) {
       const why = err && err.message ? err.message : String(err);
       unreachable = t("unreachable", { error: `${what}: ${why}` });
       showStatusBanner(unreachable, "error");
-      setTimeout(() => { refreshState(); active?.loadMessages(); if (availableModels.length === 0) loadModels(); }, 3000);
+      unreachableTimer ??= setTimeout(() => {
+        unreachableTimer = null;
+        if (active?.bound) {
+          refreshState();
+          active.loadMessages();
+        }
+        if (availableModels.length === 0) loadModels();
+      }, 3000);
     }
     function pigReachable() {
+      if (unreachableTimer) { clearTimeout(unreachableTimer); unreachableTimer = null; }
       if (unreachable) { unreachable = null; hideStatusBanner(); }
       window.webTerminal?.reattachAll();
     }
@@ -2241,7 +2273,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       renderTabs();
       // The scroller was hidden, so its scroll position is whatever it was; a tab you come back
       // to that was following its turn should still be at the bottom.
-      if (!tab.userScrolledUp) tab.scroller.scrollTop = tab.scroller.scrollHeight;
+      if (!tab.userScrolledUp) {
+        tab.scroller.scrollTop = tab.scroller.scrollHeight;
+        tab.lastScrollTop = tab.scroller.scrollTop;
+      }
       scrollBottomBtn.style.display = tab.userScrolledUp ? "flex" : "none";
       promptInput.focus();
     }
@@ -3159,13 +3194,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           }
         } else if (m.role === "tool_result" || m.role === "toolResult") {
           let card = tab?.toolCards?.get(m.toolCallId);
+          tab?.toolCards?.delete(m.toolCallId);
           if (!card) {
             card = new ToolCard({
               toolCallId: m.toolCallId,
               toolName: m.toolName || "tool",
               arguments: {},
             });
-            if (tab) tab.toolCards.set(m.toolCallId, card);
             chatScroll.appendChild(card.element);
           }
           card.finish({
@@ -3227,6 +3262,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const tab = T();
         chatScroll.innerHTML = "";
         if (tab) {
+          tab.currentThinkingBox?.finish();
+          tab.currentThinkingBox = null;
+          tab.currentAssistantBlock = null;
           tab.toolCards = tab.toolCards || new Map();
           tab.toolCards.clear();
           // What was not drawn of the conversation before is not drawn now.
@@ -3235,6 +3273,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
         if (!Array.isArray(msgs) || msgs.length === 0) {
           if (tab) {
+            tab.lastScrollTop = 0;
             tab.emptyState = new EmptyState((prompt) => {
               promptInput.value = prompt;
               promptInput.focus();
@@ -3252,6 +3291,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const cut = tab ? cutBefore(msgs, msgs.length, FIRST_DRAW) : 0;
         drawMessages(cut > 0 ? msgs.slice(cut) : msgs);
         chatScroll.scrollTop = chatScroll.scrollHeight;
+        if (tab) tab.lastScrollTop = chatScroll.scrollTop;
         if (cut > 0) {
           tab.olderMessages = { msgs, end: cut };
           backfill(tab, PREFILL);
@@ -3290,6 +3330,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         });
         scroller.prepend(fragment);
         scroller.scrollTop = tab.userScrolledUp ? scroller.scrollHeight - fromBottom : scroller.scrollHeight;
+        tab.lastScrollTop = scroller.scrollTop;
         const left = budget - (older.end - start);
         older.end = start;
         if (start === 0) {

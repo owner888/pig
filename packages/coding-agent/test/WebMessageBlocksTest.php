@@ -362,4 +362,119 @@ final class WebMessageBlocksTest extends TestCase
         );
         $this->assertSame("- one\n+ two &lt;x&gt;", $r['untouched']);
     }
+
+    public function testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt(): void
+    {
+        // Three failing loaders (`refreshState`, `loadCommands`, `loadMessages`) used to schedule
+        // a 3s timer each without deduplication, and each timer ran all three again — 3^N timers on
+        // a dropped socket — while a second `Tab.close()` shadowed the one that sent `detach_session`.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8');
+            const tabMatch = src.match(/class Tab \{[\s\S]*?\n    \}/);
+            const unreachMatch = src.match(/let unreachable = null;[\s\S]*?function pigReachable\(\) \{[\s\S]*?\n    \}/);
+            if (!tabMatch || !unreachMatch) throw new Error('Could not extract Tab or pigUnreachable');
+
+            const timers = new Map();
+            let nextTimer = 1;
+            const sent = [];
+            let active = null;
+            let renderingTab = null;
+            const sandbox = {
+                Node: { ELEMENT_NODE: 1 },
+                ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
+                MutationObserver: class { observe() {} disconnect() {} },
+                document: {
+                    createElement: () => ({ className: '', style: {}, hidden: false, addEventListener: () => {}, remove: () => {}, querySelector: () => null }),
+                },
+                chatArea: { appendChild: () => {} },
+                scrollBottomBtn: { style: {} },
+                network: { send: (m) => sent.push(m) },
+                clientId: 'client-1',
+                pageId: '0'.repeat(32),
+                currentTheme: 'dark',
+                FIRST_LOAD: 180,
+                createHookState: () => ({}),
+                DRAWS_MESSAGES: new Set(),
+                away: () => false,
+                catchUp: () => {},
+                overCap: () => false,
+                slashCommandsFrom: () => [],
+                extraCommands: () => [],
+                slashAutocomplete: null,
+                imageRefs: (tab) => (tab.sessionFile && tab.cwd ? { images: 'refs' } : {}),
+                withImageUrls: (_, m) => m,
+                renderMessages: () => {},
+                drawStreamingText: () => {},
+                rememberPrompt: () => {},
+                textOf: () => '',
+                drawNotify: () => {},
+                prependIncognitoNotice: () => {},
+                setRunningState: () => {},
+                appendErrorMessage: () => {},
+                appendNoticeMessage: () => {},
+                onHookUiRequest: () => {},
+                onEvent: () => {},
+                agentWorkingChanged: () => {},
+                saveTabs: () => {},
+                renderTabs: () => {},
+                applyActiveTabToChrome: () => {},
+                drawCwdChip: () => {},
+                hideStatusBanner: () => {},
+                showStatusBanner: () => {},
+                availableModels: ['m'],
+                loadModels: () => {},
+                refreshState: () => active?.refreshState(),
+                t: (k) => k,
+                window: {},
+                setTimeout: (fn) => { const id = nextTimer++; timers.set(id, fn); return id; },
+                clearTimeout: (id) => { timers.delete(id); },
+            };
+            const run = new Function(
+                ...Object.keys(sandbox),
+                `let tabSeq = 0;\n${tabMatch[0]}\n${unreachMatch[0]}\nreturn { Tab, pigUnreachable, pigReachable, setActive: (t) => { active = t; } };`,
+            );
+            const { Tab, pigUnreachable, pigReachable, setActive } = run(...Object.values(sandbox));
+
+            const tab = new Tab('/repo', null);
+            setActive(tab);
+            // 1. Multiple failures arm only one retry timer, and pigReachable cancels it.
+            pigUnreachable('state', new Error('timeout'));
+            pigUnreachable('commands', new Error('timeout'));
+            pigUnreachable('messages', new Error('timeout'));
+            const afterTripleFailure = timers.size;
+            pigReachable();
+            const afterReachable = timers.size;
+
+            // 2. A dropped connection rejecting in-flight RPCs does not arm pigUnreachable at all.
+            tab.onServerMessage({ type: 'session_bound', cwd: '/repo' });
+            tab.onConnectionLost();
+            const afterDisconnect = timers.size;
+
+            // 3. Closing a tab sends detach_session.
+            sent.length = 0;
+            tab.close();
+            console.log(JSON.stringify({
+                afterTripleFailure,
+                afterReachable,
+                afterDisconnect,
+                detached: sent.some((m) => m.type === 'detach_session' && m.tabId === tab.id),
+            }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $r = json_decode(implode('', $out), true);
+
+        $this->assertSame(1, $r['afterTripleFailure'], 'at most one retry timer is armed at a time');
+        $this->assertSame(0, $r['afterReachable'], 'pigReachable cancels the pending retry timer');
+        $this->assertSame(0, $r['afterDisconnect'], 'a disconnected tab does not arm pigUnreachable');
+        $this->assertTrue($r['detached'], 'closing a tab sends detach_session');
+    }
 }

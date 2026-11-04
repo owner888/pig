@@ -208,12 +208,19 @@ export class SharedNetwork {
       if (active) active.onServerMessage(m);
     };
 
-    ws.onclose = () => {
+    let lost = false;
+    const onLost = () => {
+      if (lost) return;
+      lost = true;
       this.connectionLost();
+    };
+
+    ws.onclose = () => {
+      onLost();
       this.scheduleReconnect();
     };
 
-    ws.onerror = () => this.connectionLost();
+    ws.onerror = () => onLost();
   }
 
   reconnectNow() {

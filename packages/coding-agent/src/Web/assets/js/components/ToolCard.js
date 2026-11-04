@@ -213,6 +213,10 @@ export class ToolCard {
     const footer = this.element.querySelector(".tool-details-footer");
     footer.textContent = this.#resultNotes().join("\n");
     footer.hidden = footer.textContent === "";
+    this.result = null;
+    this.rawOutput = "";
+    this.args = {};
+    delete this.element.dataset.args;
   }
 
   /**

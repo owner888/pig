@@ -19,6 +19,8 @@ The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved ou
 - [A screenshot from the web UI never reached the agent: WebSocket fragments were read as messages](#a-screenshot-from-the-web-ui-never-reached-the-agent-websocket-fragments-were-read-as-messages)
 - [The web sidebar follows the window width](#the-web-sidebar-follows-the-window-width)
 - [An extension rewrote `Origin` and the login page's own stylesheet was refused](#an-extension-rewrote-origin-and-the-login-pages-own-stylesheet-was-refused)
+- [A language pack installed with `pig install` was not in the web page's language list](#a-language-pack-installed-with-pig-install-was-not-in-the-web-pages-language-list)
+- [Chrome reached 20 GB of memory on a long `pig web` run with WebSocket reconnects](#chrome-reached-20-gb-of-memory-on-a-long-pig-web-run-with-websocket-reconnects)
 
 ## A failed LLM send in Web mode showed no error at all (the error was swallowed)
 
@@ -326,4 +328,37 @@ extensions were loaded by the children (`CodingAgent` passes `packageExtensions`
 **Rule**: the shell loads what a child loads. Anything an extension registers *for the page*
 (a locale, an HTTP route, a provider for `/api/models`) must come from the shell's own
 `ExtensionLoader::load()` call, so a new way of bringing extensions in goes there too.
+
+## Chrome reached 20 GB of memory on a long `pig web` run with WebSocket reconnects
+
+**Symptom**: leaving `pig web` open in Chrome over a long session with occasional network drops or
+sleep/wake reconnections grew the Chrome renderer to ~20 GB of RAM.
+
+**Cause** (four stacked):
+1. `pigUnreachable()` scheduled a 3 s `setTimeout` with no deduplication and `pigReachable()` never
+   cleared it. When a WebSocket drop rejected `loadMessages()` and `refreshState()`, `refreshState()`
+   also fell through to `loadCommands()` while `this.bound === false`: all three called
+   `pigUnreachable()`, and every 3 s each timer called `refreshState()` + `loadMessages()`, which
+   failed 3 times again — a $3^N$ timer and RPC storm that flooded the socket with `get_messages`
+   calls as soon as it reconnected, tripping `HARD_SEND_BUFFER` (32 MB) and repeating.
+2. `onBound()` and `catchUpNow()` called `loadMessages()` before `refreshState()`, and `loadMessages()`
+   on `LIVE_CAP` never refreshed state when `this.sessionFile` was still `null` on a tab started in
+   this browser session, so `imageRefs()` sent `{}` instead of `{ images: "refs" }` and fetched 180
+   messages with inline base64 screenshots.
+3. `renderMessages()` and `backfill()` set `scrollTop = scrollHeight` on a shorter redrawn DOM without
+   updating `tab.lastScrollTop`, so the next scroll event saw `top < this.lastScrollTop`, set
+   `tab.userScrolledUp = true`, and permanently disabled `LIVE_CAP` (300 messages).
+4. `ToolCard.finish()` kept `this.result` (including inline base64 images), `this.rawOutput`,
+   `this.args` and `dataset.args`, finished cards stayed in `tab.toolCards`, and a second leftover
+   `Tab.close()` method shadowed the one that sent `detach_session`.
+
+**Rule**: `pigUnreachable()` holds at most one timer (`unreachableTimer`), cleared by `pigReachable()`,
+and a tab whose socket is not bound (`!this.bound`) leaves reconnects to `network.js`. `refreshState()`
+runs before `loadMessages()` on bind/catch-up (and inside `loadMessages()` when an active conversation
+has no `sessionFile` yet) so `images: "refs"` is always used. Every programmatic `scrollTop` change
+updates `tab.lastScrollTop`. `ToolCard.finish()` clears `result`, `rawOutput`, `args` and
+`dataset.args`, and removes the finished card from `tab.toolCards`.
+
+Regression test: `WebMessageBlocksTest::testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt`.
+
 

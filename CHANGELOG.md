@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.4] - 2026-11-03
+
+### Fixed
+
+- Fixed a Chrome memory leak in `pig web` over long runs and WebSocket reconnections: `pigUnreachable` now holds at most one retry timer (cleared on `pigReachable`) and disconnected tabs leave reconnection to `network.js` instead of multiplying retry timers by 3 every 3 seconds; `refreshState` runs before `loadMessages` so conversations started in the current tab always fetch history images by reference (`images: "refs"`) rather than inline base64; programmatic scroll updates (`renderMessages`, `backfill`, `ResizeObserver`) keep `lastScrollTop` in sync so redrawing a shorter page is not mistaken for scrolling up and never disables `LIVE_CAP`; `ToolCard.finish()` releases raw result payloads and removes finished cards from `tab.toolCards`; and closing a tab sends `detach_session` and disconnects its observers and timers.
+
 ## [1.5.3] - 2026-11-03
 
 ### Added

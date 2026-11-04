@@ -74,7 +74,7 @@ const chatScroll = new Element('div');
 const promptInput = new Element('textarea');
 const active = { toolCards: new Map(), emptyState: null };
 const T = () => active;
-const scrollToBottomIfNeeded = () => { chatScroll.scrollTop = chatScroll.scrollHeight; };
+const scrollToBottomIfNeeded = () => { chatScroll.scrollTop = chatScroll.scrollHeight; active.lastScrollTop = chatScroll.scrollTop; };
 const openImageLightbox = () => {};
 function textOf(content) { if (!Array.isArray(content)) return ''; return content.filter((c) => c && c.type === 'text').map((c) => c.text || '').join(''); }
 function appendErrorMessage(errorText) { const block = new Element('div'); block.className = 'msg-block msg-error'; block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`; chatScroll.appendChild(block); }
@@ -154,6 +154,11 @@ const bash = new ToolCard({ toolCallId: 'bash1', toolName: 'bash', arguments: { 
 bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCode: 3, fullOutputPath: '/tmp/full.txt' } }, isError: true });
 assert.doesNotMatch(bash.element.querySelector('.tool-details-footer').textContent, /exit 3/, 'the output already says the exit code');
 assert.match(bash.element.querySelector('.tool-details-footer').textContent, /Full output: \/tmp\/full.txt/);
+assert.equal(bash.result, null, 'finished tool card released its raw result payload');
+assert.equal(bash.rawOutput, '', 'finished tool card released its raw output copy');
+assert.equal(bash.element.dataset.args, undefined, 'finished tool card released its serialized arguments');
+assert.equal(active.toolCards.size, 0, 'completed tool cards are not retained in the tab map');
+assert.equal(active.lastScrollTop, chatScroll.scrollTop, 'redrawing messages updates lastScrollTop so a shorter page is not read as scrolling up');
 
 // A name with underscores is a name: `_` emphasises only at a word's edge, and nothing inside a
 // code span is markup.
