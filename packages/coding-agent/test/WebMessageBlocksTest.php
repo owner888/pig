@@ -477,4 +477,74 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(0, $r['afterDisconnect'], 'a disconnected tab does not arm pigUnreachable');
         $this->assertTrue($r['detached'], 'closing a tab sends detach_session');
     }
+
+    public function testAnyFileCanBePickedOrDroppedAndNonImagesInsertTheirStagedPath(): void
+    {
+        $html = (string) file_get_contents(__DIR__ . '/../src/Web/assets/index.html');
+        $this->assertStringNotContainsString('id="file-input" accept=', $html, 'the file picker must not grey out non-image files');
+
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8');
+            const start = src.indexOf('const IMAGE_MIME_BY_EXT =');
+            const end = src.indexOf('function renderPendingImages()', start);
+            if (start === -1 || end === -1) throw new Error('Could not extract file handlers');
+
+            const pendingImages = [];
+            const promptInput = {
+                value: '',
+                selectionStart: 0,
+                selectionEnd: 0,
+                focus() {},
+                setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
+            };
+            const attachBtn = { disabled: false };
+            const fn = new Function(
+                'promptInput', 'attachBtn', 'pendingImages', 'renderPendingImages', 'resizePrompt', 'randomHex', 'fetch', 'FileReader', 'appendErrorMessage', 't',
+                `${src.slice(start, end)}\nreturn { handleFiles, insertPathsAtCursor };`,
+            );
+            const { handleFiles } = fn(
+                promptInput,
+                attachBtn,
+                pendingImages,
+                () => {},
+                () => {},
+                () => '0123456789abcdef0123456789abcdef',
+                async (url) => ({ ok: true, status: 200, json: async () => ({ ok: true, path: '/tmp/pig-upload/' + new URL('http://x' + url).searchParams.get('name') }) }),
+                class { readAsDataURL(f) { this.onload({ target: { result: 'data:image/png;base64,AA==' } }); } },
+                (e) => { throw new Error(e); },
+                (k) => k,
+            );
+
+            (async () => {
+                const fakeFile = (name, type) => ({ name, type, size: 4, slice: () => ({ arrayBuffer: async () => new ArrayBuffer(4) }) });
+                await handleFiles([fakeFile('changelog-1.5.3.md', 'text/markdown'), fakeFile('shot.PNG', '')]);
+                const firstPrompt = promptInput.value;
+                promptInput.value = '!adb install';
+                promptInput.selectionStart = promptInput.selectionEnd = promptInput.value.length;
+                await handleFiles([fakeFile('Doka 1.3.apk', 'application/vnd.android.package-archive')]);
+                console.log(JSON.stringify({
+                    firstPrompt,
+                    bashPrompt: promptInput.value,
+                    images: pendingImages.length,
+                    imageMime: pendingImages[0]?.mimeType,
+                }));
+            })();
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $r = json_decode(implode('', $out), true);
+
+        $this->assertSame('/tmp/pig-upload/changelog-1.5.3.md ', $r['firstPrompt']);
+        $this->assertSame("!adb install '/tmp/pig-upload/Doka 1.3.apk' ", $r['bashPrompt']);
+        $this->assertSame(1, $r['images']);
+        $this->assertSame('image/png', $r['imageMime']);
+    }
 }

@@ -858,46 +858,131 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       fileInput.value = "";
     });
 
-    // Clipboard image paste
+    // Clipboard file / image paste
     window.addEventListener("paste", (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
       const files = [];
       for (const item of items) {
-        if (item.type.indexOf("image") !== -1) {
+        if (item.kind === "file") {
           const file = item.getAsFile();
           if (file) files.push(file);
         }
       }
       if (files.length > 0) {
+        e.preventDefault();
         handleFiles(files);
       }
     });
 
-    // Drag and drop images
-    window.addEventListener("dragover", (e) => e.preventDefault());
-    window.addEventListener("drop", (e) => {
+    // Drag and drop files / images (capture phase so dropping onto the textarea works too)
+    window.addEventListener("dragover", (e) => {
+      if (!Array.from(e.dataTransfer?.types || []).includes("Files")) return;
       e.preventDefault();
-      if (e.dataTransfer?.files?.length) {
-        handleFiles(e.dataTransfer.files);
-      }
-    });
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    }, true);
+    window.addEventListener("drop", (e) => {
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleFiles(e.dataTransfer.files);
+    }, true);
 
-    function handleFiles(files) {
-      for (const f of files) {
-        if (!f.type.startsWith("image/")) continue;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const result = e.target.result;
-          const base64 = result.split(",")[1];
-          pendingImages.push({
-            mimeType: f.type,
-            data: base64,
-            url: result,
-          });
-          renderPendingImages();
-        };
-        reader.readAsDataURL(f);
+    const IMAGE_MIME_BY_EXT = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+    };
+    const SUPPORTED_IMAGE_MIMES = new Set(Object.values(IMAGE_MIME_BY_EXT));
+    const UPLOAD_CHUNK = 4 * 1024 * 1024;
+
+    function imageMimeOf(file) {
+      if (SUPPORTED_IMAGE_MIMES.has(file.type)) return file.type;
+      const ext = (file.name || "").split(".").pop()?.toLowerCase() || "";
+      return IMAGE_MIME_BY_EXT[ext] || null;
+    }
+
+    function quotePathIfNeeded(value) {
+      return value !== "" && !/[^a-zA-Z0-9_\-./~:@]/.test(value)
+        ? value
+        : "'" + value.replace(/'/g, "'\\''") + "'";
+    }
+
+    function insertPathsAtCursor(paths) {
+      if (!paths.length) return;
+      const value = promptInput.value;
+      const start = typeof promptInput.selectionStart === "number" ? promptInput.selectionStart : value.length;
+      const end = typeof promptInput.selectionEnd === "number" ? promptInput.selectionEnd : value.length;
+      const bash = value.trimStart().startsWith("!");
+      const joined = bash ? paths.map(quotePathIfNeeded).join(" ") : paths.join("\n");
+      const before = start > 0 ? value[start - 1] : "";
+      const after = end < value.length ? value[end] : "";
+      const leading = before !== "" && !/\s/.test(before) ? " " : "";
+      const trailing = after === "" || !/\s/.test(after) ? " " : "";
+      const inserted = leading + joined + trailing;
+      promptInput.value = value.slice(0, start) + inserted + value.slice(end);
+      const caret = start + inserted.length;
+      promptInput.focus();
+      promptInput.setSelectionRange(caret, caret);
+      resizePrompt();
+    }
+
+    async function uploadFile(file) {
+      const id = randomHex().slice(0, 16);
+      const name = file.name || "file";
+      let path = null;
+      const total = Math.max(1, file.size || 0);
+      for (let offset = 0; offset < total; offset += UPLOAD_CHUNK) {
+        const chunk = file.slice(offset, offset + UPLOAD_CHUNK);
+        const params = new URLSearchParams({ id, name, ...(offset > 0 ? { append: "1" } : {}) });
+        const res = await fetch(`/api/upload?${params}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: await chunk.arrayBuffer(),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        path = data.path;
+      }
+      return path;
+    }
+
+    async function handleFiles(files) {
+      const uploads = [];
+      for (const f of Array.from(files || [])) {
+        const mime = imageMimeOf(f);
+        if (mime) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const result = e.target.result;
+            const base64 = result.split(",")[1];
+            pendingImages.push({
+              mimeType: mime,
+              data: base64,
+              url: result,
+            });
+            renderPendingImages();
+          };
+          reader.readAsDataURL(f);
+        } else {
+          uploads.push(f);
+        }
+      }
+      if (uploads.length === 0) return;
+      attachBtn.disabled = true;
+      try {
+        const paths = [];
+        for (const f of uploads) {
+          const path = await uploadFile(f);
+          if (path) paths.push(path);
+        }
+        insertPathsAtCursor(paths);
+      } catch (err) {
+        appendErrorMessage(err.message || t("send_failed"));
+      } finally {
+        attachBtn.disabled = false;
       }
     }
 

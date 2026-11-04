@@ -993,6 +993,46 @@ final class HttpServer
             return;
         }
 
+        // 10.2c Stage a file picked or dropped in the browser (`ClipboardFile` for any file),
+        // under its own name in a temp directory so its path goes into the prompt.
+        if ($path === '/api/upload') {
+            if ($req['method'] !== 'POST') {
+                $conn->sendResponse(405, $json, (string) json_encode(['ok' => false, 'error' => 'POST only']));
+
+                return;
+            }
+
+            $query = $req['query'] ?? [];
+            $id = is_string($query['id'] ?? null) && preg_match('/^[0-9a-f]{16}$/', $query['id']) === 1
+                ? $query['id']
+                : bin2hex(random_bytes(8));
+            $rawName = is_string($query['name'] ?? null) ? $query['name'] : '';
+            $safeName = preg_replace('/[\x00-\x1F\x7F\/\\\\]+/u', '_', basename(str_replace('\\', '/', $rawName))) ?? '';
+            $safeName = trim($safeName, '. ');
+            if ($safeName === '') {
+                $safeName = 'file';
+            }
+
+            $dir = rtrim(sys_get_temp_dir(), '/') . '/pig-upload-' . $id;
+            if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
+                $conn->sendResponse(500, $json, (string) json_encode(['ok' => false, 'error' => 'Could not create upload directory']));
+
+                return;
+            }
+
+            $target = $dir . '/' . $safeName;
+            $flags = ($query['append'] ?? '') === '1' ? FILE_APPEND : 0;
+            if (file_put_contents($target, $req['body'], $flags) === false) {
+                $conn->sendResponse(500, $json, (string) json_encode(['ok' => false, 'error' => 'Could not write uploaded file']));
+
+                return;
+            }
+
+            $conn->sendResponse(200, $json, (string) json_encode(['ok' => true, 'path' => $target]));
+
+            return;
+        }
+
         // 10.3c What the loaded extensions answer for: their panels (`WebPanels`, from
         // `ExtensionApi::registerWebPanel()`) and any endpoints of their own
         // (`ExtensionApi::registerHttpRoute()`), rather than either being written in here. Answered

@@ -21,6 +21,7 @@ The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved ou
 - [An extension rewrote `Origin` and the login page's own stylesheet was refused](#an-extension-rewrote-origin-and-the-login-pages-own-stylesheet-was-refused)
 - [A language pack installed with `pig install` was not in the web page's language list](#a-language-pack-installed-with-pig-install-was-not-in-the-web-pages-language-list)
 - [Chrome reached 20 GB of memory on a long `pig web` run with WebSocket reconnects](#chrome-reached-20-gb-of-memory-on-a-long-pig-web-run-with-websocket-reconnects)
+- [Non-image files could not be picked or dragged into the web UI](#non-image-files-could-not-be-picked-or-dragged-into-the-web-ui)
 
 ## A failed LLM send in Web mode showed no error at all (the error was swallowed)
 
@@ -360,5 +361,24 @@ updates `tab.lastScrollTop`. `ToolCard.finish()` clears `result`, `rawOutput`, `
 `dataset.args`, and removes the finished card from `tab.toolCards`.
 
 Regression test: `WebMessageBlocksTest::testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt`.
+
+## Non-image files could not be picked or dragged into the web UI
+
+**Symptom**: clicking `📎` in `pig web` greyed out every non-image file in the macOS file dialog
+(`.apk`, `.md`, `.zip`, `.csv`, `.ips`, `.json`), and dragging a non-image file into the browser
+window did nothing.
+
+**Cause**: `#file-input` in `index.html` had `accept="image/*"`, `handleFiles()` skipped anything
+whose MIME did not start with `image/`, and `dragover`/`drop` registered in bubble phase without
+`dropEffect = "copy"`.
+
+**Rule**: `#file-input` has no `accept` filter, `dragover`/`drop` run in capture phase, raster
+images (`png`, `jpeg`, `gif`, `webp`) join `pendingImages`, and any other file is staged in chunks
+through `POST /api/upload` into `sys_get_temp_dir()/pig-upload-<id>/<filename>` and its path
+inserted into `#prompt-input` (quoted in `!` commands, as `Editor::pasteFromClipboard()` does).
+
+Regression tests: `WebModeTest::testUploadedFilesAreStagedUnderTheirSafeFilenameAndSupportChunkedAppend`,
+`WebMessageBlocksTest::testAnyFileCanBePickedOrDroppedAndNonImagesInsertTheirStagedPath`.
+
 
 

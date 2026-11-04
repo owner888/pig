@@ -1554,4 +1554,35 @@ final class WebModeTest extends TestCase
             unlink($file);
         }
     }
+
+    public function testUploadedFilesAreStagedUnderTheirSafeFilenameAndSupportChunkedAppend(): void
+    {
+        $port = 28199;
+        $server = $this->server($port);
+        $http = new HttpClient();
+
+        Async::run(function () use ($server, $http, $port): void {
+            $server->start();
+            $id = 'a1b2c3d4e5f60718';
+            $r1 = json_decode($http->follow(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/upload?id={$id}&name=" . rawurlencode('../../changelog-1.5.3.md'),
+                body: 'part-1-',
+            ))->body->all(), true);
+            $r2 = json_decode($http->follow(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/upload?id={$id}&name=" . rawurlencode('../../changelog-1.5.3.md') . '&append=1',
+                body: 'part-2',
+            ))->body->all(), true);
+
+            $this->assertTrue($r1['ok'] ?? false);
+            $this->assertSame($r1['path'], $r2['path']);
+            $this->assertSame('changelog-1.5.3.md', basename($r1['path']));
+            $this->assertSame('part-1-part-2', file_get_contents($r1['path']));
+
+            unlink($r1['path']);
+            rmdir(dirname($r1['path']));
+            $server->stop();
+        });
+    }
 }

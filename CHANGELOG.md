@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.5.5] - 2026-11-03
+
+### Fixed
+
+- Fixed `pig web` greying out non-image files in the `📎` file picker and ignoring non-image files when dragged or pasted into the page: `#file-input` no longer restricts `accept` to `image/*`, `dragover`/`drop` run in capture phase with `dropEffect = "copy"`, and non-image files are staged in 4 MB chunks through `POST /api/upload` into `sys_get_temp_dir()/pig-upload-<id>/<filename>` with their path inserted at the prompt cursor (quoted in `!` commands, matching the TUI editor).
+
 ## [1.5.4] - 2026-11-03
 
 ### Fixed
