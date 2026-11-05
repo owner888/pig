@@ -1119,6 +1119,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       block.className = "compaction-box hook-message skill-invocation";
       block.innerHTML = `<summary class="compaction-header"><span class="compaction-title">[skill]</span> ${escapeHtml(name)}<span class="skill-location">${escapeHtml(location)}</span></summary><div class="compaction-summary-text prose">${renderMarkdown(content)}</div>`;
       chatScroll.appendChild(block);
+      return block;
     }
 
     function appendUserMessage(text, images = []) {
@@ -1130,12 +1131,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       chatScroll.querySelector(".empty-state-hero")?.remove();
 
       const skill = text ? text.match(SKILL_BLOCK) : null;
+      let skillEl = null;
       if (skill) {
-        appendSkillInvocation(skill[1], skill[2], skill[3]);
+        skillEl = appendSkillInvocation(skill[1], skill[2], skill[3]);
         text = skill[4] || "";
         if (!text && images.length === 0) {
           scrollToBottomIfNeeded();
-          return;
+          return skillEl;
         }
       }
 
@@ -1185,6 +1187,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       chatScroll.appendChild(block);
       scrollToBottomIfNeeded();
+      return block;
     }
 
     function appendErrorMessage(errorText) {
@@ -1781,7 +1784,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       }
 
+      const wasRunning = tab.isRunning;
       setRunningState(true);
+      // Draw the question at once when the tab is idle, so a prompt with screenshots or over a
+      // slow link appears the instant Enter is pressed rather than after the upload and
+      // `prepareRun()` finish on the server. If the child later says it queued or deduplicated
+      // the message, or if the send fails, the optimistic bubble is removed.
+      let optimisticBlock = null;
+      if (!wasRunning) {
+        tab.render(() => { optimisticBlock = appendUserMessage(text, imgsToSend); });
+      }
 
       // Always `prompt`, always with a `streamingBehavior`: the child decides whether a turn is
       // running at the moment the message arrives, and only then does the behavior count. The
@@ -1794,7 +1806,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Drawn by what the child did with it, as the TUI does: a message that started a turn is
         // the conversation now; a queued one waits above the input as `Steering:`/`Follow-up:`
         // and joins the conversation when it is delivered (`message_start` in `onEvent()`).
-        // The answer comes before the turn's first event, so the bubble is still in order.
         //
         // `requestId` (pig's): a prompt whose answer never came — the connection dropped, the child
         // went away — may or may not have been taken, so sending the same text again sends the same
@@ -1802,9 +1813,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         requestId = tab.unsent?.text === text ? tab.unsent.requestId : randomHex();
         tab.unsent = null;
         const { disposition } = await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer", requestId });
-        if (disposition === "duplicate") tab.refreshState();
-        else if (disposition !== "queued") tab.render(() => appendUserMessage(text, imgsToSend));
+        if (disposition === "duplicate") {
+          optimisticBlock?.remove();
+          tab.refreshState();
+        } else if (disposition === "queued") {
+          optimisticBlock?.remove();
+        } else if (!optimisticBlock) {
+          tab.render(() => appendUserMessage(text, imgsToSend));
+        }
       } catch (err) {
+        optimisticBlock?.remove();
         // Refused by the child: nothing was taken, so the next send is a new request.
         if (!err.refused && requestId !== null) tab.unsent = { text, requestId };
         setRunningState(false);

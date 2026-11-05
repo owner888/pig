@@ -1751,15 +1751,22 @@ final class HttpServer
             return $event;
         }
 
+        if ($type === 'message_start') {
+            $role = $event['message']['role'] ?? null;
+            if ($role === 'system' || $role === 'assistant' || $role === 'toolResult' || $role === 'tool_result') {
+                return ['type' => 'message_start', 'message' => ['role' => $role]];
+            }
+        }
+
         if ($type === 'message_end') {
             $msg = $event['message'] ?? null;
             if (!is_array($msg)) {
                 return $event;
             }
             $role = $msg['role'] ?? null;
-            if ($role === 'toolResult' || $role === 'tool_result') {
-                // `tool_execution_end` already delivered the result; `message_end` only counts for `LIVE_CAP`.
-                return ['type' => 'message_end', 'message' => ['role' => 'toolResult']];
+            if ($role === 'user' || $role === 'system' || $role === 'toolResult' || $role === 'tool_result') {
+                // `tool_execution_end` and `message_start` already delivered the message; `message_end` only counts for `LIVE_CAP`.
+                return ['type' => 'message_end', 'message' => ['role' => $role === 'tool_result' ? 'toolResult' : $role]];
             }
             if ($role === 'assistant') {
                 $hasToolCall = false;

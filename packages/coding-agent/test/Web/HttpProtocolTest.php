@@ -143,6 +143,18 @@ final class HttpProtocolTest extends TestCase
         ]);
         $this->assertSame(['type' => 'message_end', 'message' => ['role' => 'toolResult']], $toolEnd);
 
+        $userEnd = $slim->invoke(null, [
+            'type' => 'message_end',
+            'message' => ['role' => 'user', 'content' => [['type' => 'image', 'data' => str_repeat('B', 10000)]]],
+        ]);
+        $this->assertSame(['type' => 'message_end', 'message' => ['role' => 'user']], $userEnd);
+
+        $sysStart = $slim->invoke(null, [
+            'type' => 'message_start',
+            'message' => ['role' => 'system', 'content' => str_repeat('S', 5000)],
+        ]);
+        $this->assertSame(['type' => 'message_start', 'message' => ['role' => 'system']], $sysStart);
+
         $assistantEnd = $slim->invoke(null, [
             'type' => 'message_end',
             'message' => [

@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.9] - 2026-11-05
+
+### Fixed
+
+- Fixed prompts (especially those with screenshots) in `pig web` waiting until the full image upload and server `prepareRun()` completed before appearing in the conversation: `submitMessage()` now renders the user message bubble optimistically on send (removing it if the child answers `queued` or `duplicate` or if the send fails), and `HttpServer::slimForBrowser()` strips full `user` and `system` message bodies (including echoed base64 images) from live `message_start` / `message_end` events.
+
 ## [1.6.8] - 2026-11-05
 
 ### Fixed
