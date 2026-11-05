@@ -351,6 +351,24 @@ final class ProcessTest extends TestCase
         $this->assertGreaterThan(5, $ticks, 'the loop was blocked while the command ran');
     }
 
+    public function testStreamingRunsWhereItIsToldTo(): void
+    {
+        // `cwd` on both halves, as `runAsync()` has it: a subagent is started in the directory the
+        // model named, and `pwd` is the one line that says whether it was.
+        $dir = sys_get_temp_dir();
+        $seen = [];
+        $collect = static function (string $line) use (&$seen): bool {
+            $seen[] = $line;
+
+            return true;
+        };
+
+        Process::stream(['pwd'], $collect, 5.0, $dir);
+        Async::run(static fn (): array => Process::streamAsync(['pwd'], $collect, 5.0, null, $dir));
+
+        $this->assertSame([realpath($dir), realpath($dir)], array_map(realpath(...), $seen));
+    }
+
     public function testStreamingAsyncSplitsLinesStopsEarlyAndKeepsStandardError(): void
     {
         // The same contract as `stream()`, because `GrepTool` was moved from one to the other and

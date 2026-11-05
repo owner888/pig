@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.6] - 2026-11-05
+
+### Added
+
+- Added `examples/extensions/subagent/`, a port of pi's subagent example: the `subagent` tool delegates a task to a child `pig --mode json -p --no-session` with its own context window, in single, parallel (max 8, 4 concurrent) and chain (`{previous}`) modes; agents are `~/.pig/agent/agents/*.md` and `.pig/agents/*.md` in pi's frontmatter format, with the four sample agents and three workflow prompts. An example, not a built-in: linked into `~/.pig/agent/extensions/` by hand, as pi's is.
+- `Process::stream()` and `Process::streamAsync()` take a `cwd`, as `runAsync()` does.
+
 ## [1.6.5] - 2026-11-05
 
 ### Added

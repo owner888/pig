@@ -371,7 +371,8 @@ final class Process
      * the blocking version and nothing outside a session changes.
      *
      * @param list<string>          $command
-     * @param Closure(string): bool $onLine false to stop reading and kill the command
+     * @param Closure(string): bool $onLine  false to stop reading and kill the command
+     * @param string|null           $cwd     where to run it; null means wherever pig was started
      * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop, when
      *         the deadline passed or when the signal was raised — and its standard error
      */
@@ -380,13 +381,14 @@ final class Process
         Closure $onLine,
         float $timeout = self::DEFAULT_TIMEOUT,
         ?AbortSignal $signal = null,
+        ?string $cwd = null,
     ): array {
         if ($command === []) {
             throw new TuiError('Process::streamAsync() needs a command');
         }
 
         if (Fiber::getCurrent() === null) {
-            return self::stream($command, $onLine, $timeout);
+            return self::stream($command, $onLine, $timeout, $cwd);
         }
 
         $buffer = '';
@@ -395,7 +397,7 @@ final class Process
         [$exit, $stopped] = self::pump(
             $command,
             $timeout,
-            null,
+            $cwd,
             $signal,
             static function (int $fd, string $chunk) use (&$buffer, &$errors, $onLine): bool {
                 if ($fd === 2) {
@@ -879,10 +881,11 @@ final class Process
      *
      * @param list<string>          $command
      * @param Closure(string): bool $onLine  false to stop reading and kill the command
+     * @param string|null           $cwd     where to run it; null means wherever pig was started
      * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop, and
      *         128 + the signal when something killed it — and whatever it wrote to standard error
      */
-    public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT): array
+    public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
     {
         if ($command === []) {
             throw new TuiError('Process::stream() needs a command');
@@ -891,7 +894,7 @@ final class Process
         set_error_handler(static fn (): bool => true);
 
         try {
-            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $cwd);
         } finally {
             restore_error_handler();
         }

@@ -9,6 +9,9 @@
 /coverage/
 /clover.xml
 
+# Eval baselines — `php scripts/eval.php --json > baseline.json`
+/baseline.json
+
 # Static analysis caches
 /.php-cs-fixer.cache
 /.phpstan.cache
