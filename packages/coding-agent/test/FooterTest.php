@@ -81,7 +81,7 @@ final class FooterTest extends TestCase
         return new AgentSession($agent);
     }
 
-    private function spent(AgentSession $session, Usage $usage, StopReason $stop = StopReason::Stop): void
+    private function spent(AgentSession $session, Usage $usage, StopReason $stop = StopReason::Stop, ?int $timestamp = null): void
     {
         $session->agent->appendMessage(new AssistantMessage(
             [new TextContent('x')],
@@ -90,6 +90,7 @@ final class FooterTest extends TestCase
             'claude-test',
             $usage,
             $stop,
+            timestamp: $timestamp,
         ));
     }
 
@@ -273,14 +274,15 @@ final class FooterTest extends TestCase
         // the one after — upstream shows `?` until the next response, not `0.0%`, which reads as
         // the conversation having been emptied.
         $session = $this->session();
-        $this->spent($session, new Usage(190_000, 0, 0, 0));
-        $session->agent->appendMessage(new CompactionSummary('what happened earlier'));
+        $at = \Pig\Ai\Timestamp::nowMs();
+        $this->spent($session, new Usage(190_000, 0, 0, 0), timestamp: $at - 20);
+        $session->agent->appendMessage(new CompactionSummary('what happened earlier', timestamp: $at - 10));
 
         $line = $this->lines($session)[1];
         $this->assertStringContainsString('?/200k', $line);
         $this->assertStringNotContainsString('0.0%', $line);
 
-        $this->spent($session, new Usage(20_000, 0, 0, 0));
+        $this->spent($session, new Usage(20_000, 0, 0, 0), timestamp: $at);
         $this->assertStringContainsString('10.0%/200k', $this->lines($session)[1]);
     }
 

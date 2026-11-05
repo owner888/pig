@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.7] - 2026-11-05
+
+### Fixed
+
+- Fixed `FooterTest::testRightAfterACompactionTheContextIsUnknownNotZero` failing in CI when `new CompactionSummary(...)` and the post-compaction `AssistantMessage` received the same millisecond timestamp, causing `Compaction::lastUsage()` (`$message->timestamp <= $compactedAt`) to treat the post-compaction turn as pre-compaction.
+- Added the missing `## [1.5.8] - 2026-11-04` section in `CHANGELOG.md`.
+
 ## [1.6.6] - 2026-11-05
 
 ### Added
@@ -118,6 +125,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Fixed the footer showing `0.0%` of the context window right after a compaction, which read as the conversation having been emptied: until the next response measures the new context it shows `?`, as upstream's `getContextUsage()` does.
 - Fixed Up in the web page's prompt box sometimes bringing back the prompt before the last one: when the conversation is drawn afresh (after `LIVE_CAP` live messages, a reconnect, or opening the tab again) the history is rebuilt from the page's messages, and a prompt the page does not hold yet — the one just sent and still being answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) — went behind the page's prompts instead of in front of them.
+
+## [1.5.8] - 2026-11-04
+
+### Fixed
+
+- Fixed Gemini `MALFORMED_FUNCTION_CALL` errors not being retried automatically and detached `bash` tool subprocesses from `/dev/tty` via `setsid` so background commands cannot write onto or hang the TUI screen.
 
 ## [1.5.7] - 2026-11-03
 

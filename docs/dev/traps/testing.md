@@ -24,6 +24,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [A collapsed bash output test asserted on tail timing without warmup and with redundant row counting](#a-collapsed-bash-output-test-asserted-on-tail-timing-without-warmup-and-with-redundant-row-counting)
 - [Binding a fixed callback port in a test triggered an unhandled PHP warning when already taken by the OS](#binding-a-fixed-callback-port-in-a-test-triggered-an-unhandled-php-warning-when-already-taken-by-the-os)
 - [`RpcModeTest` gave a `bash` command forty milliseconds and read the stream before the shell had answered](#rpcmodetest-gave-a-bash-command-forty-milliseconds-and-read-the-stream-before-the-shell-had-answered)
+- [`FooterTest` constructed a `CompactionSummary` and a post-compaction `AssistantMessage` in the same millisecond](#footertest-constructed-a-compactionsummary-and-a-post-compaction-assistantmessage-in-the-same-millisecond)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1160,3 +1161,12 @@ and reporting trailing seen bytes if the launch fails or times out.
 **Cause**: `send()` settled the loop a fixed forty ticks of a millisecond each. A `bash` command is a real shell process; forty milliseconds covers it on an idle Linux box and not on a Mac also running the web tests.
 
 **Rule**: A test that drives a real process waits for its evidence, not a tick count: `send()` of a `bash` and every `response()` now tick until the response is in the stream (`awaitPending()`, five-second ceiling, which no passing test gets near). Keep `settle()`'s fixed ticks for everything in-process, where they are what the loop needs and nothing more.
+
+## `FooterTest` constructed a `CompactionSummary` and a post-compaction `AssistantMessage` in the same millisecond
+
+**Symptom**: `FooterTest::testRightAfterACompactionTheContextIsUnknownNotZero` failed in CI (`Failed asserting that '↑210k ?/200k (auto) …' contains "10.0%/200k"`).
+
+**Cause**: `Compaction::lastUsage()` treats any `AssistantMessage` with `$message->timestamp <= $compactedAt` as pre-compaction (`<=` because a real compaction summary is written in the same millisecond as the turn it replaces). In the test, `new CompactionSummary(...)` and the subsequent `$this->spent(...)` ran back-to-back with no I/O in between, so both received the exact same `Timestamp::nowMs()` and `lastUsage()` discarded the post-compaction reading.
+
+**Rule**: Tests that construct a `CompactionSummary` and a subsequent `AssistantMessage` in memory without a real turn in between must pass explicit ordered timestamps (`$at - 20`, `$at - 10`, `$at`).
+
