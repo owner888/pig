@@ -82,6 +82,8 @@ php scripts/generate-models.php   # rewrite the built-in rows (scripts/BuiltinCa
 php scripts/build-models.php      # rebuild packages/ai/data/models/ after editing BuiltinCatalog.php by hand
 php scripts/bench-tui.php [session.jsonl] [regular|fullscreen] [cols] [rows]
                         # ms and bytes per frame on a real conversation against a fake terminal
+php scripts/eval.php [--json] [--keep] [name …] [-- <bin/pig options>]
+                        # the cases under evals/ through `bin/pig -p`, pass/fail + tokens + cost — costs money
 ```
 
 PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.

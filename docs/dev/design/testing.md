@@ -8,6 +8,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [`tui`'s tests, where the specification was the find](#tuis-tests-where-the-specification-was-the-find)
 - [`ai`'s tests are all live-provider, and two of them are still a specification](#ais-tests-are-all-live-provider-and-two-of-them-are-still-a-specification)
 - [`test/live.php`, and what Anthropic said back](#testlivephp-and-what-anthropic-said-back)
+- [`scripts/eval.php`: does the agent still do the task](#scriptsevalphp-does-the-agent-still-do-the-task)
 - [How much of it has been read against upstream](#how-much-of-it-has-been-read-against-upstream)
 
 ## `packages/agent`'s test suite, read as a specification
@@ -304,6 +305,33 @@ failure is worth suspecting in the harness before the port.* Three of four, on t
 Still untested against a real endpoint: Groq, xAI, Cerebras, z.ai, Mistral and Copilot — their
 protocol code rests on canned servers alone. And none of this is a one-off: the numbers here are
 worth re-running rather than quoting, which is what the script is for.
+
+## `scripts/eval.php`: does the agent still do the task
+
+The suite says the code does what upstream's does; `test/live.php` says the providers accept what
+pig sends. Neither says whether a prompt, a tool description or a model change made the agent better
+or worse at a task — that is what `evals/` is for, and it is pig's own, not upstream's (pi has no
+eval harness).
+
+A case is `evals/<name>/CASE.md`: frontmatter with the assertions, the prompt below it, and an
+optional `fixture/` copied into a fresh temporary directory the run uses as its working directory.
+The runner spawns `bin/pig --mode json --incognito --no-update-check -p <prompt>` per case — the
+real entry point, so what is measured is what a person gets, and a crash in one case is one failed
+line rather than a dead runner. From the JSON events it keeps the final assistant text, the
+`tool_execution_start` names, and the usage and cost of every assistant message; `agent_end`'s
+`error` and a non-zero exit are failures of their own.
+
+**Assertions are deterministic only**: `answer` (contains / not_contains / regex), `files` (exists /
+contains / equals, in the working directory), `check` (shell commands that must exit 0) and `tools`
+(called / not_called). A model grading a model was left out on purpose — it doubles the spend and
+adds a second source of variance to a measurement whose point is detecting variance.
+
+Nothing is written anywhere: `--incognito` keeps the run out of `~/.pig/agent/sessions` and the
+logs, and the temporary directory is removed unless `--keep`. Results go to standard output, as a
+line per case or as one JSON document with `--json`; a baseline is a redirect. Options after `--`
+go to `bin/pig`, so `php scripts/eval.php -- --model google/gemini-2.5-pro` compares models and
+`-- --no-hooks` runs without the machine's extensions (a permission gate under `NoUi` denies every
+tool call, which looks like the model refusing to work).
 
 ## How much of it has been read against upstream
 

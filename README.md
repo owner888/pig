@@ -424,6 +424,9 @@ php test/lint.php
 
 # Run live provider validation (requires API keys)
 php test/live.php
+
+# Run the agent evals under evals/ (requires API keys; add -- --model <ref> to compare models)
+php scripts/eval.php
 ```
 
 ---

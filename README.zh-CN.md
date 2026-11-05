@@ -403,6 +403,9 @@ php test/lint.php
 
 # 运行真实模型提供商端到端测试（需要配置对应 API Key）
 php test/live.php
+
+# 运行 evals/ 下的 agent 评测用例（需要 API Key；加 -- --model <ref> 可对比模型）
+php scripts/eval.php
 ```
 
 ---
