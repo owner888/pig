@@ -412,6 +412,108 @@ final class SettingsListTest extends TestCase
         }
     }
 
+    // ---- the search line (upstream's `enableSearch`) ---------------------------------------
+
+    /** @return list<SettingItem> */
+    private static function several(): array
+    {
+        return [
+            new SettingItem('theme', 'Theme', 'dark', values: ['dark', 'light']),
+            new SettingItem('thinking', 'Thinking', 'medium', values: ['low', 'medium', 'high']),
+            new SettingItem('steering', 'Steering mode', 'one-at-a-time', values: ['one-at-a-time', 'all']),
+            new SettingItem('transport', 'Transport', 'auto', values: ['auto', 'sse']),
+        ];
+    }
+
+    public function testTypingKeepsTheRowsTheQueryMatchesBestFirst(): void
+    {
+        $list = new SettingsList(self::several(), 10, self::plain(), enableSearch: true);
+        $list->handleInput('t');
+        $list->handleInput('r');
+
+        $lines = $list->render(60);
+        $rows = implode("\n", $lines);
+
+        $this->assertSame('tr', $list->filter());
+        $this->assertStringContainsString('Transport', $rows);
+        $this->assertStringContainsString('Steering mode', $rows);
+        $this->assertStringNotContainsString('Thinking', $rows);
+        $this->assertStringContainsString('tr', $lines[0], 'the search line is the first row');
+        $this->assertSame('', $lines[1], 'and a blank one follows it');
+    }
+
+    public function testEnterChangesTheRowTheQueryPutTheCursorOn(): void
+    {
+        $seen = [];
+        $list = new SettingsList(self::several(), 10, self::plain(), enableSearch: true);
+        $list->setChangeHandler(static function (string $id, string $value) use (&$seen): void {
+            $seen[] = "{$id}={$value}";
+        });
+
+        foreach (str_split('transp') as $key) {
+            $list->handleInput($key);
+        }
+        $list->handleInput("\r");
+
+        $this->assertSame(['transport=sse'], $seen);
+    }
+
+    public function testSpaceIsTypedOnceSomethingHasBeenAndChangesARowBeforeThat(): void
+    {
+        $seen = [];
+        $list = new SettingsList(self::several(), 10, self::plain(), enableSearch: true);
+        $list->setChangeHandler(static function (string $id, string $value) use (&$seen): void {
+            $seen[] = $id;
+        });
+
+        $list->handleInput(' ');
+        $this->assertSame(['theme'], $seen, 'with nothing typed, Space changes the row');
+
+        $list->handleInput('s');
+        $list->handleInput(' ');
+        $this->assertSame(['theme'], $seen, 'with a query, Space is part of it');
+        $this->assertSame('s ', $list->filter());
+    }
+
+    public function testAQueryThatMatchesNothingSaysSoAndCanBeTypedOn(): void
+    {
+        $list = new SettingsList(self::several(), 10, self::plain(), enableSearch: true);
+
+        foreach (str_split('zzz') as $key) {
+            $list->handleInput($key);
+        }
+
+        $this->assertStringContainsString('No matching settings', implode("\n", $list->render(60)));
+
+        $list->handleInput("\x7f");
+        $list->handleInput("\x7f");
+        $list->handleInput("\x7f");
+        $this->assertSame('', $list->filter());
+        $this->assertStringContainsString('Theme', implode("\n", $list->render(60)), 'every row is back once the query is');
+    }
+
+    public function testEscapeClosesEvenWithAQuery(): void
+    {
+        $closed = 0;
+        $list = new SettingsList(self::several(), 10, self::plain(), enableSearch: true);
+        $list->setCloseHandler(static function () use (&$closed): void {
+            $closed++;
+        });
+
+        $list->handleInput('t');
+        $list->handleInput("\e");
+
+        $this->assertSame(1, $closed);
+    }
+
+    public function testWithoutSearchEveryLineIsStillARow(): void
+    {
+        $lines = $this->list(self::several())->render(60);
+
+        $this->assertStringContainsString('Theme', $lines[0], 'no search line, no blank line');
+        $this->assertStringNotContainsString('Type to search', implode("\n", $lines));
+    }
+
     public function testASubmenuThatCannotTakeKeysIsDrawnRatherThanCrashedOn(): void
     {
         $list = $this->list([new SettingItem(

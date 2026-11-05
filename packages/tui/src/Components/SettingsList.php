@@ -7,6 +7,8 @@ namespace Pig\Tui\Components;
 use Closure;
 use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
+use Pig\Tui\Focusable;
+use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keybindings;
 use Pig\Tui\MouseHandler;
@@ -30,12 +32,24 @@ use Pig\Tui\Width;
  * one mechanism rather than a second kind of list, so a submenu can be a `SelectList`, and
  * the thinking-level row is one.
  *
+ * With `enableSearch` (upstream's `SettingsListOptions`), a search line sits above the rows and
+ * every key no binding claims types into it; the rows are those the query matches, best first,
+ * by the same fuzzy ranking the model picker uses. `/settings` has it; the submenus do not.
+ *
  * Ported from upstream's `tui/components/settings-list.ts`.
  */
-final class SettingsList implements Component, InputHandler, MouseHandler, CapturesViewportInput
+final class SettingsList implements Component, Focusable, InputHandler, MouseHandler, CapturesViewportInput
 {
+    public bool $focused = false;
+
     /** @var list<SettingItem> */
     private array $items;
+
+    /** The rows the query leaves, in its order; every row while there is no search. @var list<SettingItem> */
+    private array $filtered;
+
+    /** The search line; null without `enableSearch`. */
+    private readonly ?Input $search;
 
     /**
      * What each row is set to now, by id.
@@ -71,13 +85,19 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
     /** Columns left empty at the right-hand end of a row, as upstream leaves. */
     private const int RIGHT_MARGIN = 2;
 
-    /** @param list<SettingItem> $items */
+    /**
+     * @param list<SettingItem> $items
+     * @param bool $enableSearch upstream's option: a search line above the rows
+     */
     public function __construct(
         array $items,
         private readonly int $maxVisible = 10,
         ?SettingsListTheme $theme = null,
+        bool $enableSearch = false,
     ) {
         $this->items = array_values($items);
+        $this->filtered = $this->items;
+        $this->search = $enableSearch ? new Input() : null;
 
         foreach ($this->items as $item) {
             $this->current[$item->id] = $item->value;
@@ -120,10 +140,16 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
         $this->onClose = $handler;
     }
 
+    /** What has been typed into the search line; empty without one. */
+    public function filter(): string
+    {
+        return $this->search?->value() ?? '';
+    }
+
     /** Move the selection to the row with this id; an id no row has leaves it where it is. */
     public function selectItem(string $id): void
     {
-        foreach ($this->items as $index => $item) {
+        foreach ($this->filtered as $index => $item) {
             if ($item->id === $id) {
                 $this->selected = $index;
 
@@ -135,6 +161,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
     #[\Override]
     public function invalidate(): void
     {
+        $this->search?->invalidate();
         $this->submenu?->invalidate();
     }
 
@@ -148,18 +175,32 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
             return $this->submenu->render($width);
         }
 
-        if ($this->items === []) {
-            return $this->hint('Nothing to set', $width);
-        }
-
-        $total = count($this->items);
-        [$start, $end] = $this->visibleRange();
-
-        $labelWidth = $this->labelWidth($width);
+        // The search line first, then a blank one, as upstream draws them. Focused, the input
+        // puts the cursor marker at its caret, so an input method composes at the search line.
         $lines = [];
 
+        if ($this->search !== null) {
+            $this->search->focused = $this->focused;
+            $lines = [...$this->search->render($width), ''];
+        }
+
+        if ($this->items === []) {
+            return [...$lines, ...$this->hint('Nothing to set', $width)];
+        }
+
+        if ($this->filtered === []) {
+            return [...$lines, ($this->theme->hint)(Width::truncate('  No matching settings', max(1, $width), '')), '', ...$this->hint($this->hintText(), $width)];
+        }
+
+        $total = count($this->filtered);
+        [$start, $end] = $this->visibleRange();
+
+        // The label column is the widest of *every* row, not of the rows the query leaves —
+        // upstream's choice, so the value column does not jump about as you type.
+        $labelWidth = $this->labelWidth($width);
+
         for ($index = $start; $index < $end; $index++) {
-            $lines[] = $this->row($this->items[$index], $index === $this->selected, $labelWidth, $width);
+            $lines[] = $this->row($this->filtered[$index], $index === $this->selected, $labelWidth, $width);
         }
 
         if ($start > 0 || $end < $total) {
@@ -169,7 +210,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
             $lines[] = ($this->theme->hint)(Width::truncate("  ({$position}/{$total})", max(1, $width - 2), ''));
         }
 
-        $description = $this->items[$this->selected]->description ?? null;
+        $description = $this->filtered[$this->selected]->description ?? null;
 
         if ($description !== null) {
             $lines[] = '';
@@ -178,18 +219,25 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
 
         $lines[] = '';
 
-        // Space is named because Space works. Upstream says `Enter/Space to change · Esc to
-        // cancel`; pig keeps its own second half, because Escape here means done rather than
-        // cancelled, and had quietly dropped the first — a key that works and is not on the
-        // list is the Ctrl+G rule from the other side.
-        return [...$lines, ...$this->hint('Enter or Space to change · Esc when done', $width)];
+        return [...$lines, ...$this->hint($this->hintText(), $width)];
+    }
+
+    /**
+     * Space is named because Space works. Upstream says `Enter/Space to change · Esc to cancel`;
+     * pig keeps its own second half, because Escape here means done rather than cancelled, and
+     * had quietly dropped the first — a key that works and is not on the list is the Ctrl+G rule
+     * from the other side. With a search line, upstream's `Type to search` leads.
+     */
+    private function hintText(): string
+    {
+        return ($this->search !== null ? 'Type to search · ' : '') . 'Enter or Space to change · Esc when done';
     }
 
     /**
      * An open submenu takes the event; otherwise the wheel moves the selection, a primary press
      * selects the row under it and the click that follows changes it — upstream's `handleMouse()`.
-     *
-     * Upstream's search-line rows are not here, because pig's list has no search.
+     * With a search line, row 0 is the input's, row 1 the blank under it, and the rows are counted
+     * from 2, as upstream counts them.
      */
     #[\Override]
     public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
@@ -200,13 +248,23 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
             return $result?->withFocus();
         }
 
-        if ($this->items === []) {
+        if ($this->search !== null) {
+            if ($event->y === 0) {
+                return $this->search->handleMouse($event)?->withFocus();
+            }
+
+            if ($event->y === 1) {
+                return null;
+            }
+        }
+
+        if ($this->filtered === []) {
             return null;
         }
         if ($event->type === 'wheel' && $event->wheelDelta !== null && $event->wheelDelta !== 0) {
             $delta = $event->wheelDelta < 0 ? -1 : 1;
             $previousIndex = $this->selected;
-            $this->selected = max(0, min(count($this->items) - 1, $this->selected + $delta));
+            $this->selected = max(0, min(count($this->filtered) - 1, $this->selected + $delta));
 
             return new TuiMouseEventResult(handled: true, render: $this->selected !== $previousIndex);
         }
@@ -216,7 +274,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
         }
 
         [$start, $end] = $this->visibleRange();
-        $itemIndex = $start + $event->y;
+        $itemIndex = $start + $event->y - ($this->search !== null ? 2 : 0);
         if ($itemIndex < $start || $itemIndex >= $end) {
             return null;
         }
@@ -241,7 +299,7 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
      */
     private function visibleRange(): array
     {
-        $total = count($this->items);
+        $total = count($this->filtered);
         $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
 
         return [$start, min($start + $this->maxVisible, $total)];
@@ -331,30 +389,46 @@ final class SettingsList implements Component, InputHandler, MouseHandler, Captu
             return;
         }
 
-        $last = count($this->items) - 1;
+        $last = count($this->filtered) - 1;
         $kb = Keybindings::getKeybindings();
-        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, count($this->items), $this->maxVisible);
+        $pageIndex = Keybindings::getSelectPageIndex($kb, $data, $this->selected, count($this->filtered), $this->maxVisible);
 
         match (true) {
             // Any key leaves a list with nothing in it, where upstream answers only Escape and
             // moves a cursor through no rows for everything else. Unreachable from `/settings`,
             // which always has rows; the alternative is a screen that cannot be left by the key
-            // somebody presses first.
-            $last < 0 => $this->close(),
+            // somebody presses first. A query that matches nothing is different: the rows are
+            // still there behind it, and the key is typed into the search line.
+            $this->items === [] => $this->close(),
+            $kb->matches($data, 'tui.select.cancel') => $this->close(),
+            $last < 0 => $this->type($data),
             $kb->matches($data, 'tui.select.up') => $this->selected = $this->selected === 0 ? $last : $this->selected - 1,
             $kb->matches($data, 'tui.select.down') => $this->selected = $this->selected === $last ? 0 : $this->selected + 1,
             $pageIndex !== null => $this->selected = $pageIndex,
             // Space as well as Enter, as upstream does: a row that is a switch reads like
-            // a checkbox, and a checkbox is toggled with the space bar.
-            $kb->matches($data, 'tui.select.confirm') || $data === ' ' => $this->activate(),
-            $kb->matches($data, 'tui.select.cancel') => $this->close(),
-            default => null,
+            // a checkbox, and a checkbox is toggled with the space bar — unless something has
+            // been typed into the search line, where Space is a character of the query.
+            $kb->matches($data, 'tui.select.confirm') || ($data === ' ' && $this->filter() === '') => $this->activate(),
+            default => $this->type($data),
         };
+    }
+
+    /** A key no binding claimed: into the search line, and the rows are those it matches now. */
+    private function type(string $data): void
+    {
+        if ($this->search === null) {
+            return;
+        }
+
+        $this->search->handleInput($data);
+        $this->filtered = Fuzzy::filter($this->items, $this->search->value(), static fn (SettingItem $item): string => $item->label);
+        // Upstream's `applyFilter()`: the best match is the selection.
+        $this->selected = 0;
     }
 
     private function activate(): void
     {
-        $item = $this->items[$this->selected] ?? null;
+        $item = $this->filtered[$this->selected] ?? null;
 
         if ($item === null) {
             return;

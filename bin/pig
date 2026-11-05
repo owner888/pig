@@ -40,6 +40,7 @@ use Pig\CodingAgent\Cli\AuthCommand;
 use Pig\CodingAgent\Cli\InitialMessage;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
+use Pig\CodingAgent\Cli\FirstTimeSetup;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Cli\PackageCommands;
 use Pig\CodingAgent\Cli\WebDaemon;
@@ -610,6 +611,13 @@ $settings = Settings::load($cwd, projectTrusted: $projectTrusted);
 
 foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
+}
+
+// The first run's two questions — a theme, and whether providers are told who is asking — on a
+// screen of their own before the project's trust question and the session: upstream's
+// `shouldRunFirstTimeSetup()` / `showFirstTimeSetup()` in `main()`. Escape skips, and saves nothing.
+if ($interactive && $startsASession && FirstTimeSetup::shouldRun()) {
+    FirstTimeSetup::run($settings);
 }
 
 // The prompt's theme comes from the person's own settings, since the project's are exactly what

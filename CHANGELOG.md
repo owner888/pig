@@ -50,6 +50,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.0] - 2026-11-05
+
+### Added
+
+- Added the first run's two questions, upstream's first-time setup: a theme (system, dark or light, previewed as the cursor moves) and whether pig may name itself to the model providers (`enableInstallTelemetry`), on a screen of their own before anything else, when there is no `~/.pig/agent/settings.json` yet. Escape skips and saves nothing.
+- Added the theme row's submenu to `/settings`, upstream's `ThemeSubmenu`: pick one theme, or `automatic` for one theme when the terminal is light and another when it is dark — the `light/dark` pair the theme controller already followed, which until now could only be written into settings.json by hand. Moving the cursor previews; Escape puts the original back.
+- Added the `HTTP idle timeout` row to `/settings` (30 sec, 1 min, 2 min, 5 min, disabled), upstream's: saved as `httpIdleTimeoutMs` and applied to every request from then on.
+- Added upstream's search line to `/settings` (`SettingsList`'s `enableSearch`): type to keep the rows the query matches, best first, by the same fuzzy ranking the model picker uses; Space is a character of the query once something is typed, and Escape still leaves. The submenus keep no search line, as upstream's do not.
+
 ## [1.5.9] - 2026-11-05
 
 ### Changed

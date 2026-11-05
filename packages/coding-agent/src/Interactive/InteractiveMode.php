@@ -169,10 +169,7 @@ use Throwable;
  * means what. Keeping that split is what makes the whole thing testable — the session has
  * no idea a terminal exists, and the components are handed finished messages.
  *
- * Ported from upstream's `interactive-mode.ts`, which is 2439 lines. The difference is
- * the selectors: upstream has twenty-five of them — models, sessions, settings, hooks,
- * OAuth, branch trees — and each one needs a subsystem that is not ported. What is here
- * is the loop that makes it an agent you can talk to.
+ * Ported from upstream's `interactive-mode.ts`.
  */
 final class InteractiveMode
 {
@@ -4087,7 +4084,7 @@ final class InteractiveMode
                 continue;
             }
 
-            $items[] = new AutocompleteItem($name, $name, self::themeDescription($name));
+            $items[] = new AutocompleteItem($name, $name, ThemeSubmenu::description($name));
         }
 
         return $items;
@@ -7112,7 +7109,7 @@ final class InteractiveMode
             if ($isCurrent) {
                 $selectedIndex = $index;
             }
-            $items[] = new SelectItem($name, $name . ($isCurrent ? ' ·' : ''), self::themeDescription($name));
+            $items[] = new SelectItem($name, $name . ($isCurrent ? ' ·' : ''), ThemeSubmenu::description($name));
         }
 
         $picker = new SelectList($items, 8, Themes::getSelectListTheme(), SelectListLayout::compact());
@@ -7154,17 +7151,6 @@ final class InteractiveMode
         return $names;
     }
 
-    private static function themeDescription(string $name): string
-    {
-        return match ($name) {
-            Themes::SYSTEM_THEME_NAME => "Generated from the terminal's own colours",
-            'dark' => 'Default dark theme',
-            'light' => 'Default light theme',
-            'labra' => 'Cyberpunk dark olive & hot pink theme (from omarchy-labra)',
-            default => 'Custom theme',
-        };
-    }
-
     /**
      * `/settings` — everything that can be changed from inside a session, in one screen.
      *
@@ -7186,8 +7172,14 @@ final class InteractiveMode
                 'theme',
                 'Theme',
                 $this->themeController->getThemeSelection() ?? Themes::SYSTEM_THEME_NAME,
-                'The colours pig is drawn in. system follows the terminal.',
-                values: $this->availableThemes(),
+                'The colours pig is drawn in. system follows the terminal; automatic is one theme for a light terminal and one for a dark one.',
+                // Upstream's `ThemeSubmenu`: a list to pick one, or the automatic screen with its light/dark pair.
+                submenu: fn (string $current, Closure $done): Component => new ThemeSubmenu(
+                    $current,
+                    $this->availableThemes(),
+                    $this->themeController->preview(...),
+                    $done,
+                ),
             ),
         ];
 
@@ -7257,6 +7249,13 @@ final class InteractiveMode
             $this->settings->sessionShareDestination(),
             'Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)',
             values: Settings::SESSION_SHARE_DESTINATIONS,
+        );
+        $rows[] = new SettingItem(
+            'httpIdleTimeout',
+            'HTTP idle timeout',
+            self::formatHttpIdleTimeoutMs($this->settings->httpIdleTimeoutMs()),
+            'Maximum idle gap while waiting for HTTP headers or body chunks. Disable for local models that pause longer than five minutes.',
+            values: array_keys(self::HTTP_IDLE_TIMEOUT_CHOICES),
         );
         $rows[] = new SettingItem(
             'autoCompact',
@@ -7475,7 +7474,8 @@ final class InteractiveMode
             values: ['auto', ...array_map('strval', $wheelValues)],
         );
 
-        $list = new SettingsList($rows, 8, Themes::getSettingsListTheme());
+        // Upstream's `enableSearch: true` on the main list only; the submenus keep no search line.
+        $list = new SettingsList($rows, 8, Themes::getSettingsListTheme(), enableSearch: true);
         $list->setChangeHandler(function (string $id, string $value) use ($list): void {
             if ($id === 'tuiMode') {
                 $this->useTuiMode($value, $list);
@@ -7628,6 +7628,7 @@ final class InteractiveMode
             'mermaid' => $this->useMermaidRenderingMode($value),
             'transport' => $this->settings->setTransport(in_array($value, Settings::TRANSPORTS, true) ? $value : 'auto'),
             'shareDestination' => $this->settings->setSessionShareDestination(in_array($value, Settings::SESSION_SHARE_DESTINATIONS, true) ? $value : 'auto'),
+            'httpIdleTimeout' => $this->useHttpIdleTimeoutMs(self::HTTP_IDLE_TIMEOUT_CHOICES[$value] ?? 300_000),
             'editorPaddingX' => $this->useEditorPaddingX((int) $value),
             'outputPad' => $this->useOutputPad($value === '0' ? 0 : 1),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
@@ -7757,6 +7758,16 @@ final class InteractiveMode
      */
     private function useTheme(string $wanted): bool
     {
+        // A `light/dark` pair from the settings screen's automatic mode: both names are themes
+        // the screen listed, and the controller follows the terminal between them from here on.
+        if (Themes::parseAutoThemeSetting($wanted) !== null) {
+            $this->themeController->setThemeSetting($wanted);
+            $this->settings->setTheme($wanted);
+            $this->say("Theme: {$wanted} (automatic: light/dark)");
+
+            return true;
+        }
+
         $result = $this->themeController->setThemeName($wanted);
         if (!$result['success']) {
             $this->sayError("Failed to load theme \"{$wanted}\": {$result['error']}\nFell back to the system theme.");
@@ -7767,6 +7778,35 @@ final class InteractiveMode
         $this->say("Theme: {$wanted}");
 
         return true;
+    }
+
+    /**
+     * Upstream's `HTTP_IDLE_TIMEOUT_CHOICES`: what the settings row offers, label to milliseconds.
+     *
+     * @var array<string, int>
+     */
+    private const array HTTP_IDLE_TIMEOUT_CHOICES = [
+        '30 sec' => 30_000,
+        '1 min' => 60_000,
+        '2 min' => 120_000,
+        '5 min' => 300_000,
+        'disabled' => 0,
+    ];
+
+    /** Upstream's `formatHttpIdleTimeoutMs()`: the choice's label, or the seconds for a value set by hand. */
+    private static function formatHttpIdleTimeoutMs(int $ms): string
+    {
+        $label = array_search($ms, self::HTTP_IDLE_TIMEOUT_CHOICES, true);
+
+        return $label === false ? ($ms / 1000) . ' sec' : $label;
+    }
+
+    /** Upstream's `onHttpIdleTimeoutMsChange`: saved, and applied to every request from now on. */
+    private function useHttpIdleTimeoutMs(int $ms): void
+    {
+        $this->settings->set('httpIdleTimeoutMs', $ms === 0 ? 'disabled' : $ms);
+        HttpClient::useIdleTimeout($ms / 1000);
+        $this->say('HTTP idle timeout: ' . self::formatHttpIdleTimeoutMs($ms));
     }
 
     // ---- what the agent is doing ----------------------------------------------------------
