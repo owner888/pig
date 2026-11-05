@@ -416,7 +416,10 @@ and never recovered, while the server logged `closing a connection: the peer has
    banner stayed up even after the RPC eventually arrived.
 
 **Rule**: `Websocket` negotiates `permessage-deflate; server_no_context_takeover; client_no_context_takeover`
-(RFC 7692) and `Http::encode()` gzip-compresses text/JSON responses ≥512 B; `RpcMode::imagesAsRefs()`
+(RFC 7692) and compresses/decompresses with `deflate_init(ZLIB_ENCODING_RAW)` + `deflate_add(..., ZLIB_SYNC_FLUSH)`
+and `inflate_init(ZLIB_ENCODING_RAW)` + `inflate_add(..., ZLIB_SYNC_FLUSH)` (**never** `gzdeflate` / `gzinflate`:
+`gzdeflate` emits `Z_FINISH` with `BFINAL=1` and no `\x00\x00\xff\xff` trailer, while `gzinflate` rejects
+a browser's `Z_SYNC_FLUSH` `BFINAL=0` stream with `data error`); `Http::encode()` gzip-compresses text/JSON responses ≥512 B; `RpcMode::imagesAsRefs()`
 strips `thoughtSignature` / `thinkingSignature` / `textSignature`; `HttpServer::slimForBrowser()` drops
 redundant full-message live events (`entry_appended`, `turn_end`, non-delta `message_update`s,
 `agent_end.messages`, full `message_end` bodies); `TcpConnection::silentFor()` counts a draining

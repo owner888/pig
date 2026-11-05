@@ -40,7 +40,7 @@ final class Websocket implements ProtocolInterface
 
         $accept = base64_encode(sha1($key . self::GUID, true));
         $extensions = strtolower($headers['sec-websocket-extensions'] ?? '');
-        $deflate = str_contains($extensions, 'permessage-deflate') && function_exists('gzdeflate') && function_exists('gzinflate');
+        $deflate = str_contains($extensions, 'permessage-deflate') && function_exists('deflate_init') && function_exists('inflate_init');
         $connection->websocketDeflate = $deflate;
 
         $handshakeResponse = "HTTP/1.1 101 Switching Protocols\r\n"
@@ -191,14 +191,20 @@ final class Websocket implements ProtocolInterface
         $connection->websocketCompressed = false;
 
         if ($compressed) {
+            // RFC 7692 §7.2.1 / §7.2.2: a `permessage-deflate` payload is a raw DEFLATE stream
+            // flushed with `Z_SYNC_FLUSH` (`BFINAL=0`) and with the trailing `0x00 0x00 0xFF 0xFF`
+            // stripped. `gzinflate()` requires a `BFINAL=1` block and fails on a browser's
+            // `Z_SYNC_FLUSH` stream; `inflate_init(ZLIB_ENCODING_RAW)` + `inflate_add(..., ZLIB_SYNC_FLUSH)`
+            // is the exact RFC 7692 algorithm.
             set_error_handler(static fn (): bool => true);
             try {
-                $inflated = gzinflate($message . "\x00\x00\xff\xff");
+                $context = inflate_init(ZLIB_ENCODING_RAW);
+                $inflated = $context !== false ? inflate_add($context, $message . "\x00\x00\xff\xff", ZLIB_SYNC_FLUSH) : false;
             } finally {
                 restore_error_handler();
             }
 
-            if ($inflated === false) {
+            if (!is_string($inflated)) {
                 $connection->close('a compressed WebSocket frame could not be inflated');
 
                 return null;
@@ -226,8 +232,9 @@ final class Websocket implements ProtocolInterface
         $payload = (string) (is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR));
 
         if ($connection->websocketDeflate && strlen($payload) >= 256) {
-            $deflated = gzdeflate($payload, 6);
-            if ($deflated !== false) {
+            $context = deflate_init(ZLIB_ENCODING_RAW, ['level' => 6]);
+            $deflated = $context !== false ? deflate_add($context, $payload, ZLIB_SYNC_FLUSH) : false;
+            if (is_string($deflated)) {
                 if (str_ends_with($deflated, "\x00\x00\xff\xff")) {
                     $deflated = substr($deflated, 0, -4);
                 }

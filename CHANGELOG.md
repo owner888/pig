@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.8] - 2026-11-05
+
+### Fixed
+
+- Fixed `pig web` reconnecting in a loop (`closing a connection: a compressed WebSocket frame could not be inflated`) when a browser sent a `permessage-deflate` compressed frame: `Websocket::decode()` and `Websocket::encode()` now use `inflate_init(ZLIB_ENCODING_RAW)` / `inflate_add(..., ZLIB_SYNC_FLUSH)` and `deflate_init(ZLIB_ENCODING_RAW)` / `deflate_add(..., ZLIB_SYNC_FLUSH)` per RFC 7692 §7.2 instead of `gzinflate()` / `gzdeflate()`, which rejected the browser's `BFINAL=0` sync-flushed stream.
+
 ## [1.6.7] - 2026-11-05
 
 ### Fixed

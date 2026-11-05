@@ -261,13 +261,15 @@ final class WebsocketProtocolTest extends TestCase
 
         $payloadOffset = (ord($frame[1]) & 0x7F) === 126 ? 4 : 2;
         $compressedPayload = substr($frame, $payloadOffset);
-        $this->assertSame($text, gzinflate($compressedPayload . "\x00\x00\xff\xff"));
+        $ictx = inflate_init(ZLIB_ENCODING_RAW);
+        $this->assertSame($text, inflate_add($ictx, $compressedPayload . "\x00\x00\xff\xff", ZLIB_SYNC_FLUSH));
 
-        // Client -> server: a compressed client frame (even split across continuations) inflates back to the message.
-        $clientRaw = gzdeflate($text, 6);
-        if (str_ends_with($clientRaw, "\x00\x00\xff\xff")) {
-            $clientRaw = substr($clientRaw, 0, -4);
-        }
+        // Client -> server: Chrome compresses with Z_SYNC_FLUSH (BFINAL=0, which gzinflate() rejects!)
+        // and strips the trailing \x00\x00\xff\xff. Even split across continuations, it inflates back.
+        $dctx = deflate_init(ZLIB_ENCODING_RAW, ['level' => 6]);
+        $clientRaw = deflate_add($dctx, $text, ZLIB_SYNC_FLUSH);
+        $this->assertStringEndsWith("\x00\x00\xff\xff", $clientRaw);
+        $clientRaw = substr($clientRaw, 0, -4);
         $part1 = substr($clientRaw, 0, 20);
         $part2 = substr($clientRaw, 20);
         $f1 = self::clientFrame(Websocket::OPCODE_TEXT, $part1, final: false);
@@ -277,6 +279,7 @@ final class WebsocketProtocolTest extends TestCase
         fwrite($clientSock, $f1 . $f2);
         $conn->onReadable();
 
+        $this->assertFalse($conn->isClosed());
         $this->assertSame([$text], $received);
 
         $conn->close();
