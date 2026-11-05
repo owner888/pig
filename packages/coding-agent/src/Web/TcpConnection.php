@@ -87,6 +87,12 @@ class TcpConnection
      */
     public ?string $websocketDataBuffer = null;
 
+    /** Whether the current fragmented WebSocket message has RSV1 set (`permessage-deflate`). */
+    public bool $websocketCompressed = false;
+
+    /** Whether the WebSocket handshake negotiated `permessage-deflate` (RFC 7692). */
+    public bool $websocketDeflate = false;
+
     /** @var class-string<ProtocolInterface> */
     protected string $protocol = Http::class;
 

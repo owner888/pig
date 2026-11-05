@@ -346,43 +346,53 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
 
       /** The commands the `/` list offers beyond the built-ins, as the TUI's list does. */
-      async loadCommands() {
-        if (!this.bound) return;
-        try {
-          this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
-          if (this === active) slashAutocomplete?.setExtraCommands(extraCommands(this));
-        } catch (err) { if (this === active && this.bound && !this.ended) pigUnreachable(t("what_command_list"), err); }
+      loadCommands() {
+        if (!this.bound) return Promise.resolve();
+        if (this.loadingCommands) return this.loadingCommands;
+        return this.loadingCommands = (async () => {
+          try {
+            this.commands = slashCommandsFrom(await this.rpc({ type: "get_commands" }));
+            if (this === active) slashAutocomplete?.setExtraCommands(extraCommands(this));
+          } catch (err) { if (this === active && this.bound && !this.ended) pigUnreachable(t("what_command_list"), err); }
+          finally { this.loadingCommands = null; }
+        })();
       }
 
-      async refreshState() {
-        if (!this.bound) return;
-        try {
-          const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
-          this.state = s;
-          this.stats = stats;
-          this.isPersisted = (typeof s.isPersisted === "boolean") ? s.isPersisted : !!(s.sessionFile && (s.messageCount > 0));
-          if (this.isPersisted && s.sessionFile) {
-            this.sessionPath = s.sessionFile;
-            this.sessionFile = s.sessionFile.split("/").pop();
-          } else if (!this.isPersisted) {
-            this.sessionPath = null;
-            this.sessionFile = null;
+      refreshState() {
+        if (!this.bound) return Promise.resolve();
+        if (this.refreshingState) return this.refreshingState;
+        return this.refreshingState = (async () => {
+          try {
+            const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
+            if (this === active) pigReachable();
+            this.state = s;
+            this.stats = stats;
+            this.isPersisted = (typeof s.isPersisted === "boolean") ? s.isPersisted : !!(s.sessionFile && (s.messageCount > 0));
+            if (this.isPersisted && s.sessionFile) {
+              this.sessionPath = s.sessionFile;
+              this.sessionFile = s.sessionFile.split("/").pop();
+            } else if (!this.isPersisted) {
+              this.sessionPath = null;
+              this.sessionFile = null;
+            }
+            if (s.cwd) this.cwd = s.cwd;
+            this.name = s.sessionName || null;
+            if (s.opening) this.opening = s.opening;
+            this.isRunning = !!s.isStreaming;
+            this.render(() => setRunningState(this.isRunning));
+            this.showStoppedMidRun();
+            saveTabs(); renderTabs();
+            if (this === active) applyActiveTabToChrome();
+          } catch (err) {
+            if (this === active && this.bound && !this.ended) pigUnreachable(t("what_session_state"), err);
+            return;
+          } finally {
+            this.refreshingState = null;
           }
-          if (s.cwd) this.cwd = s.cwd;
-          this.name = s.sessionName || null;
-          if (s.opening) this.opening = s.opening;
-          this.isRunning = !!s.isStreaming;
-          this.render(() => setRunningState(this.isRunning));
-          this.showStoppedMidRun();
-          saveTabs(); renderTabs();
-          if (this === active) applyActiveTabToChrome();
-        } catch (err) {
-          if (this === active && this.bound && !this.ended) pigUnreachable(t("what_session_state"), err);
-          return;
-        }
-        // Apart, so a child that cannot list its commands still has its state drawn — and after
-        // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
-        this.loadCommands();
+          // Apart, so a child that cannot list its commands still has its state drawn — and after
+          // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
+          this.loadCommands();
+        })();
       }
 
       /**
@@ -412,63 +422,72 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         });
       }
 
-      async loadMessages() {
-        if (!this.bound) return;
-        try {
-          // A new conversation's file is written on its first message; learn it before asking for
-          // messages so `imageRefs()` can ask for images by reference (`images: "refs"`).
-          if (!this.sessionFile && !this.incognito && (this.messagesLoaded || this.isRunning)) {
-            await this.refreshState();
-            if (!this.bound) return;
+      loadMessages() {
+        if (!this.bound) return Promise.resolve();
+        if (this.loadingMessages) return this.loadingMessages;
+        return this.loadingMessages = (async () => {
+          try {
+            // A new conversation's file is written on its first message; learn it before asking for
+            // messages so `imageRefs()` can ask for images by reference (`images: "refs"`).
+            if (!this.sessionFile && !this.incognito && (this.messagesLoaded || this.isRunning)) {
+              await this.refreshState();
+              if (!this.bound) return;
+            }
+            // The end of the conversation only (`RpcMode::messagesPage()`): the whole of a long one —
+            // screenshots and all — was hundreds of megabytes, more than the server could pass on.
+            // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
+            // `limit` answers with everything and no `start`, which is drawn as it was.
+            this.needsMessages = false;
+            this.stale = false;
+            this.liveMessages = 0;
+            const token = this.remoteToken = {};
+            const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD, ...imageRefs(this) });
+            if (this === active) pigReachable();
+            if (this.remoteToken !== token) return;
+            this.render(() => renderMessages(withImageUrls(this, d.messages || [])));
+            // The answer still streaming is not among them (`get_messages` holds ended messages), but
+            // its text so far is known: drawn whole, and the rest of it follows into the same block.
+            if (this.isRunning && this.currentAssistantText.trim()) this.render(() => drawStreamingText());
+            // The prompts of the conversation, for Up — upstream's `renderInitialMessages()` fills
+            // the editor's history the same way. The page is the last part only, and what this tab
+            // remembers (newest first) is merged around it: a remembered prompt the page lacks is newer
+            // than the page when it comes before any the page has — the one just sent, still being
+            // answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) —
+            // and goes in front, so Up still brings back the last thing said; the rest is older than the
+            // page — drawn afresh after `LIVE_CAP`, or after a reconnect — and is kept behind it.
+            const remembered = this.promptHistory;
+            this.promptHistory = [];
+            for (const m of d.messages || []) {
+              if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
+            }
+            const onPage = this.promptHistory;
+            const newer = [];
+            const older = [];
+            let pastKnown = false;
+            for (const prompt of remembered) {
+              if (onPage.includes(prompt)) { pastKnown = true; continue; }
+              (pastKnown ? older : newer).push(prompt);
+            }
+            this.promptHistory = [...newer, ...onPage, ...older].slice(0, HISTORY_LIMIT);
+            this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
+            // A `session_start` handler's `notify` arrives before the conversation does, and drawing
+            // the conversation clears the chat; the TUI keeps those lines, so they are put back.
+            if (!this.messagesLoaded) {
+              this.messagesLoaded = true;
+              this.render(() => this.earlyNotices.forEach(drawNotify));
+              this.earlyNotices = [];
+            }
+            // Drawing the conversation cleared the chat, so the private session's notice goes back on
+            // top of it each time.
+            if (this.incognito) this.render(() => prependIncognitoNotice());
+            this.showStoppedMidRun();
+            if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
+          } catch (err) {
+            if (this === active && this.bound && !this.ended) pigUnreachable(t("what_conversation"), err);
+          } finally {
+            this.loadingMessages = null;
           }
-          // The end of the conversation only (`RpcMode::messagesPage()`): the whole of a long one —
-          // screenshots and all — was hundreds of megabytes, more than the server could pass on.
-          // The rest is asked for as the reader scrolls up (`fetchOlder()`). A child from before
-          // `limit` answers with everything and no `start`, which is drawn as it was.
-          this.needsMessages = false;
-          this.stale = false;
-          this.liveMessages = 0;
-          const token = this.remoteToken = {};
-          const d = await this.rpc({ type: "get_messages", limit: FIRST_LOAD, ...imageRefs(this) });
-          if (this.remoteToken !== token) return;
-          this.render(() => renderMessages(withImageUrls(this, d.messages || [])));
-          // The answer still streaming is not among them (`get_messages` holds ended messages), but
-          // its text so far is known: drawn whole, and the rest of it follows into the same block.
-          if (this.isRunning && this.currentAssistantText.trim()) this.render(() => drawStreamingText());
-          // The prompts of the conversation, for Up — upstream's `renderInitialMessages()` fills
-          // the editor's history the same way. The page is the last part only, and what this tab
-          // remembers (newest first) is merged around it: a remembered prompt the page lacks is newer
-          // than the page when it comes before any the page has — the one just sent, still being
-          // answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) —
-          // and goes in front, so Up still brings back the last thing said; the rest is older than the
-          // page — drawn afresh after `LIVE_CAP`, or after a reconnect — and is kept behind it.
-          const remembered = this.promptHistory;
-          this.promptHistory = [];
-          for (const m of d.messages || []) {
-            if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
-          }
-          const onPage = this.promptHistory;
-          const newer = [];
-          const older = [];
-          let pastKnown = false;
-          for (const prompt of remembered) {
-            if (onPage.includes(prompt)) { pastKnown = true; continue; }
-            (pastKnown ? older : newer).push(prompt);
-          }
-          this.promptHistory = [...newer, ...onPage, ...older].slice(0, HISTORY_LIMIT);
-          this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
-          // A `session_start` handler's `notify` arrives before the conversation does, and drawing
-          // the conversation clears the chat; the TUI keeps those lines, so they are put back.
-          if (!this.messagesLoaded) {
-            this.messagesLoaded = true;
-            this.render(() => this.earlyNotices.forEach(drawNotify));
-            this.earlyNotices = [];
-          }
-          // Drawing the conversation cleared the chat, so the private session's notice goes back on
-          // top of it each time.
-          if (this.incognito) this.render(() => prependIncognitoNotice());
-          this.showStoppedMidRun();
-        } catch (err) { if (this === active && this.bound && !this.ended) pigUnreachable(t("what_conversation"), err); }
+        })();
       }
     }
 
@@ -3391,8 +3410,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
      */
     const FIRST_DRAW = 60;
     const PREFILL = 120;
-    // Asked of the child at a time: the first draw and its prefill, then a few parts more.
-    const FIRST_LOAD = FIRST_DRAW + PREFILL;
+    // Asked of the child at a time: the first draw first so a slow tunnel answers in kilobytes,
+    // then `FETCH_MORE` as the reader scrolls up (`fetchOlder()`).
+    const FIRST_LOAD = FIRST_DRAW;
     const FETCH_MORE = 180;
     const BACKFILL = 60;
     const NEAR_TOP = 2;

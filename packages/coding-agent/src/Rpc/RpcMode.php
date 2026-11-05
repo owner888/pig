@@ -1488,12 +1488,18 @@ final class RpcMode
      * Every image in `$node` given as a `ref` — where it is — in place of its data: a page asks for
      * it when it comes into view (`get_image`, through `pig web`'s `/api/session-image`). A
      * conversation of screenshots was megabytes for every part of its history a page fetched.
+     * Opaque provider signatures (`thoughtSignature`, `thinkingSignature`, `textSignature`) are
+     * stripped too: they are high-entropy encrypted blobs for the model's next turn, never drawn by
+     * a page, and keeping them bloated `get_messages` by hundreds of kilobytes of uncompressible
+     * base64.
      *
      * @param array<array-key, mixed> $node
      * @return array<array-key, mixed>
      */
     private static function imagesAsRefs(array $node, string $at): array
     {
+        unset($node['thoughtSignature'], $node['thinkingSignature'], $node['textSignature']);
+
         if (($node['type'] ?? null) === 'image' && is_string($node['data'] ?? null)) {
             unset($node['data']);
 

@@ -410,6 +410,8 @@ final class WebMessageBlocksTest extends TestCase
                 imageRefs: (tab) => (tab.sessionFile && tab.cwd ? { images: 'refs' } : {}),
                 withImageUrls: (_, m) => m,
                 renderMessages: () => {},
+                nearTop: () => false,
+                fetchOlder: () => {},
                 drawStreamingText: () => {},
                 rememberPrompt: () => {},
                 textOf: () => '',
@@ -456,13 +458,25 @@ final class WebMessageBlocksTest extends TestCase
             tab.onConnectionLost();
             const afterDisconnect = timers.size;
 
-            // 3. Closing a tab sends detach_session.
+            // 3. Concurrent loadMessages() / refreshState() calls coalesce into one in-flight request.
+            const tab2 = new Tab('/repo', 's.jsonl');
+            setActive(tab2);
+            tab2.bound = true;
+            sent.length = 0;
+            const p1 = tab2.loadMessages();
+            const p2 = tab2.loadMessages();
+            const getMessagesSent = sent.filter((m) => m.type === 'rpc_command' && m.command?.type === 'get_messages').length;
+
+            // 4. Closing a tab sends detach_session.
             sent.length = 0;
             tab.close();
+            tab2.close();
             console.log(JSON.stringify({
                 afterTripleFailure,
                 afterReachable,
                 afterDisconnect,
+                samePromise: p1 === p2,
+                getMessagesSent,
                 detached: sent.some((m) => m.type === 'detach_session' && m.tabId === tab.id),
             }));
             JS;
@@ -475,6 +489,8 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(1, $r['afterTripleFailure'], 'at most one retry timer is armed at a time');
         $this->assertSame(0, $r['afterReachable'], 'pigReachable cancels the pending retry timer');
         $this->assertSame(0, $r['afterDisconnect'], 'a disconnected tab does not arm pigUnreachable');
+        $this->assertTrue($r['samePromise'], 'concurrent loadMessages() calls share one in-flight Promise');
+        $this->assertSame(1, $r['getMessagesSent'], 'only one get_messages RPC goes out while in-flight');
         $this->assertTrue($r['detached'], 'closing a tab sends detach_session');
     }
 

@@ -231,6 +231,58 @@ final class WebsocketProtocolTest extends TestCase
         fclose($clientSock);
     }
 
+    public function testPermessageDeflateNegotiatesAndCompressesLargeFrames(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $received = [];
+        $conn = new TcpConnection($serverSock, static function ($c, $data) use (&$received): void { $received[] = $data; }, static fn () => null);
+
+        $ok = Websocket::handshake([
+            'headers' => [
+                'upgrade' => 'websocket',
+                'connection' => 'Upgrade',
+                'sec-websocket-key' => 'dGhlIHNhbXBsZSBub25jZQ==',
+                'sec-websocket-extensions' => 'permessage-deflate; client_max_window_bits',
+            ],
+        ], $conn);
+
+        $this->assertTrue($ok);
+        $this->assertTrue($conn->websocketDeflate);
+
+        $handshake = fread($clientSock, 4096);
+        $this->assertIsString($handshake);
+        $this->assertStringContainsString('Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover', $handshake);
+
+        // Server -> client: a large text payload is compressed with RSV1 (0x40) set and the 4-byte tail stripped.
+        $text = str_repeat('{"role":"assistant","content":[{"type":"text","text":"hello world"}]},', 50);
+        $frame = Websocket::encode($text, $conn);
+        $this->assertSame(0xC1, ord($frame[0]), 'FIN (0x80) | RSV1 (0x40) | OPCODE_TEXT (0x01)');
+        $this->assertLessThan(strlen($text) / 4, strlen($frame));
+
+        $payloadOffset = (ord($frame[1]) & 0x7F) === 126 ? 4 : 2;
+        $compressedPayload = substr($frame, $payloadOffset);
+        $this->assertSame($text, gzinflate($compressedPayload . "\x00\x00\xff\xff"));
+
+        // Client -> server: a compressed client frame (even split across continuations) inflates back to the message.
+        $clientRaw = gzdeflate($text, 6);
+        if (str_ends_with($clientRaw, "\x00\x00\xff\xff")) {
+            $clientRaw = substr($clientRaw, 0, -4);
+        }
+        $part1 = substr($clientRaw, 0, 20);
+        $part2 = substr($clientRaw, 20);
+        $f1 = self::clientFrame(Websocket::OPCODE_TEXT, $part1, final: false);
+        $f1[0] = chr(ord($f1[0]) | 0x40); // RSV1 on first frame only
+        $f2 = self::clientFrame(Websocket::OPCODE_CONTINUATION, $part2, final: true);
+
+        fwrite($clientSock, $f1 . $f2);
+        $conn->onReadable();
+
+        $this->assertSame([$text], $received);
+
+        $conn->close();
+        fclose($clientSock);
+    }
+
     /** A frame as a browser sends it: masked, with the length in whichever form fits. */
     private static function clientFrame(int $opcode, string $payload, bool $final = true): string
     {

@@ -50,6 +50,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.2] - 2026-11-05
+
+### Added
+
+- Added WebSocket `permessage-deflate` compression (`Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover`, RFC 7692) in `pig web`, compressing outgoing frames ≥ 256 bytes with `gzdeflate` and inflating incoming `RSV1` frames across continuations.
+
+### Fixed
+
+- Fixed `pig web` getting stuck on `get_messages: no answer in 30s` over high-loss or low-bandwidth tunnels (such as a congested Tailscale link): `RpcMode::imagesAsRefs()` strips opaque high-entropy provider signatures (`thoughtSignature`, `thinkingSignature`, `textSignature`) from web history payloads, `FIRST_LOAD` matches `FIRST_DRAW` (60 messages) so the initial load shrinks by ~96% (867 KB → 31 KB with `permessage-deflate`), and `Tab.loadMessages()`, `Tab.refreshState()`, and `Tab.loadCommands()` coalesce concurrent calls onto one in-flight Promise and clear the unreachable banner on completion.
+
 ## [1.6.1] - 2026-11-05
 
 ### Added

@@ -725,6 +725,29 @@ final class RpcModeTest extends TestCase
         $this->assertSame(['mimeType' => 'image/png', 'data' => $data], $this->data(['type' => 'get_image', 'ref' => $image['ref']]));
     }
 
+    public function testHistoryRefsStripOpaqueProviderSignatures(): void
+    {
+        $file = SessionManager::create($this->cwd);
+        $file->append(new UserMessage('hi'));
+        $file->append(new AssistantMessage([
+            new \Pig\Ai\ThinkingContent('plan', thinkingSignature: 'OPAQUE_THINKING_SIG'),
+            new \Pig\Ai\TextContent('answer', textSignature: 'OPAQUE_TEXT_SIG'),
+            new \Pig\Ai\ToolCall('c1', 'read', ['path' => 'a.php'], thoughtSignature: 'OPAQUE_THOUGHT_SIG'),
+        ], Api::AnthropicMessages, 'anthropic', 'claude-test', new Usage(), StopReason::Stop));
+
+        $this->start(resume: $file->path);
+
+        $refs = $this->data(['type' => 'get_messages', 'limit' => 10, 'images' => 'refs'])['messages'][1]['content'];
+        $this->assertNull($refs[0]['thinkingSignature'] ?? null);
+        $this->assertNull($refs[1]['textSignature'] ?? null);
+        $this->assertNull($refs[2]['thoughtSignature'] ?? null);
+
+        $raw = $this->data(['type' => 'get_messages'])['messages'][1]['content'];
+        $this->assertSame('OPAQUE_THINKING_SIG', $raw[0]['thinkingSignature']);
+        $this->assertSame('OPAQUE_TEXT_SIG', $raw[1]['textSignature']);
+        $this->assertSame('OPAQUE_THOUGHT_SIG', $raw[2]['thoughtSignature']);
+    }
+
     // ---- prompting ---------------------------------------------------------------------
 
     public function testPromptRespondsBeforeTheTurnAndTheEventsFollow(): void

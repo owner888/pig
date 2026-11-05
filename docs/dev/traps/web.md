@@ -23,6 +23,7 @@ The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved ou
 - [Chrome reached 20 GB of memory on a long `pig web` run with WebSocket reconnects](#chrome-reached-20-gb-of-memory-on-a-long-pig-web-run-with-websocket-reconnects)
 - [Non-image files could not be picked or dragged into the web UI](#non-image-files-could-not-be-picked-or-dragged-into-the-web-ui)
 - [`pig web restart` reset a `0.0.0.0` daemon back to `127.0.0.1`](#pig-web-restart-reset-a-0000-daemon-back-to-127001)
+- [Over a lossy tunnel, `get_messages: no answer in 30s` looped forever](#over-a-lossy-tunnel-get_messages-no-answer-in-30s-looped-forever)
 
 ## A failed LLM send in Web mode showed no error at all (the error was swallowed)
 
@@ -397,6 +398,30 @@ includes the address, and `restart()` prepends the running daemon's `--host` and
 
 Regression test: `WebDaemonTest::testRestartKeepsTheRunningDaemonsHostAndPortUnlessOverridden`.
 
+## Over a lossy tunnel, `get_messages: no answer in 30s` looped forever
 
+**Symptom**: opening `pig web` over a high-loss Tailscale link (~25% packet loss, ~20 KB/s TCP
+goodput) showed `Cannot reach pig: the conversation: get_messages: no answer in 30s — reconnecting…`
+and never recovered, while the server logged `closing a connection: the peer has read nothing for 15 s`.
 
+**Cause** (three stacked):
+1. `Websocket` had no `permessage-deflate` (RFC 7692) and `RpcMode::imagesAsRefs()` kept opaque
+   high-entropy provider signatures (`thoughtSignature`, `thinkingSignature`, `textSignature`) in the
+   history payload. `FIRST_LOAD = 180` sent 485–868 KB of uncompressed JSON on initial tab open,
+   taking >30 s over a 20 KB/s link.
+2. When `get_state` timed out first, `pigUnreachable()` fired 3 s later and called `loadMessages()`
+   again while the first `get_messages` was still streaming over the socket, queuing a second 868 KB
+   response behind the first and guaranteeing every subsequent call timed out.
+3. Neither `refreshState()` nor `loadMessages()` called `pigReachable()` on completion, so the error
+   banner stayed up even after the RPC eventually arrived.
+
+**Rule**: `Websocket` negotiates `permessage-deflate; server_no_context_takeover; client_no_context_takeover`
+(RFC 7692), `RpcMode::imagesAsRefs()` strips `thoughtSignature` / `thinkingSignature` / `textSignature`,
+`FIRST_LOAD` equals `FIRST_DRAW` (60), and `Tab.refreshState()`, `Tab.loadMessages()` and
+`Tab.loadCommands()` coalesce concurrent calls onto one in-flight Promise and call `pigReachable()`
+when the active tab's state or messages arrive.
+
+Regression tests: `WebsocketProtocolTest::testPermessageDeflateNegotiatesAndCompressesLargeFrames`,
+`RpcModeTest::testHistoryRefsStripOpaqueProviderSignatures`,
+`WebMessageBlocksTest::testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt`.
 

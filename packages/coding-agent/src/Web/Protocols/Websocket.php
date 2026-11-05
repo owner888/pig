@@ -39,11 +39,16 @@ final class Websocket implements ProtocolInterface
         }
 
         $accept = base64_encode(sha1($key . self::GUID, true));
+        $extensions = strtolower($headers['sec-websocket-extensions'] ?? '');
+        $deflate = str_contains($extensions, 'permessage-deflate') && function_exists('gzdeflate') && function_exists('gzinflate');
+        $connection->websocketDeflate = $deflate;
 
         $handshakeResponse = "HTTP/1.1 101 Switching Protocols\r\n"
             . "Upgrade: websocket\r\n"
             . "Connection: Upgrade\r\n"
-            . "Sec-WebSocket-Accept: {$accept}\r\n\r\n";
+            . "Sec-WebSocket-Accept: {$accept}\r\n"
+            . ($deflate ? "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n" : '')
+            . "\r\n";
 
         // Raw send handshake bytes, then switch connection protocol to Websocket
         $connection->sendRaw($handshakeResponse);
@@ -106,6 +111,7 @@ final class Websocket implements ProtocolInterface
         $byte2 = ord($buffer[1]);
 
         $final = ($byte1 & 0x80) !== 0;
+        $rsv1 = ($byte1 & 0x40) !== 0;
         $opcode = $byte1 & 0x0F;
         $hasMask = ($byte2 & 0x80) !== 0;
         $payloadLen = $byte2 & 0x7F;
@@ -172,6 +178,7 @@ final class Websocket implements ProtocolInterface
             return null;
         } else {
             $connection->websocketDataBuffer = $payload;
+            $connection->websocketCompressed = $rsv1 && $connection->websocketDeflate;
         }
 
         if (!$final) {
@@ -179,7 +186,26 @@ final class Websocket implements ProtocolInterface
         }
 
         $message = $connection->websocketDataBuffer;
+        $compressed = $connection->websocketCompressed;
         $connection->websocketDataBuffer = null;
+        $connection->websocketCompressed = false;
+
+        if ($compressed) {
+            set_error_handler(static fn (): bool => true);
+            try {
+                $inflated = gzinflate($message . "\x00\x00\xff\xff");
+            } finally {
+                restore_error_handler();
+            }
+
+            if ($inflated === false) {
+                $connection->close('a compressed WebSocket frame could not be inflated');
+
+                return null;
+            }
+
+            return $inflated;
+        }
 
         return $message;
     }
@@ -197,17 +223,28 @@ final class Websocket implements ProtocolInterface
      */
     public static function encode(mixed $data, TcpConnection $connection): string
     {
-        $payload = is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
+        $payload = (string) (is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR));
 
-        return self::createFrame((string) $payload, self::OPCODE_TEXT);
+        if ($connection->websocketDeflate && strlen($payload) >= 256) {
+            $deflated = gzdeflate($payload, 6);
+            if ($deflated !== false) {
+                if (str_ends_with($deflated, "\x00\x00\xff\xff")) {
+                    $deflated = substr($deflated, 0, -4);
+                }
+
+                return self::createFrame($deflated, self::OPCODE_TEXT, compressed: true);
+            }
+        }
+
+        return self::createFrame($payload, self::OPCODE_TEXT);
     }
 
     /**
      * Create an unmasked WebSocket frame from server to client.
      */
-    public static function createFrame(string $payload, int $opcode): string
+    public static function createFrame(string $payload, int $opcode, bool $compressed = false): string
     {
-        $firstByte = 0x80 | ($opcode & 0x0F); // FIN = 1
+        $firstByte = 0x80 | ($compressed ? 0x40 : 0) | ($opcode & 0x0F); // FIN = 1
         $len = strlen($payload);
 
         if ($len <= 125) {
