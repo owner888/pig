@@ -416,12 +416,19 @@ and never recovered, while the server logged `closing a connection: the peer has
    banner stayed up even after the RPC eventually arrived.
 
 **Rule**: `Websocket` negotiates `permessage-deflate; server_no_context_takeover; client_no_context_takeover`
-(RFC 7692), `RpcMode::imagesAsRefs()` strips `thoughtSignature` / `thinkingSignature` / `textSignature`,
-`FIRST_LOAD` equals `FIRST_DRAW` (60), and `Tab.refreshState()`, `Tab.loadMessages()` and
-`Tab.loadCommands()` coalesce concurrent calls onto one in-flight Promise and call `pigReachable()`
-when the active tab's state or messages arrive.
+(RFC 7692) and `Http::encode()` gzip-compresses text/JSON responses ≥512 B; `RpcMode::imagesAsRefs()`
+strips `thoughtSignature` / `thinkingSignature` / `textSignature`; `HttpServer::slimForBrowser()` drops
+redundant full-message live events (`entry_appended`, `turn_end`, non-delta `message_update`s,
+`agent_end.messages`, full `message_end` bodies); `TcpConnection::silentFor()` counts a draining
+`$sendBuffer` (`$lastDrainAt`) as alive so queued pings do not trip `SILENT_LIMIT`; `network.js` binds
+the active tab first on connect/reconnect; `FIRST_LOAD` equals `FIRST_DRAW` (60); and
+`Tab.refreshState()`, `Tab.loadMessages()` and `Tab.loadCommands()` coalesce concurrent calls onto one
+in-flight Promise and call `pigReachable()` when the active tab's state or messages arrive.
 
 Regression tests: `WebsocketProtocolTest::testPermessageDeflateNegotiatesAndCompressesLargeFrames`,
+`HttpProtocolTest::testEncodeGzipCompressesTextAndJsonResponsesWhenAccepted`,
+`HttpProtocolTest::testSlimForBrowserStripsRedundantLivePayloads`,
+`TcpConnectionTest::testDrainingSendBufferCountsAsActiveInSilentFor`,
 `RpcModeTest::testHistoryRefsStripOpaqueProviderSignatures`,
 `WebMessageBlocksTest::testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt`.
 

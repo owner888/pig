@@ -93,4 +93,74 @@ final class HttpProtocolTest extends TestCase
 
         $this->assertNotContains('--session', $args);
     }
+
+    public function testEncodeGzipCompressesTextAndJsonResponsesWhenAccepted(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($serverSock, static fn () => null, static fn () => null);
+        $conn->httpGzip = true;
+
+        $body = str_repeat('{"id":"session-1","opening":"hello world"},', 30);
+        $response = Http::encode([
+            'status' => 200,
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => $body,
+        ], $conn);
+
+        $this->assertStringContainsString("Content-Encoding: gzip\r\n", $response);
+        $this->assertStringContainsString("Vary: Accept-Encoding\r\n", $response);
+        $rawBody = substr($response, strpos($response, "\r\n\r\n") + 4);
+        $this->assertLessThan(strlen($body) / 4, strlen($rawBody));
+        $this->assertSame($body, gzdecode($rawBody));
+
+        $conn->close();
+        fclose($clientSock);
+    }
+
+    public function testSlimForBrowserStripsRedundantLivePayloads(): void
+    {
+        $slim = new \ReflectionMethod(HttpServer::class, 'slimForBrowser');
+
+        $this->assertNull($slim->invoke(null, ['type' => 'entry_appended', 'entry' => ['id' => 'e1']]));
+        $this->assertNull($slim->invoke(null, ['type' => 'turn_end', 'message' => [], 'toolResults' => []]));
+        $this->assertNull($slim->invoke(null, ['type' => 'message_update', 'assistantMessageEvent' => ['type' => 'done', 'message' => []]]));
+
+        $delta = $slim->invoke(null, [
+            'type' => 'message_update',
+            'usage' => ['input' => 100],
+            'assistantMessageEvent' => ['type' => 'text_delta', 'delta' => 'hi'],
+        ]);
+        $this->assertArrayNotHasKey('usage', $delta);
+        $this->assertSame('hi', $delta['assistantMessageEvent']['delta']);
+
+        $agentEnd = $slim->invoke(null, ['type' => 'agent_end', 'messages' => [['role' => 'assistant']], 'willRetry' => false]);
+        $this->assertArrayNotHasKey('messages', $agentEnd);
+        $this->assertFalse($agentEnd['willRetry']);
+
+        $toolEnd = $slim->invoke(null, [
+            'type' => 'message_end',
+            'message' => ['role' => 'toolResult', 'content' => [['type' => 'image', 'data' => str_repeat('A', 10000)]]],
+        ]);
+        $this->assertSame(['type' => 'message_end', 'message' => ['role' => 'toolResult']], $toolEnd);
+
+        $assistantEnd = $slim->invoke(null, [
+            'type' => 'message_end',
+            'message' => [
+                'role' => 'assistant',
+                'stopReason' => 'toolUse',
+                'content' => [
+                    ['type' => 'thinking', 'thinking' => str_repeat('T', 5000), 'thinkingSignature' => 'SIG'],
+                    ['type' => 'toolCall', 'id' => 'c1', 'name' => 'read', 'arguments' => ['path' => 'a.php']],
+                ],
+            ],
+        ]);
+        $this->assertSame([
+            'type' => 'message_end',
+            'message' => [
+                'role' => 'assistant',
+                'stopReason' => 'toolUse',
+                'content' => [['type' => 'toolCall']],
+            ],
+        ], $assistantEnd);
+    }
 }

@@ -430,6 +430,7 @@ final class WebMessageBlocksTest extends TestCase
                 hideStatusBanner: () => {},
                 showStatusBanner: () => {},
                 availableModels: ['m'],
+                tabs: [],
                 loadModels: () => {},
                 refreshState: () => active?.refreshState(),
                 t: (k) => k,

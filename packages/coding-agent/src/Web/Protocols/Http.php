@@ -114,6 +114,22 @@ final class Http implements ProtocolInterface
         $headers = $data['headers'] ?? [];
         $body = $data['body'] ?? '';
 
+        $contentType = strtolower($headers['Content-Type'] ?? $headers['content-type'] ?? '');
+        $alreadyEncoded = isset($headers['Content-Encoding']) || isset($headers['content-encoding']);
+        $compressible = str_starts_with($contentType, 'text/')
+            || str_starts_with($contentType, 'application/json')
+            || str_starts_with($contentType, 'application/javascript')
+            || str_starts_with($contentType, 'image/svg+xml');
+
+        if ($status === 200 && !$alreadyEncoded && $compressible && strlen($body) >= 512 && $connection->httpGzip && function_exists('gzencode')) {
+            $compressed = gzencode($body, 6);
+            if ($compressed !== false && strlen($compressed) < strlen($body)) {
+                $body = $compressed;
+                $headers['Content-Encoding'] = 'gzip';
+                $headers['Vary'] ??= 'Accept-Encoding';
+            }
+        }
+
         $headers['Content-Length'] = (string) strlen($body);
         $headers['Connection'] ??= 'keep-alive';
 

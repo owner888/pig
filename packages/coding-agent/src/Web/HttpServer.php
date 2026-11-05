@@ -507,6 +507,8 @@ final class HttpServer
      */
     private function handleRequest(Connection $conn, array $req, int $connectionId): void
     {
+        $conn->httpGzip = preg_match('/\bgzip\b/i', $req['headers']['accept-encoding'] ?? '') === 1;
+
         $next = function () use ($conn, $req, $connectionId): void {
             $this->route($conn, $req, $connectionId);
         };
@@ -1675,9 +1677,16 @@ final class HttpServer
      */
     private function onSessionEvent(ManagedSession $managed, array $event): void
     {
-        $base = ($event['type'] ?? null) === 'session_ended' ? $event : ['type' => 'rpc_event', 'event' => $event];
-        $type = $event['type'] ?? null;
-        $toolCallId = is_string($event['toolCallId'] ?? null) ? $event['toolCallId'] : null;
+        $this->schedules->observe($managed, $event);
+
+        $browserEvent = self::slimForBrowser($event);
+        if ($browserEvent === null) {
+            return;
+        }
+
+        $base = ($browserEvent['type'] ?? null) === 'session_ended' ? $browserEvent : ['type' => 'rpc_event', 'event' => $browserEvent];
+        $type = $browserEvent['type'] ?? null;
+        $toolCallId = is_string($browserEvent['toolCallId'] ?? null) ? $browserEvent['toolCallId'] : null;
 
         foreach ($managed->clients as $connectionId => $tabIds) {
             $client = $this->wsClients[$connectionId] ?? null;
@@ -1707,8 +1716,73 @@ final class HttpServer
                 $client->send($line);
             }
         }
+    }
 
-        $this->schedules->observe($managed, $event);
+    /**
+     * Strip live RPC events that the browser page never draws or that duplicate full messages
+     * and base64 screenshots 4–5 times per turn over a slow tunnel (`entry_appended`, `turn_end`,
+     * `message_update`'s `done`/`text_end`/`thinking_end`/`toolcall_*`, `agent_end.messages`, and
+     * `message_end`'s full `toolResult` / `assistant` payloads).
+     *
+     * @param array<string, mixed> $event
+     * @return array<string, mixed>|null
+     */
+    private static function slimForBrowser(array $event): ?array
+    {
+        $type = $event['type'] ?? null;
+
+        if ($type === 'entry_appended' || $type === 'turn_end') {
+            return null;
+        }
+
+        if ($type === 'message_update') {
+            $sub = $event['assistantMessageEvent']['type'] ?? null;
+            if (!in_array($sub, ['text_delta', 'thinking_delta', 'error'], true)) {
+                return null;
+            }
+            unset($event['usage']);
+
+            return $event;
+        }
+
+        if ($type === 'agent_end') {
+            unset($event['messages']);
+
+            return $event;
+        }
+
+        if ($type === 'message_end') {
+            $msg = $event['message'] ?? null;
+            if (!is_array($msg)) {
+                return $event;
+            }
+            $role = $msg['role'] ?? null;
+            if ($role === 'toolResult' || $role === 'tool_result') {
+                // `tool_execution_end` already delivered the result; `message_end` only counts for `LIVE_CAP`.
+                return ['type' => 'message_end', 'message' => ['role' => 'toolResult']];
+            }
+            if ($role === 'assistant') {
+                $hasToolCall = false;
+                foreach ($msg['content'] ?? [] as $c) {
+                    if (is_array($c) && in_array($c['type'] ?? null, ['toolCall', 'tool_call'], true)) {
+                        $hasToolCall = true;
+                        break;
+                    }
+                }
+
+                return [
+                    'type' => 'message_end',
+                    'message' => array_filter([
+                        'role' => 'assistant',
+                        'stopReason' => $msg['stopReason'] ?? null,
+                        'errorMessage' => $msg['errorMessage'] ?? null,
+                        'content' => $hasToolCall ? [['type' => 'toolCall']] : null,
+                    ], static fn (mixed $v): bool => $v !== null),
+                ];
+            }
+        }
+
+        return $event;
     }
 
     /** Every page re-reads `/api/scheduled` on this; the list is small and one shape is enough. */

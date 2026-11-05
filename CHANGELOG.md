@@ -50,6 +50,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added `scripts/eval.php`, an agent eval runner: each `evals/<name>/CASE.md` (frontmatter assertions + prompt, optional `fixture/` working directory) is run through `bin/pig --mode json --incognito -p` and checked deterministically — final answer (contains / not_contains / regex), files in the working directory (exists / contains / equals), shell `check` commands, and tool names called / not called — reporting tokens, cost and wall time per case; `--json` for machine output, `--keep` to inspect the working directory, options after `--` go to `bin/pig` (e.g. `-- --model …` to compare models). Two starter cases under `evals/`.
+
+## [1.6.4] - 2026-11-05
+
+### Changed
+
+- `pig web` compresses all HTTP text and JSON responses ≥ 512 bytes (`/`, `/login`, `/theme.css`, `/api/sessions/all`, `/api/models`, and the rest) with gzip when the client accepts it, strips redundant full-message live events (`entry_appended`, `turn_end`, non-delta `message_update`s, `agent_end.messages`, and full `message_end` bodies) before forwarding over the browser WebSocket, binds the active tab first on connect/reconnect before background tabs, and fetches `get_commands` once per tab bind rather than on every state refresh.
+
+### Fixed
+
+- Fixed `pig web` closing active slow-tunnel connections with `silent for N s, no pong` while a large payload was still draining in `$sendBuffer` ahead of the queued WebSocket ping: `TcpConnection::silentFor()` now counts recent `$lastDrainAt` write progress as activity while the buffer is draining.
+
 ## [1.6.3] - 2026-11-05
 
 ### Added

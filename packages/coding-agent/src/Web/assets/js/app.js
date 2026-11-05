@@ -332,8 +332,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // A fresh child, or a reconnect to one: load what it has. A tab in the background loads
         // its conversation when it is opened (`openTab()`): after a reconnect every tab binds at
         // once, and every history at once is the biggest thing a page asks the server to send it.
-        if (this === active) await this.loadMessages();
-        else this.needsMessages = true;
+        if (this === active) {
+          await this.loadMessages();
+          this.loadCommands();
+          for (const t of tabs) {
+            if (t !== this && !t.bound && !t.ended) t.subscribe();
+          }
+        } else {
+          this.needsMessages = true;
+        }
         if (this === active) applyActiveTabToChrome();
       }
 
@@ -389,9 +396,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           } finally {
             this.refreshingState = null;
           }
-          // Apart, so a child that cannot list its commands still has its state drawn — and after
-          // every refresh, so a `/reload` that brought new ones is offered on the next `/`.
-          this.loadCommands();
         })();
       }
 
@@ -2419,7 +2423,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       active = tab;
       tab.scroller.hidden = false;
       if (!tab.bound) tab.subscribe();
-      else if (tab.needsMessages) tab.loadMessages();
+      else {
+        if (tab.needsMessages) tab.loadMessages();
+        if (tab.commands.length === 0) tab.loadCommands();
+      }
 
       // Show friendly EmptyState if tab has no messages yet — but not for a conversation that is
       // only still loading: the welcome screen over a long one's file, for as long as its process

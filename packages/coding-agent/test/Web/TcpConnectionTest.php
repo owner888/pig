@@ -132,4 +132,21 @@ final class TcpConnectionTest extends TestCase
         $conn->close();
         fclose($peer);
     }
+
+    public function testDrainingSendBufferCountsAsActiveInSilentFor(): void
+    {
+        [$peer, $server] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($server, static fn () => null, static fn () => null);
+        (new \ReflectionProperty(TcpConnection::class, 'lastReadAt'))->setValue($conn, microtime(true) - 90);
+        (new \ReflectionProperty(TcpConnection::class, 'sendBuffer'))->setValue($conn, 'still-draining');
+        (new \ReflectionProperty(TcpConnection::class, 'lastDrainAt'))->setValue($conn, microtime(true) - 2);
+
+        $this->assertLessThan(5, $conn->silentFor(), 'draining bytes prove the TCP peer is acknowledging segments');
+
+        (new \ReflectionProperty(TcpConnection::class, 'sendBuffer'))->setValue($conn, '');
+        $this->assertGreaterThan(80, $conn->silentFor(), 'once drained, silence is measured from lastReadAt');
+
+        $conn->close();
+        fclose($peer);
+    }
 }

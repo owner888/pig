@@ -93,6 +93,9 @@ class TcpConnection
     /** Whether the WebSocket handshake negotiated `permessage-deflate` (RFC 7692). */
     public bool $websocketDeflate = false;
 
+    /** Whether HTTP responses on this connection may be gzip-compressed (`Accept-Encoding: gzip`). */
+    public bool $httpGzip = false;
+
     /** @var class-string<ProtocolInterface> */
     protected string $protocol = Http::class;
 
@@ -404,10 +407,19 @@ class TcpConnection
         $this->readableWatcher = $watcher;
     }
 
-    /** Seconds since the peer last sent anything. */
+    /**
+     * Seconds since the peer last read or sent anything.
+     *
+     * Over a slow tunnel (Tailscale), a server-initiated WebSocket `ping()` is queued at the tail
+     * of `$sendBuffer` behind any in-flight payload, so the browser cannot see or answer it until
+     * the payload drains. As long as the socket is draining (`$lastDrainAt`), the peer is alive and
+     * acknowledging TCP segments.
+     */
     public function silentFor(): float
     {
-        return microtime(true) - $this->lastReadAt;
+        $lastActive = $this->sendBuffer !== '' ? max($this->lastReadAt, $this->lastDrainAt) : $this->lastReadAt;
+
+        return microtime(true) - $lastActive;
     }
 
     public function isClosed(): bool

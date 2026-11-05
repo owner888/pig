@@ -163,10 +163,14 @@ export class SharedNetwork {
       this.hideStatus();
       this.onReachable();
       this.reconnectDelay = 1000;
-      // Resubscribe every tab currently open in the browser window over this shared connection
+      // Bind the active tab first; background tabs wait until its initial messages load (or when
+      // clicked) so a slow tunnel is not flooded by N concurrent child spawns and RPCs at once.
+      const active = this.getActiveTab();
       const tabs = this.getTabs();
-      for (const t of tabs) {
-        t.subscribe();
+      if (active) {
+        active.subscribe();
+      } else {
+        for (const t of tabs) t.subscribe();
       }
     };
 
