@@ -50,6 +50,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.1] - 2026-11-05
+
+### Added
+
+- Added `Pig\Ai\Http\Retrying::fetch()`, the one retry loop for plain requests — a catalog, a market-data page, a download: a transport failure or a 408/425/429/5xx is tried again (three attempts unless told otherwise), `Retry-After` is honoured, otherwise the wait doubles with jitter up to a cap, an abort cuts the wait short, and the last answer comes back whatever its status for the caller to judge. Model requests keep `ProviderRetry` and `Retry`. `AGENTS.md` says so: no retry loop at a call site.
+
+### Changed
+
+- `RemoteCatalog::request()` goes through `Retrying::fetch()` with upstream's numbers (three attempts, no wait, its status list) instead of a loop of its own.
+
 ## [1.6.0] - 2026-11-05
 
 ### Added

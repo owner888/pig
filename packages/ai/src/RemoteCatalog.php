@@ -7,6 +7,7 @@ namespace Pig\Ai;
 use InvalidArgumentException;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Retrying;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\AbortSignal;
@@ -83,22 +84,8 @@ final class RemoteCatalog
             ...($etag !== null ? ['if-none-match' => $etag] : []),
         ]);
 
-        for ($attempt = 0; ; $attempt++) {
-            $signal?->throwIfAborted();
-
-            try {
-                $response = $client->send($request, $signal);
-                $body = $response->body->all();
-
-                if ($attempt >= self::MAX_RETRIES || !in_array($response->status, self::RETRYABLE_STATUS_CODES, true)) {
-                    return [$response, $body];
-                }
-            } catch (\Throwable $error) {
-                if ($signal?->aborted() || $attempt >= self::MAX_RETRIES) {
-                    throw $error;
-                }
-            }
-        }
+        // Upstream's loop is `Retrying::fetch()` with its numbers: three attempts, no wait between.
+        return Retrying::fetch($client, $request, attempts: self::MAX_RETRIES + 1, baseDelay: 0.0, signal: $signal, statuses: self::RETRYABLE_STATUS_CODES);
     }
 
     /**

@@ -115,6 +115,10 @@ change: [docs/dev/decisions.md](docs/dev/decisions.md#version-floor-php--83).
   (`SessionManager::lines()` checks `is_readable` rather than suppressing `file()`).
 - No silent fallback: `catch` must re-throw (`throw new X(..., $e)`). No `?? default` to paper
   over a missing value, no `clamp`/floor without a reproduced bug behind it.
+- **A plain HTTP request that may be tried again goes through `Pig\Ai\Http\Retrying::fetch()`** —
+  a catalog, a market-data page, a download. Never write the retry loop at the call site: the
+  rules (which failures, the wait, `Retry-After`, abort) live in one place. Model requests are the
+  exception and keep `ProviderRetry` (the SDKs' policy) and `Retry` (the turn), as upstream has them.
 - `Deferred::complete()` twice throws. Where ported code relies on a JS promise ignoring its
   second resolve, the call site guards with `isComplete()` and says so in a comment — so the
   leniency stays local instead of becoming a global rule.
