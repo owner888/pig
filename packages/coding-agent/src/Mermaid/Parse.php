@@ -198,6 +198,15 @@ final class Parse
             return 'sequence';
         }
 
+        // The kinds pig draws beyond grok-mermaid's: `Pie`, `Timeline`, `Journey`, `Kanban`, `GitGraph`.
+        if ($kind === 'pie' || $kind === 'timeline' || $kind === 'journey' || $kind === 'kanban') {
+            return $kind;
+        }
+
+        if (str_starts_with($kind, 'gitgraph')) {
+            return 'git';
+        }
+
         return null;
     }
 

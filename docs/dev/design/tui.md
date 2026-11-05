@@ -227,6 +227,16 @@ screen, which measure that way. It shows only on tabs, soft hyphens and keycaps.
 Node (`test/fixtures/mermaid/cases.json`). The fuzz corpus (4,486 sources) was checked the same
 way while porting: all of it matches with upstream's width table swapped in.
 
+**Five kinds are pig's, not the port's:** `Pie`, `Timeline`, `Journey`, `Kanban` and `GitGraph`,
+one class each (parse and layout together) with `Rows` for the listing-shaped ones, since
+grok-mermaid — and the Rust renderer it ports — stop at the five above. They sit in the same
+directory and hang off two lines of the port: `Parse::diagramKind()` names them and
+`Mermaid::draw()` dispatches to them; the port's files are otherwise untouched, so a re-sync against
+grok-mermaid diffs clean. Their drawings have no upstream to match, so `pig-cases.json` pins what
+pig draws (upstream's eight sources of those kinds moved there from `cases.json`, where they were
+asserting the source-box fallback). A new kind goes the same way: a class with `parse()` and
+`layout()`, a kind name in `diagramKind()`, a case in `Mermaid::draw()`, fixtures in `pig-cases.json`.
+
 `MermaidTransformer` is upstream's `components/mermaid.ts`: first among the Markdown transformers
 (`InteractiveMode::markdownTransformers()`), each row a code span joined by hard breaks, the block
 left as written when `markdown.mermaid` is `off`, while streaming under `final`, when it cannot be

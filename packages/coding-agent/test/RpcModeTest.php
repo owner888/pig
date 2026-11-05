@@ -260,6 +260,41 @@ final class RpcModeTest extends TestCase
     {
         fwrite($this->peer, json_encode($command) . "\n");
         $this->settle();
+
+        // A `bash` is a real process, and forty milliseconds is not always enough for a shell to
+        // start, run `echo` and exit — on a loaded machine the response came after the test
+        // had already read the stream, or landed inside the next command's answer. So a bash
+        // command is waited out: ticks until its response is in the stream, or five seconds.
+        if (($command['type'] ?? null) === 'bash') {
+            $this->awaitPending('response');
+        }
+    }
+
+    /** Ticks until a line of `$type` is in the stream, or five seconds have passed. */
+    private function awaitPending(string $type): void
+    {
+        $deadline = microtime(true) + 5;
+
+        while (!$this->pending($type) && microtime(true) < $deadline) {
+            $this->settle(10);
+        }
+    }
+
+    /** Whether a line of `$type` has been written since `lines()` last read, without reading it. */
+    private function pending(string $type): bool
+    {
+        fseek($this->out, $this->read);
+        $bytes = (string) stream_get_contents($this->out);
+
+        foreach (explode("\n", $bytes) as $line) {
+            $decoded = trim($line) === '' ? null : json_decode($line, true);
+
+            if (is_array($decoded) && ($decoded['type'] ?? null) === $type) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Write raw bytes, whole lines or not. */
@@ -340,6 +375,7 @@ final class RpcModeTest extends TestCase
         // stream, and one of them is its own response.
         $this->lines();
         $this->send($command);
+        $this->awaitPending('response');
         $responses = $this->of('response');
         $this->assertCount(1, $responses, 'expected exactly one response');
 

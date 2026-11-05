@@ -5349,7 +5349,9 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Theme', $screen);
         $this->assertStringContainsString('dark', $screen);
         $this->assertStringContainsString('Session share destination', $screen);
-        $this->assertStringContainsString('Auto-compact', $screen);
+        // The eighth row, the last the list shows before it scrolls; Auto-compact is below the fold.
+        $this->assertStringContainsString('HTTP idle timeout', $screen);
+        $this->assertStringContainsString('5 min', $screen);
         $this->assertStringContainsString('esc when done', $screen);
     }
 
@@ -5358,8 +5360,10 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->openSettings();
 
-        // Theme is the first row; its values are `Themes::getAvailableThemes()`, so the one after
-        // dark is labra.
+        // Theme is the first row and opens upstream's submenu: system, automatic, then the
+        // themes, the cursor on dark, so the one below it is labra. Enter picks it.
+        $this->type(self::ENTER);
+        $this->type(self::DOWN);
         $this->type(self::ENTER);
 
         $this->assertSame('labra', $this->settings->theme());
@@ -5601,7 +5605,7 @@ final class InteractiveModeTest extends TestCase
         // Which is the honest answer: both are true at once, so both are drawn. Sharing one
         // container meant whichever wrote last was the only one you could see.
         $this->assertStringContainsString('Working', $screen);
-        $this->assertStringContainsString('Auto-compact', $screen);
+        $this->assertStringContainsString('HTTP idle timeout', $screen);
 
         $held();
         $this->settle();

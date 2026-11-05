@@ -23,6 +23,7 @@ The test suite, mutation sweeps, live provider tests, packaging. Moved out of `A
 - [`uncapturedClosureReads()` falsely flagged static class property accesses](#uncapturedclosurereads-falsely-flagged-static-class-property-accesses)
 - [A collapsed bash output test asserted on tail timing without warmup and with redundant row counting](#a-collapsed-bash-output-test-asserted-on-tail-timing-without-warmup-and-with-redundant-row-counting)
 - [Binding a fixed callback port in a test triggered an unhandled PHP warning when already taken by the OS](#binding-a-fixed-callback-port-in-a-test-triggered-an-unhandled-php-warning-when-already-taken-by-the-os)
+- [`RpcModeTest` gave a `bash` command forty milliseconds and read the stream before the shell had answered](#rpcmodetest-gave-a-bash-command-forty-milliseconds-and-read-the-stream-before-the-shell-had-answered)
 
 ## Every run of the test suite opened the developer's browser on Anthropic's authorize page
 
@@ -1152,7 +1153,10 @@ and reporting trailing seen bytes if the launch fails or times out.
 
 **Rule**: Always wrap intentional collision bindings with `set_error_handler` to suppress PHP warnings when the port is already taken by the environment.
 
+## `RpcModeTest` gave a `bash` command forty milliseconds and read the stream before the shell had answered
 
+**Symptom**: On a loaded macOS machine, three bash tests failed at once while the rest of the suite passed: `testBashAnswersWithUpstreamsBashResult` saw no response (`actual size 0`), `testBashExcludedFromContextIsKeptButNotSentToTheModel` saw two (the bash answer arrived inside the next command's), and `testBashStreamsItsOutputAsEventsCarryingTheCommandsId` saw no `bash_execution_update` events.
 
+**Cause**: `send()` settled the loop a fixed forty ticks of a millisecond each. A `bash` command is a real shell process; forty milliseconds covers it on an idle Linux box and not on a Mac also running the web tests.
 
-
+**Rule**: A test that drives a real process waits for its evidence, not a tick count: `send()` of a `bash` and every `response()` now tick until the response is in the stream (`awaitPending()`, five-second ceiling, which no passing test gets near). Keep `settle()`'s fixed ticks for everything in-process, where they are what the loop needs and nothing more.

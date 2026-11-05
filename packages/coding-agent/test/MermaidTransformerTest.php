@@ -62,8 +62,8 @@ final class MermaidTransformerTest extends TestCase
     {
         $this->assertSame(self::FLOW, MermaidTransformer::transform(self::FLOW, false, 8), 'wider than the room');
 
-        $pie = "```mermaid\npie\n  \"a\" : 1\n```";
-        $this->assertSame($pie, MermaidTransformer::transform($pie, false, 80), 'a kind it does not draw');
+        $gantt = "```mermaid\ngantt\n  task :a1, 2024-01-01, 30d\n```";
+        $this->assertSame($gantt, MermaidTransformer::transform($gantt, false, 80), 'a kind it does not draw');
 
         $other = "```js\nconst mermaid = 1\n```";
         $this->assertSame($other, MermaidTransformer::transform($other, false, 80));

@@ -7,7 +7,8 @@ namespace Pig\CodingAgent\Mermaid;
 /**
  * grok-mermaid's `render()`: a Mermaid source block as Unicode box-drawing art — `graph` and
  * `flowchart` (subgraphs included), `stateDiagram`, `classDiagram`, `erDiagram` and
- * `sequenceDiagram`, laid out at whatever size they need (`MermaidArt::$width`).
+ * `sequenceDiagram`, laid out at whatever size they need (`MermaidArt::$width`). pig adds `pie`,
+ * `timeline`, `journey`, `kanban` and `gitGraph`, each its own class, which grok-mermaid does not draw.
  *
  * Null is no art to show: blank input, a syntax error, a kind it does not draw, or one too large
  * to lay out. Rendering is best-effort: a flowchart keeps whatever parsed, and the stricter
@@ -40,7 +41,7 @@ final class Mermaid
         return new MermaidArt($lines['plain'], $lines['styled'], $lines['width'], $drawn['warnings']);
     }
 
-    /** grok-mermaid's `diagramKind()`: `flowchart`, `state`, `class`, `er`, `sequence`, or null. */
+    /** grok-mermaid's `diagramKind()`: `flowchart`, `state`, `class`, `er`, `sequence` — or pig's `pie`, `timeline`, `journey`, `kanban`, `git` — or null. */
     public static function kind(string $src): ?string
     {
         return Parse::diagramKind($src);
@@ -113,6 +114,16 @@ final class Mermaid
                 $sequence = Parse::parseSequence($src);
 
                 return $sequence === null ? null : $plain(SequenceLayout::layoutSequence($sequence));
+            case 'pie':
+                return $plain(Pie::parse($src)?->layout());
+            case 'timeline':
+                return $plain(Timeline::parse($src)?->layout());
+            case 'journey':
+                return $plain(Journey::parse($src)?->layout());
+            case 'kanban':
+                return $plain(Kanban::parse($src)?->layout());
+            case 'git':
+                return $plain(GitGraph::parse($src)?->layout());
             default:
                 return null;
         }

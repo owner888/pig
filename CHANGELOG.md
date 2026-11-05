@@ -50,6 +50,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.3] - 2026-11-05
+
+### Added
+
+- Added five Mermaid diagram kinds grok-mermaid does not draw, each a class of its own beside the port in `Mermaid\`: `pie` as a bar listing with each slice's share (and value under `showData`), `timeline` down the screen with periods, events and section rules, `journey` as tasks with star scores and actors, `kanban` as columns of cards (with the `@{ … }` assignee, ticket and priority as a muted line), and `gitGraph` as `git log --graph` draws one — lanes, forks, merges, `HIGHLIGHT` / `REVERSE` commits, tags and cherry-picks. Each falls back to the source box as before when it does not fit or does not parse; `gantt`, `mindmap` and the rest still show as source. `test/fixtures/mermaid/pig-cases.json` pins what they draw.
+
 ## [1.6.2] - 2026-11-05
 
 ### Added

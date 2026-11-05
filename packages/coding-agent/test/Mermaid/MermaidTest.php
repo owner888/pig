@@ -22,6 +22,10 @@ use Pig\CodingAgent\Mermaid\Span;
  * matches too, but for the ones holding a tab, a soft hyphen or a keycap, which
  * upstream measures with its own `unicode-width` table and pig with `Width::visible()` — the
  * measure the rest of the screen is drawn with (see `Mermaid\Measure`).
+ *
+ * `pig-cases.json` is the kinds pig draws and grok-mermaid does not (`pie`, `timeline`, `journey`,
+ * `kanban`, `gitGraph`): upstream's eight sources of those kinds, which it left as source boxes,
+ * and pig's own, each pinned to what pig draws. The source boxes are still upstream's.
  */
 final class MermaidTest extends TestCase
 {
@@ -35,8 +39,19 @@ final class MermaidTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function pigCases(): iterable
+    {
+        $cases = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/mermaid/pig-cases.json'), true);
+
+        foreach ($cases as $i => $case) {
+            yield "#{$i} " . strtok($case['src'], "\n") => [$case];
+        }
+    }
+
     /** @param array<string, mixed> $case */
     #[DataProvider('cases')]
+    #[DataProvider('pigCases')]
     public function testPigDrawsWhatUpstreamDrew(array $case): void
     {
         $this->assertSame($case['kind'], Mermaid::kind($case['src']));
