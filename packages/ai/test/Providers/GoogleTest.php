@@ -28,6 +28,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\PigUserAgent;
+use Pig\Ai\Utils\Retry;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -307,16 +308,20 @@ final class GoogleTest extends TestCase
 
     public function testARefusedPromptIsAFailureAndNotAnEmptySuccess(): void
     {
-        // It comes back as a 200 with nothing in it but the reason. Upstream's Gemini path does not
-        // read `promptFeedback`: no candidate means no finish reason, and that is its error. pig
-        // used to say `Gemini refused the prompt: SAFETY` here, its own words; that rule now lives
-        // only in the Antigravity extension, which is pig's own.
-        $url = $this->serve([['promptFeedback' => ['blockReason' => 'SAFETY']]]);
+        // It comes back as a 200 with nothing in it but the reason and the usage. Upstream's Gemini
+        // path does not read `promptFeedback`: no candidate means no finish reason, and that is its
+        // error — one the retry policy takes for a cut connection and repeats with the same prompt.
+        // pig's own rule (`GoogleShared::onChunk()`, shared with Antigravity): the refusal by name,
+        // not retried, and the input Google billed for still on the message.
+        $url = $this->serve([['promptFeedback' => ['blockReason' => 'OTHER'], 'usageMetadata' => ['promptTokenCount' => 513951, 'totalTokenCount' => 513951]]]);
 
         [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertContains('ErrorEvent', $types);
-        $this->assertSame('Google stream ended without a finish reason', $message->errorMessage);
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Gemini refused the prompt: OTHER', $message->errorMessage);
+        $this->assertSame(513951, $message->usage->input);
+        $this->assertFalse(Retry::isRetryableAssistantError($message));
     }
 
     /** @return iterable<string, array{0: string, 1: string, 2: string}> */

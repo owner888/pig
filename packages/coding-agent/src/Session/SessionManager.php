@@ -1800,8 +1800,21 @@ final class SessionManager
             throw new AgentError("Could not create {$directory}");
         }
 
-        if (file_put_contents($this->path, $lines, FILE_APPEND | LOCK_EX) === false) {
-            throw new AgentError("Could not write the session to {$this->path}");
+        $reason = null;
+        set_error_handler(static function (int $errno, string $errstr) use (&$reason): bool {
+            $reason = $errstr;
+
+            return true;
+        });
+
+        try {
+            $ok = file_put_contents($this->path, $lines, FILE_APPEND | LOCK_EX) !== false;
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!$ok) {
+            throw new AgentError("Could not write the session to {$this->path}" . ($reason !== null ? ": {$reason}" : ''));
         }
     }
 

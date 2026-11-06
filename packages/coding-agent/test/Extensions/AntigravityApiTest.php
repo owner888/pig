@@ -499,8 +499,8 @@ final class AntigravityApiTest extends TestCase
 
     public function testABlockedPromptIsStillNamedHere(): void
     {
-        // This provider's own rule, which moved here out of `GoogleShared` when the Gemini path took
-        // upstream's (no `promptFeedback` check there).
+        // pig's own rule, now in `GoogleShared::onChunk()` for every Gemini path; this provider
+        // unwraps `response` first and hands the same chunk over.
         $url = $this->serve([['response' => ['promptFeedback' => ['blockReason' => 'SAFETY']]]]);
 
         $this->assertSame('Gemini refused the prompt: SAFETY', $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', null, new Context([new UserMessage('hi')])));

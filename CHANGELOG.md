@@ -50,6 +50,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.6.10] - 2026-11-06
+
+### Fixed
+
+- Fixed a prompt Gemini refused (`promptFeedback.blockReason`, a 200 with no candidate) being reported as `Google stream ended without a finish reason` and then retried, again and again, with the same prompt. `GoogleShared::onChunk()` now ends the turn with `Gemini refused the prompt: <reason>` — not retryable — after recording the usage on the same chunk, so the input Google billed for is still the turn's. The Antigravity extension's own copy of that check is gone; it shares this one.
+- Fixed `Could not write the session to <path>` saying nothing about why: the PHP warning behind the failed write (permission denied, disk full, …) is now part of the message.
+
 ## [1.6.9] - 2026-11-05
 
 ### Fixed

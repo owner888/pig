@@ -386,6 +386,17 @@ final class GoogleShared
             $builder->setUsage(self::usage($data['usageMetadata']));
         }
 
+        // A blocked prompt is a 200 with nothing in it but the reason: no candidate, so no finish
+        // reason, and upstream's Gemini path ends such a turn with "ended without a finish reason" —
+        // which the retry policy reads as a cut connection and tries again, and again, with the same
+        // prompt. pig's own rule, the developer's call: name the refusal, after the usage on the
+        // same chunk, so the input Google billed for is still the turn's.
+        $blocked = $data['promptFeedback']['blockReason'] ?? null;
+
+        if (is_string($blocked) && $blocked !== '') {
+            throw new ProviderError("Gemini refused the prompt: {$blocked}");
+        }
+
         return $open;
     }
 

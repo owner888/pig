@@ -242,15 +242,6 @@ final class AntigravityApi implements StreamApi
                 // `chunk.response || chunk`.
                 $responseData = is_array($data['response'] ?? null) ? $data['response'] : $data;
 
-                // A blocked prompt comes back as a 200 with nothing in it but the reason. This
-                // provider's own rule: upstream's Gemini path has no such check (its turn ends
-                // "without a finish reason"), so it lives here, not in `GoogleShared`.
-                $blocked = $responseData['promptFeedback']['blockReason'] ?? null;
-
-                if (is_string($blocked)) {
-                    throw new ProviderError("Gemini refused the prompt: {$blocked}");
-                }
-
                 if (isset($responseData['candidates'][0]['finishReason'])) {
                     $sawFinishReason = true;
                 }
