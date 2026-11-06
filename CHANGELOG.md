@@ -52,6 +52,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## [1.6.10] - 2026-11-06
 
+### Changed
+
+- `/diff` (terminal and `pig web`) names the untracked files under the diff — `Untracked (not in the diff): test.txt` — because `git diff` compares tracked files only, so a new file left `/diff` saying "no changes" while `git status` listed it. Names only, in the file's order; `/diff --no-index /dev/null <file>` still shows one's contents.
+
 ### Fixed
 
 - Fixed a prompt Gemini refused (`promptFeedback.blockReason`, a 200 with no candidate) being reported as `Google stream ended without a finish reason` and then retried, again and again, with the same prompt. `GoogleShared::onChunk()` now ends the turn with `Gemini refused the prompt: <reason>` — not retryable — after recording the usage on the same chunk, so the input Google billed for is still the turn's. The Antigravity extension's own copy of that check is gone; it shares this one.

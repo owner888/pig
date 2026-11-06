@@ -48,6 +48,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\BugReport;
 use Pig\CodingAgent\CrashLog;
 use Pig\CodingAgent\CustomModels;
+use Pig\CodingAgent\GitUntracked;
 use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
@@ -5136,13 +5137,20 @@ final class InteractiveMode
         }
 
         $diff = trim($stdout);
+        $note = GitUntracked::note($cwd);
+
         if ($diff === '') {
-            $this->say('No git changes in working tree.');
+            $this->say($note === '' ? 'No git changes in working tree.' : "No git changes in working tree. {$note}");
 
             return;
         }
 
         $this->chat->addChild(new ThemedText(static fn (): string => DiffView::render($diff), 1, 0));
+
+        if ($note !== '') {
+            $this->say($note);
+        }
+
         $this->tui->requestRender();
     }
 

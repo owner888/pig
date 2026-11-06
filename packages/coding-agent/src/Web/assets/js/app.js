@@ -1764,6 +1764,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             empty.innerText = t("diff_empty");
             chatScroll.appendChild(empty);
           }
+          if (Array.isArray(data.untracked) && data.untracked.length > 0) {
+            const note = document.createElement("div");
+            note.className = "msg-block msg-assistant";
+            note.innerText = t("diff_untracked") + data.untracked.join(", ");
+            chatScroll.appendChild(note);
+          }
         } catch (err) { appendErrorMessage(err.message); }
         scrollToBottomIfNeeded();
         return;

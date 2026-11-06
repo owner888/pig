@@ -1264,7 +1264,8 @@ final class RpcMode
             throw new \RuntimeException('git diff failed: ' . ($stderr !== '' ? trim($stderr) : 'not a git repository'));
         }
 
-        return ['diff' => trim($stdout)];
+        // The names `git diff` cannot show, for the page to list under the diff.
+        return ['diff' => trim($stdout), 'untracked' => \Pig\CodingAgent\GitUntracked::files($this->session->cwd())];
     }
 
     /** @param array<string, mixed> $command  @return array<string, mixed> */
