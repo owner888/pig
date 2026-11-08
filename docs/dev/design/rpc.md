@@ -49,8 +49,8 @@ no batch requests (removed from the spec in 2025-06-18).
 Two things the first draft left for asking, both answered the same day: `$ctx->mode()` answers
 **`mcp`** — a fifth value beside upstream's four, so a hook can tell an MCP caller from an RPC host
 (the developer asked for it rather than the draft's `rpc`). And the twelve-closure
-`$hooks->initialize(...)` block was the same in `PrintMode`, `RpcMode`, `InteractiveMode` (twice)
-and would have been the fifth copy in `McpMode`; it is **`HookRunner::wire($session, $ui)`** now,
+`$extensionRunner->initialize(...)` block was the same in `PrintMode`, `RpcMode`, `InteractiveMode` (twice)
+and would have been the fifth copy in `McpMode`; it is **`ExtensionRunner::wire($session, $ui)`** now,
 and what each mode keeps for itself is `onError()`, since where a broken hook is reported is the
 one thing that differed.
 
@@ -136,14 +136,14 @@ prompt is accepted, so it holds across a restart; a refused one is not kept and 
   `setStatus` / `setWidget` / `setTitle` and `notify` (`notifyType`) told rather than asked, widget
   placement `aboveEditor` / `belowEditor`, `pasteToEditor` as `set_editor_text`. The TUI-only calls
   (`setWorkingMessage()` and the rest) send nothing, as upstream's do. A dialog `timeout` is honoured
-  by every `HookUi` (the terminal counts it down).
+  by every `ExtensionUi` (the terminal counts it down).
 - **Errors**: every failure is a `success: false` response rather than a disconnection; a line that
   is not JSON is `Failed to parse command: …`; a trailing CR is stripped. A broken extension is
   `extension_error {extensionPath, event, error}`; a custom tool that failed to start is pig's
   `tool_error`.
 
 **Standard input goes on the same loop as the model's socket**, through `Loop::onReadable()`.
-`RpcUi` is `HookUi` over the wire: a hook calling `confirm()` parks its fiber on a `Deferred` exactly
+`RpcUi` is `ExtensionUi` over the wire: a hook calling `confirm()` parks its fiber on a `Deferred` exactly
 as it does in the terminal, and the line that resumes it is an `extension_ui_response` instead of a
 keystroke. `readline()` would have blocked the loop that has to deliver it. A host may answer several
 questions in any order, so there is no "one thing in the overlay at a time"; `custom()` returns null

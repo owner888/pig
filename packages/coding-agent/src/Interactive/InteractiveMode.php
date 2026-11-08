@@ -67,8 +67,6 @@ use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
 use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
-use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
@@ -81,14 +79,11 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookLoader;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\RegisteredCommand;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\FileCommand;
@@ -109,7 +104,7 @@ use Pig\CodingAgent\Session\UsageEntry;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\ExtensionResources;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\CompactionEndEvent;
 use Pig\CodingAgent\Session\CompactionStartEvent;
 use Pig\CodingAgent\Session\ModelFallbackEvent;
@@ -325,7 +320,7 @@ final class InteractiveMode
     /** @var list<FileCommand> prompts kept as files, reachable as `/name` */
     private array $fileCommands = [];
 
-    private ?HookRunner $hooks = null;
+    private ?ExtensionRunner $extensionRunner = null;
 
     private ?CustomToolSet $customTools = null;
 
@@ -335,8 +330,8 @@ final class InteractiveMode
     /** Reports working, blocked, done, and error states to terminals that support OSC 7501. */
     private readonly ProgramStatusReporter $programStatus;
 
-    /** @var array<string, RegisteredCommand> what the hooks added, by name */
-    private array $hookCommands = [];
+    /** @var array<string, RegisteredCommand> what the extensions added, by name */
+    private array $extensionCommands = [];
 
     /** What was chosen last time, and where the choices made here are remembered. */
     private Settings $settings;
@@ -407,7 +402,7 @@ final class InteractiveMode
         ?Clipboard $clipboard = null,
         array $fileCommands = [],
         ?Settings $settings = null,
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?CustomToolSet $customTools = null,
         private readonly array $initialMessages = [],
         private readonly array $initialImages = [],
@@ -436,7 +431,7 @@ final class InteractiveMode
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
         $this->fileCommands = $fileCommands;
-        $this->hooks = $hooks;
+        $this->extensionRunner = $extensionRunner;
         $this->customTools = $customTools;
         $this->extensions = $extensions;
         $this->builtInTools = ToolSet::CODING;
@@ -585,7 +580,7 @@ final class InteractiveMode
     private function wireSession(): void
     {
         $session = $this->session;
-        $hooks = $this->hooks;
+        $extensionRunner = $this->extensionRunner;
         $customTools = $this->customTools;
         $cwd = $this->cwd;
 
@@ -597,20 +592,19 @@ final class InteractiveMode
             Loop::get()->defer(fn () => $this->stop());
         });
 
-        $hooks?->wire($session, $this->ui);
+        $extensionRunner?->wire($session, $this->ui);
 
-        $customTools?->withUi($this->ui);
-        $customTools?->withContext(fn () => $hooks?->context() ?? new HookContext($cwd, ui: $this->ui, hasUi: true));
+        $customTools?->withContext(fn () => $extensionRunner?->context() ?? new ExtensionContext($cwd, ui: $this->ui, hasUi: true));
 
         // Last, because reporting a hook's complaints needs the transcript to report
         // them into, and a name taken twice is a complaint made while reading the hooks.
-        if ($hooks !== null) {
-            $hooks->onError($this->sayHookError(...));
-            $this->messageRenderers = $hooks->renderers();
-            [$this->hookCommands, $clashes] = $hooks->commands();
+        if ($extensionRunner !== null) {
+            $extensionRunner->onError($this->sayExtensionError(...));
+            $this->messageRenderers = $extensionRunner->renderers();
+            [$this->extensionCommands, $clashes] = $extensionRunner->commands();
 
             foreach ($clashes as $clash) {
-                $hooks->emitError($clash);
+                $extensionRunner->emitError($clash);
             }
         }
     }
@@ -707,7 +701,7 @@ final class InteractiveMode
         $this->maybeWarnAboutAnthropicSubscriptionAuth();
 
         $this->running = true;
-        $this->hooks?->emit(new SessionStartEvent());
+        $this->extensionRunner?->emit(new SessionStartEvent());
         $this->takeExtensionResources($this->session->discoverResources('startup'));
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
@@ -801,7 +795,7 @@ final class InteractiveMode
                 continue;
             }
 
-            if ($message instanceof HookMessage) {
+            if ($message instanceof CustomMessage) {
                 $this->showHookMessage($message);
 
                 continue;
@@ -862,7 +856,7 @@ final class InteractiveMode
 
         // Upstream's `registerEntryRenderer`: if a hook or extension registered a custom
         // renderer for `CustomEntry` entries stored in the session tree, render them into the chat.
-        $entryRenderers = $this->hooks?->entryRenderers() ?? [];
+        $entryRenderers = $this->extensionRunner?->entryRenderers() ?? [];
         if ($entryRenderers !== []) {
             foreach ($this->session->store()?->customEntries() ?? [] as $entry) {
                 if (isset($entryRenderers[$entry->customType])) {
@@ -956,7 +950,7 @@ final class InteractiveMode
         // still has a session to read. Nothing after this point is drawn — the terminal
         // is about to be handed back — so a hook that complains here complains to stderr
         // through whatever it uses itself.
-        $this->hooks?->emit(new SessionShutdownEvent('quit'));
+        $this->extensionRunner?->emit(new SessionShutdownEvent('quit'));
 
         // Nothing is drawn after this, so a tool that fails while letting go is reported
         // to stderr — the transcript is a moment away from being scrolled off.
@@ -1039,7 +1033,7 @@ final class InteractiveMode
                 || $child instanceof BashExecutionComponent
                 || $child instanceof CompactionComponent
                 || $child instanceof BranchSummaryComponent
-                || $child instanceof HookMessageComponent
+                || $child instanceof CustomMessageComponent
                 || $child instanceof SkillInvocationMessageComponent
             ) {
                 $child->setExpanded($this->expanded);
@@ -1318,14 +1312,6 @@ final class InteractiveMode
                 $addLoadedSection('Extensions', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $extensions)));
             }
 
-            // pig's own: custom tools are loaded from their own folders, which upstream has no
-            // equivalent of — its tools come from extensions. Only those: an extension's tools are
-            // the extension's, named under [Extensions] (or not at all, for a built-in), as
-            // upstream lists no tools.
-            $toolNames = $this->toolsFromToolFolders();
-            if ($toolNames !== []) {
-                $addLoadedSection('Tools', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $toolNames)));
-            }
         }
 
         if ($showDiagnostics) {
@@ -1383,28 +1369,6 @@ final class InteractiveMode
     }
 
     /**
-     * The custom tools that came from a tool folder rather than from an extension.
-     *
-     * @return list<string>
-     */
-    private function toolsFromToolFolders(): array
-    {
-        $fromExtensions = [];
-        foreach ($this->extensions as $ext) {
-            $fromExtensions[$ext->resolved] = true;
-        }
-
-        $names = [];
-        foreach ($this->customTools?->loaded() ?? [] as $one) {
-            if (!isset($fromExtensions[$one->resolvedPath])) {
-                $names[] = $one->tool->name;
-            }
-        }
-
-        return $names;
-    }
-
-    /**
      * Labels of loaded hooks and extensions from standard locations — not the built-ins, which
      * upstream marks `hidden` and leaves out of [Extensions] (`BuiltinExtensions`).
      *
@@ -1413,8 +1377,8 @@ final class InteractiveMode
     private function discoveredExtensions(): array
     {
         $extraPaths = [];
-        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
-            $extraPaths = $this->hooks->paths();
+        if ($this->extensionRunner !== null && !$this->extensionRunner->isEmpty()) {
+            $extraPaths = $this->extensionRunner->paths();
         }
 
         foreach ($this->extensions as $ext) {
@@ -1610,13 +1574,13 @@ final class InteractiveMode
         // `tui.editor.pageUp`/`pageDown` move by 30% of the terminal, as upstream's do.
         $this->editor->setTerminalRows(fn (): int => $this->tui->terminal->rows());
 
-        foreach ($this->hooks?->shortcuts() ?? [] as $spec) {
+        foreach ($this->extensionRunner?->shortcuts() ?? [] as $spec) {
             $this->editor->registerShortcut(
                 $spec['key'],
                 function () use ($spec): void {
                     Async::spawn(function () use ($spec): void {
                         try {
-                            ($spec['handler'])($this->hooks->context());
+                            ($spec['handler'])($this->extensionRunner->context());
                         } catch (\Throwable $e) {
                             $this->sayError("Shortcut error ({$spec['key']}): {$e->getMessage()}");
                         }
@@ -1648,7 +1612,7 @@ final class InteractiveMode
             fn (): int => max(1, $this->tui->terminal->columns() - 2 * $this->outputPad),
         );
 
-        return [$this->mermaidTransformer, ...($this->hooks?->markdownTransformers() ?? [])];
+        return [$this->mermaidTransformer, ...($this->extensionRunner?->markdownTransformers() ?? [])];
     }
 
     /** Upstream's `onMermaidRenderingModeChange`: saved, and every message drawn again with it. */
@@ -2120,7 +2084,7 @@ final class InteractiveMode
                         $command->name,
                         $command->description,
                     ),
-                    array_values($this->hookCommands),
+                    array_values($this->extensionCommands),
                 ),
                 // Upstream's skill commands, behind `enableSkillCommands`: the list only, since a
                 // `/skill:name` typed by hand is expanded either way.
@@ -2583,11 +2547,10 @@ final class InteractiveMode
         ['settings', 'Change what is switchable, and see what it is set to'],
         ['changelog', 'What changed, release by release'],
         ['reload', 'Reload extensions, skills, commands, tools, and context files'],
-        ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['bug', 'Report a bug to the pig developers (/bug [what went wrong])'],
-        ['trust', 'Decide whether this project\'s .pig/ hooks, tools and extensions may load'],
+        ['trust', 'Decide whether this project\'s .pig/ extensions may load'],
         ['incognito', 'Make this session private: its file goes to the trash and nothing more is saved'],
         ['discard', 'Throw this session away and quit: its file goes to the trash'],
         ['quit', 'Quit pig'],
@@ -2642,7 +2605,7 @@ final class InteractiveMode
             }
         }
 
-        if (isset($this->hookCommands[$name])) {
+        if (isset($this->extensionCommands[$name])) {
             return true;
         }
 
@@ -2690,7 +2653,6 @@ final class InteractiveMode
             'reload' => $this->reload(),
             'arminsayshi' => $this->sayHi(),
             'debug' => $this->writeDebugLog(),
-            'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'doctor' => $this->say($this->doctorReport()),
             'bug' => $this->reportBug(trim(substr($text, strlen($name) + 1))),
@@ -2819,7 +2781,7 @@ final class InteractiveMode
      */
     private function runAddedCommand(string $text, string $name): void
     {
-        if (isset($this->hookCommands[$name])) {
+        if (isset($this->extensionCommands[$name])) {
             Async::spawn(function () use ($text): void {
                 $this->session->prompt($text);
                 $this->tui->requestRender();
@@ -2839,41 +2801,6 @@ final class InteractiveMode
         // Not drawn here: `onMessageStart` draws every user message, and drawing it twice is
         // what happens to anything that helpfully draws its own.
         $this->send($text);
-    }
-
-    /**
-     * What hooks loaded, where from, and what each one is listening for.
-     *
-     * @return Closure(): string built from a snapshot, so a theme change recolours it without a
-     *                           `/reload` since changing what it lists
-     */
-    private function hookList(): Closure
-    {
-        if ($this->hooks === null || $this->hooks->isEmpty()) {
-            return static fn (): string => 'No hooks loaded. A .php file in ~/.pig/agent/hooks or .pig/hooks that returns a callable is one.';
-        }
-
-        $paths = $this->hooks->paths();
-        $commands = array_map(static fn (RegisteredCommand $command): string => $command->description, $this->hookCommands);
-
-        return static function () use ($paths, $commands): string {
-            $lines = [];
-
-            foreach ($paths as $path) {
-                $lines[] = Themes::theme()->fg('muted', $path);
-            }
-
-            if ($commands !== []) {
-                $lines[] = '';
-
-                foreach ($commands as $name => $description) {
-                    $lines[] = Themes::theme()->fg('dim', Width::pad('/' . $name, 12))
-                        . Themes::theme()->fg('muted', $description);
-                }
-            }
-
-            return implode("\n", $lines);
-        };
     }
 
     /**
@@ -4264,12 +4191,11 @@ final class InteractiveMode
         $this->autocompleteWrappers = [];
         $this->setCustomEditorComponent(null);
 
-        // 4. Reload hooks, and extensions with theirs. The runner being replaced hears
+        // 4. Reload the extensions, and the runner with them. The runner being replaced hears
         // `session_shutdown` first and the new one `session_start`, as upstream's do across a
         // reload — an MCP server connected by the old one is otherwise never closed, and never
         // connected by the new one.
-        $this->hooks?->emit(new SessionShutdownEvent('reload'));
-        [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks(), projectTrusted: $this->projectTrusted);
+        $this->extensionRunner?->emit(new SessionShutdownEvent('reload'));
         $loadedTools = [];
 
         // The loader scans the three extension roots itself. The third argument is for paths
@@ -4297,41 +4223,30 @@ final class InteractiveMode
         $this->extensions = $loadedExtensions;
 
         foreach ($loadedExtensions as $ext) {
-            $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);
             foreach ($ext->api->tools() as $tool) {
                 $loadedTools[] = new LoadedCustomTool($ext->path, $ext->resolved, $tool);
             }
         }
 
-        $hooks = new HookRunner($loadedHooks, $this->cwd, $this->session->store());
-        $this->hooks = $hooks;
-        $this->session->setHooks($hooks);
+        $extensionRunner = new ExtensionRunner($loadedExtensions, $this->cwd, $this->session->store());
+        $this->extensionRunner = $extensionRunner;
+        $this->session->setExtensionRunner($extensionRunner);
 
         $session = $this->session;
-        $hooks->wire($session, $this->ui);
+        $extensionRunner->wire($session, $this->ui);
 
-        $hooks->onError($this->sayHookError(...));
-        $this->messageRenderers = $hooks->renderers();
-        [$this->hookCommands, $clashes] = $hooks->commands();
+        $extensionRunner->onError($this->sayExtensionError(...));
+        $this->messageRenderers = $extensionRunner->renderers();
+        [$this->extensionCommands, $clashes] = $extensionRunner->commands();
 
         foreach ($clashes as $clash) {
-            $hooks->emitError($clash);
+            $extensionRunner->emitError($clash);
         }
 
-        // 6. Reload custom tools
-        $toolApi = new CustomToolApi($this->cwd);
-        [$diskTools, $toolProblems] = CustomToolLoader::load(
-            $this->cwd,
-            $this->builtInTools,
-            $this->settings->customTools(),
-            api: $toolApi,
-            projectTrusted: $this->projectTrusted,
-        );
-        $allCustomTools = [...$diskTools, ...$loadedTools];
-        $customTools = new CustomToolSet($allCustomTools, $toolApi);
+        // 6. The custom tools are the extensions', rebuilt from what they registered.
+        $customTools = new CustomToolSet($loadedTools);
         $previousTools = $this->customTools;
         $this->customTools = $customTools;
-        $customTools->withUi($this->ui);
 
         foreach ($loadedExtensions as $ext) {
             $customTools->adopt($ext);
@@ -4345,14 +4260,14 @@ final class InteractiveMode
             $customTools->keep($filter);
         }
 
-        $customTools->withContext(fn () => $hooks->context());
+        $customTools->withContext(fn () => $extensionRunner->context());
 
         // 7. Update agent tools & system prompt — through the session's loadout, the one place
         // that builds them, so an extension's narrowed active set survives too.
         $loadout = $this->session->loadout();
 
         if ($loadout === null) {
-            $loadout = new ToolLoadout($this->session->agent, $this->cwd, $this->builtInTools, $customTools, $hooks, $this->contextFiles, $this->skills);
+            $loadout = new ToolLoadout($this->session->agent, $this->cwd, $this->builtInTools, $customTools, $extensionRunner, $this->contextFiles, $this->skills);
             $this->session->useLoadout($loadout);
             $loadout->apply();
         } else {
@@ -4360,7 +4275,7 @@ final class InteractiveMode
         }
 
         $customTools->onChange(static fn () => $loadout->refresh());
-        $hooks->emit(new SessionStartEvent('reload'));
+        $extensionRunner->emit(new SessionStartEvent('reload'));
         $this->takeExtensionResources($this->session->discoverResources('reload'));
 
         // Upstream's `this.keybindings.reload()`: the same manager reads `keybindings.json` again,
@@ -4383,9 +4298,7 @@ final class InteractiveMode
             $skillWarnings,
         );
         $this->extensionDiagnostics = [
-            ...array_map(static fn (HookError $p): array => ['type' => 'error', 'message' => "{$p->event}: {$p->error}", 'path' => $p->hookPath], $hookProblems),
             ...array_map(static fn (ExtensionError $p): array => ['type' => 'error', 'message' => "{$p->stage}: {$p->message}", 'path' => $p->path], $extensionProblems),
-            ...array_map(static fn (ToolProblem $p): array => ['type' => 'error', 'message' => $p->error, 'path' => $p->path], $toolProblems),
         ];
         $this->showLoadedResources(force: false, showDiagnosticsWhenQuiet: true);
 
@@ -4903,7 +4816,7 @@ final class InteractiveMode
             $this->closePicker();
             Async::spawn(function () use ($id, $current): void {
                 // The current name goes in as the placeholder rather than as a prefill: upstream
-                // seeds its own input with it, and `HookUi::input()` — which three classes
+                // seeds its own input with it, and `ExtensionUi::input()` — which three classes
                 // implement — takes a placeholder and no prefill. Adding one for this would change
                 // an interface for a convenience, so the name is shown and retyped instead.
                 $name = trim((string) $this->ui->input(
@@ -6742,7 +6655,7 @@ final class InteractiveMode
         $this->sayError("{$prefix}: {$error->getMessage()}");
         $this->tui->requestRender();
         $this->exitCode = 1;
-        $this->hooks = null;
+        $this->extensionRunner = null;
         Loop::get()->defer(fn () => $this->stop());
     }
 
@@ -6769,7 +6682,7 @@ final class InteractiveMode
         $this->cwd = $started->session->cwd();
         $this->settings = $started->session->settings() ?? $this->settings;
         $this->projectTrusted = $started->session->isProjectTrusted();
-        $this->hooks = $started->hooks;
+        $this->extensionRunner = $started->extensionRunner;
         $this->customTools = $started->customTools;
         $this->extensions = $started->extensions;
         $this->contextFiles = $started->contextFiles;
@@ -6800,7 +6713,7 @@ final class InteractiveMode
             $this->sayWarning(ProjectTrust::warning());
         }
 
-        $this->hooks->emit(new SessionStartEvent('resume', $previous));
+        $this->extensionRunner->emit(new SessionStartEvent('resume', $previous));
         $this->takeExtensionResources($this->session->discoverResources('startup'));
         $this->sayToolProblems($this->customTools->notify('switch', $previous));
         $this->paintBorder();
@@ -8060,7 +7973,7 @@ final class InteractiveMode
 
     private function onMessageEnd(MessageEndEvent $event): void
     {
-        if ($event->message instanceof HookMessage) {
+        if ($event->message instanceof CustomMessage) {
             $this->showHookMessage($event->message);
 
             return;
@@ -8475,7 +8388,7 @@ final class InteractiveMode
      * the default **and says so**, the same as a custom tool's does and for the same reason:
      * a picture that quietly turns into plain text is a bug nobody reports.
      */
-    private function showHookMessage(HookMessage $message): void
+    private function showHookMessage(CustomMessage $message): void
     {
         if (!$message->display) {
             return;
@@ -8507,7 +8420,7 @@ final class InteractiveMode
             }
         }
 
-        $this->chat->addChild(new HookMessageComponent($message, $this->expanded, $this->outputPad));
+        $this->chat->addChild(new CustomMessageComponent($message, $this->expanded, $this->outputPad));
     }
 
     /** @param array<string, mixed> $arguments */
@@ -8518,7 +8431,7 @@ final class InteractiveMode
             'renderResult' => $custom->renderResult,
         ]);
 
-        return $this->hooks?->resolveToolRenderers($name, $base);
+        return $this->extensionRunner?->resolveToolRenderers($name, $base);
     }
 
     private function addTool(string $id, string $name, array $arguments): ToolExecutionComponent
@@ -8633,9 +8546,9 @@ final class InteractiveMode
      * stop something is a `tool_call` hook, and that one reaches the model as a blocked
      * tool and is drawn as the tool's own error.
      */
-    private function sayHookError(HookError $error): void
+    private function sayExtensionError(ExtensionError $error): void
     {
-        $this->sayWarning('hook ' . $error->toText());
+        $this->sayWarning('extension ' . $error->toText());
     }
 
     /**

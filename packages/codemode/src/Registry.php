@@ -31,7 +31,7 @@ final class Registry
 
     /**
      * @param array<string, mixed> $parameters
-     * @param Closure(array<string, mixed>, \Pig\Async\AbortSignal, \Pig\CodingAgent\Hooks\HookContext): mixed $execute
+     * @param Closure(array<string, mixed>, \Pig\Async\AbortSignal, \Pig\CodingAgent\Extensions\ExtensionContext): mixed $execute
      * @param array{name: string, aliases?: list<string>, description: ?string}|null $namespace
      * @param 'codemode'|'codemode-deferred' $exposure
      */

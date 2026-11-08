@@ -657,7 +657,7 @@ has nothing to do with the file.
 
 **One equivalent mutant worth writing down, because it looks like a gap.** `startNew()` and
 `switchTo()` both guard `if ($refusal !== null && $refusal->cancel)`, and no mutation of the `&&`
-can fail a test — `emitBeforeSwitch()` goes through `HookRunner::ask()`, whose decisiveness
+can fail a test — `emitBeforeSwitch()` goes through `ExtensionRunner::ask()`, whose decisiveness
 predicate *is* `$r->cancel`, so a result that does not cancel never comes back at all. The two are
 one rule in two places. Harmless, kept, and measured rather than assumed — and the test that covers
 the behaviour (a hook that only watches does not block the switch) says on itself that it cannot
@@ -857,7 +857,7 @@ Profiling found four (then five) heavy hitters:
 - Tool definitions are compared only with `Transcript::declarationsEqual()`: PHP has two spellings of an empty object, `[]` and `stdClass`, the session file reads back the former, and a direct comparison would redeclare every tool on every resume.
 - Deltas come from `AgentLoop`'s `declareToolChanges()` and `AgentSession`'s `prepareNextTurnWithContext` (`SystemPrompt::diffSections()`); `Agent` has no `setSystemPrompt()` any more — changing the prompt means appending a `SystemMessage`.
 - Compaction: the summarized part holds no `SystemMessage`; `CompactionSummary::$systemMessage` stores the one to replay, rebuilt in the order `[system, summary, …kept]`.
-- The `context` hook does not see system messages (`HookRunner` removes them first and puts them back in place); use `context_with_system` to see them.
+- The `context` hook does not see system messages (`ExtensionRunner` removes them first and puts them back in place); use `context_with_system` to see them.
 - Tests: `packages/ai/test/Utils/TranscriptTest.php`, `Providers/SystemMessagesOnTheWireTest.php`, the declare/prepareNextTurn cases of `AgentLoopTest`/`AgentTest`, `coding-agent/test/SystemMessageTranscriptTest.php`, `RpcModeTest::testGetMessagesRoundTripsThroughTheSessionCodec`.
 
 ## Compaction and branch summaries retry too, and `agent_end` says whether a retry follows
@@ -914,7 +914,7 @@ Profiling found four (then five) heavy hitters:
 - pig's deferred MCP tools are not registered before `tool_search`, so pig-mcp registers one directly (and lists it in `DeferredTools` as `loaded`) when `ExtensionApi::isToolPending()` is true — that is what upstream's "register but do not activate, then pending activates" looks like in pig.
 - Extra sections go only through `SystemPrompt::withSections()`: the name matches `/^[a-z][a-z0-9_-]*$/` and is not `preamble`, the content is wrapped as `<name>\n…\n</name>`, and empty content does not appear; pig's own sections are not tagged.
 - The turn's options live in `AgentSession::$runSystemPromptOptions`, cleared when `runAgentPrompt()` ends; the projection is installed on `Agent::$transformContext` (now public, as upstream).
-- Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
+- Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `ExtensionRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
 
 ## A failed session write left the entry in memory, and the next one pointed at a missing parent
 

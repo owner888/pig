@@ -22,7 +22,7 @@ use Pig\Async\Deferred;
 use Pig\Async\Future;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\Extensions\Llama\HuggingFaceClient;
 use Pig\Extensions\Llama\LlamaClient;
 use Pig\Extensions\Llama\LlamaExtension;
@@ -197,7 +197,7 @@ final class LlamaExtensionTest extends TestCase
         [$extension] = $this->extension($auth);
         $ui = new ScriptedLlamaUi(selects: ['Unload all and load']);
         $notices = new NoticingUi();
-        $ctx = new HookContext('.', ui: $notices);
+        $ctx = new ExtensionContext('.', ui: $notices);
         $client = new LlamaClient($url);
 
         Async::run(function () use ($extension, $ctx, $ui, $client): void {
@@ -220,8 +220,8 @@ final class LlamaExtensionTest extends TestCase
         $notices = new NoticingUi();
 
         Async::run(function () use ($extension, $notices, $url): void {
-            $extension->unloadModel(new HookContext('.', ui: $notices), new ScriptedLlamaUi(confirms: [false]), new LlamaClient($url), $this->catalog[0]);
-            $extension->unloadModel(new HookContext('.', ui: $notices), $confirming = new ScriptedLlamaUi(confirms: [true]), new LlamaClient($url), $this->catalog[0]);
+            $extension->unloadModel(new ExtensionContext('.', ui: $notices), new ScriptedLlamaUi(confirms: [false]), new LlamaClient($url), $this->catalog[0]);
+            $extension->unloadModel(new ExtensionContext('.', ui: $notices), $confirming = new ScriptedLlamaUi(confirms: [true]), new LlamaClient($url), $this->catalog[0]);
             $this->assertSame(['Unload model?|old'], $confirming->confirmed);
         });
 
@@ -239,7 +239,7 @@ final class LlamaExtensionTest extends TestCase
         $notices = new NoticingUi();
 
         Async::run(function () use ($extension, $ui, $notices, $url): void {
-            $extension->loadModel(new HookContext('.', ui: $notices), $ui, new LlamaClient($url), $this->catalog, $this->catalog[0]);
+            $extension->loadModel(new ExtensionContext('.', ui: $notices), $ui, new LlamaClient($url), $this->catalog, $this->catalog[0]);
         });
 
         $this->assertSame(['Stop loading?|slow'], $ui->confirmed);
@@ -266,7 +266,7 @@ final class LlamaExtensionTest extends TestCase
         $notices = new NoticingUi();
 
         try {
-            Async::run(static fn () => $extension->downloadModel(new HookContext('.', ui: $notices), $ui, new LlamaClient($url)));
+            Async::run(static fn () => $extension->downloadModel(new ExtensionContext('.', ui: $notices), $ui, new LlamaClient($url)));
         } finally {
             $hub->stop();
         }
@@ -366,14 +366,14 @@ final class LlamaExtensionTest extends TestCase
 
         $this->assertFalse($auth->hasKeyFor('llama.cpp'));
         $this->assertNull($auth->apiKey('llama.cpp'));
-        $this->assertNull($extension->configuredClient(new HookContext('.', ui: $notices)));
+        $this->assertNull($extension->configuredClient(new ExtensionContext('.', ui: $notices)));
         $this->assertSame(['[warning] Configure llama.cpp with /login llama.cpp'], $notices->notices);
 
         putenv('LLAMA_BASE_URL=http://10.0.0.5:9000/v1');
         $this->assertTrue($auth->hasKeyFor('llama.cpp'));
         $this->assertSame('local', $auth->apiKey('llama.cpp'));
         $this->assertSame('LLAMA_BASE_URL', $auth->providerAuth('llama.cpp')?->source);
-        $this->assertSame('http://10.0.0.5:9000', $extension->configuredClient(new HookContext('.', ui: $notices))?->serverUrl);
+        $this->assertSame('http://10.0.0.5:9000', $extension->configuredClient(new ExtensionContext('.', ui: $notices))?->serverUrl);
 
         putenv('LLAMA_API_KEY=env-key');
         $this->assertSame('env-key', $auth->apiKey('llama.cpp'));
@@ -384,7 +384,7 @@ final class LlamaExtensionTest extends TestCase
         [$extension] = $this->extension($this->auth());
         $notices = new NoticingUi();
 
-        $extension->command('', new HookContext('.', ui: $notices));
+        $extension->command('', new ExtensionContext('.', ui: $notices));
 
         $this->assertSame(['[warning] /llama is available in interactive mode'], $notices->notices);
     }
@@ -395,7 +395,7 @@ final class LlamaExtensionTest extends TestCase
         $ui = new ScriptedLlamaUi(connectionErrors: ['retry', 'close']);
 
         // Nothing listens on port 9 of the loopback.
-        Async::run(static fn () => $extension->manage(new HookContext('.', ui: new NoticingUi()), $ui, new LlamaClient('http://127.0.0.1:9')));
+        Async::run(static fn () => $extension->manage(new ExtensionContext('.', ui: new NoticingUi()), $ui, new LlamaClient('http://127.0.0.1:9')));
 
         $this->assertSame(['http://127.0.0.1:9|Could not connect to the server.', 'http://127.0.0.1:9|Could not connect to the server.'], $ui->connectionErrorsShown);
     }

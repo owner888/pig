@@ -20,7 +20,7 @@ use Pig\CodingAgent\Session\CompactionResult;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionCodec;
 
 /** Run the actual browser renderers with the messages PHP actually sends, not invented JSON. */
@@ -35,8 +35,8 @@ final class WebMessageBlocksTest extends TestCase
 
         $compaction = new CompactionSummary('A **summary**', tokensBefore: 256653, timestamp: 101);
         $branch = new BranchSummary('A branch handover', fromHook: true, timestamp: 102);
-        $hook = new HookMessage('build', [new TextContent("one\ntwo\nthree\nfour\nfive\nsix")], timestamp: 103);
-        $hidden = new HookMessage('secret', [new TextContent('do not display')], display: false, timestamp: 104);
+        $hook = new CustomMessage('build', [new TextContent("one\ntwo\nthree\nfour\nfive\nsix")], timestamp: 103);
+        $hidden = new CustomMessage('secret', [new TextContent('do not display')], display: false, timestamp: 104);
         $assistant = new AssistantMessage([
             new ToolCall('edit1', 'edit', ['path' => 'a.php', 'oldText' => 'preview-old', 'newText' => 'preview-new']),
             new ToolCall('read1', 'read', ['path' => 'a.php']),

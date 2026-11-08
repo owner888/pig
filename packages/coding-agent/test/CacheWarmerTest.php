@@ -22,7 +22,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
+use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Session\CacheWarmer;
 use Pig\CodingAgent\Session\CacheWarmingDecision;
 use Pig\CodingAgent\Session\CacheWarmingStatus;

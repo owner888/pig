@@ -11,8 +11,8 @@ use Pig\Ai\SystemMessage;
 use Pig\Ai\Utils\Text;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\WrappedCustomTool;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SystemPrompt;
@@ -90,7 +90,7 @@ final class ToolLoadout
         private readonly string $cwd,
         private readonly array $builtIn,
         private CustomToolSet $customTools,
-        private readonly HookRunner $hooks,
+        private readonly ExtensionRunner $extensionRunner,
         private ?array $contextFiles = null,
         private array $skills = [],
         private readonly ?string $systemPrompt = null,
@@ -203,7 +203,12 @@ final class ToolLoadout
             static fn (AgentTool $tool): bool => in_array($tool->definition()->name, $active, true),
         ));
 
-        $tools = HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->hooks);
+        // A registered tool with a built-in's name replaces the built-in, as upstream's does: an
+        // extension that registers `bash` is offering its own `bash`, and the model is told one.
+        $customNames = array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $custom);
+        $builtIn = array_values(array_filter($builtIn, static fn (string $name): bool => !in_array($name, $customNames, true)));
+
+        $tools = ExtensionGuardedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->extensionRunner);
 
         if ($this->resultImages !== null) {
             $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);

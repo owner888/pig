@@ -8,7 +8,7 @@ Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensio
 - [A hook with something to say](#a-hook-with-something-to-say)
 - [MCP servers, and the tool that arrives after startup](#mcp-servers-and-the-tool-that-arrives-after-startup)
 - [codemode: the model writes PHP, and a child `php` runs it](#codemode-the-model-writes-php-and-a-child-php-runs-it)
-- [A closure read `$pi` it never captured, and the warning was swallowed by its own `catch`](#a-closure-read-pi-it-never-captured-and-the-warning-was-swallowed-by-its-own-catch)
+- [A closure read `$pig` it never captured, and the warning was swallowed by its own `catch`](#a-closure-read-pig-it-never-captured-and-the-warning-was-swallowed-by-its-own-catch)
 - [What pi 1.0.0 changed about codemode and MCP OAuth, and the one thing left out](#what-pi-100-changed-about-codemode-and-mcp-oauth-and-the-one-thing-left-out)
 - [A stranger's `.pig/` is not loaded until somebody says so](#a-strangers-pig-is-not-loaded-until-somebody-says-so)
 - [Built-in extensions](#built-in-extensions)
@@ -175,7 +175,7 @@ hook API, and the first two are opposites that are easy to confuse:
 | `sendMessage()` | the conversation | the model, and a person unless `display: false` | context, like any message |
 | `appendEntry()` | the session file only | the next run of the same hook | nothing |
 
-`sendMessage()` makes a `Session\HookMessage` — an app message like `BashExecution`, turned
+`sendMessage()` makes a `Session\CustomMessage` — an app message like `BashExecution`, turned
 into a user message by `CodingAgent::toLlm()`. It is what a hook uses to tell the model
 something the model had no way to find out: a build that just failed, a file that changed
 underneath it, a rule about this repository. Its `content` goes to the model **whole** rather
@@ -191,7 +191,7 @@ Five things worth keeping straight:
 
 - **A hook's message is not drawn as a user message.** It reaches the model as one, and
   showing it as one would have someone scroll back and find themselves saying something they
-  never typed. `HookMessageComponent` labels it with the hook's own type instead, and the HTML
+  never typed. `CustomMessageComponent` labels it with the hook's own type instead, and the HTML
   export does the same.
 - **`display: false` is honoured on screen and in the export**, and nowhere else. A reminder
   injected before every turn is talking to the model; a person who has to scroll past it every
@@ -222,51 +222,52 @@ A compaction names it — `[Hook build]: …` — rather than folding it in as a
 summary would read "the user said the build is broken" and send the model looking for a
 conversation that did not happen.
 
-`BeforeAgentStartEventResult` carries a `HookMessage`, as upstream's does. Every handler's
+`BeforeAgentStartEventResult` carries a `CustomMessage`, as upstream's does. Every handler's
 message is kept, in hook order, and goes after the run's starting message. The event is
 upstream's union on `messageType`: `'user'` carries `prompt` and `images`, `'custom'` carries
 the starting `message` and no prompt, so a handler that should act only on what a person typed
 checks `$event->messageType === 'user'`.
 
 **Each mode wires its own UI**, which is upstream's rule too. `InteractiveMode` builds the
-`TerminalUi` and calls `HookRunner::initialize()` and `CustomToolSet::withUi()` itself;
+`TerminalUi` and calls `ExtensionRunner::initialize()` itself;
 `bin/pig` loads and constructs but wires none of it, because it has no screen to draw a
 dialog on and a second mode will have a different one.
 
-`CustomTools\` is upstream's `core/custom-tools/`, on the same loader. A tool lives in a
-folder of its own — `~/.pig/agent/tools/<name>/index.php`, or the same under `<cwd>/.pig/tools`
-— because a tool is likelier than a hook to want a second file beside it, and a folder is
-where that goes. The file returns a factory; the factory returns a `CustomTool` or a list
-of them:
+`CustomTools\` is what pig calls a tool an extension registers — upstream's `ToolDefinition`
+and its `registerTool()`. There is no tool file any more: tool files were merged into
+extensions, as hooks were and as upstream merged both. An extension `registerTool()`s one or
+more of these from its factory:
 
 ```php
-<?php // ~/.pig/agent/tools/wc/index.php
+<?php // ~/.pig/agent/extensions/wc.php
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
+use Pig\CodingAgent\Extensions\ExtensionApi;
 
-return fn (CustomToolApi $pi) => new CustomTool(
-    name: 'wc',
-    label: 'Count lines',
-    description: 'Count the lines in a file.',
-    parameters: [
-        'type' => 'object',
-        'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
-        'required' => ['path'],
-    ],
-    execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
-        [new TextContent(trim($pi->exec(['wc', '-l', $params['path']])->stdout))],
-    ),
-);
+return static function (ExtensionApi $pig): void {
+    $pig->registerTool(new CustomTool(
+        name: 'wc',
+        label: 'Count lines',
+        description: 'Count the lines in a file.',
+        parameters: [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
+            'required' => ['path'],
+        ],
+        execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
+            [new TextContent(trim($pig->exec(['wc', '-l', $params['path']])->stdout))],
+        ),
+    ));
+};
 ```
 
-Upstream's `CustomTool` is an object literal with five fields and three optional callbacks;
+Upstream's `ToolDefinition` is an object literal with five fields and three optional callbacks;
 the PHP equivalent of an object literal is a value object built from closures, and the
 developer chose that over an interface to implement. `WrappedCustomTool` turns one into an
 `AgentTool` — upstream's `wrapper.ts` — and the one thing it adds is the session: `execute`
-is given the same `HookContext` a hook gets, which is the reason to write a custom tool
+is given the same `ExtensionContext` a handler gets, which is the reason to write a custom tool
 rather than a built-in one. It can read the conversation, see which model is answering, and
 stop the run.
 
@@ -274,40 +275,30 @@ Five things worth keeping straight:
 
 - **The declaration validates itself.** A nameless tool, a tool with no description, a
   `parameters` that is not a JSON Schema object — all refused in the constructor, which the
-  loader turns into a complaint naming the file. Left to the provider, a bad name fails the
+  loader turns into a complaint naming the extension. Left to the provider, a bad name fails the
   whole request rather than the tool, and a missing description is a tool the model can
   never choose.
-- **A tool may not take a built-in's name.** `bash` is described in the system prompt; a
-  custom tool answering to that name would be called in its place by a model that was told
-  something else. Named, not dropped, because only the author can fix it.
-- **Custom tools are wrapped with the built-ins, not after them.** `CodingAgent::create()`
-  concatenates first and hands the lot to `HookedTool::wrap()`, so a `tool_call` hook guards
+- **A tool with a built-in's name replaces the built-in.** Upstream's rule: an extension that
+  registers `bash` is offering its own `bash`, and `ToolLoadout::apply()` leaves the built-in out
+  so the model is told one. (Tool files used to be refused that name; an extension is trusted
+  with it, as upstream trusts it.)
+- **Custom tools are wrapped with the built-ins, not after them.** `ToolLoadout::apply()`
+  concatenates first and hands the lot to `ExtensionGuardedTool::wrap()`, so a `tool_call` hook guards
   a tool somebody wrote exactly as it guards `bash`. A guard that covered only the built-ins
   would not be a guard.
 - **The session context is a closure, not a value.** `/model` replaces the model mid-session,
   and a tool that asked which one is answering must not be told about the one that was
   replaced.
-- **The UI arrives after loading, not during it.** A factory runs at startup, before there
-  is a screen; `CustomToolApi::ui()` answers as `NoUi` until the mode calls `withUi()` on the
-  one shared API object every factory closed over. That is why `bin/pig` constructs the API
-  itself and hands it to both the loader and the set.
 - **`onSession` is fired from the interactive mode, not from the session.** All five moments
   a tool hears about — startup, `/new` and `/resume`, `/fork` and `/clone`, `/tree`, quitting — are
   things someone did in the UI, and the UI is the only place with somewhere to report a callback
-  that failed. Routing them through the hook runner was the other option and was worse: `/hooks`
-  would then list tool files as hooks. Upstream's `branch` reason is `fork` here, the word its
-  session events use for the same thing now.
+  that failed. Upstream's `branch` reason is `fork` here, the word its session events use for the
+  same thing now.
 
-`--no-tool-files` loads none of them (it was `--no-tools` until that became upstream's "no tools at
-all"). Settings name extra entry files under upstream's key,
-`customTools`. The system prompt's "Available tools" list stays the built-ins, as upstream's
-does: a custom tool reaches the model as a tool definition, which is the part that matters.
-
-**`~/.pig/agent/tools/` holds two unrelated things**, and that is upstream's doing rather than a
-choice made here: `ToolInstaller` downloads `fd` and `rg` into it, and custom tools live in
-it too. They are told apart by shape — a downloaded binary is a file, a custom tool is a
-folder with an entry file — and the discovery glob is `*/index.php`, so neither sees the
-other. Worth knowing before wondering why `ls ~/.pig/agent/tools` shows a mixture.
+A tool still in `~/.pig/agent/tools/<name>/index.php` or `<cwd>/.pig/tools`, or named under the
+`customTools` setting, stops the startup the way a hook file does (`ExtensionLoader::legacyFiles()`):
+it is told to become an extension that registers what it used to return. `ToolInstaller` keeps
+`fd` and `rg` under `~/.pig/agent/bin`, so nothing else is in `tools/` now.
 
 `renderCall` and `renderResult` are ported too: a tool hands back a `Pig\Tui\Component` and
 `ToolExecutionComponent` draws that instead of its own tool view — which is what stops a tool
@@ -327,13 +318,13 @@ things about them:
   object. Every field is therefore optional to the renderer, exactly as it is to the built-in
   headings.
 
-`CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
+`CustomToolAPI.ui` is ported as `ExtensionUi`, in both `$pig->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
 
 `Extensions\` is upstream's `core/extensions/`. An extension is a PHP file (or a folder with
 `index.php`) in `~/.pig/agent/extensions`, `<cwd>/.pig/extensions` or `<cwd>/extensions` that
 returns a callable. It unifies what used to be split between hooks and custom tools: the callable
-is handed an `ExtensionApi` (which inherits `HookApi`) and can register commands, tools, event
+is handed an `ExtensionApi` (which inherits `ExtensionApi`) and can register commands, tools, event
 handlers and message renderers all from a single file or directory.
 
 `extensions/pig-antigravity/index.php` is the first ported full extension, bringing Antigravity's
@@ -388,7 +379,7 @@ for what the config file means. Two things are pig's own and both are consequenc
   later. So `ExtensionApi::registerTool()` notifies after load and `removeTools()` is beside it,
   `CustomToolSet::adopt()` follows one extension's list, and `onChange()` is what re-sets the
   agent's tools — in `CodingAgent::session()` and in `InteractiveMode::reload()`, the two places
-  that build the set, with the built-ins and `HookedTool::wrap()` exactly as at startup. That last
+  that build the set, with the built-ins and `ExtensionGuardedTool::wrap()` exactly as at startup. That last
   clause is what makes the permission gate reach an MCP tool, and it was watched doing so.
 - **`command`, `args`, and `cwd` expand `~` automatically** (`Paths::expand()` via `ServerConnection::transportFor()`).
   Configurations in `mcp.json` can use `~/` instead of hardcoding absolute home directories, keeping
@@ -406,12 +397,12 @@ stripped `parameters` is what the Code Assist path (`GoogleShared::tools()`, `pi
 still sends. Regression tests: `GoogleTest::testTheCodeAssistToolsStillStripJsonSchemaMetaDeclarations`,
 `testTheDirectApiSendsTheSchemaAsWrittenInParametersJsonSchema`.
 
-**An extension registers a server with `$pi->registerMcpServer($name, $config)`**, upstream's
+**An extension registers a server with `$pig->registerMcpServer($name, $config)`**, upstream's
 API with upstream's validation (`McpServers::validate()`, which `McpConfig` and `pig mcp` use
 too — one answer to what a config is). The static `McpServerRegistry` holds them for
 `Models::register()`'s reason; `unregisterMcpServer()` takes one away only from the extension that
 registered it. Servers registered while the extensions load are read by `pig-mcp` on
-`session_start` through `$pi->getMcpServers()`; one registered later reaches it as
+`session_start` through `$pig->getMcpServers()`; one registered later reaches it as
 `mcp_servers_change`, emitted in an `Async::spawn` because handlers await and a factory registers
 at load, outside any fiber. A registered server **overrides a configured one of the same name for
 the session** (`ServerEntry` scope `extension`; the manager says so and writes nothing to the
@@ -438,7 +429,7 @@ and the dialogs. Four things decided on the way:
   constant registered with Google; this one listens on whatever is free, because the redirect URI
   is registered with each MCP server's authorization server at sign-in, and matches a callback to
   the sign-in waiting for it by `state`. Two servers for two different facts.
-- **The pasted-URL prompt races the callback**, which is why `HookUi::input()` grew a `$signal`:
+- **The pasted-URL prompt races the callback**, which is why `ExtensionUi::input()` grew a `$signal`:
   without one the dialog stays open after the browser already answered, and in the first live run
   it did. `NoticingUi` parks on the signal for the same reason — a test UI whose `input()` answers
   null at once would read as "the person cancelled" before the browser got a turn.
@@ -596,7 +587,7 @@ script (a second parameter of the eval'd function, `__CodemodeModels` bridging t
 `usage` (see (1) below). **`codemode.mode: on|only`** is `CustomTool::$prepareLoadout`
 (upstream's `ToolDefinition.prepareLoadout`), asked by `ToolLoadout::apply()` after the hook wrap
 with the whole active list: it answers descriptions (`DescribedTool` is the tool with its
-description replaced, a decorator for `HookedTool`'s reason) and names to hide from the agent.
+description replaced, a decorator for `ExtensionGuardedTool`'s reason) and names to hide from the agent.
 `on` appends `Codemode: $tools->x([...]) resolves to …` to every declared tool — upstream's
 `describeOutput()` of the tool's `outputSchema`: "a string" without one, the field list for an object
 (`bash`'s `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`). A call to a tool
@@ -686,8 +677,8 @@ the keys bullet above.
 **`AgentError` carries `$details`** so a failed script still shows the UI its nested calls — upstream
 returns `{ isError: true, details }` where pig throws, and the renderer needs the calls either way.
 
-**And `HookRunner::setSession()` had no caller.** `$ctx->session` was null in every handler in
-production, which is how long a documented `HookContext` field can stay wired at one end: until the
+**And `ExtensionRunner::setSession()` had no caller.** `$ctx->session` was null in every handler in
+production, which is how long a documented `ExtensionContext` field can stay wired at one end: until the
 first extension that needs it. `AgentSession` attaches itself now.
 
 Regression tests: `CodemodeTest` (24 — source, identifiers, declarations, the sandbox's isolation,
@@ -698,16 +689,16 @@ the session file, the output budget). Verified live with `server-filesystem` at 
 exposure: the model sees `read, bash, edit, write, codemode`, writes a `parallel()` over four
 `read_text_file` calls, and answers from the script's return value.
 
-## A closure read `$pi` it never captured, and the warning was swallowed by its own `catch`
+## A closure read `$pig` it never captured, and the warning was swallowed by its own `catch`
 
-Reported as `PHP Warning: Undefined variable $pi in …/smart-session.php on line 486`. Every
-extension handler is `static function (…) use (…)` — the shape `/reload` requires — and `$pi`
-exists only in the file's outermost closure, so a handler that reads it without `use ($pi)` is
-reading nothing. Two sites: `session_start` read `$pi->getSessionName()` (null, so the default
-branch ran and nobody noticed) and the auto-namer called `$pi->setSessionName($title)` inside a
+Reported as `PHP Warning: Undefined variable $pig in …/smart-session.php on line 486`. Every
+extension handler is `static function (…) use (…)` — the shape `/reload` requires — and `$pig`
+exists only in the file's outermost closure, so a handler that reads it without `use ($pig)` is
+reading nothing. Two sites: `session_start` read `$pig->getSessionName()` (null, so the default
+branch ran and nobody noticed) and the auto-namer called `$pig->setSessionName($title)` inside a
 `catch (Throwable) { /* Silent fallback */ }` — **so the warning printed and the title was never
 set**, which is a feature failing on the exact line that made it worth having. Both are `$ctx->…`
-now; `HookContext` had the two methods for precisely this.
+now; `ExtensionContext` had the two methods for precisely this.
 
 **`uncapturedClosureReads()` in `test/lint.php` is the sweep**, one token over again from the
 property check: for every closure, a variable read in its body that is not a parameter, not in its
@@ -724,7 +715,7 @@ Over 618 files it found the one site and nothing else — after three rounds of 
 that were each a syntax shape the first version did not know: `catch (\Fully\Qualified $e)`
 tokenizes as `T_NAME_FULLY_QUALIFIED` and not `T_STRING`, `foreach ($rows as [$s, $e])` puts the
 targets inside brackets, and a nested `use (&$acc)` is an assignment and not a read. Putting the
-`$pi` back turns it red on line 486. **`lint.php` now also takes directories on the command line**
+`$pig` back turns it red on line 486. **`lint.php` now also takes directories on the command line**
 — `php test/lint.php ~/.pig/agent/extensions` — because the extensions a person wrote load into the
 same process and fail the same ways, and `extensions/` in the repository is swept by default; it
 was not before, which is how three `@` suppressions had survived in it.
@@ -808,8 +799,8 @@ the metadata URL), `McpExtensionTest::testAStepUpSignInAsksForTheGrantedScopeAsW
 
 `ProjectTrust` is upstream's `trust-manager.ts` + `project-trust.ts`, and the reason it exists is a
 sentence this file already had: *"a hook runs in this process with this process's permissions …
-one that calls `exit()` takes the session with it."* True of `~/.pig/agent/hooks`, which the person
-wrote — and equally true of `<cwd>/.pig/hooks`, which whoever pushed to the repository wrote. Until
+one that calls `exit()` takes the session with it."* True of `~/.pig/agent/extensions`, which the person
+wrote — and equally true of `<cwd>/.pig/extensions`, which whoever pushed to the repository wrote. Until
 this, `git clone` and `cd` were the whole distance between a stranger's PHP and `require`.
 
 The shape, all of it upstream's: `~/.pig/agent/trust.json` keyed by absolute path, **nearest
@@ -831,7 +822,7 @@ Four things pig's arrangement decided:
   the call, because the question gates what `CodingAgent::session()` may `require` and so cannot be
   asked from inside the session it gates. Upstream asks through its extension UI context during a
   two-pass bootstrap; pig has no screen at that point and this is the one.
-- **One flag, every loader**: `projectTrusted` on `Settings`, `HookLoader`, `CustomToolLoader`,
+- **One flag, every loader**: `projectTrusted` on `Settings`,
   `ExtensionLoader` (both of its project roots), `PackageManager::resolveLocalResources()` (skills,
   prompts, themes, the ancestors' `.agents/skills`) and `SystemPromptFiles`. Each one *does not open*
   the directory, rather than reading and discarding — a broken `.pig/settings.json` in an untrusted

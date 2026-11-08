@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Logger;
 use PigVless\VlessServer;
 
@@ -31,14 +31,14 @@ require_once __DIR__ . '/VlessServer.php';
  * See `VlessServer` for what the protocol is and what is left out (UDP, MUX, everything Xray
  * added after the header).
  */
-return function (ExtensionApi $pi): void {
+return function (ExtensionApi $pig): void {
     /** @var VlessServer|null the server as configured, started or not */
     $server = null;
     $running = false;
     $problem = null;
 
-    $pi->on('session_start', static function (SessionStartEvent $event, HookContext $ctx) use ($pi, &$server, &$problem): void {
-        $settings = $pi->getSettings();
+    $pig->on('session_start', static function (SessionStartEvent $event, ExtensionContext $ctx) use ($pig, &$server, &$problem): void {
+        $settings = $pig->getSettings();
         $config = $settings?->get('vless');
         $config = is_array($config) ? $config : [];
 
@@ -78,16 +78,16 @@ return function (ExtensionApi $pi): void {
         }
     });
 
-    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$server, &$running): void {
+    $pig->on('session_shutdown', static function (SessionShutdownEvent $event, ExtensionContext $ctx) use (&$server, &$running): void {
         if ($running) {
             $server?->stop();
             $running = false;
         }
     });
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'vless',
-        static function (string $args, HookContext $ctx) use (&$server, &$running, &$problem): void {
+        static function (string $args, ExtensionContext $ctx) use (&$server, &$running, &$problem): void {
             $say = static function (string $text, string $level = 'info') use ($ctx): void {
                 if ($ctx->hasUi) {
                     $ctx->ui->notify($text, $level);

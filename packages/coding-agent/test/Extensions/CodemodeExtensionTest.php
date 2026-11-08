@@ -17,10 +17,10 @@ use Pig\Codemode\Registry;
 use PigCodemode\CodemodeDescription;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\StartedSession;
 use Pig\Test\WithoutProviderKeys;
@@ -95,14 +95,14 @@ final class CodemodeExtensionTest extends TestCase
         $started = Async::run(static fn (): StartedSession => CodingAgent::session(...$arguments));
 
         $session = $started->session;
-        $started->hooks->initialize(
+        $started->extensionRunner->initialize(
             static fn () => $started->model,
             note: static fn (string $customType, mixed $data) => $session->appendHookEntry($customType, $data),
         );
 
         Async::run(static function () use ($started): void {
-            $started->hooks->emit(new SessionStartEvent());
-            $started->hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+            $started->extensionRunner->emit(new SessionStartEvent());
+            $started->extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         return $started;
@@ -131,7 +131,7 @@ final class CodemodeExtensionTest extends TestCase
 
     private function stop(StartedSession $started): void
     {
-        Async::run(static fn () => $started->hooks->emit(new SessionShutdownEvent()));
+        Async::run(static fn () => $started->extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testWithNoCodemodeServerAndNothingNamingItTheToolIsRegisteredButInactive(): void
@@ -218,7 +218,7 @@ final class CodemodeExtensionTest extends TestCase
 
         // Upstream's `tool_call` wait: a script naming the server's namespace waits for it to connect,
         // so its tools are there when the script runs. The first prompt did not wait for it.
-        Async::run(static fn () => $started->hooks->emitToolCall(new \Pig\CodingAgent\Hooks\Events\ToolCallEvent('codemode', 'call-1', ['code' => 'return $tools->mcp__fixture__echo(["text" => "hi"]);'])));
+        Async::run(static fn () => $started->extensionRunner->emitToolCall(new \Pig\CodingAgent\Extensions\Events\ToolCallEvent('codemode', 'call-1', ['code' => 'return $tools->mcp__fixture__echo(["text" => "hi"]);'])));
 
         // Upstream's tool keeps one description; `prepareLoadout` is what lists the callable tools.
         $codemode = $started->customTools->find('codemode');
@@ -226,7 +226,7 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertStringContainsString('$tools->mcp__fixture__echo(array{text?: string} $input): array{', (string) self::declared($started, 'codemode'));
 
         // A script calls it and the result is the whole CallToolResult, which the script filters.
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => '$r = $tools->mcp__fixture__echo(["text" => "hi"]); return strtoupper($r["content"][0]["text"]);'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => '$r = $tools->mcp__fixture__echo(["text" => "hi"]); return strtoupper($r["content"][0]["text"]);'], null, $started->extensionRunner->context(), null));
         $this->assertMatchesRegularExpression("/^Script completed\nWall time [\d.]+ seconds\nOutput:\n$/", $result->content[0]->text);
         $this->assertSame('ECHO: HI', $result->content[1]->text);
         $this->assertSame('mcp__fixture__echo', $result->details['calls'][0]['name']);
@@ -258,7 +258,7 @@ final class CodemodeExtensionTest extends TestCase
 
         // The agent's own tools are callable from a script even though they are not listed.
         file_put_contents($this->cwd . '/note.txt', "hello from a file\n");
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return trim($tools->read(["path" => "note.txt"]));'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return trim($tools->read(["path" => "note.txt"]));'], null, $started->extensionRunner->context(), null));
         $this->assertSame('hello from a file', $result->content[count($result->content) - 1]->text);
         $this->stop($started);
     }
@@ -266,12 +266,12 @@ final class CodemodeExtensionTest extends TestCase
     public function testANestedCallGoesThroughTheToolCallHookLikeAnyOther(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
-        mkdir($this->home . '/hooks', 0o755, true);
-        file_put_contents($this->home . '/hooks/guard.php', <<<'PHP'
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/guard.php', <<<'PHP'
 <?php
-use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
-return function ($pi): void {
-    $pi->on('tool_call', function ($event) {
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
+return function ($pig): void {
+    $pig->on('tool_call', function ($event) {
         file_put_contents(getenv('PIG_CODING_AGENT_DIR') . '/seen-call-id', $event->toolCallId);
 
         return $event->toolName === 'bash' ? new ToolCallEventResult(block: true, reason: 'No shells from scripts.') : null;
@@ -281,7 +281,7 @@ PHP);
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
-        $result = Async::run(static fn () => ($codemode->execute)('call-7', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine"]);'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('call-7', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine"]);'], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertFalse($value[0]['ok']);
@@ -308,8 +308,8 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerTool(new CustomTool(
+return function (ExtensionApi $pig): void {
+    $pig->registerTool(new CustomTool(
         name: 'spend',
         label: 'Spend',
         description: 'Spends a little on a model.',
@@ -327,7 +327,7 @@ PHP);
             }
         });
 
-        $result = Async::run(static fn () => ($codemode->execute)('call-9', ['code' => 'return parallel_settled([fn () => $tools->spend(["amount" => "lots"]), fn () => $tools->spend(["amount" => 3])]);'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('call-9', ['code' => 'return parallel_settled([fn () => $tools->spend(["amount" => "lots"]), fn () => $tools->spend(["amount" => 3])]);'], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertFalse($value[0]['ok']);
@@ -357,7 +357,7 @@ PHP);
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'text("first"); echo "printed one\n"; text("second"); echo "printed two"; return "returned";'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'text("first"); echo "printed one\n"; text("second"); echo "printed two"; return "returned";'], null, $started->extensionRunner->context(), null));
 
         // Upstream's `formatOutput()` then `joinAdjacentText()`: one text block, each item headed.
         $this->assertCount(2, $result->content, 'the header and one joined text block');
@@ -367,7 +367,7 @@ PHP);
         );
 
         // One item gets no header, and a script that only returns reads as it did before.
-        $alone = Async::run(static fn () => ($codemode->execute)('2', ['code' => 'return "just this";'], null, $started->hooks->context(), null));
+        $alone = Async::run(static fn () => ($codemode->execute)('2', ['code' => 'return "just this";'], null, $started->extensionRunner->context(), null));
         $this->assertSame('just this', $alone->content[1]->text);
         $this->stop($started);
     }
@@ -405,7 +405,7 @@ PHP);
         // The hidden tools are still callable: the extension kept the list the loadout handed it.
         file_put_contents($this->cwd . '/note.txt', "hidden but reachable\n");
         $codemode = $started->customTools->find('codemode');
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return trim($tools->read(["path" => "note.txt"]));'], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return trim($tools->read(["path" => "note.txt"]));'], null, $started->extensionRunner->context(), null));
         $this->assertSame('hidden but reachable', $result->content[count($result->content) - 1]->text);
         $this->stop($started);
     }
@@ -443,7 +443,7 @@ PHP);
                 array_column(search_tools('search', ['namespace' => 'dev_radius']), 'name'),
                 array_column(search_tools('search', ['namespace' => 'mcp__other']), 'name'),
             ];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertSame(['name' => 'mcp__dev-radius', 'description' => 'the radius server', 'instructions' => 'be gentle', 'tools' => ['mcp__dev_radius__search', 'mcp__dev_radius__fetch']], $value[0]);
@@ -483,7 +483,7 @@ PHP);
                 'images' => [['type' => 'image', 'data' => base64_encode('png'), 'mimeType' => 'image/png']],
             ]);
             return ['id' => $chat['id'], 'keys' => array_key_exists('headers', $chat), 'cost' => isset($chat['cost']['input']), 'classifiers' => count($classifiers) > 0, 'available' => $models->getAvailableOfType('chat', 'anthropic') !== [], 'tries' => $tries, 'blind' => [$blind['stopReason'], $blind['errorMessage']]];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertSame('claude-sonnet-4-5', $value['id']);
@@ -527,8 +527,8 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerProvider('zzpics', [
+return function (ExtensionApi $pig): void {
+    $pig->registerProvider('zzpics', [
         'baseUrl' => 'https://pics.example',
         'apiKey' => 'sk-pics',
         'models' => [['type' => 'image', 'id' => 'painter', 'name' => 'Painter', 'api' => 'zz-images', 'input' => ['text'], 'output' => ['image', 'text']]],
@@ -548,7 +548,7 @@ PHP));
             $r = $models->generateImages($available[0], ['input' => [['type' => 'text', 'text' => 'a cat']]]);
             foreach ($r['output'] as $block) { if ($block['type'] === 'image') { image($block); } }
             return ['ids' => array_column($available, 'id'), 'stop' => $r['stopReason'], 'types' => array_column($r['output'], 'type')];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertSame(['painter'], $value['ids']);
@@ -583,7 +583,7 @@ PHP));
 
         $signedOut = $this->start(extensions: ['pig-antigravity']);
         $codemode = $signedOut->customTools->find('codemode');
-        $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedOut->hooks->context(), null))->content;
+        $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedOut->extensionRunner->context(), null))->content;
         $this->assertSame([], json_decode($content[count($content) - 1]->text, true), 'not before signing in: ' . $content[count($content) - 1]->text);
         $this->stop($signedOut);
         \Pig\Ai\Extension\ProviderRegistry::forget();
@@ -592,7 +592,7 @@ PHP));
         $auth->setCredentials('antigravity', new \Pig\Ai\Utils\Oauth\Credentials('refresh', 'ya29.test', (int) (microtime(true) * 1000) + 3_600_000, projectId: 'proj-1'));
         $signedIn = $this->start(auth: $auth, extensions: ['pig-antigravity']);
         $codemode = $signedIn->customTools->find('codemode');
-        $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedIn->hooks->context(), null))->content;
+        $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedIn->extensionRunner->context(), null))->content;
         $value = json_decode($content[count($content) - 1]->text, true);
         $this->assertSame(['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-3-pro-image-preview'], $value);
         $this->stop($signedIn);
@@ -616,7 +616,7 @@ PHP));
             $r = $tools->read(['path' => 'dot.png']);
             image($r['images'][0]);
             return ['keys' => array_keys($r), 'mime' => $r['images'][0]['mimeType'], 'type' => $r['images'][0]['type']];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $images = array_values(array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\ImageContent));
         $this->assertCount(1, $images, 'the picture the script showed is on the result');
@@ -653,7 +653,7 @@ PHP));
             $r = $tools->read(['path' => 'dot.png']);
             text(['printed' => $r]);
             return ['returned' => $r];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $images = array_values(array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\ImageContent));
         $this->assertCount(1, $images, 'the same picture twice is one image');
@@ -747,7 +747,7 @@ PHP));
             $ok = $tools->bash(['command' => 'printf "%s" "$PIG_SESSION_ID"']);
             $bad = $tools->bash(['command' => 'echo nope; exit 2']);
             return ['ok' => $ok['output'], 'okExit' => $ok['exit_code'], 'bad' => $bad['output'], 'badExit' => $bad['exit_code'], 'keys' => array_keys($bad)];
-            PHP], null, $started->hooks->context(), null));
+            PHP], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertSame($started->session->store()?->id, $value['ok']);
@@ -765,7 +765,7 @@ PHP));
         $codemode = $started->customTools->find('codemode');
 
         try {
-            Async::run(static fn () => ($codemode->execute)('1', ['code' => '$x = $tools->read(["path" => "nope.txt"]); return $x;'], null, $started->hooks->context(), null));
+            Async::run(static fn () => ($codemode->execute)('1', ['code' => '$x = $tools->read(["path" => "nope.txt"]); return $x;'], null, $started->extensionRunner->context(), null));
             $this->fail('the script failed');
         } catch (\Pig\Agent\AgentError $error) {
             $this->assertStringContainsString("Script failed", $error->getMessage());
@@ -775,7 +775,7 @@ PHP));
         }
 
         try {
-            Async::run(static fn () => ($codemode->execute)('1', ['code' => '   '], null, $started->hooks->context(), null));
+            Async::run(static fn () => ($codemode->execute)('1', ['code' => '   '], null, $started->extensionRunner->context(), null));
             $this->fail('refused');
         } catch (\Pig\Agent\AgentError $error) {
             $this->assertStringContainsString('Expected PHP source text', $error->getMessage());
@@ -789,7 +789,7 @@ PHP));
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
-        $ctx = $started->hooks->context();
+        $ctx = $started->extensionRunner->context();
 
         Async::run(static fn () => ($codemode->execute)('1', ['code' => 'store("count", 41); return null;'], null, $ctx, null));
         $result = Async::run(static fn () => ($codemode->execute)('2', ['code' => 'return load("count") + 1;'], null, $ctx, null));
@@ -807,7 +807,7 @@ PHP));
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
-        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => "// @options: {\"max_output_tokens\": 100}\nforeach (range(1, 300) as \$i) { text(\"line {\$i}\"); } return null;"], null, $started->hooks->context(), null));
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => "// @options: {\"max_output_tokens\": 100}\nforeach (range(1, 300) as \$i) { text(\"line {\$i}\"); } return null;"], null, $started->extensionRunner->context(), null));
 
         $text = $result->content[1]->text;
         $this->assertStringStartsWith('Warning: truncated output (original token count:', $text);

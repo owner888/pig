@@ -82,7 +82,7 @@ Themes are ported from upstream's `theme.ts` / `theme-schema.ts` / `system-theme
 | `highlightTheme()` + `Highlight::lines` | `Themes::highlightCode($code, $lang)` |
 | `thinkingBorder($l)`, the bash-mode border, `isTruecolor()` | `Themes::theme()->getThinkingBorderColor($l)`, `getBashModeBorderColor()`, `getColorMode() === 'truecolor'` |
 | `Palette::named/dark/light/labra`, `names()`, `customThemes()` | `Themes::setTheme()/initTheme()/getThemeByName()`, `setCustomThemesCwd()` + `getAvailableThemes()`, `getAvailableThemesWithPaths()` |
-| `HookUi::palette()`, `FooterComponent::setPalette()` | `HookUi::theme()`; the footer reads the global theme directly |
+| `ExtensionUi::palette()`, `FooterComponent::setPalette()` | `ExtensionUi::theme()`; the footer reads the global theme directly |
 | `InteractiveMode::useTheme()/$palette`, constructor `(session, palette, cwd, version, theme, …)` | `$themeController` (`InteractiveThemeController`), `(session, cwd, version, ?themeSetting, …)` |
 
 `!command` runs a shell command and puts the result in the conversation, as a
@@ -590,7 +590,7 @@ branch it describes.
 - **Its lists carry forward into a later compaction** unless a hook wrote it.
 
 `session_before_compact` and `session_before_tree` stop at the first handler that cancels, else take
-the last answer (`HookRunner`). The events carry upstream's fields: `SessionBeforeCompactEvent
+the last answer (`ExtensionRunner`). The events carry upstream's fields: `SessionBeforeCompactEvent
 {preparation, branchEntries, customInstructions, reason, willRetry, signal}`, `SessionCompactEvent
 {compactionEntry, fromExtension, reason, willRetry}`, `SessionBeforeTreeEvent {preparation, signal}`,
 `SessionTreeEvent {newLeafId, oldLeafId, summaryEntry, fromExtension}`. A hook that cancels a
@@ -738,7 +738,7 @@ holds the call before the tool runs (the assistant message is written on `messag
 the intent record pi-durable writes, and nothing new is stored.
 
 - **`Pig\Agent\ToolReplay`** (`Safe`/`Unsafe`) and **`ReplayableTool`**, optional as the field is;
-  `read`, `grep`, `find` and `ls` are `Safe`. Each wrapper (`HookedTool`, `DescribedTool`,
+  `read`, `grep`, `find` and `ls` are `Safe`. Each wrapper (`ExtensionGuardedTool`, `DescribedTool`,
   `ResultImagesTool`, `WrappedCustomTool`) forwards `ToolReplay::of()` of what it wraps, or the
   declaration is lost one layer down. An extension declares it with `CustomTool(replay: ToolReplay::Safe)`.
 - **`AgentLoop::resume()` / `Agent::resume()`**, pig's own; `continue()` stays upstream's and still

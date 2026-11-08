@@ -147,7 +147,7 @@ place it applies, which is what a reader needs.) Found by a differential run aga
 `utils.ts`, not by anybody noticing a missing space — `truncateToWidth` disagreed on five multi-line
 inputs and the width function underneath it was the reason.
 
-The same shape is elsewhere in the tree and **was left alone**: `HookApi`'s `customType` and tool
+The same shape is elsewhere in the tree and **was left alone**: `ExtensionApi`'s `customType` and tool
 names, `Skills`' name check, `Editor`'s "is this word completable" — each is `^…$` against a string
 that would have to end in a newline to slip through, and none of them can be reached with one today.
 Changing them tightens what is accepted, which is a behaviour change with no reproduced bug behind
@@ -256,12 +256,11 @@ of the model.
 `Process::run()` polls with `usleep()` while it waits. That is right for what it was written
 for — a two-second `wl-paste`, a `which` — and wrong for anything a person waits through, because
 the one thread is inside the sleep: no keystrokes, no spinner, no redraw, no escape. A hook's
-`$pi->exec(['npm','test'])` went through it, so a thirty-second command was thirty seconds of a
+`$pig->exec(['npm','test'])` went through it, so a thirty-second command was thirty seconds of a
 terminal that would not answer, and the only thing that ended it was the timeout.
 
 `Process::runAsync()` is the same function with the pipes on the loop — the same `select()` that
-waits on the model's socket — parked on a `Deferred` until they close. `HookApi::exec()` and
-`CustomToolApi::exec()` use it. `run()` is untouched, because its thirty-odd other callers are
+waits on the model's socket — parked on a `Deferred` until they close. `ExtensionApi::exec()` uses it. `run()` is untouched, because its thirty-odd other callers are
 probes where blocking is the honest thing to do and some of them run before there is a loop at all.
 
 Four things in it are load-bearing rather than tidy, and three are rules this file already had:
@@ -632,7 +631,7 @@ Two rules fall out, and the second is the one that generalises:
 - A `catch` clause naming a class the file does not import is a `catch` that never fires.
 - **Anything inside `Async::spawn()` whose future nobody awaits must not be able to throw.**
   The `runAgentPrompt()` that `AgentSession::sendHookMessage()` spawns for a hook's `triggerTurn`
-  catches a throw and reports it through `emitError()` as a `HookError`, so a bug in there is a
+  catches a throw and reports it through `emitError()` as a `ExtensionError`, so a bug in there is a
   reported failure rather than a session that stops mid-sentence.
 
 ## `tick()` waits out the timer it is polling for (tests)

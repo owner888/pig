@@ -11,7 +11,7 @@ use InvalidArgumentException;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use RuntimeException;
 
 /**
@@ -104,7 +104,7 @@ final class ScheduleTool
      * @param array<string, mixed> $params
      * @throws AgentError with what went wrong, for the model
      */
-    public function execute(array $params, HookContext $ctx): AgentToolResult
+    public function execute(array $params, ExtensionContext $ctx): AgentToolResult
     {
         $action = (string) ($params['action'] ?? '');
 
@@ -134,7 +134,7 @@ final class ScheduleTool
     }
 
     /** @param array<string, mixed> $params */
-    private function save(ScheduleClient $client, array $params, HookContext $ctx, bool $update): AgentToolResult
+    private function save(ScheduleClient $client, array $params, ExtensionContext $ctx, bool $update): AgentToolResult
     {
         $existing = $update ? $this->existing($client, $params) : null;
         $data = $existing !== null ? array_intersect_key($existing, array_flip(['id', 'name', 'prompt', 'cwd', 'triggers', 'timezone', 'model', 'thinkingLevel', 'enabled', 'permissionMode'])) : [];
@@ -181,7 +181,7 @@ final class ScheduleTool
     }
 
     /** @param array<string, mixed> $task */
-    private function act(ScheduleClient $client, string $action, array $task, HookContext $ctx): AgentToolResult
+    private function act(ScheduleClient $client, string $action, array $task, ExtensionContext $ctx): AgentToolResult
     {
         $name = (string) $task['name'];
         $question = match ($action) {

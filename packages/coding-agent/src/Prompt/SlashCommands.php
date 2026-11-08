@@ -124,7 +124,7 @@ final class SlashCommands
      * The `.md` files directly in $directory, sorted.
      *
      * `scandir()` sorts, which upstream's `readdirSync` does not promise, and the reason is
-     * `CustomToolLoader::discover()`'s: two templates of one name is decided by load order, and
+     * `ExtensionLoader::discover()`'s: two templates of one name is decided by load order, and
      * readdir order is not an order.
      *
      * @return list<string>

@@ -500,8 +500,6 @@ final class SettingsTest extends TestCase
         $this->assertSame(QueueMode::OneAtATime, $settings->steeringMode(), 'three thoughts, one at a time');
         $this->assertSame(QueueMode::OneAtATime, $settings->followUpMode());
         $this->assertNull($settings->lastChangelogVersion(), 'never means a first run');
-        $this->assertSame([], $settings->hooks());
-        $this->assertSame([], $settings->customTools());
         $this->assertSame([], $settings->extensions());
     }
 
@@ -609,27 +607,21 @@ final class SettingsTest extends TestCase
     public function testFilesNamedInTheSettingsComeBackAsPathsAndNothingElseComesBackAtAll(): void
     {
         $this->writeGlobal([
-            'hooks' => ['~/hooks/guard.php', 12],
-            'customTools' => ['~/tools/wc/index.php'],
-            'extensions' => ['~/extensions/antigravity'],
+            'extensions' => ['~/extensions/antigravity', 12],
         ]);
 
         $settings = $this->load();
 
         // Every entry becomes a string rather than being dropped, because the loader reports an
-        // unreadable path by name and a silently shortened list is a hook somebody wrote and
+        // unreadable path by name and a silently shortened list is an extension somebody wrote and
         // never heard about again.
-        $this->assertSame(['~/hooks/guard.php', '12'], $settings->hooks());
-        $this->assertSame(['~/tools/wc/index.php'], $settings->customTools());
-        $this->assertSame(['~/extensions/antigravity'], $settings->extensions());
+        $this->assertSame(['~/extensions/antigravity', '12'], $settings->extensions());
 
         // A value that is not a list at all has no paths in it to name.
-        $this->writeGlobal(['hooks' => 'not a list', 'customTools' => 'not a list', 'extensions' => 'not a list']);
+        $this->writeGlobal(['extensions' => 'not a list']);
 
         $settings = $this->load();
 
-        $this->assertSame([], $settings->hooks());
-        $this->assertSame([], $settings->customTools());
         $this->assertSame([], $settings->extensions());
     }
 

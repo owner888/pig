@@ -10,7 +10,7 @@ use Pig\Ai\Http\Request;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Config;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use RuntimeException;
 use Throwable;
 
@@ -84,7 +84,7 @@ final class GeminiVideo
      * @param Closure(string): void $progress one line on what is happening now
      * @return array{text: string, model: string, route: string, bytes: int}
      */
-    public function analyze(string $path, string $prompt, HookContext $ctx, Closure $progress, ?AbortSignal $signal = null): array
+    public function analyze(string $path, string $prompt, ExtensionContext $ctx, Closure $progress, ?AbortSignal $signal = null): array
     {
         $resolved = realpath(str_starts_with($path, '/') ? $path : rtrim($ctx->cwd, '/') . '/' . $path);
         if ($resolved === false || !is_file($resolved)) {
@@ -323,7 +323,7 @@ final class GeminiVideo
     }
 
     /** pig's own credentials for `google` first — `/login`, `models.json` — then the environment. */
-    private function geminiKey(HookContext $ctx): ?string
+    private function geminiKey(ExtensionContext $ctx): ?string
     {
         try {
             $key = $ctx->modelRegistry->getProviderAuth('google')?->auth->apiKey;
@@ -361,7 +361,7 @@ final class GeminiVideo
      *
      * @return array{token: string, project: string}|null
      */
-    private function antigravityCredentials(HookContext $ctx): ?array
+    private function antigravityCredentials(ExtensionContext $ctx): ?array
     {
         try {
             $raw = $ctx->modelRegistry->getProviderAuth('antigravity')?->auth->apiKey;

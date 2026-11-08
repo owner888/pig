@@ -14,7 +14,7 @@ use Pig\Codemode\DeferredTools;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 
 /**
  * `pig-tool-search` on its own — upstream's `tool-search` extension: `tool_search` over whatever
@@ -81,7 +81,7 @@ final class ToolSearchExtensionTest extends TestCase
         $this->assertStringContainsString("You have access to tools from the following sources:\n- docs: Product docs.\n- gh\n", $search->description);
         $this->assertSame(['query'], $search->parameters['required']);
 
-        $ctx = new HookContext('.');
+        $ctx = new ExtensionContext('.');
         $none = Async::run(static fn () => ($search->execute)('1', ['query' => 'weather forecast'], null, $ctx, null));
         $this->assertSame('No matching tools found.', $none->content[0]->text);
         $this->assertSame([], $loaded);
@@ -107,7 +107,7 @@ final class ToolSearchExtensionTest extends TestCase
         $set = $this->load();
         DeferredTools::register('x_tool', 'A tool.', null, ['name' => 'x', 'description' => null], static fn (): CustomTool => self::tool('x_tool', 'A tool.'));
         $search = $set->find('tool_search');
-        $ctx = new HookContext('.');
+        $ctx = new ExtensionContext('.');
 
         foreach ([['query' => '  '], ['query' => 'x', 'limit' => 0], ['query' => 'x', 'limit' => 1.5]] as $params) {
             try {

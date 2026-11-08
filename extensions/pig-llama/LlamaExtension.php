@@ -8,7 +8,7 @@ use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\ModelRefresh;
 use RuntimeException;
 use Throwable;
@@ -72,7 +72,7 @@ final class LlamaExtension
     }
 
     /** Upstream's `configuredClient()`: the router from the provider's resolved auth, or a warning. */
-    public function configuredClient(HookContext $ctx): ?LlamaClient
+    public function configuredClient(ExtensionContext $ctx): ?LlamaClient
     {
         $result = $this->auth->providerAuth(LlamaProvider::LLAMA_PROVIDER_ID);
 
@@ -127,7 +127,7 @@ final class LlamaExtension
      * @param list<LlamaModelInfo> $catalog
      * @param LlamaModelInfo $target
      */
-    public function loadModel(HookContext $ctx, LlamaUi $ui, LlamaClient $client, array $catalog, array $target): void
+    public function loadModel(ExtensionContext $ctx, LlamaUi $ui, LlamaClient $client, array $catalog, array $target): void
     {
         $loaded = array_values(array_filter($catalog, static fn (array $model): bool => $model['id'] !== $target['id'] && self::modelIsLoaded($model)));
         $replace = false;
@@ -209,7 +209,7 @@ final class LlamaExtension
     }
 
     /** @param LlamaModelInfo $model */
-    public function unloadModel(HookContext $ctx, LlamaUi $ui, LlamaClient $client, array $model): void
+    public function unloadModel(ExtensionContext $ctx, LlamaUi $ui, LlamaClient $client, array $model): void
     {
         if (!$ui->confirm('Unload model?', $model['id'])) {
             return;
@@ -220,7 +220,7 @@ final class LlamaExtension
         $ctx->ui->notify("Unloaded {$model['id']}");
     }
 
-    public function downloadModel(HookContext $ctx, LlamaUi $ui, LlamaClient $client): void
+    public function downloadModel(ExtensionContext $ctx, LlamaUi $ui, LlamaClient $client): void
     {
         $huggingFace = new HuggingFaceClient(HuggingFaceClient::findHuggingFaceToken(), $this->huggingFaceUrl);
         $selected = $ui->searchModels(static fn (string $query, AbortSignal $signal): array => $huggingFace->search($query, $signal));
@@ -291,7 +291,7 @@ final class LlamaExtension
     }
 
     /** Upstream's `/llama` handler. */
-    public function command(string $args, HookContext $ctx): void
+    public function command(string $args, ExtensionContext $ctx): void
     {
         if ($ctx->mode() !== 'tui') {
             $ctx->ui->notify('/llama is available in interactive mode', 'warning');
@@ -309,7 +309,7 @@ final class LlamaExtension
     }
 
     /** The body `/llama` runs in its view: the router's state, and the action chosen on it, until closed. */
-    public function manage(HookContext $ctx, LlamaUi $ui, LlamaClient $client): void
+    public function manage(ExtensionContext $ctx, LlamaUi $ui, LlamaClient $client): void
     {
         $readCatalog = function () use ($ui, $client): ?array {
             while (true) {

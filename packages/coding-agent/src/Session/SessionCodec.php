@@ -56,7 +56,7 @@ final class SessionCodec
                 ...($message->usage === null ? [] : ['usage' => MessageJson::encodeUsage($message->usage)]),
                 'timestamp' => $message->timestamp,
             ],
-            $message instanceof HookMessage => [
+            $message instanceof CustomMessage => [
                 'role' => 'custom',
                 'customType' => $message->customType,
                 'content' => self::encodeContent($message->content),
@@ -120,7 +120,7 @@ final class SessionCodec
                 $timestamp,
                 is_array($entry['usage'] ?? null) ? MessageJson::decodeUsage($entry['usage']) : null,
             ),
-            'custom' => new HookMessage(
+            'custom' => new CustomMessage(
                 (string) ($entry['customType'] ?? ''),
                 self::decodeContent((array) ($entry['content'] ?? [])),
                 ($entry['display'] ?? true) === true,

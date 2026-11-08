@@ -314,7 +314,7 @@ final class Compaction
             // long — a 3,900-character one estimated as **zero tokens**. See docs/dev/traps/session.md.
             $message instanceof CompactionSummary => strlen($message->toText()),
             $message instanceof BranchSummary => strlen($message->toText()),
-            $message instanceof HookMessage => strlen($message->toText()),
+            $message instanceof CustomMessage => strlen($message->toText()),
             default => 0,
         };
 
@@ -357,7 +357,7 @@ final class Compaction
         return $message instanceof UserMessage
             || $message instanceof AssistantMessage
             || $message instanceof BashExecution
-            || $message instanceof HookMessage
+            || $message instanceof CustomMessage
             || $message instanceof BranchSummary
             || $message instanceof CompactionSummary;
     }
@@ -367,7 +367,7 @@ final class Compaction
     {
         return $message instanceof UserMessage
             || $message instanceof BashExecution
-            || $message instanceof HookMessage
+            || $message instanceof CustomMessage
             || $message instanceof BranchSummary
             || $message instanceof CompactionSummary;
     }

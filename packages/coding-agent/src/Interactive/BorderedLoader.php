@@ -18,7 +18,7 @@ use Pig\Tui\TUI;
  * A spinner between two rules, with `esc cancel` under it.
  *
  * Upstream's `BorderedLoader`, and it exists for hooks: a hook that goes away for a while —
- * fetching something, waiting on a build — hands one of these to `HookUi::custom()`, and the
+ * fetching something, waiting on a build — hands one of these to `ExtensionUi::custom()`, and the
  * rules are what separate it from the transcript above and the prompt below. `TerminalUi`'s own
  * dialogs draw no rules, because they are a question and a question is read as one thing; this
  * is a *wait*, and a wait with nothing around it reads as output that stopped.

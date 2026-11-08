@@ -609,7 +609,7 @@ what it is: a pure function over a table. **New public API, so it was flagged ra
 `Reader r1 watches a closed stream; cancel the watcher before closing it` — which is this document's
 own trap, thrown from inside a test that had done nothing wrong. Two causes, both fixed:
 
-- **`OverflowTest` and `HookRunnerTest` were the only two test classes that turn the loop and never
+- **`OverflowTest` and `ExtensionRunnerTest` were the only two test classes that turn the loop and never
   `Loop::reset()`.** The loop is a singleton that outlives a test, so those two inherited whatever
   watchers the previous test left — and the error names *their* `Async::run()`. Found by sweeping
   every class for the pair (touches the loop, never resets), which is two out of forty-odd.

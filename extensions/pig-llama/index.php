@@ -35,12 +35,12 @@ foreach (['LlamaClient', 'HuggingFaceClient', 'LlamaApiKeyAuth', 'LlamaProvider'
     require_once __DIR__ . "/{$class}.php";
 }
 
-return function (ExtensionApi $pi): void {
-    $auth = $pi->auth() ?? Auth::discover();
+return function (ExtensionApi $pig): void {
+    $auth = $pig->auth() ?? Auth::discover();
     $extension = new LlamaExtension($auth, new LlamaProvider());
     // Registering restores the stored catalog (`ModelRefresh`, no network), before anything asks
     // for a model by name; the router is asked at startup and after `/login`, as for any provider
     // with a `refreshModels`.
-    $pi->registerProvider($extension->provider->provider);
-    $pi->registerCommand('llama', $extension->command(...), 'Manage llama.cpp router models');
+    $pig->registerProvider($extension->provider->provider);
+    $pig->registerCommand('llama', $extension->command(...), 'Manage llama.cpp router models');
 };

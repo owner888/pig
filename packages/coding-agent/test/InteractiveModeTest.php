@@ -37,10 +37,10 @@ use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
@@ -50,7 +50,7 @@ use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\ProviderRegistry;
@@ -205,7 +205,7 @@ final class InteractiveModeTest extends TestCase
         array $skills = [],
         array $fileCommands = [],
         ?Settings $settings = null,
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?CustomToolSet $customTools = null,
         array $initialMessages = [],
         array $initialImages = [],
@@ -242,9 +242,9 @@ final class InteractiveModeTest extends TestCase
         // loaded, wrapped. Without the tools `/tools` would be answering about an agent that
         // has none; without the wrapping no `tool_call` hook fires at all, so a guard that
         // works in production could not be reached from here.
-        $agent->setTools(HookedTool::wrap(
+        $agent->setTools(ExtensionGuardedTool::wrap(
             [...ToolSet::create($this->cwd, $tools), ...($customTools?->agentTools() ?? [])],
-            $hooks ?? new HookRunner(),
+            $extensionRunner ?? new ExtensionRunner(),
         ));
 
         $saved = match (true) {
@@ -264,7 +264,7 @@ final class InteractiveModeTest extends TestCase
             $this->cwd,
             $saved,
             $this->settings,
-            $hooks,
+            $extensionRunner,
             $fileCommands,
             $modelScope,
             incognito: $incognito,
@@ -284,7 +284,7 @@ final class InteractiveModeTest extends TestCase
             $this->clipboard,
             $fileCommands,
             $this->settings,
-            $hooks,
+            $extensionRunner,
             $customTools,
             $initialMessages,
             $initialImages,
@@ -402,7 +402,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testAnUntrustedProjectSaysSoOnScreenAndSlashTrustSavesADecision(): void
     {
-        mkdir($this->cwd . '/.pig/hooks', 0o755, true);
+        mkdir($this->cwd . '/.pig/extensions', 0o755, true);
         $this->start(projectTrusted: false);
 
         $this->assertStringContainsString('This project is not trusted', $this->screenText());
@@ -420,7 +420,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testATrustedProjectIsNotWarnedAboutAndEscapeLeavesTheFileAlone(): void
     {
-        mkdir($this->cwd . '/.pig/hooks', 0o755, true);
+        mkdir($this->cwd . '/.pig/extensions', 0o755, true);
         $this->start();
 
         $this->assertStringNotContainsString('This project is not trusted', $this->screenText());
@@ -1273,7 +1273,7 @@ final class InteractiveModeTest extends TestCase
         mkdir($this->home . '/extensions', 0o755, true);
         file_put_contents($this->home . '/extensions/greeter.php', <<<'PHP'
             <?php
-            return function ($pi): void { $pi->registerCommand('greet', fn () => null, 'Say hello'); };
+            return function ($pig): void { $pig->registerCommand('greet', fn () => null, 'Say hello'); };
             PHP);
 
         $this->start();
@@ -3419,41 +3419,17 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
-    // ---- hooks --------------------------------------------------------------------------
-
-    public function testSlashHooksSaysSoWhenThereAreNone(): void
-    {
-        $this->start();
-        $this->type('/hooks');
-        $this->type(self::ENTER);
-
-        $this->assertStringContainsString('No hooks loaded', $this->screen());
-    }
-
-    public function testSlashHooksListsWhatLoadedAndWhatItAdded(): void
-    {
-        $api = new HookApi($this->cwd, '/somewhere/deploy.php');
-        $api->registerCommand('deploy', static fn () => null, 'Ship it');
-
-        $this->start(hooks: $this->runner($api, '/somewhere/deploy.php'));
-        $this->type('/hooks');
-        $this->type(self::ENTER);
-        $screen = $this->screen();
-
-        $this->assertStringContainsString('/somewhere/deploy.php', $screen);
-        $this->assertStringContainsString('/deploy', $screen);
-        $this->assertStringContainsString('Ship it', $screen);
-    }
+    // ---- extension commands --------------------------------------------------------------
 
     public function testACommandAHookRegisteredRunsWithItsArguments(): void
     {
         $seen = null;
-        $api = new HookApi($this->cwd, 'deploy.php');
+        $api = new ExtensionApi($this->cwd, 'deploy.php');
         $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
             $seen = $arguments;
         });
 
-        $this->start(hooks: $this->runner($api));
+        $this->start(extensionRunner: $this->runner($api));
         $this->type('/deploy staging --now');
         $this->type(self::ENTER);
         // Settled, because the command runs inside `AgentSession::prompt()` in a fiber of its
@@ -3465,28 +3441,28 @@ final class InteractiveModeTest extends TestCase
 
     public function testACommandThatFailsIsAWarningRatherThanTheEndOfTheSession(): void
     {
-        $api = new HookApi($this->cwd, 'deploy.php');
+        $api = new ExtensionApi($this->cwd, 'deploy.php');
         $api->registerCommand('deploy', static function (): void {
             throw new RuntimeException('no credentials');
         });
 
-        $this->start(hooks: $this->runner($api));
+        $this->start(extensionRunner: $this->runner($api));
         $this->type('/deploy');
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertStringContainsString('Warning: hook deploy.php (/deploy): no credentials', $this->screen());
+        $this->assertStringContainsString('Warning: extension deploy.php (/deploy): no credentials', $this->screen());
     }
 
     public function testAHookCannotShadowABuiltIn(): void
     {
         $called = false;
-        $api = new HookApi($this->cwd, 'evil.php');
+        $api = new ExtensionApi($this->cwd, 'evil.php');
         $api->registerCommand('help', static function () use (&$called): void {
             $called = true;
         });
 
-        $this->start(hooks: $this->runner($api));
+        $this->start(extensionRunner: $this->runner($api));
         $this->type('/help');
         $this->type(self::ENTER);
 
@@ -3496,10 +3472,10 @@ final class InteractiveModeTest extends TestCase
 
     public function testAHookCommandIsOfferedInTheBanner(): void
     {
-        $api = new HookApi($this->cwd, 'deploy.php');
+        $api = new ExtensionApi($this->cwd, 'deploy.php');
         $api->registerCommand('deploy', static fn () => null, 'Ship it');
 
-        $this->start(hooks: $this->runner($api));
+        $this->start(extensionRunner: $this->runner($api));
         $this->type("\x0f");
 
         $this->assertStringContainsString('deploy.php', $this->screen());
@@ -3507,12 +3483,12 @@ final class InteractiveModeTest extends TestCase
 
     public function testAHookThatFailsMidRunIsAWarningInTheTranscript(): void
     {
-        $api = new HookApi($this->cwd, 'watcher.php');
+        $api = new ExtensionApi($this->cwd, 'watcher.php');
         $api->on('turn_end', static function (): void {
             throw new RuntimeException('counted wrong');
         });
 
-        $this->start(['the answer'], hooks: $this->runner($api, 'watcher.php'));
+        $this->start(['the answer'], extensionRunner: $this->runner($api, 'watcher.php'));
         $this->type('hello');
         $this->type(self::ENTER);
         $this->settle();
@@ -3520,18 +3496,18 @@ final class InteractiveModeTest extends TestCase
         $screen = $this->screen();
 
         $this->assertStringContainsString('the answer', $screen);
-        $this->assertStringContainsString('Warning: hook watcher.php (turn_end)', $screen);
+        $this->assertStringContainsString('Warning: extension watcher.php (turn_end)', $screen);
     }
 
     public function testAHookCommandStillRunsWhileTheAgentIsWorking(): void
     {
         $seen = null;
-        $api = new HookApi($this->cwd, 'deploy.php');
+        $api = new ExtensionApi($this->cwd, 'deploy.php');
         $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
             $seen = $arguments;
         });
 
-        $this->start(['answered'], hooks: $this->runner($api));
+        $this->start(['answered'], extensionRunner: $this->runner($api));
         $release = $this->holdTheAgent();
 
         $this->type('hi');
@@ -3553,7 +3529,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testAnExtensionCanStackItsOwnCompletionsOnTheBuiltInOnes(): void
     {
-        $api = new HookApi($this->cwd, 'completer.php');
+        $api = new ExtensionApi($this->cwd, 'completer.php');
         $api->on('session_start', static function ($event, $ctx): void {
             $ctx->ui->addAutocompleteProvider(static fn (AutocompleteProvider $base): AutocompleteProvider => new class($base) implements AutocompleteProvider {
                 public function __construct(private readonly AutocompleteProvider $base)
@@ -3578,7 +3554,7 @@ final class InteractiveModeTest extends TestCase
             });
         });
 
-        $this->start(hooks: $this->runner($api, 'completer.php'));
+        $this->start(extensionRunner: $this->runner($api, 'completer.php'));
         $this->type('/');
         $this->type('zz');
 
@@ -3594,7 +3570,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testAnExtensionCanPutItsOwnPromptInPlaceAndTakeItBack(): void
     {
-        $api = new HookApi($this->cwd, 'vim.php');
+        $api = new ExtensionApi($this->cwd, 'vim.php');
         $api->registerCommand('vim', static function (string $arguments, $ctx): void {
             if ($ctx->ui->getEditorComponent() !== null) {
                 $ctx->ui->setEditorText('kept');
@@ -3615,7 +3591,7 @@ final class InteractiveModeTest extends TestCase
             });
         });
 
-        $this->start(hooks: $this->runner($api, 'vim.php'));
+        $this->start(extensionRunner: $this->runner($api, 'vim.php'));
         $this->type('/vim');
         $this->type(self::ENTER);
         $this->settle();
@@ -3645,7 +3621,7 @@ final class InteractiveModeTest extends TestCase
     public function testReplacingThePromptLeavesAnOpenDialogAnswerable(): void
     {
         $answer = null;
-        $api = new HookApi($this->cwd, 'swap.php');
+        $api = new ExtensionApi($this->cwd, 'swap.php');
         $api->registerCommand('swap', static function (string $arguments, $ctx) use (&$answer): void {
             Async::spawn(static function () use ($ctx, &$answer): void {
                 $answer = $ctx->ui->confirm('Keep going?', '');
@@ -3662,7 +3638,7 @@ final class InteractiveModeTest extends TestCase
             });
         });
 
-        $this->start(hooks: $this->runner($api, 'swap.php'));
+        $this->start(extensionRunner: $this->runner($api, 'swap.php'));
         $this->type('/swap');
         $this->type(self::ENTER);
         $this->settle();
@@ -3677,9 +3653,9 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('new', $this->screen());
     }
 
-    private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner
+    private function runner(ExtensionApi $api, string $path = 'deploy.php'): ExtensionRunner
     {
-        return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
+        return new ExtensionRunner([new LoadedExtension($path, $path, $api->name, $api)], $this->cwd);
     }
 
     // ---- naming a point ----------------------------------------------------------------
@@ -3819,7 +3795,7 @@ final class InteractiveModeTest extends TestCase
     {
         file_put_contents($this->cwd . '/notes.txt', "one\ntwo\nthree\n");
 
-        $api = new HookApi($this->cwd, 'guard.php');
+        $api = new ExtensionApi($this->cwd, 'guard.php');
         $api->on('tool_call', function ($event, $context): mixed {
             $context->ui->confirm('Let edit run?', 'notes.txt');
 
@@ -3828,7 +3804,7 @@ final class InteractiveModeTest extends TestCase
 
         $this->start(
             answers: [self::wants('edit', ['path' => 'notes.txt', 'edits' => [['oldText' => 'two', 'newText' => 'TWO']]]), 'done'],
-            hooks: $this->runner($api, 'guard.php'),
+            extensionRunner: $this->runner($api, 'guard.php'),
             tools: ['edit'],
         );
 
@@ -3854,7 +3830,7 @@ final class InteractiveModeTest extends TestCase
     /**
      * The other end of the wire, and the end that was missing.
      *
-     * `HookRunnerTest` drives the runner with a signal handed to it directly; nothing checked
+     * `ExtensionRunnerTest` drives the runner with a signal handed to it directly; nothing checked
      * that the *terminal* hands it one. Taking `signal:` out of `initialize()` here broke no
      * test at all — the same "wired at one end only" shape as the ctrl+o handler that named
      * three classes, made again inside its own fix.
@@ -3862,7 +3838,7 @@ final class InteractiveModeTest extends TestCase
     public function testEscapeStopsACommandAHooksGuardStarted(): void
     {
         $result = null;
-        $api = new HookApi($this->cwd, 'guard.php');
+        $api = new ExtensionApi($this->cwd, 'guard.php');
         $api->on('tool_call', function ($event, $context) use (&$result, $api): mixed {
             // Escape arrives while this is parked on the command, which is the real order: the
             // loop can only deliver the key because the command is not blocking it.
@@ -3878,7 +3854,7 @@ final class InteractiveModeTest extends TestCase
 
         $this->start(
             answers: [self::wants('read', ['path' => 'notes.txt']), 'done'],
-            hooks: $this->runner($api, 'guard.php'),
+            extensionRunner: $this->runner($api, 'guard.php'),
         );
 
         $started = microtime(true);
@@ -4057,7 +4033,7 @@ final class InteractiveModeTest extends TestCase
         // then ran — `agent_settled`, the "task complete" notification, and Working again at once.
         // Upstream's session is streaming for the whole prompt, so the text is steering.
         $settled = 0;
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('agent_settled', static function () use (&$settled): void {
             $settled++;
         });
@@ -4065,7 +4041,7 @@ final class InteractiveModeTest extends TestCase
         $this->start(
             answers: [self::failed('Anthropic returned 503: overloaded'), 'here you go', 'never asked for'],
             settings: Settings::inMemory(['retry' => ['baseDelayMs' => 200]]),
-            hooks: new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd),
+            extensionRunner: new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd),
         );
 
         $this->type('hi');
@@ -4093,9 +4069,9 @@ final class InteractiveModeTest extends TestCase
 
     public function testAHooksMessageIsDrawnAsItsOwnThingNotAsSomethingYouSaid(): void
     {
-        $api = new HookApi('.', 'test.php');
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $api = new ExtensionApi('.', 'test.php');
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('build', 'the build is broken');
@@ -4114,9 +4090,9 @@ final class InteractiveModeTest extends TestCase
     public function testALongHookMessageIsDrawnWholeAndCtrlOLeavesItSo(): void
     {
         // Upstream's default draw of a custom message is not folded.
-        $api = new HookApi('.', 'test.php');
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $api = new ExtensionApi('.', 'test.php');
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         $long = implode("\n", array_map(static fn (int $i): string => "detail {$i}", range(1, 20)));
 
@@ -4134,9 +4110,9 @@ final class InteractiveModeTest extends TestCase
 
     public function testAMessageMarkedNotToDisplayIsNotDrawn(): void
     {
-        $api = new HookApi('.', 'test.php');
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $api = new ExtensionApi('.', 'test.php');
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('reminder', 'only for the model', display: false);
@@ -4151,14 +4127,14 @@ final class InteractiveModeTest extends TestCase
 
     public function testAHookCanDrawItsOwnMessage(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->registerMessageRenderer(
             'build',
             static fn (): Text => new Text('drawn by the hook itself', 0, 0),
         );
 
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('build', 'the plain version');
@@ -4172,11 +4148,11 @@ final class InteractiveModeTest extends TestCase
 
     public function testARendererThatReturnsNullGetsTheDefaultWithoutComplaint(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->registerMessageRenderer('build', static fn (): mixed => null);
 
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('build', 'the plain version');
@@ -4191,11 +4167,11 @@ final class InteractiveModeTest extends TestCase
 
     public function testARendererThatThrowsFallsBackAndSaysSo(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->registerMessageRenderer('build', static fn (): mixed => throw new RuntimeException('bad renderer'));
 
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('build', 'the plain version');
@@ -4211,11 +4187,11 @@ final class InteractiveModeTest extends TestCase
 
     public function testARendererThatReturnsSomethingElseIsAComplaint(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->registerMessageRenderer('build', static fn (): string => 'not a component');
 
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
-        $this->start(answers: ['ok'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
+        $this->start(answers: ['ok'], extensionRunner: $extensionRunner);
 
         Async::spawn(static function () use ($api): void {
             $api->sendMessage('build', 'the plain version');
@@ -4236,7 +4212,7 @@ final class InteractiveModeTest extends TestCase
 
         $store = $this->session->store();
         self::assertNotNull($store);
-        $store->append(new HookMessage('build', [new TextContent('remembered across a restart')]));
+        $store->append(new CustomMessage('build', [new TextContent('remembered across a restart')]));
 
         $path = $store->path;
         $this->mode->stop();
@@ -4267,17 +4243,10 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('wc/index.php', $screen);
     }
 
-    public function testACustomToolIsNamedInTheBanner(): void
-    {
-        $this->start(customTools: $this->tools('wc'));
-
-        $this->assertStringContainsString('[Tools]', $this->screen());
-    }
-
     public function testAnExtensionsToolsAreNotNamedInTheBanner(): void
     {
         // Upstream lists no tools at all: they belong to the extension that registered them, and
-        // a built-in's — codemode, web search — are not even named. [Tools] is for tool folders.
+        // a built-in's — codemode, web search — are not even named.
         $this->start(customTools: $this->tools('wc'));
         $extension = new \Pig\CodingAgent\Extensions\LoadedExtension(
             'wc/index.php',
@@ -4333,7 +4302,7 @@ final class InteractiveModeTest extends TestCase
         $this->start(
             customTools: $this->tools('wc'),
             answers: [self::wants('wc', []), 'done'],
-            hooks: $this->runner(new HookApi($this->cwd, 'bystander.php'), 'bystander.php'),
+            extensionRunner: $this->runner(new ExtensionApi($this->cwd, 'bystander.php'), 'bystander.php'),
         );
 
         $this->type('count them');
@@ -6162,11 +6131,11 @@ final class InteractiveModeTest extends TestCase
             $asked[] = $cwd;
             $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
             $agent->setModel($this->session->model());
-            $hooks = new HookRunner([], $cwd, $opened);
-            $session = new AgentSession($agent, $cwd, $opened, $this->settings, $hooks);
+            $extensionRunner = new ExtensionRunner([], $cwd, $opened);
+            $session = new AgentSession($agent, $cwd, $opened, $this->settings, $extensionRunner);
             $session->restore($opened->messages());
 
-            return new \Pig\CodingAgent\StartedSession($session, $agent->state->model, $session->thinkingLevel(), [], [], [], $hooks, new CustomToolSet([], new \Pig\CodingAgent\CustomTools\CustomToolApi($cwd)), $opened, ['a warning from over there'], true);
+            return new \Pig\CodingAgent\StartedSession($session, $agent->state->model, $session->thinkingLevel(), [], [], [], $extensionRunner, new CustomToolSet(), $opened, ['a warning from over there'], true);
         };
 
         $this->start(store: true, createRuntime: $createRuntime);

@@ -7,12 +7,12 @@ namespace Pig\CodingAgent\Mcp;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\NoUi;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\NoUi;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\Tui\Style;
 use Throwable;
@@ -44,7 +44,7 @@ final class McpMode
         private readonly AgentSession $session,
         public readonly int $port = 8089,
         public readonly string $host = '127.0.0.1',
-        private readonly ?HookRunner $hooks = null,
+        private readonly ?ExtensionRunner $extensionRunner = null,
         private readonly ?CustomToolSet $customTools = null,
         public readonly bool $stdio = false,
     ) {
@@ -91,18 +91,17 @@ final class McpMode
     {
         $this->session->setMode('mcp');
 
-        $this->hooks?->wire($this->session, new NoUi());
+        $this->extensionRunner?->wire($this->session, new NoUi());
 
-        $this->hooks?->onError(static function (HookError $error): void {
-            fwrite(STDERR, "hook {$error->hookPath} ({$error->event}): {$error->error}\n");
+        $this->extensionRunner?->onError(static function (ExtensionError $error): void {
+            fwrite(STDERR, "extension {$error->path} ({$error->stage}): {$error->message}\n");
         });
 
-        $this->customTools?->withUi(new NoUi());
         $this->customTools?->withContext(
-            fn () => $this->hooks?->context() ?? new HookContext($this->session->cwd(), $this->session->store()),
+            fn () => $this->extensionRunner?->context() ?? new ExtensionContext($this->session->cwd(), $this->session->store()),
         );
 
-        $this->hooks?->emit(new SessionStartEvent());
+        $this->extensionRunner?->emit(new SessionStartEvent());
         $this->session->discoverResources('startup');
 
         foreach ($this->customTools?->notify('start') ?? [] as $problem) {
@@ -115,7 +114,7 @@ final class McpMode
     {
         $this->server?->stop();
         $this->server = null;
-        $this->hooks?->emit(new SessionShutdownEvent());
+        $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->customTools?->notify('shutdown');
         $this->session->dispose();
     }

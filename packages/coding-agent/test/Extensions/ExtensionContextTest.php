@@ -31,17 +31,16 @@ use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Extensions\EventBus;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\Events\InputEvent;
-use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
-use Pig\CodingAgent\Hooks\Events\ToolExecutionEndEvent;
-use Pig\CodingAgent\Hooks\Events\ToolExecutionStartEvent;
-use Pig\CodingAgent\Hooks\Events\UserBashEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\InputEventResult;
-use Pig\CodingAgent\Hooks\Results\UserBashEventResult;
+use Pig\CodingAgent\Extensions\Events\InputEvent;
+use Pig\CodingAgent\Extensions\Events\SessionCompactFailedEvent;
+use Pig\CodingAgent\Extensions\Events\ToolExecutionEndEvent;
+use Pig\CodingAgent\Extensions\Events\ToolExecutionStartEvent;
+use Pig\CodingAgent\Extensions\Events\UserBashEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\InputEventResult;
+use Pig\CodingAgent\Extensions\Results\UserBashEventResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -124,16 +123,16 @@ final class ExtensionContextTest extends TestCase
         file_put_contents($extDir . '/producer.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return static function (ExtensionApi $pi): void {
-    $pi->events()->emit('chat', 'hello from producer');
+return static function (ExtensionApi $pig): void {
+    $pig->events()->emit('chat', 'hello from producer');
 };
 PHP);
         file_put_contents($extDir . '/consumer.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return static function (ExtensionApi $pi): void {
-    $pi->events()->on('chat', static function ($msg) use ($pi): void {
-        $pi->registerFlag('saw_' . $msg);
+return static function (ExtensionApi $pig): void {
+    $pig->events()->on('chat', static function ($msg) use ($pig): void {
+        $pig->registerFlag('saw_' . $msg);
     });
 };
 PHP);
@@ -152,12 +151,12 @@ PHP);
 
     public function testInputHandlerCanTransformTextBeforePrompt(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('input', static function (InputEvent $event): InputEventResult {
             return InputEventResult::transform(str_replace('foo', 'bar', $event->text));
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $session = $this->createSession(['ok'], $runner);
 
         Async::run(static fn () => $session->prompt('hello foo world'));
@@ -169,12 +168,12 @@ PHP);
 
     public function testInputHandlerThatReturnsHandledStopsThePromptCompletely(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('input', static function (InputEvent $event): InputEventResult {
             return InputEventResult::handled();
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $session = $this->createSession(['should not be called'], $runner);
 
         Async::run(static fn () => $session->prompt('ignored prompt'));
@@ -186,14 +185,14 @@ PHP);
 
     public function testUserBashHookCanInterceptAndSupplyCustomExecution(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('user_bash', static function (UserBashEvent $event): UserBashEventResult {
             return new UserBashEventResult(
                 new BashExecution($event->command, "intercepted: {$event->command}", 0),
             );
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $session = $this->createSession([], $runner);
 
         $execution = $session->executeBash('echo real');
@@ -206,12 +205,12 @@ PHP);
 
     public function testUserBashHookThatThrowsDoesNotFallBackToLocalExecution(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('user_bash', static function (): UserBashEventResult {
             throw new RuntimeException('remote runner unreachable');
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $session = $this->createSession([], $runner);
 
         $this->assertThrows(RuntimeException::class, static function () use ($session): void {
@@ -223,7 +222,7 @@ PHP);
 
     public function testToolExecutionEventsAreFiredDuringTurn(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $starts = [];
         $ends = [];
 
@@ -234,7 +233,7 @@ PHP);
             $ends[] = [$e->toolName, $e->isError];
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
 
         $model = new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000);
         $agent = new Agent(new AgentOptions(
@@ -296,14 +295,14 @@ PHP);
 
     public function testSessionCompactFailedIsEmittedWhenCompactThrows(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $failures = [];
 
         $api->on('session_compact_failed', static function (SessionCompactFailedEvent $e) use (&$failures): void {
             $failures[] = $e;
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         // Session with no messages — compacting throws "Nothing to compact"
         $session = $this->createSession([], $runner);
 
@@ -356,7 +355,7 @@ PHP);
     {
         $agent = new Agent(new AgentOptions(streamFn: static fn () => new AssistantMessageEventStream(), apiKey: 'k'));
         $agent->setModel(new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
-        $runner = new HookRunner();
+        $runner = new ExtensionRunner();
 
         $customTools = new CustomToolSet([
             new LoadedCustomTool('a.php', 'a.php', new CustomTool('tool_a', 'Tool A', 'A', ['type' => 'object'], static fn () => new AgentToolResult([]))),
@@ -396,17 +395,17 @@ PHP);
 
     public function testExecuteToolRunsToolThroughHookedGateAndValidatesSchema(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $calls = [];
-        $api->on('tool_call', static function (\Pig\CodingAgent\Hooks\Events\ToolCallEvent $e) use (&$calls) {
+        $api->on('tool_call', static function (\Pig\CodingAgent\Extensions\Events\ToolCallEvent $e) use (&$calls) {
             $calls[] = $e->toolName;
             if ($e->input['forbidden'] ?? false) {
-                return new \Pig\CodingAgent\Hooks\Results\ToolCallEventResult(block: true, reason: 'blocked by test');
+                return new \Pig\CodingAgent\Extensions\Results\ToolCallEventResult(block: true, reason: 'blocked by test');
             }
             return null;
         });
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $agent = new Agent(new AgentOptions(streamFn: static fn () => new AssistantMessageEventStream(), apiKey: 'k'));
         $agent->setModel(new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
 
@@ -471,7 +470,7 @@ PHP);
         $session = new AgentSession($agent, '/workspace', null, null, projectTrusted: false);
         $session->setMode('tui');
 
-        $ctx = new HookContext('/workspace', session: $session);
+        $ctx = new ExtensionContext('/workspace', session: $session);
 
         $this->assertSame('tui', $ctx->mode());
         $this->assertFalse($ctx->isProjectTrusted());
@@ -492,7 +491,7 @@ PHP);
         $this->assertArrayHasKey('ctrl+x', $api->shortcuts());
         $this->assertSame('Custom action', $api->shortcuts()['ctrl+x']['description']);
 
-        $runner = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)]);
         $shortcuts = $runner->shortcuts();
         $this->assertArrayHasKey('ctrl+x', $shortcuts);
 
@@ -512,7 +511,7 @@ PHP);
             return "[{$ctx['role']}] " . strtoupper($text);
         });
 
-        $runner = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)]);
         $transformers = $runner->markdownTransformers();
         $this->assertCount(1, $transformers);
 
@@ -545,9 +544,9 @@ PHP);
             return $next();
         });
 
-        $runner = new HookRunner([
-            new LoadedHook('ext1.php', 'ext1.php', $api1),
-            new LoadedHook('ext2.php', 'ext2.php', $api2),
+        $runner = new ExtensionRunner([
+            new LoadedExtension('ext1.php', 'ext1.php', $api1->name, $api1),
+            new LoadedExtension('ext2.php', 'ext2.php', $api2->name, $api2),
         ]);
 
         $res1 = $runner->resolveToolRenderers('special_tool');
@@ -562,12 +561,12 @@ PHP);
         $this->assertNull($resNone);
     }
 
-    public function testRegisterEntryRendererAggregatesOnHookRunner(): void
+    public function testRegisterEntryRendererAggregatesOnExtensionRunner(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->registerEntryRenderer('my-entry', static fn () => new \Pig\Tui\Components\Text('custom entry', 0, 0));
 
-        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)]);
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)]);
         $renderers = $runner->entryRenderers();
 
         $this->assertArrayHasKey('my-entry', $renderers);
@@ -722,7 +721,7 @@ PHP);
     // ---- helpers --------------------------------------------------------------------
 
     /** @param list<string> $answers */
-    private function createSession(array $answers, ?HookRunner $hooks = null, ?SessionManager $store = null): AgentSession
+    private function createSession(array $answers, ?ExtensionRunner $extensionRunner = null, ?SessionManager $store = null): AgentSession
     {
         $index = 0;
         $agent = new Agent(new AgentOptions(
@@ -741,6 +740,6 @@ PHP);
         ));
         $agent->setModel(new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store, null, $hooks);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, null, $extensionRunner);
     }
 }

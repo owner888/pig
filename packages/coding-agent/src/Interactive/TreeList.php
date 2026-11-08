@@ -17,7 +17,7 @@ use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\CustomEntry;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\ThinkingLevelChange;
@@ -612,7 +612,7 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
             $message instanceof ToolResultMessage => 'toolresult ' . $message->toolName
                 . ' ' . ($this->calls[$message->toolCallId] ?? ''),
             $message instanceof BashExecution => 'bash ' . $message->command,
-            $message instanceof HookMessage => 'hook ' . self::textOf($message->content),
+            $message instanceof CustomMessage => 'hook ' . self::textOf($message->content),
             $message instanceof CompactionSummary => 'compaction ' . $message->summary,
             $message instanceof BranchSummary => 'branch summary ' . $message->summary,
             $message instanceof CustomEntry => 'custom ' . $message->customType,
@@ -762,7 +762,7 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
                 'dim',
                 '[bash]: ' . self::oneLine($message->command),
             ),
-            $message instanceof HookMessage => Themes::theme()->fg('customMessageLabel', '[hook]: ')
+            $message instanceof CustomMessage => Themes::theme()->fg('customMessageLabel', '[hook]: ')
                 . self::oneLine(self::textOf($message->content)),
             $message instanceof CompactionSummary => Themes::theme()->fg(
                 'borderAccent',
@@ -977,7 +977,7 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
         $text = match (true) {
             $message instanceof BashExecution => $message->command,
             $message instanceof AssistantMessage => self::fullText($message->content) ?: ($message->errorMessage ?? ''),
-            $message instanceof UserMessage, $message instanceof HookMessage => self::fullText($message->content),
+            $message instanceof UserMessage, $message instanceof CustomMessage => self::fullText($message->content),
             $message instanceof ToolResultMessage => self::fullText($message->content),
             $message instanceof CompactionSummary, $message instanceof BranchSummary => $message->summary,
             default => '',

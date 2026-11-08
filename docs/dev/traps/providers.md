@@ -1163,7 +1163,7 @@ class. See "A provider an extension brings" above.
 
 ## Gemini thinking config chosen by `str_contains($id, 'gemini-3')`: a no-thinking request was a 400, and levels did nothing on Gemma 4 / `-latest`
 
-**Symptom**: requests without a thinking level (the `HookContext` completion, an export summary) were a straight 400 on `google/gemini-3.1-pro-preview` — "Budget 0 is invalid. This model only works in thinking mode" — and likewise on 3.5 Flash Lite; on `gemma-4-*`, `gemini-flash-latest` and `gemini-flash-lite-latest`, `--thinking low` had no effect and the model thought as much as it liked.
+**Symptom**: requests without a thinking level (the `ExtensionContext` completion, an export summary) were a straight 400 on `google/gemini-3.1-pro-preview` — "Budget 0 is invalid. This model only works in thinking mode" — and likewise on 3.5 Flash Lite; on `gemma-4-*`, `gemini-flash-latest` and `gemini-flash-lite-latest`, `--thinking low` had no effect and the model thought as much as it liked.
 
 **Root cause**: `Stream::gemini()` chose level versus budget with `str_contains($id, 'gemini-3')`, so Gemma 4 and the two `-latest` aliases fell to `thinkingBudget: -1`; `Google::thinking()` sent `thinkingBudget: 0` for every "no thinking", and the agent's `ThinkingLevel::clampedFor()` covers only the agent's own requests, so a request without a level never passed through it. Upstream picks the format with `usesGoogleThinkingLevel()` (a regex plus the two aliases plus `/gemma-?4/`) and routes "no thinking" through `getDisabledGoogleThinkingConfig()`: a level model without `off` is sent the lowest level `off` clamps to. Budgets are also looked up by the level `thinkingLevelMap` resolved to, and 2.5 Flash-Lite has a row of its own.
 

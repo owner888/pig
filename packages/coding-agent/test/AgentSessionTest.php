@@ -48,25 +48,24 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
-use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
-use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Extensions\Events\SessionCompactEvent;
+use Pig\CodingAgent\Extensions\Events\SessionCompactFailedEvent;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Session\ToolProgress;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\ModelChoice;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
-use Pig\CodingAgent\Hooks\Results\SessionBeforeForkResult;
-use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeCompactResult;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeForkResult;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\CompactionEndEvent;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\StartedSession;
 use Pig\CodingAgent\Session\SessionCwdIssue;
 use Pig\CodingAgent\Session\SessionCwd;
@@ -325,7 +324,7 @@ final class AgentSessionTest extends TestCase
     public function testAnExtensionIsToldTheSessionIsPrivateAndWhereToSaveThings(): void
     {
         $session = $this->session([]);
-        $context = new \Pig\CodingAgent\Hooks\HookContext(sys_get_temp_dir(), session: $session);
+        $context = new \Pig\CodingAgent\Extensions\ExtensionContext(sys_get_temp_dir(), session: $session);
 
         $this->assertFalse($context->isIncognito());
         $this->assertSame(\Pig\CodingAgent\Config::home() . '/artifacts', $context->artifactsDirectory());
@@ -822,7 +821,7 @@ final class AgentSessionTest extends TestCase
     {
         $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
         $agent->setModel($this->model());
-        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), ['read', 'bash'], new CustomToolSet(), new HookRunner());
+        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), ['read', 'bash'], new CustomToolSet(), new ExtensionRunner());
         $loadout->apply();
         new AgentSession($agent, sys_get_temp_dir(), settings: Settings::inMemory([
             'images' => ['autoResize' => false],
@@ -866,7 +865,7 @@ final class AgentSessionTest extends TestCase
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(['ok', 'ok'], null), apiKey: 'test-key'));
         $agent->setModel($this->model());
         $skill = new Skill('review', 'Review code', "{$dir}/SKILL.md", $dir, 'test');
-        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), [], new CustomToolSet(), new HookRunner(), [], [$skill]);
+        $loadout = new ToolLoadout($agent, sys_get_temp_dir(), [], new CustomToolSet(), new ExtensionRunner(), [], [$skill]);
         $session = new AgentSession($agent, sys_get_temp_dir(), loadout: $loadout);
 
         Async::run(static fn () => $session->prompt('/skill:review src/a.php'));
@@ -1421,7 +1420,7 @@ final class AgentSessionTest extends TestCase
         // system notification hook said "task complete" twice while the task was still going.
         $settled = [];
         $ended = 0;
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'agent_end' => static function () use (&$ended): void {
                 $ended++;
             },
@@ -1437,7 +1436,7 @@ final class AgentSessionTest extends TestCase
                 'here you go',
             ]),
             settings: self::quickRetries(),
-            hooks: $hooks,
+            extensionRunner: $extensionRunner,
         );
 
         Async::run(static function () use ($session): void {
@@ -1454,7 +1453,7 @@ final class AgentSessionTest extends TestCase
     public function testAgentSettledStillFiresWhenNothingWasRetried(): void
     {
         $settled = 0;
-        $session = $this->session(['hello'], hooks: $this->hooks([
+        $session = $this->session(['hello'], extensionRunner: $this->extensionRunner([
             'agent_settled' => static function () use (&$settled): void {
                 $settled++;
             },
@@ -1633,8 +1632,8 @@ final class AgentSessionTest extends TestCase
                 [],
                 [],
                 [],
-                new HookRunner([], $cwd),
-                new CustomToolSet([], new CustomToolApi($cwd)),
+                new ExtensionRunner([], $cwd),
+                new CustomToolSet(),
                 $opened,
                 [],
                 true,
@@ -1986,7 +1985,7 @@ final class AgentSessionTest extends TestCase
                 'answered after summarising',
             ]),
             settings: self::quickRetries(['keepRecentTokens' => 1]),
-            hooks: $this->hooks(['session_before_compact' => $record, 'session_compact' => $record]),
+            extensionRunner: $this->extensionRunner(['session_before_compact' => $record, 'session_compact' => $record]),
         );
 
         Async::run(static function () use ($session): void {
@@ -2045,7 +2044,7 @@ final class AgentSessionTest extends TestCase
                 return $this->replay('done');
             },
             store: $store,
-            hooks: $this->hooks(['session_before_compact' => static fn (SessionBeforeCompactEvent $event) => new SessionBeforeCompactResult(
+            extensionRunner: $this->extensionRunner(['session_before_compact' => static fn (SessionBeforeCompactEvent $event) => new SessionBeforeCompactResult(
                 compaction: new \Pig\CodingAgent\Session\CompactionResult('summary', $event->preparation->firstKeptEntryId, $event->preparation->tokensBefore),
             )]),
         );
@@ -2066,7 +2065,7 @@ final class AgentSessionTest extends TestCase
     public function testAFailedCompactionIsReportedInUpstreamsWords(): void
     {
         $failed = [];
-        $session = $this->session([], settings: self::quickRetries(['keepRecentTokens' => 1]), hooks: $this->hooks([
+        $session = $this->session([], settings: self::quickRetries(['keepRecentTokens' => 1]), extensionRunner: $this->extensionRunner([
             'session_before_compact' => static fn () => new SessionBeforeCompactResult(cancel: true),
             'session_compact_failed' => static function (SessionCompactFailedEvent $event) use (&$failed): void {
                 $failed[] = $event;
@@ -2768,7 +2767,7 @@ final class AgentSessionTest extends TestCase
         // and was ignored over RPC until the recipe moved in here. Both doors, because a guard
         // on one of two is the shape that got it wrong the first time.
         $asked = [];
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_before_switch' => function (mixed $event) use (&$asked): SessionBeforeSwitchResult {
                 $asked[] = $event->reason;
 
@@ -2777,7 +2776,7 @@ final class AgentSessionTest extends TestCase
         ]);
 
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session(['hello'], store: $store, hooks: $hooks);
+        $session = $this->session(['hello'], store: $store, extensionRunner: $extensionRunner);
         Async::run(static fn () => $session->prompt('the conversation I am in'));
 
         $new = $session->startNew();
@@ -2830,12 +2829,12 @@ final class AgentSessionTest extends TestCase
         // goes through `ask()`, whose decisiveness predicate is `$r->cancel`, so a result that
         // does not cancel never comes back at all. The two checks are one rule in two places —
         // harmless, and the reason this case passes either way is measured rather than assumed.
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_before_switch' => static fn (): SessionBeforeSwitchResult
                 => new SessionBeforeSwitchResult(cancel: false),
         ]);
 
-        $session = $this->session(['hello'], store: SessionManager::create(sys_get_temp_dir()), hooks: $hooks);
+        $session = $this->session(['hello'], store: SessionManager::create(sys_get_temp_dir()), extensionRunner: $extensionRunner);
         Async::run(static fn () => $session->prompt('hi'));
 
         $this->assertTrue($session->startNew()->switched);
@@ -2850,7 +2849,7 @@ final class AgentSessionTest extends TestCase
     {
         $seen = [];
         $shutdowns = [];
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_start' => function (mixed $event) use (&$seen): null {
                 $seen[] = [$event->reason, $event->previousSessionFile];
 
@@ -2864,7 +2863,7 @@ final class AgentSessionTest extends TestCase
         ]);
 
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session(['hello'], store: $store, hooks: $hooks);
+        $session = $this->session(['hello'], store: $store, extensionRunner: $extensionRunner);
         Async::run(static fn () => $session->prompt('hi'));
 
         $session->startNew();
@@ -2946,7 +2945,7 @@ final class AgentSessionTest extends TestCase
     public function testAHookCanRefuseAForkAndIsToldWhichKindItWas(): void
     {
         $asked = [];
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_before_fork' => function (mixed $event) use (&$asked): SessionBeforeForkResult {
                 $asked[] = $event->position;
 
@@ -2954,7 +2953,7 @@ final class AgentSessionTest extends TestCase
             },
         ]);
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session(['one'], store: $store, hooks: $hooks);
+        $session = $this->session(['one'], store: $store, extensionRunner: $extensionRunner);
         Async::run(static fn () => $session->prompt('a question'));
         $leaf = (string) $store->leaf();
 
@@ -2966,7 +2965,7 @@ final class AgentSessionTest extends TestCase
     public function testTheHooksHearAForkAsAForkOnceItHasHappened(): void
     {
         $seen = [];
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_shutdown' => function (mixed $event) use (&$seen): null {
                 $seen[] = ['shutdown', $event->reason, $event->targetSessionFile];
 
@@ -2979,7 +2978,7 @@ final class AgentSessionTest extends TestCase
             },
         ]);
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session(['one'], store: $store, hooks: $hooks);
+        $session = $this->session(['one'], store: $store, extensionRunner: $extensionRunner);
         Async::run(static fn () => $session->prompt('a question'));
 
         Async::run(static fn (): SessionSwitch => $session->fork((string) $store->leaf(), 'at'));
@@ -3341,15 +3340,15 @@ final class AgentSessionTest extends TestCase
     }
 
     /** @param array<string, callable> $handlers */
-    private function hooks(array $handlers): HookRunner
+    private function extensionRunner(array $handlers): ExtensionRunner
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
 
         foreach ($handlers as $event => $handler) {
             $api->on($event, $handler);
         }
 
-        return new HookRunner([new LoadedHook('test.php', 'test.php', $api)], sys_get_temp_dir());
+        return new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], sys_get_temp_dir());
     }
 
     private function session(
@@ -3360,7 +3359,7 @@ final class AgentSessionTest extends TestCase
         ?SessionManager $store = null,
         ?Settings $settings = null,
         ?Closure $getApiKey = null,
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?Auth $auth = null,
     ): AgentSession {
         $agent = new Agent(new AgentOptions(
@@ -3374,7 +3373,7 @@ final class AgentSessionTest extends TestCase
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $hooks, auth: $auth);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $extensionRunner, auth: $auth);
     }
 
     /**

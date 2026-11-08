@@ -32,7 +32,7 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\Utils\MessageJson;
-use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
+use Pig\CodingAgent\Extensions\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSettledEvent;
 use Pig\CodingAgent\Session\BashExecutionUpdateEvent;
 use Pig\CodingAgent\Session\CompactionEndEvent;

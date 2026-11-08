@@ -7,9 +7,7 @@ namespace Pig\CodingAgent\Extensions;
 use Closure;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Config;
-use Pig\CodingAgent\Hooks\DeclaredSymbols;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookLoader;
+use Pig\CodingAgent\Extensions\DeclaredSymbols;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Tools\Paths;
@@ -257,6 +255,17 @@ final class ExtensionLoader
     /**
      * Scan a directory for *.php files and subdirectories with index.php.
      *
+     * Not recursive, and sorted so that two machines with the same files load them in the
+     * same order — extensions run in load order, and readdir order is not an order.
+     *
+     * A `glob()` rather than a scan, and here that is the point rather than an oversight:
+     * a glob does not match a leading dot, and an extension directory is a directory somebody
+     * *edits*. Emacs writes a `.#name.php` symlink beside the file it has open, which ends
+     * in `.php` — upstream's `readdirSync` picks it up (it accepts symlinks) and reports a
+     * load error for as long as the editor is open. `Migrations` has the opposite rule, and
+     * for the opposite reason: missing a session file there loses somebody's conversation,
+     * where missing a dotfile here is how an editor's droppings stay out of the way.
+     *
      * @return list<string>
      */
     public static function discover(string $directory): array
@@ -286,6 +295,55 @@ final class ExtensionLoader
     public static function inProjectFolder(string $cwd): array
     {
         return PackageManager::declaredFiles($cwd, 'extensions') ?? self::discover($cwd . '/extensions');
+    }
+
+    /**
+     * What is still in a hooks or tools folder, or named under a `hooks` or `customTools`
+     * setting, now that both are extensions — one line per find, each saying where it goes.
+     * Empty when there is nothing.
+     *
+     * `~/.pig/agent/hooks` and `<cwd>/.pig/hooks` were the hook folders, `~/.pig/agent/tools/<name>/index.php`
+     * and the same under `<cwd>/.pig/tools` the tool folders; `hooks` and `customTools` in the
+     * settings named more. A hook file is an extension file already: it returns a factory, and
+     * what the factory is handed has every method `HookApi` had. A tool file returned a
+     * `CustomTool` (or a list) from a factory handed `CustomToolApi`; as an extension it
+     * `$pig->registerTool()`s each one instead, and `$pig->exec()` is the `exec()` it had.
+     *
+     * @param mixed $hooksSetting the raw `hooks` setting, whatever it is
+     * @param mixed $customTools the raw `customTools` setting, whatever it is
+     * @return list<string>
+     */
+    public static function legacyFiles(string $cwd, mixed $hooksSetting = null, mixed $customTools = null, ?string $home = null): array
+    {
+        $home ??= Config::home();
+        $cwd = rtrim($cwd, '/');
+        $found = [];
+
+        foreach ([$home . '/hooks' => $home . '/extensions', $cwd . '/.pig/hooks' => $cwd . '/.pig/extensions'] as $folder => $instead) {
+            foreach (glob($folder . '/*.php', GLOB_NOSORT) ?: [] as $file) {
+                $found[] = "{$file}: hooks are extensions now — move it to {$instead}/ and it loads as it is";
+            }
+        }
+
+        if (is_array($hooksSetting) && $hooksSetting !== []) {
+            $found[] = 'the `hooks` setting: hooks are extensions now — name these files under `extensions` instead';
+        }
+
+        foreach ([$home . '/tools' => $home . '/extensions', $cwd . '/.pig/tools' => $cwd . '/.pig/extensions'] as $folder => $instead) {
+            foreach (glob($folder . '/*/index.php', GLOB_NOSORT) ?: [] as $file) {
+                $found[] = "{$file}: tool files are extensions now — move the folder to {$instead}/ and have its factory `\$pig->registerTool()` each tool it returned";
+            }
+        }
+
+        if (is_array($customTools) && $customTools !== []) {
+            $found[] = 'the `customTools` setting: tool files are extensions now — name these files under `extensions` instead, once they register their tools';
+        }
+
+        if ($found !== []) {
+            $found[] = '(`Pig\\CodingAgent\\Extensions\\HookApi` and `Pig\\CodingAgent\\CustomTools\\CustomToolApi` are `Pig\\CodingAgent\\Extensions\\ExtensionApi` now, which has everything they had)';
+        }
+
+        return $found;
     }
 
     /**
@@ -332,7 +390,7 @@ final class ExtensionLoader
             Timings::time("{$label} module import", 'extensions');
 
             if ($kept['changed']) {
-                $note = new ExtensionError($path, 'reload', 'declares ' . HookLoader::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
+                $note = new ExtensionError($path, 'reload', 'declares ' . self::listOf($declared) . ', which PHP cannot unload — running the version loaded at startup; restart pig to pick up the change');
             }
         } else {
             // Already in this process through another file's `require_once` — a helper beside an
@@ -401,13 +459,37 @@ final class ExtensionLoader
         return [new LoadedExtension($path, $resolved, $name, $api), $note];
     }
 
-    private static function evaluate(string $path): mixed
+    /**
+     * The declared names for a message: the first few and a count, because an extension with
+     * twelve classes is twelve names nobody needs to read.
+     *
+     * @param list<string> $names
+     */
+    public static function listOf(array $names): string
     {
-        return (static fn (): mixed => require $path)();
+        $shown = array_slice($names, 0, 3);
+        $rest = count($names) - count($shown);
+
+        return implode(', ', $shown) . ($rest > 0 ? " and {$rest} more" : '');
     }
 
+    /**
+     * `require`, in a scope of its own.
+     *
+     * Static so the file cannot reach `$this`, and with one oddly-named parameter so that an
+     * extension writing `$path` at the top level is writing its own variable, not ours.
+     */
+    private static function evaluate(string $pigExtensionPath): mixed
+    {
+        return (static fn (): mixed => require $pigExtensionPath)();
+    }
+
+    /** A throwable as one line, with where it came from when that is not obvious. */
     private static function describe(Throwable $error): string
     {
-        return $error::class . ': ' . $error->getMessage();
+        $type = $error::class;
+        $where = basename($error->getFile()) . ':' . $error->getLine();
+
+        return "{$type}: {$error->getMessage()} ({$where})";
     }
 }

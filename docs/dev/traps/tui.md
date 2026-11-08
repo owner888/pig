@@ -184,7 +184,7 @@ row hangs in the margin.
 **Then the same question was asked of everything else that builds its own lines**, which is the half
 that makes this worth an entry rather than a fix: `FooterComponent` and `TreeList` measure and
 truncate, `DiffView` hands back a string that goes through `Text`, and `ToolExecutionComponent`,
-`UserMessageComponent`, `HookMessageComponent`, `BorderedLoader` and the banner are
+`UserMessageComponent`, `CustomMessageComponent`, `BorderedLoader` and the banner are
 `Text`/`Markdown`/`Container` all the way down, which wrap and pad by themselves.
 
 **That sweep named `BashOutputComponent` as one of the safe ones and it was not**, which is worth
@@ -498,7 +498,7 @@ UTF-8 half of that function and not this one** — because the UTF-8 half arrive
 control-character half was never missed.
 
 Three transcript paths carry text that is not pig's own words, and **all three were different**: the
-tool view sanitised UTF-8, `DiffView` gained it a batch later, and `HookMessageComponent` had
+tool view sanitised UTF-8, `DiffView` gained it a batch later, and `CustomMessageComponent` had
 neither — so a hook that sent a build log with one stray byte in it took the session down, which is
 the same killer a third time. `Tools\Shell::sanitize()` is the one rule now: escape sequences out,
 malformed UTF-8 out, every control character but tab and newline out.
@@ -533,7 +533,7 @@ remember:
 Regression tests: the five `ToolExecutionTest::testAControlCharacterInToolOutputNeverReachesTheTerminal`
 rows, `DiffViewTest::testADiffOfAFileWithAFormFeedInItDoesNotMoveTheCursor` — a form feed is legal in
 C and ordinary in Emacs-era source — and
-`HookMessagesTest::testABuildLogAHookSentIsDrawnWhateverBytesAreInIt`.
+`CustomMessagesTest::testABuildLogAHookSentIsDrawnWhateverBytesAreInIt`.
 
 ## A budget handed out by flooring has to be corrected in both directions
 
@@ -884,7 +884,7 @@ from it.
 Regression tests: `InteractiveModeTest::testATurnEndingDoesNotEraseAnOpenScreenFromUnderTheCursor`
 (fails if `showSettings()` is pointed back at `$status`),
 `testAWorkingLoaderAndAnOpenScreenBothFitOnTheScreen`, and
-`HookUiTest::testADialogIsRefusedWhileSomethingElseHoldsTheOverlay`,
+`ExtensionUiTest::testADialogIsRefusedWhileSomethingElseHoldsTheOverlay`,
 `testARefusedDialogSaysWhyRatherThanFailingQuietly`,
 `testTheOverlayBeingFreeAgainLetsTheNextOneThrough` (all three fail with the overlay half of
 `canAsk()` removed).
@@ -1751,7 +1751,7 @@ Two things follow, and both are load-bearing rather than tidy:
   focus from the first and leave *its* fiber unreachable. The refusal answers with the safe
   value — null, or false for `confirm()`.
 
-Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
+Tests: `ExtensionUiTest::testEscapingAnInputAnswersWithNothing`,
 `testASecondDialogIsRefusedRatherThanStacked`, and the three
 `testAGuardCanAskBeforeLettingAToolRun` cases that drive the whole chain.
 
@@ -1932,10 +1932,10 @@ equivalent here yet.
 
 **Countermeasure**:
 1. Added `SessionInfoEntry` and mapped it in `SessionEntries` and `SessionManager` (`sessionName()` / `setSessionName()`), with persistence in `.jsonl` files and preview support in `/resume` (`describe()`).
-2. Added `sessionName()` / `getSessionName()` and `setSessionName()` across `AgentSession`, `HookApi`, and `HookContext`, wired to trigger `onSessionNameChanged` and immediately request a TUI re-render.
-3. Extended `HookApi::EVENTS` with `session_info_changed`, `message_start`, `message_update`, `message_end`, and `agent_settled`, forwarding them from `AgentSession::tellHooks()`.
-4. Provided `$ctx->complete($prompt)` and `$ctx->apiKey($model)` in `HookContext`, enabling background tasks to seamlessly execute LLM completions using active session credentials.
-5. In `smart-session.php`, supported both `instanceof AssistantMessage` and role checks, set title generation budget to 1000 tokens matching upstream, and bound speed telemetry and auto-summarization to `$pi->setSessionName(...)`.
+2. Added `sessionName()` / `getSessionName()` and `setSessionName()` across `AgentSession`, `ExtensionApi`, and `ExtensionContext`, wired to trigger `onSessionNameChanged` and immediately request a TUI re-render.
+3. Extended `ExtensionApi::EVENTS` with `session_info_changed`, `message_start`, `message_update`, `message_end`, and `agent_settled`, forwarding them from `AgentSession::tellHooks()`.
+4. Provided `$ctx->complete($prompt)` and `$ctx->apiKey($model)` in `ExtensionContext`, enabling background tasks to seamlessly execute LLM completions using active session credentials.
+5. In `smart-session.php`, supported both `instanceof AssistantMessage` and role checks, set title generation budget to 1000 tokens matching upstream, and bound speed telemetry and auto-summarization to `$pig->setSessionName(...)`.
 6. Added `/name` built-in slash command to view or rename the current session on the fly.
 7. In `FooterComponent::where()`, appended ` • {$sessionName}` beside git branch, rendering the identical top line.
 

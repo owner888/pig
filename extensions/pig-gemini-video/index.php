@@ -11,7 +11,7 @@ use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Throwable;
 
 /**
@@ -23,12 +23,12 @@ use Throwable;
  *
  * How it gets there — the Antigravity subscription or a Gemini API key — is {@see GeminiVideo}'s.
  */
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     require_once __DIR__ . '/src/GeminiVideo.php';
 
-    $video = new GeminiVideo(static fn (string $name): mixed => $pi->getSettings()?->get("geminiVideo.{$name}"));
+    $video = new GeminiVideo(static fn (string $name): mixed => $pig->getSettings()?->get("geminiVideo.{$name}"));
 
-    $pi->registerTool(new CustomTool(
+    $pig->registerTool(new CustomTool(
         name: 'analyze_video',
         label: 'Analyze Video',
         description: 'Watch a local video file with Google Gemini, which understands video (motion, audio, on-screen text, UI flows), '
@@ -49,7 +49,7 @@ return static function (ExtensionApi $pi): void {
             ],
             'required' => ['path'],
         ],
-        execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($video): AgentToolResult {
+        execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($video): AgentToolResult {
             $path = trim((string) ($params['path'] ?? ''));
             if ($path === '') {
                 throw new InvalidArgumentException('path must not be empty');
@@ -69,9 +69,9 @@ return static function (ExtensionApi $pi): void {
         },
     ));
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'gemini-video',
-        static function (string $args, HookContext $ctx) use ($pi, $video): void {
+        static function (string $args, ExtensionContext $ctx) use ($pig, $video): void {
             $parts = preg_split('/\s+/', trim($args), 2) ?: [];
             $path = trim($parts[0] ?? '', "'\"");
             $prompt = trim($parts[1] ?? '') ?: GeminiVideo::DEFAULT_PROMPT;
@@ -97,7 +97,7 @@ return static function (ExtensionApi $pi): void {
 
             // Into the conversation and on screen, so the model can see it and talk about it next —
             // but not a turn of its own: the person asked to watch, not to be answered.
-            $pi->sendMessage(
+            $pig->sendMessage(
                 'gemini-video',
                 '🎬 Gemini (' . ($result['route'] === 'antigravity' ? 'antigravity · ' : '') . "{$result['model']}) on " . basename($path) . ":\n\n{$result['text']}",
                 display: true,

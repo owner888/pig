@@ -19,13 +19,13 @@ use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
-use Pig\CodingAgent\Hooks\Events\BeforeProviderHeadersEvent;
-use Pig\CodingAgent\Hooks\Events\BeforeProviderRequestEvent;
-use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
+use Pig\CodingAgent\Extensions\Events\AfterProviderResponseEvent;
+use Pig\CodingAgent\Extensions\Events\BeforeProviderHeadersEvent;
+use Pig\CodingAgent\Extensions\Events\BeforeProviderRequestEvent;
+use Pig\CodingAgent\Extensions\Events\ProviderStreamEvent;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\BeforeProviderRequestResult;
 use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Settings;
@@ -119,7 +119,7 @@ final class ExtensionApiTest extends TestCase
 
             return null;
         });
-        $runner = new HookRunner([new LoadedHook('jira.php', 'jira.php', $jira)], '/work');
+        $runner = new ExtensionRunner([new LoadedExtension('jira.php', 'jira.php', $jira->name, $jira)], '/work');
         $runner->initialize(static fn () => null);
 
         $jira->registerMcpServer('jira', ['command' => 'x']);
@@ -132,7 +132,7 @@ final class ExtensionApiTest extends TestCase
 
         // Without a handler the registration is reported once, as a loading complaint.
         $alone = new ExtensionApi('/work', 'alone.php', 'alone');
-        $runner = new HookRunner([new LoadedHook('alone.php', 'alone.php', $alone)], '/work');
+        $runner = new ExtensionRunner([new LoadedExtension('alone.php', 'alone.php', $alone->name, $alone)], '/work');
         $errors = [];
         $runner->onError(static function ($e) use (&$errors): void {
             $errors[] = $e->toText();
@@ -212,8 +212,8 @@ final class ExtensionApiTest extends TestCase
         $agent = new Agent(new AgentOptions(apiKey: 'test-key'));
         $sonnet = Models::get('claude-sonnet-4-5') ?? throw new \RuntimeException('no sonnet');
         $agent->setModel(new Model($sonnet->id, $sonnet->name, $sonnet->api, $sonnet->provider, rtrim($url, '/'), $sonnet->contextWindow, $sonnet->maxTokens, $sonnet->reasoning, $sonnet->input, $sonnet->pricing, $sonnet->headers, $sonnet->compat, $sonnet->thinkingLevelMap));
-        $hooks = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work');
-        $session = new AgentSession($agent, '/work', null, Settings::inMemory(), $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)], '/work');
+        $session = new AgentSession($agent, '/work', null, Settings::inMemory(), $extensionRunner);
 
         Async::run(static fn () => $session->prompt('hi'));
 
@@ -248,7 +248,7 @@ final class ExtensionApiTest extends TestCase
         $api->on('after_provider_response', static function () use (&$seen): void {
             $seen = true;
         });
-        $session = $this->session(new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work'));
+        $session = $this->session(new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)], '/work'));
 
         $url = $this->server->start(["HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"]);
 
@@ -307,7 +307,7 @@ final class ExtensionApiTest extends TestCase
         ExtensionApi::useSettings($settings);
         $this->assertSame('light', $api->getSettings()?->theme());
 
-        $runner = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work');
+        $runner = new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)], '/work');
         $session = $this->session($runner);
         $api->withContext(static fn () => $runner->context());
 
@@ -323,7 +323,7 @@ final class ExtensionApiTest extends TestCase
     public function testSendUserMessageStartsATurnWhenIdle(): void
     {
         $api = new ExtensionApi('/work', 'probe.php', 'probe');
-        $runner = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work');
+        $runner = new ExtensionRunner([new LoadedExtension('probe.php', 'probe.php', $api->name, $api)], '/work');
         $session = $this->session($runner);
         $api->withContext(static fn () => $runner->context());
 
@@ -340,7 +340,7 @@ final class ExtensionApiTest extends TestCase
 
     // ---- helpers ------------------------------------------------------------------------
 
-    private function session(HookRunner $hooks): AgentSession
+    private function session(ExtensionRunner $extensionRunner): AgentSession
     {
         $agent = new Agent(new AgentOptions(
             streamFn: static function (Model $model, TranscriptContext $context): \Pig\Ai\Utils\AssistantMessageEventStream {
@@ -359,8 +359,8 @@ final class ExtensionApiTest extends TestCase
         ));
         $agent->setModel(Models::get('claude-sonnet-4-5') ?? throw new \RuntimeException('no sonnet'));
 
-        $session = new AgentSession($agent, '/work', null, Settings::inMemory(), $hooks);
-        $hooks->setSession($session);
+        $session = new AgentSession($agent, '/work', null, Settings::inMemory(), $extensionRunner);
+        $extensionRunner->setSession($session);
 
         return $session;
     }

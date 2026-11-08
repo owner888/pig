@@ -11,7 +11,7 @@ use Pig\Async\Future;
  * Upstream's `LlamaUi` (`extensions/llama/ui.ts`): the screens `/llama` moves between.
  *
  * Upstream's methods answer promises; here a method that waits parks the calling fiber and answers
- * the value, as every `HookUi` dialog does — except `progress()`, which `runWithProgress()` races
+ * the value, as every `ExtensionUi` dialog does — except `progress()`, which `runWithProgress()` races
  * against the work it reports on, so it answers the `Future` itself.
  *
  * An action is upstream's `LlamaManagerAction`: `['type' => 'model', 'model' => …]`, `['type' =>

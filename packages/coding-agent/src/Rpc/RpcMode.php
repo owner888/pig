@@ -19,11 +19,11 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\ModelRefresh;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use JsonException;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CompactionEndEvent;
@@ -102,7 +102,7 @@ final class RpcMode
     public function __construct(
         private AgentSession $session,
         private string $cwd,
-        private ?HookRunner $hooks = null,
+        private ?ExtensionRunner $extensionRunner = null,
         private ?CustomToolSet $customTools = null,
         private ?Settings $settings = null,
         private readonly ?Auth $auth = null,
@@ -159,7 +159,7 @@ final class RpcMode
             }
         }
 
-        $this->hooks?->emit(new SessionStartEvent());
+        $this->extensionRunner?->emit(new SessionStartEvent());
         $this->session->discoverResources('startup');
         $this->report($this->customTools?->notify('start') ?? []);
     }
@@ -181,21 +181,20 @@ final class RpcMode
         });
 
         // Each mode wires its own UI; this one's is the protocol.
-        $this->hooks?->wire($this->session, $this->ui);
+        $this->extensionRunner?->wire($this->session, $this->ui);
 
         // Upstream's `extension_error`, with its three fields.
-        $this->hooks?->onError(function (HookError $error): void {
+        $this->extensionRunner?->onError(function (ExtensionError $error): void {
             $this->send([
                 'type' => 'extension_error',
-                'extensionPath' => $error->hookPath,
-                'event' => $error->event,
-                'error' => $error->error,
+                'extensionPath' => $error->path,
+                'event' => $error->stage,
+                'error' => $error->message,
             ]);
         });
 
-        $this->customTools?->withUi($this->ui);
         $this->customTools?->withContext(
-            fn () => $this->hooks?->context() ?? new HookContext($this->cwd, ui: $this->ui, hasUi: true),
+            fn () => $this->extensionRunner?->context() ?? new ExtensionContext($this->cwd, ui: $this->ui, hasUi: true),
         );
     }
 
@@ -210,7 +209,7 @@ final class RpcMode
 
         $this->session = $started->session;
         $this->cwd = $started->session->cwd();
-        $this->hooks = $started->hooks;
+        $this->extensionRunner = $started->extensionRunner;
         $this->customTools = $started->customTools;
         $this->settings = $started->session->settings();
         $this->bindSession();
@@ -219,7 +218,7 @@ final class RpcMode
             fwrite($this->err, $warning . "\n");
         }
 
-        $this->hooks->emit(new SessionStartEvent('resume', $previous));
+        $this->extensionRunner->emit(new SessionStartEvent('resume', $previous));
         $this->session->discoverResources('startup');
         $this->report($this->customTools->notify('switch', $previous));
     }
@@ -231,7 +230,7 @@ final class RpcMode
             $this->watcher = null;
         }
 
-        $this->hooks?->emit(new SessionShutdownEvent());
+        $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->report($this->customTools?->notify('shutdown') ?? []);
         $this->session->dispose();
     }
@@ -1016,14 +1015,14 @@ final class RpcMode
     {
         $commands = [];
 
-        foreach ($this->hooks?->commands()[0] ?? [] as $name => $command) {
+        foreach ($this->extensionRunner?->commands()[0] ?? [] as $name => $command) {
             $commands[] = [
                 'name' => (string) $name,
                 ...($command->description === '' ? [] : ['description' => $command->description]),
                 'source' => 'extension',
                 'sourceInfo' => $this->sourceInfo(
-                    $command->hookPath,
-                    str_starts_with($command->hookPath, rtrim($this->cwd, '/') . '/') ? 'project' : 'user',
+                    $command->extensionPath,
+                    str_starts_with($command->extensionPath, rtrim($this->cwd, '/') . '/') ? 'project' : 'user',
                 ),
             ];
         }

@@ -21,11 +21,11 @@ use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\CacheWarmingDecisionEventResult;
+use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\CacheWarmingDecisionEventResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\UsageEntry;
@@ -104,14 +104,14 @@ final class CacheWarmingSessionTest extends TestCase
     public function testAHookHasTheLastWordOnEachRefresh(): void
     {
         $asked = [];
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $api->on('cache_warming_decision', static function (CacheWarmingDecisionEvent $event) use (&$asked): CacheWarmingDecisionEventResult {
             $asked[] = $event;
 
             return new CacheWarmingDecisionEventResult('stop');
         });
         $store = SessionManager::create(sys_get_temp_dir());
-        $session = $this->session($store, Settings::inMemory(['cacheWarming' => 'idle']), new HookRunner([new LoadedHook('test.php', 'test.php', $api)], sys_get_temp_dir()));
+        $session = $this->session($store, Settings::inMemory(['cacheWarming' => 'idle']), new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], sys_get_temp_dir()));
         $session->enableCacheWarming();
 
         Async::run(function () use ($session): void {
@@ -154,7 +154,7 @@ final class CacheWarmingSessionTest extends TestCase
         $this->assertCount(1, $this->requests);
     }
 
-    private function session(SessionManager $store, Settings $settings, ?HookRunner $hooks = null): AgentSession
+    private function session(SessionManager $store, Settings $settings, ?ExtensionRunner $extensionRunner = null): AgentSession
     {
         $agent = new Agent(new AgentOptions(
             streamFn: function (Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream {
@@ -178,7 +178,7 @@ final class CacheWarmingSessionTest extends TestCase
             promptCache: ['short' => 10.1],
         ));
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $hooks);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $extensionRunner);
     }
 
     private static function answer(Model $model, Usage $usage): AssistantMessageEventStream

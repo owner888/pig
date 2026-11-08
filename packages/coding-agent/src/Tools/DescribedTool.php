@@ -19,7 +19,7 @@ use Pig\Async\AbortSignal;
  *
  * Only the definition's description changes; the name, the schema, the sampling and the
  * execution are the tool's own, so to everything but the model it is the same tool. A
- * decorator for `HookedTool`'s reason: PHP has interfaces where upstream spreads the tool
+ * decorator for `ExtensionGuardedTool`'s reason: PHP has interfaces where upstream spreads the tool
  * into a literal with one field replaced.
  */
 final readonly class DescribedTool implements AgentTool, ReplayableTool, PreparesArguments

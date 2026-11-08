@@ -10,7 +10,7 @@ use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 
 final class ExtensionLoaderTest extends TestCase
 {
@@ -66,8 +66,8 @@ final class ExtensionLoaderTest extends TestCase
         file_put_contents($fileExt, <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerCommand('greet', fn ($args, $ctx) => null, 'Say hello');
+return function (ExtensionApi $pig): void {
+    $pig->registerCommand('greet', fn ($args, $ctx) => null, 'Say hello');
 };
 PHP);
 
@@ -80,8 +80,8 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-return function (ExtensionApi $pi): void {
-    $pi->registerTool(new CustomTool(
+return function (ExtensionApi $pig): void {
+    $pig->registerTool(new CustomTool(
         name: 'sample_tool',
         label: 'Sample Tool',
         description: 'Sample description',
@@ -117,7 +117,7 @@ PHP);
         file_put_contents($this->cwd . '/composer.json', json_encode(['name' => 'me/thing', 'extra' => ['pig' => ['extensions' => ['./extensions/entry.php']]]]));
         file_put_contents($this->cwd . '/extensions/Alpha.php', "<?php\nnamespace {$ns};\nrequire_once __DIR__ . '/Beta.php';\nfinal class Alpha {}\n");
         file_put_contents($this->cwd . '/extensions/Beta.php', "<?php\nnamespace {$ns};\nfinal class Beta {}\n");
-        file_put_contents($this->cwd . '/extensions/entry.php', "<?php\nrequire_once __DIR__ . '/Alpha.php';\nreturn static function (\\Pig\\CodingAgent\\Extensions\\ExtensionApi \$pi): void {\n    \$pi->registerCommand('entry', static fn () => null, 'the entry');\n};\n");
+        file_put_contents($this->cwd . '/extensions/entry.php', "<?php\nrequire_once __DIR__ . '/Alpha.php';\nreturn static function (\\Pig\\CodingAgent\\Extensions\\ExtensionApi \$pig): void {\n    \$pig->registerCommand('entry', static fn () => null, 'the entry');\n};\n");
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: true);
 
@@ -131,7 +131,7 @@ PHP);
         // No manifest, so every file is tried — `Alpha` first, which pulls `Beta` in. `Beta`'s own
         // turn must not `require` it again: that fatal error is beyond any `catch`.
         $ns = 'PigLoaderHelper' . bin2hex(random_bytes(4));
-        file_put_contents($this->cwd . '/extensions/Alpha.php', "<?php\nnamespace {$ns};\nrequire_once __DIR__ . '/Beta.php';\nreturn static function (\$pi): void {};\n");
+        file_put_contents($this->cwd . '/extensions/Alpha.php', "<?php\nnamespace {$ns};\nrequire_once __DIR__ . '/Beta.php';\nreturn static function (\$pig): void {};\n");
         file_put_contents($this->cwd . '/extensions/Beta.php', "<?php\nnamespace {$ns};\nfinal class Beta {}\n");
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir, projectTrusted: true);
@@ -157,7 +157,7 @@ PHP);
                 mkdir($dir, 0755, true);
             }
             file_put_contents($dir . '/Helper.php', "<?php\nnamespace {$ns};\ninterface Helper {}\n// {$version}\n");
-            file_put_contents($dir . '/entry.php', "<?php\nrequire_once __DIR__ . '/Helper.php';\nreturn static function (\$pi): void {};\n");
+            file_put_contents($dir . '/entry.php', "<?php\nrequire_once __DIR__ . '/Helper.php';\nreturn static function (\$pig): void {};\n");
 
             return $dir . '/entry.php';
         };
@@ -191,7 +191,7 @@ PHP);
         $broken = $this->homeDir . '/extensions/broken.php';
         file_put_contents($broken, <<<'PHP'
 <?php
-return function ($pi): void {
+return function ($pig): void {
     throw new RuntimeException('Intentional extension failure');
 };
 PHP);
@@ -209,7 +209,7 @@ PHP);
         file_put_contents($noisy, <<<'PHP'
 <?php
 echo "corrupt terminal output";
-return function ($pi): void {};
+return function ($pig): void {};
 PHP);
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
@@ -225,8 +225,8 @@ PHP);
         file_put_contents($custom, <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerCommand('custom_cmd', fn () => null);
+return function (ExtensionApi $pig): void {
+    $pig->registerCommand('custom_cmd', fn () => null);
 };
 PHP);
 
@@ -252,7 +252,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 if (!defined('{$constant}')) {
     throw new RuntimeException('the shared vendor/autoload.php was not loaded');
 }
-return function (ExtensionApi \$pi): void {};
+return function (ExtensionApi \$pig): void {};
 PHP);
 
         [$loaded, $errors] = ExtensionLoader::load(
@@ -271,7 +271,7 @@ PHP);
         $extension = <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {};
+return function (ExtensionApi $pig): void {};
 PHP;
         file_put_contents($this->homeDir . '/extensions/discovered.php', $extension);
         is_dir($this->cwd . '/.pig/extensions') || mkdir($this->cwd . '/.pig/extensions', 0755, true);
@@ -290,24 +290,6 @@ PHP;
         $this->assertSame(['named'], array_map(static fn (object $e): string => $e->name, $loaded));
     }
 
-    public function testBackwardCompatibilityWithHookApiTypehint(): void
-    {
-        $legacy = $this->homeDir . '/extensions/legacy.php';
-        file_put_contents($legacy, <<<'PHP'
-<?php
-use Pig\CodingAgent\Hooks\HookApi;
-return function (HookApi $pi): void {
-    $pi->registerCommand('legacy_cmd', fn () => null);
-};
-PHP);
-
-        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
-
-        $this->assertSame([], $errors);
-        $this->assertCount(1, $loaded);
-        $this->assertSame('legacy', $loaded[0]->name);
-    }
-
     public function testAFolderExtensionsClassesAreSeenInItsSiblingFilesToo(): void
     {
         // The entry `require_once`s a class file beside it, as every bundled extension does. The
@@ -324,7 +306,7 @@ PHP);
         file_put_contents($dir . '/index.php', <<<'PHP'
 <?php
 require_once __DIR__ . '/src/Helper.php';
-return function ($pi): void { \ExtLoaderTestA\Helper::$runs++; };
+return function ($pig): void { \ExtLoaderTestA\Helper::$runs++; };
 PHP);
 
         [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
@@ -355,7 +337,7 @@ PHP);
         $project = $this->cwd . '/extensions/twice-checkout';
         mkdir($global, 0755, true);
         mkdir($project, 0755, true);
-        $entry = "<?php\nnamespace ExtLoaderTestB;\nclass Shared {}\nreturn function (\$pi): void {};\n";
+        $entry = "<?php\nnamespace ExtLoaderTestB;\nclass Shared {}\nreturn function (\$pig): void {};\n";
         file_put_contents($global . '/index.php', $entry);
         file_put_contents($project . '/index.php', $entry . "// edited in the checkout\n");
 
@@ -377,8 +359,8 @@ PHP);
         file_put_contents($globalDir . '/index.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'global');
+return function (ExtensionApi $pig): void {
+    $pig->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'global');
 };
 PHP);
 
@@ -388,8 +370,8 @@ PHP);
         file_put_contents($projectDir . '/index.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-return function (ExtensionApi $pi): void {
-    $pi->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'project');
+return function (ExtensionApi $pig): void {
+    $pig->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'project');
 };
 PHP);
 
@@ -410,7 +392,7 @@ PHP);
         $marker = $this->tempDir . '/ran.txt';
         $write = static function (string $dir, string $who) use ($marker): void {
             mkdir($dir, 0755, true);
-            file_put_contents($dir . '/index.php', "<?php\nreturn function (\$pi): void { file_put_contents(" . var_export($marker, true) . ", " . var_export($who . "\n", true) . ", FILE_APPEND); };\n");
+            file_put_contents($dir . '/index.php', "<?php\nreturn function (\$pig): void { file_put_contents(" . var_export($marker, true) . ", " . var_export($who . "\n", true) . ", FILE_APPEND); };\n");
         };
         $write($this->homeDir . '/extensions/same', 'home');
         $write($this->cwd . '/extensions/same', 'project');

@@ -35,7 +35,7 @@ use Pig\Codemode\SourceError;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Theme\CodeHighlighter;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Tools\Truncate;
@@ -63,7 +63,7 @@ require_once __DIR__ . '/CodemodeDescription.php';
  * `store()`/`load()` persist across scripts as a `codemode-store` entry in the session file,
  * upstream's name, so a conversation moved to pi keeps its store.
  */
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $storeEntryType = 'codemode-store';
     $defaultMaxOutputTokens = 10_000;
     $charsPerToken = 4;
@@ -94,7 +94,7 @@ return static function (ExtensionApi $pi): void {
     $nested = static fn (): array => Registry::all();
 
     /** The agent's own tools (the hooked ones), which scripts can call too, minus codemode itself. */
-    $agentTools = static function (HookContext $ctx) use (&$callable): array {
+    $agentTools = static function (ExtensionContext $ctx) use (&$callable): array {
         $out = [];
 
         foreach ($callable ?? $ctx->session?->agent->tools() ?? [] as $tool) {
@@ -111,7 +111,7 @@ return static function (ExtensionApi $pi): void {
     };
 
     /** Every callable tool as a declaration, agent's first, for the description and `ALL_TOOLS`. */
-    $declarations = static function (?HookContext $ctx) use ($agentTools, $nested): array {
+    $declarations = static function (?ExtensionContext $ctx) use ($agentTools, $nested): array {
         $all = [];
 
         if ($ctx !== null) {
@@ -269,7 +269,7 @@ return static function (ExtensionApi $pi): void {
 
     $truncate = static fn (string $text, int $max): string => strlen($text) > $max ? substr($text, 0, $max - 3) . '...' : $text;
 
-    $execute = static function (string $toolCallId, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use (
+    $execute = static function (string $toolCallId, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use (
         $agentTools,
         $nested,
         $declarations,
@@ -283,7 +283,7 @@ return static function (ExtensionApi $pi): void {
         $imageExtensions,
         $maxConcurrentModelCalls,
         $truncate,
-        $pi,
+        $pig,
     ): AgentToolResult {
         $startedAt = microtime(true);
 
@@ -527,7 +527,7 @@ return static function (ExtensionApi $pi): void {
 
             return $info;
         };
-        $auth = $ctx->session?->auth ?? $pi->auth();
+        $auth = $ctx->session?->auth ?? $pig->auth();
         $modelsOfType = static fn (ModelType $type, ?string $provider): array => array_values(array_filter(
             Models::allOfType($type),
             static fn (Model|ImageModel|ClassifierModel $m): bool => $provider === null || $m->provider === $provider,
@@ -914,7 +914,7 @@ return static function (ExtensionApi $pi): void {
             $writes = $result['storeWrites'];
 
             if ($writes['set'] !== [] || $writes['delete'] !== []) {
-                $pi->appendEntry($storeEntryType, ['set' => $writes['set'], 'delete' => $writes['delete']]);
+                $pig->appendEntry($storeEntryType, ['set' => $writes['set'], 'delete' => $writes['delete']]);
             }
 
             // A returned value is appended like `text()`.
@@ -1289,7 +1289,7 @@ return static function (ExtensionApi $pi): void {
         defaultActive: false,
         reachesTools: static fn (array $input): string|array => CodemodeDescription::scriptReach($input['code'] ?? null),
     );
-    $pi->registerTool($tool);
+    $pig->registerTool($tool);
 
     $inSession = false;
 
@@ -1298,33 +1298,33 @@ return static function (ExtensionApi $pi): void {
     // the registry; and tools that only a script can reach activate codemode — upstream's
     // `ensureDiscoveryActive()`, the half of it that is about codemode. When `--tools` or an
     // `--exclude-tools` left codemode out, it is not registered and `setActiveTools()` ignores it.
-    $ensureActive = static function () use ($pi, $tool, &$inSession): void {
+    $ensureActive = static function () use ($pig, $tool, &$inSession): void {
         if (!$inSession) {
             return;
         }
 
-        $pi->registerTool($tool);
+        $pig->registerTool($tool);
 
         if (Registry::isEmpty()) {
             return;
         }
 
-        $active = $pi->getActiveTools();
+        $active = $pig->getActiveTools();
 
         if (!in_array(CodemodeDescription::TOOL_NAME, $active, true)) {
-            $pi->setActiveTools([...$active, CodemodeDescription::TOOL_NAME]);
+            $pig->setActiveTools([...$active, CodemodeDescription::TOOL_NAME]);
         }
     };
 
     Registry::onChange($ensureActive);
 
-    $pi->on('session_start', static function ($event, HookContext $ctx) use (&$inSession, &$settings, $ensureActive): void {
+    $pig->on('session_start', static function ($event, ExtensionContext $ctx) use (&$inSession, &$settings, $ensureActive): void {
         $settings = $ctx->session?->settings();
         $inSession = $ctx->session !== null;
         $ensureActive();
     });
 
-    $pi->on('session_shutdown', static function () use (&$inSession): void {
+    $pig->on('session_shutdown', static function () use (&$inSession): void {
         $inSession = false;
     });
 };

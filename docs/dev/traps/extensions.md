@@ -27,7 +27,7 @@ Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensio
 
 `setExpanded()` exists on `ToolExecutionComponent`, `CompactionComponent` and
 `BranchSummaryComponent`, and `InteractiveMode`'s ctrl+o handler names those three. It could not
-name `HookMessageComponent`, because that class had no such method: a hook's message was drawn
+name `CustomMessageComponent`, because that class had no such method: a hook's message was drawn
 whole, for ever, while ctrl+o folded every tool call around it. Upstream cuts it to five lines with
 a `...`.
 
@@ -100,7 +100,7 @@ Regression tests: `SkillsTest::testASkillWhoseDescriptionIsNotUtf8StillHasOneInT
 
 ## One condition for two independent facts wired neither
 
-`HookRunner::initialize()` handed each hook its `sendMessage()` and `appendEntry()` writers
+`ExtensionRunner::initialize()` handed each hook its `sendMessage()` and `appendEntry()` writers
 behind `if ($send !== null && $note !== null)`. Both are optional and independent, so a mode
 offering only one got **neither** — and what the hook would then read is `sendMessage() needs a
 session — call it from a handler`, which is a confident explanation of something that did not
@@ -112,7 +112,7 @@ silent disabling waiting for a caller who only satisfies one.** The tell is that
 have separate error messages — if one fact can be missing on its own, it has to be *wired* on its
 own.
 
-Regression test: `HookMessagesTest::testAModeThatWiresOneWriterGetsThatOne`.
+Regression test: `CustomMessagesTest::testAModeThatWiresOneWriterGetsThatOne`.
 
 ## A hook that fails while being asked for permission has not given it
 
@@ -122,34 +122,34 @@ be able to stop what it watches. Permission is the opposite: a hook asked whethe
 run `rm -rf` and answering with a `TypeError` has said nothing, and reading nothing as yes is
 how a guard stops working on exactly the day someone leaves a typo in it.
 
-So `HookRunner::emitToolCall()` lets the throwable out and `HookedTool::guard()` turns it into
+So `ExtensionRunner::emitToolCall()` lets the throwable out and `ExtensionGuardedTool::guard()` turns it into
 a blocked call — `Blocked: a tool_call hook failed, and a hook that cannot answer is not
 consent`, which the model reads as a tool error and can work around. Upstream does the same
 thing in `tool-wrapper.ts` and calls it fail-safe.
 
-Tests: `HookRunnerTest::testAToolCallHandlerThatThrowsIsNotCaughtHere` and
+Tests: `ExtensionRunnerTest::testAToolCallHandlerThatThrowsIsNotCaughtHere` and
 `testAToolCallHookThatThrowsBlocksTheCall`.
 
-## Two hook files reaching the same path is a fatal error, not a doubled handler
+## Two extension files reaching the same path is a fatal error, not a doubled handler
 
-`~/.pig/agent/hooks` symlinked into a project's `.pig/hooks` is a normal way to keep one copy of a
-hook, and the obvious reading is that loading it twice just registers its handlers twice.
-It is worse than that: `require` on a file that declares a function a second time is a fatal
-`Error`, so the second load kills the *first* hook as well and neither works.
+`~/.pig/agent/extensions` symlinked into a project's `.pig/extensions` is a normal way to keep one
+copy of an extension, and the obvious reading is that loading it twice just registers its handlers
+twice. It is worse than that: `require` on a file that declares a function a second time is a fatal
+`Error`, so the second load kills the *first* extension as well and neither works.
 
-`HookLoader` therefore deduplicates on `realpath()` before loading, the same way `Skills`
+`ExtensionLoader` therefore deduplicates on `realpath()` before loading, the same way `Skills`
 does — and for a harder reason. Test:
-`HookLoaderTest::testTheSameFileNamedTwiceIsLoadedOnce`.
+`ExtensionFileLoadingTest::testTheSameFileNamedTwiceIsLoadedOnce`.
 
-## A hook that prints corrupts the screen it printed onto
+## An extension that prints corrupts the screen it printed onto
 
-Hooks load before the UI starts, so an `echo` or a stray `var_dump` in a hook file lands on
+Extensions load before the UI starts, so an `echo` or a stray `var_dump` in an extension file lands on
 the terminal a moment before the TUI takes it over and redraws across it. What the person
 sees is a session that came up wrong, with nothing to read and nothing to search for.
 
-`HookLoader` wraps the `require` in `ob_start()` and turns anything printed into a load
+`ExtensionLoader` wraps the `require` in `ob_start()` and turns anything printed into a load
 complaint naming the file and quoting what it printed. Test:
-`HookLoaderTest::testAFileThatPrintsIsAComplaint`.
+`ExtensionFileLoadingTest::testAFileThatPrintsIsAComplaint`.
 
 ## Hooks: what upstream walls off for commands is not here, and the docs said "all of it"
 
@@ -157,7 +157,7 @@ Twentieth, and a documentation find rather than a code one. The hooks section cl
 upstream's `core/hooks/` "all of it", and then said — correctly — that sixteen of eighteen events
 are fired. What it never mentioned is `HookCommandContext`: upstream gives a slash command's handler
 `waitForIdle()`, `newSession()`, `branch()` and `navigateTree()`, walled off from event handlers
-because calling them inside the agent loop deadlocks. pig has one `HookContext` for both and none of
+because calling them inside the agent loop deadlocks. pig has one `ExtensionContext` for both and none of
 the four.
 
 Left unported, deliberately and now in writing: `branch()` is `AgentSession::fork()`, which a mode
@@ -195,7 +195,7 @@ interrupts the tools queued behind the current one and a hook's note is not a ch
 stays out of `$this->followUps` for the reason upstream keeps it out: handing somebody a hook's
 sentence to re-send is not putting their text back.
 
-`HookMessagesTest::testAMessageSentWhileTheAgentIsWorkingStillArrives` sends one from inside the
+`CustomMessagesTest::testAMessageSentWhileTheAgentIsWorkingStillArrives` sends one from inside the
 first turn — the harness gained a `duringTurn` closure for it, since that is the only moment
 `isStreaming()` is true and a test still has control. **Nothing covered this branch at all**, which
 is why three lines of bookkeeping could stand in for the delivery.
@@ -291,7 +291,7 @@ taken no value and the path would have been sent to the model as a message.
 `echo 'Exported to: ', HtmlExport::fromFile(…)` writes left to right, so a missing file printed
 `Exported to: ` and then the error underneath it. The write happens first and the sentence after.
 
-**`--no-skills`.** `--no-hooks` and `--no-tool-files` (then called `--no-tools`) have been there from the start; skills had
+**`--no-skills`.** `--no-hooks` and `--no-tool-files` (then called `--no-tools`) had been there from the start — both gone since hooks and tool files became extensions; skills had
 no flag — three loaders, two with a switch on the command line and one without, which reads as
 "this one cannot be turned off for one run". `withSkills` on `session()`; `--skill` paths still load
 under it, as upstream's `noSkills` keeps them.
@@ -345,18 +345,17 @@ Left out of `main.ts` with reasons, so the flag list is not compared twice:
 
 | Upstream | Why not |
 |---|---|
-| `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tool-files`, which upstream lacks and pig has |
 
 ## A `before_*` hook result is only heard if the runner thinks it decisive
 
-`HookRunner::ask()` walks the handlers and stops at the first *decisive* answer, which each
+`ExtensionRunner::ask()` walks the handlers and stops at the first *decisive* answer, which each
 event defines for itself. `emitBeforeCompact()` counted both `cancel` and a supplied
 `compaction`; `emitBeforeTree()` counted only `cancel`. So a hook that wrote its own branch
 summary was walked straight past, `ask()` returned null at the end of the list, and the model
 was asked to write one anyway — the hook's work thrown away, silently, with no error anywhere.
 
 It was caught by a test written at the same time as the feature
-(`HookWiringTest::testAHookCanWriteTheHandoverItself`), which is the only reason it was caught
+(`ExtensionWiringTest::testAHookCanWriteTheHandoverItself`), which is the only reason it was caught
 at all: nothing about the wrong behaviour is visible without a hook that supplies a summary.
 
 Whenever a `before_*` result grows a field that means "I have handled this", the predicate in
@@ -365,15 +364,15 @@ first when a hook seems to have been ignored.
 
 ## `NoUi` was reported as a UI, so `hasUi` lied
 
-`HookContext::$hasUi` answers one question — will asking reach anybody — and `HookRunner`
+`ExtensionContext::$hasUi` answers one question — will asking reach anybody — and `ExtensionRunner`
 computed it as `$this->ui !== null`. That was right for as long as nothing passed a `NoUi`
-deliberately: the default is `null`, and `HookContext` turns null into `NoUi` with `hasUi`
+deliberately: the default is `null`, and `ExtensionContext` turns null into `NoUi` with `hasUi`
 false. `PrintMode` is the first caller to pass one on purpose, and it was told there was
 somebody there, so a hook that checks before asking asked and heard nothing.
 
 Now `$this->ui !== null && !$this->ui instanceof NoUi`. The predicate belongs with `NoUi`,
 which is by definition nobody; a caller passing `hasUi: true` beside a `NoUi` is making a
-claim that contradicts itself, and `HookContext` still lets one, which is worth revisiting.
+claim that contradicts itself, and `ExtensionContext` still lets one, which is worth revisiting.
 
 ## Verified against the real deployment
 
@@ -415,7 +414,7 @@ under `~/.pig/agent/extensions` and a checkout's) pick a winner by load order, a
 the process for good. Nothing can make a second `require` of the same file work, so the only honest
 answers are "do not `require` it again" and "say so".
 
-**Rule** (`Hooks\DeclaredSymbols`, used by `HookLoader` and `ExtensionLoader` alike): a named class
+**Rule** (`Extensions\DeclaredSymbols`, used by `ExtensionLoader`): a named class
 is allowed. Before a `require`, the loader tokenizes the file — the whole folder for an `index.php`,
 `vendor/`, `node_modules/` and tests left out — for named classes, interfaces, traits, enums and
 functions, namespace included.
@@ -434,7 +433,7 @@ functions, namespace included.
 
 Still true: `pig`'s own `packages/` classes cannot be reloaded either — that is a restart.
 
-Regression tests: `HookLoaderTest::testAHookMayDeclareAClassAndAReloadRunsTheFactoryItFirstLoaded`,
+Regression tests: `ExtensionFileLoadingTest::testAnExtensionMayDeclareAClassAndAReloadRunsTheFactoryItFirstLoaded`,
 `testASecondDifferentCopyOfAClassIsRefusedByNameAndAnIdenticalOneIsNot`,
 `ExtensionLoaderTest::testAFolderExtensionsClassesAreSeenInItsSiblingFilesToo`,
 `testADifferentCopyOfAnExtensionsClassIsRefusedByName`.

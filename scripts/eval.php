@@ -10,7 +10,7 @@ declare(strict_types=1);
  *   php scripts/eval.php [--json] [--keep] [--filter <substring>] [name …] [-- <bin/pig options>]
  *
  * Every case runs as `bin/pig --mode json --incognito --no-update-check -p <prompt>` in a
- * temporary copy of its `fixture/` directory; what follows `--` is appended (`--model`, `--no-hooks`,
+ * temporary copy of its `fixture/` directory; what follows `--` is appended (`--model`, `--no-extensions`,
  * `--tools`). Nothing is written under `~/.pig`: an incognito run keeps no session and no log. The
  * keys and models are the machine's own, as `test/live.php` has it — so this costs money, and nothing
  * runs it automatically.

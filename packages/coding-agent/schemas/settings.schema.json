@@ -347,20 +347,6 @@
       },
       "description": "Local extension file paths or directories."
     },
-    "hooks": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Hook files loaded in addition to the standard hooks folders."
-    },
-    "customTools": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Custom tool entry files loaded in addition to the standard tools folders."
-    },
     "disabledExtensions": {
       "type": "array",
       "items": {

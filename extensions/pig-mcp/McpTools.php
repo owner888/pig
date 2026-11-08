@@ -11,7 +11,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\Mcp\Protocol\Content;
 use RuntimeException;
 
@@ -68,7 +68,7 @@ final class McpTools
             label: "{$server}/{$toolName}",
             description: $description !== '' ? $description : (is_string($title) ? $title : "MCP tool {$toolName} from server {$server}"),
             parameters: self::parameters(is_array($tool['inputSchema'] ?? null) ? $tool['inputSchema'] : []),
-            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection, $readableResources): AgentToolResult {
+            execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection, $readableResources): AgentToolResult {
                 $result = $connection->callTool($toolName, $params, [
                     'signal' => $signal,
                     'timeout' => $connection->timeout(),

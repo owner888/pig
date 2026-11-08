@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
-use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Settings;
@@ -55,53 +53,11 @@ final class ProjectTrustGatesTest extends TestCase
         file_put_contents($path, $body);
     }
 
-    private const string HOOK = <<<'PHP'
-        <?php
-        return function ($pi): void { $pi->on('tool_call', fn () => null); };
-        PHP;
-
-    public function testHooksUnderTheProjectAreLeftOutAndTheOwnOnesStay(): void
-    {
-        $this->put('home/hooks/mine.php', self::HOOK);
-        $this->put('project/.pig/hooks/theirs.php', self::HOOK);
-
-        [$trusted] = HookLoader::load($this->cwd, home: $this->home);
-        [$untrusted] = HookLoader::load($this->cwd, home: $this->home, projectTrusted: false);
-
-        $this->assertCount(2, $trusted);
-        $this->assertCount(1, $untrusted);
-        $this->assertStringEndsWith('/home/hooks/mine.php', $untrusted[0]->path);
-    }
-
-    public function testToolsUnderTheProjectAreLeftOut(): void
-    {
-        $tool = <<<'PHP'
-            <?php
-            use Pig\CodingAgent\CustomTools\CustomTool;
-            use Pig\Agent\AgentToolResult;
-            use Pig\Ai\TextContent;
-            return fn ($pi) => new CustomTool(
-                name: 'NAME', label: 'x', description: 'x',
-                parameters: ['type' => 'object', 'properties' => []],
-                execute: fn () => new AgentToolResult([new TextContent('ok')]),
-            );
-            PHP;
-        $this->put('home/tools/mine/index.php', str_replace('NAME', 'mine', $tool));
-        $this->put('project/.pig/tools/theirs/index.php', str_replace('NAME', 'theirs', $tool));
-
-        [$trusted] = CustomToolLoader::load($this->cwd, home: $this->home);
-        [$untrusted] = CustomToolLoader::load($this->cwd, home: $this->home, projectTrusted: false);
-
-        $names = static fn (array $loaded): array => array_map(static fn ($t) => $t->tool->name, $loaded);
-        $this->assertSame(['mine', 'theirs'], $names($trusted));
-        $this->assertSame(['mine'], $names($untrusted));
-    }
-
     public function testBothProjectExtensionRootsAreLeftOut(): void
     {
         $extension = <<<'PHP'
             <?php
-            return function ($pi): void { $pi->registerCommand('NAME', fn () => null, 'x'); };
+            return function ($pig): void { $pig->registerCommand('NAME', fn () => null, 'x'); };
             PHP;
         $this->put('home/extensions/mine.php', str_replace('NAME', 'mine', $extension));
         $this->put('project/.pig/extensions/dot.php', str_replace('NAME', 'dot', $extension));
@@ -119,7 +75,7 @@ final class ProjectTrustGatesTest extends TestCase
     {
         $extension = <<<'PHP'
             <?php
-            return function ($pi): void { $pi->registerCommand('NAME', fn () => null, 'x'); };
+            return function ($pig): void { $pig->registerCommand('NAME', fn () => null, 'x'); };
             PHP;
         $this->put('home/extensions/mine.php', str_replace('NAME', 'mine', $extension));
         $this->put('project/.pig/extensions/dot.php', str_replace('NAME', 'dot', $extension));

@@ -16,7 +16,7 @@ use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\ContextEdit;
 use Pig\CodingAgent\Session\CustomEntry;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 
 /**
@@ -226,7 +226,7 @@ final class PiFormatTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('hi'));
         $session->append($this->answer());
-        $session->append(new HookMessage('build', [new TextContent('broken')], display: false));
+        $session->append(new CustomMessage('build', [new TextContent('broken')], display: false));
 
         $line = self::linesOf($session->path)[3];
 

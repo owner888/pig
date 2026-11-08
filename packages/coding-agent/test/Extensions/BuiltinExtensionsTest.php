@@ -83,7 +83,7 @@ final class BuiltinExtensionsTest extends TestCase
     public function testAStaleCopyInTheHomeIsNotLoadedAndSaysSo(): void
     {
         mkdir("{$this->root}/home/extensions/pig-mcp");
-        file_put_contents("{$this->root}/home/extensions/pig-mcp/index.php", "<?php\nreturn function (\$pi): void { throw new \\RuntimeException('loaded'); };\n");
+        file_put_contents("{$this->root}/home/extensions/pig-mcp/index.php", "<?php\nreturn function (\$pig): void { throw new \\RuntimeException('loaded'); };\n");
 
         [$loaded, $errors] = ExtensionLoader::load("{$this->root}/project", home: "{$this->root}/home");
 
@@ -94,8 +94,8 @@ final class BuiltinExtensionsTest extends TestCase
 
     public function testBuiltinsLoadLastAndAReplaceableOneGivesWayToAnExtensionWithItsCommand(): void
     {
-        file_put_contents("{$this->root}/home/extensions/mine.php", "<?php\nreturn function (\$pi): void { \$pi->registerCommand('mcp', fn () => null, 'Mine'); };\n");
-        file_put_contents("{$this->root}/home/extensions/other.php", "<?php\nreturn function (\$pi): void {};\n");
+        file_put_contents("{$this->root}/home/extensions/mine.php", "<?php\nreturn function (\$pig): void { \$pig->registerCommand('mcp', fn () => null, 'Mine'); };\n");
+        file_put_contents("{$this->root}/home/extensions/other.php", "<?php\nreturn function (\$pig): void {};\n");
 
         [$loaded, $errors] = ExtensionLoader::load(
             "{$this->root}/project",

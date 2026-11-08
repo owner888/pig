@@ -383,13 +383,11 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
-    public function testNoToolFilesIsAFlagAndNoToolsIsUpstreams(): void
+    public function testNoToolsIsUpstreamsAndDoesNotEatThePrompt(): void
     {
-        // `--no-tool-files` skips the tools somebody wrote in `~/.pig/agent/tools`; `--no-tools`
-        // is upstream's, every tool off. Both flags, and neither eats the prompt.
-        $parsed = $this->parse('--no-tool-files', '-nt', 'fix the bug');
+        // `--no-tools` is upstream's, every tool off. A flag, so it does not eat the prompt.
+        $parsed = $this->parse('-nt', 'fix the bug');
 
-        $this->assertTrue($parsed->has('no-tool-files'));
         $this->assertTrue($parsed->has('no-tools'));
         $this->assertFalse(isset($parsed->options['tools']));
         $this->assertSame(['fix the bug'], $parsed->messages);

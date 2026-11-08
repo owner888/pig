@@ -125,7 +125,7 @@ Two things the page has to do that the terminal does not:
 What `RpcUi` does not send — a terminal `Component` (`custom()`, headers, footers, the editor, message
 and tool renderers), the working indicator, shortcuts — the page cannot draw either;
 an extension that wants a place in the page has a panel (next section). Regression tests:
-`WebHookUiTest` (`hooks.js` under Node against `RpcUi`'s real requests, a theme colour included),
+`WebExtensionUiTest` (`hooks.js` under Node against `RpcUi`'s real requests, a theme colour included),
 `RpcUiThemeTest`, `RpcModeTest`'s `set_theme` / `PIG_WEB_THEME` cases,
 `WebModeTest::testATabThatJoinsLaterIsShownWhatTheExtensionsLeftOnScreen` and
 `WebModeTest::testAChildIsStartedInThePagesThemeAndAJoiningPageDoesNotRestartIt`.
@@ -146,7 +146,7 @@ credentials endpoints, and the page's internals are not an API. Every string is 
 locale is in the request and the extension answers in it. A button is an action: `action(name, args,
 request, $ui)` returns null or why it failed, and the panel is drawn again either way; a button with
 a `confirm` question asks it in the page's own modal first (`openModal`, which lets only the top
-modal of a stack answer Escape and Enter). `$ui` is the `HookUi` a hook has as `$ctx->ui`, so an
+modal of a stack answer Escape and Enter). `$ui` is the `ExtensionUi` a hook has as `$ctx->ui`, so an
 action asks with the same `confirm()` / `select()` / `input()` / `editor()` the developer's
 extensions already use in the terminal and in conversations: the page sends the action over its
 WebSocket (`panel_action`), `HttpServer` runs it in a fiber with an `RpcUi` whose questions go to

@@ -1377,38 +1377,6 @@ final class Settings
     }
 
     /**
-     * Hook files named in the settings, on top of the two standard folders.
-     *
-     * Upstream's key exactly: a top-level `hooks` array of paths. The folders are not a
-     * setting there either — they are always read, and `--no-hooks` is how they are not:
-     * a switch here would have to live under `hooks` and that name is already this list.
-     *
-     * @return list<string>
-     */
-    public function hooks(): array
-    {
-        $value = $this->get('hooks');
-
-        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
-    }
-
-    /**
-     * Custom tool files named in the settings, on top of the two standard folders.
-     *
-     * Upstream's key exactly: a top-level `customTools` array of paths, each one a tool's
-     * entry file. `--no-tool-files` is how none of them are loaded, for the same reason
-     * `--no-hooks` is a flag rather than a setting — the name here is already this list.
-     *
-     * @return list<string>
-     */
-    public function customTools(): array
-    {
-        $value = $this->get('customTools');
-
-        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
-    }
-
-    /**
      * Extension files or directories named in the settings.
      *
      * Upstream's key exactly: a top-level `extensions` array of paths. Its `+`, `-` and `!` entries

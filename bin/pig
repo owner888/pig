@@ -291,8 +291,6 @@ if (isset($options['help'])) {
                         start without loading any prompt templates
       -nc, --no-context-files
                         start without reading AGENTS.md or CLAUDE.md
-      --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
-      --no-tool-files   start without loading ~/.pig/agent/tools or .pig/tools
       -e, --extension <s>   load an extension for this run: a file, a directory, or a package
                         source (git:github.com/user/repo) cloned under tmp/ and not written to
                         settings (repeatable)
@@ -853,13 +851,13 @@ $settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings
 $trustOverride = isset($options['approve']) ? true : (isset($options['no-approve']) ? false : null);
 
 $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrust, &$settings, $trustOverride): bool {
-    $runner = new \Pig\CodingAgent\Hooks\HookRunner(
-        array_map(static fn ($ext) => new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api), $loaded),
+    $runner = new \Pig\CodingAgent\Extensions\ExtensionRunner(
+        array_map(static fn ($ext) => new \Pig\CodingAgent\Extensions\LoadedHook($ext->path, $ext->resolved, $ext->api), $loaded),
         $cwd,
     );
     $runner->initialize(static fn () => null);
-    $runner->onError(static function (\Pig\CodingAgent\Hooks\HookError $error): void {
-        fwrite(STDERR, Style::yellow("Extension \"{$error->hookPath}\" {$error->event} error: {$error->error}\n"));
+    $runner->onError(static function (\Pig\CodingAgent\Extensions\ExtensionError $error): void {
+        fwrite(STDERR, Style::yellow("Extension \"{$error->extensionPath}\" {$error->event} error: {$error->error}\n"));
     });
 
     $trusted = ProjectTrust::resolve($cwd, $askTrust, extensions: $runner, default: $settings->defaultProjectTrust(), override: $trustOverride);
@@ -1076,9 +1074,7 @@ $assemble = static function (
         continue: $continue,
         save: !$noSession,
         readOnly: isset($options['read-only']),
-        withHooks: !isset($options['no-hooks']),
         withSkills: !isset($options['no-skills']),
-        withTools: !isset($options['no-tool-files']),
         withExtensions: !isset($options['no-extensions']),
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,
@@ -1233,7 +1229,7 @@ if ($sessionName !== null) {
 $contextFiles = $started->contextFiles;
 $skills = $started->skills;
 $fileCommands = $started->fileCommands;
-$hooks = $started->hooks;
+$extensionRunner = $started->extensionRunner;
 $customTools = $started->customTools;
 $extensions = $started->extensions;
 
@@ -1271,7 +1267,7 @@ Timings::printTimings();
 $exit = 0;
 
 if ($mode === 'rpc') {
-    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings, $auth, createRuntime: $createRuntime);
+    $running = new RpcMode($session, $cwd, $extensionRunner, $customTools, $settings, $auth, createRuntime: $createRuntime);
 
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
@@ -1279,10 +1275,10 @@ if ($mode === 'rpc') {
 } elseif ($mode === 'mcp') {
     $mcpPort = isset($options['mcp-port']) && ctype_digit((string) $options['mcp-port']) ? (int) $options['mcp-port'] : 8089;
     $mcpHost = isset($options['mcp-host']) && $options['mcp-host'] !== '' ? (string) $options['mcp-host'] : '127.0.0.1';
-    $serving = new McpMode($session, $mcpPort, $mcpHost, $hooks, $customTools, stdio: isset($options['mcp-stdio']));
+    $serving = new McpMode($session, $mcpPort, $mcpHost, $extensionRunner, $customTools, stdio: isset($options['mcp-stdio']));
     $exit = (int) Async::run(static fn (): int => $serving->run());
 } elseif (!$interactive) {
-    $printing = new PrintMode($session, $mode === 'json' ? 'json' : 'text', $hooks, $customTools);
+    $printing = new PrintMode($session, $mode === 'json' ? 'json' : 'text', $extensionRunner, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));
 } else {
     // What changed since this person last looked, shown once. Not on `-c` or `-r`: somebody
@@ -1338,7 +1334,7 @@ if ($mode === 'rpc') {
         skills: $skills,
         fileCommands: $fileCommands,
         settings: $settings,
-        hooks: $hooks,
+        extensionRunner: $extensionRunner,
         customTools: $customTools,
         auth: $auth,
         initialMessages: $messages,

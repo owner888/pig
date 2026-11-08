@@ -57,7 +57,7 @@ use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Logger;
 use PigAntigravity\Accounts;
 use PigAntigravity\AccountsPanel;
@@ -77,8 +77,8 @@ foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigr
     require_once __DIR__ . "/src/{$class}.php";
 }
 
-return function (ExtensionApi $pi): void {
-    $auth = $pi->auth() ?? Auth::discover();
+return function (ExtensionApi $pig): void {
+    $auth = $pig->auth() ?? Auth::discover();
     $accounts = Accounts::beside($auth->path());
 
     /**
@@ -206,7 +206,7 @@ return function (ExtensionApi $pi): void {
         });
     };
 
-    $pi->registerProvider(new Provider(
+    $pig->registerProvider(new Provider(
         id: Models::PROVIDER,
         name: 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         models: Models::fallback(),
@@ -234,7 +234,7 @@ return function (ExtensionApi $pi): void {
         }
     }
 
-    $pi->on('session_start', static function () use ($refreshInBackground): void {
+    $pig->on('session_start', static function () use ($refreshInBackground): void {
         $refreshInBackground();
     });
 
@@ -360,7 +360,7 @@ return function (ExtensionApi $pi): void {
         return [$result, ImageGenerator::save($result, $targetPath, $cwd)];
     };
 
-    $emit = static function (HookContext $ctx, string $text, string $type = 'info'): void {
+    $emit = static function (ExtensionContext $ctx, string $text, string $type = 'info'): void {
         if ($ctx->hasUi) {
             $ctx->ui->notify($text, $type);
         } else {
@@ -388,7 +388,7 @@ return function (ExtensionApi $pi): void {
         return ['accounts' => $rows, 'problems' => $accounts->problems()];
     };
 
-    $pi->registerWebPanel(
+    $pig->registerWebPanel(
         AccountsPanel::ID,
         AccountsPanel::TITLE,
         static function (array $request) use ($payload, $getAuthAndToken): array {
@@ -435,9 +435,9 @@ return function (ExtensionApi $pi): void {
 
     // ---- commands -----------------------------------------------------------------------
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.usage',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $emit): void {
+        static function (string $args, ExtensionContext $ctx) use ($getAuthAndToken, $emit): void {
             $authData = $getAuthAndToken();
             if ($authData === null) {
                 $emit($ctx, 'No Antigravity credentials. Run /login antigravity first.', 'warning');
@@ -457,9 +457,9 @@ return function (ExtensionApi $pi): void {
         'Show Antigravity shared quota pools (Gemini / Claude+GPT, 5h + weekly)',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.models',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $emit): void {
+        static function (string $args, ExtensionContext $ctx) use ($getAuthAndToken, $emit): void {
             $authData = $getAuthAndToken();
             if ($authData === null) {
                 $emit($ctx, 'No Antigravity credentials. Run /login antigravity first.', 'warning');
@@ -479,9 +479,9 @@ return function (ExtensionApi $pi): void {
         'List Antigravity runtime models + remaining pool fraction',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.accounts',
-        static function (string $args, HookContext $ctx) use ($accounts, $emit, $activate, $remove, $rotate, $find, $sync): void {
+        static function (string $args, ExtensionContext $ctx) use ($accounts, $emit, $activate, $remove, $rotate, $find, $sync): void {
             $sync();
             $trimmed = trim($args);
 
@@ -533,9 +533,9 @@ return function (ExtensionApi $pi): void {
         'List, switch, or remove linked Antigravity Google accounts',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.doctor',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $accounts, $emit): void {
+        static function (string $args, ExtensionContext $ctx) use ($getAuthAndToken, $accounts, $emit): void {
             $authData = $getAuthAndToken();
             $tokenStatus = 'none';
             $projectId = 'none';
@@ -567,9 +567,9 @@ return function (ExtensionApi $pi): void {
         'Show sanitized Antigravity provider diagnostics',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.refresh',
-        static function (string $args, HookContext $ctx) use ($auth, $emit, $refreshCatalog): void {
+        static function (string $args, ExtensionContext $ctx) use ($auth, $emit, $refreshCatalog): void {
             $apiKey = $auth->apiKey(Models::PROVIDER);
 
             if ($apiKey === null) {
@@ -598,9 +598,9 @@ return function (ExtensionApi $pi): void {
         'Force refresh Antigravity dynamic model catalog',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.search',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $http, $emit): void {
+        static function (string $args, ExtensionContext $ctx) use ($getAuthAndToken, $http, $emit): void {
             $parsed = GoogleSearch::parseSearchArgs($args);
             if ($parsed['query'] === '') {
                 $emit($ctx, 'Usage: /antigravity.search [--thinking] [--url <url>] <query>', 'warning');
@@ -628,9 +628,9 @@ return function (ExtensionApi $pi): void {
         'Search the web via Google Search grounding (usage: /antigravity.search [--thinking] [--url <url>] <query>)',
     );
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'antigravity.image',
-        static function (string $args, HookContext $ctx) use ($getAuthAndToken, $generateAndSave, $emit): void {
+        static function (string $args, ExtensionContext $ctx) use ($getAuthAndToken, $generateAndSave, $emit): void {
             $usage = 'Usage: /antigravity.image [--ratio 16:9] [--model gemini-3-pro-image] [--path file.png] <prompt>';
             $tokens = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
@@ -691,7 +691,7 @@ return function (ExtensionApi $pi): void {
     $noImageTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_IMAGE_TOOL') ?: getenv('NOAGY_NO_IMAGE_TOOL')) === '1';
 
     if (!$noSearchTool) {
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'google_search',
             label: 'Google Search',
             description: 'Search the live web using Google Search grounding over Google Cloud Code Assist. Returns an evidence brief, sources, and verified citations.',
@@ -705,7 +705,7 @@ return function (ExtensionApi $pi): void {
                 ],
                 'required' => ['query'],
             ],
-            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($getAuthAndToken, $http): AgentToolResult {
+            execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($getAuthAndToken, $http): AgentToolResult {
                 if ($onUpdate !== null) {
                     $onUpdate(new AgentToolResult([new TextContent('Searching Google…')]));
                 }
@@ -729,7 +729,7 @@ return function (ExtensionApi $pi): void {
     }
 
     if (!$noImageTool) {
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: 'generate_image',
             label: 'Generate image',
             description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pig/generated-images/ unless path is set.',
@@ -743,7 +743,7 @@ return function (ExtensionApi $pi): void {
                 ],
                 'required' => ['prompt'],
             ],
-            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($generateAndSave): AgentToolResult {
+            execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($generateAndSave): AgentToolResult {
                 if ($onUpdate !== null) {
                     $onUpdate(new AgentToolResult([new TextContent('Generating image…')]));
                 }

@@ -1429,7 +1429,7 @@ final class SessionManager
                 $message->timestamp,
                 $message->usage,
             ),
-            $message instanceof HookMessage => new HookMessage(
+            $message instanceof CustomMessage => new CustomMessage(
                 $message->customType,
                 $content,
                 $message->display,

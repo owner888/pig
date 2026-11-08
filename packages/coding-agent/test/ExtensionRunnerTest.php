@@ -1,0 +1,1053 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pig\CodingAgent\Test;
+
+use Fiber;
+use PHPUnit\Framework\TestCase;
+use Pig\Agent\AgentError;
+use Pig\Agent\AgentTool;
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\TextContent;
+use Pig\Ai\Tool;
+use Pig\Ai\UserMessage;
+use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
+use Pig\Async\Async;
+use Pig\Async\Loop;
+use Pig\CodingAgent\Extensions\Events\AgentStartEvent;
+use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
+use Pig\CodingAgent\Extensions\Events\ResourcesDiscoverEvent;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeTreeEvent;
+use Pig\CodingAgent\Extensions\Events\TreePreparation;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeTreeResult;
+use Pig\CodingAgent\Session\CompactionPreparation;
+use Pig\CodingAgent\Session\CompactionSettings;
+use Pig\CodingAgent\Session\FileOperations;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeSwitchEvent;
+use Pig\CodingAgent\Extensions\Events\ToolCallEvent;
+use Pig\CodingAgent\Extensions\Events\ToolResultEvent;
+use Pig\CodingAgent\Extensions\ExecResult;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Session\CustomMessage;
+use Pig\CodingAgent\Extensions\Results\CacheWarmingDecisionEventResult;
+use Pig\CodingAgent\Prompt\SystemPromptOptions;
+use Pig\CodingAgent\Extensions\Results\ContextEventResult;
+use Pig\CodingAgent\Extensions\Results\ResourcesDiscoverResult;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeCompactResult;
+use Pig\CodingAgent\Extensions\Results\SessionBeforeSwitchResult;
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
+use Pig\CodingAgent\Extensions\Results\ToolResultEventResult;
+use InvalidArgumentException;
+use RuntimeException;
+
+final class ExtensionRunnerTest extends TestCase
+{
+    /**
+     * A loop of this test's own.
+     *
+     * **Every other class that turns the loop does this, and these two were the exceptions.** The
+     * loop is a singleton that outlives a test, so a class starting without this inherits whatever
+     * watchers the previous test left behind — and a watcher whose stream has since gone reports
+     * `Reader r1 watches a closed stream` from inside *this* test's `Async::run()`, naming a test
+     * that did nothing wrong. It showed up as two `OverflowTest` errors under real PHPUnit and not
+     * under the verification shim, which runs the same files in a different order.
+     */
+    #[\Override]
+    protected function setUp(): void
+    {
+        Loop::reset();
+    }
+    /** @var list<ExtensionError> what the runner reported while a test ran */
+    private array $errors = [];
+
+    /** @param array<string, callable> $handlers one per event, which is all these tests need */
+    private function hook(array $handlers, string $path = 'test.php'): LoadedExtension
+    {
+        $api = new ExtensionApi('.', $path);
+
+        foreach ($handlers as $event => $handler) {
+            $api->on($event, $handler);
+        }
+
+        return new LoadedExtension($path, $path, $api->name, $api);
+    }
+
+    /** A runner whose complaints land in $this->errors. @param list<LoadedExtension> $extensionRunner */
+    private function runner(array $extensionRunner): ExtensionRunner
+    {
+        $this->errors = [];
+        $runner = new ExtensionRunner($extensionRunner, '/work');
+        $runner->onError(function (ExtensionError $error): void {
+            $this->errors[] = $error;
+        });
+
+        return $runner;
+    }
+
+    // ---- resources_discover ------------------------------------------------------------
+
+    public function testEveryExtensionsDirectoriesAreCollectedAndARelativeOneIsItsOwn(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['resources_discover' => static fn (ResourcesDiscoverEvent $e): ResourcesDiscoverResult => new ResourcesDiscoverResult(
+                skillPaths: ['skills', '/opt/shared/skills'],
+                promptPaths: ['prompts'],
+            )], '/exts/one/index.php'),
+            $this->hook(['resources_discover' => static fn (): ResourcesDiscoverResult => new ResourcesDiscoverResult(themePaths: ['themes'])], '/exts/two.php'),
+            $this->hook(['resources_discover' => static fn (): null => null], '/exts/quiet.php'),
+        ]);
+
+        $found = $runner->emitResourcesDiscover('/work', 'startup');
+
+        $this->assertSame([
+            ['path' => '/exts/one/skills', 'extensionPath' => '/exts/one/index.php'],
+            ['path' => '/opt/shared/skills', 'extensionPath' => '/exts/one/index.php'],
+        ], $found->skillPaths);
+        $this->assertSame([['path' => '/exts/one/prompts', 'extensionPath' => '/exts/one/index.php']], $found->promptPaths);
+        $this->assertSame([['path' => '/exts/themes', 'extensionPath' => '/exts/two.php']], $found->themePaths);
+        $this->assertSame([], $this->errors);
+    }
+
+    public function testAHandlerThatThrowsOrAnswersWronglyIsReportedAndTheRestStillAnswer(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['resources_discover' => static fn (): never => throw new \RuntimeException('no disk')], '/exts/broken.php'),
+            $this->hook(['resources_discover' => static fn (): array => ['skillPaths' => ['x']]], '/exts/wrong.php'),
+            $this->hook(['resources_discover' => static fn (): ResourcesDiscoverResult => new ResourcesDiscoverResult(skillPaths: ['/s'])], '/exts/fine.php'),
+        ]);
+
+        $found = $runner->emitResourcesDiscover('/work', 'reload');
+
+        $this->assertSame([['path' => '/s', 'extensionPath' => '/exts/fine.php']], $found->skillPaths);
+        $this->assertCount(2, $this->errors);
+        $this->assertStringContainsString('no disk', $this->errors[0]->message);
+        $this->assertStringContainsString('expected ' . ResourcesDiscoverResult::class, $this->errors[1]->message);
+    }
+
+    // ---- what is listening -------------------------------------------------------------
+
+    public function testAnEmptyRunnerHasNothingListening(): void
+    {
+        $runner = new ExtensionRunner();
+
+        $this->assertTrue($runner->isEmpty());
+        $this->assertFalse($runner->hasHandlers('tool_call'));
+        $this->assertSame([], $runner->paths());
+    }
+
+    public function testHasHandlersFindsAcrossHooks(): void
+    {
+        $runner = new ExtensionRunner([
+            $this->hook(['agent_start' => static fn () => null], 'a.php'),
+            $this->hook(['tool_call' => static fn () => null], 'b.php'),
+        ]);
+
+        $this->assertTrue($runner->hasHandlers('agent_start'));
+        $this->assertTrue($runner->hasHandlers('tool_call'));
+        $this->assertFalse($runner->hasHandlers('turn_end'));
+        $this->assertSame(['a.php', 'b.php'], $runner->paths());
+    }
+
+    // ---- fire and forget ---------------------------------------------------------------
+
+    public function testEveryHandlerSeesAFireAndForgetEvent(): void
+    {
+        $seen = [];
+        $runner = new ExtensionRunner([
+            $this->hook(['agent_start' => static function () use (&$seen): void {
+                $seen[] = 'a';
+            }], 'a.php'),
+            $this->hook(['agent_start' => static function () use (&$seen): void {
+                $seen[] = 'b';
+            }], 'b.php'),
+        ]);
+
+        $runner->emit(new AgentStartEvent());
+
+        $this->assertSame(['a', 'b'], $seen);
+    }
+
+    /** One person's broken hook is not another's. */
+    public function testAHandlerThatThrowsIsReportedAndTheRestStillRun(): void
+    {
+        $reached = false;
+        $runner = $this->runner([
+            $this->hook(['agent_start' => static function (): void {
+                throw new RuntimeException('boom');
+            }], 'bad.php'),
+            $this->hook(['agent_start' => static function () use (&$reached): void {
+                $reached = true;
+            }], 'good.php'),
+        ]);
+
+        $runner->emit(new AgentStartEvent());
+
+        $this->assertTrue($reached);
+        $this->assertCount(1, $this->errors);
+        $this->assertSame('bad.php', $this->errors[0]->path);
+        $this->assertSame('agent_start', $this->errors[0]->stage);
+        $this->assertStringContainsString('boom', $this->errors[0]->message);
+    }
+
+    public function testACacheWarmingDecisionIsTheLastAnswerAndAThrowLeavesPigsStanding(): void
+    {
+        $event = new CacheWarmingDecisionEvent(0.03, 0.345, 1.0, 'warm');
+        $runner = $this->runner([
+            $this->hook(['cache_warming_decision' => static fn (): CacheWarmingDecisionEventResult => new CacheWarmingDecisionEventResult('stop')], 'first.php'),
+            $this->hook(['cache_warming_decision' => static fn (): CacheWarmingDecisionEventResult => new CacheWarmingDecisionEventResult()], 'silent.php'),
+            $this->hook(['cache_warming_decision' => static function (): never {
+                throw new RuntimeException('boom');
+            }], 'bad.php'),
+        ]);
+
+        // Upstream's rule: every handler is asked, the last one with an action wins, and one with
+        // nothing to say leaves the answer where it was.
+        $this->assertSame('stop', $runner->emitCacheWarmingDecision($event));
+        $this->assertCount(1, $this->errors);
+        $this->assertSame('bad.php', $this->errors[0]->path);
+        $this->assertSame('warm', $this->runner([])->emitCacheWarmingDecision($event));
+    }
+
+    public function testTheContextCarriesTheWorkingDirectoryAndTheCurrentModel(): void
+    {
+        $runner = new ExtensionRunner([], '/work');
+        $runner->initialize(getModel: static fn () => null, isIdle: static fn (): bool => false);
+
+        $context = $runner->context();
+
+        $this->assertSame('/work', $context->cwd);
+        $this->assertNull($context->model);
+        $this->assertFalse($context->isIdle());
+        $this->assertFalse($context->hasPendingMessages());
+    }
+
+    public function testAContextWithNothingWiredUpIsIdle(): void
+    {
+        $this->assertTrue((new ExtensionRunner())->context()->isIdle());
+    }
+
+    // ---- tool_call ---------------------------------------------------------------------
+
+    public function testNoHandlerMeansNoOpinion(): void
+    {
+        $runner = new ExtensionRunner();
+
+        $this->assertNull($runner->emitToolCall(new ToolCallEvent('bash', '1', [])));
+    }
+
+    public function testTheFirstBlockStopsTheRest(): void
+    {
+        $asked = [];
+        $runner = new ExtensionRunner([
+            $this->hook(['tool_call' => static function () use (&$asked) {
+                $asked[] = 'a';
+
+                return new ToolCallEventResult(block: true, reason: 'no');
+            }], 'a.php'),
+            $this->hook(['tool_call' => static function () use (&$asked) {
+                $asked[] = 'b';
+
+                return null;
+            }], 'b.php'),
+        ]);
+
+        $result = $runner->emitToolCall(new ToolCallEvent('bash', '1', []));
+
+        $this->assertSame(['a'], $asked);
+        $this->assertTrue($result?->block);
+        $this->assertSame('no', $result->reason);
+    }
+
+    public function testAHandlerThatDoesNotBlockLetsTheNextOneAnswer(): void
+    {
+        $runner = new ExtensionRunner([
+            $this->hook(['tool_call' => static fn () => new ToolCallEventResult()], 'a.php'),
+            $this->hook(['tool_call' => static fn () => new ToolCallEventResult(block: true)], 'b.php'),
+        ]);
+
+        $this->assertTrue($runner->emitToolCall(new ToolCallEvent('bash', '1', []))?->block);
+    }
+
+    /** A hook asked whether a tool may run and answering with an exception has not said yes. */
+    public function testAToolCallHandlerThatThrowsIsNotCaughtHere(): void
+    {
+        $runner = new ExtensionRunner([
+            $this->hook(['tool_call' => static function (): void {
+                throw new RuntimeException('guard is broken');
+            }]),
+        ]);
+
+        try {
+            $runner->emitToolCall(new ToolCallEvent('bash', '1', []));
+            $this->fail('expected the throw to reach the caller');
+        } catch (RuntimeException $error) {
+            $this->assertSame('guard is broken', $error->getMessage());
+        }
+    }
+
+    public function testABlockWithNoReasonStillTellsTheModelSomething(): void
+    {
+        $this->assertSame(
+            'Tool execution was blocked by a hook',
+            (new ToolCallEventResult(block: true))->message(),
+        );
+    }
+
+    public function testAHandlerReturningTheWrongTypeIsReportedAndIgnored(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['tool_call' => static fn (): string => 'block it'], 'a.php'),
+        ]);
+
+        $this->assertNull($runner->emitToolCall(new ToolCallEvent('bash', '1', [])));
+        $this->assertCount(1, $this->errors);
+        $this->assertStringContainsString('handler returned string', $this->errors[0]->message);
+    }
+
+    // ---- tool_result -------------------------------------------------------------------
+
+    public function testTheLastToolResultHandlerWins(): void
+    {
+        $runner = new ExtensionRunner([
+            $this->hook(['tool_result' => static fn () => new ToolResultEventResult([new TextContent('a')])], 'a.php'),
+            $this->hook(['tool_result' => static fn () => new ToolResultEventResult([new TextContent('b')])], 'b.php'),
+        ]);
+
+        $result = $runner->emitToolResult(new ToolResultEvent('read', '1', [], [new TextContent('raw')]));
+
+        $this->assertSame('b', $result?->content[0]->text);
+    }
+
+    /** Each handler sees the tool's own output, not the edit the hook before it made. */
+    public function testEachToolResultHandlerSeesTheToolsOwnOutput(): void
+    {
+        $seen = [];
+        $runner = new ExtensionRunner([
+            $this->hook(['tool_result' => static function ($event) use (&$seen) {
+                $seen[] = $event->content[0]->text;
+
+                return new ToolResultEventResult([new TextContent('replaced')]);
+            }], 'a.php'),
+            $this->hook(['tool_result' => static function ($event) use (&$seen) {
+                $seen[] = $event->content[0]->text;
+
+                return null;
+            }], 'b.php'),
+        ]);
+
+        $runner->emitToolResult(new ToolResultEvent('read', '1', [], [new TextContent('raw')]));
+
+        $this->assertSame(['raw', 'raw'], $seen);
+    }
+
+    public function testAToolResultHandlerThatThrowsIsCaught(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['tool_result' => static function (): void {
+                throw new RuntimeException('counted wrong');
+            }]),
+        ]);
+
+        $this->assertNull($runner->emitToolResult(new ToolResultEvent('read', '1', [], [])));
+        $this->assertCount(1, $this->errors);
+    }
+
+    /**
+     * A handler that throws on one of the four *decisive* events has not answered.
+     *
+     * Those four go through `ask()` rather than `emit()`, which is a second walk over the
+     * handlers with its own `try` — and that `try` had no test: removing it broke nothing in the
+     * whole suite, while a hook with a typo in it would have thrown out of `compact()`,
+     * `goTo()` or `switchTo()` instead of letting the default happen. Upstream's own suite names
+     * the rule ("should continue with default compaction if hook throws error"), which is how
+     * this was found. Answering null is what makes that fall-through work, and the next handler
+     * still gets asked.
+     */
+    public function testAThrowingHandlerOnADecisiveEventIsReportedAndTheNextOneStillAnswers(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['session_before_compact' => static function (): void {
+                throw new RuntimeException('a typo in a hook');
+            }], 'bad.php'),
+            $this->hook([
+                'session_before_compact' => static fn () => new SessionBeforeCompactResult(cancel: true),
+            ], 'good.php'),
+        ]);
+
+        $answer = $runner->emitBeforeCompact(self::beforeCompact());
+
+        $this->assertTrue($answer?->cancel);
+        $this->assertCount(1, $this->errors);
+        $this->assertSame('bad.php', $this->errors[0]->path);
+        $this->assertSame('session_before_compact', $this->errors[0]->stage);
+        $this->assertStringContainsString('a typo in a hook', $this->errors[0]->message);
+    }
+
+    /** And with nobody left to answer, the caller is told nothing was decided. */
+    public function testADecisiveEventWhoseOnlyHandlerThrowsAnswersNothing(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['session_before_compact' => static function (): void {
+                throw new RuntimeException('boom');
+            }]),
+        ]);
+
+        $this->assertNull($runner->emitBeforeCompact(self::beforeCompact()));
+        $this->assertCount(1, $this->errors);
+    }
+
+    // ---- context -----------------------------------------------------------------------
+
+    public function testContextHandlersAreChained(): void
+    {
+        $runner = new ExtensionRunner([
+            $this->hook(['context' => static fn ($event) => new ContextEventResult(
+                [...$event->messages, new UserMessage('from a')],
+            )], 'a.php'),
+            $this->hook(['context' => static fn ($event) => new ContextEventResult(
+                [...$event->messages, new UserMessage('from b')],
+            )], 'b.php'),
+        ]);
+
+        $out = $runner->emitContext([new UserMessage('original')]);
+
+        $this->assertCount(3, $out);
+        $this->assertSame('from b', $out[2]->content[0]->text);
+    }
+
+    public function testAContextHandlerReturningNullChangesNothing(): void
+    {
+        $runner = new ExtensionRunner([$this->hook(['context' => static fn () => null])]);
+        $messages = [new UserMessage('one')];
+
+        $this->assertSame($messages, $runner->emitContext($messages));
+    }
+
+    public function testAContextHandlerThatThrowsLeavesTheConversationAlone(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['context' => static function (): void {
+                throw new RuntimeException('bad edit');
+            }]),
+        ]);
+
+        $messages = [new UserMessage('one')];
+
+        $this->assertSame($messages, $runner->emitContext($messages));
+        $this->assertCount(1, $this->errors);
+    }
+
+    // ---- before_agent_start ------------------------------------------------------------
+
+    public function testEveryHandlersMessageIsKeptInOrder(): void
+    {
+        // Upstream's `emitBeforeAgentStart()` collects each handler's `message`.
+        $runner = new ExtensionRunner([
+            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult(new CustomMessage('a', [new TextContent('first')]))], 'a.php'),
+            $this->hook(['before_agent_start' => static fn () => new BeforeAgentStartEventResult(new CustomMessage('b', [new TextContent('second')]))], 'b.php'),
+        ]);
+
+        $messages = $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hello']);
+
+        $this->assertSame(['first', 'second'], array_map(static fn (CustomMessage $m): string => $m->toText(), $messages));
+    }
+
+    public function testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections(): void
+    {
+        // Upstream's `emitBeforeAgentStart()`: one options object for every handler, and a
+        // `systemPrompt` answer becomes `forceSystemPrompt`.
+        $seen = [];
+        $runner = new ExtensionRunner([
+            $this->hook(['before_agent_start' => static function ($event) {
+                $event->systemPromptOptions->sections['plan_mode'] = 'Plan only.';
+
+                return new BeforeAgentStartEventResult(systemPrompt: 'Exact prompt.');
+            }], 'a.php'),
+            $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
+                $seen = [$event->systemPromptOptions->sections, $event->systemPromptOptions->forceSystemPrompt, $event->systemPrompt()];
+
+                return new BeforeAgentStartEventResult(new CustomMessage('note', [new TextContent('the note')]));
+            }], 'b.php'),
+        ]);
+        $options = new SystemPromptOptions();
+
+        $messages = $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hello'], $options, static fn (SystemPromptOptions $o): string => $o->forceSystemPrompt ?? 'built');
+
+        $this->assertSame([['plan_mode' => 'Plan only.'], 'Exact prompt.', 'Exact prompt.'], $seen);
+        $this->assertSame('Exact prompt.', $options->forceSystemPrompt);
+        $this->assertSame('the note', $messages[0]->toText());
+    }
+
+    public function testTheHandlerSeesThePrompt(): void
+    {
+        $seen = null;
+        $runner = new ExtensionRunner([
+            $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
+                $seen = [$event->messageType, $event->prompt, $event->message];
+
+                return null;
+            }]),
+        ]);
+
+        $runner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'fix the tests']);
+
+        $this->assertSame(['user', 'fix the tests', null], $seen);
+    }
+
+    public function testACustomMessageRunCarriesTheMessageAndNoPrompt(): void
+    {
+        // Upstream's `BeforeAgentStartCustomEvent`: a run started by `sendMessage(…, triggerTurn)`.
+        $seen = null;
+        $runner = new ExtensionRunner([
+            $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
+                $seen = [$event->messageType, $event->prompt, $event->message?->toText()];
+
+                return null;
+            }]),
+        ]);
+
+        $runner->emitBeforeAgentStart(['messageType' => 'custom', 'message' => new CustomMessage('build', [new TextContent('the build broke')])]);
+
+        $this->assertSame(['custom', null, 'the build broke'], $seen);
+    }
+
+    // ---- the cancellable ones ----------------------------------------------------------
+
+    public function testTheFirstRefusalStopsTheRest(): void
+    {
+        $asked = [];
+        $runner = new ExtensionRunner([
+            $this->hook(['session_before_switch' => static function () use (&$asked) {
+                $asked[] = 'a';
+
+                return new SessionBeforeSwitchResult(cancel: true);
+            }], 'a.php'),
+            $this->hook(['session_before_switch' => static function () use (&$asked) {
+                $asked[] = 'b';
+
+                return null;
+            }], 'b.php'),
+        ]);
+
+        $result = $runner->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
+
+        $this->assertTrue($result?->cancel);
+        $this->assertSame(['a'], $asked);
+    }
+
+    public function testNotCancellingIsAnAnswerThatCancelsNothing(): void
+    {
+        // Upstream's runner keeps the last answer that is not a cancel and returns it at the end.
+        $runner = new ExtensionRunner([
+            $this->hook(['session_before_switch' => static fn () => new SessionBeforeSwitchResult()]),
+        ]);
+
+        $this->assertFalse($runner->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume'))?->cancel);
+    }
+
+    public function testTheLastAnswerToABeforeEventWinsUnlessOneCancels(): void
+    {
+        // A handler that only changes the label is still heard — the first version stopped only at
+        // a cancel or a summary, and dropped every other answer on the floor.
+        $runner = new ExtensionRunner([
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'first')], 'a.php'),
+            $this->hook(['session_before_tree' => static fn () => null], 'b.php'),
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'second')], 'c.php'),
+        ]);
+        $event = new SessionBeforeTreeEvent(new TreePreparation('t', 'o', null, [], false), (new AbortController())->signal);
+
+        $this->assertSame('second', $runner->emitBeforeTree($event)?->label);
+
+        $cancelling = new ExtensionRunner([
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(cancel: true)], 'a.php'),
+            $this->hook(['session_before_tree' => static fn () => new SessionBeforeTreeResult(label: 'never asked')], 'b.php'),
+        ]);
+
+        $this->assertTrue($cancelling->emitBeforeTree($event)?->cancel);
+    }
+
+    private static function beforeCompact(): SessionBeforeCompactEvent
+    {
+        return new SessionBeforeCompactEvent(
+            new CompactionPreparation('e1', [], [], false, 0, null, new FileOperations(), new CompactionSettings()),
+            [],
+            null,
+            'manual',
+            false,
+            (new AbortController())->signal,
+        );
+    }
+
+    // ---- commands ----------------------------------------------------------------------
+
+    public function testCommandsAreCollectedFromEveryHook(): void
+    {
+        $a = new ExtensionApi('.', 'a.php');
+        $a->registerCommand('deploy', static fn () => null, 'Ship it');
+        $b = new ExtensionApi('.', 'b.php');
+        $b->registerCommand('rollback', static fn () => null);
+
+        $runner = new ExtensionRunner([new LoadedExtension('a.php', 'a.php', $a->name, $a), new LoadedExtension('b.php', 'b.php', $b->name, $b)]);
+        [$commands, $clashes] = $runner->commands();
+
+        $this->assertSame(['deploy', 'rollback'], array_keys($commands));
+        $this->assertSame('Ship it', $commands['deploy']->description);
+        $this->assertSame([], $clashes);
+    }
+
+    public function testTheFirstHookToRegisterANameKeepsIt(): void
+    {
+        $a = new ExtensionApi('.', 'a.php');
+        $a->registerCommand('deploy', static fn () => null, 'from a');
+        $b = new ExtensionApi('.', 'b.php');
+        $b->registerCommand('deploy', static fn () => null, 'from b');
+
+        $runner = new ExtensionRunner([new LoadedExtension('a.php', 'a.php', $a->name, $a), new LoadedExtension('b.php', 'b.php', $b->name, $b)]);
+        [$commands, $clashes] = $runner->commands();
+
+        $this->assertSame('from a', $commands['deploy']->description);
+        $this->assertCount(1, $clashes);
+        $this->assertSame('b.php', $clashes[0]->path);
+        $this->assertStringContainsString('already registered by a.php', $clashes[0]->message);
+    }
+
+    public function testTheSameHookCannotRegisterANameTwice(): void
+    {
+        $api = new ExtensionApi('.', 'a.php');
+        $api->registerCommand('deploy', static fn () => null);
+
+        try {
+            $api->registerCommand('deploy', static fn () => null);
+            $this->fail('expected the second registration to be refused');
+        } catch (InvalidArgumentException $error) {
+            $this->assertStringContainsString('already registered /deploy', $error->getMessage());
+        }
+    }
+
+    public function testALeadingSlashIsAllowedAndDropped(): void
+    {
+        $api = new ExtensionApi('.', 'a.php');
+        $api->registerCommand('/deploy', static fn () => null);
+
+        $this->assertSame(['deploy'], array_keys($api->commands()));
+    }
+
+    public function testACommandNameWithASpaceIsRefused(): void
+    {
+        try {
+            (new ExtensionApi('.'))->registerCommand('ship it', static fn () => null);
+            $this->fail('expected the name to be refused');
+        } catch (InvalidArgumentException $error) {
+            $this->assertStringContainsString('cannot be a command name', $error->getMessage());
+        }
+    }
+
+    // ---- exec --------------------------------------------------------------------------
+
+    public function testExecReturnsWhatTheCommandSaid(): void
+    {
+        $result = (new ExtensionApi('.'))->exec(['echo', 'hello']);
+
+        $this->assertTrue($result->ok());
+        $this->assertSame("hello\n", $result->stdout);
+        $this->assertFalse($result->stopped());
+    }
+
+    public function testExecRunsWhereItIsToldTo(): void
+    {
+        $result = (new ExtensionApi(sys_get_temp_dir()))->exec(['pwd']);
+
+        $this->assertSame(realpath(sys_get_temp_dir()), realpath(trim($result->stdout)));
+    }
+
+    public function testExecReportsAFailingCommandRatherThanThrowing(): void
+    {
+        $result = (new ExtensionApi('.'))->exec(['sh', '-c', 'echo oops >&2; exit 3']);
+
+        $this->assertFalse($result->ok());
+        $this->assertSame(3, $result->exitCode);
+        $this->assertStringContainsString('oops', $result->stderr);
+    }
+
+    public function testExecOutputPastMaxBufferIsCutAndTheCommandStopped(): void
+    {
+        // A descendant that keeps writing must not keep the call waiting either.
+        $command = ['sh', '-c', 'printf abc; printf def >&2; yes'];
+        $blocking = (new ExtensionApi('.'))->exec($command, maxBuffer: 6);
+        $onLoop = null;
+        Async::run(static function () use (&$onLoop, $command): void {
+            $onLoop = (new ExtensionApi('.'))->exec($command, maxBuffer: 6);
+        });
+
+        foreach ([$blocking, $onLoop] as $result) {
+            $this->assertInstanceOf(ExecResult::class, $result);
+            $this->assertTrue($result->truncated);
+            $this->assertTrue($result->stopped());
+            $this->assertFalse($result->ok());
+            $this->assertSame(6, strlen($result->stdout) + strlen($result->stderr));
+        }
+
+        $this->assertFalse((new ExtensionApi('.'))->exec(['echo', 'hi'], maxBuffer: 3)->truncated);
+        $this->assertSame(ExecResult::MAX_BUFFER, 128 * 1024 * 1024);
+    }
+
+    public function testExecDropsACharacterTheCapCutThrough(): void
+    {
+        // "é" is two bytes; a cap of 2 keeps "a" and half of it, and half is dropped.
+        $result = (new ExtensionApi('.'))->exec(['sh', '-c', 'printf "a\303\251"; sleep 5'], maxBuffer: 2);
+
+        $this->assertTrue($result->truncated);
+        $this->assertSame('a', $result->stdout);
+    }
+
+    public function testANegativeMaxBufferIsRefusedBeforeAnythingRuns(): void
+    {
+        $this->expectException(\Pig\Tui\TuiError::class);
+
+        (new ExtensionApi('.'))->exec(['echo', 'hi'], maxBuffer: -1);
+    }
+
+    public function testAHooksCommandDoesNotFreezeTheScreenWhileItRuns(): void
+    {
+        $ticks = 0;
+
+        Async::run(static function () use (&$ticks): void {
+            Async::spawn(static function () use (&$ticks): void {
+                for ($index = 0; $index < 5; $index++) {
+                    Async::delay(0.02);
+                    $ticks++;
+                }
+            });
+
+            (new ExtensionApi('.'))->exec(['sh', '-c', 'sleep 0.3']);
+        });
+
+        // A hook that runs a linter used to be that many seconds of a terminal that would not
+        // answer: no keystrokes, no spinner, no redraw, because `Process::run()` polls with
+        // `usleep()` and the one thread is inside it. The count is 0 if that comes back.
+        $this->assertGreaterThan(1, $ticks);
+    }
+
+    public function testEscapeStopsAHooksCommandRatherThanWaitingItOut(): void
+    {
+        $controller = new AbortController();
+        $api = new ExtensionApi('.');
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], '.');
+        $runner->initialize(
+            getModel: static fn () => null,
+            signal: static fn (): AbortSignal => $controller->signal,
+        );
+
+        $result = null;
+        $started = microtime(true);
+
+        Async::run(static function () use ($controller, $api, &$result): void {
+            Async::spawn(static function () use ($controller): void {
+                Async::delay(0.05);
+                $controller->abort('escape');
+            });
+
+            $result = $api->exec(['sh', '-c', 'echo started; sleep 5']);
+        });
+
+        // Upstream cannot do this: its `ExecOptions` has a `signal` field and its
+        // `ExtensionContext` has no signal to put in it, so a hook's command can only be waited
+        // out. The hook does not pass one here either — one it had to remember is one whose
+        // author did not.
+        $this->assertTrue($result->stopped());
+        $this->assertStringContainsString('started', $result->stdout);
+        $this->assertLessThan(2.0, microtime(true) - $started);
+    }
+
+    public function testAHandlerCanParkOnTheTurnsSignalItself(): void
+    {
+        $controller = new AbortController();
+        $api = new ExtensionApi('.');
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], '.');
+        $runner->initialize(
+            getModel: static fn () => null,
+            signal: static fn (): AbortSignal => $controller->signal,
+        );
+
+        $seen = null;
+        $api->on('agent_start', static function ($event, $context) use (&$seen): void {
+            $seen = $context->signal;
+        });
+
+        $runner->emit(new AgentStartEvent());
+
+        // On the context too, for a handler whose own waiting is not a subprocess.
+        $this->assertSame($controller->signal, $seen);
+    }
+
+    public function testBetweenTurnsThereIsNoSignalAndACommandStillRuns(): void
+    {
+        $api = new ExtensionApi('.');
+        $runner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], '.');
+        $runner->initialize(getModel: static fn () => null, signal: static fn () => null);
+
+        $result = Async::run(static fn () => $api->exec(['echo', 'idle']));
+
+        $this->assertTrue($result->ok());
+        $this->assertSame("idle\n", $result->stdout);
+    }
+
+    public function testAHooksCommandStillRunsWhereThereIsNoLoop(): void
+    {
+        // A hook factory runs at startup, before `Async::run()` — the same call, outside a
+        // fiber, still has to work.
+        $this->assertNull(Fiber::getCurrent());
+
+        $this->assertSame("plain\n", (new ExtensionApi('.'))->exec(['echo', 'plain'])->stdout);
+    }
+
+    // ---- the wrapped tool --------------------------------------------------------------
+
+    public function testAToolWithNoHooksIsNotWrappedAtAll(): void
+    {
+        $tools = [new RecordingTool()];
+
+        $this->assertSame($tools, ExtensionGuardedTool::wrap($tools, new ExtensionRunner()));
+    }
+
+    public function testAWrappedToolLooksExactlyLikeTheToolItWraps(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new ExtensionGuardedTool($tool, new ExtensionRunner());
+
+        $this->assertSame('read', $wrapped->definition()->name);
+        $this->assertSame('Read file', $wrapped->label());
+        $this->assertSame($tool, $wrapped->inner());
+    }
+
+    public function testAToolRunsWhenNothingBlocksIt(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new ExtensionGuardedTool($tool, new ExtensionRunner([$this->hook(['tool_call' => static fn () => null])]));
+
+        $result = $wrapped->execute('1', ['path' => 'x']);
+
+        $this->assertSame(1, $tool->calls);
+        $this->assertSame('read x', $result->content[0]->text);
+    }
+
+    public function testABlockedToolNeverRuns(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new ExtensionGuardedTool($tool, new ExtensionRunner([
+            $this->hook(['tool_call' => static fn () => new ToolCallEventResult(block: true, reason: 'not here')]),
+        ]));
+
+        try {
+            $wrapped->execute('1', ['path' => 'x']);
+            $this->fail('expected the call to be blocked');
+        } catch (AgentError $error) {
+            $this->assertSame('not here', $error->getMessage());
+        }
+
+        $this->assertSame(0, $tool->calls);
+    }
+
+    /** A guard with a typo in it must not be a guard that waves everything through. */
+    public function testAToolCallHookThatThrowsBlocksTheCall(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new ExtensionGuardedTool($tool, new ExtensionRunner([
+            $this->hook(['tool_call' => static function (): void {
+                throw new RuntimeException('typo');
+            }]),
+        ]));
+
+        try {
+            $wrapped->execute('1', ['path' => 'x']);
+            $this->fail('expected the call to be blocked');
+        } catch (AgentError $error) {
+            $this->assertStringContainsString('is not consent', $error->getMessage());
+            $this->assertStringContainsString('typo', $error->getMessage());
+        }
+
+        $this->assertSame(0, $tool->calls);
+    }
+
+    /**
+     * Upstream's rule for changing a call rather than refusing it: "To modify arguments, mutate
+     * `event.input` in place". Its permission gate turns `rm -rf build` into a move to the trash
+     * this way, without blocking. The event was `readonly` here, so a hook that rewrote the
+     * command rewrote a copy and `rm` ran as typed.
+     */
+    public function testAHookThatEditsTheInputChangesWhatTheToolRunsWith(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new ExtensionGuardedTool($tool, new ExtensionRunner([
+            $this->hook(['tool_call' => static function ($event) {
+                $event->input['path'] = 'trash/' . $event->input['path'];
+
+                return null;
+            }]),
+        ]));
+
+        $result = $wrapped->execute('1', ['path' => 'x']);
+
+        $this->assertSame(1, $tool->calls);
+        $this->assertSame('read trash/x', $result->content[0]->text, 'the tool ran with the edited arguments');
+    }
+
+    public function testTheHookSeesTheToolNameAndArguments(): void
+    {
+        $seen = null;
+        $wrapped = new ExtensionGuardedTool(new RecordingTool(), new ExtensionRunner([
+            $this->hook(['tool_call' => static function ($event) use (&$seen) {
+                $seen = $event;
+
+                return null;
+            }]),
+        ]));
+
+        $wrapped->execute('call-7', ['path' => 'x']);
+
+        $this->assertSame('read', $seen?->toolName);
+        $this->assertSame('call-7', $seen->toolCallId);
+        $this->assertSame(['path' => 'x'], $seen->input);
+    }
+
+    public function testAHookCanReplaceWhatTheModelIsShown(): void
+    {
+        $wrapped = new ExtensionGuardedTool(new RecordingTool(), new ExtensionRunner([
+            $this->hook(['tool_result' => static fn () => new ToolResultEventResult([new TextContent('redacted')])]),
+        ]));
+
+        $result = $wrapped->execute('1', ['path' => 'secrets']);
+
+        $this->assertSame('redacted', $result->content[0]->text);
+        // Untouched, because the hook said nothing about it.
+        $this->assertSame('details for secrets', $result->details);
+    }
+
+    public function testAHookCanReplaceTheDetailsAlone(): void
+    {
+        $wrapped = new ExtensionGuardedTool(new RecordingTool(), new ExtensionRunner([
+            $this->hook(['tool_result' => static fn () => new ToolResultEventResult(details: 'other')]),
+        ]));
+
+        $result = $wrapped->execute('1', ['path' => 'x']);
+
+        $this->assertSame('read x', $result->content[0]->text);
+        $this->assertSame('other', $result->details);
+    }
+
+    public function testAHookCanTurnASuccessIntoAnError(): void
+    {
+        $wrapped = new ExtensionGuardedTool(new RecordingTool(), new ExtensionRunner([
+            $this->hook(['tool_result' => static fn () => new ToolResultEventResult(
+                [new TextContent('that file is off limits')],
+                isError: true,
+            )]),
+        ]));
+
+        try {
+            $wrapped->execute('1', ['path' => 'x']);
+            $this->fail('expected the hook to raise it as an error');
+        } catch (AgentError $error) {
+            $this->assertSame('that file is off limits', $error->getMessage());
+        }
+    }
+
+    public function testAFailingToolIsShownToTheHooksAndStillFails(): void
+    {
+        $seen = null;
+        $wrapped = new ExtensionGuardedTool(new ThrowingTool(), new ExtensionRunner([
+            $this->hook(['tool_result' => static function ($event) use (&$seen) {
+                $seen = $event;
+
+                return null;
+            }]),
+        ]));
+
+        try {
+            $wrapped->execute('1', []);
+            $this->fail('expected the tool to fail');
+        } catch (RuntimeException $error) {
+            $this->assertSame('disk on fire', $error->getMessage());
+        }
+
+        $this->assertTrue($seen?->isError);
+        $this->assertSame('disk on fire', $seen->content[0]->text);
+    }
+
+    public function testProgressIsPassedThroughToTheWrappedTool(): void
+    {
+        $updates = [];
+        $wrapped = new ExtensionGuardedTool(new RecordingTool(), new ExtensionRunner([
+            $this->hook(['tool_call' => static fn () => null]),
+        ]));
+
+        $wrapped->execute('1', ['path' => 'x'], null, static function (AgentToolResult $partial) use (&$updates): void {
+            $updates[] = $partial->content[0]->text;
+        });
+
+        $this->assertSame(['working'], $updates);
+    }
+}
+
+/** A tool that records that it ran, reports progress, and says what it was asked for. */
+final class RecordingTool implements AgentTool
+{
+    public int $calls = 0;
+
+    public function definition(): Tool
+    {
+        return new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
+    }
+
+    public function label(): string
+    {
+        return 'Read file';
+    }
+
+    public function execute(
+        string $toolCallId,
+        array $arguments,
+        ?AbortSignal $signal = null,
+        ?\Closure $onUpdate = null,
+    ): AgentToolResult {
+        $this->calls++;
+
+        if ($onUpdate !== null) {
+            $onUpdate(new AgentToolResult([new TextContent('working')]));
+        }
+
+        $path = (string) ($arguments['path'] ?? '');
+
+        return new AgentToolResult([new TextContent("read {$path}")], "details for {$path}");
+    }
+}
+
+final class ThrowingTool implements AgentTool
+{
+    public function definition(): Tool
+    {
+        return new Tool('write', 'Write a file', ['type' => 'object', 'properties' => []]);
+    }
+
+    public function label(): string
+    {
+        return 'Write file';
+    }
+
+    public function execute(
+        string $toolCallId,
+        array $arguments,
+        ?AbortSignal $signal = null,
+        ?\Closure $onUpdate = null,
+    ): AgentToolResult {
+        throw new RuntimeException('disk on fire');
+    }
+}

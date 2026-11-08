@@ -33,18 +33,17 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Boundary\CompactionDraft;
-use Pig\CodingAgent\Hooks\Boundary\ContextEditDraft;
-use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
-use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
-use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\Results\BoundaryResult;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\Boundary\CompactionDraft;
+use Pig\CodingAgent\Extensions\Boundary\ContextEditDraft;
+use Pig\CodingAgent\Extensions\Boundary\CustomEntryDraft;
+use Pig\CodingAgent\Extensions\Boundary\CustomMessageDraft;
+use Pig\CodingAgent\Extensions\Events\AgentBeforeSettleEvent;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\Results\BoundaryResult;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\RetryStartEvent;
@@ -97,14 +96,14 @@ final class AgentSettledTest extends TestCase
     public function testATurnAHookTriggersFromAgentEndIsPartOfTheSamePrompt(): void
     {
         $sent = false;
-        $session = $this->start(['first', 'second'], static function (HookApi $pi) use (&$sent): void {
-            $pi->on('agent_end', static function () use ($pi, &$sent): void {
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig) use (&$sent): void {
+            $pig->on('agent_end', static function () use ($pig, &$sent): void {
                 if ($sent) {
                     return;
                 }
 
                 $sent = true;
-                $pi->sendMessage('note', 'carry on', triggerTurn: true);
+                $pig->sendMessage('note', 'carry on', triggerTurn: true);
             });
         });
 
@@ -118,14 +117,14 @@ final class AgentSettledTest extends TestCase
     public function testAUserMessageAnExtensionSendsFromAgentEndIsPartOfTheSamePrompt(): void
     {
         $sent = false;
-        $session = $this->start(['first', 'second'], static function (HookApi $pi) use (&$sent): void {
-            $pi->on('agent_end', static function () use ($pi, &$sent): void {
-                if ($sent || !$pi instanceof ExtensionApi) {
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig) use (&$sent): void {
+            $pig->on('agent_end', static function () use ($pig, &$sent): void {
+                if ($sent || !$pig instanceof ExtensionApi) {
                     return;
                 }
 
                 $sent = true;
-                $pi->sendUserMessage('and another thing');
+                $pig->sendUserMessage('and another thing');
             });
         }, extension: true);
 
@@ -141,14 +140,14 @@ final class AgentSettledTest extends TestCase
     public function testAHookMessageQueuedFromTheLastTurnEndIsAnsweredBeforeSettling(): void
     {
         $sent = false;
-        $session = $this->start(['first', 'second'], static function (HookApi $pi) use (&$sent): void {
-            $pi->on('turn_end', static function () use ($pi, &$sent): void {
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig) use (&$sent): void {
+            $pig->on('turn_end', static function () use ($pig, &$sent): void {
                 if ($sent) {
                     return;
                 }
 
                 $sent = true;
-                $pi->sendMessage('note', 'one more thing', triggerTurn: true);
+                $pig->sendMessage('note', 'one more thing', triggerTurn: true);
             });
         });
 
@@ -194,7 +193,7 @@ final class AgentSettledTest extends TestCase
         $session->subscribe(static function (AgentEvent $event) use ($session, &$sent): void {
             if ($event instanceof RetryStartEvent && !$sent) {
                 $sent = true;
-                $session->sendHookMessage(new HookMessage('note', [new TextContent('while you wait')]), true);
+                $session->sendHookMessage(new CustomMessage('note', [new TextContent('while you wait')]), true);
             }
         });
 
@@ -373,8 +372,8 @@ final class AgentSettledTest extends TestCase
     public function testABeforeSettleHandlerCanAppendAMessageAndAskForOneMoreRequest(): void
     {
         $seen = [];
-        $session = $this->start(['first', 'second'], static function (HookApi $pi) use (&$seen): void {
-            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$seen): ?BoundaryResult {
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig) use (&$seen): void {
+            $pig->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$seen): ?BoundaryResult {
                 $seen[] = [$event->outcome, $event->continue, $event->context->canContinue, count($event->context->pendingMessages)];
 
                 if (count($seen) > 1) {
@@ -393,7 +392,7 @@ final class AgentSettledTest extends TestCase
 
         $messages = $session->messages();
         $this->assertSame('second', self::textOf($messages[count($messages) - 1]), 'the request the handler asked for was made');
-        $this->assertInstanceOf(HookMessage::class, $messages[count($messages) - 2], 'the drafted message is in the conversation, in front of it');
+        $this->assertInstanceOf(CustomMessage::class, $messages[count($messages) - 2], 'the drafted message is in the conversation, in front of it');
         $this->assertSame([['completed', false, false, 0], ['completed', false, false, 0]], $seen, 'asked once per boundary: before the first answer settled, and again after the second');
         $this->assertSettledOnceAtTheEnd();
     }
@@ -401,11 +400,11 @@ final class AgentSettledTest extends TestCase
     public function testAContinueTheContextCannotCarryIsRefusedAndReported(): void
     {
         $errors = [];
-        $session = $this->start(['first', 'second'], static function (HookApi $pi): void {
-            $pi->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(continue: true));
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig): void {
+            $pig->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(continue: true));
         });
-        $session->hooks()?->onError(static function (HookError $error) use (&$errors): void {
-            $errors[] = $error->error;
+        $session->extensionRunner()?->onError(static function (ExtensionError $error) use (&$errors): void {
+            $errors[] = $error->message;
         });
 
         Async::run(static fn () => $session->prompt('hi'));
@@ -420,17 +419,17 @@ final class AgentSettledTest extends TestCase
     public function testAHandlerSeesWhatTheOneBeforeItDraftedAndAnEditOfNothingIsRefused(): void
     {
         $second = null;
-        $session = $this->start(['first'], static function (HookApi $pi) use (&$second): void {
-            $pi->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(entries: [new CustomMessageDraft('a', 'from a')]));
-            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$second): BoundaryResult {
+        $session = $this->start(['first'], static function (ExtensionApi $pig) use (&$second): void {
+            $pig->on('agent_before_settle', static fn (): BoundaryResult => new BoundaryResult(entries: [new CustomMessageDraft('a', 'from a')]));
+            $pig->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$second): BoundaryResult {
                 $second = $event;
 
                 return new BoundaryResult(entries: [...$event->entries, new ContextEditDraft('no-such-entry')]);
             });
         });
         $errors = [];
-        $session->hooks()?->onError(static function (HookError $error) use (&$errors): void {
-            $errors[] = $error->error;
+        $session->extensionRunner()?->onError(static function (ExtensionError $error) use (&$errors): void {
+            $errors[] = $error->message;
         });
 
         Async::run(static fn () => $session->prompt('hi'));
@@ -439,7 +438,7 @@ final class AgentSettledTest extends TestCase
         $this->assertCount(1, $second->entries);
         $this->assertTrue($second->context->canContinue, 'the first handler\'s message would let a request go');
         $this->assertStringStartsWith('Invalid boundary entries:', $errors[0] ?? '');
-        $this->assertNotInstanceOf(HookMessage::class, $session->messages()[count($session->messages()) - 1], 'an invalid list appends nothing, not even its good half');
+        $this->assertNotInstanceOf(CustomMessage::class, $session->messages()[count($session->messages()) - 1], 'an invalid list appends nothing, not even its good half');
         $this->assertSettledOnceAtTheEnd();
     }
 
@@ -447,9 +446,9 @@ final class AgentSettledTest extends TestCase
     {
         $dir = sys_get_temp_dir() . '/pig-settle-' . bin2hex(random_bytes(4));
         $store = SessionManager::create($dir);
-        $session = $this->start(['first', 'second'], static function (HookApi $pi): void {
+        $session = $this->start(['first', 'second'], static function (ExtensionApi $pig): void {
             $once = false;
-            $pi->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$once): ?BoundaryResult {
+            $pig->on('agent_before_settle', static function (AgentBeforeSettleEvent $event) use (&$once): ?BoundaryResult {
                 if ($once) {
                     return null;
                 }
@@ -554,12 +553,12 @@ final class AgentSettledTest extends TestCase
 
     /**
      * @param list<string|array{error: string}|array{tool: string}> $script
-     * @param (Closure(HookApi): void)|null $register
+     * @param (Closure(ExtensionApi): void)|null $register
      */
     private function start(array $script, ?Closure $register = null, ?Settings $settings = null, bool $extension = false, ?SessionManager $store = null): AgentSession
     {
         $this->script = $script;
-        $api = $extension ? new ExtensionApi('.', 'test.php', 'test') : new HookApi('.', 'test.php');
+        $api = $extension ? new ExtensionApi('.', 'test.php', 'test') : new ExtensionApi('.', 'test.php');
 
         $api->on('agent_start', function (): void {
             $this->log[] = 'agent_start';
@@ -579,23 +578,23 @@ final class AgentSettledTest extends TestCase
             $register($api);
         }
 
-        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], sys_get_temp_dir());
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], sys_get_temp_dir());
 
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'test-key'));
         $agent->setModel(new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
         $agent->setTools([$this->tool()]);
 
-        $session = new AgentSession($agent, sys_get_temp_dir(), $store, $settings ?? Settings::inMemory(['retry' => ['baseDelayMs' => 1]]), $hooks);
+        $session = new AgentSession($agent, sys_get_temp_dir(), $store, $settings ?? Settings::inMemory(['retry' => ['baseDelayMs' => 1]]), $extensionRunner);
         $this->session = $session;
 
-        $hooks->initialize(
+        $extensionRunner->initialize(
             getModel: static fn () => $session->model(),
             isIdle: static fn (): bool => !$session->isStreaming(),
-            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
+            send: static function (CustomMessage $message, bool $triggerTurn) use ($session): void {
                 $session->sendHookMessage($message, $triggerTurn);
             },
         );
-        $hooks->setSession($session);
+        $extensionRunner->setSession($session);
 
         return $session;
     }

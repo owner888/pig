@@ -14,7 +14,7 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -30,7 +30,7 @@ use Pig\CodingAgent\Session\SessionCodec;
  * Which is why the defaults are the subject: a host sends back what it was given, minus whatever
  * its own encoder dropped for being false. A mutation sweep put 43 mutations through this class and
  * every one of those defaults survived, along with the `default` arm that refuses a role this pig
- * does not know; `HookMessage` joined the same wire after Web was found dropping it.
+ * does not know; `CustomMessage` joined the same wire after Web was found dropping it.
  */
 final class SessionCodecTest extends TestCase
 {
@@ -85,7 +85,7 @@ final class SessionCodecTest extends TestCase
 
     public function testAHooksMessageGoesOverTheWireWholeRatherThanBeingDropped(): void
     {
-        $message = new HookMessage('build', [new TextContent('log'), new ImageContent('aGVsbG8=', 'image/png')],
+        $message = new CustomMessage('build', [new TextContent('log'), new ImageContent('aGVsbG8=', 'image/png')],
             display: false, details: ['code' => 3], timestamp: 1234);
         $encoded = SessionCodec::encode($message);
 
@@ -101,7 +101,7 @@ final class SessionCodecTest extends TestCase
     public function testAHooksMessageWithNoDisplayFlagIsShown(): void
     {
         $message = SessionCodec::decode(['role' => 'custom', 'customType' => 'build', 'content' => []]);
-        $this->assertInstanceOf(HookMessage::class, $message);
+        $this->assertInstanceOf(CustomMessage::class, $message);
         $this->assertTrue($message->display);
     }
 

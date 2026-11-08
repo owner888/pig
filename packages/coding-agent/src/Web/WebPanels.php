@@ -6,8 +6,8 @@ namespace Pig\CodingAgent\Web;
 
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\WebPanel;
-use Pig\CodingAgent\Hooks\HookUi;
-use Pig\CodingAgent\Hooks\NoUi;
+use Pig\CodingAgent\Extensions\ExtensionUi;
+use Pig\CodingAgent\Extensions\NoUi;
 use Throwable;
 
 /**
@@ -74,7 +74,7 @@ final class WebPanels
      * @param array<string, mixed> $data
      * @return array{ok: bool, error?: string, blocks?: list<array<string, mixed>>}
      */
-    public static function actFor(array $data, HookUi $ui): array
+    public static function actFor(array $data, ExtensionUi $ui): array
     {
         $panel = ExtensionApi::webPanel(is_string($data['panel'] ?? null) ? $data['panel'] : '');
 
@@ -88,7 +88,7 @@ final class WebPanels
      * @param array<string, mixed> $data
      * @return array{ok: bool, error?: string, blocks?: list<array<string, mixed>>}
      */
-    public static function act(WebPanel $panel, array $data, HookUi $ui): array
+    public static function act(WebPanel $panel, array $data, ExtensionUi $ui): array
     {
         $request = ['locale' => self::locale($data['locale'] ?? null), 'section' => null];
         $name = is_string($data['action'] ?? null) ? $data['action'] : '';

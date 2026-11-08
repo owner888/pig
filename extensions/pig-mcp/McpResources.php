@@ -10,7 +10,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 
 /**
  * MCP resources, through the tools Codex and opencode use — upstream's `extensions/mcp/resources.js`:
@@ -158,7 +158,7 @@ final class McpResources
                 label: self::LIST,
                 description: 'Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.',
                 parameters: $listParameters,
-                execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($list, $jsonResult): AgentToolResult {
+                execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($list, $jsonResult): AgentToolResult {
                     $payload = $list(
                         $params,
                         $signal,
@@ -179,7 +179,7 @@ final class McpResources
                 label: self::LIST_TEMPLATES,
                 description: 'Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.',
                 parameters: $listParameters,
-                execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($list, $jsonResult): AgentToolResult {
+                execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($list, $jsonResult): AgentToolResult {
                     $payload = $list(
                         $params,
                         $signal,
@@ -200,7 +200,7 @@ final class McpResources
                 label: self::READ,
                 description: 'Read a specific resource from an MCP server given the server name and resource URI.',
                 parameters: $readParameters,
-                execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($findServer): AgentToolResult {
+                execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($findServer): AgentToolResult {
                     $serverName = self::stringArgument($params, 'server');
                     $uri = self::stringArgument($params, 'uri');
 

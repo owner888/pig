@@ -7,7 +7,7 @@ namespace Pig\CodingAgent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Model;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
@@ -43,7 +43,7 @@ final readonly class StartedSession
         public array $contextFiles,
         public array $skills,
         public array $fileCommands,
-        public HookRunner $hooks,
+        public ExtensionRunner $extensionRunner,
         public CustomToolSet $customTools,
         public ?SessionManager $store,
         public array $warnings,

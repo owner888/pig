@@ -6,8 +6,7 @@ namespace Pig\CodingAgent\CustomTools;
 
 use Closure;
 use Pig\Agent\AgentTool;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Throwable;
 
 /**
@@ -43,12 +42,8 @@ final class CustomToolSet
     /** @var list<LoadedCustomTool> everything adopted, before `$keep` — so a filter set later still sees it */
     private array $all;
 
-    /**
-     * @param list<LoadedCustomTool> $tools
-     * @param CustomToolApi|null     $api the one the factories were handed, so `withUi()`
-     *        reaches what they closed over rather than a fresh copy of it
-     */
-    public function __construct(array $tools = [], private readonly ?CustomToolApi $api = null)
+    /** @param list<LoadedCustomTool> $tools */
+    public function __construct(array $tools = [])
     {
         $this->all = $tools;
         $this->tools = $tools;
@@ -77,30 +72,17 @@ final class CustomToolSet
     }
 
     /**
-     * Hand the tools the terminal's UI, once a mode has one.
-     *
-     * Upstream's `setUIContext`. Called after the mode is up rather than at load, because
-     * at load there is no screen to draw a dialog on.
-     */
-    public function withUi(HookUi $ui): void
-    {
-        $this->api?->withUi($ui);
-    }
-
-    /**
      * Say how to build the session context a tool's `execute` and `onSession` are given.
      *
      * Separate from the constructor because the tools are loaded before there is a
      * session to describe — and a closure rather than a value, so a tool that asks which
      * model is answering is told the current one rather than the one at startup.
      *
-     * @param Closure(): HookContext $context
+     * @param Closure(): ExtensionContext $context
      */
     public function withContext(Closure $context): void
     {
         $this->context = $context;
-        // And to the shared API object, so `$pi->exec()` can reach the turn's signal.
-        $this->api?->withContext($context);
     }
 
     public function isEmpty(): bool
@@ -260,7 +242,7 @@ final class CustomToolSet
         return $problems;
     }
 
-    /** @return Closure(): HookContext */
+    /** @return Closure(): ExtensionContext */
     private function contextFn(): Closure
     {
         // A context with nothing wired up rather than null: a tool reading
@@ -273,6 +255,6 @@ final class CustomToolSet
         // something legitimately early, which is why it went unnoticed — the three modes all
         // wire it now, and `PrintModeTest::testACustomToolGetsTheRealSessionHereToo` is what
         // keeps the third one honest.
-        return $this->context ?? static fn (): HookContext => new HookContext('.');
+        return $this->context ?? static fn (): ExtensionContext => new ExtensionContext('.');
     }
 }

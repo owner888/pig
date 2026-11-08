@@ -34,14 +34,12 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\LoadedExtension;
-use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
-use Pig\CodingAgent\Hooks\Events\ContextEvent;
-use Pig\CodingAgent\Hooks\Events\ContextWithSystemEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
-use Pig\CodingAgent\Hooks\Results\ContextEventResult;
+use Pig\CodingAgent\Extensions\Events\BeforeAgentStartEvent;
+use Pig\CodingAgent\Extensions\Events\ContextEvent;
+use Pig\CodingAgent\Extensions\Events\ContextWithSystemEvent;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Extensions\Results\ContextEventResult;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -250,7 +248,7 @@ final class SystemMessageTranscriptTest extends TestCase
         // Upstream's `system-prompt-updates.test.ts`, "a forced prompt is sent as the leading prompt
         // for the run and never recorded".
         $turn = 0;
-        $api = new HookApi();
+        $api = new ExtensionApi();
         $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$turn): ?BeforeAgentStartEventResult {
             if (++$turn === 3) {
                 $event->systemPromptOptions->sections['plan_mode'] = 'Plan only.';
@@ -258,8 +256,8 @@ final class SystemMessageTranscriptTest extends TestCase
 
             return $turn === 2 || $turn === 3 ? new BeforeAgentStartEventResult(systemPrompt: 'Exact prompt.') : null;
         });
-        $hooks = new HookRunner([new LoadedHook('test-hook', 'test-hook', $api)]);
-        [$session] = $this->session(['one', 'two', 'three', 'four'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test-hook', 'test-hook', $api->name, $api)]);
+        [$session] = $this->session(['one', 'two', 'three', 'four'], extensionRunner: $extensionRunner);
 
         foreach (['one', 'two', 'three', 'four'] as $text) {
             Async::run(static fn () => $session->prompt($text));
@@ -302,15 +300,15 @@ final class SystemMessageTranscriptTest extends TestCase
     public function testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt(): void
     {
         $seen = null;
-        $api = new HookApi();
+        $api = new ExtensionApi();
         $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$seen): null {
             $event->systemPromptOptions->sections['notes'] = 'Remember the notes.';
             $seen = $event->systemPrompt();
 
             return null;
         });
-        $hooks = new HookRunner([new LoadedHook('test-hook', 'test-hook', $api)]);
-        [$session] = $this->session(['one'], hooks: $hooks);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test-hook', 'test-hook', $api->name, $api)]);
+        [$session] = $this->session(['one'], extensionRunner: $extensionRunner);
 
         Async::run(static fn () => $session->prompt('first'));
 
@@ -436,7 +434,7 @@ final class SystemMessageTranscriptTest extends TestCase
     {
         $seen = [];
         $withSystem = [];
-        $api = new HookApi();
+        $api = new ExtensionApi();
         $api->on('context', static function (ContextEvent $event) use (&$seen): ContextEventResult {
             $seen[] = array_map(static fn ($m): string => $m::class, $event->messages);
 
@@ -448,9 +446,9 @@ final class SystemMessageTranscriptTest extends TestCase
 
             return null;
         });
-        $hooks = new HookRunner([new LoadedHook('test-hook', 'test-hook', $api)]);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('test-hook', 'test-hook', $api->name, $api)]);
 
-        [$session] = $this->session(['one', 'two'], hooks: $hooks);
+        [$session] = $this->session(['one', 'two'], extensionRunner: $extensionRunner);
 
         Async::run(static fn () => $session->prompt('first'));
         Async::run(static fn () => $session->prompt('second'));
@@ -486,7 +484,7 @@ final class SystemMessageTranscriptTest extends TestCase
     private function session(
         array $answers,
         array $settings = [],
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         bool $reasoning = false,
         int $maxTokens = 64_000,
         ?CustomToolSet $customTools = null,
@@ -495,18 +493,18 @@ final class SystemMessageTranscriptTest extends TestCase
         $this->answers = $answers;
         // As `CodingAgent::create()` wires the hooks: the `context` event is the agent's transform.
         $agent = new Agent(new AgentOptions(
-            transformContext: $hooks === null ? null : static fn (array $messages): array => $hooks->emitContext($messages),
+            transformContext: $extensionRunner === null ? null : static fn (array $messages): array => $extensionRunner->emitContext($messages),
             streamFn: $this->provider(...),
             apiKey: 'test-key',
         ));
         $agent->setModel(new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, $maxTokens, $reasoning));
         $customTools ??= new CustomToolSet();
-        $loadout = new ToolLoadout($agent, $this->cwd, ['read', 'bash'], $customTools, $hooks ?? new HookRunner(), [], []);
+        $loadout = new ToolLoadout($agent, $this->cwd, ['read', 'bash'], $customTools, $extensionRunner ?? new ExtensionRunner(), [], []);
         // As `CodingAgent::session()` wires it: a tool that arrives later goes through `refresh()`.
         $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
         $store = $resume ?? SessionManager::create($this->cwd);
-        $session = new AgentSession($agent, $this->cwd, $store, Settings::inMemory($settings), $hooks, loadout: $loadout);
+        $session = new AgentSession($agent, $this->cwd, $store, Settings::inMemory($settings), $extensionRunner, loadout: $loadout);
 
         // And as it resumes one.
         if ($resume !== null) {

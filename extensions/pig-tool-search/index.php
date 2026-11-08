@@ -23,7 +23,7 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
  * The description lists the sources the tools come from, as pig's has from the start; upstream's
  * is fixed and leaves that to the `mcp_servers` prompt section.
  */
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $registered = false;
 
     $search = static function (string $id, array $params): AgentToolResult {
@@ -63,12 +63,12 @@ return static function (ExtensionApi $pi): void {
     };
 
     /** Register `tool_search` while something is listed, with the sources in its description. */
-    $sync = static function () use ($pi, &$registered, $search): void {
+    $sync = static function () use ($pig, &$registered, $search): void {
         $listed = DeferredTools::all();
 
         if ($listed === []) {
             if ($registered) {
-                $pi->removeTools(static fn (CustomTool $tool): bool => $tool->name === ToolSearch::TOOL_NAME);
+                $pig->removeTools(static fn (CustomTool $tool): bool => $tool->name === ToolSearch::TOOL_NAME);
                 $registered = false;
             }
 
@@ -90,7 +90,7 @@ return static function (ExtensionApi $pi): void {
         // Registered again on every change, as pig-mcp did when it owned the tool: the
         // description stays current, and the tool goes after the ones just loaded.
         $registered = true;
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: ToolSearch::TOOL_NAME,
             label: ToolSearch::TOOL_NAME,
             description: ToolSearch::description(array_values($sources)),

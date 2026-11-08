@@ -9,14 +9,14 @@ use Pig\CodingAgent\Interactive\BlockedStatus;
 use Pig\Ai\Utils\Uuid;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Extensions\ExtensionUi;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\ThemeInfo;
 use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\Theme\Themes;
 
 /**
- * `HookUi` over the wire: the question goes out as an `extension_ui_request` line, the answer comes
+ * `ExtensionUi` over the wire: the question goes out as an `extension_ui_request` line, the answer comes
  * back as an `extension_ui_response` — upstream's names and fields (`rpc-types.ts`), so a client
  * written against pi answers pig's hooks unchanged.
  *
@@ -48,7 +48,7 @@ use Pig\CodingAgent\Theme\Themes;
  * `theme()->fg()` writes is in the colours the host shows — and an extension's `setTheme()` is an
  * `extension_ui_request` of pig's own, `{method: "setTheme", theme}`, that the host applies.
  */
-final class RpcUi implements HookUi
+final class RpcUi implements ExtensionUi
 {
     /** @var array<string, Deferred> questions asked and not yet answered, by id */
     private array $pending = [];
@@ -258,7 +258,7 @@ final class RpcUi implements HookUi
      * Lines go to the host, and none — a cleared widget — is `widgetLines` left out, as upstream's
      * undefined is. A factory does not go at all, because it builds a terminal component and there
      * is no terminal — upstream sends only `string[] | undefined` and drops the rest the same way.
-     * `widgetPlacement` is upstream's `aboveEditor` or `belowEditor` — `HookUi`'s `above` and
+     * `widgetPlacement` is upstream's `aboveEditor` or `belowEditor` — `ExtensionUi`'s `above` and
      * `below` in upstream's words — and left out when the hook did not say, as upstream's
      * `options?.placement` is.
      */

@@ -240,7 +240,7 @@ final class Skills
      * `vendor` are skipped, and so is anything a symlink cannot be followed to.
      *
      * `scandir()` sorts where upstream's `readdirSync()` does not promise to, which is the order a
-     * name collision is decided by — the same reason `CustomToolLoader::discover()` sorts.
+     * name collision is decided by — the same reason `ExtensionLoader::discover()` sorts.
      *
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */

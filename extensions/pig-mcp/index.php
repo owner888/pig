@@ -7,13 +7,13 @@ use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
-use Pig\CodingAgent\Hooks\Events\McpServersChangeEvent;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Extensions\Events\BeforeAgentStartEvent;
+use Pig\CodingAgent\Extensions\Events\McpServersChangeEvent;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\Events\ToolCallEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Version;
@@ -73,7 +73,7 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResour
  *
  * What a server says with `notifications/message` goes to `~/.pig/agent/mcp.log`, rotated at 5MB.
  */
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $startupWait = 10.0;
 
     /** @var list<ServerEntry> */
@@ -96,7 +96,7 @@ return static function (ExtensionApi $pi): void {
     $generation = 0;
     /** The session's sign-ins: session shutdown aborts them, and a fresh one replaces it. */
     $signIns = new \Pig\Async\AbortController();
-    $cwd = $pi->cwd();
+    $cwd = $pig->cwd();
     $credentials = new McpOauth(McpOauth::defaultPath(Config::home()));
     $log = new McpServerLog(Config::home() . '/mcp.log');
     $openUrl = static function (string $url): void {
@@ -158,7 +158,7 @@ return static function (ExtensionApi $pi): void {
      * Register the resource tools with the widest exposure of the servers they reach: `direct` when
      * one of them is direct, `deferred` otherwise; gone when no server has resources.
      */
-    $syncResourceTools = static function () use ($pi, &$entries, &$connections, &$resourceToolsExposure, $resourceServers): void {
+    $syncResourceTools = static function () use ($pig, &$entries, &$connections, &$resourceToolsExposure, $resourceServers): void {
         $exposures = [];
 
         foreach ($resourceServers() as $connection) {
@@ -175,15 +175,15 @@ return static function (ExtensionApi $pi): void {
         $tools = McpResources::define($resourceServers);
 
         // Whatever they were before comes off; what they are now goes on by the exposure's door.
-        $pi->removeTools(static fn ($tool): bool => in_array($tool->name, McpResources::NAMES, true));
+        $pig->removeTools(static fn ($tool): bool => in_array($tool->name, McpResources::NAMES, true));
         DeferredTools::remove(static fn (array $one): bool => in_array($one['name'], McpResources::NAMES, true));
 
         foreach ($tools as $tool) {
             if ($next === 'direct') {
-                $pi->registerTool($tool);
+                $pig->registerTool($tool);
             } elseif ($next === 'deferred') {
-                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pi, $tool): \Pig\CodingAgent\CustomTools\CustomTool {
-                    $pi->registerTool($tool);
+                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pig, $tool): \Pig\CodingAgent\CustomTools\CustomTool {
+                    $pig->registerTool($tool);
 
                     return $tool;
                 });
@@ -196,7 +196,7 @@ return static function (ExtensionApi $pi): void {
         return $resourceToolsExposure === 'direct' || DeferredTools::isLoaded(McpResources::READ);
     };
 
-    $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$syncResourceTools, $resourcesReadable): void {
+    $registerTools = static function (ServerConnection $connection) use ($pig, &$toolOwners, &$serverTools, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
         $current = [];
         /** @var array<string, true> the names that went to the codemode registry this pass */
@@ -236,7 +236,7 @@ return static function (ExtensionApi $pi): void {
                     $name,
                     $defined->description,
                     $defined->parameters,
-                    static fn (array $args, \Pig\Async\AbortSignal $signal, HookContext $ctx): mixed => McpTools::scriptValue($connection->callTool($toolName, $args, ['signal' => $signal, 'timeout' => $connection->timeout()])),
+                    static fn (array $args, \Pig\Async\AbortSignal $signal, ExtensionContext $ctx): mixed => McpTools::scriptValue($connection->callTool($toolName, $args, ['signal' => $signal, 'timeout' => $connection->timeout()])),
                     ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
                     $exposure,
                     McpTools::callToolResultSchema($tool),
@@ -252,15 +252,15 @@ return static function (ExtensionApi $pi): void {
             $list = null;
 
             if ($exposure === 'deferred') {
-                $loaded = DeferredTools::isLoaded($name) || $pi->isToolPending($name);
+                $loaded = DeferredTools::isLoaded($name) || $pig->isToolPending($name);
                 $list = static fn () => DeferredTools::register(
                     $name,
                     (string) ($tool['description'] ?? ''),
                     $tool['inputSchema'] ?? null,
                     ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
-                    static function () use ($pi, $define): \Pig\CodingAgent\CustomTools\CustomTool {
+                    static function () use ($pig, $define): \Pig\CodingAgent\CustomTools\CustomTool {
                         $defined = $define();
-                        $pi->registerTool($defined);
+                        $pig->registerTool($defined);
 
                         return $defined;
                     },
@@ -274,7 +274,7 @@ return static function (ExtensionApi $pi): void {
             }
 
             $declared[] = $name;
-            $pi->registerTool($define());
+            $pig->registerTool($define());
 
             if ($list !== null) {
                 $list();
@@ -286,7 +286,7 @@ return static function (ExtensionApi $pi): void {
         $gone = array_diff($serverTools[$server] ?? [], $declared);
 
         if ($gone !== []) {
-            $pi->removeTools(static fn ($tool): bool => in_array($tool->name, $gone, true));
+            $pig->removeTools(static fn ($tool): bool => in_array($tool->name, $gone, true));
 
             DeferredTools::remove(static fn (array $one): bool => $one['loaded'] && in_array($one['name'], $gone, true));
         }
@@ -298,11 +298,11 @@ return static function (ExtensionApi $pi): void {
         $syncResourceTools();
     };
 
-    $hideTools = static function (string $server) use ($pi, &$serverTools, &$syncResourceTools): void {
+    $hideTools = static function (string $server) use ($pig, &$serverTools, &$syncResourceTools): void {
         $names = $serverTools[$server] ?? [];
 
         if ($names !== []) {
-            $pi->removeTools(static fn ($tool): bool => in_array($tool->name, $names, true));
+            $pig->removeTools(static fn ($tool): bool => in_array($tool->name, $names, true));
             \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $names, true));
         }
 
@@ -314,17 +314,17 @@ return static function (ExtensionApi $pi): void {
 
     /** One message for everything that needs the user after startup. */
     /**
-     * Servers extensions registered with `$pi->registerMcpServer()`, except names `mcp.json`
+     * Servers extensions registered with `$pig->registerMcpServer()`, except names `mcp.json`
      * defines (by tool namespace, where `-` and `_` read alike), which take precedence.
      *
      * @return array{servers: list<ServerEntry>, overridden: list<string>, configs: array<string, string>}
      */
-    $registeredServers = static function () use ($pi, &$configuredEntries): array {
+    $registeredServers = static function () use ($pig, &$configuredEntries): array {
         $registered = [];
         $overriddenNames = [];
         $configs = [];
 
-        foreach ($pi->getMcpServers() as $server) {
+        foreach ($pig->getMcpServers() as $server) {
             $configured = null;
 
             foreach ($configuredEntries as $entry) {
@@ -346,7 +346,7 @@ return static function (ExtensionApi $pi): void {
         return ['servers' => $registered, 'overridden' => $overriddenNames, 'configs' => $configs];
     };
 
-    $reportProblems = static function (HookContext $ctx, array $only = []) use (&$entries, &$connections, &$configErrors, $describeState): void {
+    $reportProblems = static function (ExtensionContext $ctx, array $only = []) use (&$entries, &$connections, &$configErrors, $describeState): void {
         $lines = $only === [] ? array_map(static fn (string $e): string => "config: {$e}", $configErrors) : [];
 
         foreach ($only === [] ? $entries : $only as $entry) {
@@ -512,8 +512,8 @@ return static function (ExtensionApi $pi): void {
         return implode("\n", $lines);
     };
 
-    $pi->on('session_start', static function (SessionStartEvent $event, HookContext $ctx) use (
-        $pi,
+    $pig->on('session_start', static function (SessionStartEvent $event, ExtensionContext $ctx) use (
+        $pig,
         &$entries,
         &$connections,
         &$configErrors,
@@ -559,9 +559,9 @@ return static function (ExtensionApi $pi): void {
                 $exposures += McpServersSection::configuredExposures($entry);
             }
 
-            $all = $pi->getAllTools();
+            $all = $pig->getAllTools();
             $reaching = static fn (string $name): bool => array_filter($all, static fn (array $tool): bool => $tool['name'] === $name && isset($tool['reachesTools'])) !== [];
-            $active = $pi->getActiveTools();
+            $active = $pig->getActiveTools();
             $activate = [];
 
             if (isset($exposures['codemode']) && $reaching('codemode') && !in_array('codemode', $active, true)) {
@@ -573,7 +573,7 @@ return static function (ExtensionApi $pi): void {
             }
 
             if ($activate !== []) {
-                $pi->setActiveTools([...$active, ...$activate]);
+                $pig->setActiveTools([...$active, ...$activate]);
             }
         }
 
@@ -624,7 +624,7 @@ return static function (ExtensionApi $pi): void {
     // declared to the model, so they are on it, but not indefinitely: a slow or hanging server must
     // not hold up the prompt. A codemode or tool_search server is waited for by the call that reaches
     // it (`tool_call` below).
-    $waitForStartup = static function (HookContext $ctx) use (&$pending, &$serverReady, &$entries, &$waitedForStartup, $startupWait): void {
+    $waitForStartup = static function (ExtensionContext $ctx) use (&$pending, &$serverReady, &$entries, &$waitedForStartup, $startupWait): void {
         if ($pending === null || $waitedForStartup) {
             return;
         }
@@ -660,7 +660,7 @@ return static function (ExtensionApi $pi): void {
     // server when it searches or enumerates tools, and tool_search for every server. The resource
     // tools reach every server, so they wait for all of them. Direct MCP calls wait only for their
     // own server."
-    $pi->on('tool_call', static function (ToolCallEvent $event, HookContext $ctx) use ($pi, &$serverReady, &$entries, &$toolOwners): mixed {
+    $pig->on('tool_call', static function (ToolCallEvent $event, ExtensionContext $ctx) use ($pig, &$serverReady, &$entries, &$toolOwners): mixed {
         $connecting = [];
 
         foreach ($entries as $entry) {
@@ -677,7 +677,7 @@ return static function (ExtensionApi $pi): void {
 
         $tool = null;
 
-        foreach ($pi->getAllTools() as $candidate) {
+        foreach ($pig->getAllTools() as $candidate) {
             if ($candidate['name'] === $event->toolName) {
                 $tool = $candidate;
 
@@ -709,7 +709,7 @@ return static function (ExtensionApi $pi): void {
 
     // "Every prompt lists the servers in the `mcp_servers` section as they are when it starts. Pi
     // appends the section to the conversation when it changed, for example after a server connected."
-    $pi->on('before_agent_start', static function (BeforeAgentStartEvent $event, HookContext $ctx) use (&$entries, &$connections, $waitForStartup): ?BeforeAgentStartEventResult {
+    $pig->on('before_agent_start', static function (BeforeAgentStartEvent $event, ExtensionContext $ctx) use (&$entries, &$connections, $waitForStartup): ?BeforeAgentStartEventResult {
         $waitForStartup($ctx);
         $section = McpServersSection::render(array_map(
             static fn (ServerEntry $entry): array => ['entry' => $entry, 'instructions' => $connections[$entry->name]?->instructions ?? null],
@@ -726,7 +726,7 @@ return static function (ExtensionApi $pi): void {
     });
 
     // Servers registered or unregistered during the session connect or disconnect right away.
-    $pi->on('mcp_servers_change', static function (McpServersChangeEvent $event, HookContext $ctx) use (
+    $pig->on('mcp_servers_change', static function (McpServersChangeEvent $event, ExtensionContext $ctx) use (
         &$entries,
         &$connections,
         &$overridden,
@@ -800,7 +800,7 @@ return static function (ExtensionApi $pi): void {
         $reportProblems($ctx, $connecting);
     });
 
-    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools, &$signIns): void {
+    $pig->on('session_shutdown', static function (SessionShutdownEvent $event, ExtensionContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools, &$signIns): void {
         $generation++;
         // A sign-in still running belongs to the session that is ending (upstream #10565).
         $signIns->abort('session shutdown');
@@ -918,7 +918,7 @@ return static function (ExtensionApi $pi): void {
     };
 
     /** The sign-in with the plain dialogs — `/mcp login` outside the manager. */
-    $loginCommand = static function (ServerEntry $entry, HookContext $ctx) use ($signIn, $openUrl, &$connections): void {
+    $loginCommand = static function (ServerEntry $entry, ExtensionContext $ctx) use ($signIn, $openUrl, &$connections): void {
         $name = $entry->name;
 
         if (!$ctx->hasUi) {
@@ -1196,9 +1196,9 @@ return static function (ExtensionApi $pi): void {
         }
     };
 
-    $pi->registerCommand(
+    $pig->registerCommand(
         'mcp',
-        static function (string $args, HookContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage, $loginCommand, $signOut): void {
+        static function (string $args, ExtensionContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage, $loginCommand, $signOut): void {
             $parts = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
             $action = $parts[0] ?? null;
             $name = $parts[1] ?? null;

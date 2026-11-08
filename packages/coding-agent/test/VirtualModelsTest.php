@@ -251,7 +251,7 @@ final class VirtualModelsTest extends TestCase
     public function testTheRouterIsHandedAnExtensionContextToFindItsModelIn(): void
     {
         $contexts = [];
-        $this->register(route: static function (ModelRouteRequest $request, \Pig\CodingAgent\Hooks\HookContext $ctx) use (&$contexts): ModelRoute {
+        $this->register(route: static function (ModelRouteRequest $request, \Pig\CodingAgent\Extensions\ExtensionContext $ctx) use (&$contexts): ModelRoute {
             $contexts[] = $ctx;
 
             return new ModelRoute($ctx->modelRegistry->find('lab', 'smart') ?? throw new RuntimeException('not found'), $request->thinkingLevel);

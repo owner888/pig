@@ -157,9 +157,9 @@ function suppressions(string $source): array
 /**
  * `$name` read inside a closure body where nothing could have given it a value.
  *
- * Every extension handler is `static function (...) use (...)`, and `$pi` exists only in the
- * file's outermost closure — so a `$pi->setSessionName()` inside a handler that did not
- * `use ($pi)` is `Undefined variable $pi` on the line that reaches it, which for
+ * Every extension handler is `static function (...) use (...)`, and `$pig` exists only in the
+ * file's outermost closure — so a `$pig->setSessionName()` inside a handler that did not
+ * `use ($pig)` is `Undefined variable $pig` on the line that reaches it, which for
  * smart-session.php was the moment a title was generated, inside a `catch (Throwable)` that
  * swallowed it. `php -l` resolves no names; this reads them off the tokens.
  *

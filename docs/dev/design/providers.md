@@ -82,7 +82,7 @@ Six things decided where pig differs:
   `replay()` walks. The cost is still on `/session`. The prompt size is read off the agent's last assistant message where upstream reads the branch's;
   the two differ only when the last turn failed and was taken off the state.
 
-The `cache_warming_decision` hook (`HookRunner::emitCacheWarmingDecision()`) is upstream's: every
+The `cache_warming_decision` hook (`ExtensionRunner::emitCacheWarmingDecision()`) is upstream's: every
 handler is asked, the last one returning an action wins, a throw is reported and leaves pig's answer
 standing. A refresh that ran against pig's answer is noted `extension override` on its entry. The one
 swallowed throw is the refresh itself — best effort, as upstream's comment says: a failed refresh must

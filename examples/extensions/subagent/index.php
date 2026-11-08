@@ -26,9 +26,9 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
+use Pig\CodingAgent\Extensions\Events\ToolResultEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\Results\ToolResultEventResult;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Component;
@@ -42,7 +42,7 @@ use PigSubagent\Subagent;
 require_once __DIR__ . '/Agents.php';
 require_once __DIR__ . '/Subagent.php';
 
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $taskItem = [
         'type' => 'object',
         'properties' => [
@@ -74,7 +74,7 @@ return static function (ExtensionApi $pi): void {
     ];
 
     // Tool execute results cannot set runtime error state directly, so patch it through the result hook.
-    $pi->on('tool_result', static function (ToolResultEvent $event): ?ToolResultEventResult {
+    $pig->on('tool_result', static function (ToolResultEvent $event): ?ToolResultEventResult {
         if ($event->toolName !== 'subagent') {
             return null;
         }
@@ -156,7 +156,7 @@ return static function (ExtensionApi $pi): void {
         }
     };
 
-    $pi->registerTool(new CustomTool(
+    $pig->registerTool(new CustomTool(
         name: 'subagent',
         label: 'Subagent',
         description: implode(' ', [
@@ -166,7 +166,7 @@ return static function (ExtensionApi $pi): void {
             'To enable project-local agents in ' . Agents::CONFIG_DIR_NAME . '/agents, set agentScope: "both" (or "project").',
         ]),
         parameters: $parameters,
-        execute: static function (string $toolCallId, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($text): AgentToolResult {
+        execute: static function (string $toolCallId, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($text): AgentToolResult {
             $agentScope = in_array($params['agentScope'] ?? null, ['user', 'project', 'both'], true) ? $params['agentScope'] : 'user';
             $dispatchDefaults = [
                 'model' => $ctx->model !== null ? "{$ctx->model->provider}/{$ctx->model->id}" : null,

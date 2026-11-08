@@ -11,8 +11,8 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionUi;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\Schedule\ScheduleClient;
@@ -761,7 +761,7 @@ final class WebModeTest extends TestCase
             'probe.ask',
             'Ask',
             static fn (array $request): array => [['type' => 'text', 'text' => 'drawn']],
-            static function (string $action, array $args, array $request, \Pig\CodingAgent\Hooks\HookUi $ui) use (&$heard): ?string {
+            static function (string $action, array $args, array $request, \Pig\CodingAgent\Extensions\ExtensionUi $ui) use (&$heard): ?string {
                 $name = $ui->input('Name?', 'a name');
                 $heard[] = $name;
                 if ($name === null) {
@@ -1115,13 +1115,13 @@ final class WebModeTest extends TestCase
 
             $asked = [];
             $answer = true;
-            $ui = $this->createStub(HookUi::class);
+            $ui = $this->createStub(ExtensionUi::class);
             $ui->method('confirm')->willReturnCallback(static function (string $title, string $message) use (&$asked, &$answer): bool {
                 $asked[] = [$title, $message];
 
                 return $answer;
             });
-            $ctx = new HookContext(cwd: $folder, ui: $ui, hasUi: true);
+            $ctx = new ExtensionContext(cwd: $folder, ui: $ui, hasUi: true);
             $tool = new ScheduleTool(timezone: static fn (): string => 'Asia/Singapore');
             $text = static fn (\Pig\Agent\AgentToolResult $r): string => $r->content[0]->text;
 
@@ -1166,12 +1166,12 @@ final class WebModeTest extends TestCase
             }
 
             try {
-                $tool->execute(['action' => 'delete', 'id' => $id], new HookContext(cwd: $folder));
+                $tool->execute(['action' => 'delete', 'id' => $id], new ExtensionContext(cwd: $folder));
                 $this->fail('changed with nobody to confirm');
             } catch (\Pig\Agent\AgentError $e) {
                 $this->assertStringContainsString('nobody is here to confirm', $e->getMessage());
             }
-            $this->assertStringContainsString('Upstream', $text($tool->execute(['action' => 'list'], new HookContext(cwd: $folder))), 'but it can still read');
+            $this->assertStringContainsString('Upstream', $text($tool->execute(['action' => 'list'], new ExtensionContext(cwd: $folder))), 'but it can still read');
 
             $text($tool->execute(['action' => 'delete', 'id' => $id], $ctx));
             $this->assertSame([], $server->schedules()->list());

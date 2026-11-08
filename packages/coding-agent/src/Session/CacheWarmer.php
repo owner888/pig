@@ -17,7 +17,7 @@ use Pig\Ai\Usage;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
+use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
 use Throwable;
 
 /**

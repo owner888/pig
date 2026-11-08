@@ -10,10 +10,10 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookState;
-use Pig\CodingAgent\Hooks\HookUi;
-use Pig\CodingAgent\Hooks\NoUi;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionState;
+use Pig\CodingAgent\Extensions\ExtensionUi;
+use Pig\CodingAgent\Extensions\NoUi;
 use Pig\CodingAgent\ModelRegistry;
 use Pig\Extensions\GeminiVideo\GeminiVideo;
 use ReflectionClass;
@@ -313,7 +313,7 @@ final class GeminiVideoExtensionTest extends TestCase
      * @param list<string> $progress
      * @return array{text: string, model: string, route: string, bytes: int}
      */
-    private function analyze(string $path, string $prompt, HookContext $ctx, array &$progress = []): array
+    private function analyze(string $path, string $prompt, ExtensionContext $ctx, array &$progress = []): array
     {
         $video = new GeminiVideo(fn (string $name): mixed => $this->settings[$name] ?? null, self::INLINE, self::CHUNK, 0.01);
 
@@ -324,7 +324,7 @@ final class GeminiVideoExtensionTest extends TestCase
         });
     }
 
-    private function signedIn(?HookUi $ui = null): HookContext
+    private function signedIn(?ExtensionUi $ui = null): ExtensionContext
     {
         $auth = Auth::inMemory();
         $auth->setApiKey('antigravity', (string) json_encode(['token' => FakeGeminiServer::TOKEN, 'projectId' => FakeGeminiServer::PROJECT]));
@@ -333,9 +333,9 @@ final class GeminiVideoExtensionTest extends TestCase
     }
 
     /** A context whose model registry reads $auth — the constructor builds one only from a session. */
-    private function context(Auth $auth, ?HookUi $ui = null): HookContext
+    private function context(Auth $auth, ?ExtensionUi $ui = null): ExtensionContext
     {
-        $ctx = (new ReflectionClass(HookContext::class))->newInstanceWithoutConstructor();
+        $ctx = (new ReflectionClass(ExtensionContext::class))->newInstanceWithoutConstructor();
         $dir = $this->dir;
         Closure::bind(function () use ($auth, $ui, $dir): void {
             $this->cwd = $dir;
@@ -345,9 +345,9 @@ final class GeminiVideoExtensionTest extends TestCase
             $this->hasUi = $ui !== null;
             $this->signal = null;
             $this->session = null;
-            $this->state = new HookState();
+            $this->state = new ExtensionState();
             $this->modelRegistry = new ModelRegistry($auth);
-        }, $ctx, HookContext::class)();
+        }, $ctx, ExtensionContext::class)();
 
         return $ctx;
     }

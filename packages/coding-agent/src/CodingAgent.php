@@ -17,22 +17,18 @@ use Pig\Ai\Tool;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Transcript;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
-use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\ExtensionError;
-use Pig\CodingAgent\Hooks\HookLoader;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
@@ -80,7 +76,7 @@ final class CodingAgent
      *                                             be renewed between them — `Auth::apiKey()`
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
      * @param list<Skill>            $skills       what the model may reach for
-     * @param HookRunner|null        $hooks        wrapped around the tools, and given the
+     * @param ExtensionRunner|null        $extensionRunner        wrapped around the tools, and given the
      *                                             context on its way to the model
      * @param CustomToolSet|null     $customTools  tools loaded from disk, offered to the
      *                                             model alongside the built-in ones
@@ -96,7 +92,7 @@ final class CodingAgent
         ?array $contextFiles = null,
         ThinkingLevel $thinking = ThinkingLevel::Off,
         array $skills = [],
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?CustomToolSet $customTools = null,
     ): Agent {
         $agent = new Agent(new AgentOptions(
@@ -115,9 +111,9 @@ final class CodingAgent
             // edits the conversation the agent keeps, not the wire format it becomes:
             // a hook that wants to drop a message should not have to know what an
             // Anthropic content block looks like.
-            transformContext: $hooks === null
+            transformContext: $extensionRunner === null
                 ? null
-                : static fn (array $messages): array => $hooks->emitContext($messages),
+                : static fn (array $messages): array => $extensionRunner->emitContext($messages),
         ));
 
         $agent->setModel($model);
@@ -131,7 +127,7 @@ final class CodingAgent
             $cwd,
             $tools,
             $customTools ?? new CustomToolSet(),
-            $hooks ?? new HookRunner(),
+            $extensionRunner ?? new ExtensionRunner(),
             $contextFiles,
             $skills,
             $systemPrompt,
@@ -249,8 +245,6 @@ final class CodingAgent
         bool $continue = false,
         bool $save = true,
         bool $readOnly = false,
-        bool $withHooks = true,
-        bool $withTools = true,
         bool $withSkills = true,
         bool $withExtensions = true,
         ?string $skillsDir = null,
@@ -288,6 +282,14 @@ final class CodingAgent
         // Before the extensions load, so a factory that reads `getSettings()` at load gets them;
         // the flags come after, because which flags exist is only known once they have loaded.
         ExtensionApi::useSettings($settings);
+
+        // Hooks and tool files were merged into extensions, as upstream merged them: a hook file
+        // loads unchanged from an extensions folder and a tool file is a few lines from one, so
+        // each is said where to go rather than loaded from where it is — a folder read quietly
+        // would be one nobody ever moves.
+        if (($legacy = ExtensionLoader::legacyFiles($cwd, $settings->get('hooks'), $settings->get('customTools'))) !== []) {
+            throw new CodingAgentError(implode("\n", $legacy));
+        }
 
         $cliExtensions = $extensionPaths ?? [];
         [$loadedExtensions, $extensionProblems] = match (true) {
@@ -475,21 +477,8 @@ final class CodingAgent
         $resumed = $store !== null ? $resume !== null || $continue : $readFrom !== null;
         Timings::time('session');
 
-        [$loadedHooks, $hookProblems] = $withHooks
-            ? HookLoader::load($cwd, $settings->hooks(), projectTrusted: $projectTrusted)
-            : [[], []];
-
-        foreach ($hookProblems as $problem) {
-            $warnings[] = "hook {$problem->toText()}";
-        }
-
-
-        foreach ($loadedExtensions as $ext) {
-            $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);
-        }
-
-        $hooks = new HookRunner($loadedHooks, $cwd, $store);
-        Timings::time('hooks');
+        $extensionRunner = new ExtensionRunner($loadedExtensions, $cwd, $store);
+        Timings::time('extensions');
 
         // The built-in names are handed in so a tool that would shadow `bash` is named rather than
         // quietly replacing it.
@@ -563,17 +552,7 @@ final class CodingAgent
             $builtIn = array_values(array_filter($builtIn, static fn (string $name): bool => !$excluded->matches($name)));
         }
 
-        // Held onto rather than left to the loader: it is what a mode later hands the UI to, and it
-        // is the object every tool factory closed over.
-        $toolApi = new CustomToolApi($cwd);
-
-        [$loadedTools, $toolProblems] = $withTools
-            ? CustomToolLoader::load($cwd, $builtIn, $settings->customTools(), api: $toolApi, projectTrusted: $projectTrusted)
-            : [[], []];
-
-        foreach ($toolProblems as $problem) {
-            $warnings[] = "tool {$problem->toText()}";
-        }
+        $loadedTools = [];
 
         foreach ($loadedExtensions as $ext) {
             foreach ($ext->api->tools() as $tool) {
@@ -582,7 +561,7 @@ final class CodingAgent
         }
 
         Timings::time('customTools');
-        $customTools = new CustomToolSet($loadedTools, $toolApi);
+        $customTools = new CustomToolSet($loadedTools);
 
         foreach ($loadedExtensions as $ext) {
             $customTools->adopt($ext);
@@ -621,7 +600,7 @@ final class CodingAgent
             contextFiles: $contextFiles,
             thinking: $level,
             skills: $skills,
-            hooks: $hooks,
+            extensionRunner: $extensionRunner,
             customTools: $customTools,
         );
         Timings::time('agent');
@@ -629,7 +608,7 @@ final class CodingAgent
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
         // same way the ones at startup did: beside the built-ins, wrapped with the hooks, and
         // activated on registration as upstream's `_refreshToolRegistry()` does (`refresh()`).
-        $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills, $promptFiles->custom(), $promptFiles->appended());
+        $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $extensionRunner, $contextFiles, $skills, $promptFiles->custom(), $promptFiles->appended());
         $loadout->useNamed($named);
         $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
@@ -646,7 +625,7 @@ final class CodingAgent
                 $cwd,
                 $store,
                 $settings,
-                $hooks,
+                $extensionRunner,
                 $fileCommands,
                 $scope,
                 auth: $auth,
@@ -699,7 +678,7 @@ final class CodingAgent
             $contextFiles,
             $skills,
             $fileCommands,
-            $hooks,
+            $extensionRunner,
             $customTools,
             $store,
             $warnings,
@@ -912,7 +891,7 @@ final class CodingAgent
             // as well as text, so it goes through whole rather than through `toText()`. An
             // empty one is dropped: a user message with no content is a request every
             // provider rejects, and a hook that meant to say nothing has said nothing.
-            if ($message instanceof HookMessage) {
+            if ($message instanceof CustomMessage) {
                 if (!$message->isEmpty()) {
                     $converted[] = new UserMessage($message->content, $message->timestamp);
                 }

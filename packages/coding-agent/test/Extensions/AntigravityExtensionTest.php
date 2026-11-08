@@ -200,7 +200,7 @@ final class AntigravityExtensionTest extends TestCase
 
         // Check commands registered into hookApi
         $commands = [];
-        $hookRunner = new \Pig\CodingAgent\Hooks\HookRunner([new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api)], $root);
+        $hookRunner = new \Pig\CodingAgent\Extensions\ExtensionRunner([new \Pig\CodingAgent\Extensions\LoadedExtension($ext->path, $ext->resolved, $ext->name, $ext->api)], $root);
         [$registeredCommands] = $hookRunner->commands();
 
         $this->assertArrayHasKey('antigravity.usage', $registeredCommands);
@@ -222,10 +222,10 @@ final class AntigravityExtensionTest extends TestCase
         try {
             [$loaded] = $this->loadTheExtension();
             $ext = $loaded[0];
-            [$commands] = (new \Pig\CodingAgent\Hooks\HookRunner([new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api)], $this->home))->commands();
+            [$commands] = (new \Pig\CodingAgent\Extensions\ExtensionRunner([new \Pig\CodingAgent\Extensions\LoadedExtension($ext->path, $ext->resolved, $ext->name, $ext->api)], $this->home))->commands();
             $ui = new NoticingUi();
 
-            ($commands['antigravity.refresh']->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true));
+            ($commands['antigravity.refresh']->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true));
 
             $this->assertSame(['[warning] No Antigravity credentials. Run /login antigravity first.'], $ui->notices);
         } finally {

@@ -31,7 +31,7 @@ use Closure;
  *
  * An action is a button: `['label' => …, 'action' => …, 'args' => [...], 'confirm' => …,
  * 'tone' => 'danger', 'title' => …]`. Pressed (and confirmed, when there is a `confirm` question),
- * it calls `action` with its name, `args`, the request and a `HookUi` — the same `confirm()`,
+ * it calls `action` with its name, `args`, the request and a `ExtensionUi` — the same `confirm()`,
  * `select()`, `input()`, `editor()` and `notify()` a hook has as `$ctx->ui`, drawn by the page as
  * it draws a hook's, so an action can ask before it acts or ask for what it needs. A `notify()` is
  * a line at the top of the panel. The panel is drawn again either way, so an action answers only
@@ -49,7 +49,7 @@ final readonly class WebPanel
      * @param string|array<string, string> $title the sidebar entry and the window heading; by
      *        locale, falling back to `en` and then to the first one given
      * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
-     * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Hooks\HookUi): ?string)|null $action
+     * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Extensions\ExtensionUi): ?string)|null $action
      *        null when it worked, else why it did not; a throw is the same as its message
      * @param string $icon the glyph the sidebar shows before the title, as it is — an emoji, say; a default one when empty
      * @param list<string> $commands slash commands that open the panel in the page (`accounts` for `/accounts`)

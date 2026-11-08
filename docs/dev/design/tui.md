@@ -85,7 +85,7 @@ too — that is the one deviation, and `ImageProcess::$codec` is the seam the te
 **The tools get their options when the loadout builds them.** `ToolLoadout::useToolOptions()` is
 upstream's `_buildRuntime()` options (`read`'s `autoResizeImages` and resize profile, `bash`'s
 `commandPrefix`), asked at each `apply()`; `useResultImages()` wraps each tool in a
-`ResultImagesTool` outside `HookedTool`, so a picture a `tool_result` hook put in is fitted too —
+`ResultImagesTool` outside `ExtensionGuardedTool`, so a picture a `tool_result` hook put in is fitted too —
 upstream's `_afterToolCall()` order. Both re-apply only a loadout that was already applied, or a
 session built on a fresh loadout would gain a system message it never asked for.
 

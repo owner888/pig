@@ -9,7 +9,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Future;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Interactive\ThemedText;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\CapturesViewportInput;
@@ -32,7 +32,7 @@ use Throwable;
 
 /**
  * Upstream's `LlamaView` (`extensions/llama/ui.ts`), with the module's `showLlamaUi()` and
- * `runWithProgress()`: one component that `HookUi::custom()` shows, whose contents are swapped
+ * `runWithProgress()`: one component that `ExtensionUi::custom()` shows, whose contents are swapped
  * as `/llama` moves between the model list, a choice, the Hugging Face search and a progress bar.
  *
  * Every coloured line is a `ThemedText` over `Themes::theme()` (upstream's `theme` proxy), as the
@@ -388,7 +388,7 @@ final class LlamaView implements LlamaUi, Component, InputHandler, Focusable, Ca
      *
      * @param Closure(LlamaUi): void $run
      */
-    public static function showLlamaUi(HookContext $ctx, Closure $run): void
+    public static function showLlamaUi(ExtensionContext $ctx, Closure $run): void
     {
         $ctx->ui->custom(static function (TUI $tui, mixed $theme, Closure $done) use ($ctx, $run): LlamaView {
             $view = new self($tui, Keybindings::getKeybindings());

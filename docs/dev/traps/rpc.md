@@ -26,8 +26,8 @@ Three things about it are worth keeping:
 - **The stub is why it went unnoticed.** It exists so a tool asked something legitimately early
   gets an answer rather than a `TypeError`, and nothing distinguishes that from a mode that
   forgot to wire. It says so on itself now.
-- **The `?? new HookContext(…)` fallbacks in the modes are unreachable from `bin/pig`**, which
-  builds a `HookRunner` unconditionally — `--no-hooks` gives an *empty* runner, not a null one. So
+- **The `?? new ExtensionContext(…)` fallbacks in the modes are unreachable from `bin/pig`**, which
+  builds a `ExtensionRunner` unconditionally — `--no-extensions` gives an *empty* runner, not a null one. So
   the only live path was the one `PrintMode` did not take.
 - **`AgentSession::cwd()` is why the fix needed no new constructor parameter.** The session
   already holds the project directory, and a mode holding the session being handed it a second
@@ -45,7 +45,7 @@ Fourth find, and the clearest instance of the pattern the others taught: **the s
 modes, with the checks on only one of them.**
 
 `InteractiveMode` asks the hooks before leaving a conversation (`mayLeave()` →
-`HookRunner::emitBeforeSwitch()`), and `/resume` is unreachable while a turn is streaming because
+`ExtensionRunner::emitBeforeSwitch()`), and `/resume` is unreachable while a turn is streaming because
 `showSessions()` guards on `isStreaming()`. `RpcMode::switchSession()` did none of it:
 
 - **The cancellable `session_before_switch` hook was never fired.** A hook that refuses to leave a

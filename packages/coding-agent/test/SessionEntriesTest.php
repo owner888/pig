@@ -10,7 +10,7 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Session\SessionInfoEntry;
 use Pig\CodingAgent\Session\UsageEntry;
@@ -38,7 +38,7 @@ final class SessionEntriesTest extends TestCase
         // `display: false` is for a reminder injected before every turn, which is talking to the
         // model; the default has to be the other way round, or a hook that told somebody
         // something told nobody. pi omits the field when it is true.
-        $this->assertInstanceOf(HookMessage::class, $decoded);
+        $this->assertInstanceOf(CustomMessage::class, $decoded);
         $this->assertTrue($decoded->display);
 
         $hidden = SessionEntries::decode([
@@ -48,7 +48,7 @@ final class SessionEntriesTest extends TestCase
             'display' => false,
         ]);
 
-        $this->assertInstanceOf(HookMessage::class, $hidden);
+        $this->assertInstanceOf(CustomMessage::class, $hidden);
         $this->assertFalse($hidden->display);
     }
 

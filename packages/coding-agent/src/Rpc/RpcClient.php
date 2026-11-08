@@ -94,7 +94,7 @@ final class RpcClient
     /**
      * @param string        $cwd         where the agent works, and where it is started
      * @param string|null   $binary      `bin/pig`, found relative to this package unless given
-     * @param list<string>  $arguments   extra options, such as `--model` or `--no-hooks`
+     * @param list<string>  $arguments   extra options, such as `--model` or `--no-extensions`
      * @param array<string, string> $environment added to this process's own
      * @param float         $timeout     seconds to wait for one response before giving up
      */

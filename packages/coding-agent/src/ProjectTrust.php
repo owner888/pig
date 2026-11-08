@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent;
 
 use Closure;
-use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\Events\ProjectTrustEvent;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use RuntimeException;
 
 /**
@@ -29,7 +29,7 @@ use RuntimeException;
  * click through.
  *
  * What an untrusted project loses is exactly its `.pig/` directory, its `.agents/skills` and
- * `<cwd>/extensions`: settings, MCP servers, hooks, tools, extensions, skills, prompt templates,
+ * `<cwd>/extensions`: settings, MCP servers, extensions, skills, prompt templates,
  * themes and `SYSTEM.md` / `APPEND_SYSTEM.md`. The person's own `~/.pig/agent/` and
  * `~/.agents/skills` are always theirs. `AGENTS.md` / `CLAUDE.md` are **not** gated, as upstream does not gate them:
  * they are text the model reads, not code pig runs.
@@ -44,12 +44,10 @@ final class ProjectTrust
 
     /**
      * What under `<cwd>/.pig/` turns a directory into a project with something to trust —
-     * upstream's `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`, plus pig's two code loaders upstream
-     * does not have, `hooks` and `tools`: both are PHP `require`d into this process. A project
-     * package cloned under `.pig/git` is reached only through `.pig/settings.json`, which is on the
-     * list.
+     * upstream's `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`. A project package cloned under
+     * `.pig/git` is reached only through `.pig/settings.json`, which is on the list.
      */
-    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'prompts', 'themes', 'SYSTEM.md', 'APPEND_SYSTEM.md'];
+    public const array RESOURCES = ['settings.json', 'mcp.json', 'extensions', 'skills', 'prompts', 'themes', 'SYSTEM.md', 'APPEND_SYSTEM.md'];
 
     /**
      * Whether this directory has anything a trust decision would apply to.
@@ -207,18 +205,18 @@ final class ProjectTrust
         $list = implode(', ', $shown) . ($more > 0 ? " and {$more} more" : '');
 
         return "Trust project folder?\n{$cwd}\n\nIt has: {$list}\n"
-            . 'This allows pig to load .pig settings and resources and execute project hooks, tools and extensions.';
+            . 'This allows pig to load .pig settings and resources and execute project extensions.';
     }
 
     /**
      * Decide: this run's override first; nothing to gate means the saved answer, or yes without
      * one; then an extension that answers wins, then a saved answer, otherwise ask — and with nobody to ask, **no**. That last one is upstream's and the only
-     * safe direction: `-p` on a stranger's repository must not run its hooks because there was
+     * safe direction: `-p` on a stranger's repository must not run its extensions because there was
      * no terminal to refuse on.
      *
      * @param (Closure(list<TrustChoice>): ?TrustChoice)|null $ask draws the question; null
      *        (escape) is "do not trust, this session only"
-     * @param HookRunner|null $extensions the extensions loaded before trust — the person's and
+     * @param ExtensionRunner|null $extensions the extensions loaded before trust — the person's and
      *        the command line's — asked `project_trust` first, as upstream asks them. One that
      *        says `remember` is saved like an answer at the prompt.
      */
@@ -228,7 +226,7 @@ final class ProjectTrust
      * @param ?bool $override upstream's `--approve` / `--no-approve`: this run's answer, ahead of
      *        everything, and written nowhere.
      */
-    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?HookRunner $extensions = null, string $default = 'ask', ?bool $override = null): bool
+    public static function resolve(string $cwd, ?Closure $ask, ?string $home = null, ?ExtensionRunner $extensions = null, string $default = 'ask', ?bool $override = null): bool
     {
         if ($override !== null) {
             return $override;

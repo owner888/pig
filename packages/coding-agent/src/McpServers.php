@@ -7,7 +7,7 @@ namespace Pig\CodingAgent;
 /**
  * MCP server configuration as the core sees it — upstream's `core/mcp-servers.ts`: the shape of
  * one `mcpServers` entry, validated once for a file (`PigMcp\McpConfig::load()`) and for an
- * extension's `$pi->registerMcpServer()`, and the namespace a server's tools are registered under.
+ * extension's `$pig->registerMcpServer()`, and the namespace a server's tools are registered under.
  * Connecting is the `pig-mcp` extension's business; what a server *is* has to be known before it.
  */
 final class McpServers

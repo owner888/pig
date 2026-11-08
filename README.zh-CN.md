@@ -276,7 +276,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 
 ### 扩展能做什么
 
-一个扩展是一个返回 `function (ExtensionApi $pi)` 的 PHP 文件（或带 `index.php` 的目录）。API 对齐 pi 的 `ExtensionAPI`：
+一个扩展是一个返回 `function (ExtensionApi $pig)` 的 PHP 文件（或带 `index.php` 的目录）。API 对齐 pi 的 `ExtensionAPI`：
 
 | | |
 | :--- | :--- |
@@ -341,7 +341,7 @@ Logger::timeEnd('benchmark');
 
 **图片、shell、会话。** 来自 `read`、`@file`、提示或任何工具的图片会在进入对话时缩到提供方的限制以内（2000×2000，或模型自己的），需要缩小时依赖 PHP 的 `gd` 扩展；`images.autoResize: false` 原样发送，`images.blockImages: true` 一张都不发。`shellCommandPrefix` 在每条命令前先跑一行（比如 `shopt -s expand_aliases`），`sessionDir`、`PIG_CODING_AGENT_SESSION_DIR` 或 `--session-dir <dir>` 把所有项目的会话放进同一个目录。`defaultProjectTrust`（`ask`、`always`、`never`）决定还没被决定过的项目（`-a`/`--approve` 或 `-na`/`--no-approve` 只替这一次运行决定，什么都不保存），`collapseChangelog: true` 在升级后只显示一行而不是完整更新说明，`steeringMode` / `followUpMode`（`one-at-a-time` 或 `all`）决定排队消息怎么交出去，`httpProxy` 是 `--proxy` 和环境变量都没给时用的代理，`transport`（`auto`、`websocket`、`websocket-cached`、`sse`）决定怎么连 ChatGPT 的 Codex 后端——默认走为会话保留的 WebSocket，失败时退回 SSE——`websocketConnectTimeoutMs` 是它握手的时限。
 
-**图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植——外加 pig 自己实现的饼图、时间线、用户旅程、看板和 gitGraph）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。`--skill`、`--prompt-template` 和 `--theme` 为本次运行加载一个文件或目录（都可重复，`-e` 现在也可以，且 `-ne` 下 `-e` 仍会加载）；启动用的主题是 `--use-theme <name>`，`--no-themes` 除内置主题和 `--theme` 指定的之外不找任何主题。不加载 `~/.pig/agent/tools` 和 `.pig/tools` 里的工具文件现在是 `--no-tool-files`。同样来自 pi 的还有：`--provider`、`--system-prompt`、`--append-system-prompt`、`--tui-mode regular|fullscreen`、`--verbose`、`--offline`（启动时不联网，等同 `PIG_OFFLINE=1`）和 `--update-check`。内置模型列表会从 pigagent.dev 自动更新——每个 provider 最多四小时查一次，且只在比 pig 自带的更新时才使用；`PIG_MODEL_CATALOG_URL` 可指定别的目录服务器，设为 `off` 则关闭。`bash` 命令能通过 `PIG_SESSION_ID`、`PIG_SESSION_FILE`、`PIG_PROVIDER`、`PIG_MODEL` 和 `PIG_REASONING_LEVEL` 得知当前会话；在 Windows 上可以用 `--tools` 或 `defaultTools` 打开 `powershell` 工具。pig 会告诉 OpenRouter、NVIDIA NIM 和 OpenCode 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
+**图表、参数、署名。** 消息里的 ```mermaid 代码块会画成 Unicode 图（流程图、状态图、类图、ER 图和时序图——pi 所用渲染器的纯 PHP 移植——外加 pig 自己实现的饼图、时间线、用户旅程、看板和 gitGraph）；`markdown.mermaid` 可选 `streaming`（默认）、`final` 或 `off`。pi 的短参数全部可用：`-t`/`-xt` 选工具，`-nt`/`--no-tools` 不带任何工具启动，`-nbt`/`--no-builtin-tools` 不带内置工具，`-ns`、`-np`、`-nc`、`-ne` 分别不加载技能、提示模板、`AGENTS.md`/`CLAUDE.md` 和扩展，`-n`/`--name` 给会话命名。`--skill`、`--prompt-template` 和 `--theme` 为本次运行加载一个文件或目录（都可重复，`-e` 现在也可以，且 `-ne` 下 `-e` 仍会加载）；启动用的主题是 `--use-theme <name>`，`--no-themes` 除内置主题和 `--theme` 指定的之外不找任何主题。同样来自 pi 的还有：`--provider`、`--system-prompt`、`--append-system-prompt`、`--tui-mode regular|fullscreen`、`--verbose`、`--offline`（启动时不联网，等同 `PIG_OFFLINE=1`）和 `--update-check`。内置模型列表会从 pigagent.dev 自动更新——每个 provider 最多四小时查一次，且只在比 pig 自带的更新时才使用；`PIG_MODEL_CATALOG_URL` 可指定别的目录服务器，设为 `off` 则关闭。`bash` 命令能通过 `PIG_SESSION_ID`、`PIG_SESSION_FILE`、`PIG_PROVIDER`、`PIG_MODEL` 和 `PIG_REASONING_LEVEL` 得知当前会话；在 Windows 上可以用 `--tools` 或 `defaultTools` 打开 `powershell` 工具。pig 会告诉 OpenRouter、NVIDIA NIM 和 OpenCode 调用方是 pig；`enableInstallTelemetry: false` 或 `PIG_TELEMETRY=0` 可关掉，pig 不向任何地方发送安装报告。
 
 ### 登录
 
@@ -364,7 +364,7 @@ Logger::timeEnd('benchmark');
 
 从 1.0 起，下面这些（且只有这些）遵循语义化版本：小版本只增不改，删除或改变只在大版本里发生。
 
-- **扩展 API**：`ExtensionApi`（扩展里的 `$pig`）、`HookApi` 与 `HookContext`（处理函数里的 `$ctx`）、`CustomTool` 与 `CustomToolApi`、事件名及 `Hooks/Events` 下的事件类，以及扩展实现的 `Provider` / `StreamApi` / `OauthFlow`。标了 `@internal` 的 public 方法属于宿主，不属于扩展。
+- **扩展 API**：`ExtensionApi`（扩展里的 `$pig`）与 `ExtensionContext`（处理函数里的 `$ctx`）、`CustomTool`、事件名及 `Extensions/Events` 下的事件类，以及扩展实现的 `Provider` / `StreamApi` / `OauthFlow`。标了 `@internal` 的 public 方法属于宿主，不属于扩展。
 - **`~/.pig/agent` 里的文件**：`settings.json`、`models.json`、`keybindings.json` 和主题，以已发布的 JSON Schema 为准；`auth.json`、`mcp.json`、`trust.json`。
 - **会话文件**：`.jsonl` 格式第 3 版，与 pi 相同——任一方写的会话另一方都能打开。
 - **RPC 协议**：`--mode rpc` 的命令、响应与事件，以及 `--mode json` 输出的 JSON 行。

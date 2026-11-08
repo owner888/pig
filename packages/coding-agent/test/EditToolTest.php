@@ -13,8 +13,8 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Async\AbortController;
 use Pig\Async\AbortError;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Tools\DescribedTool;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\EditTool;
@@ -536,7 +536,7 @@ final class EditToolTest extends ToolTestCase
         // The loop meets the edit tool only through these, so one that did not pass the shim
         // on would leave every saved session's edits to fail the schema.
         foreach ([
-            new HookedTool($this->edit(), new HookRunner()),
+            new ExtensionGuardedTool($this->edit(), new ExtensionRunner()),
             new DescribedTool($this->edit(), 'described'),
             new ResultImagesTool($this->edit(), static fn (array $content): array => $content),
         ] as $wrapper) {

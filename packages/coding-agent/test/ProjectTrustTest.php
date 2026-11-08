@@ -6,12 +6,12 @@ namespace Pig\CodingAgent\Test;
 
 use Closure;
 use PHPUnit\Framework\TestCase;
-use Pig\CodingAgent\Hooks\Events\ProjectTrustEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\ProjectTrustEventResult;
+use Pig\CodingAgent\Extensions\Events\ProjectTrustEvent;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\ProjectTrustEventResult;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
 
@@ -109,16 +109,16 @@ final class ProjectTrustTest extends TestCase
 
     public function testWithResourcesAndNobodyToAskTheAnswerIsNo(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
 
-        // `-p` on a stranger's repository: no terminal, no saved decision, and the hooks do not run.
+        // `-p` on a stranger's repository: no terminal, no saved decision, and the extensions do not run.
         $this->assertFalse(ProjectTrust::resolve($this->project, null, $this->home));
         $this->assertFileDoesNotExist(ProjectTrust::path($this->home), 'a refusal by default is not written down');
     }
 
     public function testApproveOrNoApproveIsThisRunsAnswerAheadOfEverything(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         ProjectTrust::remember([$this->project => false], $this->home);
 
         $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home, default: 'never', override: true));
@@ -128,7 +128,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testTheDefaultAnswersWhenNothingSavedDoesAndOnlyThen(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         $asked = false;
         $ask = static function () use (&$asked): ?TrustChoice {
             $asked = true;
@@ -151,7 +151,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testASavedDecisionIsNotAskedAgainAndTheNearestAncestorWins(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         ProjectTrust::remember([$this->root . '/work' => true], $this->home);
 
         $asked = false;
@@ -172,7 +172,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testChoosingWritesWhatTheChoiceSaysAndEscapeWritesNothing(): void
     {
-        mkdir($this->project . '/.pig/tools', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
 
         $trusted = ProjectTrust::resolve(
             $this->project,
@@ -194,20 +194,20 @@ final class ProjectTrustTest extends TestCase
     }
 
     /** @param list<Closure> $handlers */
-    private function extensions(array $handlers, ?array &$errors = null): HookRunner
+    private function extensions(array $handlers, ?array &$errors = null): ExtensionRunner
     {
-        $hooks = [];
+        $extensionRunner = [];
 
         foreach ($handlers as $i => $handler) {
-            $api = new HookApi($this->project, "/ext/{$i}.php");
+            $api = new ExtensionApi($this->project, "/ext/{$i}.php");
             $api->on('project_trust', $handler);
-            $hooks[] = new LoadedHook("/ext/{$i}.php", "/ext/{$i}.php", $api);
+            $extensionRunner[] = new LoadedExtension("/ext/{$i}.php", "/ext/{$i}.php", $api->name, $api);
         }
 
-        $runner = new HookRunner($hooks, $this->project);
+        $runner = new ExtensionRunner($extensionRunner, $this->project);
         $runner->initialize(static fn () => null);
         $errors = [];
-        $runner->onError(static function (HookError $error) use (&$errors): void {
+        $runner->onError(static function (ExtensionError $error) use (&$errors): void {
             $errors[] = $error;
         });
 
@@ -216,7 +216,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testAnExtensionThatAnswersWinsOverTheSavedDecisionAndThePrompt(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         ProjectTrust::remember([$this->project => false], $this->home);
         $asked = false;
         $ask = static function () use (&$asked): ?TrustChoice {
@@ -238,7 +238,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testAnExtensionsRememberIsSavedLikeAnAnswerAtThePrompt(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         $extensions = $this->extensions([
             static fn (): ProjectTrustEventResult => new ProjectTrustEventResult('no', remember: true),
         ]);
@@ -249,7 +249,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testAnExtensionWithNoOpinionLeavesItToTheSavedAnswerAndAThrowIsReported(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         ProjectTrust::remember([$this->project => true], $this->home);
         $extensions = $this->extensions([
             static fn (): ProjectTrustEventResult => throw new \RuntimeException('boom'),
@@ -258,8 +258,8 @@ final class ProjectTrustTest extends TestCase
 
         $this->assertTrue(ProjectTrust::resolve($this->project, null, $this->home, $extensions));
         $this->assertCount(1, $errors);
-        $this->assertSame('project_trust', $errors[0]->event);
-        $this->assertStringContainsString('boom', $errors[0]->error);
+        $this->assertSame('project_trust', $errors[0]->stage);
+        $this->assertStringContainsString('boom', $errors[0]->message);
     }
 
     public function testAnAnswerThatIsNotOneOfTheThreeIsRefused(): void
@@ -270,7 +270,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testTrustingTheParentClearsANarrowerAnswerUnderneath(): void
     {
-        mkdir($this->project . '/.pig/tools', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         ProjectTrust::remember([$this->project => false], $this->home);
 
         $choices = ProjectTrust::choices($this->project);
@@ -294,7 +294,7 @@ final class ProjectTrustTest extends TestCase
 
     public function testAnUnreadableTrustFileIsAComplaintRatherThanATrustedProject(): void
     {
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         file_put_contents(ProjectTrust::path($this->home), '{"/x": "yes"}');
 
         $this->expectException(\RuntimeException::class);
@@ -308,7 +308,7 @@ final class ProjectTrustTest extends TestCase
         // Upstream's `readTrustFile()` accepts `null` — its "forget this path" writes one — so a
         // `trust.json` pi wrote can carry it, and refusing it was a pig that could not start on a
         // file pi was happy with. A null is walked past to the nearest real decision above it.
-        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        mkdir($this->project . '/.pig/extensions', 0o755, true);
         $parent = ProjectTrust::canonical(dirname($this->project));
         file_put_contents(ProjectTrust::path($this->home), json_encode([
             ProjectTrust::canonical($this->project) => null,

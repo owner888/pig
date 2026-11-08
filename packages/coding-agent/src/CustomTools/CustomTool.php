@@ -11,38 +11,39 @@ use Pig\Agent\ToolReplay;
 /**
  * A tool somebody wrote, as they declare it.
  *
- * Upstream's `CustomTool` is an object literal with five fields and three optional
+ * Upstream's `ToolDefinition` is an object literal with five fields and three optional
  * callbacks; the PHP equivalent of an object literal is a value object built from
- * closures, so that is what this is. A tool file returns a factory that returns one of
- * these — or a list of them:
+ * closures, so that is what this is. An extension registers one of these:
  *
  * ```php
- * <?php // ~/.pig/agent/tools/wc/index.php
+ * <?php // ~/.pig/agent/extensions/wc.php
  *
  * use Pig\Agent\AgentToolResult;
  * use Pig\Ai\TextContent;
  * use Pig\CodingAgent\CustomTools\CustomTool;
- * use Pig\CodingAgent\CustomTools\CustomToolApi;
+ * use Pig\CodingAgent\Extensions\ExtensionApi;
  *
- * return fn (CustomToolApi $pi) => new CustomTool(
- *     name: 'wc',
- *     label: 'Count lines',
- *     description: 'Count the lines in a file.',
- *     parameters: [
- *         'type' => 'object',
- *         'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
- *         'required' => ['path'],
- *     ],
- *     execute: function (string $id, array $params, ?Closure $onUpdate, $ctx) use ($pi) {
- *         $run = $pi->exec(['wc', '-l', $params['path']]);
+ * return static function (ExtensionApi $pig): void {
+ *     $pig->registerTool(new CustomTool(
+ *         name: 'wc',
+ *         label: 'Count lines',
+ *         description: 'Count the lines in a file.',
+ *         parameters: [
+ *             'type' => 'object',
+ *             'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
+ *             'required' => ['path'],
+ *         ],
+ *         execute: function (string $id, array $params, ?Closure $onUpdate, $ctx) use ($pig) {
+ *             $run = $pig->exec(['wc', '-l', $params['path']]);
  *
- *         return new AgentToolResult([new TextContent(trim($run->stdout))]);
- *     },
- * );
+ *             return new AgentToolResult([new TextContent(trim($run->stdout))]);
+ *         },
+ *     ));
+ * };
  * ```
  *
  * `execute` is given the same four things `AgentTool::execute()` is, plus the session as
- * a `HookContext` — which is the reason a custom tool is worth having over a built-in
+ * a `ExtensionContext` — which is the reason a custom tool is worth having over a built-in
  * one: it can read the conversation, see which model is answering, and stop the run.
  *
  * `renderCall` and `renderResult` are optional, and they are what makes a custom tool look
@@ -56,8 +57,8 @@ final readonly class CustomTool
 
     /**
      * @param array<string, mixed> $parameters JSON Schema for the arguments object
-     * @param Closure(string, array<string, mixed>, ?Closure, \Pig\CodingAgent\Hooks\HookContext, ?\Pig\Async\AbortSignal): \Pig\Agent\AgentToolResult $execute
-     * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Hooks\HookContext): void|null $onSession
+     * @param Closure(string, array<string, mixed>, ?Closure, \Pig\CodingAgent\Extensions\ExtensionContext, ?\Pig\Async\AbortSignal): \Pig\Agent\AgentToolResult $execute
+     * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Extensions\ExtensionContext): void|null $onSession
      *        called on `/new`, `/resume`, `/tree` and on the way out — for rebuilding
      *        state from the conversation, or letting go of something that was held
      * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Theme, RenderOptions): \Pig\Tui\Component|null $renderCall

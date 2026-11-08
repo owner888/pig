@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Test\Extensions;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Web\Schedule\ScheduleTool;
 
 /**
@@ -58,14 +58,14 @@ final class ScheduleExtensionTest extends TestCase
     {
         $this->expectException(AgentError::class);
         $this->expectExceptionMessage('pig web start -d');
-        (new ScheduleTool())->execute(['action' => 'list'], new HookContext(cwd: $this->root . '/project'));
+        (new ScheduleTool())->execute(['action' => 'list'], new ExtensionContext(cwd: $this->root . '/project'));
     }
 
     public function testAnActionThatIsNotOneIsRefusedNamingThem(): void
     {
         $this->expectException(AgentError::class);
         $this->expectExceptionMessage('list, runs, create, update, delete, enable, disable, run');
-        (new ScheduleTool())->execute(['action' => 'schedule'], new HookContext(cwd: $this->root . '/project'));
+        (new ScheduleTool())->execute(['action' => 'schedule'], new ExtensionContext(cwd: $this->root . '/project'));
     }
 
     public function testThisMachinesTimezoneIsOneDateTimeKnows(): void

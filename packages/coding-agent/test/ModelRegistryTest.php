@@ -17,7 +17,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\ModelRegistry;
 use Pig\CodingAgent\Session\UsageEntry;
 use Pig\CodingAgent\UsageCostBreakdown;
@@ -49,7 +49,7 @@ final class ModelRegistryTest extends TestCase
 
     public function testAnExtensionContextCarriesAModelRegistry(): void
     {
-        $ctx = new HookContext('.');
+        $ctx = new ExtensionContext('.');
 
         $this->assertInstanceOf(ModelRegistry::class, $ctx->modelRegistry);
         $this->assertSame('m', $ctx->modelRegistry->find('zzreg', 'm')?->id);

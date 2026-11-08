@@ -16,10 +16,10 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use PigMcp\McpConfig;
 use PigMcp\McpServersSection;
 use PigMcp\ServerConnection;
@@ -367,14 +367,14 @@ final class McpExtensionTest extends TestCase
             $changes++;
         });
 
-        $hooks = new HookRunner([new LoadedHook($ext->path, $ext->resolved, $ext->api)], $this->cwd);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension($ext->path, $ext->resolved, $ext->name, $ext->api)], $this->cwd);
         $ui = new NoticingUi();
-        $hooks->initialize(static fn () => null, ui: $ui);
+        $extensionRunner->initialize(static fn () => null, ui: $ui);
 
-        Async::run(function () use ($hooks): void {
-            $hooks->emit(new SessionStartEvent());
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
             // What the first prompt does: wait for the startup connections.
-            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $this->assertSame(['mcp__fixture__echo'], $set->names(), 'the connected server\'s tool, under its MCP name');
@@ -389,7 +389,7 @@ final class McpExtensionTest extends TestCase
         // The tool runs through the connection.
         $tool = $set->find('mcp__fixture__echo');
         $this->assertNotNull($tool);
-        $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'round trip'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
+        $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'round trip'], null, new \Pig\CodingAgent\Extensions\ExtensionContext('.'), null));
         $this->assertSame('echo: round trip', $result->content[0]->text);
 
         // `/mcp` names both, with the failure's first line.
@@ -397,7 +397,7 @@ final class McpExtensionTest extends TestCase
         $this->assertNotNull($command);
         // No terminal: `/mcp` prints the status rather than opening the manager.
         Async::run(function () use ($command, $ui): void {
-            ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
+            ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: false));
         });
         $status = end($ui->notices);
         $this->assertStringContainsString('fixture: connected, 1 tools (direct)', $status);
@@ -405,7 +405,7 @@ final class McpExtensionTest extends TestCase
         $this->assertStringContainsString('broken: failed (codemode)', $status);
         $this->assertStringContainsString('MCP connection closed', $status);
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
         Loop::get()->tick();
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
@@ -421,11 +421,11 @@ final class McpExtensionTest extends TestCase
         file_put_contents($registrar, <<<PHP
         <?php
         use Pig\\CodingAgent\\Extensions\\ExtensionApi;
-        return static function (ExtensionApi \$pi): void {
-            \$pi->registerMcpServer('reg', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
-            \$pi->registerMcpServer('fixture', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
-            \$pi->registerCommand('unreg', static fn () => \$pi->unregisterMcpServer('reg'));
-            \$pi->registerCommand('rereg', static fn () => \$pi->registerMcpServer('late', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']));
+        return static function (ExtensionApi \$pig): void {
+            \$pig->registerMcpServer('reg', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
+            \$pig->registerMcpServer('fixture', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']);
+            \$pig->registerCommand('unreg', static fn () => \$pig->unregisterMcpServer('reg'));
+            \$pig->registerCommand('rereg', static fn () => \$pig->registerMcpServer('late', ['command' => PHP_BINARY, 'args' => [{$fixture}], 'exposure' => 'direct']));
         };
         PHP);
 
@@ -437,13 +437,13 @@ final class McpExtensionTest extends TestCase
 
         $set = new CustomToolSet([]);
         $set->adopt($mcp);
-        $hooks = new HookRunner([new LoadedHook($mcp->path, $mcp->resolved, $mcp->api), new LoadedHook($reg->path, $reg->resolved, $reg->api)], $this->cwd);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension($mcp->path, $mcp->resolved, $mcp->name, $mcp->api), new LoadedExtension($reg->path, $reg->resolved, $reg->name, $reg->api)], $this->cwd);
         $ui = new NoticingUi();
-        $hooks->initialize(static fn () => null, ui: $ui);
+        $extensionRunner->initialize(static fn () => null, ui: $ui);
 
-        Async::run(function () use ($hooks): void {
-            $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $names = $set->names();
@@ -453,7 +453,7 @@ final class McpExtensionTest extends TestCase
         // `/mcp` says whose the registered one is, and that the file won the other name.
         $command = $mcp->api->commands()['mcp'] ?? null;
         Async::run(function () use ($command, $ui): void {
-            ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
+            ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: false));
         });
         $status = end($ui->notices);
         $this->assertStringContainsString('reg: connected, 1 tools (direct)', $status);
@@ -462,7 +462,7 @@ final class McpExtensionTest extends TestCase
         // Unregistered mid-session: `mcp_servers_change` closes it and its tool goes.
         $unreg = $reg->api->commands()['unreg'];
         Async::run(function () use ($unreg): void {
-            ($unreg->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.'));
+            ($unreg->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.'));
         });
         $this->turn();
         $this->assertSame(['mcp__fixture__echo'], $set->names());
@@ -470,14 +470,14 @@ final class McpExtensionTest extends TestCase
         // Registered mid-session: connected right away.
         $rereg = $reg->api->commands()['rereg'];
         Async::run(function () use ($rereg): void {
-            ($rereg->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.'));
+            ($rereg->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.'));
         });
         $this->until(static fn (): bool => in_array('mcp__late__echo', $set->names(), true));
         $names = $set->names();
         sort($names);
         $this->assertSame(['mcp__fixture__echo', 'mcp__late__echo'], $names);
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
         Loop::get()->tick();
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
@@ -505,17 +505,17 @@ final class McpExtensionTest extends TestCase
             'slow' => ['command' => PHP_BINARY, 'args' => ['-r', 'sleep(30);']],
         ]]));
 
-        [, $hooks] = $this->load();
-        $hooks->initialize(static fn () => null, ui: new NoticingUi());
+        [, $extensionRunner] = $this->load();
+        $extensionRunner->initialize(static fn () => null, ui: new NoticingUi());
         $started = microtime(true);
 
-        Async::run(function () use ($hooks): void {
-            $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
 
         $this->assertLessThan(2.0, microtime(true) - $started);
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testACodemodeExposedToolIsNotOnTheModelButInTheCodemodeRegistry(): void
@@ -525,7 +525,7 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // upstream's default exposure: codemode
         ]]));
 
-        [$set, $hooks, $ui] = $this->start();
+        [$set, $extensionRunner, $ui] = $this->start();
 
         // Nothing declared, nothing said: the tool is where codemode scripts find it.
         $this->assertSame([], $set->names());
@@ -536,13 +536,13 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('fixture', $registered['mcp__fixture__echo']['namespace']['name']);
 
         // And the registry entry calls through to the server, answering the whole CallToolResult.
-        $value = Async::run(static fn () => ($registered['mcp__fixture__echo']['execute'])(['text' => 'via script'], (new \Pig\Async\AbortController())->signal, new \Pig\CodingAgent\Hooks\HookContext('.')));
+        $value = Async::run(static fn () => ($registered['mcp__fixture__echo']['execute'])(['text' => 'via script'], (new \Pig\Async\AbortController())->signal, new \Pig\CodingAgent\Extensions\ExtensionContext('.')));
         $this->assertSame([['type' => 'text', 'text' => 'echo: via script']], $value['content']);
 
         // The status says so too.
         $this->assertStringContainsString('fixture: connected, 1 tools (codemode)', $this->mcpStatus());
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
         $this->assertSame([], \Pig\Codemode\Registry::all(), 'shutdown takes them out of the registry');
     }
 
@@ -552,7 +552,7 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $hooks, $ui] = $this->start();
+        [$set, $extensionRunner, $ui] = $this->start();
 
         $this->assertSame(['tool_search'], $set->names(), 'the deferred tool is not declared yet');
         $search = $set->find('tool_search');
@@ -560,11 +560,11 @@ final class McpExtensionTest extends TestCase
 
         // `/mcp` says how many are waiting.
         $command = $this->extension->api->commands()['mcp'];
-        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false)));
+        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: false)));
         $this->assertStringContainsString('fixture: connected, 1 tools (1 waiting for tool_search) (deferred)', end($ui->notices));
 
         // A query that matches nothing loads nothing.
-        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.');
         $none = Async::run(static fn () => ($search->execute)('1', ['query' => 'weather forecast'], null, $ctx, null));
         $this->assertSame('No matching tools found.', $none->content[0]->text);
         $this->assertSame(['tool_search'], $set->names());
@@ -583,7 +583,7 @@ final class McpExtensionTest extends TestCase
         $result = Async::run(static fn () => ($tool->execute)('3', ['text' => 'hi'], null, $ctx, null));
         $this->assertSame('echo: hi', $result->content[0]->text);
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects(): void
@@ -595,13 +595,13 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $hooks] = $this->load();
-        $hooks->initialize(static fn () => null, ui: new NoticingUi());
+        [$set, $extensionRunner] = $this->load();
+        $extensionRunner->initialize(static fn () => null, ui: new NoticingUi());
         $agent = new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions());
-        $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $hooks, [], []);
+        $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $extensionRunner, [], []);
         $set->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
-        $session = new \Pig\CodingAgent\Session\AgentSession($agent, $this->cwd, hooks: $hooks, loadout: $loadout);
+        $session = new \Pig\CodingAgent\Session\AgentSession($agent, $this->cwd, extensionRunner: $extensionRunner, loadout: $loadout);
 
         // What the transcript of the earlier session declared, `tool_search` having loaded the tool.
         $session->restore([new \Pig\Ai\SystemMessage('', ['cwd' => 'x'], [
@@ -611,9 +611,9 @@ final class McpExtensionTest extends TestCase
         ])]);
         $this->assertTrue($session->isToolPending('mcp__fixture__echo'));
 
-        Async::run(function () use ($hooks): void {
-            $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
         $this->untilServersSettle();
 
@@ -621,7 +621,7 @@ final class McpExtensionTest extends TestCase
         $this->assertSame(['read', 'mcp__fixture__echo', 'tool_search'], $session->activeTools());
         $this->assertFalse($session->isToolPending('mcp__fixture__echo'));
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testEveryPromptListsTheServersWhoseToolsAreNotDeclared(): void
@@ -629,14 +629,14 @@ final class McpExtensionTest extends TestCase
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred', 'description' => 'Echoes text.'],
         ]]));
-        [, $hooks] = $this->start();
+        [, $extensionRunner] = $this->start();
 
         $options = new \Pig\CodingAgent\Prompt\SystemPromptOptions();
-        Async::run(static fn () => $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'again'], $options));
+        Async::run(static fn () => $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'again'], $options));
 
         $this->assertSame([McpServersSection::NAME => "MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__fixture (tool_search): Echoes text."], $options->sections);
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     // ---- the `mcp_servers` section: upstream's "MCP servers section" ----------------------------
@@ -697,12 +697,12 @@ final class McpExtensionTest extends TestCase
             'broken' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--exit-on', 'initialize']],
         ]]));
 
-        [$set, $hooks] = $this->start();
+        [$set, $extensionRunner] = $this->start();
         [$terminal, $tui, $ui] = $this->terminal();
         $this->assertSame(['mcp__fixture__echo'], $set->names());
 
         $command = $this->extension->api->commands()['mcp'];
-        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true);
+        $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true);
         $open = Async::spawn(static fn () => ($command->handler)('', $ctx));
         $this->turn();
 
@@ -766,7 +766,7 @@ final class McpExtensionTest extends TestCase
         $this->assertTrue($open->isComplete(), 'the command returned');
         $this->assertStringNotContainsString('MCP servers', $this->screenOf($tui), 'and the overlay is empty');
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testChangingTheExposureInTheManagerIsSavedAndReRegistersTheTools(): void
@@ -775,12 +775,12 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
         ]]));
 
-        [$set, $hooks] = $this->start();
+        [$set, $extensionRunner] = $this->start();
         [$terminal, $tui, $ui] = $this->terminal();
         $this->assertSame(['mcp__fixture__echo'], $set->names());
 
         $command = $this->extension->api->commands()['mcp'];
-        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true)));
         $this->turn();
         $terminal->type("\r");                 // fixture
         $this->turn();
@@ -805,7 +805,7 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\e");
         $terminal->type("\e");
         $this->turn();
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testTheListRedrawsWhileAServerIsStillConnecting(): void
@@ -821,15 +821,15 @@ final class McpExtensionTest extends TestCase
         $this->extension = $loaded[0];
         $set = new CustomToolSet([]);
         $set->adopt($this->extension);
-        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension($this->extension->path, $this->extension->resolved, $this->extension->name, $this->extension->api)], $this->cwd);
         [$terminal, $tui, $ui] = $this->terminal();
-        $hooks->initialize(static fn () => null, ui: $ui);
+        $extensionRunner->initialize(static fn () => null, ui: $ui);
 
-        Async::spawn(fn () => $hooks->emit(new SessionStartEvent()));
+        Async::spawn(fn () => $extensionRunner->emit(new SessionStartEvent()));
         $this->turn(3);
 
         $command = $this->extension->api->commands()['mcp'];
-        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true)));
         $this->turn(3);
         $this->assertMatchesRegularExpression('/slow.*(connecting…|starting)/', $this->screenOf($tui));
 
@@ -839,7 +839,7 @@ final class McpExtensionTest extends TestCase
 
         $terminal->type("\e");
         $this->turn();
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     // ---- resources ------------------------------------------------------------------------------
@@ -851,7 +851,7 @@ final class McpExtensionTest extends TestCase
             'plain' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
         ]]));
 
-        [$set, $hooks] = $this->start();
+        [$set, $extensionRunner] = $this->start();
 
         $names = $set->names();
         sort($names);
@@ -861,7 +861,7 @@ final class McpExtensionTest extends TestCase
             'the resource tools once, not per server, and declared because a server with resources is direct',
         );
 
-        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.');
         $call = static fn (string $tool, array $params) => Async::run(static fn () => ($set->find($tool)->execute)('1', $params, null, $ctx, null));
         $json = static fn (AgentToolResult $result): array => json_decode($result->content[0]->text, true);
 
@@ -915,7 +915,7 @@ final class McpExtensionTest extends TestCase
             $this->assertSame('uri must be provided', $error->getMessage());
         }
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testTheResourceToolsTakeTheWidestExposureAndGoWhenNoServerHasResources(): void
@@ -924,13 +924,13 @@ final class McpExtensionTest extends TestCase
             'docs' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--resources'], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $hooks] = $this->start();
+        [$set, $extensionRunner] = $this->start();
 
         // A deferred server's resources: the tools wait behind tool_search, with the server's tool.
         $this->assertSame(['tool_search'], $set->names());
         $search = $set->find('tool_search');
         $this->assertStringContainsString('- mcp resources', $search->description, 'listed as a source of their own');
-        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.');
         $found = Async::run(static fn () => ($search->execute)('1', ['query' => 'list resources'], null, $ctx, null));
         $this->assertStringContainsString('list_mcp_resources', $found->content[0]->text);
         $this->assertContains('list_mcp_resources', $set->names(), 'loaded like any deferred tool');
@@ -938,7 +938,7 @@ final class McpExtensionTest extends TestCase
         // Disabling the only server with resources takes them away, loaded or not.
         $command = $this->extension->api->commands()['mcp'];
         [$terminal, $tui, $ui] = $this->terminal();
-        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true)));
         $this->turn();
         $terminal->type("\r");                               // docs
         $this->turn();
@@ -952,7 +952,7 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\e");
         $terminal->type("\e");
         $this->turn();
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testAResourceLinkNamesTheReaderOnlyWhileTheResourceToolsAreOnTheModel(): void
@@ -972,16 +972,16 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--log-on-call'], 'exposure' => 'direct'],
         ]]));
 
-        [$set, $hooks] = $this->start();
+        [$set, $extensionRunner] = $this->start();
         $tool = $set->find('mcp__fixture__echo');
-        Async::run(static fn () => ($tool->execute)('1', ['text' => 'hi'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
+        Async::run(static fn () => ($tool->execute)('1', ['text' => 'hi'], null, new \Pig\CodingAgent\Extensions\ExtensionContext('.'), null));
         // The notification arrived before the reply, so the log is already written; a bare
         // `tick()` here would block in `select` on the server's pipes with nothing to read.
 
         $log = (string) file_get_contents($this->home . '/mcp.log');
         $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[fixture\] warning echo: called with\n    \{"text":"hi"\}\n$/', $log);
 
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
     public function testTheLogFormatsAnyShapeAndRotatesPastTheLimit(): void
@@ -1021,7 +1021,7 @@ final class McpExtensionTest extends TestCase
         ]]));
 
         try {
-            [$set, $hooks, $ui] = $this->start();
+            [$set, $extensionRunner, $ui] = $this->start();
 
             // Not failed: waiting for a sign-in, and the report says how.
             $this->assertSame([], $set->names());
@@ -1032,7 +1032,7 @@ final class McpExtensionTest extends TestCase
             // cannot see); the browser is played by hitting the callback with a code the fake
             // authorization server minted for the PKCE challenge in that URL.
             $command = $this->extension->api->commands()['mcp'];
-            $ctx = new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true);
+            $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true);
             $before = count($ui->notices);
 
             Async::run(function () use ($command, $ctx, $server, $ui, $before): void {
@@ -1080,7 +1080,7 @@ final class McpExtensionTest extends TestCase
             $this->assertStringContainsString('remote: needs sign-in', $this->mcpStatus());
             $this->assertSame([], $set->names(), 'and its tool is off the model');
 
-            Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+            Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
         } finally {
             $server->stop();
         }
@@ -1121,7 +1121,7 @@ final class McpExtensionTest extends TestCase
             // provider refreshes, and the call is retried — the model sees one answer.
             $server->requireToken = 'revoked-elsewhere';
             $tool = $set->find('mcp__remote__echo');
-            $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'still here'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
+            $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'still here'], null, new \Pig\CodingAgent\Extensions\ExtensionContext('.'), null));
             $this->assertSame('echo: still here', $result->content[0]->text);
             $this->assertSame(2, count($server->tokenRequests), 'one more refresh');
         } finally {
@@ -1192,7 +1192,7 @@ final class McpExtensionTest extends TestCase
             $this->assertStringContainsString('check the Authorization header', $status);
 
             $command = $this->extension->api->commands()['mcp'];
-            Async::run(fn () => ($command->handler)('login bearer', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+            Async::run(fn () => ($command->handler)('login bearer', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true)));
             $this->assertStringContainsString('No enabled MCP server uses OAuth', end($ui->notices));
         } finally {
             $server->stop();
@@ -1204,7 +1204,7 @@ final class McpExtensionTest extends TestCase
     {
         $command = $this->extension->api->commands()['mcp'];
         $ui = new NoticingUi();
-        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false)));
+        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: false)));
 
         return (string) end($ui->notices);
     }
@@ -1402,21 +1402,21 @@ final class McpExtensionTest extends TestCase
     /**
      * Load the extension from the repository, start a session on it and wait as the first prompt would.
      *
-     * @return array{CustomToolSet, HookRunner, NoticingUi}
+     * @return array{CustomToolSet, ExtensionRunner, NoticingUi}
      */
     private function start(): array
     {
-        [$set, $hooks] = $this->load();
+        [$set, $extensionRunner] = $this->load();
         $ui = new NoticingUi();
-        $hooks->initialize(static fn () => null, ui: $ui);
+        $extensionRunner->initialize(static fn () => null, ui: $ui);
 
-        Async::run(function () use ($hooks): void {
-            $hooks->emit(new SessionStartEvent());
-            $hooks->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
         });
         $this->untilServersSettle();
 
-        return [$set, $hooks, $ui];
+        return [$set, $extensionRunner, $ui];
     }
 
     /**
@@ -1432,7 +1432,7 @@ final class McpExtensionTest extends TestCase
         Async::run(static function () use ($command, $deadline): void {
             do {
                 $ui = new NoticingUi();
-                ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
+                ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: false));
                 $status = (string) end($ui->notices);
 
                 if (!str_contains($status, 'starting') && !str_contains($status, 'connecting')) {
@@ -1448,7 +1448,7 @@ final class McpExtensionTest extends TestCase
      * Load the MCP extension and the `tool_search` one beside it, as `bin/pig` loads them, with one
      * tool set adopting both — `tool_search` is `pig-tool-search`'s, the deferred tools pig-mcp's.
      *
-     * @return array{CustomToolSet, HookRunner}
+     * @return array{CustomToolSet, ExtensionRunner}
      */
     private function load(): array
     {
@@ -1458,13 +1458,13 @@ final class McpExtensionTest extends TestCase
         $this->assertCount(2, $loaded);
         $this->extension = $loaded[0];
         $set = new CustomToolSet([]);
-        $hooks = [];
+        $extensionRunner = [];
 
         foreach ($loaded as $extension) {
             $set->adopt($extension);
-            $hooks[] = new LoadedHook($extension->path, $extension->resolved, $extension->api);
+            $extensionRunner[] = new LoadedExtension($extension->path, $extension->resolved, $extension->name, $extension->api);
         }
 
-        return [$set, new HookRunner($hooks, $this->cwd)];
+        return [$set, new ExtensionRunner($extensionRunner, $this->cwd)];
     }
 }

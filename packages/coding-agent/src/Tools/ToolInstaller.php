@@ -69,12 +69,11 @@ final class ToolInstaller
     /**
      * `~/.pig/agent/bin`, which is upstream's `join(getAgentDir(), "bin")`.
      *
-     * **Was `tools/`, and that was a collision rather than a naming preference.**
-     * `CustomTools\CustomToolLoader` scans the same `tools/` for folders with an `index.php` in
-     * them — a person's own tools. So a downloaded `fd` binary sat in the directory pig also
-     * treats as a list of tools to load, and the only reason nothing broke is that the loader
-     * wants directories and a binary is a file. Separating them is the point; matching upstream
-     * is the reason the new name is `bin`.
+     * **Was `tools/`, and that was a collision rather than a naming preference.** The tool-file
+     * loader of the time scanned the same `tools/` for folders with an `index.php` in them — a
+     * person's own tools — so a downloaded `fd` binary sat in the directory pig also treated as a
+     * list of tools to load. Separating them was the point; matching upstream is the reason the
+     * name is `bin`.
      */
     public static function directory(): string
     {

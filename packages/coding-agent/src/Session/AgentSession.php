@@ -56,49 +56,49 @@ use Pig\Async\Deferred;
 use Pig\Async\Future;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
-use Pig\CodingAgent\Hooks\Events\AgentSettledEvent as HookAgentSettled;
-use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
-use Pig\CodingAgent\Hooks\Events\CacheWarmingDecisionEvent;
-use Pig\CodingAgent\Hooks\Events\MessageEndEvent as HookMessageEnd;
-use Pig\CodingAgent\Hooks\Events\MessageStartEvent as HookMessageStart;
-use Pig\CodingAgent\Hooks\Events\MessageUpdateEvent as HookMessageUpdate;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeForkEvent;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
-use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
-use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
-use Pig\CodingAgent\Hooks\Events\InputEvent;
-use Pig\CodingAgent\Hooks\Events\UserBashEvent;
-use Pig\CodingAgent\Hooks\Events\ToolExecutionStartEvent as HookToolExecutionStart;
-use Pig\CodingAgent\Hooks\Events\ToolExecutionUpdateEvent as HookToolExecutionUpdate;
-use Pig\CodingAgent\Hooks\Events\ToolExecutionEndEvent as HookToolExecutionEnd;
-use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
-use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
-use Pig\CodingAgent\Hooks\Events\TreePreparation;
-use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
-use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
-use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
-use Pig\CodingAgent\Hooks\Events\ModelSelectEvent;
-use Pig\CodingAgent\Hooks\Events\ThinkingLevelSelectEvent;
-use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
-use Pig\CodingAgent\Hooks\Boundary\BoundaryContextPreview;
-use Pig\CodingAgent\Hooks\Boundary\CompactionDraft;
-use Pig\CodingAgent\Hooks\Boundary\ContextEditDraft;
-use Pig\CodingAgent\Hooks\Boundary\CustomEntryDraft;
-use Pig\CodingAgent\Hooks\Boundary\CustomMessageDraft;
-use Pig\CodingAgent\Hooks\Boundary\SessionBoundaryDraft;
-use Pig\CodingAgent\Hooks\Events\AgentBeforeSettleEvent;
+use Pig\CodingAgent\Extensions\Events\AgentEndEvent as ExtensionAgentEnd;
+use Pig\CodingAgent\Extensions\Events\AgentSettledEvent as ExtensionAgentSettled;
+use Pig\CodingAgent\Extensions\Events\AgentStartEvent as ExtensionAgentStart;
+use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
+use Pig\CodingAgent\Extensions\Events\MessageEndEvent as ExtensionMessageEnd;
+use Pig\CodingAgent\Extensions\Events\MessageStartEvent as ExtensionMessageStart;
+use Pig\CodingAgent\Extensions\Events\MessageUpdateEvent as ExtensionMessageUpdate;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeForkEvent;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeSwitchEvent;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\Events\SessionBeforeTreeEvent;
+use Pig\CodingAgent\Extensions\Events\SessionCompactEvent;
+use Pig\CodingAgent\Extensions\Events\SessionCompactFailedEvent;
+use Pig\CodingAgent\Extensions\Events\InputEvent;
+use Pig\CodingAgent\Extensions\Events\UserBashEvent;
+use Pig\CodingAgent\Extensions\Events\ToolExecutionStartEvent as ExtensionToolExecutionStart;
+use Pig\CodingAgent\Extensions\Events\ToolExecutionUpdateEvent as ExtensionToolExecutionUpdate;
+use Pig\CodingAgent\Extensions\Events\ToolExecutionEndEvent as ExtensionToolExecutionEnd;
+use Pig\CodingAgent\Extensions\Events\SessionInfoChangedEvent;
+use Pig\CodingAgent\Extensions\Events\SessionTreeEvent;
+use Pig\CodingAgent\Extensions\Events\TreePreparation;
+use Pig\CodingAgent\Extensions\Events\TurnEndEvent as ExtensionTurnEnd;
+use Pig\CodingAgent\Extensions\Events\AfterProviderResponseEvent;
+use Pig\CodingAgent\Extensions\Events\ProviderStreamEvent;
+use Pig\CodingAgent\Extensions\Events\ModelSelectEvent;
+use Pig\CodingAgent\Extensions\Events\ThinkingLevelSelectEvent;
+use Pig\CodingAgent\Extensions\Events\TurnStartEvent as ExtensionTurnStart;
+use Pig\CodingAgent\Extensions\Boundary\BoundaryContextPreview;
+use Pig\CodingAgent\Extensions\Boundary\CompactionDraft;
+use Pig\CodingAgent\Extensions\Boundary\ContextEditDraft;
+use Pig\CodingAgent\Extensions\Boundary\CustomEntryDraft;
+use Pig\CodingAgent\Extensions\Boundary\CustomMessageDraft;
+use Pig\CodingAgent\Extensions\Boundary\SessionBoundaryDraft;
+use Pig\CodingAgent\Extensions\Events\AgentBeforeSettleEvent;
 use Pig\CodingAgent\ModelRoute;
 use Pig\CodingAgent\ModelRouteRequest;
 use Pig\CodingAgent\RoutedModel;
 use Pig\CodingAgent\VirtualModelRegistry;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
@@ -209,12 +209,12 @@ final class AgentSession
     private bool $startingRun = false;
 
     /**
-     * @var list<HookMessage> custom messages sent while a run was in progress without
+     * @var list<CustomMessage> custom messages sent while a run was in progress without
      *      `triggerTurn`, appended at the end of the turn — upstream's `_pendingCustomMessages`
      */
     private array $pendingHookMessages = [];
 
-    /** @var list<HookMessage> custom messages sent with `deliverAs: 'nextTurn'` — upstream's `_pendingNextTurnMessages` */
+    /** @var list<CustomMessage> custom messages sent with `deliverAs: 'nextTurn'` — upstream's `_pendingNextTurnMessages` */
     private array $pendingNextTurnMessages = [];
 
     /** Escape reached the prompt in progress, so its post-run loop stops. Upstream's `_agentRunAbortRequested`. */
@@ -310,7 +310,7 @@ final class AgentSession
         private readonly string $cwd = '.',
         private ?SessionManager $store = null,
         private readonly ?Settings $settings = null,
-        private ?HookRunner $hooks = null,
+        private ?ExtensionRunner $extensionRunner = null,
         array $fileCommands = [],
         array $modelScope = [],
         public readonly ?Auth $auth = null,
@@ -355,19 +355,19 @@ final class AgentSession
         // its `onPayload` / `onResponse` / `onProviderStreamEvent`, `maxRetryDelayMs` from the
         // provider retry settings, and a `streamFn` that adds the request options
         // (`buildRequestOptions()`). pig's agent is built before the session, so the session puts
-        // them on it here. Each reads `$this->hooks` when it runs, so a `/reload` that swaps the
+        // them on it here. Each reads `$this->extensionRunner` when it runs, so a `/reload` that swaps the
         // runner is picked up.
-        $this->agent->onPayload = fn (mixed $payload, Model $model): mixed => $this->hooks?->hasHandlers('before_provider_request') === true
-            ? $this->hooks->emitBeforeProviderRequest($payload)
+        $this->agent->onPayload = fn (mixed $payload, Model $model): mixed => $this->extensionRunner?->hasHandlers('before_provider_request') === true
+            ? $this->extensionRunner->emitBeforeProviderRequest($payload)
             : $payload;
         $this->agent->onResponse = function (array $response, Model $model): void {
-            if ($this->hooks?->hasHandlers('after_provider_response') === true) {
-                $this->hooks->emit(new AfterProviderResponseEvent($response['status'], $response['headers']));
+            if ($this->extensionRunner?->hasHandlers('after_provider_response') === true) {
+                $this->extensionRunner->emit(new AfterProviderResponseEvent($response['status'], $response['headers']));
             }
         };
         $this->agent->onProviderStreamEvent = function (mixed $data, Model $model): void {
-            if ($this->hooks?->hasHandlers('provider_stream_event') === true) {
-                $this->hooks->emit(new ProviderStreamEvent($model->provider, $model->api->value, $model->id, $data));
+            if ($this->extensionRunner?->hasHandlers('provider_stream_event') === true) {
+                $this->extensionRunner->emit(new ProviderStreamEvent($model->provider, $model->api->value, $model->id, $data));
             }
         };
         $this->agent->maxRetryDelayMs = $this->settings?->providerRetrySettings()['maxRetryDelayMs'] ?? 60_000;
@@ -500,23 +500,23 @@ final class AgentSession
             $this->agent->setFollowUpMode($settings->followUpMode());
         }
 
-        // `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
-        // in every handler — a `HookContext` field documented and wired at one end only. The
+        // `ExtensionRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
+        // in every handler — a `ExtensionContext` field documented and wired at one end only. The
         // session is the thing that holds the runner, so it is the thing that tells the runner,
-        // through `setHooks()`, which a later `/reload` goes through too.
-        $this->setHooks($this->hooks);
+        // through `setExtensionRunner()`, which a later `/reload` goes through too.
+        $this->setExtensionRunner($this->extensionRunner);
     }
 
     /** The hooks this session fires at, if any. */
-    public function hooks(): ?HookRunner
+    public function extensionRunner(): ?ExtensionRunner
     {
-        return $this->hooks;
+        return $this->extensionRunner;
     }
 
-    public function setHooks(?HookRunner $hooks): void
+    public function setExtensionRunner(?ExtensionRunner $extensionRunner): void
     {
-        $this->hooks = $hooks;
-        $hooks?->setSession($this);
+        $this->extensionRunner = $extensionRunner;
+        $extensionRunner?->setSession($this);
     }
 
     /** @return list<FileCommand> the prompt templates `/name` expands — upstream's `promptTemplates` */
@@ -543,11 +543,11 @@ final class AgentSession
      */
     public function discoverResources(string $reason): ?ExtensionResources
     {
-        if ($this->hooks === null || !$this->hooks->listensTo('resources_discover')) {
+        if ($this->extensionRunner === null || !$this->extensionRunner->listensTo('resources_discover')) {
             return null;
         }
 
-        $found = $this->hooks->emitResourcesDiscover($this->cwd, $reason);
+        $found = $this->extensionRunner->emitResourcesDiscover($this->cwd, $reason);
 
         if ($found->isEmpty()) {
             return null;
@@ -566,7 +566,7 @@ final class AgentSession
                 }
             }
 
-            $this->hooks->emitError(new HookError($extensionPath, 'resources_discover', "skill {$warning->path}: {$warning->message}"));
+            $this->extensionRunner->emitError(new ExtensionError($extensionPath, 'resources_discover', "skill {$warning->path}: {$warning->message}"));
         }
 
         $commands = SlashCommands::fromDirectories($paths($found->promptPaths));
@@ -751,7 +751,7 @@ final class AgentSession
         $this->closeSessionResources();
         $this->store = $store;
         $this->agent->sessionId = $this->sessionId();
-        $this->hooks?->setStore($store);
+        $this->extensionRunner?->setStore($store);
     }
 
     /**
@@ -1051,7 +1051,7 @@ final class AgentSession
                 ? $inner($model, $context, $options)
                 : Stream::simple($model, $context, $options),
             fn (): string => $this->settings?->cacheWarmingMode() ?? 'streaming',
-            fn (CacheWarmingDecisionEvent $event): string => $this->hooks?->emitCacheWarmingDecision($event) ?? $event->action,
+            fn (CacheWarmingDecisionEvent $event): string => $this->extensionRunner?->emitCacheWarmingDecision($event) ?? $event->action,
             fn (): int => $this->lastPromptTokens(),
             function (string $kind, string $provider, string $model, Usage $usage, ?string $note): ?UsageEntry {
                 $entry = $this->store?->appendUsage($kind, $provider, $model, $usage, $note);
@@ -1137,7 +1137,7 @@ final class AgentSession
             $this->agent->abort();
         }
 
-        $this->tellHooks($event);
+        $this->tellExtensions($event);
 
         // A queued message leaves the queue *before* the event goes out, so a listener
         // redrawing the "3 messages waiting" line sees three, not four.
@@ -1233,21 +1233,21 @@ final class AgentSession
      * `agent_start` rather than kept per session, because upstream's `turnIndex` is
      * "which turn of this run", which is what a hook watching a long run wants.
      */
-    private function tellHooks(AgentEvent $event): void
+    private function tellExtensions(AgentEvent $event): void
     {
-        if ($this->hooks === null) {
+        if ($this->extensionRunner === null) {
             return;
         }
 
         if ($event instanceof AgentStartEvent) {
             $this->turnIndex = 0;
-            $this->hooks->emit(new HookAgentStart());
+            $this->extensionRunner->emit(new ExtensionAgentStart());
 
             return;
         }
 
         if ($event instanceof TurnStartEvent) {
-            $this->hooks->emit(new HookTurnStart($this->turnIndex));
+            $this->extensionRunner->emit(new ExtensionTurnStart($this->turnIndex));
 
             return;
         }
@@ -1259,50 +1259,50 @@ final class AgentSession
                 StopReason::Error => 'error',
                 default => 'completed',
             };
-            $this->hooks->emit(new HookTurnEnd($event->message, $event->toolResults, $this->turnIndex));
+            $this->extensionRunner->emit(new ExtensionTurnEnd($event->message, $event->toolResults, $this->turnIndex));
             $this->turnIndex++;
 
             return;
         }
 
         if ($event instanceof MessageStartEvent) {
-            $this->hooks->emit(new HookMessageStart($event->message));
+            $this->extensionRunner->emit(new ExtensionMessageStart($event->message));
 
             return;
         }
 
         if ($event instanceof MessageUpdateEvent) {
-            $this->hooks->emit(new HookMessageUpdate($event->message, $event->assistantMessageEvent));
+            $this->extensionRunner->emit(new ExtensionMessageUpdate($event->message, $event->assistantMessageEvent));
 
             return;
         }
 
         if ($event instanceof MessageEndEvent) {
-            $this->hooks->emit(new HookMessageEnd($event->message));
+            $this->extensionRunner->emit(new ExtensionMessageEnd($event->message));
 
             return;
         }
 
         if ($event instanceof ToolExecutionStartEvent) {
-            $this->hooks->emit(new HookToolExecutionStart($event->toolCallId, $event->toolName, $event->arguments, $event->parentToolCallId));
+            $this->extensionRunner->emit(new ExtensionToolExecutionStart($event->toolCallId, $event->toolName, $event->arguments, $event->parentToolCallId));
 
             return;
         }
 
         if ($event instanceof ToolExecutionUpdateEvent) {
-            $this->hooks->emit(new HookToolExecutionUpdate($event->toolCallId, $event->toolName, $event->arguments, $event->partialResult, $event->parentToolCallId));
+            $this->extensionRunner->emit(new ExtensionToolExecutionUpdate($event->toolCallId, $event->toolName, $event->arguments, $event->partialResult, $event->parentToolCallId));
 
             return;
         }
 
         if ($event instanceof ToolExecutionEndEvent) {
-            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError, $event->durationMs, $event->parentToolCallId));
+            $this->extensionRunner->emit(new ExtensionToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError, $event->durationMs, $event->parentToolCallId));
 
             return;
         }
 
         if ($event instanceof AgentEndEvent) {
-            $this->hooks->emit(new HookAgentEnd($event->messages));
+            $this->extensionRunner->emit(new ExtensionAgentEnd($event->messages));
         }
 
         // `agent_settled` is **not** emitted here. `AgentEndEvent` is the end of a *run*, and a
@@ -1844,7 +1844,7 @@ final class AgentSession
         $this->sessionName = $name !== '' ? $name : null;
         $this->store?->setSessionName($name);
         $event = new SessionInfoChangedEvent($name);
-        $this->hooks?->emit($event);
+        $this->extensionRunner?->emit($event);
         $this->announce($event);
 
         foreach ($this->nameListeners as $listener) {
@@ -1994,7 +1994,7 @@ final class AgentSession
         // clamp would be a file full of a model changing to itself.
         if ($changed) {
             $this->store?->appendModelChange($model->provider, $model->id);
-            $this->hooks?->emit(new ModelSelectEvent($model, $previous));
+            $this->extensionRunner?->emit(new ModelSelectEvent($model, $previous));
         }
 
         // Remembered for the next run when enabled (e.g. CLI interactive mode).
@@ -2384,7 +2384,7 @@ final class AgentSession
      * run instead of starting another, and an abort requested meanwhile aborts the run as soon as it
      * exists" (at `agent_start`, `onAgentEvent()`).
      *
-     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: HookMessage} $trigger
+     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: CustomMessage} $trigger
      * @param (Closure(): void)|null $onStarted called once the run's messages are prepared, before the first request
      */
     private function startRun(array $trigger, ?Closure $onStarted = null): void
@@ -2425,7 +2425,7 @@ final class AgentSession
      * build the starting message followed by pending nextTurn messages (consumed here) and handler
      * messages, with a system patch first when the prompt changed."
      *
-     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: HookMessage} $trigger
+     * @param array{messageType: 'user', prompt: string, images: list<ImageContent>}|array{messageType: 'custom', message: CustomMessage} $trigger
      * @return list<mixed>
      */
     private function prepareRun(array $trigger): array
@@ -2450,7 +2450,7 @@ final class AgentSession
         // The handlers get the prompt options to change — upstream's `systemPromptOptions` — and
         // what they leave is this run's (`$runSystemPromptOptions`).
         $options = new SystemPromptOptions();
-        $handlerMessages = $this->hooks?->emitBeforeAgentStart($trigger, $options, $this->renderSystemPrompt(...)) ?? [];
+        $handlerMessages = $this->extensionRunner?->emitBeforeAgentStart($trigger, $options, $this->renderSystemPrompt(...)) ?? [];
 
         if ($trigger['messageType'] === 'custom') {
             $messages = [$trigger['message']];
@@ -2469,7 +2469,7 @@ final class AgentSession
 
         // Each handler's message, stamped now, as upstream builds them.
         foreach ($handlerMessages as $message) {
-            $messages[] = new HookMessage($message->customType, $message->content, $message->display, $message->details);
+            $messages[] = new CustomMessage($message->customType, $message->content, $message->display, $message->details);
         }
 
         // Upstream's `updateMessage`, put in front (`messages.unshift(updateMessage)`): the prompt
@@ -2490,21 +2490,21 @@ final class AgentSession
      */
     private function runHookCommand(string $text): bool
     {
-        if ($this->hooks === null || !str_starts_with($text, '/')) {
+        if ($this->extensionRunner === null || !str_starts_with($text, '/')) {
             return false;
         }
 
         $name = strtok(substr($text, 1), " \t") ?: '';
-        $command = $this->hooks->command($name);
+        $command = $this->extensionRunner->command($name);
 
         if ($command === null) {
             return false;
         }
 
         try {
-            ($command->handler)(trim(substr($text, strlen($name) + 1)), $this->hooks->context());
+            ($command->handler)(trim(substr($text, strlen($name) + 1)), $this->extensionRunner->context());
         } catch (Throwable $error) {
-            $this->hooks->emitError(new HookError($command->hookPath, "/{$name}", $error->getMessage()));
+            $this->extensionRunner->emitError(new ExtensionError($command->extensionPath, "/{$name}", $error->getMessage()));
         }
 
         return true;
@@ -2608,11 +2608,11 @@ final class AgentSession
      */
     private function runInputHandlers(string $text, array $images, string $source, ?string $streaming): ?array
     {
-        if ($this->hooks === null) {
+        if ($this->extensionRunner === null) {
             return [$text, $images];
         }
 
-        $result = $this->hooks->emitInput(new InputEvent($text, $images, $source, $streaming));
+        $result = $this->extensionRunner->emitInput(new InputEvent($text, $images, $source, $streaming));
 
         return match ($result->action) {
             'handled' => null,
@@ -2667,7 +2667,7 @@ final class AgentSession
         $content = is_readable($skill->path) ? file_get_contents($skill->path) : false;
 
         if ($content === false) {
-            $this->hooks?->emitError(new HookError($skill->path, 'skill_expansion', "Could not read {$skill->path}"));
+            $this->extensionRunner?->emitError(new ExtensionError($skill->path, 'skill_expansion', "Could not read {$skill->path}"));
 
             return $text;
         }
@@ -2694,7 +2694,7 @@ final class AgentSession
      *
      * @param 'steer'|'followUp'|'nextTurn'|null $deliverAs
      */
-    public function sendHookMessage(HookMessage $message, ?bool $triggerTurn = null, ?string $deliverAs = null): void
+    public function sendHookMessage(CustomMessage $message, ?bool $triggerTurn = null, ?string $deliverAs = null): void
     {
         if ($deliverAs === 'nextTurn') {
             $this->pendingNextTurnMessages[] = $message;
@@ -2741,11 +2741,11 @@ final class AgentSession
                     // Nobody awaits this fiber, so the hook that asked is told — the same channel
                     // as a handler that threw. Without hooks there is no one to tell, and the throw
                     // goes to the spawned future as it is.
-                    if ($this->hooks === null) {
+                    if ($this->extensionRunner === null) {
                         throw $problem;
                     }
 
-                    $this->hooks->emitError(new HookError('<session>', 'sendMessage', $problem->getMessage()));
+                    $this->extensionRunner->emitError(new ExtensionError('<session>', 'sendMessage', $problem->getMessage()));
                 }
             });
 
@@ -2762,7 +2762,7 @@ final class AgentSession
     }
 
     /** Upstream's `_appendCustomMessage()`: into the conversation and the file, and told to the listeners. */
-    private function appendHookMessage(HookMessage $message): void
+    private function appendHookMessage(CustomMessage $message): void
     {
         $this->agent->appendMessage($message);
         $this->store?->append($message);
@@ -2866,7 +2866,7 @@ final class AgentSession
     {
         $name = strtok(substr($text, 1), " \t") ?: '';
 
-        if ($this->hooks?->command($name) !== null) {
+        if ($this->extensionRunner?->command($name) !== null) {
             throw new AgentError("Extension command \"/{$name}\" cannot be queued. Use prompt() or execute the command when not streaming.");
         }
     }
@@ -3030,7 +3030,7 @@ final class AgentSession
         // A hook may run it somewhere else — a container, a remote box — and hand back what
         // came of it. A hook that throws stops it here: falling back to running the command on
         // this machine is exactly what such a hook exists to prevent. Upstream's rule.
-        $handled = $this->hooks?->emitUserBash(new UserBashEvent($command, $excludeFromContext, $this->cwd));
+        $handled = $this->extensionRunner?->emitUserBash(new UserBashEvent($command, $excludeFromContext, $this->cwd));
 
         if ($handled !== null) {
             $result = $handled->result;
@@ -3164,7 +3164,7 @@ final class AgentSession
 
         // `'new'` rather than `'resume'`: a hook that refuses to leave a conversation usually
         // cares *why* it is being left, and upstream passes the same two words.
-        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
+        $refusal = $this->extensionRunner?->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
 
         if ($refusal !== null && $refusal->cancel) {
             return new SessionSwitch(switched: false, previous: $previous);
@@ -3188,7 +3188,7 @@ final class AgentSession
         // Upstream tears the whole runtime down and builds a new one, so its hooks hear
         // `session_shutdown` with the target and then `session_start` with the previous file.
         // pig keeps the same hooks across the switch and tells them the same two things.
-        $this->hooks?->emit(new SessionShutdownEvent('new', $fresh?->path));
+        $this->extensionRunner?->emit(new SessionShutdownEvent('new', $fresh?->path));
 
         if ($fresh !== null) {
             $this->writeTo($fresh);
@@ -3205,7 +3205,7 @@ final class AgentSession
         // declares both again, so the new file starts with them as the old one did.
         $this->agent->reset();
         $this->agent->clearMessages();
-        $this->hooks?->emit(new SessionStartEvent('new', $previous));
+        $this->extensionRunner?->emit(new SessionStartEvent('new', $previous));
         $this->tellSwitched('new', $previous);
 
         return new SessionSwitch(switched: true, previous: $previous);
@@ -3245,7 +3245,7 @@ final class AgentSession
     {
         $previous = $this->store?->path;
 
-        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume', $path));
+        $refusal = $this->extensionRunner?->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume', $path));
 
         if ($refusal !== null && $refusal->cancel) {
             return new SessionSwitch(switched: false, previous: $previous);
@@ -3257,7 +3257,7 @@ final class AgentSession
         // Unconditional, for `startNew()`'s reason: a sleeping retry is not streaming either.
         $this->abort()->await();
         $this->clearQueue();
-        $this->hooks?->emit(new SessionShutdownEvent('resume', $opened->path));
+        $this->extensionRunner?->emit(new SessionShutdownEvent('resume', $opened->path));
 
         // Another directory: upstream's `teardownCurrent()` then `createRuntime({cwd: …})`. The
         // replacement resumes the file itself and hears `session_start` from the caller, once it
@@ -3282,7 +3282,7 @@ final class AgentSession
         // And what it was being had with. Nothing was typed here — resuming takes no model —
         // so the file wins outright, which is what "resume" means.
         $this->restoreSettings();
-        $this->hooks?->emit(new SessionStartEvent('resume', $previous));
+        $this->extensionRunner?->emit(new SessionStartEvent('resume', $previous));
         $this->tellSwitched('resume', $previous);
 
         // The messages somebody would count: a system message is prompt state, not something said.
@@ -3329,7 +3329,7 @@ final class AgentSession
 
         $previous = $this->store->path;
 
-        $refusal = $this->hooks?->emitBeforeFork(new SessionBeforeForkEvent($entryId, $position));
+        $refusal = $this->extensionRunner?->emitBeforeFork(new SessionBeforeForkEvent($entryId, $position));
 
         if ($refusal !== null && $refusal->cancel) {
             return new SessionSwitch(switched: false, previous: $previous);
@@ -3363,12 +3363,12 @@ final class AgentSession
 
         $this->abort()->await();
         $this->clearQueue();
-        $this->hooks?->emit(new SessionShutdownEvent('fork', $forked->path));
+        $this->extensionRunner?->emit(new SessionShutdownEvent('fork', $forked->path));
 
         $this->writeTo($forked);
         $this->restore($forked->messages());
         $this->restoreSettings();
-        $this->hooks?->emit(new SessionStartEvent('fork', $previous));
+        $this->extensionRunner?->emit(new SessionStartEvent('fork', $previous));
         $this->tellSwitched('fork', $previous);
 
         $said = array_filter($forked->messages(), static fn (mixed $message): bool => !$message instanceof SystemMessage);
@@ -3467,7 +3467,7 @@ final class AgentSession
         $listener = $signal?->onAbort(static fn () => $controller->abort('Cancelled'));
 
         try {
-            $answer = $this->hooks?->emitBeforeTree(new SessionBeforeTreeEvent(
+            $answer = $this->extensionRunner?->emitBeforeTree(new SessionBeforeTreeEvent(
                 new TreePreparation(
                     $entryId,
                     $oldLeaf,
@@ -3551,7 +3551,7 @@ final class AgentSession
         $this->agent->replaceMessages($this->store->messages());
         $this->restoreToolsFromTranscript();
 
-        $this->hooks?->emit(new SessionTreeEvent(
+        $this->extensionRunner?->emit(new SessionTreeEvent(
             $this->store->leaf(),
             $oldLeaf,
             $summary,
@@ -3603,7 +3603,7 @@ final class AgentSession
 
         $message = $entry['message'];
 
-        if (!$message instanceof UserMessage && !$message instanceof HookMessage) {
+        if (!$message instanceof UserMessage && !$message instanceof CustomMessage) {
             return [$entryId, null];
         }
 
@@ -4098,8 +4098,8 @@ final class AgentSession
         $effectiveTimeoutMs = $httpIdleTimeoutMs === 0 ? 2_147_483_647 : $httpIdleTimeoutMs;
         $headers = ProviderAttribution::merge($model, $options->sessionId, $options->headers);
 
-        if ($this->hooks?->hasHandlers('before_provider_headers') === true) {
-            $headers = $this->hooks->emitBeforeProviderHeaders($headers ?? []);
+        if ($this->extensionRunner?->hasHandlers('before_provider_headers') === true) {
+            $headers = $this->extensionRunner->emitBeforeProviderHeaders($headers ?? []);
         }
 
         return new SimpleStreamOptions(...[
@@ -4184,7 +4184,7 @@ final class AgentSession
                 if ($this->promptTooLargeSaidFor !== $message) {
                     $this->promptTooLargeSaidFor = $message;
                     $this->announce(new CompactionEndEvent('overflow', null, false, false, $tooLarge));
-                    $this->hooks?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $tooLarge, willRetry: false, fromExtension: false));
+                    $this->extensionRunner?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $tooLarge, willRetry: false, fromExtension: false));
                 }
 
                 return false;
@@ -4201,7 +4201,7 @@ final class AgentSession
                     ? 'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.'
                     : 'Truncated response recovery failed after one compact-and-retry attempt.';
                 $this->announce(new CompactionEndEvent('overflow', null, false, false, $errorMessage));
-                $this->hooks?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $errorMessage, willRetry: false, fromExtension: false));
+                $this->extensionRunner?->emit(new SessionCompactFailedEvent('overflow', aborted: false, errorMessage: $errorMessage, willRetry: false, fromExtension: false));
 
                 return false;
             }
@@ -4521,7 +4521,7 @@ final class AgentSession
 
     /**
      * Upstream's `_runBeforeSettleBoundary()`: with nobody listening, the prompt carries on only
-     * for what is queued; with handlers, they are asked (`HookRunner::emitBoundary()`), what they
+     * for what is queued; with handlers, they are asked (`ExtensionRunner::emitBoundary()`), what they
      * drafted is appended, and the prompt carries on if they said so or something is queued —
      * unless the context as it then stands could not be sent, which is reported and refused.
      *
@@ -4529,11 +4529,11 @@ final class AgentSession
      */
     private function runBeforeSettleBoundary(): bool
     {
-        if ($this->hooks === null || !$this->hooks->listensTo('agent_before_settle')) {
+        if ($this->extensionRunner === null || !$this->extensionRunner->listensTo('agent_before_settle')) {
             return $this->agent->hasQueuedMessages();
         }
 
-        $result = $this->hooks->emitBoundary(
+        $result = $this->extensionRunner->emitBoundary(
             fn (array $entries, bool $continue, BoundaryContextPreview $context): AgentBeforeSettleEvent => new AgentBeforeSettleEvent($entries, $continue, $context, $this->lastOutcome),
             fn (array $entries): BoundaryContextPreview => $this->buildBoundaryContext($entries),
         );
@@ -4549,7 +4549,7 @@ final class AgentSession
 
         if ($shouldContinue && !$final->canContinue) {
             if ($result->continue) {
-                $this->hooks->emitError(new HookError('<boundary>', 'agent_before_settle', 'agent_before_settle requested continuation without runnable model context'));
+                $this->extensionRunner->emitError(new ExtensionError('<boundary>', 'agent_before_settle', 'agent_before_settle requested continuation without runnable model context'));
             }
 
             return false;
@@ -4596,7 +4596,7 @@ final class AgentSession
      * Upstream's `_applyBoundaryDrafts()`, against the store or a preview of it.
      *
      * @param list<SessionBoundaryDraft> $drafts
-     * @return list<HookMessage> the messages among them, for the agent's own state
+     * @return list<CustomMessage> the messages among them, for the agent's own state
      */
     private function applyBoundaryDrafts(SessionManager $manager, array $drafts): array
     {
@@ -4606,7 +4606,7 @@ final class AgentSession
             if ($draft instanceof CustomEntryDraft) {
                 $manager->appendCustomEntry($draft->customType, $draft->data);
             } elseif ($draft instanceof CustomMessageDraft) {
-                $message = new HookMessage(
+                $message = new CustomMessage(
                     $draft->customType,
                     is_string($draft->content) ? [new TextContent($draft->content)] : $draft->content,
                     $draft->display,
@@ -4687,7 +4687,7 @@ final class AgentSession
         $aborted = $this->runAbortRequested;
 
         try {
-            $this->hooks?->emit(new HookAgentSettled($this->messages(), $aborted));
+            $this->extensionRunner?->emit(new ExtensionAgentSettled($this->messages(), $aborted));
             $this->announce(new AgentSettledEvent($aborted));
         } finally {
             $this->emittingSettled = false;
@@ -4811,7 +4811,7 @@ final class AgentSession
             $errorMessage = $aborted ? null : self::compactionFailure($reason, $failure->getMessage());
 
             $this->announce(new CompactionEndEvent($reason, null, $aborted, false, $errorMessage));
-            $this->hooks?->emit(new SessionCompactFailedEvent(
+            $this->extensionRunner?->emit(new SessionCompactFailedEvent(
                 $reason,
                 aborted: $aborted,
                 errorMessage: $errorMessage,
@@ -4824,7 +4824,7 @@ final class AgentSession
 
         if ($done === null) {
             $this->announce(new CompactionEndEvent($reason, null, true, false));
-            $this->hooks?->emit(new SessionCompactFailedEvent($reason, aborted: true, willRetry: false, fromExtension: $this->compactionFromExtension));
+            $this->extensionRunner?->emit(new SessionCompactFailedEvent($reason, aborted: true, willRetry: false, fromExtension: $this->compactionFromExtension));
 
             return null;
         }
@@ -4901,7 +4901,7 @@ final class AgentSession
             throw new AgentError($last?->message instanceof CompactionSummary ? 'Already compacted' : 'Nothing to compact (session too small)');
         }
 
-        $answer = $this->hooks?->emitBeforeCompact(new SessionBeforeCompactEvent(
+        $answer = $this->extensionRunner?->emitBeforeCompact(new SessionBeforeCompactEvent(
             $preparation,
             $pathEntries,
             $instructions,
@@ -4989,7 +4989,7 @@ final class AgentSession
             throw new AgentError('The compaction was written but is not in the conversation it was written to.');
         }
 
-        $this->hooks?->emit(new SessionCompactEvent($summary, $this->compactionFromExtension, $reason, $willRetry));
+        $this->extensionRunner?->emit(new SessionCompactEvent($summary, $this->compactionFromExtension, $reason, $willRetry));
 
         $estimatedTokensAfter = 0;
 
@@ -5073,7 +5073,7 @@ final class AgentSession
             $this->store?->appendThinkingLevelChange($effective->value);
             // Upstream's `thinking_level_changed`, beside the entry, before the hooks hear of it.
             $this->announce(new ThinkingLevelChangedEvent($effective));
-            $this->hooks?->emit(new ThinkingLevelSelectEvent($effective, $previous));
+            $this->extensionRunner?->emit(new ThinkingLevelSelectEvent($effective, $previous));
         }
     }
 

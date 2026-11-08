@@ -168,7 +168,7 @@ differ. `BashTool`'s options are upstream's: `commandPrefix`, `shellPath`,
   truncated, full_output_path?, exit_code, wall_time_seconds}`, `output` up to 1 MiB (head and tail
   512 KiB around an omitted marker, from `Run::fullOutput()`). `AgentToolResult::$structuredContent`
   and `AgentError::$structuredContent` are agent-core's; `Ai\Tool::$outputSchema` is never sent to a
-  provider; neither is written to the session (`details` is). `HookedTool` keeps `structuredContent`
+  provider; neither is written to the session (`details` is). `ExtensionGuardedTool` keeps `structuredContent`
   unless a hook replaced the content. A non-zero exit is an error to the model and still carries it.
 - **The session is in the command's environment.** `Tools\SessionEnvironment` sets `PIG_SESSION_ID`,
   `PIG_SESSION_FILE`, `PIG_PROVIDER`, `PIG_MODEL` and `PIG_REASONING_LEVEL` (upstream's `PI_*`) on each
@@ -433,7 +433,7 @@ key grammar against `Keys::isKeyName()`, and `SchemaErrors` against typebox itse
 Where pig's schemas differ from upstream's: the `$id`s are `https://pigagent.dev/schemas/…`; the
 settings schema leaves out what pig does not read (`npmCommand`, `enableAnalytics`, `trackingId`,
 `deviceId`, the legacy `queueMode` and `websockets`) and adds pig's own keys (`fallbackModels`,
-`hooks`, `customTools`, `disabledExtensions`, `proxy.bypass`, `update.check`, the legacy
+`disabledExtensions`, `proxy.bypass`, `update.check`, the legacy
 `tui.mode`); the key grammar also reads `control`, `option`, `cmd`, `command`, `meta`, `pageup` and
 `pagedown`. A change to a setting, a binding, a theme token or a `models.json` field is a change to
 the schema file in the same commit; the test names the file when it is forgotten. The files must be
@@ -462,7 +462,7 @@ person's behalf. Settings the person changes on purpose — `/settings`, "save a
 and `/thinking` — are still saved: an incognito window keeps the bookmarks you add. The web page does
 not keep a private tab among the tabs a reload reopens.
 
-Extensions load as usual and are told: `isIncognito()` on `ExtensionApi` and `HookContext`, asked at
+Extensions load as usual and are told: `isIncognito()` on `ExtensionApi` and `ExtensionContext`, asked at
 the moment of writing because `/incognito` can come part way, and `artifactsDirectory()`, the place
 for what an extension makes for the session — `<agent-dir>/artifacts` ordinarily, the session's
 temporary directory in a private one.

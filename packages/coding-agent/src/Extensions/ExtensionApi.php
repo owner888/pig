@@ -5,34 +5,132 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Extensions;
 
 use Closure;
+use InvalidArgumentException;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\TextContent;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ExecResult;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\RegisteredCommand;
 use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\ModelRouteRequest;
-use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\RegisteredMcpServer;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\VirtualModelDefinition;
 use Pig\CodingAgent\VirtualModelRegistry;
+use Pig\Tui\Process;
 
 /**
- * What an extension factory is handed to register capabilities.
+ * What an extension factory is handed, and the whole of what it may do.
  *
- * Upstream pi's `ExtensionAPI` concept: an extension can register commands, tools,
- * lifecycle event handlers, custom message renderers, and interactive UI dialogs,
- * all from a single extension definition.
+ * An extension is a PHP file that returns a callable; the callable is given one of these and
+ * registers what it wants — event handlers, slash commands, tools, providers, renderers, UI:
  *
- * Inherits from `HookApi` so any existing hook or extension typehinting `HookApi`
- * remains 100% compatible.
+ * ```php
+ * <?php // ~/.pig/agent/extensions/no-force-push.php
+ *
+ * use Pig\CodingAgent\Extensions\ExtensionApi;
+ * use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
+ *
+ * return function (ExtensionApi $pig): void {
+ *     $pig->on('tool_call', function ($event) {
+ *         if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
+ *             return new ToolCallEventResult(block: true, reason: 'No force pushes from here.');
+ *         }
+ *
+ *         return null;
+ *     });
+ * };
+ * ```
+ *
+ * Upstream's `ExtensionAPI` interface in `core/extensions/types.ts`, whose `on()` overloads exist
+ * to give each event its own handler type. PHP has no overloads, so the names live in `EVENTS`
+ * and an unknown one is a loading error rather than a subscription that silently never fires —
+ * which is what a typo costs upstream.
  */
-final class ExtensionApi extends HookApi
+final class ExtensionApi
 {
+    /** Every event an extension may subscribe to. */
+    public const array EVENTS = [
+        'session_start',
+        'session_before_switch',
+        'session_before_fork',
+        'session_before_compact',
+        'session_compact',
+        'session_before_tree',
+        'session_tree',
+        'session_shutdown',
+        'session_info_changed',
+        'context',
+        'context_with_system',
+        'before_agent_start',
+        'agent_start',
+        'agent_end',
+        'agent_settled',
+        'turn_start',
+        'turn_end',
+        'message_start',
+        'message_update',
+        'message_end',
+        'tool_call',
+        'tool_result',
+        'before_provider_request',
+        'before_provider_headers',
+        'after_provider_response',
+        'provider_stream_event',
+        'model_select',
+        'thinking_level_select',
+        'cache_warming_decision',
+        'tool_execution_start',
+        'tool_execution_update',
+        'tool_execution_end',
+        'session_compact_failed',
+        'user_bash',
+        'input',
+        'ui_prompt_start',
+        'ui_prompt_end',
+        'mcp_servers_change',
+        'project_trust',
+        'resources_discover',
+        'agent_before_settle',
+    ];
+
+    /** How long a command an extension runs may take before it is killed. */
+    private const float EXEC_TIMEOUT = 30.0;
+
+    /** @var array<string, list<Closure>> */
+    private array $handlers = [];
+
+    /** @var array<string, RegisteredCommand> */
+    private array $commands = [];
+
+    /** @var array<string, Closure> one renderer per custom message type */
+    private array $renderers = [];
+
+    /** @var array<string, Closure> one renderer per custom entry type */
+    private array $entryRenderers = [];
+
+    /** Handed in once the session exists; null while the extension file is being read. */
+    private ?Closure $send = null;
+
+    private ?Closure $note = null;
+
+    private ?Closure $setSessionName = null;
+
+    private ?Closure $getSessionName = null;
+
+    /** @var Closure(): ExtensionContext|null */
+    private ?Closure $context = null;
+
     /** @var list<CustomTool> */
     private array $tools = [];
 
@@ -77,21 +175,358 @@ final class ExtensionApi extends HookApi
     /** @var list<Closure(string, Closure(): ?array): ?array> */
     private array $toolRenderers = [];
 
+    public readonly string $name;
+
+    private readonly EventBus $events;
+
+    /**
+     * @param string      $cwd  the working directory the extension was loaded for
+     * @param string      $path the file it was loaded from, which is what a registration is owned by
+     * @param string|null $name the extension's name; its file or folder name when not given
+     */
     public function __construct(
-        string $cwd,
-        string $path,
-        public readonly string $name,
+        private readonly string $cwd = '.',
+        private readonly string $path = '',
+        ?string $name = null,
         private readonly ?Auth $auth = null,
-        ?Closure $send = null,
-        ?Closure $note = null,
-        ?Closure $context = null,
         ?EventBus $events = null,
     ) {
-        parent::__construct($cwd, $path, $send, $note, $context);
+        $this->name = $name ?? ExtensionLoader::nameOf($path);
         $this->events = $events ?? new EventBus();
     }
 
-    private readonly EventBus $events;
+    /**
+     * Run $handler whenever $event happens.
+     *
+     * Several handlers for one event run in the order they were registered, and several
+     * extensions run in the order they were loaded.
+     *
+     * @param callable(mixed, ExtensionContext): mixed $handler returns a result object, or null
+     * @throws InvalidArgumentException when there is no such event
+     */
+    public function on(string $event, callable $handler): void
+    {
+        if (!in_array($event, self::EVENTS, true)) {
+            throw new InvalidArgumentException(
+                "No event called '{$event}'. There is: " . implode(', ', self::EVENTS),
+            );
+        }
+
+        $this->handlers[$event][] = Closure::fromCallable($handler);
+    }
+
+    /**
+     * Put something in the conversation, from the extension.
+     *
+     * The model sees it, as a user message: this is for telling it something it had no way
+     * to find out — a build that just failed, a file that changed underneath it, a rule
+     * about this repository. `display` decides whether a person sees it too, and `details`
+     * is the extension's own metadata, kept in the session file and never sent to the model.
+     *
+     * Upstream's `options: { triggerTurn?, deliverAs? }`. `$deliverAs: 'nextTurn'` holds it for the
+     * next run, beside that run's first message. While the agent is working it is steered in
+     * (`steer`, the default) or queued as a follow-up (`followUp`) — unless `$triggerTurn` is
+     * false, which holds it until the turn ends, since a message between a tool call and its
+     * result is a request every provider rejects. Idle, `$triggerTurn: true` starts a run from
+     * it, through `before_agent_start` as a prompt does; otherwise it is appended for the next
+     * thing anyone says.
+     *
+     * @param string|list<TextContent|ImageContent> $content
+     * @param 'steer'|'followUp'|'nextTurn'|null      $deliverAs
+     * @throws InvalidArgumentException when the type or `$deliverAs` is unusable
+     */
+    public function sendMessage(
+        string $customType,
+        string|array $content,
+        bool $display = true,
+        mixed $details = null,
+        ?bool $triggerTurn = null,
+        ?string $deliverAs = null,
+    ): void {
+        if ($deliverAs !== null && !in_array($deliverAs, ['steer', 'followUp', 'nextTurn'], true)) {
+            throw new InvalidArgumentException("No such deliverAs: '{$deliverAs}'. There is steer, followUp and nextTurn.");
+        }
+
+        $message = new CustomMessage(
+            self::customType($customType),
+            is_string($content) ? [new TextContent($content)] : array_values($content),
+            $display,
+            $details,
+        );
+
+        // Before the session exists there is nothing to send to: an extension file is read at
+        // startup, and its factory runs before a mode has wired anything up. Saying so
+        // beats a message that silently goes nowhere.
+        if ($this->send === null) {
+            throw new InvalidArgumentException(
+                'sendMessage() needs a session — call it from a handler, not while the extension file is being read.',
+            );
+        }
+
+        ($this->send)($message, $triggerTurn, $deliverAs);
+    }
+
+    /**
+     * Write something down that the model will never see.
+     *
+     * For extension state that should survive a restart: "this session was granted full
+     * permissions". It is in the session file and not in the conversation, so it costs no
+     * context — the opposite trade from `sendMessage()`. Read it back on the next
+     * `session_start` from `$ctx->store?->customEntries('your-type')`.
+     *
+     * @throws InvalidArgumentException when the type is unusable
+     */
+    public function appendEntry(string $customType, mixed $data = null): void
+    {
+        $type = self::customType($customType);
+
+        if ($this->note === null) {
+            throw new InvalidArgumentException(
+                'appendEntry() needs a session — call it from a handler, not while the extension file is being read.',
+            );
+        }
+
+        ($this->note)($type, $data);
+    }
+
+    /**
+     * Draw this extension's own messages your own way.
+     *
+     * The renderer is handed the message, whether the transcript is expanded, and the
+     * theme, and returns a `Pig\Tui\Component` — or null for "draw it normally", which
+     * is not a failure. Same shape as a custom tool's `renderResult`, and the same reason:
+     * a message whose content is a table should not be squeezed through formatting meant
+     * for prose.
+     *
+     * One per type, last registration wins, because two renderers for one message is a
+     * question with no answer.
+     *
+     * @param callable(CustomMessage, RenderOptions, Theme): mixed $renderer
+     */
+    public function registerMessageRenderer(string $customType, callable $renderer): void
+    {
+        $this->renderers[self::customType($customType)] = Closure::fromCallable($renderer);
+    }
+
+    /**
+     * @return array<string, Closure>
+     * @internal
+     */
+    public function renderers(): array
+    {
+        return $this->renderers;
+    }
+
+    /**
+     * Draw this extension's custom session entries in the transcript.
+     * Upstream's `registerEntryRenderer`. Custom entries do not participate in LLM context.
+     *
+     * @param callable(CustomEntry, RenderOptions, Theme): mixed $renderer
+     */
+    public function registerEntryRenderer(string $customType, callable $renderer): void
+    {
+        $this->entryRenderers[self::customType($customType)] = Closure::fromCallable($renderer);
+    }
+
+    /**
+     * @return array<string, Closure>
+     * @internal
+     */
+    public function entryRenderers(): array
+    {
+        return $this->entryRenderers;
+    }
+
+    /**
+     * Where to read the session from, once there is one.
+     *
+     * The provider rather than a `ExtensionContext`, because the runner builds one fresh per emit:
+     * what `exec()` reads off it has to be the turn running now.
+     *
+     * @param Closure(): ExtensionContext $context
+     * @internal called by `ExtensionRunner::initialize()`
+     */
+    /** The working directory the extension was loaded for. */
+    public function cwd(): string
+    {
+        return $this->cwd;
+    }
+
+    /** The file this extension was loaded from, which is what a registration is owned by. */
+    public function path(): string
+    {
+        return $this->path;
+    }
+
+    /** @internal */
+    public function withContext(Closure $context): void
+    {
+        $this->context = $context;
+    }
+
+    /** The context as it stands now, or null before a mode has wired one. */
+    private function contextNow(): ?ExtensionContext
+    {
+        return $this->context === null ? null : ($this->context)();
+    }
+
+    /** The friendly session name, or null if unset. */
+    public function getSessionName(): ?string
+    {
+        if ($this->getSessionName !== null) {
+            return ($this->getSessionName)();
+        }
+
+        return $this->context === null ? null : ($this->context)()->sessionName();
+    }
+
+    /** Set or update the session display name. */
+    public function setSessionName(string $name): void
+    {
+        if ($this->setSessionName !== null) {
+            ($this->setSessionName)($name);
+
+            return;
+        }
+
+        if ($this->context !== null) {
+            ($this->context)()->setSessionName($name);
+        }
+    }
+
+    /**
+     * Wire the writers, once there is a session to write to.
+     *
+     * Either on its own: they are two independent facts, and one missing must not take the
+     * other with it. Whichever is not given stays null, which is what `sendMessage()` and
+     * `appendEntry()` already have an answer for.
+     *
+     * @param Closure(CustomMessage, ?bool, ?string): void|null $send
+     * @param Closure(string, mixed): void|null     $note
+     * @internal called by `ExtensionRunner::initialize()`
+     */
+    public function writesTo(?Closure $send, ?Closure $note): void
+    {
+        $this->send = $send ?? $this->send;
+        $this->note = $note ?? $this->note;
+    }
+
+    /** @internal */
+    public function bindSessionNames(?Closure $setSessionName, ?Closure $getSessionName): void
+    {
+        $this->setSessionName = $setSessionName ?? $this->setSessionName;
+        $this->getSessionName = $getSessionName ?? $this->getSessionName;
+    }
+
+    /**
+     * A usable name for an extension's own kind of message.
+     *
+     * The same rule as a command's, because it is used the same way — an extension filters its own
+     * messages out of a resumed session by matching on it, and a type with a quote or a
+     * newline in it is one nobody can match reliably.
+     */
+    private static function customType(string $customType): string
+    {
+        if (preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', $customType) !== 1) {
+            throw new InvalidArgumentException(
+                "'{$customType}' cannot be a custom type: letters, digits, dashes and underscores only.",
+            );
+        }
+
+        return $customType;
+    }
+
+    /**
+     * Add a slash command.
+     *
+     * A built-in of the same name wins, so an extension cannot take `/compact` away from the
+     * person using it.
+     *
+     * @param callable(string, ExtensionContext): void $handler
+     * @throws InvalidArgumentException when the name is unusable or already taken
+     */
+    public function registerCommand(string $name, callable $handler, string $description = ''): void
+    {
+        $name = ltrim($name, '/');
+
+        if ($name === '' || preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/', $name) !== 1) {
+            throw new InvalidArgumentException(
+                "'{$name}' cannot be a command name: letters, digits, dots, dashes and underscores only.",
+            );
+        }
+
+        if (isset($this->commands[$name])) {
+            throw new InvalidArgumentException("This extension already registered /{$name}.");
+        }
+
+        $this->commands[$name] = new RegisteredCommand(
+            $name,
+            $description,
+            Closure::fromCallable($handler),
+            $this->path,
+        );
+    }
+
+    /**
+     * Run a command and wait for it.
+     *
+     * Here because the timeout and the argv array are worth having by default: an extension
+     * that reaches for `shell_exec` gets neither, and an extension that hangs hangs pig.
+     *
+     * Three differences from upstream's `execCommand`, and the third is the one to know:
+     *
+     * - **There is a timeout by default.** Upstream's is opt-in, so an extension that forgets it
+     *   parks the turn for as long as its command wants. Thirty seconds is long enough for a
+     *   test run and short enough to be survivable.
+     * - **`killed` is `ExecResult::stopped()`**, which is upstream's field under pig's
+     *   `Process::STOPPED`. It is wider by one case and says so on itself: a program that is
+     *   not on this machine answers the same way as one that ran too long, where upstream
+     *   reports that as `code: 1, killed: false`.
+     * - **Escape stops it**, and the screen stays alive while it runs: the command goes on the
+     *   loop (`Process::runAsync()`) and parks on the turn's own `AbortSignal`, so it comes
+     *   back as `stopped()` the moment somebody interrupts. **Upstream cannot do this** —
+     *   its `ExecOptions` has a `signal` field and its `ExtensionContext` has no signal to put in
+     *   it, so an extension there can only be waited out. The signal is not a parameter here for the
+     *   same reason: one an extension had to remember to pass is one whose author did not. A handler
+     *   that waits on something of its own reads `$ctx->signal` and parks on that.
+     *
+     * @param list<string> $command   the program and its arguments, unquoted
+     * @param string|null  $cwd       defaults to the directory pig is working in
+     * @param int          $maxBuffer upstream's `ExecOptions.maxBuffer`: stdout and stderr together past
+     *                                this stop the command, and the result says `truncated`
+     */
+    public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT, int $maxBuffer = ExecResult::MAX_BUFFER): ExecResult
+    {
+        [$exit, $stdout, $stderr, $truncated] = Process::runAsync(
+            $command,
+            $timeout,
+            $cwd ?? $this->cwd,
+            // The turn's signal, without the extension having to pass it: escape means stop, and an
+            // extension that had to remember to opt in is one whose author did not.
+            $this->context === null ? null : ($this->context)()->signal,
+            $maxBuffer,
+        );
+
+        return new ExecResult($exit, $stdout, $stderr, $truncated);
+    }
+
+    /**
+     * @return list<Closure>
+     * @internal
+     */
+    public function handlers(string $event): array
+    {
+        return $this->handlers[$event] ?? [];
+    }
+
+    /**
+     * @return array<string, RegisteredCommand>
+     * @internal
+     */
+    public function commands(): array
+    {
+        return $this->commands;
+    }
 
     /** The channel every extension of this load shares. Upstream's `pi.events`. */
     public function events(): EventBus
@@ -269,7 +704,7 @@ final class ExtensionApi extends HookApi
             $definition->provider,
             $definition->id,
             $definition->name,
-            fn (ModelRouteRequest $request): mixed => $route($request, $this->contextNow() ?? new HookContext($this->cwd())),
+            fn (ModelRouteRequest $request): mixed => $route($request, $this->contextNow() ?? new ExtensionContext($this->cwd())),
             $definition->thinkingLevels,
             $definition->contextWindow,
             $definition->maxTokens,
@@ -470,7 +905,7 @@ final class ExtensionApi extends HookApi
      *
      * @param string|array<string, string> $title by locale (`['en' => …, 'zh-CN' => …]`) or one for all
      * @param Closure(array{locale: string, section: ?string}): list<array<string, mixed>> $render
-     * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Hooks\HookUi): ?string)|null $action
+     * @param (Closure(string, array<string, mixed>, array{locale: string, section: ?string}, \Pig\CodingAgent\Extensions\ExtensionUi): ?string)|null $action
      *        its last argument asks the person, as `$ctx->ui` does: `confirm()`, `select()`, `input()`…
      * @param string $icon the glyph the sidebar shows before the title, as it is — an emoji, say; a default one when empty
      * @param list<string> $commands slash commands that open it in the page, without the slash
@@ -556,7 +991,7 @@ final class ExtensionApi extends HookApi
 
     /**
      * Switch the session's model. Upstream's `setModel()`: false when there is no key for it
-     * or no session to switch — a refusal, not a failure, because a hook asking for a model
+     * or no session to switch — a refusal, not a failure, because an extension asking for a model
      * this machine cannot reach has nothing to do about it.
      */
     public function setModel(Model $model): bool
@@ -594,7 +1029,7 @@ final class ExtensionApi extends HookApi
     /**
      * Put a *user* message into the conversation, as if typed. Upstream's `sendUserMessage()`.
      *
-     * Different from `sendMessage()`, which is a hook's own message under its own type: this is
+     * Different from `sendMessage()`, which is an extension's own message under its own type: this is
      * the person's voice, and reaches the model as a user turn. `steer` cuts in after the tool
      * that is running; `followUp` waits for the turn to end; with the agent idle either one
      * starts a turn.
@@ -620,7 +1055,7 @@ final class ExtensionApi extends HookApi
         $this->session()?->store()?->appendLabel($entryId, $label);
     }
 
-    /** The commands every hook and extension registered, by name, for a help screen of its own. @return list<string> */
+    /** The commands every extension registered, by name, for a help screen of its own. @return list<string> */
     public function getCommands(): array
     {
         $session = $this->session();
@@ -629,7 +1064,7 @@ final class ExtensionApi extends HookApi
             return array_keys($this->commands());
         }
 
-        [$all] = $session->hooks()?->commands() ?? [[]];
+        [$all] = $session->extensionRunner()?->commands() ?? [[]];
 
         return array_keys($all);
     }
@@ -642,7 +1077,7 @@ final class ExtensionApi extends HookApi
     /**
      * Register a keyboard shortcut. Upstream's `registerShortcut()`.
      *
-     * @param callable(\Pig\CodingAgent\Hooks\HookContext): void $handler
+     * @param callable(\Pig\CodingAgent\Extensions\ExtensionContext): void $handler
      */
     public function registerShortcut(string $shortcut, callable $handler, string $description = ''): void
     {

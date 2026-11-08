@@ -12,19 +12,19 @@ declare(strict_types=1);
  * page only says it when the person is not looking at it.
  */
 
-use Pig\CodingAgent\Hooks\Events\AgentSettledEvent;
-use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\Events\AgentSettledEvent;
+use Pig\CodingAgent\Extensions\Events\AgentStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 
-return static function (HookApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $startedAt = null;
 
-    $pi->on('agent_start', static function (AgentStartEvent $event) use (&$startedAt): void {
+    $pig->on('agent_start', static function (AgentStartEvent $event) use (&$startedAt): void {
         $startedAt ??= microtime(true);
     });
 
-    $pi->on('agent_settled', static function (AgentSettledEvent $event, HookContext $ctx) use (&$startedAt): void {
+    $pig->on('agent_settled', static function (AgentSettledEvent $event, ExtensionContext $ctx) use (&$startedAt): void {
         $seconds = $startedAt !== null ? (int) round(microtime(true) - $startedAt) : null;
         $startedAt = null;
 

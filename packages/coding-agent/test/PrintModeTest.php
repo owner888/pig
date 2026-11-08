@@ -32,10 +32,10 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSessionEvent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Session\AgentSession;
@@ -126,7 +126,7 @@ final class PrintModeTest extends TestCase
         array $messages,
         string $mode = 'text',
         array $images = [],
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?CustomToolSet $customTools = null,
         bool $store = false,
         ?Settings $settings = null,
@@ -153,11 +153,11 @@ final class PrintModeTest extends TestCase
             $this->cwd,
             $store ? SessionManager::create($this->cwd) : null,
             $settings,
-            $hooks,
+            $extensionRunner,
             $fileCommands,
         );
 
-        $printing = new PrintMode($this->session, $mode, $hooks, $customTools, $this->out, $this->err);
+        $printing = new PrintMode($this->session, $mode, $extensionRunner, $customTools, $this->out, $this->err);
 
         return (int) Async::run(static fn (): int => $printing->run($messages, $images));
     }
@@ -454,7 +454,7 @@ final class PrintModeTest extends TestCase
     public function testAHookIsToldTheSessionStartedAndEnded(): void
     {
         $seen = [];
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_start' => static function () use (&$seen): mixed {
                 $seen[] = 'start';
 
@@ -468,7 +468,7 @@ final class PrintModeTest extends TestCase
         ]);
 
         $this->answers = ['ok'];
-        $this->execute(['ask'], hooks: $hooks);
+        $this->execute(['ask'], extensionRunner: $extensionRunner);
 
         $this->assertSame(['start', 'shutdown'], $seen);
     }
@@ -483,7 +483,7 @@ final class PrintModeTest extends TestCase
     public function testAHookGetsTheSessionsKeyHereToo(): void
     {
         $key = 'not asked';
-        $hooks = $this->hooks([
+        $extensionRunner = $this->extensionRunner([
             'session_start' => static function (mixed $event, mixed $ctx) use (&$key): mixed {
                 $key = $ctx->apiKey($ctx->model);
 
@@ -492,7 +492,7 @@ final class PrintModeTest extends TestCase
         ]);
 
         $this->answers = ['ok'];
-        $this->execute(['ask'], hooks: $hooks);
+        $this->execute(['ask'], extensionRunner: $extensionRunner);
 
         $this->assertSame('k', $key);
         $this->assertSame('', $this->complained());
@@ -501,7 +501,7 @@ final class PrintModeTest extends TestCase
     public function testAHookThatAsksIsAnsweredNoWithoutAnybodyBeingAsked(): void
     {
         $answers = [];
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
             $answers['confirm'] = $ctx->ui->confirm('really?', '');
             $answers['select'] = $ctx->ui->select('which?', ['a']);
             $answers['hasUi'] = $ctx->hasUi;
@@ -510,7 +510,7 @@ final class PrintModeTest extends TestCase
         }]);
 
         $this->answers = ['ok'];
-        $this->execute(['ask'], hooks: $hooks);
+        $this->execute(['ask'], extensionRunner: $extensionRunner);
 
         // Fail-safe: a `tool_call` guard that cannot reach a person blocks the call. And
         // `hasUi` is false, so a hook that would rather behave differently can tell.
@@ -519,10 +519,10 @@ final class PrintModeTest extends TestCase
 
     public function testAHookThatThrowsComplainsOnStandardErrorAndTheRunGoesOn(): void
     {
-        $hooks = $this->hooks(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
+        $extensionRunner = $this->extensionRunner(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
 
         $this->answers = ['still answered'];
-        $code = $this->execute(['ask'], hooks: $hooks);
+        $code = $this->execute(['ask'], extensionRunner: $extensionRunner);
 
         $this->assertSame(0, $code);
         // Upstream's sentence: `Extension error (<path>): <error>`.
@@ -533,10 +533,10 @@ final class PrintModeTest extends TestCase
 
     public function testABrokenHookDoesNotLandAmongTheJsonLines(): void
     {
-        $hooks = $this->hooks(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
+        $extensionRunner = $this->extensionRunner(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
 
         $this->answers = ['ok'];
-        $this->execute(['ask'], mode: 'json', hooks: $hooks);
+        $this->execute(['ask'], mode: 'json', extensionRunner: $extensionRunner);
 
         // The assertion is `events()` not failing: it decodes every line and a yellow
         // sentence among them would stop it.
@@ -578,7 +578,7 @@ final class PrintModeTest extends TestCase
             description: 'Does nothing.',
             parameters: ['type' => 'object', 'properties' => [], 'required' => []],
             execute: static fn (): mixed => null,
-            onSession: static function (CustomToolSessionEvent $event, HookContext $context) use (&$seen): void {
+            onSession: static function (CustomToolSessionEvent $event, ExtensionContext $context) use (&$seen): void {
                 if ($event->reason === 'start') {
                     $seen = $context;
                 }
@@ -588,7 +588,7 @@ final class PrintModeTest extends TestCase
         $this->answers = ['ok'];
         $this->execute(
             ['ask'],
-            hooks: $this->hooks([]),
+            extensionRunner: $this->extensionRunner([]),
             customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]),
             store: true,
         );
@@ -610,15 +610,15 @@ final class PrintModeTest extends TestCase
 
     public function testAHookCommandRunsHereRatherThanReachingTheModelAsText(): void
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
         $ran = null;
         $api->registerCommand('deploy', function (string $arguments) use (&$ran): void {
             $ran = $arguments;
         });
 
         $this->answers = ['the model should never be asked'];
-        $code = $this->execute(['/deploy staging'], hooks: new HookRunner(
-            [new LoadedHook('test.php', 'test.php', $api)],
+        $code = $this->execute(['/deploy staging'], extensionRunner: new ExtensionRunner(
+            [new LoadedExtension('test.php', 'test.php', $api->name, $api)],
             $this->cwd,
         ));
 
@@ -660,14 +660,14 @@ final class PrintModeTest extends TestCase
     }
 
     /** @param array<string, callable> $handlers */
-    private function hooks(array $handlers): HookRunner
+    private function extensionRunner(array $handlers): ExtensionRunner
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
 
         foreach ($handlers as $event => $handler) {
             $api->on($event, $handler);
         }
 
-        return new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        return new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
     }
 }

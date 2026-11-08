@@ -109,7 +109,7 @@ final class SessionEntries
             ];
         }
 
-        if ($item instanceof HookMessage) {
+        if ($item instanceof CustomMessage) {
             return [
                 'type' => 'custom_message',
                 ...$base,
@@ -237,7 +237,7 @@ final class SessionEntries
                 $at,
             ),
 
-            'custom_message' => new HookMessage(
+            'custom_message' => new CustomMessage(
                 (string) ($line['customType'] ?? ''),
                 SessionCodec::decodeContent(self::contentOf($line['content'] ?? [])),
                 (bool) ($line['display'] ?? true),

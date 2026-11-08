@@ -6,12 +6,12 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use Closure;
 use Pig\CodingAgent\Interactive\BlockedStatus;
-use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Extensions\ExtensionUi;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
 
-/** A `HookUi` that answers nothing and writes down what it was told. */
-final class NoticingUi implements HookUi
+/** A `ExtensionUi` that answers nothing and writes down what it was told. */
+final class NoticingUi implements ExtensionUi
 {
     /** @var list<string> `[level] message` */
     public array $notices = [];

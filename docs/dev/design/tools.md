@@ -67,7 +67,7 @@ has no module caches, but the shape is right for a second reason — `/theme` re
 and a component holding a closure it was given cannot hold a stale colour table.
 
 `Interactive\BorderedLoader` is upstream's, and it is for hooks: a hook that goes away for a while
-hands one to `HookUi::custom()`, and the rules are what separate it from the transcript above and
+hands one to `ExtensionUi::custom()`, and the rules are what separate it from the transcript above and
 the prompt below. `TerminalUi`'s own dialogs draw no rules, because a question reads as one thing;
 this is a **wait**, and a wait with nothing around it reads as output that stopped. It is a
 `Container` **and** an `InputHandler`, which is the trap on `SettingsSubmenu` again — and here the
@@ -653,8 +653,8 @@ validates and needs it afterwards to run.
 no counterpart and needs none: about 35 are re-exports, which an autoloader does, and about 155 are
 `discoverHooks()`, `discoverSkills()`, `loadSettings()` and four more like them — thin wrappers so
 an SDK user need not import from `./internal/…`. pig's loaders were public from the start, so
-`ContextFiles::load()`, `CodingAgent::resources()` (skills and prompt templates), `HookLoader::load()`,
-`CustomToolLoader::load()`, `Auth::discover()`, `CustomModels::discover()`, `Settings::load()` and
+`ContextFiles::load()`, `CodingAgent::resources()` (skills and prompt templates), `ExtensionLoader::load()`,
+`Auth::discover()`, `CustomModels::discover()`, `Settings::load()` and
 `SystemPrompt::build()` are already the things to call.
 
 **The remaining ~235 lines were the ones that mattered, and until this they were `bin/pig`'s
@@ -681,18 +681,20 @@ Three rules make it testable, and they are worth keeping when it grows:
 
 `bin/pig` went from 539 lines to 411.
 
-`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/agent/hooks` or
-`.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
-it wants to hear about:
+`Extensions\` is upstream's `core/extensions/`: the loader, the API, the runner, the
+context, the events and their results. There is no hook file any more — hooks were merged into
+extensions, as upstream merged them. An extension is a PHP file in `~/.pig/agent/extensions` or
+`.pig/extensions` that returns a callable; the callable is handed an `ExtensionApi` and registers
+what it wants to hear about:
 
 ```php
-<?php // ~/.pig/agent/hooks/no-force-push.php
+<?php // ~/.pig/agent/extensions/no-force-push.php
 
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 
-return function (HookApi $pi): void {
-    $pi->on('tool_call', function ($event) {
+return function (ExtensionApi $pig): void {
+    $pig->on('tool_call', function ($event) {
         if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
             return new ToolCallEventResult(block: true, reason: 'No force pushes from here.');
         }
@@ -702,22 +704,28 @@ return function (HookApi $pi): void {
 };
 ```
 
-**`require`, not a subprocess.** That was a decision with a cost, taken deliberately. A hook
+**`require`, not a subprocess.** That was a decision with a cost, taken deliberately. An extension
 runs in this process with this process's permissions: it can hand back an object, which a
 command-line hook could not, and it can be written against pig's own classes because it is
-running inside pig. What it cannot be given is a timeout or any isolation. A hook that loops
+running inside pig. What it cannot be given is a timeout or any isolation. An extension that loops
 does not time out; one that calls `exit()` takes the session with it. What *is* caught is
 everything PHP raises as a `Throwable` — including a syntax error, which an included file
-raises as a catchable `ParseError` — so a broken hook is a complaint on the shell at startup
-rather than a crash. `--no-hooks` starts without loading any.
+raises as a catchable `ParseError` — so a broken extension is a complaint on the shell at startup
+rather than a crash. `--no-extensions` starts without loading any.
 
-The event names are upstream HEAD's (`HookApi::EVENTS`), with the shapes they have there:
+**A file still in a hooks folder stops the startup.** `~/.pig/agent/hooks`, `<cwd>/.pig/hooks` and
+the `hooks` setting were where hook files lived; `ExtensionLoader::legacyHooks()` names each one
+that is still there with where it goes, and `CodingAgent::session()` refuses to start until it has
+moved. Not loaded from the old place quietly, because a folder read quietly is one nobody ever
+moves; not skipped quietly either, because a file somebody wrote would then just stop working.
+
+The event names are upstream HEAD's (`ExtensionApi::EVENTS`), with the shapes they have there:
 `session_start` carries `reason` (`startup`/`reload`/`new`/`resume`) and `previousSessionFile`,
 `session_shutdown` carries `reason` (`quit`/`reload`/`new`/`resume`) and `targetSessionFile`, and
 `/new`, `/resume` and `/reload` fire the pair in that order — upstream tears its runtime down and
 builds a new one, pig keeps the same hooks and tells them the same two things. `session_switch`,
 which upstream no longer has, went with no alias. `ui_prompt_start`/`ui_prompt_end` are said
-around every blocking dialog by `Hooks\PromptingUi`, upstream's `wrapUIPromptContext()`.
+around every blocking dialog by `Extensions\PromptingUi`, upstream's `wrapUIPromptContext()`.
 `session_before_fork` is asked by `AgentSession::fork()` with the entry and the position (`before`
 for `/fork`, `at` for `/clone`), and the pair it fires afterwards carries the reason `fork`. A typo
 is refused by name, since the names are a list here rather than TypeScript overloads.
@@ -729,7 +737,7 @@ arrangement is the thing to know before reading any of them:**
   person's extensions first (`ExtensionLoader::load()` in upstream's order: home, the settings',
   the command line's — then, after trust, the project's two roots and the project settings'
   `extensions`), and `projectTrusted:` may be a closure that is asked with what loaded so far. The
-  closure builds a `HookRunner` over them and hands it to `ProjectTrust::resolve()`, which asks
+  closure builds a `ExtensionRunner` over them and hands it to `ProjectTrust::resolve()`, which asks
   `emitProjectTrust()` before the saved answer and the prompt — the first `yes`/`no` wins,
   `undecided` falls through, `remember` writes `trust.json`. Two phases of one load rather than
   upstream's two loads, because a factory run twice is an MCP server connected twice. The settings
@@ -763,7 +771,7 @@ arrangement is the thing to know before reading any of them:**
   `triggerCharacters`: `/` and `@` open a list and Tab opens the wrapper's, nothing else does.
 - **`agent_before_settle` is the last step of `runAgentPrompt()`'s loop**, where upstream has it:
   after `handlePostAgentRun()` found no retry, no overflow and nothing queued, `runBeforeSettleBoundary()`
-  runs `HookRunner::emitBoundary()` — each handler handed the drafts and `continue` the ones before
+  runs `ExtensionRunner::emitBoundary()` — each handler handed the drafts and `continue` the ones before
   it settled on, and a `BoundaryContextPreview` built from `SessionManager::preview()` (a clone that
   appends and writes nowhere; `previewOf()` for `--no-session`) with those drafts applied. An entry
   that cannot be applied throws there, is reported as `Invalid boundary entries`, and the whole list
@@ -786,7 +794,7 @@ arrangement is the thing to know before reading any of them:**
   routes `agent->state->model` when it is virtual, so each request routes again and the selection
   never leaves the state. `VirtualModelRegistry::resolve()` is upstream's `resolveModel()`: physical
   target with credentials, level clamped with `ThinkingLevel::clampedFor()`. A router is called as
-  `(request, ctx)` with a per-request `HookContext` — upstream's `ctx.sessionManager.getBranch()` is
+  `(request, ctx)` with a per-request `ExtensionContext` — upstream's `ctx.sessionManager.getBranch()` is
   `$ctx->store->branch()`, `ctx.modelRegistry` is `$ctx->modelRegistry`. Reasons: `retry` when
   `$failedResponse` was set by a successful `prepareRetry()`, `user` when a `UserMessage` follows the
   last assistant message, else `continuation`; summaries (`summariseAndSwapIn()`, `branchSummary()`)
@@ -804,12 +812,12 @@ arrangement is the thing to know before reading any of them:**
   `SessionManager` carry it, and `withThinkingLevel()` is the one way to set it on a readonly message.
 
 **Not ported from upstream's `ExtensionAPI`:** `ExtensionCommandContext` (see below). The
-context's `modelRegistry` is here (`HookContext::$modelRegistry`, `ModelRegistry`).
+context's `modelRegistry` is here (`ExtensionContext::$modelRegistry`, `ModelRegistry`).
 
 **What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
 Upstream gives a slash command's handler four methods an event handler does not get —
 `waitForIdle()`, `newSession()`, `branch()` and `navigateTree()` — walled off that way because
-calling them from inside the agent loop deadlocks. pig has one `HookContext` for both, with
+calling them from inside the agent loop deadlocks. pig has one `ExtensionContext` for both, with
 everything that can be read at any moment plus `abort()`. The four are not ported, and not as an
 oversight: `branch()` is `AgentSession::fork()`, which a mode calls and a hook does not get,
 `navigateTree()` is `goTo()`, whose
@@ -839,30 +847,29 @@ Four things worth keeping straight:
   A `tool_result` handler is given the tool's own output every time, so a hook can always tell
   the tool from another hook's edit of it.
 - **A hook's message goes in with the run's starting messages, not onto the state.**
-  `before_agent_start` returns a `HookMessage` that follows the prompt into the run — appended
+  `before_agent_start` returns a `CustomMessage` that follows the prompt into the run — appended
   to the agent's messages directly it would never reach the session file, and a resumed
   conversation would be missing the thing that explained it.
 
-`HookedTool` is `tool-wrapper.ts` as a decorator, because PHP has interfaces where TypeScript
-has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a
+`ExtensionGuardedTool` is `tool-wrapper.ts` as a decorator, because PHP has interfaces where TypeScript
+has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pig->exec()` can run a
 command where the project is.
 
-**`$pi->exec()` is on the loop**, as upstream's `execCommand` is asynchronous. It was not: it went
+**`$pig->exec()` is on the loop**, as upstream's `execCommand` is asynchronous. It was not: it went
 through `Process::run()`, which polls with `usleep()`, so while a hook's command ran there were no
-keystrokes, no spinner and no redraw — a thirty-second linter was a thirty-second freeze. It and
-`CustomToolApi::exec()` both go through `Process::runAsync()` now; see the trap below.
+keystrokes, no spinner and no redraw — a thirty-second linter was a thirty-second freeze. It goes
+through `Process::runAsync()` now; see the trap below.
 
 **And escape stops it**, which is pig doing something upstream cannot. Upstream's `ExecOptions`
-has a `signal` field and its `HookContext` has no signal to put in it, so a hook's command can
+has a `signal` field and its `ExtensionContext` has no signal to put in it, so a hook's command can
 only be waited out there. Here `Agent::signal()` answers the run in progress's — null between
 runs, because the controller is cleared in `run()`'s `finally` and handing back the last one would
 mean an already-aborted signal for everything asking after an interrupted turn — and the modes
-pass it to `HookRunner::initialize()` the way they already pass `getModel`. It reaches `exec()`
-through the **context provider** rather than as a parameter: the runner builds a `HookContext`
+pass it to `ExtensionRunner::initialize()` the way they already pass `getModel`. It reaches `exec()`
+through the **context provider** rather than as a parameter: the runner builds a `ExtensionContext`
 fresh per emit, so what `exec()` reads is the turn running now, and a signal the hook had to
 remember to pass is one whose author did not. `$ctx->signal` is there too, for a handler whose own
-waiting is not a subprocess. `CustomToolApi` is wired the same way, through the `withContext()`
-the modes already call.
+waiting is not a subprocess.
 
 Two differences from upstream's version remain, both deliberate. **There is a timeout by default**
 where upstream's is opt-in, so a hook that forgets one cannot park the turn for as long as its
@@ -870,11 +877,11 @@ command wants. And **`killed` is `ExecResult::stopped()`**, wider by two cases a
 itself: a program that is not on this machine, and one escape stopped, answer the same way as one
 that ran too long — where upstream reports the first as `code: 1, killed: false`.
 
-`HookUi` is upstream's `HookUIContext`, and it is what makes `tool_call` more than a
+`ExtensionUi` is upstream's `ExtensionUIContext`, and it is what makes `tool_call` more than a
 yes-or-no rule: a handler can ask the person something and wait for the answer.
 
 ```php
-$pi->on('tool_call', function ($event, $ctx) {
+$pig->on('tool_call', function ($event, $ctx) {
     if ($event->toolName !== 'bash' || !str_contains($event->input['command'] ?? '', 'rm -rf')) {
         return null;
     }
@@ -997,9 +1004,7 @@ first codepoint instead, which gives the same answer for everything a terminal a
 
 `--no-tools` (`-nt`) is upstream's: no tool at all, MCP's included (`CodingAgent::session(noTools:
 'all')`), and `--no-builtin-tools` (`-nbt`) keeps the custom and extension tools; a `--tools` of
-`+name`/`-name` entries then changes the empty default, and a named set wins over both. **pig's
-old `--no-tools` is `--no-tool-files`** — it skips `~/.pig/agent/tools` and `.pig/tools` — with no
-reader for the old spelling. `--name` (`-n`) names the session before the first turn (upstream's
+`+name`/`-name` entries then changes the empty default, and a named set wins over both. `--name` (`-n`) names the session before the first turn (upstream's
 `appendSessionInfo()`), `--no-prompt-templates` (`-np`) and `--no-context-files` (`-nc`) switch off
 those loaders; every one of upstream's short forms is in `Arguments::SHORT`.
 

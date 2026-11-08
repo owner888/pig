@@ -26,7 +26,7 @@ use Pig\Tui\Width;
  * The `/mcp` manager view — upstream's `extensions/mcp/ui.js`: menus that rebuild while servers
  * connect, a read-only status screen, and the sign-in screen that takes a pasted redirect URL.
  *
- * One component that `HookUi::custom()` shows and whose contents are swapped as the manager moves
+ * One component that `ExtensionUi::custom()` shows and whose contents are swapped as the manager moves
  * between screens. Each screen parks the caller on a `Deferred` and the keys resume it — the same
  * trick every hook dialog uses, which is what lets `manage()` read as a loop over menus.
  *

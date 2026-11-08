@@ -67,7 +67,7 @@ Three things decided while porting it:
 worth remembering. `InteractiveModeTest`'s provider stub pushed `StartEvent` and `DoneEvent` and
 nothing between, so no `MessageUpdateEvent` was ever emitted and a tool call's component was created
 by `tool_execution_start` — *after* the message had ended. And it called `$agent->setTools()` without
-`HookedTool::wrap()`, so **no `tool_call` hook could fire in any test in that file**: a guard that
+`ExtensionGuardedTool::wrap()`, so **no `tool_call` hook could fire in any test in that file**: a guard that
 works in production was unreachable from the one place that drives the whole front end. Both are
 fixed, and the second is the same shape as the settings that were "live in production and inert in
 every test" a few entries down.
@@ -553,7 +553,7 @@ Regression test: `OpenAiResponsesTest::testAnAbortedTurnsThinkingAndCallsAreNotS
 ## `AGENTS.md` that could not be read was skipped without a word
 
 Every loader in this repository hands a problem it cannot fix back to `bin/pig` to print before
-the UI starts — `Skills`, `HookLoader`, `CustomToolLoader`, `Settings`, `CustomModels`. `ContextFiles`
+the UI starts — `Skills`, `ExtensionLoader`, `CustomToolLoader`, `Settings`, `CustomModels`. `ContextFiles`
 was the one that swallowed it. Its comment said *"skipped rather than fatal"*, which answers
 whether to **stop** and says nothing about whether to **speak**; upstream prints a yellow warning
 here. Permissions and a broken symlink are the two ways in, and what it costs is that the agent
@@ -562,7 +562,7 @@ works without instructions the person wrote and nobody ever finds out.
 Two things about the shape of the fix:
 
 - **`load()` keeps its signature and `loadWithWarnings()` is the new one**, which is upside down
-  from its three siblings — `Skills::load()`, `HookLoader::load()` and `CustomToolLoader::load()`
+  from its three siblings — `Skills::load()`, `ExtensionLoader::load()` and `CustomToolLoader::load()`
   all return `[things, problems]`. The reason is not a design preference: `Prompt\SystemPrompt`
   calls `load()` and is a file the developer owns, so the tuple cannot be pushed into it from
   here. Aligning it is a one-line change the next person to touch that file can make.
@@ -618,7 +618,7 @@ writes a `.#name.php` symlink beside the open file; upstream picks that up and r
 error for as long as the editor is open. `Migrations` scans instead, for the opposite reason:
 missing a session file there loses a conversation. Both now say so where the code is.
 
-Regression tests: `HookLoaderTest::testAConfiguredPathCopiedOutOfAFileManagerStillResolves` and
+Regression tests: `ExtensionFileLoadingTest::testAConfiguredPathCopiedOutOfAFileManagerStillResolves` and
 its twin in `CustomToolsTest`.
 
 ## A fixed unpack directory plus a glob installs last week's binary
@@ -737,7 +737,7 @@ directory forever is how somebody ends up with two half-populated homes and no w
 one a given file came from. `mv ~/.pig/* ~/.pig/agent/` is the whole upgrade.
 
 The second move is the one worth remembering. `ToolInstaller::directory()` was
-`Config::home() . '/tools'` — **the same directory `CustomTools\CustomToolLoader` scans for
+`Config::home() . '/tools'` — **the same directory the tool-file loader of the time scanned for
 folders with an `index.php` in them.** A downloaded `fd` binary sat in the list of the person's own
 tools, and the only reason nothing ever broke is a rule written for a different purpose: the
 loader wants directories and a binary is a file. That is a coincidence holding two features apart,
@@ -818,9 +818,9 @@ On Unix, a process spawned by `proc_open` / `fork` inherits every open descripto
 **Root cause**: upstream's `execCommand()` caps stdout and stderr together at `maxBuffer` (c466a35, 256 MiB): the command is killed, `truncated: true`, the code nonzero, and an incomplete UTF-8 suffix dropped. pig read without a limit.
 
 **Trap rules**:
-- `Process::runAsync()`/`run()` take `?int $maxBuffer` (null: no cap) and return a fourth element, `truncated`; over the cap the command is STOPPED and the pipes are no longer read. `HookApi::exec()` and `CustomToolApi::exec()` pass `ExecResult::MAX_BUFFER` by default.
+- `Process::runAsync()`/`run()` take `?int $maxBuffer` (null: no cap) and return a fourth element, `truncated`; over the cap the command is STOPPED and the pipes are no longer read. `ExtensionApi::exec()` passes `ExecResult::MAX_BUFFER` by default.
 - The default is 128 MiB, not upstream's 256: under `bin/pig`'s 512M limit a 256 MiB string and one copy of it do not fit (measured). Raise it only with the limit.
-- Tests: `HookRunnerTest::testExecOutputPastMaxBufferIsCutAndTheCommandStopped`, `testExecDropsACharacterTheCapCutThrough`.
+- Tests: `ExtensionRunnerTest::testExecOutputPastMaxBufferIsCutAndTheCommandStopped`, `testExecDropsACharacterTheCapCutThrough`.
 
 ## Tool output stripped only the escapes the renderer writes
 
@@ -872,7 +872,7 @@ line between them as removed and added again; and a saved session's `edit` call 
 
 **Root cause**: `EditDiff::render()` trims the common head and tail of two texts, which is the exact
 diff for one contiguous change and one block for several. And `prepareArguments()` is an optional
-interface (`PreparesArguments`), like `ReplayableTool`: `HookedTool`, `DescribedTool` and
+interface (`PreparesArguments`), like `ReplayableTool`: `ExtensionGuardedTool`, `DescribedTool` and
 `ResultImagesTool` sit between the loop and `EditTool`, and a wrapper that does not forward it hides it.
 
 **Trap rules**:

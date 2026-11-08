@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
-/** A server an extension registered with `$pi->registerMcpServer()`. Upstream's `RegisteredMcpServer`. */
+/** A server an extension registered with `$pig->registerMcpServer()`. Upstream's `RegisteredMcpServer`. */
 final readonly class RegisteredMcpServer
 {
     /** @param array<string, mixed> $config the validated `mcpServers` entry */

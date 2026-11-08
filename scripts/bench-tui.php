@@ -28,8 +28,8 @@ use Pig\Agent\AgentOptions;
 use Pig\Ai\Api;
 use Pig\Ai\Model;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Session\AgentSession;
@@ -76,7 +76,7 @@ $agent = new Agent(new AgentOptions(
 ));
 $agent->setModel(new Model('claude-bench', 'Bench', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
 $cwd = dirname($sessionPath);
-$agent->setTools(HookedTool::wrap(ToolSet::create($cwd, ['read']), new HookRunner()));
+$agent->setTools(ExtensionGuardedTool::wrap(ToolSet::create($cwd, ['read']), new ExtensionRunner()));
 
 $saved = SessionManager::open($sessionPath);
 $session = new AgentSession($agent, $cwd, $saved, $settings);

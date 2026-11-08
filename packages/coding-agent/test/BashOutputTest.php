@@ -17,7 +17,7 @@ use Pig\Tui\Width;
  * The tail of a typed command's output, on screen.
  *
  * The one transcript component that does **not** clean what it is given — `ToolExecutionComponent`,
- * `DiffView` and `HookMessageComponent` all go through `Shell::sanitize()` — and upstream's
+ * `DiffView` and `CustomMessageComponent` all go through `Shell::sanitize()` — and upstream's
  * `bash-execution.ts` does not either. That is only safe because the command runner cleans at the
  * source, which is what these cases are here to say.
  */

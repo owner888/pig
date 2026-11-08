@@ -228,21 +228,21 @@ final class RpcClientTest extends TestCase
     {
         // The same three checks as `switch_session`, on its sibling — which is the whole value of
         // having found them once.
-        mkdir($this->home . '/.pig/hooks', 0o755, true);
-        file_put_contents($this->home . '/.pig/hooks/no-leaving.php', <<<'PHP'
+        mkdir($this->home . '/.pig/extensions', 0o755, true);
+        file_put_contents($this->home . '/.pig/extensions/no-leaving.php', <<<'PHP'
         <?php
 
-        use Pig\CodingAgent\Hooks\HookApi;
-        use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
+        use Pig\CodingAgent\Extensions\ExtensionApi;
+        use Pig\CodingAgent\Extensions\Results\SessionBeforeSwitchResult;
 
-        return function (HookApi $pi): void {
-            $pi->on('session_before_switch', static fn (object $event): SessionBeforeSwitchResult
+        return function (ExtensionApi $pig): void {
+            $pig->on('session_before_switch', static fn (object $event): SessionBeforeSwitchResult
                 => new SessionBeforeSwitchResult(cancel: $event->reason === 'new'));
         };
         PHP);
 
         $this->serveOneTurn('unused');
-        $client = $this->client(['--model', 'stand-in'], withHooks: true);
+        $client = $this->client(['--model', 'stand-in'], withExtensions: true);
 
         [$answer, $messages] = Async::run(static function () use ($client): array {
             $client->start();
@@ -381,7 +381,7 @@ final class RpcClientTest extends TestCase
      * @param array<string, string> $environment on top of the four below — a provider key, for the
      *                                           cases about which models this machine can talk to
      */
-    private function client(array $arguments = [], bool $withHooks = false, array $environment = []): RpcClient
+    private function client(array $arguments = [], bool $withExtensions = false, array $environment = []): RpcClient
     {
         $binary = RpcClient::defaultBinary();
 
@@ -397,9 +397,9 @@ final class RpcClientTest extends TestCase
 
         return $this->client = new RpcClient(
             cwd: $this->cwd,
-            // Hooks off by default: every case but one is about the protocol, and a hook folder on
-            // the machine running the tests is not this file's business.
-            arguments: [...($withHooks ? [] : ['--no-hooks']), '--no-tool-files', ...$arguments],
+            // Extensions off by default: every case but two is about the protocol, and an extension
+            // folder on the machine running the tests is not this file's business.
+            arguments: [...($withExtensions ? [] : ['--no-extensions']), ...$arguments],
             environment: [
                 'PIG_CODING_AGENT_DIR' => $this->home . '/.pig',
                 'PI_HOME' => $this->root . '/pi',
@@ -936,23 +936,23 @@ final class RpcClientTest extends TestCase
     {
         // It could not before: the terminal asked the hooks through `mayLeave()` and the RPC path
         // did not, so a hook that refuses to leave a conversation worked in one mode and was
-        // silently ignored in the other. `HookRunner::emitBeforeSwitch()` existed the whole time.
-        mkdir($this->home . '/.pig/hooks', 0o755, true);
-        file_put_contents($this->home . '/.pig/hooks/no-leaving.php', <<<'PHP'
+        // silently ignored in the other. `ExtensionRunner::emitBeforeSwitch()` existed the whole time.
+        mkdir($this->home . '/.pig/extensions', 0o755, true);
+        file_put_contents($this->home . '/.pig/extensions/no-leaving.php', <<<'PHP'
         <?php
 
-        use Pig\CodingAgent\Hooks\HookApi;
-        use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
+        use Pig\CodingAgent\Extensions\ExtensionApi;
+        use Pig\CodingAgent\Extensions\Results\SessionBeforeSwitchResult;
 
-        return function (HookApi $pi): void {
-            $pi->on('session_before_switch', static fn (): SessionBeforeSwitchResult
+        return function (ExtensionApi $pig): void {
+            $pig->on('session_before_switch', static fn (): SessionBeforeSwitchResult
                 => new SessionBeforeSwitchResult(cancel: true));
         };
         PHP);
 
         $this->serveOneTurn('unused');
         // Hooks on, which the other cases in this file turn off.
-        $client = $this->client(['--model', 'stand-in'], withHooks: true);
+        $client = $this->client(['--model', 'stand-in'], withExtensions: true);
         $elsewhere = $this->root . '/elsewhere.jsonl';
         file_put_contents($elsewhere, json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => $this->cwd]) . "\n");
 

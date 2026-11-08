@@ -8,7 +8,7 @@ use Closure;
 use Pig\Agent\ThinkingLevel;
 
 /**
- * What an extension registers with `$pi->registerVirtualModel()` — upstream's `VirtualModelDefinition`.
+ * What an extension registers with `$pig->registerVirtualModel()` — upstream's `VirtualModelDefinition`.
  *
  * A virtual model is a catalogue entry that routes each request to a physical model. The selection
  * (`/model`, `model_change`, `$session->model()`) may name it; everything below the routing step
@@ -25,7 +25,7 @@ final readonly class VirtualModelDefinition
      * @param int $contextWindow shown before the first response; afterwards the limits of the
      *        physical model that answered apply. 0 is unknown
      * @param list<'text'|'image'> $input accepted for selection
-     * @param Closure(ModelRouteRequest, Hooks\HookContext): ModelRoute $route picks the physical model,
+     * @param Closure(ModelRouteRequest, Extensions\ExtensionContext): ModelRoute $route picks the physical model,
      *        which must have credentials, and the thinking level for one request. May throw, which
      *        fails the request. Registered through `ExtensionApi::registerVirtualModel()` it is also
      *        handed upstream's `ctx` — the extension's context, made per request, with

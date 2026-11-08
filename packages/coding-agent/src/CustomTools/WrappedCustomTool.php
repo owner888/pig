@@ -11,7 +11,7 @@ use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 
 /**
  * A custom tool, as the agent sees it.
@@ -27,7 +27,7 @@ use Pig\CodingAgent\Hooks\HookContext;
  */
 final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
 {
-    /** @param Closure(): HookContext $context */
+    /** @param Closure(): ExtensionContext $context */
     public function __construct(
         private CustomTool $tool,
         private Closure $context,
@@ -36,7 +36,7 @@ final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
 
     /**
      * @param list<LoadedCustomTool>  $loaded
-     * @param Closure(): HookContext  $context
+     * @param Closure(): ExtensionContext  $context
      * @return list<AgentTool>
      */
     public static function wrap(array $loaded, Closure $context): array

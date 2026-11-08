@@ -110,7 +110,7 @@ final class WebPanelsTest extends TestCase
             'probe.http',
             'Http',
             static fn (): array => [],
-            static function (string $action, array $args, array $request, \Pig\CodingAgent\Hooks\HookUi $ui) use (&$asked): ?string {
+            static function (string $action, array $args, array $request, \Pig\CodingAgent\Extensions\ExtensionUi $ui) use (&$asked): ?string {
                 $asked[] = [$ui->confirm('Sure?', 'x'), $ui->input('Name?')];
 
                 return null;

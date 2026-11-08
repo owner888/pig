@@ -10,12 +10,12 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\NoUi;
+use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionError;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\NoUi;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\AgentSession;
 use Throwable;
@@ -59,7 +59,7 @@ final class PrintMode
     public function __construct(
         private readonly AgentSession $session,
         private readonly string $mode = 'text',
-        private readonly ?HookRunner $hooks = null,
+        private readonly ?ExtensionRunner $extensionRunner = null,
         private readonly ?CustomToolSet $customTools = null,
         $out = null,
         $err = null,
@@ -116,17 +116,16 @@ final class PrintMode
         $this->session->setMode($this->mode === 'json' ? 'json' : 'print');
 
         // The same wiring as the other two modes, with the one difference that matters: no UI.
-        $this->hooks?->wire($this->session, new NoUi());
+        $this->extensionRunner?->wire($this->session, new NoUi());
 
         // Standard output is the answer, so a broken hook goes to standard error. In `json`
         // it would otherwise arrive as a line that is not JSON, in the middle of lines that
         // are, and whatever is reading them would stop there.
-        $this->hooks?->onError(function (HookError $error): void {
+        $this->extensionRunner?->onError(function (ExtensionError $error): void {
             // Upstream's sentence: `Extension error (<path>): <error>`.
-            $this->complain("Extension error ({$error->hookPath}): {$error->error}");
+            $this->complain("Extension error ({$error->path}): {$error->message}");
         });
 
-        $this->customTools?->withUi(new NoUi());
 
         // And the context, which this mode did not wire — so a custom tool here was handed
         // `CustomToolSet`'s own stub: no session to read, no model, `abort()` a no-op, and a
@@ -135,14 +134,14 @@ final class PrintMode
         // "the same wiring, with the one difference that matters" was counting one difference
         // too few.
         $this->customTools?->withContext(
-            fn () => $this->hooks?->context() ?? new HookContext($this->session->cwd(), $this->session->store()),
+            fn () => $this->extensionRunner?->context() ?? new ExtensionContext($this->session->cwd(), $this->session->store()),
         );
 
         if ($this->mode === 'json') {
             $this->session->subscribe($this->emit(...));
         }
 
-        $this->hooks?->emit(new SessionStartEvent());
+        $this->extensionRunner?->emit(new SessionStartEvent());
         $this->session->discoverResources('startup');
 
         foreach ($this->customTools?->notify('start') ?? [] as $problem) {
@@ -152,7 +151,7 @@ final class PrintMode
 
     private function stop(): void
     {
-        $this->hooks?->emit(new SessionShutdownEvent());
+        $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->customTools?->notify('shutdown');
         $this->session->dispose();
     }

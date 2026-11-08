@@ -12,7 +12,7 @@ use Throwable;
  * A channel extensions talk to each other on. Upstream's `pi.events` (`event-bus.ts`).
  *
  * One bus per load: every extension `ExtensionLoader::load()` reads is handed the same one, so
- * `$pi->events()->emit('git:changed', $data)` in one file reaches `on('git:changed', …)` in
+ * `$pig->events()->emit('git:changed', $data)` in one file reaches `on('git:changed', …)` in
  * another, and `/reload` — which loads again — starts with an empty bus rather than one still
  * holding handlers from closures that no longer exist.
  *

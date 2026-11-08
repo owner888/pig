@@ -46,7 +46,7 @@ final class ContextFiles
      *
      * **A file this skips is a file the person wrote and the agent is now working without.**
      * It used to be skipped silently, which is not what the rest of this repository does with a
-     * problem it cannot fix: `Skills`, `HookLoader`, `CustomToolLoader`, `Settings` and
+     * problem it cannot fix: `Skills`, `ExtensionLoader`, `Settings` and
      * `CustomModels` all hand their complaints back for `bin/pig` to print before the UI
      * starts. The old comment said "skipped rather than fatal", which answers whether to
      * *stop* and says nothing about whether to speak — and upstream prints a yellow warning

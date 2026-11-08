@@ -20,7 +20,7 @@ use Pig\Async\AbortSignal;
  * themselves (extensions, MCP servers, screenshot tools) hand back whatever they have, and one
  * oversized image makes the provider refuse the whole conversation.
  *
- * Outside `HookedTool`, for that order. A decorator for `HookedTool`'s reason.
+ * Outside `ExtensionGuardedTool`, for that order. A decorator for `ExtensionGuardedTool`'s reason.
  */
 final readonly class ResultImagesTool implements AgentTool, ReplayableTool, PreparesArguments
 {

@@ -141,9 +141,9 @@ final class CodingAgentSessionTest extends TestCase
         file_put_contents($this->home . '/extensions/mine/prompts/greet.md', "say hello to \$1\n");
         file_put_contents($this->home . '/extensions/mine/index.php', <<<'PHP'
             <?php
-            use Pig\CodingAgent\Hooks\Results\ResourcesDiscoverResult;
-            return function ($pi): void {
-                $pi->on('resources_discover', fn ($event) => new ResourcesDiscoverResult(
+            use Pig\CodingAgent\Extensions\Results\ResourcesDiscoverResult;
+            return function ($pig): void {
+                $pig->on('resources_discover', fn ($event) => new ResourcesDiscoverResult(
                     skillPaths: ['skills'],
                     promptPaths: ['prompts'],
                     themePaths: ['themes'],
@@ -833,62 +833,92 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertStringNotContainsString('Say arr.', $prompt);
     }
 
-    public function testAHookThatDoesNotLoadIsAWarningAndNotAFailedStartup(): void
+    public function testAnExtensionThatDoesNotLoadIsAWarningAndNotAFailedStartup(): void
     {
-        mkdir($this->home . '/hooks', 0o755, true);
-        file_put_contents($this->home . '/hooks/broken.php', "<?php\n\nreturn 'not a callable';\n");
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/broken.php', "<?php\n\nreturn 'not a callable';\n");
 
         $started = $this->start();
 
         $this->assertNotSame([], $started->warnings);
-        $this->assertStringStartsWith('hook ', $started->warnings[0]);
+        $this->assertStringStartsWith('extension ', $started->warnings[0]);
     }
 
-    public function testNoHooksSkipsTheFolderEntirely(): void
+    public function testNoExtensionsSkipsTheFolderEntirely(): void
+    {
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/broken.php', "<?php\n\nreturn 'not a callable';\n");
+
+        $this->assertSame([], $this->start(['withExtensions' => false])->warnings);
+    }
+
+    /**
+     * Hooks were merged into extensions: a file still in a hooks folder is not loaded from there,
+     * and not quietly skipped either — the startup stops and says where the file goes, and that
+     * it loads from there as it is.
+     */
+    public function testAFileLeftInAHooksFolderStopsTheStartupAndSaysWhereItGoes(): void
     {
         mkdir($this->home . '/hooks', 0o755, true);
-        file_put_contents($this->home . '/hooks/broken.php', "<?php\n\nreturn 'not a callable';\n");
+        file_put_contents($this->home . '/hooks/old.php', "<?php\n\nreturn static fn (): null => null;\n");
 
-        $this->assertSame([], $this->start(['withHooks' => false])->warnings);
-    }
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start());
 
-    public function testACustomToolThatDoesNotLoadIsAWarningToo(): void
-    {
-        // `~/.pig/agent/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
-        mkdir($this->home . '/tools/broken', 0o755, true);
-        file_put_contents($this->home . '/tools/broken/index.php', "<?php\n\nreturn 'not a callable';\n");
-
-        $started = $this->start();
-
-        $this->assertNotSame([], $started->warnings);
-        $this->assertStringStartsWith('tool ', $started->warnings[0]);
+        $this->assertStringContainsString($this->home . '/hooks/old.php', $error->getMessage());
+        $this->assertStringContainsString('move it to ' . $this->home . '/extensions/', $error->getMessage());
+        $this->assertStringContainsString('ExtensionApi', $error->getMessage());
     }
 
     public function testNoToolsIsNoToolAtAllAndNoBuiltinToolsKeepsTheCustomOnes(): void
     {
-        mkdir($this->home . '/tools/mine', 0o755, true);
-        file_put_contents($this->home . '/tools/mine/index.php', <<<'PHP'
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/mine.php', <<<'PHP'
             <?php
             use Pig\CodingAgent\CustomTools\CustomTool;
             use Pig\Agent\AgentToolResult;
             use Pig\Ai\TextContent;
-            return fn ($pi) => new CustomTool(
+            return fn ($pig) => $pig->registerTool(new CustomTool(
                 name: 'mine', label: 'x', description: 'x',
                 parameters: ['type' => 'object', 'properties' => []],
                 execute: fn () => new AgentToolResult([new TextContent('ok')]),
-            );
+            ));
             PHP);
 
         $this->assertSame([...ToolSet::CODING, 'mine'], $this->toolNames($this->start()));
         // Upstream's `noTools: "all"` and `"builtin"`.
         $this->assertSame([], $this->toolNames($this->start(['noTools' => 'all'])));
         $this->assertSame(['mine'], $this->toolNames($this->start(['noTools' => 'builtin'])));
-        $this->assertSame([], $this->toolNames($this->start(['noTools' => 'builtin', 'readOnly' => true, 'withTools' => false])));
+        $this->assertSame([], $this->toolNames($this->start(['noTools' => 'builtin', 'readOnly' => true, 'withExtensions' => false])));
         // Modifiers change the empty default: under `all` they are the whole set.
         $this->assertSame(['read'], $this->toolNames($this->start(['noTools' => 'all', 'tools' => ['+read']])));
         $this->assertSame(['read', 'mine'], $this->toolNames($this->start(['noTools' => 'builtin', 'tools' => ['+read']])));
         // A named set wins over both.
         $this->assertSame(['bash'], $this->toolNames($this->start(['noTools' => 'all', 'tools' => ['bash']])));
+    }
+
+    public function testAToolRegisteredUnderABuiltInsNameReplacesTheBuiltIn(): void
+    {
+        // Upstream's rule: an extension that registers `bash` is offering its own `bash`. One tool
+        // of that name reaches the model, and it is the extension's.
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/own-bash.php', <<<'PHP'
+            <?php
+            use Pig\CodingAgent\CustomTools\CustomTool;
+            use Pig\Agent\AgentToolResult;
+            use Pig\Ai\TextContent;
+            return fn ($pig) => $pig->registerTool(new CustomTool(
+                name: 'bash', label: 'own bash', description: 'mine',
+                parameters: ['type' => 'object', 'properties' => []],
+                execute: fn () => new AgentToolResult([new TextContent('mine ran')]),
+            ));
+            PHP);
+
+        $started = $this->start();
+        $names = $this->toolNames($started);
+
+        $this->assertEqualsCanonicalizing(ToolSet::CODING, $names, 'the same names, and only once each');
+        $bash = $started->session->agent->state->tools[array_search('bash', $names, true)];
+        $this->assertSame('mine', $bash->definition()->description);
     }
 
     public function testSkillAndPromptTemplatePathsLoadEvenWithTheirDiscoveryOff(): void
@@ -925,13 +955,16 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertNotSame([], $this->start()->fileCommands, 'both are there without the switches');
     }
 
-    public function testNoToolFilesSkipsThatFolderEntirely(): void
+    public function testAFileLeftInAToolsFolderStopsTheStartupAndSaysWhereItGoes(): void
     {
-        // `~/.pig/agent/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
-        mkdir($this->home . '/tools/broken', 0o755, true);
-        file_put_contents($this->home . '/tools/broken/index.php', "<?php\n\nreturn 'not a callable';\n");
+        mkdir($this->home . '/tools/old', 0o755, true);
+        file_put_contents($this->home . '/tools/old/index.php', "<?php\n\nreturn static fn (): null => null;\n");
 
-        $this->assertSame([], $this->start(['withTools' => false])->warnings);
+        $error = $this->assertThrows(CodingAgentError::class, fn () => $this->start());
+
+        $this->assertStringContainsString($this->home . '/tools/old/index.php', $error->getMessage());
+        $this->assertStringContainsString('move the folder to ' . $this->home . '/extensions/', $error->getMessage());
+        $this->assertStringContainsString('registerTool()', $error->getMessage());
     }
 
     public function testNoSkillsLoadsNoneOfThem(): void
@@ -944,7 +977,7 @@ final class CodingAgentSessionTest extends TestCase
 
         $this->assertNotSame([], $this->start()->skills, 'the skill is there to begin with');
 
-        // Its two siblings have had `--no-hooks` and `--no-tool-files` from the start, and skills had a
+        // Its sibling has had `--no-extensions` from the start, and skills had a
         // settings switch and no flag — which reads as "this one cannot be turned off for one run".
         $this->assertSame([], $this->start(['withSkills' => false])->skills);
     }
@@ -1041,8 +1074,8 @@ final class CodingAgentSessionTest extends TestCase
     {
         // The property the whole extraction rests on: a startup that printed could not be tested,
         // and a startup that is tested must not print.
-        mkdir($this->home . '/hooks', 0o755, true);
-        file_put_contents($this->home . '/hooks/broken.php', "<?php\n\nreturn 'not a callable';\n");
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/broken.php', "<?php\n\nreturn 'not a callable';\n");
         mkdir($this->cwd . '/.pig/skills/broken', 0o755, true);
         file_put_contents($this->cwd . '/.pig/skills/broken/SKILL.md', "no frontmatter here\n");
 
@@ -1085,9 +1118,9 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-return function (ExtensionApi $pi): void {
-    $pi->registerCommand('bundled_cmd', fn () => null, 'Bundled Command');
-    $pi->registerTool(new CustomTool(
+return function (ExtensionApi $pig): void {
+    $pig->registerCommand('bundled_cmd', fn () => null, 'Bundled Command');
+    $pig->registerTool(new CustomTool(
         name: 'bundled_tool',
         label: 'Bundled Tool',
         description: 'Tool from extension',
@@ -1100,13 +1133,13 @@ PHP);
         $started = $this->start();
 
         $this->assertContains('bundled_tool', $started->customTools->names());
-        [$commands] = $started->hooks->commands();
+        [$commands] = $started->extensionRunner->commands();
         $this->assertArrayHasKey('bundled_cmd', $commands);
 
         // Disabling withExtensions
         $disabled = $this->start(['withExtensions' => false]);
         $this->assertNotContains('bundled_tool', $disabled->customTools->names());
-        [$disabledCommands] = $disabled->hooks->commands();
+        [$disabledCommands] = $disabled->extensionRunner->commands();
         $this->assertArrayNotHasKey('bundled_cmd', $disabledCommands);
     }
 
@@ -1123,9 +1156,9 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-return function (ExtensionApi $pi): void {
+return function (ExtensionApi $pig): void {
     foreach (['zoo_feed', 'zoo_clean', 'mcp__gh__issues'] as $name) {
-        $pi->registerTool(new CustomTool(
+        $pig->registerTool(new CustomTool(
             name: $name, label: $name, description: $name,
             parameters: ['type' => 'object', 'properties' => []],
             execute: fn () => new AgentToolResult([new TextContent('ok')]),

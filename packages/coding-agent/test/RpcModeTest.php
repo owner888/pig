@@ -32,10 +32,10 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSessionEvent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Rpc\RpcEvents;
@@ -143,7 +143,7 @@ final class RpcModeTest extends TestCase
         bool $reasoning = false,
         bool $store = false,
         ?string $resume = null,
-        ?HookRunner $hooks = null,
+        ?ExtensionRunner $extensionRunner = null,
         ?CustomToolSet $customTools = null,
         ?Settings $settings = null,
         array $fileCommands = [],
@@ -170,7 +170,7 @@ final class RpcModeTest extends TestCase
         ));
 
         $tools = [...ToolSet::create($this->cwd, ['read']), ...($customTools?->agentTools() ?? [])];
-        $this->tools = $hooks === null ? $tools : HookedTool::wrap($tools, $hooks);
+        $this->tools = $extensionRunner === null ? $tools : ExtensionGuardedTool::wrap($tools, $extensionRunner);
         $agent->setTools($this->tools);
 
         $saved = match (true) {
@@ -190,7 +190,7 @@ final class RpcModeTest extends TestCase
             $this->cwd,
             $saved,
             $settings,
-            $hooks,
+            $extensionRunner,
             $fileCommands,
             $modelScope,
         );
@@ -202,7 +202,7 @@ final class RpcModeTest extends TestCase
         $this->mode = new RpcMode(
             $this->session,
             $this->cwd,
-            $hooks,
+            $extensionRunner,
             $customTools,
             $settings ?? Settings::inMemory(),
             auth: $auth,
@@ -1000,7 +1000,7 @@ final class RpcModeTest extends TestCase
 
     public function testAHostsSlashCommandsReachTheSameDispatchTheTerminalDoes(): void
     {
-        $api = new HookApi($this->cwd, 'deploy.php');
+        $api = new ExtensionApi($this->cwd, 'deploy.php');
         $seen = null;
         $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
             $seen = $arguments;
@@ -1008,7 +1008,7 @@ final class RpcModeTest extends TestCase
 
         $this->start(
             answers: ['reviewed'],
-            hooks: new HookRunner([new LoadedHook('deploy.php', 'deploy.php', $api)], $this->cwd),
+            extensionRunner: new ExtensionRunner([new LoadedExtension('deploy.php', 'deploy.php', $api->name, $api)], $this->cwd),
             fileCommands: [new FileCommand('review', 'Review', 'Please review $1 closely.', '(user)')],
         );
 
@@ -1287,10 +1287,10 @@ final class RpcModeTest extends TestCase
 
     public function testCompactAnswersUpstreamsCompactionResultAndTheEventsSayItHappened(): void
     {
-        $hooks = $this->hooks(['session_before_compact' => static fn (\Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent $event) => new \Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult(
+        $extensionRunner = $this->extensionRunner(['session_before_compact' => static fn (\Pig\CodingAgent\Extensions\Events\SessionBeforeCompactEvent $event) => new \Pig\CodingAgent\Extensions\Results\SessionBeforeCompactResult(
             compaction: new \Pig\CodingAgent\Session\CompactionResult('a hook wrote this', $event->preparation->firstKeptEntryId, 1234, details: ['readFiles' => ['a.php'], 'modifiedFiles' => []]),
         )]);
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
 
         $filler = str_repeat('a lot has been said about this already. ', 400);
         $messages = [];
@@ -1575,13 +1575,13 @@ final class RpcModeTest extends TestCase
     public function testAHookThatAsksParksUntilTheAnswerArrives(): void
     {
         $asked = [];
-        $hooks = $this->hooks(['tool_call' => function (mixed $event, mixed $ctx) use (&$asked): mixed {
+        $extensionRunner = $this->extensionRunner(['tool_call' => function (mixed $event, mixed $ctx) use (&$asked): mixed {
             $asked[] = $ctx->ui->confirm('Let it read?', 'a file');
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         file_put_contents($this->cwd . '/f.txt', "x\n");
 
         // The tool is called directly rather than through a turn: what is under test is the
@@ -1610,13 +1610,13 @@ final class RpcModeTest extends TestCase
     public function testAnAnswerOfNoComesBackAsFalse(): void
     {
         $answers = [];
-        $hooks = $this->hooks(['tool_call' => function (mixed $event, mixed $ctx) use (&$answers): mixed {
+        $extensionRunner = $this->extensionRunner(['tool_call' => function (mixed $event, mixed $ctx) use (&$answers): mixed {
             $answers[] = $ctx->ui->confirm('ok?', '');
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         file_put_contents($this->cwd . '/f.txt', "x\n");
 
         Async::spawn(fn () => $this->tools[0]->execute(
@@ -1637,13 +1637,13 @@ final class RpcModeTest extends TestCase
     public function testASelectSendsItsOptionsAndTakesTheValueBack(): void
     {
         $chosen = [];
-        $hooks = $this->hooks(['tool_call' => function (mixed $event, mixed $ctx) use (&$chosen): mixed {
+        $extensionRunner = $this->extensionRunner(['tool_call' => function (mixed $event, mixed $ctx) use (&$chosen): mixed {
             $chosen[] = $ctx->ui->select('Which?', ['a', 'b']);
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         file_put_contents($this->cwd . '/f.txt', "x\n");
 
         Async::spawn(fn () => $this->tools[0]->execute(
@@ -1664,13 +1664,13 @@ final class RpcModeTest extends TestCase
     public function testAHookGetsTheSessionsKeyHereToo(): void
     {
         $key = 'not asked';
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$key): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx) use (&$key): mixed {
             $key = $ctx->apiKey($ctx->model);
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $this->settle();
 
         $this->assertSame('k', $key);
@@ -1680,7 +1680,7 @@ final class RpcModeTest extends TestCase
     public function testTwoQuestionsAtOnceAreAnsweredByIdInAnyOrder(): void
     {
         $seen = [];
-        $hooks = $this->hooks(['session_start' => function (mixed $event, mixed $ctx) use (&$seen): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => function (mixed $event, mixed $ctx) use (&$seen): mixed {
             Async::spawn(function () use ($ctx, &$seen): void {
                 $seen['first'] = $ctx->ui->input('first');
             });
@@ -1691,7 +1691,7 @@ final class RpcModeTest extends TestCase
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $this->settle();
 
         $requests = $this->of('extension_ui_request');
@@ -1717,13 +1717,13 @@ final class RpcModeTest extends TestCase
     public function testSystemNotifyIsToldToTheHostAndWaitsForNothing(): void
     {
         // pig's own: the page shows it to someone looking elsewhere; another host lets it go by.
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx): mixed {
             $ctx->ui->systemNotify('Done · pig', 'Task finished (3s)');
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $requests = $this->of('extension_ui_request');
 
         $this->assertSame('systemNotify', $requests[0]['method']);
@@ -1733,14 +1733,14 @@ final class RpcModeTest extends TestCase
 
     public function testNotifyIsOneWayAndWaitsForNothing(): void
     {
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx): mixed {
             $ctx->ui->notify('loaded', 'warning');
             $ctx->ui->setStatus('mine', 'busy');
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $requests = $this->of('extension_ui_request');
 
         $this->assertSame('notify', $requests[0]['method']);
@@ -1754,7 +1754,7 @@ final class RpcModeTest extends TestCase
 
     public function testAWidgetAndATitleGoOutUnderUpstreamsNamesAndTheTuiOnlyOnesSayNothing(): void
     {
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx): mixed {
             $ctx->ui->setWidget('w', ['one line'], ['placement' => 'below']);
             $ctx->ui->setTitle('pig');
             $ctx->ui->setWorkingMessage('busy');
@@ -1766,7 +1766,7 @@ final class RpcModeTest extends TestCase
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $requests = $this->of('extension_ui_request');
 
         $this->assertSame(['setWidget', 'setTitle', 'set_editor_text'], array_column($requests, 'method'));
@@ -1779,7 +1779,7 @@ final class RpcModeTest extends TestCase
     public function testADialogWithATimeoutSaysSoAndAnswersNoWhenItRunsOut(): void
     {
         $answers = [];
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx) use (&$answers): mixed {
             Async::spawn(static function () use ($ctx, &$answers): void {
                 $answers[] = $ctx->ui->confirm('quick?', 'or not', 80);
             });
@@ -1787,7 +1787,7 @@ final class RpcModeTest extends TestCase
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $this->settle(3);
         $this->assertSame(80, $this->of('extension_ui_request')[0]['timeout']);
         $this->assertSame([], $answers, 'still waiting');
@@ -1801,14 +1801,14 @@ final class RpcModeTest extends TestCase
     public function testCustomDrawsNothingBecauseThereIsNothingToDrawOn(): void
     {
         $drawn = [];
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$drawn): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx) use (&$drawn): mixed {
             $drawn[] = $ctx->ui->custom(static fn (): mixed => throw new RuntimeException('never built'));
             $drawn[] = $ctx->ui->getEditorText();
 
             return null;
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
 
         $this->assertSame([null, ''], $drawn);
         $this->assertSame([], $this->of('extension_ui_request'));
@@ -1817,7 +1817,7 @@ final class RpcModeTest extends TestCase
     public function testTheWebShellsThemeIsTheChildsBeforeAnyExtensionRuns(): void
     {
         $seen = [];
-        $hooks = $this->hooks(['session_start' => static function (mixed $event, mixed $ctx) use (&$seen): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (mixed $event, mixed $ctx) use (&$seen): mixed {
             $seen['accent'] = $ctx->ui->theme()->getFgAnsi('accent');
             $seen['themes'] = count($ctx->ui->getAllThemes());
             $seen['switched'] = $ctx->ui->setTheme('dark');
@@ -1827,7 +1827,7 @@ final class RpcModeTest extends TestCase
 
         putenv('PIG_WEB_THEME=light');
         try {
-            $this->start(hooks: $hooks);
+            $this->start(extensionRunner: $extensionRunner);
 
             $this->assertSame(Themes::getThemeByName('light')?->getFgAnsi('accent'), $seen['accent'], 'the page\'s theme, from session_start on');
             $this->assertGreaterThan(1, $seen['themes']);
@@ -1864,11 +1864,11 @@ final class RpcModeTest extends TestCase
 
     public function testAHookThatThrowsIsReportedOnTheWireRatherThanKillingTheSession(): void
     {
-        $hooks = $this->hooks(['session_start' => static function (): mixed {
+        $extensionRunner = $this->extensionRunner(['session_start' => static function (): mixed {
             throw new RuntimeException('bad hook');
         }]);
 
-        $this->start(hooks: $hooks);
+        $this->start(extensionRunner: $extensionRunner);
         $errors = $this->of('extension_error');
 
         $this->assertSame('test.php', $errors[0]['extensionPath']);
@@ -1879,8 +1879,8 @@ final class RpcModeTest extends TestCase
 
     public function testAHookThatBlocksAToolStillBlocksItWithNoTerminalInSight(): void
     {
-        $hooks = $this->hooks(['tool_call' => static fn (): mixed => throw new RuntimeException('no reading')]);
-        $this->start(hooks: $hooks);
+        $extensionRunner = $this->extensionRunner(['tool_call' => static fn (): mixed => throw new RuntimeException('no reading')]);
+        $this->start(extensionRunner: $extensionRunner);
         file_put_contents($this->cwd . '/f.txt', "x\n");
 
         $reading = Async::spawn(fn () => $this->tools[0]->execute(
@@ -1986,14 +1986,14 @@ final class RpcModeTest extends TestCase
     // ---- the fixtures ------------------------------------------------------------------
 
     /** @param array<string, callable> $handlers */
-    private function hooks(array $handlers): HookRunner
+    private function extensionRunner(array $handlers): ExtensionRunner
     {
-        $api = new HookApi('.', 'test.php');
+        $api = new ExtensionApi('.', 'test.php');
 
         foreach ($handlers as $event => $handler) {
             $api->on($event, $handler);
         }
 
-        return new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        return new ExtensionRunner([new LoadedExtension('test.php', 'test.php', $api->name, $api)], $this->cwd);
     }
 }

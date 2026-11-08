@@ -8,7 +8,7 @@ use Closure;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Extensions\ExtensionUi;
 use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\Themes;
@@ -25,7 +25,7 @@ use LogicException;
 use Pig\Tui\TuiError;
 
 /**
- * `HookUi`, drawn in the terminal.
+ * `ExtensionUi`, drawn in the terminal.
  *
  * Upstream builds this as an object literal closing over the interactive mode's
  * internals. Here it takes them: the screen to focus, the two containers it draws into (the
@@ -51,7 +51,7 @@ use Pig\Tui\TuiError;
  *   there the fiber is fine and it is the person who loses the screen they were on. See
  *   `canAsk()`.
  */
-final class TerminalUi implements HookUi
+final class TerminalUi implements ExtensionUi
 {
     /** @var array<int, array{handler: Closure, unsubscribe: Closure(): void}> upstream's `extensionTerminalInputSubscriptions` */
     private array $terminalInputSubscriptions = [];
@@ -305,7 +305,7 @@ final class TerminalUi implements HookUi
      *
      * What cannot be guarded from here is a component that never calls it and does not
      * handle escape. It has the keys, and nothing else can take them back. See the note on
-     * `HookUi::custom()`.
+     * `ExtensionUi::custom()`.
      */
     #[\Override]
     public function custom(Closure $factory, ?BlockedStatus $blocked = null): mixed

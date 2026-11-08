@@ -12,25 +12,25 @@ use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolLoader;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\CustomTools\WrappedCustomTool;
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookedTool;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionContext;
+use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
+use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 use Pig\CodingAgent\Tools\ToolSet;
 use RuntimeException;
 
 /**
- * Tools somebody wrote: finding them, declaring them, and handing them to the agent.
+ * Tools somebody wrote: declaring them, and handing them to the agent.
  *
- * The loading mechanism is the hooks' one, so what is worth testing here is what is
- * different — the folder layout, the name clash with a built-in, the session context that
- * a custom tool gets and a built-in one does not.
+ * An extension registers them, and `ExtensionFileLoadingTest` has the loading; what is worth
+ * testing here is what is different — the declaration, and the session context that a custom
+ * tool gets and a built-in one does not.
  */
 final class CustomToolsTest extends TestCase
 {
@@ -43,8 +43,8 @@ final class CustomToolsTest extends TestCase
         $this->home = sys_get_temp_dir() . '/pig-tools-home-' . bin2hex(random_bytes(4));
         $this->project = sys_get_temp_dir() . '/pig-tools-project-' . bin2hex(random_bytes(4));
 
-        mkdir($this->home . '/tools', 0o777, true);
-        mkdir($this->project . '/.pig/tools', 0o777, true);
+        mkdir($this->home, 0o777, true);
+        mkdir($this->project, 0o777, true);
     }
 
     protected function tearDown(): void
@@ -71,36 +71,6 @@ final class CustomToolsTest extends TestCase
         if (file_exists($path)) {
             unlink($path);
         }
-    }
-
-    /** Write `<root>/<name>/index.php`, which is the layout the loader looks for. */
-    private function write(string $root, string $name, string $body): string
-    {
-        mkdir($root . '/' . $name, 0o777, true);
-        $path = $root . '/' . $name . '/index.php';
-        file_put_contents($path, $body);
-
-        return $path;
-    }
-
-    /** A tool file that declares one working tool called $name. */
-    private static function source(string $name): string
-    {
-        return <<<PHP
-            <?php
-
-            use Pig\\Agent\\AgentToolResult;
-            use Pig\\Ai\\TextContent;
-            use Pig\\CodingAgent\\CustomTools\\CustomTool;
-
-            return fn (\$pi) => new CustomTool(
-                name: '{$name}',
-                label: 'The {$name} tool',
-                description: 'Does {$name}.',
-                parameters: ['type' => 'object', 'properties' => []],
-                execute: fn (\$id, \$params, \$onUpdate, \$ctx) => new AgentToolResult([new TextContent('{$name} ran')]),
-            );
-            PHP;
     }
 
     // ---- declaring one -----------------------------------------------------------------
@@ -146,247 +116,38 @@ final class CustomToolsTest extends TestCase
         }
     }
 
-    // ---- finding them ------------------------------------------------------------------
-
-    public function testAToolInAFolderOfItsOwnLoads(): void
-    {
-        $this->write($this->home . '/tools', 'wc', self::source('wc'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
-
-        $this->assertSame([], $problems);
-        $this->assertCount(1, $tools);
-        $this->assertSame('wc', $tools[0]->tool->name);
-    }
-
-    /** A loose `.php` is not a tool: upstream's layout is a folder with an entry file. */
-    public function testALooseFileIsNotFound(): void
-    {
-        file_put_contents($this->home . '/tools/wc.php', self::source('wc'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertSame([], $problems);
-    }
-
-    public function testADownloadedBinaryIsNotMistakenForOneOfThePersonsTools(): void
-    {
-        // `fd` and `rg` used to be downloaded into this very directory, and the only reason it
-        // never broke is the rule above: a binary is a file and the loader wants folders. They
-        // live in `bin/` now — `ToolInstaller::directory()` says why — and this is the test that
-        // notices if that ever moves back.
-        mkdir($this->home . '/bin', 0o777, true);
-        file_put_contents($this->home . '/bin/fd', "#!/bin/sh\necho nope\n");
-        file_put_contents($this->home . '/tools/rg', "#!/bin/sh\necho nope\n");
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertSame([], $problems);
-    }
-
-    public function testBothFoldersAreReadWithTheUserFirst(): void
-    {
-        $this->write($this->home . '/tools', 'a', self::source('a'));
-        $this->write($this->project . '/.pig/tools', 'b', self::source('b'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
-
-        $this->assertSame([], $problems);
-        $this->assertSame(['a', 'b'], array_map(static fn ($one): string => $one->tool->name, $tools));
-    }
-
-    public function testFoldersAreLoadedInNameOrder(): void
-    {
-        foreach (['z', 'm', 'a'] as $name) {
-            $this->write($this->home . '/tools', $name, self::source($name));
-        }
-
-        [$tools] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame(['a', 'm', 'z'], array_map(static fn ($one): string => $one->tool->name, $tools));
-    }
-
-    public function testAFactoryMayDeclareSeveralTools(): void
-    {
-        $this->write($this->home . '/tools', 'pair', <<<'PHP'
-            <?php
-
-            use Pig\Agent\AgentToolResult;
-            use Pig\Ai\TextContent;
-            use Pig\CodingAgent\CustomTools\CustomTool;
-
-            $make = fn (string $name) => new CustomTool(
-                name: $name,
-                label: $name,
-                description: "Does {$name}.",
-                parameters: ['type' => 'object', 'properties' => []],
-                execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult([new TextContent($name)]),
-            );
-
-            return fn ($pi) => [$make('first'), $make('second')];
-            PHP);
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame([], $problems);
-        $this->assertSame(['first', 'second'], array_map(static fn ($one): string => $one->tool->name, $tools));
-    }
-
-    public function testAConfiguredPathIsLoadedToo(): void
-    {
-        $extra = $this->write($this->project, 'extra', self::source('extra'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [$extra], $this->home);
-
-        $this->assertSame([], $problems);
-        $this->assertCount(1, $tools);
-    }
-
-    public function testAConfiguredPathCopiedOutOfAFileManagerStillResolves(): void
-    {
-        // Both loaders had their own copy of a worse `Paths::resolve()`, which did not know
-        // that the space in a path copied out of Finder is U+202F. See `HookLoaderTest`.
-        $this->write($this->project, 'my tool', self::source('wc'));
-
-        [$tools, $problems] = CustomToolLoader::load(
-            $this->project,
-            [],
-            [$this->project . "/my\u{202F}tool/index.php"],
-            $this->home,
-        );
-
-        $this->assertSame([], $problems);
-        $this->assertCount(1, $tools);
-    }
-
-    // ---- what goes wrong ---------------------------------------------------------------
-
-    /** A tool that shadowed `bash` would be called in its place by a model told otherwise. */
-    public function testAToolCannotTakeABuiltInsName(): void
-    {
-        $this->write($this->home . '/tools', 'sneaky', self::source('bash'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertStringContainsString("'bash' is already taken", $problems[0]->error);
-    }
-
-    public function testTwoToolsWithOneNameLeaveTheFirstWorking(): void
-    {
-        $this->write($this->home . '/tools', 'a-first', self::source('same'));
-        $this->write($this->home . '/tools', 'b-second', self::source('same'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertCount(1, $tools);
-        $this->assertStringContainsString('a-first', $tools[0]->path);
-        $this->assertStringContainsString('b-second', $problems[0]->path);
-    }
-
-    public function testASyntaxErrorIsAComplaintAndNotACrash(): void
-    {
-        $this->write($this->home . '/tools', 'broken', '<?php return fn ( {');
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertStringContainsString('ParseError', $problems[0]->error);
-    }
-
-    public function testAFileThatReturnsSomethingElseIsAComplaint(): void
-    {
-        $this->write($this->home . '/tools', 'wrong', '<?php return 42;');
-
-        [, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertStringContainsString('must return a callable, got int', $problems[0]->error);
-    }
-
-    public function testAFactoryThatReturnsSomethingThatIsNotAToolIsAComplaint(): void
-    {
-        $this->write($this->home . '/tools', 'wrong', '<?php return fn ($pi) => "a tool, honestly";');
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertStringContainsString('must return a CustomTool', $problems[0]->error);
-    }
-
-    /** The declaration's own validation, arriving as a load complaint about the right file. */
-    public function testABadDeclarationIsReportedAgainstItsFile(): void
-    {
-        $this->write($this->home . '/tools', 'nameless', self::source('9lives'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame([], $tools);
-        $this->assertStringContainsString('nameless', $problems[0]->path);
-        $this->assertStringContainsString('cannot be a tool name', $problems[0]->error);
-    }
-
-    public function testAFileThatPrintsIsAComplaint(): void
-    {
-        $this->write($this->home . '/tools', 'chatty', '<?php echo "loading\n"; return fn ($pi) => null;');
-
-        [, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertStringContainsString('printed to standard output', $problems[0]->error);
-    }
-
-    public function testABrokenToolDoesNotStopTheOnesAroundIt(): void
-    {
-        $this->write($this->home . '/tools', 'a', self::source('a'));
-        $this->write($this->home . '/tools', 'b', '<?php return "nope";');
-        $this->write($this->home . '/tools', 'c', self::source('c'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
-
-        $this->assertSame(['a', 'c'], array_map(static fn ($one): string => $one->tool->name, $tools));
-        $this->assertCount(1, $problems);
-    }
-
-    public function testTheSameFileReachedTwiceIsOneTool(): void
-    {
-        $path = $this->write($this->home . '/tools', 'wc', self::source('wc'));
-
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [$path], $this->home);
-
-        $this->assertCount(1, $tools);
-        $this->assertSame([], $problems);
-    }
+    // ---- the factory, as an extension's -----------------------------------------------
 
     public function testTheFactoryGetsTheWorkingDirectoryAndCanRunThings(): void
     {
-        $this->write($this->home . '/tools', 'probe', <<<'PHP'
+        mkdir($this->home . '/extensions', 0o777, true);
+        file_put_contents($this->home . '/extensions/probe.php', <<<'PHP'
             <?php
 
             use Pig\Agent\AgentToolResult;
             use Pig\Ai\TextContent;
             use Pig\CodingAgent\CustomTools\CustomTool;
 
-            return function ($pi) {
-                $run = $pi->exec(['echo', 'ready']);
+            return function ($pig): void {
+                $run = $pig->exec(['echo', 'ready']);
 
-                return new CustomTool(
+                $pig->registerTool(new CustomTool(
                     name: 'probe',
                     label: 'Probe',
                     description: 'Reports what the factory saw.',
                     parameters: ['type' => 'object', 'properties' => []],
                     execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
-                        [new TextContent($pi->cwd . '|' . trim($run->stdout))],
+                        [new TextContent($pig->cwd() . '|' . trim($run->stdout))],
                     ),
-                );
+                ));
             };
             PHP);
 
-        [$tools, $problems] = CustomToolLoader::load($this->project, [], [], $this->home);
+        [$loaded, $problems] = ExtensionLoader::load($this->project, home: $this->home);
 
         $this->assertSame([], $problems);
 
-        $result = ($tools[0]->tool->execute)('1', [], null, new HookContext('.'), null);
+        $result = ($loaded[0]->api->tools()[0]->execute)('1', [], null, new ExtensionContext('.'), null);
 
         $this->assertSame($this->project . '|ready', $result->content[0]->text);
     }
@@ -395,7 +156,7 @@ final class CustomToolsTest extends TestCase
 
     public function testAWrappedToolLooksLikeAnyOtherTool(): void
     {
-        $wrapped = new WrappedCustomTool($this->tool('wc'), static fn () => new HookContext('/work'));
+        $wrapped = new WrappedCustomTool($this->tool('wc'), static fn () => new ExtensionContext('/work'));
 
         $this->assertSame('wc', $wrapped->definition()->name);
         $this->assertSame('Counts things.', $wrapped->definition()->description);
@@ -422,10 +183,10 @@ final class CustomToolsTest extends TestCase
             constrainedSampling: $strict,
         );
 
-        $wrapped = new WrappedCustomTool($tool, static fn () => new HookContext('/work'));
+        $wrapped = new WrappedCustomTool($tool, static fn () => new ExtensionContext('/work'));
 
         $this->assertSame($strict, $wrapped->definition()->constrainedSampling);
-        $this->assertNull((new WrappedCustomTool($this->tool('plain'), static fn () => new HookContext('/work')))->definition()->constrainedSampling);
+        $this->assertNull((new WrappedCustomTool($this->tool('plain'), static fn () => new ExtensionContext('/work')))->definition()->constrainedSampling);
     }
 
     public function testTheToolIsGivenTheSessionContext(): void
@@ -443,7 +204,7 @@ final class CustomToolsTest extends TestCase
             },
         );
 
-        $wrapped = new WrappedCustomTool($tool, static fn () => new HookContext('/work'));
+        $wrapped = new WrappedCustomTool($tool, static fn () => new ExtensionContext('/work'));
         $wrapped->execute('1', []);
 
         $this->assertSame('/work', $seen?->cwd);
@@ -467,7 +228,7 @@ final class CustomToolsTest extends TestCase
         );
 
         $wrapped = new WrappedCustomTool($tool, static function () use (&$cwd) {
-            return new HookContext($cwd);
+            return new ExtensionContext($cwd);
         });
 
         $wrapped->execute('1', []);
@@ -494,7 +255,7 @@ final class CustomToolsTest extends TestCase
             },
         );
 
-        $wrapped = new WrappedCustomTool($tool, static fn () => new HookContext('.'));
+        $wrapped = new WrappedCustomTool($tool, static fn () => new ExtensionContext('.'));
         $result = $wrapped->execute('call-9', ['what' => 'it'], null, static function ($partial) use (&$updates): void {
             $updates[] = $partial->content[0]->text;
         });
@@ -594,12 +355,12 @@ final class CustomToolsTest extends TestCase
     /** A guard that only covers the built-in tools is not a guard. */
     public function testAHookGuardsACustomToolToo(): void
     {
-        $api = new HookApi('.', 'guard.php');
+        $api = new ExtensionApi('.', 'guard.php');
         $api->on('tool_call', static fn ($event) => $event->toolName === 'wc'
             ? new ToolCallEventResult(block: true, reason: 'not that one')
             : null);
 
-        $hooks = new HookRunner([new LoadedHook('guard.php', 'guard.php', $api)], '.');
+        $extensionRunner = new ExtensionRunner([new LoadedExtension('guard.php', 'guard.php', $api->name, $api)], '.');
         $set = new CustomToolSet([new LoadedCustomTool('a.php', 'a.php', $this->tool('wc'))]);
 
         $agent = CodingAgent::create(
@@ -607,13 +368,13 @@ final class CustomToolsTest extends TestCase
             sys_get_temp_dir(),
             [],
             apiKey: 'test-key',
-            hooks: $hooks,
+            extensionRunner: $extensionRunner,
             customTools: $set,
         );
 
         $tool = $agent->state->tools[0];
 
-        $this->assertInstanceOf(HookedTool::class, $tool);
+        $this->assertInstanceOf(ExtensionGuardedTool::class, $tool);
 
         try {
             $tool->execute('1', []);

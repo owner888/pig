@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Web\Schedule\ScheduleTool;
 
 /**
@@ -16,15 +16,15 @@ use Pig\CodingAgent\Web\Schedule\ScheduleTool;
  * tool itself is in the core beside the scheduler it talks to (`Web\Schedule`), so this file is
  * only the registration.
  */
-return static function (ExtensionApi $pi): void {
+return static function (ExtensionApi $pig): void {
     $tool = new ScheduleTool();
 
-    $pi->registerTool(new CustomTool(
+    $pig->registerTool(new CustomTool(
         name: ScheduleTool::NAME,
         label: 'Schedule',
         description: ScheduleTool::description(),
         parameters: ScheduleTool::parameters(),
-        execute: static fn (string $id, array $params, ?Closure $onUpdate, HookContext $ctx) => $tool->execute($params, $ctx),
+        execute: static fn (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx) => $tool->execute($params, $ctx),
         promptSnippet: ScheduleTool::promptSnippet(),
         promptGuidelines: ScheduleTool::promptGuidelines(),
     ));

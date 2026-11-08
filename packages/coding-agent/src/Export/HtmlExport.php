@@ -17,7 +17,7 @@ use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Themes;
 
@@ -169,7 +169,7 @@ final class HtmlExport
             $message instanceof BashExecution => self::bash($message),
             $message instanceof CompactionSummary => self::compaction($message),
             $message instanceof BranchSummary => self::branch($message),
-            $message instanceof HookMessage => self::hook($message),
+            $message instanceof CustomMessage => self::hook($message),
             default => '',
         };
     }
@@ -306,14 +306,14 @@ final class HtmlExport
     /**
      * A hook's message, labelled as one.
      *
-     * Not drawn as a user message, for the reason `HookMessageComponent` gives: it reaches
+     * Not drawn as a user message, for the reason `CustomMessageComponent` gives: it reaches
      * the model as one, and showing it as one puts words in the person's mouth.
      *
      * `display: false` is honoured here too. A hook's private note to the model is not part
      * of what a person would recognise as their conversation, and an export is something
      * they send to somebody else.
      */
-    private static function hook(HookMessage $message): string
+    private static function hook(CustomMessage $message): string
     {
         if (!$message->display || trim($message->toText()) === '') {
             return '';

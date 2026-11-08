@@ -77,7 +77,7 @@ The same sweep over the other sixteen files — `agent-session-*`, `compaction`,
 `tools`, `skills`, `args`, `model-resolver`, `fuzzy`, `truncate-to-width`, `rpc`. No bug, one real
 coverage gap, and one divergence in pig's favour; the value of writing it down is the *evidence*, so:
 
-**The gap: `HookRunner::ask()`'s `try` had no test at all.** Removing it broke **nothing** in 2,433
+**The gap: `ExtensionRunner::ask()`'s `try` had no test at all.** Removing it broke **nothing** in 2,433
 cases. Four events are *decisive* — `session_before_compact`, `session_before_tree`,
 `session_before_switch`, `before_agent_start` — and they go through `ask()`, which is a second walk
 over the handlers with its own `try`, beside `emit()`'s. Only `emit()`'s was pinned
@@ -86,7 +86,7 @@ over the handlers with its own `try`, beside `emit()`'s. Only `emit()`'s was pin
 `goTo()` or `switchTo()` instead of letting the default happen — and upstream's suite is what names
 the rule: *"should continue with default compaction if hook throws error"*. **The first shape from the
 index, on a `try` rather than on a rule**: two methods over the same handlers, one of them tested.
-`HookRunnerTest::testAThrowingHandlerOnADecisiveEventIsReportedAndTheNextOneStillAnswers` and
+`ExtensionRunnerTest::testAThrowingHandlerOnADecisiveEventIsReportedAndTheNextOneStillAnswers` and
 `testADecisiveEventWhoseOnlyHandlerThrowsAnswersNothing` are the two ends.
 
 **The divergence: an empty `--model` is refused here and is a lottery upstream.** Its own test says so
@@ -330,7 +330,7 @@ Nothing is written anywhere: `--incognito` keeps the run out of `~/.pig/agent/se
 logs, and the temporary directory is removed unless `--keep`. Results go to standard output, as a
 line per case or as one JSON document with `--json`; a baseline is a redirect. Options after `--`
 go to `bin/pig`, so `php scripts/eval.php -- --model google/gemini-2.5-pro` compares models and
-`-- --no-hooks` runs without the machine's extensions (a permission gate under `NoUi` denies every
+`-- --no-extensions` runs without the machine's extensions (a permission gate under `NoUi` denies every
 tool call, which looks like the model refusing to work).
 
 ## How much of it has been read against upstream
