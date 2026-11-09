@@ -229,13 +229,34 @@ final class FooterComponent implements Component
             : 'detached';
     }
 
+    /**
+     * `.git/HEAD`, walking up from the cwd — upstream's `findGitPaths()`. `.git` is a directory
+     * in a checkout and a **file** in a worktree or a submodule, one line `gitdir: <path>` naming
+     * the directory that has the HEAD (relative to the file's directory when it is relative); a
+     * worktree's branch read from the main checkout's HEAD was the main checkout's branch.
+     */
     private function headFile(): ?string
     {
         $directory = $this->cwd;
 
         while (true) {
-            if (is_file($directory . '/.git/HEAD')) {
-                return $directory . '/.git/HEAD';
+            $git = $directory . '/.git';
+
+            if (is_dir($git)) {
+                return is_file($git . '/HEAD') ? $git . '/HEAD' : null;
+            }
+
+            if (is_file($git)) {
+                $content = trim((string) file_get_contents($git));
+
+                if (!str_starts_with($content, 'gitdir: ')) {
+                    return null;
+                }
+
+                $gitDir = trim(substr($content, 8));
+                $gitDir = str_starts_with($gitDir, '/') ? $gitDir : $directory . '/' . $gitDir;
+
+                return is_file($gitDir . '/HEAD') ? $gitDir . '/HEAD' : null;
             }
 
             $parent = dirname($directory);

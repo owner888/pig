@@ -370,23 +370,6 @@ return static function (ExtensionApi $pig): void {
 
         /** The usage of this script's `$models->*` calls and of the tools it called, for the result. */
         $modelUsage = null;
-        // Upstream's `combineUsage()`: the counts and the money added up.
-        $combineUsage = static fn (Usage $a, Usage $b): Usage => new Usage(
-            $a->input + $b->input,
-            $a->output + $b->output,
-            $a->cacheRead + $b->cacheRead,
-            $a->cacheWrite + $b->cacheWrite,
-            $a->totalTokens + $b->totalTokens,
-            new \Pig\Ai\Cost(
-                $a->cost->input + $b->cost->input,
-                $a->cost->output + $b->cost->output,
-                $a->cost->cacheRead + $b->cost->cacheRead,
-                $a->cost->cacheWrite + $b->cost->cacheWrite,
-                $a->cost->total + $b->cost->total,
-            ),
-            $a->reasoning === null && $b->reasoning === null ? null : ($a->reasoning ?? 0) + ($b->reasoning ?? 0),
-            $a->cacheWrite1h === null && $b->cacheWrite1h === null ? null : ($a->cacheWrite1h ?? 0) + ($b->cacheWrite1h ?? 0),
-        );
         $sandboxTools = [];
         $samples = [];
 
@@ -399,7 +382,7 @@ return static function (ExtensionApi $pig): void {
         // `tool_execution_*` events with `parentToolCallId` for the hooks, the RPC port and the
         // TUI. Without a session (a bare `execute` in a test) the hooked tool is called as it is.
         foreach ($agentTools($ctx) as $name => $one) {
-            $sandboxTools[] = ['name' => $name, 'description' => $samples[$name], 'execute' => static function (array $args, AbortSignal $callSignal) use ($name, $one, $ctx, $toolCallId, &$calls, $record, $publish, $scriptValue, $truncate, $errorPreviewChars, $textOf, &$modelUsage, $combineUsage): mixed {
+            $sandboxTools[] = ['name' => $name, 'description' => $samples[$name], 'execute' => static function (array $args, AbortSignal $callSignal) use ($name, $one, $ctx, $toolCallId, &$calls, $record, $publish, $scriptValue, $truncate, $errorPreviewChars, $textOf, &$modelUsage): mixed {
                 $index = $record($name, $args);
                 $at = microtime(true);
                 $isError = false;
@@ -418,11 +401,9 @@ return static function (ExtensionApi $pig): void {
                     }
                 }
 
-                // What the nested tool spent on models is this call's to bill, as upstream's
-                // recorder sums it onto the parent's result.
-                if ($result->usage !== null) {
-                    $modelUsage = $modelUsage === null ? $result->usage : $combineUsage($modelUsage, $result->usage);
-                }
+                // What the nested tool spent is not this result's: the session's recorder sums it
+                // onto the codemode call's result *message*, as upstream's does, so a script's
+                // `models.*` calls are all this result bills.
 
                 $calls[$index]['durationMs'] = (microtime(true) - $at) * 1000;
                 $calls[$index]['status'] = $isError ? ($callSignal->aborted() ? 'cancelled' : 'error') : 'ok';
@@ -677,7 +658,7 @@ return static function (ExtensionApi $pig): void {
          * a nested call row that shows only the model, never a prompt or image data.
          */
         $runModelCall = function (string $name, ModelType $type, array $args, Closure $checkContext, Closure $run) use (
-            $isRecord, $describeValue, $withArticle, $modelTypes, $toolCallId, &$calls, $publish, $truncate, $errorPreviewChars, $limit, &$modelUsage, $combineUsage, &$modelCallCount
+            $isRecord, $describeValue, $withArticle, $modelTypes, $toolCallId, &$calls, $publish, $truncate, $errorPreviewChars, $limit, &$modelUsage, &$modelCallCount
         ): array {
             [$model, $context] = [$args[0] ?? null, $args[1] ?? null];
             $listHint = "List the {$type->value} models you can use with \$models->getAvailableOfType(\"{$type->value}\").";
@@ -726,7 +707,7 @@ return static function (ExtensionApi $pig): void {
 
             if ($result->usage !== null) {
                 $calls[$index]['cost'] = $result->usage->cost->total;
-                $modelUsage = $modelUsage === null ? $result->usage : $combineUsage($modelUsage, $result->usage);
+                $modelUsage = $modelUsage === null ? $result->usage : $modelUsage->plus($result->usage);
             }
 
             $publish();
@@ -1125,7 +1106,17 @@ return static function (ExtensionApi $pig): void {
     // redraws is the running one.
     $scriptHighlighter = new CodeHighlighter();
 
-    $renderCall = static function (array $args, Theme $theme, ?ToolRenderResultOptions $options = null) use ($codePreviewLines, $expandHint, $scriptHighlighter): Text {
+    // A collapsed preview is cut by *visual* lines — upstream's `VisualLinePreview`, `keep: "start"`
+    // — because a script's output is often one long JSON line, which a logical-line cut would
+    // let wrap across the whole screen. `BashOutputComponent` is that preview here.
+    $preview = static fn (string $text, int $rows, Theme $theme): \Pig\CodingAgent\Interactive\BashOutputComponent => (static function () use ($text, $rows, $theme, $expandHint): \Pig\CodingAgent\Interactive\BashOutputComponent {
+        $component = new \Pig\CodingAgent\Interactive\BashOutputComponent($rows, static fn (int $hidden): string => $expandHint($theme, $hidden, 'lines'), keep: 'start');
+        $component->setText($text);
+
+        return $component;
+    })();
+
+    $renderCall = static function (array $args, Theme $theme, ?ToolRenderResultOptions $options = null) use ($codePreviewLines, $scriptHighlighter, $preview): \Pig\Tui\Component {
         $code = $args['code'] ?? '';
         $title = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
 
@@ -1133,23 +1124,20 @@ return static function (ExtensionApi $pig): void {
             return new Text($title . ' ' . $theme->fg('error', '[invalid arg]'), 0, 0);
         }
 
-        $text = $title;
+        $component = new \Pig\Tui\Container();
+        $component->addChild(new Text($title, 0, 0));
 
         if ($code !== '') {
-            $lines = $scriptHighlighter->highlight(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php');
-            $shown = ($options?->expanded ?? false) ? $lines : array_slice($lines, 0, $codePreviewLines);
-            $text .= "\n" . implode("\n", $shown);
-
-            if (count($shown) < count($lines)) {
-                $text .= "\n" . $expandHint($theme, count($lines) - count($shown), 'lines');
-            }
+            $highlighted = implode("\n", $scriptHighlighter->highlight(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php'));
+            $component->addChild(($options?->expanded ?? false) ? new Text($highlighted, 0, 0) : $preview($highlighted, $codePreviewLines, $theme));
         }
 
-        return new Text($text, 0, 0);
+        return $component;
     };
 
-    $renderResult = static function (AgentToolResult $result, ToolRenderResultOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines, $expandHint, $expandKey, $formatCost): Text {
+    $renderResult = static function (AgentToolResult $result, ToolRenderResultOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines, $expandKey, $formatCost, $preview): \Pig\Tui\Component {
         // Each part with a blank line above it, as upstream's `Spacer(1)` before each.
+        $component = new \Pig\Tui\Container();
         $sections = [];
         $calls = is_array($result->details['calls'] ?? null) ? $result->details['calls'] : [];
 
@@ -1212,23 +1200,21 @@ return static function (ExtensionApi $pig): void {
             $output = trim(implode("\n", $texts));
 
             if ($output !== '') {
-                $lines = explode("\n", str_replace("\t", '    ', $output));
-                $shown = $options->expanded ? $lines : array_slice($lines, 0, $outputPreviewLines);
                 $colour = $options->isError ? 'error' : 'toolOutput';
-                $section = implode("\n", array_map(static fn (string $l): string => $theme->fg($colour, $l), $shown));
+                $styled = implode("\n", array_map(static fn (string $l): string => $theme->fg($colour, $l), explode("\n", str_replace("\t", '    ', $output))));
 
-                if (count($shown) < count($lines)) {
-                    $section .= "\n" . $expandHint($theme, count($lines) - count($shown), 'lines');
+                if ($options->expanded) {
+                    $sections[] = $styled;
+                } else {
+                    // Limit wrapped lines, not logical ones: script output is often one long JSON line.
+                    $sections[] = $preview($styled, $outputPreviewLines, $theme);
+                    // The collapsed preview hides the truncation notice at the end, so name the file here.
+                    $fullOutputPath = $result->details['fullOutputPath'] ?? null;
+
+                    if (is_string($fullOutputPath) && $fullOutputPath !== '') {
+                        $sections[] = [$theme->fg('muted', "Full output: {$fullOutputPath}")];
+                    }
                 }
-
-                // The collapsed preview hides the truncation notice at the end, so name the file here.
-                $fullOutputPath = $result->details['fullOutputPath'] ?? null;
-
-                if (!$options->expanded && is_string($fullOutputPath) && $fullOutputPath !== '') {
-                    $section .= "\n" . $theme->fg('muted', "Full output: {$fullOutputPath}");
-                }
-
-                $sections[] = $section;
             }
         }
 
@@ -1236,7 +1222,21 @@ return static function (ExtensionApi $pig): void {
             $sections[] = $theme->fg('muted', $options->timer);
         }
 
-        return new Text($sections === [] ? '' : "\n" . implode("\n\n", $sections), 0, 0);
+        foreach ($sections as $section) {
+            // A plain string is a part of its own, with the blank line above it; a one-element list is
+            // a line that follows the part before it without one (upstream adds "Full output" straight
+            // under the preview).
+            if (is_array($section)) {
+                $component->addChild(new Text($section[0], 0, 0));
+
+                continue;
+            }
+
+            $component->addChild(new \Pig\Tui\Components\Spacer(1));
+            $component->addChild($section instanceof \Pig\Tui\Component ? $section : new Text($section, 0, 0));
+        }
+
+        return $component;
     };
 
     // ---- registering ----------------------------------------------------------------------------

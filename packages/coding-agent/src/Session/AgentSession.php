@@ -371,6 +371,9 @@ final class AgentSession
             }
         };
         $this->agent->maxRetryDelayMs = $this->settings?->providerRetrySettings()['maxRetryDelayMs'] ?? 60_000;
+        // The record of the calls a tool made through `executeNestedTool()` and their usage, for
+        // the loop to put on the tool's result message — upstream's `message_start` handler.
+        $this->agent->nestedCallsOf = fn (string $toolCallId): ?array => $this->takeNestedCalls($toolCallId);
 
         // Upstream's `convertToLlmWithBlockImages`, "defense-in-depth": with `images.blockImages` on,
         // every picture in a user message or a tool result becomes the line "Image reading is
@@ -1168,9 +1171,10 @@ final class AgentSession
             $this->toolProgress->update($event->toolCallId, $event->partialResult);
         }
 
-        // The nested-call counters are the run's — upstream's `_nestedToolCalls.clear()`.
+        // The nested-call counters and recorders are the run's — upstream's `_nestedToolCalls.clear()`.
         if ($event instanceof AgentEndEvent) {
             $this->nestedCalls = [];
+            $this->nestedRecorders = [];
         }
 
         // Upstream emits to extensions first and then, to its own listeners, `agent_end` with
@@ -1550,8 +1554,9 @@ final class AgentSession
      * active tool, for the same reason: a tool an extension switched off is off.
      *
      * Upstream records such a call on its caller's result as `nestedCalls` with a
-     * `<parent>/<n>` id; pig has no parent to hang it on when the caller is a command or an
-     * event handler, so it is not recorded, and the id says who made it.
+     * `<parent>/<n>` id; a call from a command or an event handler has no parent to hang it on,
+     * so this one is not recorded (`executeNestedTool()` is the recorded path), and the id says
+     * who made it.
      *
      * @param array<string, mixed> $arguments
      * @throws AgentError when no active tool has that name; whatever the tool throws otherwise
@@ -1574,6 +1579,30 @@ final class AgentSession
 
     /** @var array<string, int> how many nested calls each tool call has made, by its id */
     private array $nestedCalls = [];
+
+    /**
+     * The recorder of each model-issued call's nested calls, by the call's id — and, while a nested
+     * call runs, by its id too, so a call below a nested call records on the same recorder.
+     * Upstream's `NestedToolCallRunner.scopes`.
+     *
+     * @var array<string, NestedCallRecorder>
+     */
+    private array $nestedRecorders = [];
+
+    /**
+     * Remove and return the record of the nested calls a model-issued call made and their summed
+     * usage — upstream's `takeRecord()`, asked by the loop as it builds the tool result message
+     * (`Agent::$nestedCallsOf`). Null when the call made none.
+     *
+     * @return ?array{calls: ?\Pig\Ai\NestedToolCalls, usage: ?\Pig\Ai\Usage}
+     */
+    public function takeNestedCalls(string $toolCallId): ?array
+    {
+        $recorder = $this->nestedRecorders[$toolCallId] ?? null;
+        unset($this->nestedRecorders[$toolCallId]);
+
+        return $recorder === null ? null : ['calls' => $recorder->snapshot(), 'usage' => $recorder->totalUsage()];
+    }
 
     /**
      * The id of the next call the tool call `$parentToolCallId` makes: `<parent>/<n>`, counted
@@ -1600,8 +1629,9 @@ final class AgentSession
      * caller can show the call as running before this returns.
      *
      * Never throws for a failing tool: the failure comes back as an error result, the way the
-     * loop hands one to the model. What upstream also keeps — a bounded `nestedCalls` record
-     * on the tool result message — pig does not; the codemode tool's `details` lists the calls.
+     * loop hands one to the model. The call is recorded on the parent's `NestedCallRecorder`, and
+     * what it spent is summed there: both reach the parent's tool result message through
+     * `takeNestedCalls()` when the loop builds it, as upstream's `nestedCalls` and `usage` do.
      *
      * @param array<string, mixed>                $arguments
      * @param ?Closure(AgentToolResult): void     $onUpdate
@@ -1616,6 +1646,11 @@ final class AgentSession
         ?Closure $onUpdate = null,
     ): array {
         $name = $tool->definition()->name;
+        // The parent's recorder, or a new one for a parent seen for the first time; the nested call
+        // is filed under its own id too while it runs, for the calls it makes itself.
+        $recorder = $this->nestedRecorders[$parentToolCallId] ??= new NestedCallRecorder();
+        $record = $recorder->start(new ToolCall($toolCallId, $name, $arguments));
+        $this->nestedRecorders[$toolCallId] = $recorder;
         $this->onAgentEvent(new ToolExecutionStartEvent($toolCallId, $name, $arguments, $parentToolCallId));
         $isError = false;
         $startedAt = null;
@@ -1645,7 +1680,15 @@ final class AgentSession
             $isError = true;
         }
 
-        unset($this->nestedCalls[$toolCallId]);
+        unset($this->nestedCalls[$toolCallId], $this->nestedRecorders[$toolCallId]);
+        $recorder->finish($record, $isError, implode("\n", array_map(
+            static fn (TextContent $block): string => $block->text,
+            array_filter($result->content, static fn (mixed $block): bool => $block instanceof TextContent),
+        )));
+        // Nested results are not persisted, so their usage is only counted through the recorder.
+        if ($result->usage !== null) {
+            $recorder->addUsage($result->usage);
+        }
         $this->onAgentEvent(new ToolExecutionEndEvent($toolCallId, $name, $result, $isError, $durationMs, $parentToolCallId));
 
         return [$result, $isError];

@@ -95,11 +95,11 @@ final class FooterTest extends TestCase
     }
 
     /** @return list<string> */
-    private function lines(AgentSession $session): array
+    private function lines(AgentSession $session, ?string $cwd = null): array
     {
         return array_map(
             Ansi::strip(...),
-            (new FooterComponent($session, $this->cwd))->render(self::WIDTH),
+            (new FooterComponent($session, $cwd ?? $this->cwd))->render(self::WIDTH),
         );
     }
 
@@ -126,6 +126,30 @@ final class FooterTest extends TestCase
         file_put_contents($this->cwd . '/.git/HEAD', "9fceb02d0ae598e95dc970b74767f19372d61af8\n");
 
         $this->assertStringContainsString('(detached)', $this->lines($this->session())[0]);
+    }
+
+    public function testAWorktreesBranchIsItsOwnNotTheMainCheckouts(): void
+    {
+        // Upstream's `findGitPaths()`: in a worktree `.git` is a file, `gitdir: <path>`, and the
+        // HEAD is in that directory — the main checkout's HEAD, which a walk up would also find,
+        // is on another branch. The path is relative to the worktree, as `git worktree add` writes it.
+        $main = $this->cwd . '/main-checkout';
+        mkdir($main . '/.git/worktrees/wt', 0o755, true);
+        file_put_contents($main . '/.git/HEAD', "ref: refs/heads/main\n");
+        file_put_contents($main . '/.git/worktrees/wt/HEAD', "ref: refs/heads/feature/wt\n");
+        mkdir($this->cwd . '/wt', 0o755, true);
+        file_put_contents($this->cwd . '/wt/.git', "gitdir: ../main-checkout/.git/worktrees/wt\n");
+
+        try {
+            $this->assertStringContainsString('(feature/wt)', $this->lines($this->session(), $this->cwd . '/wt')[0]);
+        } finally {
+            foreach ([$this->cwd . '/wt/.git', $main . '/.git/worktrees/wt/HEAD', $main . '/.git/HEAD'] as $file) {
+                unlink($file);
+            }
+            foreach ([$this->cwd . '/wt', $main . '/.git/worktrees/wt', $main . '/.git/worktrees', $main . '/.git', $main] as $dir) {
+                rmdir($dir);
+            }
+        }
     }
 
     public function testOutsideARepositoryThereIsJustThePath(): void

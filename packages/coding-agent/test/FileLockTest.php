@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\FileLock;
+use Pig\CodingAgent\FileLockBusyError;
 use Pig\Test\AssertsThrows;
 use RuntimeException;
 
@@ -81,6 +82,10 @@ final class FileLockTest extends TestCase
 
         $error = $this->assertThrows(RuntimeException::class, static fn (): mixed => FileLock::hold($lock, static fn (): null => null, 0.3));
         $this->assertStringContainsString($lock, $error->getMessage());
+        // Its own class, so a caller can step around a busy lock without catching a broken one.
+        $this->assertInstanceOf(FileLockBusyError::class, $error);
+        $this->assertSame($lock, $error->path);
+        $this->assertSame(0.3, $error->waited);
         proc_close($held);
     }
 

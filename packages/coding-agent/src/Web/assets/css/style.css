@@ -1114,6 +1114,14 @@
     }
 
     /* Images grid in message */
+    /* The staged files of a sent message: the composer's tiles, at the composer's size, in a row. */
+    .msg-files-grid {
+      --tile: 120px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
     .msg-images-grid {
       display: flex;
       flex-wrap: wrap;

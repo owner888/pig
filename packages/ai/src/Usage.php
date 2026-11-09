@@ -29,6 +29,30 @@ final readonly class Usage
     }
 
     /**
+     * This and another added — upstream's `combineUsage()` (`usage-totals.ts`): the counts and the
+     * money summed, the optional splits (`reasoning`, `cacheWrite1h`) kept when either has them.
+     */
+    public function plus(self $other): self
+    {
+        return new self(
+            $this->input + $other->input,
+            $this->output + $other->output,
+            $this->cacheRead + $other->cacheRead,
+            $this->cacheWrite + $other->cacheWrite,
+            $this->totalTokens + $other->totalTokens,
+            new Cost(
+                $this->cost->input + $other->cost->input,
+                $this->cost->output + $other->cost->output,
+                $this->cost->cacheRead + $other->cost->cacheRead,
+                $this->cost->cacheWrite + $other->cost->cacheWrite,
+                $this->cost->total + $other->cost->total,
+            ),
+            $this->reasoning === null && $other->reasoning === null ? null : ($this->reasoning ?? 0) + ($other->reasoning ?? 0),
+            $this->cacheWrite1h === null && $other->cacheWrite1h === null ? null : ($this->cacheWrite1h ?? 0) + ($other->cacheWrite1h ?? 0),
+        );
+    }
+
+    /**
      * The same counts, priced.
      *
      * Upstream's calculateCost() writes into the usage it is given; this returns a new one,

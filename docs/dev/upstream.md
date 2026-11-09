@@ -87,18 +87,62 @@ Listed so the next audit does not raise them again.
 
 ### Upstream classes with no class of that name here
 
-From upstream's `export class` lines. Some are ported under another name (noted), most are not
-ported or are done another way; the developer marks which is which.
+From upstream's `export class` lines, sorted by what became of each. The first list is the
+one that matters; the other two are closed.
 
-- **ai**: `InMemoryCredentialStore`, `InMemoryModelsStore`, `ModelsError`, `ToolCallArgumentsStream`
-- **codemode**: `CodemodeSandboxBase`, `CodemodeSandboxDurableObject`, `CodemodeSourceError`, `InlineCodemodeSandbox`, `RemoteCodemodeSandbox` (pig has one `Sandbox`)
-- **coding-agent**, storage and runtime: `AgentSessionRuntime`, `AuthStorage`, `FileAuthStorageBackend`, `InMemoryAuthStorageBackend`, `ReadOnlyAuthStorage`, `RuntimeCredentials`, `CredentialSynchronizationError`, `FileModelsStore`, `InMemoryCodingAgentModelsStore`, `ModelConfig`, `ModelRuntime` (see `VirtualModelRegistry` above), `SettingsManager`, `FileSettingsStorage`, `InMemorySettingsStorage`, `ProjectTrustStore`, `DefaultPackageManager`, `DefaultResourceLoader`, `FooterDataProvider`, `NestedCallRecorder`, `NestedToolCallRunner`, `OutputAccumulator`, `Bm25Ranker`, `HuggingFaceClient`, `LlamaClient`, `McpServerConnection`, `McpServerLog`, `McpOAuthCredentialStore`, `SessionImportFileNotFoundError`
-- **coding-agent**, TUI: `SessionSelectorComponent` (pig: `SessionPicker`, folded with `SessionList`), `ModelSelectorComponent`, `ThemeSelectorComponent`, `ThinkingSelectorComponent`, `TreeSelectorComponent`, `TrustSelectorComponent`, `UserMessageSelectorComponent`, `SettingsSelectorComponent`, `ShowImagesSelectorComponent`, `ExtensionSelectorComponent`, `ExtensionEditorComponent`, `ExtensionInputComponent`, `LoginDialogComponent`, `AuthUrlComponent`, `BranchSummaryMessageComponent`, `CompactionSummaryMessageComponent`, `EarendilAnnouncementComponent`, `EasterEgg3dAnimation`, `McpManagerView`, `VisualLinePreview`, `CountdownTimer`, `StatusIndicator`, `IdleStatus`, `WorkingStatusIndicator`, `RetryStatusIndicator`, `CompactionStatusIndicator`, `BranchSummaryStatusIndicator`, `SelectSubmenu` (see `SettingsSubmenu` above), `SteppedSubmenu`, `DynamicBorder`
-- **mcp**: `JsonRpcLineReader`, `McpRefreshLockBusyError`, `McpSignInCancelledError`, `PipeTransport`
-- **tui**: `StdinBuffer` (see the program status note above)
+**Not ported** — what is left after the audit's first list was worked through (five of its eight
+rows turned out to be ported under another name and have moved to the second table, with what was
+added to close the gap each had): the three that remain are drawing, and left as they are on purpose
+for now.
+
+| upstream | what it is | note |
+|---|---|---|
+| `WorkingStatusIndicator`, `IdleStatus`, `CompactionStatusIndicator`, `BranchSummaryStatusIndicator` (`status-indicator.ts`) | the family of status lines under the editor, one class each | `InteractiveMode` draws retry, compaction and summary status inline; `Loader` is the spinner only |
+| `EasterEgg3dAnimation` | the 3D logo and Armin animations | `/arminsayshi` here says hi in text |
+| `EarendilAnnouncementComponent` | upstream's one-time announcement banner | nothing to announce here; listed so it is not mistaken for a gap |
+
+**Ported under another name, or folded into something** — closed:
+
+| upstream | here |
+|---|---|
+| `AuthStorage`, `FileAuthStorageBackend`, `InMemoryAuthStorageBackend`, `ReadOnlyAuthStorage`, `RuntimeCredentials` | `Auth` (one class; the backends are its constructor's choice, the run-time overlay its `$runtime` table — `setRuntimeApiKey()` / `removeRuntimeApiKey()` / `hasRuntimeApiKey()`, the last two added after the audit, which had taken the overlay for missing) |
+| `InMemoryCredentialStore` (`ai/src/auth/credential-store.ts`) | `Auth` again — pig's `Pig\Ai` has no store of its own, the coding agent's is injected |
+| `AgentSessionRuntime`, `SessionImportFileNotFoundError` | `CodingAgent::start()` and `StartedSession`; a missing import file is `MissingSessionCwdError` / an `AgentError` |
+| `ModelConfig` (`core/model-config.ts`) | `CustomModels` |
+| `FooterDataProvider` | `Interactive\FooterComponent`, which reads `.git/HEAD` itself (no `git` process per frame); its `findGitPaths()` — `.git` as a worktree's or submodule's `gitdir:` file — was added after the audit, which had the branch read down as a gap |
+| `ModelRuntime`, `CredentialSynchronizationError` | `VirtualModelRegistry` (the virtual-model half) and `ModelResolver`; the synchronization error has no counterpart because `Auth` writes synchronously |
+| `FileModelsStore`, `InMemoryCodingAgentModelsStore`, `InMemoryModelsStore` | `ModelRefresh` (its cache file) |
+| `ModelsError` | `Models` throws `ProviderError` / `InvalidArgumentException` with upstream's messages |
+| `SettingsManager`, `FileSettingsStorage`, `InMemorySettingsStorage` | `Settings` |
+| `ProjectTrustStore` | `ProjectTrust` |
+| `DefaultPackageManager` | `Packages\PackageManager` |
+| `DefaultResourceLoader` | `CodingAgent` + `Prompt\SystemPromptFiles` + `Extensions\ExtensionDiscovery` |
+| `NestedToolCallRunner`, `NestedCallRecorder` | `AgentSession::executeNestedTool()` and `Session\NestedCallRecorder` (ported after the audit) |
+| `OutputAccumulator` | `Tools\Run` |
+| `VisualLinePreview`, `truncateToVisualLines()` | `Interactive\BashOutputComponent` — the audit took it for bash-only; it is the shared visual-row preview, with `keep: 'start'` added after the audit so `pig-codemode`'s collapsed script and output previews cut by rows as upstream's do (they cut by logical lines before) |
+| `ToolCallArgumentsStream` | `Providers\AssistantMessageBuilder` over `StreamingJsonParser` |
+| `Bm25Ranker` | `Pig\Codemode\ToolSearch` (used by `pig-tool-search`) |
+| `HuggingFaceClient`, `LlamaClient` | `pig-llama`'s `HuggingFaceSearch` and `LlamaClient` |
+| `McpServerConnection`, `McpServerLog`, `McpSignInCancelledError`, `McpManagerView`, `McpOAuthCredentialStore`, `McpRefreshLockBusyError` | `pig-mcp`'s `ServerConnection`, `McpServerLog`, `McpSignInCancelledError`, `McpManagerView`, `McpOauth` (`mcp-auth.json`, its refresh lock is `FileLock`, which the audit had missed), and `Pig\Mcp\Oauth\McpRefreshLockBusyError` (added after the audit: a busy lock was a generic `RuntimeException`, and a sign-in did not take the lock at all) |
+| `JsonRpcLineReader` | inside `Transports\StdioTransport` |
+| `StdinBuffer` | inside `ProcessTerminal` (see the program status note above) |
+| `SteppedSubmenu` | `Interactive\ModelThinkingSubmenu` |
+| `DynamicBorder` | `Components\Rule` |
+| `StatusIndicator`, `RetryStatusIndicator`, `CountdownTimer` | `Components\Loader`, and `InteractiveMode` / `TerminalUi` inline |
+| `LoginDialogComponent`, `AuthUrlComponent` | `InteractiveMode`'s sign-in flow, inline |
+| `ExtensionEditorComponent`, `ExtensionInputComponent` | `ExtensionUi::editor()` / `input()` |
+| the `*SelectorComponent`s (`Session`, `Model`, `Theme`, `Thinking`, `Tree`, `Trust`, `UserMessage`, `Settings`, `ShowImages`, `Extension`, `Config`, `ScopedModels`), `CustomEntryComponent`, `BranchSummaryMessageComponent`, `CompactionSummaryMessageComponent` | pig's selectors and message components without the `Component` suffix (`SessionPicker`, `ConfigSelector`, `ScopedModelsSelector`, `TrustPrompt`, `StartupSelector`, …) |
+
+**Not applicable** — Node, Cloudflare or a platform pig does not run on; closed:
+
+- `CodemodeSandboxBase`, `InlineCodemodeSandbox`, `RemoteCodemodeSandbox`, `CodemodeSandboxDurableObject` — upstream runs scripts in a V8 isolate, inline or in a Durable Object; pig's one `CodemodeSandbox` is a `php -n` child, there is no second runtime to choose
+- `CodemodeSourceError` — upstream's compile error for a TypeScript script; pig's `Source` runs PHP and reports PHP's own parse errors
+- `PipeTransport` — an MCP transport over `pi-env`'s `RemoteProcess`, which has no counterpart here
 
 How the audit was run, so it can be run again: collect every `class`/`interface`/`enum` under
-`packages/*/src` with the upstream names its docblock quotes as ``Upstream's `X` ``; collect
+`packages/*/src` **and `extensions/`** (the first pass left the extensions out and listed four MCP
+and llama classes as missing that `pig-mcp` and `pig-llama` have by name) with the upstream names
+its docblock quotes as ``Upstream's `X` ``; collect
 upstream's `export (class|interface|enum|type) X` under its `packages/{ai,agent,coding-agent,tui,mcp,codemode}/src`;
 a pig class whose docblock names an upstream type that exists, is not its own name and is not
 another pig class is a row of the first table; an upstream `export class` with no pig class of

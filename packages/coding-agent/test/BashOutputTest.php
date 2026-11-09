@@ -84,6 +84,31 @@ final class BashOutputTest extends TestCase
         $this->assertStringContainsString('earlier lines', $joined);
     }
 
+    public function testTheHeadIsKeptWhenAskedWithTheNoteUnderItAndCountedInRows(): void
+    {
+        // Upstream's `VisualLinePreview` with `keep: "start"`: a script's result or a tool's output
+        // starts with what matters. The note goes under what was kept, and it counts rows, not
+        // lines — one 55-column line at width 22 is three rows, so "2 more" for the two logical
+        // lines past the budget would be wrong by four.
+        $component = new BashOutputComponent(2, static fn (int $dropped): string => "... ({$dropped} more lines)", keep: 'start');
+        $component->setText("first\nsecond\n" . str_repeat('a', 55) . "\n" . str_repeat('b', 55));
+
+        $lines = array_map(static fn (string $line): string => trim(Ansi::strip($line)), $component->render(22));
+
+        $this->assertSame(['first', 'second', '... (6 more lines)'], $lines);
+
+        // A head whose first line alone wraps past the budget is cut, and the cut rows counted.
+        $component = new BashOutputComponent(2, static fn (int $dropped): string => "... ({$dropped} more lines)", keep: 'start');
+        $component->setText(str_repeat('x', 50) . "\nlast");
+        $lines = array_map(static fn (string $line): string => trim(Ansi::strip($line)), $component->render(22));
+        $this->assertSame([str_repeat('x', 22), str_repeat('x', 22), '... (2 more lines)'], $lines);
+
+        // Nothing dropped, nothing noted.
+        $component = new BashOutputComponent(5, static fn (int $dropped): string => "... ({$dropped} more lines)", keep: 'start');
+        $component->setText("one\ntwo");
+        $this->assertSame(['one', 'two'], array_map(static fn (string $line): string => trim(Ansi::strip($line)), $component->render(22)));
+    }
+
     // ---- what a finished command costs to keep on screen ------------------------------
 
     public function testAFinishedCommandIsNotWrappedAgainOnEveryFrame(): void

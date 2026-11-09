@@ -82,7 +82,7 @@ function appendErrorMessage(errorText) { const block = new Element('div'); block
 const app = fs.readFileSync(`${root}/app.js`, 'utf8');
 // The page's own user-message renderer, skill block included — a stub here would be a second
 // answer to what a user message looks like, which is the fork this test exists to prevent.
-const userStart = app.indexOf('    const SKILL_BLOCK');
+const userStart = app.indexOf('    // ---- files: kinds, tiles, staged lines'); // the file tiles, then the user message
 const userEnd = app.indexOf('    function ensureAssistantBlock', userStart);
 assert.notEqual(userStart, -1);
 assert.notEqual(userEnd, -1);

@@ -54,13 +54,18 @@ final class BashOutputComponent implements Component
     private ?int $cachedWidth = null;
 
     /**
-     * @param Closure(int): string|null $note drawn above when rows were dropped
+     * @param Closure(int): string|null $note drawn above the kept tail, or below the kept head,
+     *        when rows were dropped
+     * @param 'start'|'end' $keep which visual rows to keep — upstream's `VisualLinePreview`
+     *        `keep`: the tail (a command's output says what happened at the end) or the head (a
+     *        script's result, a tool's output, which start with what matters)
      */
     public function __construct(
         private int $rows,
         private readonly ?Closure $note = null,
         /** Columns left blank on either side — upstream's `outputPad` on `truncateToVisualLines()`. */
         private readonly int $paddingX = 0,
+        private readonly string $keep = 'end',
     ) {
     }
 
@@ -130,6 +135,10 @@ final class BashOutputComponent implements Component
     /** @return list<string> */
     private function lines(int $width): array
     {
+        if ($this->keep === 'start') {
+            return $this->head($width);
+        }
+
         // Wrapped from the **end**, and only as far as the rows that will be shown: this keeps
         // the tail, so the head is wrapped only to be thrown away. A 50KB build log collapsed
         // to five rows cost a full wrap of 50KB on every width change, and a transcript with
@@ -176,6 +185,51 @@ final class BashOutputComponent implements Component
             // itself. Truncated rather than wrapped for the same reason a scroll count is:
             // half of a count on a second row says nothing.
             array_unshift($kept, Width::truncate(($this->note)($dropped), $width, ''));
+        }
+
+        return $this->padded($kept, $width);
+    }
+
+    /**
+     * The head: wrapped from the start, only as far as the rows that will be shown, the rest counted
+     * without being built (`TextWrap::rows()`), and the note under what was kept — upstream's
+     * `VisualLinePreview` with `keep: "start"`.
+     *
+     * @return list<string>
+     */
+    private function head(int $width): array
+    {
+        $width = max(1, $width - $this->paddingX * 2);
+        $kept = [];
+        $dropped = 0;
+
+        foreach (explode("\n", $this->text) as $line) {
+            if (count($kept) >= $this->rows) {
+                if ($this->note === null) {
+                    break;
+                }
+
+                $dropped += TextWrap::rows($line, $width);
+
+                continue;
+            }
+
+            $kept = [...$kept, ...TextWrap::wrap($line, $width)];
+        }
+
+        if ($dropped === 0 && count($kept) <= $this->rows) {
+            return $this->padded($kept, $width);
+        }
+
+        $extra = count($kept) - $this->rows;
+
+        if ($extra > 0) {
+            $dropped += $extra;
+            $kept = array_slice($kept, 0, $this->rows);
+        }
+
+        if ($this->note !== null) {
+            $kept[] = Width::truncate(($this->note)($dropped), $width, '');
         }
 
         return $this->padded($kept, $width);

@@ -263,6 +263,42 @@ final class CodemodeExtensionTest extends TestCase
         $this->stop($started);
     }
 
+    public function testACollapsedPreviewIsCutByVisualLinesAndNamesTheFullOutputFile(): void
+    {
+        // Upstream's `renderer.ts` with `VisualLinePreview`: the collapsed output is limited to
+        // wrapped rows, not logical lines, because a script's output is often one long JSON line —
+        // which, cut by lines, would wrap across the whole screen. The hint counts the hidden
+        // rows; "Full output" follows straight under it; expanded shows everything.
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+        $theme = \Pig\CodingAgent\Theme\Themes::theme();
+
+        $result = new AgentToolResult(
+            [new TextContent("Script completed\nWall time 0.1 seconds\nOutput:\n"), new TextContent(str_repeat('{"k":"v"},', 30))],
+            ['calls' => [], 'fullOutputPath' => '/tmp/full.txt'],
+        );
+        $strip = static fn (array $lines): array => array_values(array_filter(array_map(static fn (string $l): string => rtrim(\Pig\Tui\Ansi::strip($l)), $lines), static fn (string $l): bool => $l !== ''));
+
+        $collapsed = $strip(($codemode->renderResult)($result, new \Pig\CodingAgent\Extensions\ToolRenderResultOptions(expanded: false), $theme)->render(40));
+        // 300 characters of one line at width 40 are eight rows; five are kept, three hidden.
+        $this->assertCount(7, $collapsed, 'five rows of output, the hint, the file');
+        $this->assertSame(40, mb_strlen($collapsed[0]));
+        $this->assertStringContainsString('... (3 more lines,', $collapsed[5]);
+        $this->assertSame('Full output: /tmp/full.txt', $collapsed[6]);
+
+        $expanded = $strip(($codemode->renderResult)($result, new \Pig\CodingAgent\Extensions\ToolRenderResultOptions(expanded: true), $theme)->render(40));
+        $this->assertCount(8, $expanded, 'everything, no hint, no file line');
+        $this->assertStringNotContainsString('Full output', implode("\n", $expanded));
+
+        // The call's script preview is cut the same way: ten rows of code, the rest counted.
+        $call = $strip(($codemode->renderCall)(['code' => implode("\n", array_fill(0, 14, '$x = 1;'))], $theme, new \Pig\CodingAgent\Extensions\ToolRenderResultOptions(expanded: false))->render(40));
+        $this->assertSame('codemode', $call[0]);
+        $this->assertCount(12, $call, 'the title, ten lines of code, the hint');
+        $this->assertStringContainsString('... (4 more lines,', $call[11]);
+        $this->stop($started);
+    }
+
     public function testANestedCallGoesThroughTheToolCallHookLikeAnyOther(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
@@ -336,10 +372,20 @@ PHP);
         $this->assertSame('spent', $value[1]['value']);
         $this->assertSame(['error', 'ok'], array_column($result->details['calls'], 'status'));
 
-        // Upstream's `usage` on the result: what the script's calls spent is the script's to bill.
-        $this->assertNotNull($result->usage);
-        $this->assertSame(12, $result->usage->totalTokens, 'only the call that ran reported usage');
-        $this->assertEqualsWithDelta(0.003, $result->usage->cost->total, 1e-9);
+        // What the nested calls spent is not on the codemode result (that is for the script's own
+        // `models.*` calls); it is on the session's recorder for the call, with the record of the
+        // calls, for the loop to put on the tool result message — upstream's `nestedCalls` and the
+        // `usage` it sums onto the message.
+        $this->assertNull($result->usage);
+        $nested = $started->session->takeNestedCalls('call-9');
+        $this->assertSame(12, $nested['usage']->totalTokens, 'only the call that ran reported usage');
+        $this->assertEqualsWithDelta(0.003, $nested['usage']->cost->total, 1e-9);
+        $this->assertTrue($nested['calls']->complete);
+        $this->assertSame(['call-9/1', 'call-9/2'], array_map(static fn ($c) => $c->id, $nested['calls']->calls));
+        $this->assertSame(['error', 'ok'], array_map(static fn ($c) => $c->status, $nested['calls']->calls));
+        $this->assertSame(['amount' => 3], $nested['calls']->calls[1]->arguments);
+        $this->assertStringContainsString('Validation failed', $nested['calls']->calls[0]->error);
+        $this->assertNull($started->session->takeNestedCalls('call-9'), 'taken once');
 
         // `tool_execution_*` events with `parentToolCallId`, so a listener sees the sub-calls.
         $this->assertSame(

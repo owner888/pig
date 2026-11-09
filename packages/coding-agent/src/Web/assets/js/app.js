@@ -3,7 +3,7 @@
  */
 
 import "./viewport.js";
-import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer } from "./utils.js";
+import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer, apiFetch } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales, translateSettings, translateRequest, needsTranslation } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
@@ -495,9 +495,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
-
-
-
     let tabs = [];
     let active = null;        // the tab the person is looking at
     let slashAutocomplete = null;
@@ -943,27 +940,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const UPLOAD_CHUNK = 4 * 1024 * 1024;
     let uploadingFiles = []; // list of { id, name, progress }
 
-    /** The glyph and colour class a tile shows for a file: common kinds by extension, the extension itself for the rest. */
-    const FILE_KINDS = [
-      ["code", "</>", ["php", "js", "mjs", "ts", "tsx", "jsx", "py", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "m", "mm", "sh", "rb", "dart", "lua", "css", "html", "vue", "sql"]],
-      ["pdf", "PDF", ["pdf"]],
-      ["archive", "ZIP", ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "apk", "ipa", "jar"]],
-      ["audio", "\u266a", ["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"]],
-      ["video", "\u25b6", ["mp4", "mov", "mkv", "webm", "avi", "m4v"]],
-      ["sheet", "\u229e", ["xls", "xlsx", "csv", "tsv", "numbers"]],
-      ["doc", "\u00b6", ["doc", "docx", "rtf", "pages", "odt"]],
-      ["text", "TXT", ["txt", "md", "log", "json", "yaml", "yml", "xml", "toml", "ini", "conf", "env"]],
-    ];
-
-    function humanSize(bytes) {
-      if (!(bytes >= 1024)) return `${bytes || 0} B`;
-      const units = ["KB", "MB", "GB"];
-      let n = bytes / 1024;
-      let i = 0;
-      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-      return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
-    }
-
     /** "70 lines" for a text file (read here, before it is sent), its size for anything else. */
     async function fileMetaOf(file, kind) {
       if ((kind === "text" || kind === "code") && file.size <= 4 * 1024 * 1024) {
@@ -980,13 +956,26 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /** A tile clicked: the file's name, a line about it, and its text when it is text — the way the Claude app shows one. */
     async function openFileViewer(pending) {
-      const file = pending.file;
-      const textual = file && (pending.kind === "text" || pending.kind === "code") && file.size <= 4 * 1024 * 1024;
+      // Before it is sent the file is a `File` in this page; once sent it is a path on the server's
+      // disk (`/api/file`), which is the same for a text file read back in a later visit.
+      const textual = pending.kind === "text" || pending.kind === "code";
       let content = null;
-      if (textual) {
-        try { content = await file.text(); } catch { content = null; }
+      let size = pending.file?.size ?? null;
+      if (pending.file) {
+        if (textual && pending.file.size <= 4 * 1024 * 1024) {
+          try { content = await pending.file.text(); } catch { content = null; }
+        }
+      } else if (pending.path) {
+        try {
+          const res = await apiFetch(`/api/file?path=${encodeURIComponent(pending.path)}`);
+          if (res.ok) {
+            const blob = await res.blob();
+            size = blob.size;
+            if (textual && blob.size <= 4 * 1024 * 1024) content = await blob.text();
+          }
+        } catch { content = null; }
       }
-      const parts = [humanSize(file?.size || 0)];
+      const parts = [humanSize(size || 0)];
       if (content !== null) parts.push(t("file_lines", { n: content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0) }));
       openModal({
         title: pending.name,
@@ -999,14 +988,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             : `<div class="file-viewer-none">${escapeHtml(t("file_no_preview"))}</div>`}
         `,
       });
-    }
-
-    function fileKindOf(name) {
-      const ext = (name || "").split(".").pop()?.toLowerCase() || "";
-      for (const [kind, glyph, exts] of FILE_KINDS) {
-        if (exts.includes(ext)) return { kind, glyph };
-      }
-      return { kind: "other", glyph: (ext || "file").slice(0, 4).toUpperCase() };
     }
 
     function imageMimeOf(file) {
@@ -1048,7 +1029,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       for (let offset = 0; offset < total; offset += UPLOAD_CHUNK) {
         const chunk = file.slice(offset, offset + UPLOAD_CHUNK);
         const params = new URLSearchParams({ id, name, ...(offset > 0 ? { append: "1" } : {}) });
-        const res = await fetch(`/api/upload?${params}`, {
+        const res = await apiFetch(`/api/upload?${params}`, {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
           body: await chunk.arrayBuffer(),
@@ -1161,12 +1142,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       pendingFiles.forEach((file, idx) => {
         const item = document.createElement("div");
         item.className = "pending-img-item";
-        item.innerHTML = `
-          <div class="pending-file-tile" data-kind="${file.kind}">
-            <span class="pending-file-name">${escapeHtml(file.name)}</span>
-            <span class="pending-file-meta">${escapeHtml(file.meta || "")}</span>
-            <span class="pending-file-glyph">${escapeHtml(file.glyph)}</span>
-          </div>
+        item.innerHTML = `${fileTileHtml(file)}
           <button type="button" class="pending-img-del" data-tip="${escapeHtml(t("remove_named", { name: file.name }))}" aria-label="${escapeHtml(t("remove_file"))}">${DEL_ICON}</button>
         `;
         item.querySelector(".pending-file-tile").addEventListener("click", () => openFileViewer(file));
@@ -1216,6 +1192,66 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // text in a `<skill>` block, with whatever the person typed after it below. The TUI draws
     // that as a collapsed `[skill] name` line (`SkillInvocationMessageComponent`); before this
     // the page poured the whole SKILL.md into the user bubble on every replay.
+    // ---- files: kinds, tiles, staged lines --------------------------------------------------
+    // Shared by the composer (the tiles before a send) and the conversation (the tiles a sent
+    // message is drawn with); the test fixtures slice this region by its two marker lines.
+    /** The glyph and colour class a tile shows for a file: common kinds by extension, the extension itself for the rest. */
+    const FILE_KINDS = [
+      ["code", "</>", ["php", "js", "mjs", "ts", "tsx", "jsx", "py", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "m", "mm", "sh", "rb", "dart", "lua", "css", "html", "vue", "sql"]],
+      ["pdf", "PDF", ["pdf"]],
+      ["archive", "ZIP", ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "apk", "ipa", "jar"]],
+      ["audio", "\u266a", ["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"]],
+      ["video", "\u25b6", ["mp4", "mov", "mkv", "webm", "avi", "m4v"]],
+      ["sheet", "\u229e", ["xls", "xlsx", "csv", "tsv", "numbers"]],
+      ["doc", "\u00b6", ["doc", "docx", "rtf", "pages", "odt"]],
+      ["text", "TXT", ["txt", "md", "log", "json", "yaml", "yml", "xml", "toml", "ini", "conf", "env"]],
+    ];
+
+    function humanSize(bytes) {
+      if (!(bytes >= 1024)) return `${bytes || 0} B`;
+      const units = ["KB", "MB", "GB"];
+      let n = bytes / 1024;
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+    }
+
+    /** The card a file is shown as, before and after it is sent. */
+    function fileTileHtml(file) {
+      return `
+          <div class="pending-file-tile" data-kind="${file.kind}">
+            <span class="pending-file-name">${escapeHtml(file.name)}</span>
+            <span class="pending-file-meta">${escapeHtml(file.meta || "")}</span>
+            <span class="pending-file-glyph">${escapeHtml(file.glyph)}</span>
+          </div>`;
+    }
+
+    /** The lines of a message that are files the page staged (`/api/upload`), and the rest of it. */
+    const UPLOAD_LINE = /^\/\S.*\/pig-upload-[0-9a-f]+\/[^\n]+$/;
+    function splitUploadLines(text) {
+      const files = [];
+      const rest = [];
+      for (const line of text.split("\n")) {
+        if (UPLOAD_LINE.test(line.trim())) {
+          const path = line.trim();
+          const name = path.split("/").pop();
+          files.push({ name, path, ...fileKindOf(name), meta: "" });
+        } else {
+          rest.push(line);
+        }
+      }
+      return { files, text: rest.join("\n").trim() };
+    }
+
+    function fileKindOf(name) {
+      const ext = (name || "").split(".").pop()?.toLowerCase() || "";
+      for (const [kind, glyph, exts] of FILE_KINDS) {
+        if (exts.includes(ext)) return { kind, glyph };
+      }
+      return { kind: "other", glyph: (ext || "file").slice(0, 4).toUpperCase() };
+    }
+    // ---- end files ---------------------------------------------------------------------------
+
     const SKILL_BLOCK = /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/;
 
     function appendSkillInvocation(name, location, content) {
@@ -1247,6 +1283,24 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       const block = document.createElement("div");
       block.className = "msg-block msg-user";
+
+      // Files the page staged go with the message as their paths, one a line; they are drawn as
+      // the tiles they were before the send, and the question is the rest of the text.
+      const staged = text ? splitUploadLines(text) : { files: [], text: "" };
+      if (staged.files.length > 0) {
+        const grid = document.createElement("div");
+        grid.className = "msg-files-grid";
+        for (const file of staged.files) {
+          const tile = document.createElement("div");
+          tile.innerHTML = fileTileHtml(file);
+          const el = tile.firstElementChild;
+          el.title = file.path;
+          el.addEventListener("click", () => openFileViewer(file));
+          grid.appendChild(el);
+        }
+        block.appendChild(grid);
+        text = staged.text;
+      }
 
       if (text) {
         const p = document.createElement("div");
@@ -1702,7 +1756,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       window.webTerminal?.reattachAll();
     }
     async function fetchJson(url, what) {
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       pigReachable();
@@ -2348,7 +2402,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       })[p.state] || t("key_none");
 
       const post = async (path, body) => {
-        const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const res = await apiFetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         providers = data.providers;
@@ -2784,7 +2838,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const file = active?.sessionFile;
       if (!file || !unreadTasks.has(file) || document.visibilityState !== "visible") return;
       unreadTasks.delete(file);
-      fetch("/api/scheduled/seen", {
+      apiFetch("/api/scheduled/seen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionFile: file }),
@@ -3181,7 +3235,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       let data;
       try {
-        const res = await fetch(`/api/sessions/all?limit=${SIDEBAR_RECENTS}`);
+        const res = await apiFetch(`/api/sessions/all?limit=${SIDEBAR_RECENTS}`);
         data = await res.json();
       } catch (err) {
         if (mine === sidebarSeq) sidebarList.replaceChildren(emptyNote(t("failed_sessions"), true));
@@ -3250,7 +3304,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
             let data;
             try {
-              data = await (await fetch(url)).json();
+              data = await (await apiFetch(url)).json();
             } catch (err) {
               if (mine === seq) results.replaceChildren(emptyNote(t("failed_sessions"), true));
               return;
@@ -3328,7 +3382,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           }
 
           try {
-            const res = await fetch("/api/sessions/rename", {
+            const res = await apiFetch("/api/sessions/rename", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ path: session.path, name: newName, cwd: cwd }),
@@ -3375,7 +3429,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         isDanger: true,
         onConfirm: async () => {
           try {
-            const res = await fetch("/api/sessions/delete", {
+            const res = await apiFetch("/api/sessions/delete", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ path: session.path, cwd: cwd }),

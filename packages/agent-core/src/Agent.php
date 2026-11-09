@@ -121,6 +121,15 @@ final class Agent
      */
     public ?Closure $transformContext;
 
+    /**
+     * Asked by a tool call's id when its result message is built, for the calls the tool made
+     * through the session while it ran and their usage — `AgentLoopConfig::$nestedCallsOf`. The
+     * session sets it; a bare agent has no nested calls.
+     *
+     * @var (Closure(string): ?array{calls: ?\Pig\Ai\NestedToolCalls, usage: ?\Pig\Ai\Usage})|null
+     */
+    public ?Closure $nestedCallsOf = null;
+
     /** @var list<mixed> */
     private array $steeringQueue = [];
 
@@ -561,6 +570,7 @@ final class Agent
             onProviderStreamEvent: $this->onProviderStreamEvent,
             maxRetryDelayMs: $this->maxRetryDelayMs,
             identity: $this->identity,
+            nestedCallsOf: $this->nestedCallsOf,
         );
     }
 

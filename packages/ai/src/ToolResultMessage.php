@@ -27,6 +27,8 @@ final readonly class ToolResultMessage
      * @param ?int              $durationMs milliseconds the tool's execution took, measured with a
      *        monotonic clock; null for results written before it existed, and for calls that did
      *        not run
+     * @param ?NestedToolCalls  $nestedCalls the calls this tool made to other tools while it ran
+     *        (a codemode script's); kept for the session record, not sent to the model
      */
     public function __construct(
         public string $toolCallId,
@@ -37,6 +39,7 @@ final readonly class ToolResultMessage
         ?int $timestamp = null,
         public ?Usage $usage = null,
         public ?int $durationMs = null,
+        public ?NestedToolCalls $nestedCalls = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

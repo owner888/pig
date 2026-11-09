@@ -12,9 +12,11 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\FileLock;
+use Pig\CodingAgent\FileLockBusyError;
 use Pig\Mcp\Oauth\Discovery;
 use Pig\Mcp\Oauth\Flow;
 use Pig\Mcp\Oauth\McpOauthAuthorizationRequiredError;
+use Pig\Mcp\Oauth\McpRefreshLockBusyError;
 use Pig\Mcp\Oauth\McpOauthProvider;
 use Pig\Mcp\Oauth\Metadata;
 use Pig\Mcp\Oauth\OauthCallbackServer;
@@ -208,6 +210,29 @@ final class McpOauth
     // ---- the auth provider a connection uses ----------------------------------------------------
 
     /**
+     * `withRefreshLock` for one server: a lock file per server, as upstream keeps one, so refreshing
+     * one server does not wait on another's. Named by a hash of the key, which holds a URL;
+     * `.flock`, since upstream's `.lock` of the same name is a directory (`FileLock::pathFor()`).
+     * A lock held by another process for the whole wait is `McpRefreshLockBusyError`, upstream's.
+     *
+     * @return Closure(Closure(): mixed): mixed
+     */
+    private function refreshLock(string $name, string $serverUrl): Closure
+    {
+        $base = dirname($this->path) . '/mcp-auth-refresh-' . substr(hash('sha256', self::keys($name, $serverUrl)['key']), 0, 16);
+        FileLock::clearLegacy($base);
+        $lock = FileLock::pathFor($base);
+
+        return static function (Closure $fn) use ($lock): mixed {
+            try {
+                return FileLock::hold($lock, $fn);
+            } catch (FileLockBusyError) {
+                throw new McpRefreshLockBusyError();
+            }
+        };
+    }
+
+    /**
      * Auth provider for one connection: sends the stored access token and refreshes it when it
      * is about to expire or after a 401. Throws `McpOauthAuthorizationRequiredError` when the
      * person has to sign in, including when the server asks for more scope.
@@ -224,14 +249,7 @@ final class McpOauth
     {
         $store = $this->forServer($name, $serverUrl);
         $fetch = Discovery::fetcher($fetch);
-
-        // A lock file per server, as upstream keeps one: refreshing one server does not wait on
-        // another's. Named by a hash of the key, which holds a URL; `.flock`, since upstream's
-        // `.lock` of the same name is a directory (`FileLock::pathFor()`).
-        $base = dirname($this->path) . '/mcp-auth-refresh-' . substr(hash('sha256', self::keys($name, $serverUrl)['key']), 0, 16);
-        FileLock::clearLegacy($base);
-        $lock = FileLock::pathFor($base);
-        $withRefreshLock = static fn (Closure $fn): mixed => FileLock::hold($lock, $fn);
+        $withRefreshLock = $this->refreshLock($name, $serverUrl);
 
         return new class ($serverUrl, $store, $settings, $onChallenge, $fetch, $withRefreshLock) implements AuthProvider {
             private ?Deferred $refreshing = null;
@@ -472,7 +490,18 @@ final class McpOauth
             ];
 
             // A refresh keeps the granted scope; a server asking for more needs the browser flow.
-            if (Flow::authorize($provider, [...$flow, 'skipRefresh' => $stepUp], $fetch) === Flow::AUTHORIZED) {
+            // Under the server's refresh lock, as upstream's `refreshBeforeSignIn()`: two pigs
+            // refreshing one rotating token at once would lose the grant. Another process holding
+            // it for the whole wait means the person signs in instead — upstream's `REDIRECT`.
+            try {
+                $refreshed = ($this->refreshLock($name, $serverUrl))(
+                    fn (): string => ($signal?->aborted() ?? false) ? Flow::REDIRECT : Flow::authorize($provider, [...$flow, 'skipRefresh' => $stepUp], $fetch),
+                );
+            } catch (McpRefreshLockBusyError) {
+                $refreshed = Flow::REDIRECT;
+            }
+
+            if ($refreshed === Flow::AUTHORIZED) {
                 return;
             }
 

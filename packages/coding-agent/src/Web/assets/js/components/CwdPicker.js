@@ -1,4 +1,4 @@
-import { escapeHtml, openModal } from "../utils.js";
+import { escapeHtml, openModal, apiFetch } from "../utils.js";
 import { t } from "../i18n.js";
 import { splitTyped, matching, joinPath, folderName } from "../cwd.js";
 
@@ -13,7 +13,7 @@ export { folderName };
 
 async function listDir(path) {
   try {
-    const res = await fetch(`/api/dirs?path=${encodeURIComponent(path)}`);
+    const res = await apiFetch(`/api/dirs?path=${encodeURIComponent(path)}`);
     return await res.json();
   } catch {
     return { ok: false, error: t("panel_unreachable") };
@@ -110,7 +110,7 @@ export function openCwdPicker({ current, onPick }) {
       go(current || "");
 
       try {
-        const folders = await (await fetch("/api/folders")).json();
+        const folders = await (await apiFetch("/api/folders")).json();
         const list = (folders.workspaces || []).filter((w) => w.path);
         recent.innerHTML = list.length === 0
           ? `<div class="panel-text tone-muted">${escapeHtml(t("cwd_no_recent"))}</div>`

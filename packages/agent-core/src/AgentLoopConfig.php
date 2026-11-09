@@ -50,6 +50,12 @@ final readonly class AgentLoopConfig
      *        upstream's `AgentLoopConfig.prepareNextTurn`: "Called after `turn_end` when the loop will
      *        continue, immediately before the next turn starts. Return replacement
      *        context/model/thinking state or messages to append to affect that turn."
+     * @param (Closure(string): ?array{calls: ?\Pig\Ai\NestedToolCalls, usage: ?\Pig\Ai\Usage})|null $nestedCallsOf
+     *        asked by the tool call's id when its result message is built: the record of the
+     *        calls the tool made through the session while it ran (`ctx.executeTool()`, a codemode
+     *        script's) and their summed usage, which go on the message as `nestedCalls` and into its
+     *        `usage`. Upstream sets both on the message at `message_start`; the messages here are
+     *        immutable, so the loop asks before it builds one.
      * @param \Pig\Ai\ClientIdentity|null $identity upstream's `AgentLoopConfig.identity`, over
      *        `AgentLoop::defaultIdentity()` field by field
      */
@@ -73,6 +79,7 @@ final readonly class AgentLoopConfig
         public ?Closure $prepareNextTurn = null,
         public ?Closure $prepareRequest = null,
         public ?\Pig\Ai\ClientIdentity $identity = null,
+        public ?Closure $nestedCallsOf = null,
     ) {
     }
 
@@ -99,6 +106,7 @@ final readonly class AgentLoopConfig
             $this->prepareNextTurn,
             $this->prepareRequest,
             $this->identity,
+            $this->nestedCallsOf,
         );
     }
 }

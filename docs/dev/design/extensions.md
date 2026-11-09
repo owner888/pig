@@ -644,10 +644,19 @@ would, turns a throw into an error result, and sends `tool_execution_start/updat
 `onAgentEvent()` with the new `?string $parentToolCallId` on the agent-core events, the hook
 events and the RPC encoding (spread in only when set, as upstream does). The TUI's `onToolStart()`
 returns on a parent id, upstream's "shown inside their parent's row"; update and end already
-found no row. `codemode`'s `$modelUsage`/`$combineUsage` moved above the sandbox-tool closures
-that now capture them. Not ported: upstream's bounded `nestedCalls` record on the tool result
-message (codemode's `details.calls` lists them) and `parentToolCallId` on the `tool_call` and
-`tool_result` hook events (the id's `/` says as much). Regression tests:
+found no row. **The `nestedCalls` record is ported** (it was not, at first): upstream's
+`NestedCallRecorder` is `Session\NestedCallRecorder`, one per model-issued call in
+`AgentSession::$nestedRecorders` and shared by the calls below it; `executeNestedTool()` opens a row
+before the call and closes it after, and sums the nested result's `usage` on the recorder. Upstream
+sets the record and the usage on the message at `message_start`; the messages here are immutable, so
+the loop asks `Agent::$nestedCallsOf` (`AgentSession::takeNestedCalls()`) as it builds the
+`ToolResultMessage` — `nestedCalls` goes on it, the usage is added to its `usage` with
+`Usage::plus()` (upstream's `combineUsage()`, now one method where there were three copies).
+`codemode`'s own result therefore bills only the script's `models.*` calls, as upstream's does;
+`Compaction::extractFileOpsFromMessage()` reads a tool result's `nestedCalls` for the files a script
+touched. Still not ported: `parentToolCallId` on the `tool_call` and `tool_result` hook events (the
+id's `/` says as much). Regression tests: `NestedCallRecorderTest`, `MessageTest::testTheNestedCalls…`,
+`CompactionTest::testTheCallsAScriptMade…`,
 `OpenAiDecisionsTest` (twelve cases, upstream's `openai-decisions.test.ts`),
 `CodemodeExtensionTest::testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript`,
 the image rows in `…ModelsNamespaceAnswers…`, `SessionCodecTest::testAToolResultKeepsWhatTheToolSpentOnModels`,

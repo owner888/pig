@@ -36,6 +36,21 @@ export function copyText(text) {
   });
 }
 
+/**
+ * Every `/api/…` call goes through here. A 401 means the browser's session is gone — logged out
+ * elsewhere, a new password, thirty days — while the page lived on over its WebSocket; the login
+ * page is the answer, not an alert saying "Not logged in." that leaves the page where it is. The
+ * returned promise never settles after the redirect, so nothing draws on the 401's body.
+ */
+export async function apiFetch(url, init) {
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    location.replace("/login");
+    await new Promise(() => {});
+  }
+  return res;
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)

@@ -12,6 +12,8 @@ use Pig\Ai\Cost;
 use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\NestedToolCallRecord;
+use Pig\Ai\NestedToolCalls;
 use Pig\Ai\Providers\TransformMessages;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\StopReason;
@@ -216,6 +218,35 @@ final class MessageTest extends TestCase
 
         $this->assertArrayNotHasKey('durationMs', MessageJson::encode($this->assistant([new TextContent('hi')])));
         $this->assertArrayNotHasKey('durationMs', MessageJson::encode(new ToolResultMessage('call-1', 'bash', [])));
+    }
+
+    public function testTheNestedCallsOfAToolResultSurviveTheSessionFileAndAreLeftOutWhenThereWereNone(): void
+    {
+        // Upstream's `nestedCalls` on a tool result: the bounded record of the calls a tool made
+        // through the session while it ran. Absent fields of a row are left out, as upstream
+        // writes them (`arguments` or `argumentsBytes`, `error` only on an error).
+        $calls = new NestedToolCalls([
+            new NestedToolCallRecord('call-1/1', 'read', ['path' => 'a.php'], null, 'ok', 12),
+            new NestedToolCallRecord('call-1/2', 'bash', null, 9000, 'error', 3, 'No shells from scripts.'),
+            new NestedToolCallRecord('call-1/3', 'read', ['path' => 'b.php']),
+        ], false);
+        $result = new ToolResultMessage('call-1', 'codemode', [new TextContent('ok')], timestamp: 5, nestedCalls: $calls);
+
+        $encoded = json_decode((string) json_encode(MessageJson::encode($result)), true);
+
+        $this->assertSame([
+            'calls' => [
+                ['id' => 'call-1/1', 'name' => 'read', 'arguments' => ['path' => 'a.php'], 'status' => 'ok', 'durationMs' => 12],
+                ['id' => 'call-1/2', 'name' => 'bash', 'argumentsBytes' => 9000, 'status' => 'error', 'durationMs' => 3, 'error' => 'No shells from scripts.'],
+                ['id' => 'call-1/3', 'name' => 'read', 'arguments' => ['path' => 'b.php'], 'status' => 'unfinished'],
+            ],
+            'complete' => false,
+        ], $encoded['nestedCalls']);
+
+        $back = MessageJson::decode($encoded);
+        $this->assertInstanceOf(ToolResultMessage::class, $back);
+        $this->assertEquals($calls, $back->nestedCalls);
+        $this->assertArrayNotHasKey('nestedCalls', MessageJson::encode(new ToolResultMessage('call-1', 'bash', [])));
     }
 
     public function testAMessageWithNoneOfTheNewFieldsIsWrittenWithoutTheirKeys(): void

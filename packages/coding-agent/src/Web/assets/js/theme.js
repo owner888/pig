@@ -1,4 +1,4 @@
-import { escapeHtml, openModal } from "./utils.js";
+import { escapeHtml, openModal, apiFetch } from "./utils.js";
 import { t, onLocaleChanged } from "./i18n.js";
 
 /**
@@ -135,7 +135,7 @@ export async function initTheme() {
   // Before the list arrives: a stored name is applied as it is, so the page does not flash the default.
   if (wanted) document.documentElement.setAttribute("data-theme", wanted);
 
-  const res = await fetch("/api/themes");
+  const res = await apiFetch("/api/themes");
   if (!res.ok) throw new Error(`GET /api/themes failed: ${res.status}`);
   themeList = await res.json();
   applyTheme(wanted);

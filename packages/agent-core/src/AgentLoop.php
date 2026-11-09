@@ -736,7 +736,7 @@ final class AgentLoop
 
             $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError, $durationMs));
 
-            $results[] = self::toolResult($toolCall, $result, $isError, $emit, durationMs: $durationMs);
+            $results[] = self::toolResult($toolCall, $result, $isError, $emit, durationMs: $durationMs, nestedCallsOf: $config->nestedCallsOf);
 
             if ($config->getSteeringMessages === null) {
                 continue;
@@ -789,7 +789,11 @@ final class AgentLoop
         ), $toolCalls);
     }
 
-    /** @param Closure(AgentEvent): void $emit */
+    /**
+     * @param Closure(AgentEvent): void $emit
+     * @param (Closure(string): ?array{calls: ?\Pig\Ai\NestedToolCalls, usage: ?\Pig\Ai\Usage})|null $nestedCallsOf
+     *        `AgentLoopConfig::$nestedCallsOf`; only a call that ran can have made nested calls
+     */
     private static function toolResult(
         ToolCall $toolCall,
         AgentToolResult $result,
@@ -797,11 +801,21 @@ final class AgentLoop
         Closure $emit,
         bool $announce = false,
         ?int $durationMs = null,
+        ?Closure $nestedCallsOf = null,
     ): ToolResultMessage {
         if ($announce) {
             // A skipped call never ran, so its start and end are reported here instead.
             $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
             $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, true));
+        }
+
+        // Upstream's `message_start` handler in the session: the record of the calls the tool made
+        // goes on its result as `nestedCalls`, and what those calls spent is added to its `usage` —
+        // the nested results themselves are not persisted, so this is where their bill survives.
+        $nested = $nestedCallsOf === null ? null : $nestedCallsOf($toolCall->id);
+        $usage = $result->usage;
+        if ($nested !== null && $nested['usage'] !== null) {
+            $usage = $usage === null ? $nested['usage'] : $usage->plus($nested['usage']);
         }
 
         $message = new ToolResultMessage(
@@ -810,8 +824,9 @@ final class AgentLoop
             $result->content,
             $isError,
             $result->details,
-            usage: $result->usage,
+            usage: $usage,
             durationMs: $durationMs,
+            nestedCalls: $nested['calls'] ?? null,
         );
 
         $emit(new MessageStartEvent($message));

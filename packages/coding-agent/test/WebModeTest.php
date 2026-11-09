@@ -810,6 +810,45 @@ final class WebModeTest extends TestCase
     }
 
     /** The status line of a WebSocket handshake sent with `$headers`. */
+    /**
+     * A WebSocket opened with these headers and left open — the resource, after the 101.
+     *
+     * @param array<string, string> $headers
+     * @return resource
+     */
+    private function wsOpen(int $port, array $headers = [])
+    {
+        $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+        $this->assertIsResource($client);
+        stream_set_blocking($client, false);
+        $extra = implode('', array_map(static fn (string $k, string $v): string => "{$k}: {$v}\r\n", array_keys($headers), $headers));
+        fwrite($client, "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{$port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            . 'Sec-WebSocket-Key: ' . base64_encode(random_bytes(16)) . "\r\nSec-WebSocket-Version: 13\r\n{$extra}\r\n");
+
+        $resp = '';
+        for ($i = 0; $i < 50 && !str_contains($resp, "\r\n\r\n"); $i++) {
+            Async::delay(0.01);
+            $resp .= (string) fread($client, 4096);
+        }
+        $this->assertStringContainsString('101 Switching Protocols', $resp);
+
+        return $client;
+    }
+
+    /** Whether the server closed this WebSocket within a moment: end of stream on a read. @param resource $client */
+    private function wsClosedBy($client): bool
+    {
+        for ($i = 0; $i < 50; $i++) {
+            Async::delay(0.01);
+            fread($client, 4096);
+            if (feof($client)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function wsStatus(int $port, array $headers = []): string
     {
         $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
@@ -879,8 +918,16 @@ final class WebModeTest extends TestCase
             $again = $post('/api/login', ['password' => 'long enough']);
             $this->assertSame(200, $again->status);
 
+            // A page open on the session — its WebSocket — goes with the session when it is logged
+            // out, rather than living on until its first fetch comes back 401. A page on another
+            // session (the second login above) is not touched.
+            $open = $this->wsOpen($port, $session);
+            $other = $this->wsOpen($port, ['Cookie' => strtok((string) $again->header('set-cookie'), ';')]);
             $this->assertSame(200, $post('/api/logout', [], $session)->status);
             $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models", $session))->status, 'logged out');
+            $this->assertTrue($this->wsClosedBy($open), 'the logged-out session\'s WebSocket is closed by the server');
+            $this->assertFalse($this->wsClosedBy($other), 'another session\'s WebSocket stays');
+            fclose($other);
 
             $server->stop();
         });

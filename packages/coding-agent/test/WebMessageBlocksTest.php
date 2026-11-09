@@ -510,7 +510,9 @@ final class WebMessageBlocksTest extends TestCase
             const src = fs.readFileSync(process.argv[1], 'utf8');
             const start = src.indexOf('const IMAGE_MIME_BY_EXT =');
             const end = src.indexOf('function renderPendingImages()', start);
-            if (start === -1 || end === -1) throw new Error('Could not extract file handlers');
+            const filesStart = src.indexOf('    // ---- files: kinds, tiles, staged lines');
+            const filesEnd = src.indexOf('    // ---- end files', filesStart);
+            if (start === -1 || end === -1 || filesStart === -1 || filesEnd === -1) throw new Error('Could not extract file handlers');
 
             const pendingImages = [];
             const pendingFiles = [];
@@ -523,10 +525,10 @@ final class WebMessageBlocksTest extends TestCase
             };
             const attachBtn = { disabled: false };
             const fn = new Function(
-                'promptInput', 'attachBtn', 'pendingImages', 'pendingFiles', 'renderPendingImages', 'resizePrompt', 'randomHex', 'fetch', 'FileReader', 'appendErrorMessage', 't',
-                `${src.slice(start, end)}\nreturn { handleFiles, insertPathsAtCursor };`,
+                'promptInput', 'attachBtn', 'pendingImages', 'pendingFiles', 'renderPendingImages', 'resizePrompt', 'randomHex', 'apiFetch', 'FileReader', 'appendErrorMessage', 't',
+                `${src.slice(filesStart, filesEnd)}\n${src.slice(start, end)}\nreturn { handleFiles, insertPathsAtCursor, splitUploadLines };`,
             );
-            const { handleFiles } = fn(
+            const { handleFiles, splitUploadLines } = fn(
                 promptInput,
                 attachBtn,
                 pendingImages,
@@ -547,8 +549,12 @@ final class WebMessageBlocksTest extends TestCase
                 promptInput.value = '!adb install';
                 promptInput.selectionStart = promptInput.selectionEnd = promptInput.value.length;
                 await handleFiles([fakeFile('Doka 1.3.apk', 'application/vnd.android.package-archive')]);
+                // What the sent message holds, read back for its bubble: the staged files as tiles,
+                // the question as text; a path that is not the page's own staging is text.
+                const sent = splitUploadLines('/var/folders/x/T/pig-upload-5452b3aa9ec90c2d/agccam.com.txt\n/tmp/pig-upload-00ff/Doka 1.3.apk\nlook at /etc/hosts and these');
                 console.log(JSON.stringify({
                     firstPrompt,
+                    sent: { files: sent.files.map((f) => [f.name, f.kind, f.glyph]), text: sent.text },
                     files: pendingFiles.map((f) => [f.name, f.path, f.kind, f.glyph]),
                     bashPrompt: promptInput.value,
                     images: pendingImages.length,
@@ -567,6 +573,8 @@ final class WebMessageBlocksTest extends TestCase
         // a `!` bash line it is the quoted path at the cursor, as before.
         $this->assertSame('', $r['firstPrompt']);
         $this->assertSame([['changelog-1.5.3.md', '/tmp/pig-upload/changelog-1.5.3.md', 'text', 'TXT']], $r['files']);
+        $this->assertSame([['agccam.com.txt', 'text', 'TXT'], ['Doka 1.3.apk', 'archive', 'ZIP']], $r['sent']['files']);
+        $this->assertSame('look at /etc/hosts and these', $r['sent']['text']);
         $this->assertSame("!adb install '/tmp/pig-upload/Doka 1.3.apk' ", $r['bashPrompt']);
         $this->assertSame(1, $r['images']);
         $this->assertSame('image/png', $r['imageMime']);

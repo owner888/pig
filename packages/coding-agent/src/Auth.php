@@ -57,7 +57,13 @@ final class Auth
     /** @var array<string, array<string, mixed>> one entry per provider, as written */
     private array $data = [];
 
-    /** @var array<string, string> keys given on the command line, which are never written down */
+    /**
+     * Keys given for this run only — `--api-key`, or an extension's — which are never written down.
+     * Upstream's `RuntimeCredentials`, the overlay in front of its credential store; here it is a
+     * table inside the one class, because `Auth` is the store.
+     *
+     * @var array<string, string> by provider id
+     */
     private array $runtime = [];
 
     /** @var array<string, string> what a `models.json` provider's `apiKey` said — see `setCustomProviderKeys()` */
@@ -473,6 +479,9 @@ final class Auth
                 unset($this->data[$key]);
             }
         }
+        // Upstream's `RuntimeCredentials.delete()` drops the run-time key with the stored one: a
+        // logout that left `--api-key` in place would log nobody out.
+        unset($this->runtime[$provider]);
         $this->save();
     }
 
@@ -485,6 +494,18 @@ final class Auth
     public function setRuntimeApiKey(string $provider, string $key): void
     {
         $this->runtime[$provider] = $key;
+    }
+
+    /** Upstream's `removeRuntimeApiKey`: the run-time key forgotten, whatever is stored left as it is. */
+    public function removeRuntimeApiKey(string $provider): void
+    {
+        unset($this->runtime[$provider]);
+    }
+
+    /** Upstream's `hasRuntimeApiKey`: whether a key given for this run is what the provider uses. */
+    public function hasRuntimeApiKey(string $provider): bool
+    {
+        return isset($this->runtime[$provider]);
     }
 
     /**

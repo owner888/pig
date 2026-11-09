@@ -121,6 +121,8 @@ function writeOverrides(overrides) {
  * action — an action may change what the conversation can use (an account switched), so the page
  * asks again.
  */
+import { apiFetch } from "./utils.js";
+
 export function createPanels({ openModal, t, locale, act, onChanged = () => {} }) {
   let panels = [];
   let overrides = readOverrides();
@@ -131,7 +133,7 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
 
   async function load() {
     try {
-      const res = await fetch(`/api/panels?locale=${encodeURIComponent(locale())}`);
+      const res = await apiFetch(`/api/panels?locale=${encodeURIComponent(locale())}`);
       panels = (await res.json()).panels ?? [];
     } catch {
       panels = [];
@@ -232,7 +234,7 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
 
     const fill = async (el) => {
       try {
-        const res = await fetch(`${url}?locale=${encodeURIComponent(locale())}&section=${encodeURIComponent(el.dataset.section)}`);
+        const res = await apiFetch(`${url}?locale=${encodeURIComponent(locale())}&section=${encodeURIComponent(el.dataset.section)}`);
         const d = await res.json();
         if (!el.isConnected) return;
         el.innerHTML = d.ok ? blocksToHtml(d.blocks) : `<div class="panel-text tone-error">${escapeText(d.error)}</div>`;
@@ -244,7 +246,7 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
     const refresh = async () => {
       notices = [];
       try {
-        const d = await (await fetch(`${url}?locale=${encodeURIComponent(locale())}`)).json();
+        const d = await (await apiFetch(`${url}?locale=${encodeURIComponent(locale())}`)).json();
         draw(d.ok ? d.blocks : [], d.ok ? null : d.error);
       } catch {
         draw([], t("panel_unreachable"));

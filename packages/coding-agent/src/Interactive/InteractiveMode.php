@@ -5533,6 +5533,11 @@ final class InteractiveMode
      */
     private function authStatus(string $id): ?array
     {
+        // A key given for this run beats everything, as it does when a request is made.
+        if ($this->auth?->hasRuntimeApiKey($id) === true) {
+            return ['type' => 'api_key', 'source' => 'runtime'];
+        }
+
         $kind = $this->auth?->kind($id);
 
         if ($kind === 'oauth') {

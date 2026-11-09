@@ -12,6 +12,7 @@ use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
 use Pig\Ai\SystemMessage;
+use Pig\Ai\NestedToolCalls;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\Tool;
@@ -89,6 +90,7 @@ final class MessageJson
                 'isError' => $message->isError,
                 'details' => self::plain($message->details),
                 ...($message->usage === null ? [] : ['usage' => self::encodeUsage($message->usage)]),
+                ...($message->nestedCalls === null ? [] : ['nestedCalls' => $message->nestedCalls->toArray()]),
                 // Before `timestamp`, where upstream's `createToolResultMessage()` spreads it.
                 ...($message->durationMs === null ? [] : ['durationMs' => $message->durationMs]),
                 'timestamp' => $message->timestamp,
@@ -150,6 +152,7 @@ final class MessageJson
                 $timestamp,
                 is_array($entry['usage'] ?? null) ? self::decodeUsage($entry['usage']) : null,
                 isset($entry['durationMs']) ? (int) $entry['durationMs'] : null,
+                is_array($entry['nestedCalls'] ?? null) ? NestedToolCalls::fromArray($entry['nestedCalls']) : null,
             ),
             default => null,
         };

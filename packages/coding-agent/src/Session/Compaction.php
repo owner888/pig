@@ -9,7 +9,6 @@ use Pig\Agent\AgentError;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
-use Pig\Ai\Cost;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
@@ -805,37 +804,46 @@ final class Compaction
     }
 
     /**
-     * Add the file operations of an assistant message's tool calls — upstream's
-     * `extractFileOpsFromMessage()`. `read`, `write` and `edit` with a string `path`; anything else
-     * names no file.
-     *
-     * Upstream also reads the calls a codemode script made from its tool result's `nestedCalls`;
-     * pig's tool results do not record nested calls, so there is nothing there to read.
+     * Add the file operations of an assistant message's tool calls, or of the nested calls recorded
+     * on a tool result (the calls a codemode script made) — upstream's `extractFileOpsFromMessage()`.
+     * `read`, `write` and `edit` with a string `path`; anything else names no file.
      */
     public static function extractFileOpsFromMessage(mixed $message, FileOperations $fileOps): void
     {
+        if ($message instanceof ToolResultMessage) {
+            foreach ($message->nestedCalls?->calls ?? [] as $call) {
+                self::addFileOp($call->name, $call->arguments, $fileOps);
+            }
+
+            return;
+        }
+
         if (!$message instanceof AssistantMessage) {
             return;
         }
 
         foreach ($message->content as $block) {
-            if (!$block instanceof ToolCall) {
-                continue;
+            if ($block instanceof ToolCall) {
+                self::addFileOp($block->name, $block->arguments, $fileOps);
             }
-
-            $path = $block->arguments['path'] ?? null;
-
-            if (!is_string($path) || $path === '') {
-                continue;
-            }
-
-            match ($block->name) {
-                'read' => $fileOps->addRead($path),
-                'write' => $fileOps->addWritten($path),
-                'edit' => $fileOps->addEdited($path),
-                default => null,
-            };
         }
+    }
+
+    /** @param ?array<string, mixed> $arguments */
+    private static function addFileOp(string $toolName, ?array $arguments, FileOperations $fileOps): void
+    {
+        $path = $arguments['path'] ?? null;
+
+        if (!is_string($path) || $path === '') {
+            return;
+        }
+
+        match ($toolName) {
+            'read' => $fileOps->addRead($path),
+            'write' => $fileOps->addWritten($path),
+            'edit' => $fileOps->addEdited($path),
+            default => null,
+        };
     }
 
     /**
@@ -1381,7 +1389,7 @@ final class Compaction
             );
 
             $summary = "{$historyText}\n\n---\n\n**Turn Context (split turn):**\n\n{$turnPrefix['text']}";
-            $usage = $historyUsage === null ? $turnPrefix['usage'] : self::combineUsage($historyUsage, $turnPrefix['usage']);
+            $usage = $historyUsage === null ? $turnPrefix['usage'] : $historyUsage->plus($turnPrefix['usage']);
         } else {
             $result = self::generateSummaryWithUsage(
                 $preparation->messagesToSummarize,
@@ -1510,27 +1518,6 @@ final class Compaction
         }
 
         return false;
-    }
-
-    /** Upstream's `combineUsage()` (`usage-totals.ts`): two usages added, the optional splits kept when either has them. */
-    private static function combineUsage(Usage $first, Usage $second): Usage
-    {
-        return new Usage(
-            $first->input + $second->input,
-            $first->output + $second->output,
-            $first->cacheRead + $second->cacheRead,
-            $first->cacheWrite + $second->cacheWrite,
-            $first->totalTokens + $second->totalTokens,
-            new Cost(
-                $first->cost->input + $second->cost->input,
-                $first->cost->output + $second->cost->output,
-                $first->cost->cacheRead + $second->cost->cacheRead,
-                $first->cost->cacheWrite + $second->cost->cacheWrite,
-                $first->cost->total + $second->cost->total,
-            ),
-            $first->reasoning === null && $second->reasoning === null ? null : ($first->reasoning ?? 0) + ($second->reasoning ?? 0),
-            $first->cacheWrite1h === null && $second->cacheWrite1h === null ? null : ($first->cacheWrite1h ?? 0) + ($second->cacheWrite1h ?? 0),
-        );
     }
 
     // ---- measuring -------------------------------------------------------------------------

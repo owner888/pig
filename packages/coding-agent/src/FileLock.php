@@ -76,7 +76,8 @@ final class FileLock
      * @template T
      * @param Closure(): T $fn
      * @return T
-     * @throws RuntimeException when the lock could not be taken within $wait seconds
+     * @throws FileLockBusyError when the lock could not be taken within $wait seconds; a
+     *         RuntimeException when the lock file could not be made or opened
      */
     public static function hold(string $path, Closure $fn, float $wait = self::WAIT): mixed
     {
@@ -103,7 +104,7 @@ final class FileLock
             if (microtime(true) >= $deadline) {
                 fclose($handle);
 
-                throw new RuntimeException(sprintf('Another process has held %s for %.0fs; giving up.', $path, $wait));
+                throw new FileLockBusyError($path, $wait);
             }
 
             if (Fiber::getCurrent() !== null) {

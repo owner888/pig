@@ -485,6 +485,27 @@ final class AuthTest extends TestCase
         $this->assertTrue($auth->hasKeyFor('openai'));
     }
 
+    public function testARunTimeKeyCanBeTakenBackAndGoesWithALogout(): void
+    {
+        // Upstream's `RuntimeCredentials`: the overlay is asked about, removed on its own, and
+        // dropped with the stored credential on a logout — a logout that left `--api-key` in place
+        // would log nobody out.
+        $auth = $this->given('{"anthropic": {"type": "api_key", "key": "stored"}}');
+        $auth->setRuntimeApiKey('anthropic', 'typed');
+        $auth->setRuntimeApiKey('openai', 'typed-too');
+
+        $this->assertTrue($auth->hasRuntimeApiKey('anthropic'));
+        $this->assertFalse($auth->hasRuntimeApiKey('google'));
+
+        $auth->removeRuntimeApiKey('anthropic');
+        $this->assertFalse($auth->hasRuntimeApiKey('anthropic'));
+        $this->assertSame('stored', $auth->apiKey('anthropic'), 'what is stored is left as it is');
+
+        $auth->remove('openai');
+        $this->assertFalse($auth->hasRuntimeApiKey('openai'));
+        $this->assertFalse($auth->hasKeyFor('openai'));
+    }
+
     public function testAnOauthTokenInTheEnvironmentBeatsAnApiKeyThere(): void
     {
         putenv('ANTHROPIC_API_KEY=the-key');

@@ -8,6 +8,8 @@ use Closure;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
+use Pig\Ai\NestedToolCalls;
+use Pig\Ai\NestedToolCallRecord;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Model;
@@ -692,6 +694,23 @@ final class CompactionTest extends TestCase
         ]);
 
         $this->assertSame(['a.php', 'z.php'], $modified);
+    }
+
+    public function testTheCallsAScriptMadeAreReadFromItsResultsNestedCallsRecord(): void
+    {
+        // Upstream's `extractFileOpsFromMessage()` on a tool result: the calls a codemode script
+        // made are not the model's tool calls, so the only place they are is the `nestedCalls`
+        // record on the script's result — a row whose arguments were too big to keep names no file.
+        $result = new ToolResultMessage('c1', 'codemode', [new TextContent('ran')], nestedCalls: new NestedToolCalls([
+            new NestedToolCallRecord('c1/1', 'read', ['path' => 'from-script.php'], null, 'ok'),
+            new NestedToolCallRecord('c1/2', 'edit', ['path' => 'changed-by-script.php'], null, 'ok'),
+            new NestedToolCallRecord('c1/3', 'write', null, 9000, 'ok'),
+        ], false));
+
+        [$read, $modified] = Compaction::files([self::calling('c1', 'codemode', ['code' => '...']), $result]);
+
+        $this->assertSame(['from-script.php'], $read);
+        $this->assertSame(['changed-by-script.php'], $modified);
     }
 
     public function testACallWhoseArgumentsNeverArrivedNamesNoFile(): void

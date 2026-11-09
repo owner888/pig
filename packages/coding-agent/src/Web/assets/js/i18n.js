@@ -1,4 +1,4 @@
-import { escapeHtml, openModal } from "./utils.js";
+import { escapeHtml, openModal, apiFetch } from "./utils.js";
 import { applyTheme, currentTheme } from "./theme.js";
 
     const I18N = {
@@ -834,7 +834,7 @@ import { applyTheme, currentTheme } from "./theme.js";
     let extensionLocales = {};
     async function loadExtensionLocales() {
       try {
-        const res = await fetch("/api/locales");
+        const res = await apiFetch("/api/locales");
         const data = await res.json();
         if (data.success && data.locales) {
           extensionLocales = data.locales;

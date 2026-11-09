@@ -84,6 +84,9 @@ final class HttpServer
     /** @var array<int, string> a stable id per socket, for the key a new conversation gets */
     private array $clientIds = [];
 
+    /** @var array<int, string> per WebSocket, the login session it was opened with (`WebLogin::sessionKey()`) */
+    private array $wsSessions = [];
+
     private ?PtyManager $ptyManager = null;
 
     /** @var array<string, int> terminalId => connectionId */
@@ -396,6 +399,7 @@ final class HttpServer
         $this->connections = [];
         $this->wsClients = [];
         $this->clientIds = [];
+        $this->wsSessions = [];
 
         $this->ptyManager?->dispose();
         $this->ptyManager = null;
@@ -433,7 +437,7 @@ final class HttpServer
         unset($this->panelUis[$connectionId]);
 
         $this->pool->detach($connectionId);
-        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId]);
+        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId], $this->wsSessions[$connectionId]);
     }
 
     private function ptyManager(): PtyManager
@@ -546,8 +550,20 @@ final class HttpServer
         }
 
         if ($path === '/api/logout') {
+            // The session's WebSockets go with it: a page kept open on one would otherwise stay
+            // live until its first `fetch` came back 401, with the session already gone.
+            $key = $this->login->sessionKey($req['headers']);
             $this->login->logOut($req['headers']);
             $conn->sendResponse(200, [...$json, 'Set-Cookie' => WebLogin::cookie(null)], (string) json_encode(['ok' => true]));
+
+            if ($key !== null) {
+                foreach ($this->wsSessions as $id => $sessionKey) {
+                    if ($sessionKey === $key && isset($this->wsClients[$id]) && !$this->wsClients[$id]->isClosed()) {
+                        // No reason given: a reason is a warning in the log, and this is not one.
+                        $this->wsClients[$id]->close();
+                    }
+                }
+            }
 
             return true;
         }
@@ -599,6 +615,10 @@ final class HttpServer
             if (Websocket::handshake($req, $conn)) {
                 $this->wsClients[$connectionId] = $conn;
                 $this->clientIds[$connectionId] = bin2hex(random_bytes(8));
+                $key = $this->login->sessionKey($req['headers']);
+                if ($key !== null) {
+                    $this->wsSessions[$connectionId] = $key;
+                }
 
                 return;
             }

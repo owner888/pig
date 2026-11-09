@@ -217,6 +217,21 @@ final class WebLogin
         return is_int($expires) && $expires > $this->now();
     }
 
+    /**
+     * What identifies the session the request's cookies hold — the key its row is kept under —
+     * for the server to tie a WebSocket to the session it was opened with, so that logging the
+     * session out can close the sockets that would otherwise keep a page alive on it. Null when
+     * the login is off or there is no session cookie.
+     *
+     * @param array<string, string> $headers lower-cased names
+     */
+    public function sessionKey(array $headers): ?string
+    {
+        $token = self::tokenIn($headers);
+
+        return $this->enabled() && $token !== null ? hash('sha256', $token) : null;
+    }
+
     /** End the session the request's cookies hold. */
     public function logOut(array $headers): void
     {

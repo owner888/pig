@@ -1,5 +1,5 @@
 import { network } from "../network.js";
-import { escapeHtml, openModal } from "../utils.js";
+import { escapeHtml, openModal, apiFetch } from "../utils.js";
 import { t, currentLocale } from "../i18n.js";
 
 /**
@@ -47,7 +47,7 @@ const ICONS = {
 export const SCHEDULE_ICONS = ICONS;
 
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? undefined : {
+  const res = await apiFetch(path, body === undefined ? undefined : {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

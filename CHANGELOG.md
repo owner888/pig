@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.1] - 2026-11-09
+
+### Changed
+
+- A file sent from `pig web` is drawn in the message as the tile it was in the composer — name, kind, click to view — with the question as the text under it, where the message showed the staged path as a line of text. The same when the conversation is read back later: the tile opens the file from disk.
+
+- `Usage::plus()` is upstream's `combineUsage()`, one method where `Compaction` and `pig-codemode` each had a private copy.
+- The collapsed previews of a codemode call — the script and its output — are cut by visual rows, as upstream's `VisualLinePreview` cuts them, not by logical lines: a script's output is often one long JSON line, which a line cut let wrap across the whole screen. `Interactive\BashOutputComponent` took a `keep: 'start'` for it.
+- From the upstream audit in `docs/dev/upstream.md`, closed: a tool result records the calls the tool made through the session while it ran (`nestedCalls`, upstream's `NestedCallRecorder` → `Session\NestedCallRecorder`), bounded as upstream bounds it, with their summed usage added to the result's `usage` — the record is read back for compaction's file lists, as upstream reads it, and `pig-codemode`'s own result no longer bills the nested tools' usage (that is the message's now), only the script's `models.*` calls; `Auth::removeRuntimeApiKey()` / `hasRuntimeApiKey()` (upstream's `RuntimeCredentials`), a logout dropping the `--api-key` with the stored credential, and `/login` saying `runtime` for such a key; `Pig\Mcp\Oauth\McpRefreshLockBusyError` where a busy refresh lock was a generic `RuntimeException`, and an MCP sign-in now takes the server's refresh lock for its refresh and goes to the browser when another process holds it (upstream's `refreshBeforeSignIn()`), with `FileLockBusyError` under it so a busy `FileLock` can be told from a broken one; the footer's branch in a git worktree or submodule (`.git` as a `gitdir:` file, upstream's `findGitPaths()`), where it showed the main checkout's.
+
+### Fixed
+
+- Fixed `pig web` staying on a page whose login session had ended (logged out elsewhere, a new password, thirty days) until some action — a rename, the sidebar — came back `Not logged in.` in an alert: every `/api/…` call now goes to the login page on a 401, and logging out closes that session's WebSockets, so a page left open on it goes to the login page at once instead of living on over its socket.
+
 ## [1.9.0] - 2026-11-09
 
 ### Changed
