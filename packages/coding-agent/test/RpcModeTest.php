@@ -988,7 +988,10 @@ final class RpcModeTest extends TestCase
     public function testSteeringCarriesItsPictures(): void
     {
         $this->start(answers: ['seen']);
-        $this->data(['type' => 'steer', 'message' => 'look', 'images' => [['type' => 'image', 'data' => 'aGk=', 'mimeType' => 'image/png']]]);
+        // A real picture: a steered message's images are fitted like a prompt's now (upstream
+        // #11782), and two bytes that are not a PNG are left out with a note instead.
+        $png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+        $this->data(['type' => 'steer', 'message' => 'look', 'images' => [['type' => 'image', 'data' => $png, 'mimeType' => 'image/png']]]);
         $this->send(['type' => 'prompt', 'message' => 'go']);
 
         $steered = array_values(array_filter(
@@ -1196,11 +1199,12 @@ final class RpcModeTest extends TestCase
 
         // Both ends of the wire go through `AgentSession::cycleModel()`, so a host gets the scope
         // and the thinking level that comes with each entry — which is the whole reason the
-        // rotation moved off `ModelResolver` and onto the session.
-        $this->assertSame('zzp-alpha', $first['model']['id']);
-        $this->assertSame('high', $first['thinkingLevel']);
-        $this->assertSame('zzp-plain', $second['model']['id']);
-        $this->assertSame('off', $second['thinkingLevel']);
+        // rotation moved off `ModelResolver` and onto the session. The current model is outside
+        // the scope, so the first cycle lands on its first entry (upstream #11832).
+        $this->assertSame('zzp-plain', $first['model']['id']);
+        $this->assertSame('off', $first['thinkingLevel']);
+        $this->assertSame('zzp-alpha', $second['model']['id']);
+        $this->assertSame('high', $second['thinkingLevel']);
         $this->assertTrue($first['isScoped']);
     }
 

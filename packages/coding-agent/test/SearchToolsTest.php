@@ -382,6 +382,40 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertSame('a.php:1: needle', $found);
     }
 
+    /**
+     * Upstream #11895: rg roots `--glob` at its working directory, so a folder glob was matched
+     * from the session's folder rather than from `path` and found nothing. Through a symlinked
+     * `path` too, which is why the search names `.` rather than the absolute root.
+     */
+    public function testAGlobIsMatchedRelativeToThePath(): void
+    {
+        $this->needsRipgrep();
+        $this->file('repo/migrations/main/a.js', "hello\n");
+        $this->file('repo/nested/migrations/main/b.js', "hello\n");
+        symlink($this->cwd . '/repo', $this->cwd . '/link');
+
+        foreach (['repo', 'link'] as $path) {
+            $grep = fn (string $glob): array => $this->lines($this->textOf(
+                $this->execute(new GrepTool($this->cwd), ['pattern' => 'hello', 'path' => $path, 'glob' => $glob]),
+            ));
+
+            $this->assertSame(['migrations/main/a.js:1: hello'], $grep('migrations/main/*.js'), $path);
+            $this->assertSame(['migrations/main/a.js:1: hello'], $grep('./migrations/main/*.js'), $path);
+            $this->assertSame(['nested/migrations/main/b.js:1: hello'], $grep('!./migrations/**'), $path);
+            $found = $grep('**/migrations/main/*.js');
+            sort($found);
+            $this->assertSame(['migrations/main/a.js:1: hello', 'nested/migrations/main/b.js:1: hello'], $found, $path);
+        }
+    }
+
+    public function testAPatternStartingWithADashIsNotReadAsAFlag(): void
+    {
+        $this->needsRipgrep();
+        $this->file('a.txt', "-v here\n");
+
+        $this->assertSame('a.txt:1: -v here', $this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => '-v'])));
+    }
+
     public function testContextLinesAreMarkedDifferentlyFromTheMatch(): void
     {
         $this->needsRipgrep();

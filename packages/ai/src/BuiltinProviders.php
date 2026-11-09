@@ -54,7 +54,7 @@ final class BuiltinProviders
         'moonshotai-cn' => ['Moonshot AI CN', 'Moonshot AI API key'],
         'nvidia' => ['NVIDIA', 'NVIDIA API key'],
         'openai' => ['OpenAI', 'OpenAI API key'],
-        'openai-codex' => ['OpenAI Codex (legacy)', false],
+        'openai-codex' => ['OpenAI Codex', false],
         'opencode' => ['OpenCode Zen', 'OpenCode API key'],
         'opencode-go' => ['OpenCode Go', 'OpenCode API key'],
         'openrouter' => ['OpenRouter', 'OpenRouter API key'],

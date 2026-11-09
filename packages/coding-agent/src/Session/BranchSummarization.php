@@ -168,9 +168,24 @@ final class BranchSummarization
             }
         }
 
+        // Upstream #11680: what the model was shown, not what the file holds. A failed attempt a
+        // retry hid with a `context_edit` was handed to the summarizer again, and a replaced
+        // message went in with its old content. The latest edit per target on this branch wins.
+        $edits = [];
+
+        foreach ($entries as $entry) {
+            if ($entry->message instanceof ContextEdit) {
+                $edits[$entry->message->targetId] = $entry->message;
+            }
+        }
+
         for ($index = count($entries) - 1; $index >= 0; $index--) {
             $entry = $entries[$index];
             $message = self::messageFromEntry($entry);
+
+            if ($message !== null && isset($edits[$entry->id])) {
+                $message = SessionManager::edited([[$entry->id, $message]], $edits)[0][1] ?? null;
+            }
 
             if ($message === null) {
                 continue;

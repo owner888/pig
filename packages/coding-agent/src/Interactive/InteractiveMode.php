@@ -1060,6 +1060,14 @@ final class InteractiveMode
             $headerContainer->addChild(new Spacer(1));
         }
 
+        // Upstream's `Model scope: …` startup notice (#11512 moved it into the fullscreen header so
+        // it does not stay in the shell). pig draws both modes from this one tree, so it is here in
+        // both. A `ThemedText`, so it follows theme changes.
+        if ($this->modelScopeNotice() !== null) {
+            $headerContainer->addChild(new ThemedText(fn (): string => $this->modelScopeNotice() ?? '', 1, 0));
+            $headerContainer->addChild(new Spacer(1));
+        }
+
         // One component tree for both renderers, as upstream keeps it: regular mode mounts these
         // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
         // Upstream's `headerContainer`, `loadedResourcesContainer` and `chatContainer`, with pig's
@@ -1338,6 +1346,35 @@ final class InteractiveMode
     private function shouldShowStartupHeader(): bool
     {
         return $this->verbose || $this->settings->quietStartup() !== true;
+    }
+
+    /**
+     * Upstream's `getModelScopeNotice()`: `Model scope: sonnet:high, haiku (Ctrl+P to cycle)`, each
+     * model with the level its pattern named. Null without a scope, or when the startup details
+     * are hidden.
+     */
+    private function modelScopeNotice(): ?string
+    {
+        $scope = $this->session->modelScope();
+
+        if ($scope === [] || !$this->shouldShowStartupDetails()) {
+            return null;
+        }
+
+        $theme = Themes::theme();
+        $models = implode(', ', array_map(
+            static fn (ModelChoice $choice): string => $choice->model->id . ($choice->explicitThinking ? ":{$choice->thinking->value}" : ''),
+            $scope,
+        ));
+        // Upstream's `formatKeyText(keys.join("/"), { capitalize: true })`.
+        $keys = (string) preg_replace_callback(
+            '#(^|[+/])([a-z])#',
+            static fn (array $m): string => $m[1] . strtoupper($m[2]),
+            $this->keybindings->keyText('app.model.cycleForward'),
+        );
+        $hint = $keys === '' ? '' : $theme->fg('muted', " ({$keys} to cycle)");
+
+        return $theme->fg('dim', "Model scope: {$models}{$hint}");
     }
 
     /** Upstream's `shouldShowStartupDetails()`: the loaded resources, hidden by `quietStartup: true` or `header`. */
@@ -1960,6 +1997,14 @@ final class InteractiveMode
     private const string ANTHROPIC_SUBSCRIPTION_AUTH_WARNING = 'Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.';
 
     private bool $anthropicSubscriptionWarningShown = false;
+
+    /**
+     * The last cache-warming line, extended in place while it is still the last thing in the chat
+     * — upstream's `cacheWarmingNotice`.
+     *
+     * @var array{component: ThemedText, total: \stdClass, note: ?string}|null
+     */
+    private ?array $cacheWarmingNotice = null;
 
     /**
      * Upstream's `maybeWarnAboutAnthropicSubscriptionAuth()`: once a session, when the model is
@@ -8050,9 +8095,25 @@ final class InteractiveMode
             return;
         }
 
-        $usage = CacheWarmer::formatUsage($entry);
+        // Back-to-back warms collapse into one line with the cumulative cost; each is still its own
+        // usage entry in the session.
+        $previous = $this->cacheWarmingNotice;
+        $children = $this->chat->children();
+
+        if ($previous !== null && end($children) === $previous['component'] && $previous['note'] === $entry->note) {
+            $previous['total']->cost += $entry->usage->cost->total;
+            $previous['component']->invalidate();
+
+            return;
+        }
+
+        $total = new \stdClass();
+        $total->cost = $entry->usage->cost->total;
+        $note = $entry->note;
+        $component = new ThemedText(static fn (): string => Themes::theme()->fg('dim', CacheWarmer::formatUsage($total->cost, $note)), 1, 0);
+        $this->cacheWarmingNotice = ['component' => $component, 'total' => $total, 'note' => $note];
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('dim', $usage), 1, 0));
+        $this->chat->addChild($component);
     }
 
     /** Upstream's `addCompactionCostNotice()`: what a summary billed, from the usage on its entry. */

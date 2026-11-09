@@ -25,8 +25,11 @@ use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
+use Pig\Tui\FakeCursor;
+use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keybindings;
+use Pig\Tui\TUI;
 use Pig\Tui\Width;
 
 /**
@@ -62,8 +65,11 @@ use Pig\Tui\Width;
  * reverses it, `app.tree.editLabel` names a point, `app.tree.toggleLabelTimestamp` shows when each
  * name was given, and `app.message.copy` copies the selected entry's text.
  */
-final class TreeList implements Component, InputHandler, CapturesViewportInput
+final class TreeList implements Component, Focusable, InputHandler, CapturesViewportInput
 {
+    /** Set by the renderer; while true the search line carries the cursor (upstream #9157). */
+    public bool $focused = false;
+
     private const string DEFAULT = 'default';
     private const string NO_TOOLS = 'no-tools';
     private const string USER_ONLY = 'user-only';
@@ -675,11 +681,17 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
     private function searchLine(int $width): string
     {
         $line = '  ' . Themes::theme()->fg('muted', 'Search:')
-            . ($this->search === '' ? '' : ' ' . Themes::theme()->fg('accent', $this->search));
+            . ' ' . ($this->search === '' ? '' : Themes::theme()->fg('accent', $this->search));
 
         // Cut like every other line here: a query longer than the terminal is wide would wrap and
         // push a row off the bottom of the list on each keystroke.
-        return Width::truncate($line, $width, '');
+        if (!$this->focused || $width <= 0) {
+            return Width::truncate(rtrim($line, ' '), $width, '');
+        }
+
+        // Upstream #9157: a cursor at the end of the query, as the session search has, so it reads
+        // as somewhere to type — and the marker, so an input method composes there.
+        return Width::truncate($line, $width - 1, '') . TUI::CURSOR_MARKER . FakeCursor::renderFakeCursor(' ');
     }
 
     /**

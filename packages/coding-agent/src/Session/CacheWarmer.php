@@ -465,11 +465,14 @@ final class CacheWarmer
         );
     }
 
-    /** Upstream's `formatCacheWarmingUsage()`: `Cache warmed (note): $0.0153`, trailing zeros past three places dropped. */
-    public static function formatUsage(UsageEntry $entry): string
+    /**
+     * Upstream's `formatCacheWarmingUsage()`: `Cache warmed (note): $0.0153` for the total of one or
+     * more consecutive warms, trailing zeros past three places dropped.
+     */
+    public static function formatUsage(float $totalCost, ?string $note = null): string
     {
-        $note = $entry->note !== null && $entry->note !== '' ? " ({$entry->note})" : '';
-        $cost = (string) preg_replace('/(\.\d{3}\d*?)0+$/', '$1', sprintf('%.6f', $entry->usage->cost->total));
+        $note = $note !== null && $note !== '' ? " ({$note})" : '';
+        $cost = (string) preg_replace('/(\.\d{3}\d*?)0+$/', '$1', sprintf('%.6f', $totalCost));
 
         return "Cache warmed{$note}: \${$cost}";
     }

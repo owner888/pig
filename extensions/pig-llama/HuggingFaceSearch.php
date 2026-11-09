@@ -50,6 +50,9 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
 
     private int $selectedIndex = 0;
 
+    /** Whether the selection was moved since the query last changed — upstream #11810. */
+    private bool $selectionTouched = false;
+
     private string $query = '';
 
     private string $status = 'Type at least 2 characters';
@@ -129,7 +132,8 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         $this->tui->requestRender();
     }
 
-    private function filterResults(): void
+    /** @param string|null $preferredId the row to keep selected when it is still listed */
+    private function filterResults(?string $preferredId = null): void
     {
         if ($this->query !== '') {
             $matches = array_map(static fn (array $model): string => $model['id'], Fuzzy::filter($this->results, $this->query, static fn (array $model): string => $model['id']));
@@ -138,7 +142,10 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
             $this->filteredResults = $this->results;
         }
 
-        $this->selectedIndex = min($this->selectedIndex, max(0, count($this->filteredResults) - 1));
+        $preferredIndex = $preferredId === null ? false : array_search($preferredId, array_column($this->filteredResults, 'id'), true);
+        $this->selectedIndex = $preferredIndex !== false
+            ? (int) $preferredIndex
+            : min($this->selectedIndex, max(0, count($this->filteredResults) - 1));
         $this->updateResults();
     }
 
@@ -191,10 +198,12 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
                 return;
             }
 
+            // Keep the row browsed to while the search was in flight; otherwise show the best match.
+            $selectedId = $this->selectionTouched ? ($this->filteredResults[$this->selectedIndex]['id'] ?? null) : null;
             $this->results = $results;
             $this->selectedIndex = 0;
             $this->status = $results === [] ? 'No GGUF models found' : '';
-            $this->filterResults();
+            $this->filterResults($selectedId);
         } catch (Throwable $error) {
             if ($this->closed || $request->signal->aborted() || $this->query !== $query) {
                 return;
@@ -239,6 +248,7 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         if ($this->keybindings->matches($data, 'tui.select.up')) {
             if ($this->filteredResults !== []) {
                 $this->selectedIndex = $this->selectedIndex === 0 ? count($this->filteredResults) - 1 : $this->selectedIndex - 1;
+                $this->selectionTouched = true;
                 $this->updateResults();
             }
 
@@ -248,6 +258,7 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         if ($this->keybindings->matches($data, 'tui.select.down')) {
             if ($this->filteredResults !== []) {
                 $this->selectedIndex = $this->selectedIndex === count($this->filteredResults) - 1 ? 0 : $this->selectedIndex + 1;
+                $this->selectionTouched = true;
                 $this->updateResults();
             }
 
@@ -259,6 +270,7 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         if ($pageIndex !== null) {
             if ($this->filteredResults !== []) {
                 $this->selectedIndex = $pageIndex;
+                $this->selectionTouched = true;
                 $this->updateResults();
             }
 
@@ -290,6 +302,7 @@ final class HuggingFaceSearch extends Container implements Focusable, InputHandl
         }
 
         $this->query = $query;
+        $this->selectionTouched = false;
         $this->scheduleSearch();
     }
 

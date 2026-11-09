@@ -52,7 +52,11 @@ final class GrepTool implements AgentTool, ReplayableTool
                 'properties' => [
                     'pattern' => ['type' => 'string', 'description' => 'Regular expression, or a literal string with literal=true'],
                     'path' => ['type' => 'string', 'description' => 'File or directory to search; defaults to the working directory'],
-                    'glob' => ['type' => 'string', 'description' => "Only search files matching this glob, e.g. '*.php'"],
+                    'glob' => [
+                        'type' => 'string',
+                        'description' => "Filter files by glob pattern, relative to path, e.g. '*.php', 'src/**/*.php' "
+                            . "or '**/*Test.php'. A pattern without '/' matches file names at any depth",
+                    ],
                     'ignoreCase' => ['type' => 'boolean', 'description' => 'Match regardless of case'],
                     'literal' => ['type' => 'boolean', 'description' => 'Treat the pattern as text rather than a regular expression'],
                     'context' => ['type' => 'number', 'description' => 'Lines of context to show around each match'],
@@ -109,7 +113,7 @@ final class GrepTool implements AgentTool, ReplayableTool
         // times against 24 of ~25. Upstream's `grep.ts` is an async `spawn`, so this was the
         // shape the port was missing — unlike `find.ts`, which is `spawnSync` there too.
         [$exit, $errors] = Process::streamAsync(
-            $this->command($rg, $arguments, $root),
+            $this->command($rg, $arguments, $root, $searchingDirectory),
             function (string $line) use (
                 &$lines,
                 &$matches,
@@ -128,6 +132,8 @@ final class GrepTool implements AgentTool, ReplayableTool
 
                 [$file, $number] = $match;
                 $matches++;
+                // A directory search ran inside the root and reports `./…` paths (#11895).
+                $file = $searchingDirectory ? Paths::resolve($file, $root) : $file;
 
                 foreach (self::block($file, $number, $context, $root, $searchingDirectory, $cache, $shortened) as $out) {
                     $lines[] = $out;
@@ -141,6 +147,10 @@ final class GrepTool implements AgentTool, ReplayableTool
             // the kill is prompt either way, where checking per line only noticed when `rg` had
             // something to say. `throwIfAborted()` below is what the caller still sees.
             $signal,
+            // rg roots `--glob` at its own working directory, so a directory search runs inside
+            // the root (upstream #11895): `migrations/main/*.js` with `path: repo` was matched
+            // from the session's folder and found nothing.
+            $searchingDirectory ? $root : null,
         );
 
         $signal?->throwIfAborted();
@@ -203,7 +213,7 @@ final class GrepTool implements AgentTool, ReplayableTool
      * @param array<string, mixed> $arguments
      * @return list<string>
      */
-    private function command(string $rg, array $arguments, string $root): array
+    private function command(string $rg, array $arguments, string $root, bool $searchingDirectory): array
     {
         // --no-require-git so .gitignore is honoured outside a repository too; without
         // it a search of any plain directory walks straight into vendor and node_modules.
@@ -220,12 +230,17 @@ final class GrepTool implements AgentTool, ReplayableTool
         }
 
         if (isset($arguments['glob']) && $arguments['glob'] !== '') {
+            // rg never matches a leading `./` (`./src/*.php` finds nothing), so it is dropped; `!` negates.
             $command[] = '--glob';
-            $command[] = (string) $arguments['glob'];
+            $command[] = (string) preg_replace('#^(!?)(?:\./)+#', '$1', (string) $arguments['glob']);
         }
 
+        // `--` so a pattern starting with `-` is not read as a flag. A directory search names `.`:
+        // rg canonicalizes its working directory, so the absolute path of a symlinked root would
+        // no longer lie under the glob's root. rg ignores `--glob` for a file named directly.
+        $command[] = '--';
         $command[] = (string) $arguments['pattern'];
-        $command[] = $root;
+        $command[] = $searchingDirectory ? '.' : $root;
 
         return $command;
     }

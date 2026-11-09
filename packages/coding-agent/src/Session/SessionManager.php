@@ -1352,13 +1352,14 @@ final class SessionManager
 
     /**
      * Apply the edits to a run of messages: an omitted target produces nothing, a replaced one
-     * keeps its role and metadata with the new content.
+     * keeps its role and metadata with the new content. Upstream's `projectContextEntry()`, which
+     * branch summarization shares with the live context and compaction (#11680).
      *
      * @param list<array{0: string, 1: mixed}> $messages
      * @param array<string, ContextEdit>       $edits
      * @return list<array{0: string, 1: mixed}>
      */
-    private static function edited(array $messages, array $edits): array
+    public static function edited(array $messages, array $edits): array
     {
         if ($edits === []) {
             return $messages;

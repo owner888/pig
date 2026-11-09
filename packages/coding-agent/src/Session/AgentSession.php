@@ -1822,17 +1822,32 @@ final class AgentSession
     }
 
     /**
-     * Record the selection on the branch when the branch implies another one, so a resume
-     * restores it — upstream's `_recordSelection()`. Tree navigation can leave the latest
-     * `model_change` on another branch, and responses cannot record a virtual selection because
-     * they name physical models. Responses do record a physical selection unless the branch holds
-     * a virtual one; checking a physical selection against responses would record it on every
-     * prompt while the routing redirects to another model.
+     * Record the live model and thinking level on the current branch, so a resume restores them —
+     * upstream's `_recordSelection()`. The branch is read once for both.
      */
     private function recordSelection(): void
     {
+        $recorded = $this->store?->settings();
+
+        if ($recorded === null) {
+            return;
+        }
+
+        $this->recordModelSelection($recorded['model']);
+        $this->recordThinkingLevel($recorded['thinking']);
+    }
+
+    /**
+     * Upstream's `_recordModelSelection()`: the model, when the branch implies another one. Tree
+     * navigation can leave the latest `model_change` on another branch, and responses cannot
+     * record a virtual selection because they name physical models. Responses do record a
+     * physical selection unless the branch holds a virtual one; checking a physical selection
+     * against responses would record it on every prompt while the routing redirects to another
+     * model.
+     */
+    private function recordModelSelection(?ModelChangeEntry $recorded): void
+    {
         $model = $this->model();
-        $recorded = $this->store?->settings()['model'];
 
         if ($model === null || $recorded === null || ($recorded->provider === $model->provider && $recorded->modelId === $model->id)) {
             return;
@@ -1845,6 +1860,24 @@ final class AgentSession
         }
 
         $this->store?->appendModelChange($model->provider, $model->id);
+    }
+
+    /**
+     * Upstream's `_recordThinkingLevel()` (#11888): the thinking level, when the branch implies
+     * another one — tree navigation can leave the latest `thinking_level_change` on another branch,
+     * and a resume restored that stale level. The recorded level is compared after clamping to the
+     * current model, so a level clamped on resume (`xhigh` running as `high`) is not recorded over
+     * the one that was asked for. A level pig has no name for is left as it is.
+     */
+    private function recordThinkingLevel(?ThinkingLevelChangeEntry $recorded): void
+    {
+        $level = $recorded?->known();
+
+        if ($level === null || $this->clampThinking($level) === $this->thinkingLevel()) {
+            return;
+        }
+
+        $this->store?->appendThinkingLevelChange($this->thinkingLevel()->value);
     }
 
     public function sessionName(): ?string
@@ -2894,7 +2927,19 @@ final class AgentSession
         }
 
         [$text, $images] = $input;
-        $message = new UserMessage([new TextContent($this->expandFileCommand($text)), ...$images]);
+        // Upstream #11782: a queued message's images get the resize an idle prompt's do, and the
+        // hints after its text — sent at full size they could be over a provider's limit, and they
+        // were saved and replayed that way. Upstream rewrites the message in place when it is
+        // delivered (`message_start`); a `UserMessage` here is immutable and `ImageProcess` is
+        // synchronous anyway, so it is done as the message is queued, with the model in use then.
+        $body = $this->expandFileCommand($text);
+
+        if ($images !== []) {
+            [$images, $hints] = $this->normalizePromptImages($images);
+            $body = $hints !== [] ? $body . "\n\n" . implode("\n", $hints) : $body;
+        }
+
+        $message = new UserMessage([new TextContent($body), ...$images]);
 
         if ($behavior === 'steer') {
             $this->steering[] = $text;

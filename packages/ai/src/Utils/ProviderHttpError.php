@@ -40,12 +40,6 @@ final class ProviderHttpError extends RuntimeException
         parent::__construct($message, 0, $previous);
     }
 
-    /** The turn's `errorMessage` for an error the provider caught: `display`, else the message. */
-    public static function displayOf(Throwable $error): string
-    {
-        return $error instanceof self && $error->display !== null ? $error->display : $error->getMessage();
-    }
-
     /** `error.headers?.get(name)`: case-insensitive, null when absent. */
     public function header(string $name): ?string
     {

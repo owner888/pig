@@ -276,6 +276,25 @@ final class StreamTest extends TestCase
         $this->restoreEnv();
     }
 
+    public function testALongConversationKeepsFifteenPercentOfItsInputClearForAnOvercount(): void
+    {
+        // Upstream #11712: OpenRouter counts the input with its own tokenizer, up to 12% above the
+        // provider, and refuses input + max_tokens over the window. 350,000 characters are 100,000
+        // tokens, so the margin is 15,000 where it was 4,096: at a 170,000 window the answer gets
+        // 55,000 (it got 63,000). When the 15% would leave under 32,768, the margin falls back to
+        // 4,096 and the answer is capped at 32,768 — at 140,000 that is 32,768 (it was 35,904); at
+        // 120,000 the 15,904 left is less than the cap anyway.
+        $message = new UserMessage(str_repeat('x', 350_000));
+
+        $this->assertSame(55_000, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'), $message, 170_000)['max_tokens']);
+        $this->server = new CannedServer();
+        $this->assertSame(32_768, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'), $message, 140_000)['max_tokens']);
+        $this->server = new CannedServer();
+        $this->assertSame(15_904, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'), $message, 120_000)['max_tokens']);
+
+        $this->restoreEnv();
+    }
+
     public function testABudgetThinkingTurnRaisesTheCeilingByItsBudget(): void
     {
         // Upstream's `adjustMaxTokensForThinking()`: the caller's 700 is the answer, and the

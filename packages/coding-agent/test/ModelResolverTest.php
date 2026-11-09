@@ -220,14 +220,25 @@ final class ModelResolverTest extends TestCase
         $this->assertNull(ModelResolver::next([], null));
     }
 
-    public function testAModelThatIsNotOnTheListCountsAsBeingAtTheStart(): void
+    public function testAModelThatIsNotOnTheListGoesToTheFirstForwardAndTheLastBackward(): void
     {
         [$one, $two, $three] = self::probeThree();
 
-        // Upstream's `indexOf` answering -1, kept: `--model` pinned to a provider whose key has
-        // since gone is how somebody gets here. It counts as being at position 0, so the next one
-        // along is the **second** on the list rather than the first.
-        $this->assertSame($three, ModelResolver::next([$two, $three], $one));
+        // Upstream #11832. `--model` pinned to a provider whose key has since gone, or a model
+        // outside the scope, is how somebody gets here. It used to count as being at position 0,
+        // so ctrl+p skipped the first model on the list.
+        $this->assertSame($two, ModelResolver::next([$two, $three], $one));
+        $this->assertSame($three, ModelResolver::next([$two, $three], $one, backward: true));
+    }
+
+    public function testAScopeOfOneSelectsItsModelFromOutsideIt(): void
+    {
+        [$one, $two] = self::probeThree();
+
+        // It said "Only one model in the scope" and kept the model outside it.
+        $this->assertSame($two, ModelResolver::next([$two], $one));
+        $this->assertSame($two, ModelResolver::next([$two], null, backward: true));
+        $this->assertNull(ModelResolver::next([$two], $two), 'and once it is current, there is nowhere to go');
     }
 
     // ---- the scope `--models` sets ----------------------------------------------------------

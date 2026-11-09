@@ -634,10 +634,12 @@ final class ModelResolver
      * the answer, and the thinking level a scope entry carries are the session's, because a
      * caller that had to remember the level is a caller that will not.
      *
-     * Null when there is nowhere to go: one model, or none. A current model that is not in the
-     * list at all — pinned with `--model` for a provider whose key has since gone — counts as
-     * being at the start, which is upstream's rule and means ctrl+p from there lands on the
-     * *second* model in the list.
+     * Null when there is nowhere to go: an empty list, or one whose only model is the current one.
+     * A current model that is not in the list at all — pinned with `--model` for a provider whose
+     * key has since gone, or outside the scope — goes to the first model forward and the last
+     * backward, so a scope of one still selects it (upstream's `getNextCycleIndex()`, #11832;
+     * it used to count as being at the start, which skipped the first model and refused a scope
+     * of one).
      *
      * @param list<Model> $available in the registry's order, which is what the list shows
      */
@@ -645,11 +647,11 @@ final class ModelResolver
     {
         $count = count($available);
 
-        if ($count <= 1) {
+        if ($count === 0) {
             return null;
         }
 
-        $at = 0;
+        $at = null;
 
         foreach ($available as $index => $model) {
             if ($current !== null && $model->is($current)) {
@@ -657,6 +659,14 @@ final class ModelResolver
 
                 break;
             }
+        }
+
+        if ($at === null) {
+            return $available[$backward ? $count - 1 : 0];
+        }
+
+        if ($count === 1) {
+            return null;
         }
 
         return $available[($at + ($backward ? -1 : 1) + $count) % $count];

@@ -99,6 +99,11 @@ final class Themes
         'java' => 'java',
         'kt' => 'kotlin',
         'swift' => 'swift',
+        // Upstream #11790.
+        'dart' => 'dart',
+        'groovy' => 'groovy',
+        'gradle' => 'groovy',
+        'nix' => 'nix',
         'c' => 'c',
         'h' => 'c',
         'cpp' => 'cpp',

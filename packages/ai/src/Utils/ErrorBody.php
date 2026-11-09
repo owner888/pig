@@ -39,6 +39,9 @@ final class ErrorBody
     /** Upstream's `MAX_PROVIDER_ERROR_BODY_CHARS`. */
     public const int MAX_PROVIDER_ERROR_BODY_CHARS = 4000;
 
+    /** How far `withCauseDetail()` follows the cause chain. */
+    private const int MAX_CAUSE_DEPTH = 5;
+
     /**
      * `normalizeProviderError(APIError.generate(status, safeJSON(errText), errMessage, headers))`.
      *
@@ -87,7 +90,7 @@ final class ErrorBody
         $status = $error instanceof ProviderHttpError ? $error->status : null;
         $body = $error instanceof ProviderHttpError && $error->body !== null ? JsJson::trim($error->body) : null;
         $body = $body === null || $body === '' ? null : self::truncateErrorText($body, self::MAX_PROVIDER_ERROR_BODY_CHARS);
-        $message = $error->getMessage();
+        $message = $status === null && $body === null ? self::withCauseDetail($error) : $error->getMessage();
 
         return [
             'status' => $status,
@@ -95,6 +98,37 @@ final class ErrorBody
             'message' => $message,
             'messageCarriesBody' => $body === null || str_contains($message, $body),
         ];
+    }
+
+    /**
+     * Upstream's `withCauseDetail(error)`: a transport failure's own message is often generic
+     * ("Connection error." wraps the socket's "Connection refused"), so the deepest cause (up to
+     * five levels down `getPrevious()`) is appended — with its code when the text lacks it — and a
+     * caller that shows only the message keeps the reason. The message is unchanged when there is
+     * no cause, or it already says what the cause does.
+     */
+    public static function withCauseDetail(\Throwable $error): string
+    {
+        $deepest = null;
+        $current = $error->getPrevious();
+        for ($depth = 0; $depth < self::MAX_CAUSE_DEPTH && $current !== null; $depth++) {
+            $deepest = $current;
+            $current = $current->getPrevious();
+        }
+        $message = $error->getMessage();
+        if ($deepest === null) {
+            return $message;
+        }
+        $detail = trim($deepest->getMessage() !== '' ? $deepest->getMessage() : (new \ReflectionClass($deepest))->getShortName());
+        $code = (string) $deepest->getCode();
+        if ($code !== '0' && $code !== '' && !str_contains($detail, $code)) {
+            $detail = $detail !== '' ? "{$detail} ({$code})" : $code;
+        }
+        if ($detail === '' || str_contains($message, $detail)) {
+            return $message;
+        }
+
+        return $message !== '' ? "{$message}: {$detail}" : $detail;
     }
 
     /**

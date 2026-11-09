@@ -411,6 +411,21 @@ final class TreeListTest extends TestCase
         $this->assertStringContainsString('Search: road', self::plain($list));
     }
 
+    /** Upstream #9157: focused, the search line ends in a cursor, as the session search does. */
+    public function testTheSearchLineCarriesTheCursorOnlyWhileFocused(): void
+    {
+        $list = self::list(self::forked(), 'f');
+        $list->handleInput('r');
+
+        $this->assertStringNotContainsString(\Pig\Tui\TUI::CURSOR_MARKER, implode("\n", $list->render(80)));
+
+        $list->focused = true;
+        $searchLine = array_values(array_filter($list->render(80), static fn (string $line): bool => str_contains($line, 'Search:')))[0];
+
+        $this->assertStringEndsWith(\Pig\Tui\TUI::CURSOR_MARKER . \Pig\Tui\FakeCursor::renderFakeCursor(' '), $searchLine);
+        $this->assertLessThanOrEqual(80, \Pig\Tui\Width::visible($searchLine));
+    }
+
     public function testTheSearchLineIsStillThereWhenNothingMatches(): void
     {
         // Where it matters most: the only way to see what was typed wrong.

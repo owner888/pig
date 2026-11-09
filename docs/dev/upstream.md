@@ -21,6 +21,19 @@ through a command here — including macOS, which uses `pngpaste` when it is ins
 AppleScript, which always is, when it is not. Under Termux it is Termux:API's
 `termux-clipboard-get` / `termux-clipboard-set` and nothing else, text only, as upstream's.
 
+A steered or follow-up message's images are fitted to the model's limits when the message is
+queued, not when it is delivered as upstream does (#11782): upstream rewrites the queued message in
+place at `message_start`, and a `UserMessage` here is immutable. `ImageProcess` is synchronous, so the
+reason upstream waits (keeping the queue call synchronous) does not arise; the limits are the model in
+use when it was queued.
+
+Upstream changes that need nothing here, because pig never had the problem: #11813 (a bash timeout
+after the shell exited — `Tools\Run` resolves once the shell exits rather than waiting for the pipes
+its background children hold), #9274 (a diff dropping the removed line's indent — `DiffView` builds
+each side from its own tokens), #11514 (reordering the same active tools — `ToolLoadout` keeps
+registration order), #11853 (extension overlays left behind on `/reload` — `ExtensionUi::custom()`
+has no overlay mode) and #11775 (CR-only SSE lines — `SseParser` already splits on them).
+
 ## Names that differ from upstream
 
 An audit of 2026-11-09, after `CustomTools\` folded into `Extensions\` (1.8.0) and `bin/pig` was

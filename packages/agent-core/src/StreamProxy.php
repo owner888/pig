@@ -311,6 +311,7 @@ final class StreamProxy
                 'maxTokensField' => $model->compat->maxTokensField,
                 'requiresToolResultName' => $model->compat->toolResultName,
                 'requiresAssistantAfterToolResult' => $model->compat->assistantAfterToolResult,
+                'requiresNonNullAssistantContent' => $model->compat->nonNullAssistantContent,
                 'requiresThinkingAsText' => $model->compat->thinkingAsText,
                 'requiresReasoningContentOnAssistantMessages' => $model->compat->reasoningContentOnAssistantMessages,
                 'supportsStrictMode' => $model->compat->strictMode,

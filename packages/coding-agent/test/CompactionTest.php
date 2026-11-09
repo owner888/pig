@@ -844,6 +844,24 @@ final class CompactionTest extends TestCase
         $this->assertNotContains($messages[1], $preparation->messages, 'the message that named it did not fit');
     }
 
+    /** Upstream #11680: a branch summary is written from what the model was shown. */
+    public function testABranchSummaryHonoursContextEdits(): void
+    {
+        $messages = [
+            new UserMessage('do it'),
+            self::assistant('a failed attempt'),
+            self::assistant('the first wording'),
+            new ContextEdit('e1', null),
+            new ContextEdit('e2', 'the replaced wording'),
+        ];
+
+        $kept = BranchSummarization::prepareBranchEntries(self::entries($messages))->messages;
+
+        $this->assertCount(2, $kept);
+        $this->assertSame($messages[0], $kept[0]);
+        $this->assertEquals([new TextContent('the replaced wording')], $kept[1]->content);
+    }
+
     public function testTheMovesCommonAncestorIsFoundAndTheRestOfTheOldBranchCollected(): void
     {
         $store = SessionManager::create(sys_get_temp_dir());

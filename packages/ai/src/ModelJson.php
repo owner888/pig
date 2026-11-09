@@ -27,6 +27,7 @@ final class ModelJson
         'maxTokensField' => 'maxTokensField',
         'toolResultName' => 'requiresToolResultName',
         'assistantAfterToolResult' => 'requiresAssistantAfterToolResult',
+        'nonNullAssistantContent' => 'requiresNonNullAssistantContent',
         'thinkingAsText' => 'requiresThinkingAsText',
         'reasoningContentOnAssistantMessages' => 'requiresReasoningContentOnAssistantMessages',
         'strictMode' => 'supportsStrictMode',
@@ -295,6 +296,7 @@ final class ModelJson
             supportsToolSearch: $flag('supportsToolSearch'),
             supportsAdditionalTools: $flag('supportsAdditionalTools'),
             supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
+            nonNullAssistantContent: $flag('requiresNonNullAssistantContent'),
         );
     }
 

@@ -43,6 +43,32 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.3] - 2026-11-09
+
+### Added
+
+- A model's `compat` takes `requiresNonNullAssistantContent` (upstream #8118): a tool-call-only assistant turn is sent with `content: ""` rather than `null`, for an OpenAI-compatible endpoint that rejects the null. In `models.json` and its schema.
+- `/model`'s scope is shown under the header at startup when `--models` set one — `Model scope: sonnet:high, haiku (Ctrl+P to cycle)`, upstream's notice (#11512), which pig never drew.
+
+### Changed
+
+- Consecutive cache warms share one `Cache warmed: $…` line with the running total, as upstream's do; each is still its own usage entry.
+- The `openai-codex` provider is named `OpenAI Codex`, without `(legacy)`, as upstream renamed it.
+- The output reserve for a long conversation is 15% of its estimated input (at least 32,768 tokens when the window has room), not a flat margin, so an undercount of a large context no longer runs it past the window (upstream #11712).
+
+### Fixed
+
+- Fixed `grep`'s `glob` being matched from the session's folder rather than from `path`: `path: "repo", glob: "migrations/main/*.js"` found nothing. rg now runs inside the searched folder (symlinked ones too), a leading `./` in the glob is dropped, and the parameter says the glob is relative to `path` (upstream #11895). A pattern starting with `-` is no longer read as an rg flag.
+- Fixed a resume restoring a stale thinking level after going back in the tree: the live level is recorded on the branch before the next prompt, unless it differs only by clamping (upstream #11888).
+- Fixed ctrl+p doing nothing when the scope held one model and the current model was outside it, and skipping the scope's first model when cycling in from outside: forward lands on the first entry, backward on the last (upstream #11832).
+- Fixed images in steered and follow-up messages going out (and into the session) at full size: they are fitted to the model's limits with the same hints as a prompt's (upstream #11782).
+- Fixed a branch summary being written from messages a `context_edit` had hidden or replaced — a retried failed attempt went to the summarizer again (upstream #11680).
+- Fixed a connection failure reading only `Connection error.`: the underlying cause is appended, e.g. `Connection error.: connect ECONNREFUSED … (111)` (upstream #11783).
+- Fixed a gateway's "cut short after the reply had begun" not being retried (upstream #11879).
+- Fixed the `/tree` search line having no cursor (upstream #9157).
+- Fixed the pig-llama Hugging Face search jumping back to the top when results arrived after the selection had been moved (upstream #11810).
+- `.dart`, `.groovy`, `.gradle` and `.nix` files are highlighted in read/write views (upstream #11790).
+
 ## [1.9.2] - 2026-11-09
 
 ### Added

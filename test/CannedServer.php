@@ -164,8 +164,15 @@ final class CannedServer
 
             $this->received .= $data;
 
-            // Reply once the whole request head is in.
+            // Reply once the whole request is in: the head, and as much body as it announced. A
+            // body over one read (64 KiB) used to be cut there, and `receivedJson()` came back empty.
             if (!str_contains($this->received, "\r\n\r\n")) {
+                return;
+            }
+
+            [$head, $body] = explode("\r\n\r\n", $this->received, 2);
+
+            if (preg_match('/^content-length:\s*(\d+)/im', $head, $length) === 1 && strlen($body) < (int) $length[1]) {
                 return;
             }
 

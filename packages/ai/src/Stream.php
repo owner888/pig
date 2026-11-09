@@ -47,6 +47,20 @@ final class Stream
     /** Upstream's `CONTEXT_SAFETY_TOKENS`: what `clampMaxTokensToContext()` keeps clear of the window. */
     private const int CONTEXT_SAFETY_TOKENS = 4096;
 
+    /**
+     * Upstream's `CONTEXT_SAFETY_RATIO` (#11712): OpenRouter counts the input with its own tokenizer
+     * and rejects input + max_tokens above the window before routing — prose up to 12% above the
+     * provider's count — so the margin is 15% of the estimated input when that is more than 4,096.
+     */
+    private const float CONTEXT_SAFETY_RATIO = 0.15;
+
+    /**
+     * Upstream's `MIN_OUTPUT_WITH_RATIO_MARGIN`: the 15% margin is kept only while it leaves this
+     * much output. Otherwise (a nearly full large window, or any small one) only the fixed margin
+     * is kept, and the output is capped at this, so an overcount still fits for a while.
+     */
+    private const int MIN_OUTPUT_WITH_RATIO_MARGIN = 32768;
+
     /** Upstream's `MIN_MAX_TOKENS`. */
     private const int MIN_MAX_TOKENS = 1;
 
@@ -500,8 +514,9 @@ final class Stream
 
     /**
      * Upstream's `clampMaxTokensToContext()`: the request's ceiling, cut so the conversation plus
-     * the answer plus 4,096 tokens of slack fit in the window — never below 1. A model with no
-     * window (0) is not cut.
+     * the answer plus a margin fit in the window — never below 1. The margin is 15% of the
+     * estimated input, at least 4,096; when that would leave less than 32,768 for the answer,
+     * the margin is 4,096 and the answer is capped at 32,768. A model with no window (0) is not cut.
      */
     private static function clampMaxTokensToContext(Model $model, TranscriptContext $context, int $maxTokens): int
     {
@@ -509,9 +524,15 @@ final class Stream
             return max(self::MIN_MAX_TOKENS, $maxTokens);
         }
 
-        $available = $model->contextWindow - Utils\Estimate::contextTokens($context) - self::CONTEXT_SAFETY_TOKENS;
+        $input = Utils\Estimate::contextTokens($context);
+        $margin = max(self::CONTEXT_SAFETY_TOKENS, (int) ceil($input * self::CONTEXT_SAFETY_RATIO));
+        $room = $model->contextWindow - $input - $margin;
 
-        return min($maxTokens, max(self::MIN_MAX_TOKENS, $available));
+        if ($room < self::MIN_OUTPUT_WITH_RATIO_MARGIN) {
+            $room = min(self::MIN_OUTPUT_WITH_RATIO_MARGIN, $model->contextWindow - $input - self::CONTEXT_SAFETY_TOKENS);
+        }
+
+        return min($maxTokens, max(self::MIN_MAX_TOKENS, $room));
     }
 
     /**

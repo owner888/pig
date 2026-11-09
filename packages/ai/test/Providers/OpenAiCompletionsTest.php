@@ -683,6 +683,25 @@ final class OpenAiCompletionsTest extends TestCase
         ], $messages);
     }
 
+    public function testAToolCallOnlyTurnSendsAnEmptyStringWhereTheEndpointRejectsNull(): void
+    {
+        // Upstream's `requiresNonNullAssistantContent` (#8118): an assistant turn that only called
+        // tools has no text, and is sent with `content: null` — unless the endpoint says it rejects
+        // that, when it is `""`. Off by default.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', [])]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+        ]);
+
+        $this->send($context, $this->model());
+        $this->assertNull($this->server->receivedJson()['messages'][1]['content']);
+
+        $this->server = new CannedServer();
+        $this->send($context, $this->model(compat: new OpenAiCompat(nonNullAssistantContent: true)));
+        $this->assertSame('', $this->server->receivedJson()['messages'][1]['content']);
+    }
+
     /** @return iterable<string, array{0: list<string>, 1: string}> */
     public static function sdkStreamFailures(): iterable
     {

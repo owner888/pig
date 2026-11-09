@@ -1685,7 +1685,7 @@ final class OpenAiCompletions
 
         // Upstream: "Some providers don't accept null content, use empty string instead" — and
         // every endpoint rejects an assistant turn that has neither content nor calls.
-        $out = ['role' => 'assistant', 'content' => $compat->assistantAfterToolResult ? '' : null];
+        $out = ['role' => 'assistant', 'content' => $compat->assistantAfterToolResult || $compat->nonNullAssistantContent ? '' : null];
 
         if ($nonEmptyThinkingBlocks !== []) {
             if ($compat->thinkingAsText) {

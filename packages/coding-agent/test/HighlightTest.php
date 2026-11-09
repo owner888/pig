@@ -195,6 +195,10 @@ final class HighlightTest extends TestCase
         $this->assertSame('php', Highlight::languageFromPath('/a/b/Thing.php'));
         $this->assertSame('javascript', Highlight::languageFromPath('app.tsx'));
         $this->assertSame('shell', Highlight::languageFromPath('~/.config/setup.zsh'));
+        // Upstream #11790.
+        $this->assertSame('java', Highlight::languageFromPath('main.dart'));
+        $this->assertSame('java', Highlight::languageFromPath('build.gradle'));
+        $this->assertSame('shell', Highlight::languageFromPath('flake.nix'));
         $this->assertNull(Highlight::languageFromPath('notes.txt'));
     }
 

@@ -109,6 +109,9 @@ final readonly class OpenAiCompat
      *        its `tool_search_output`
      * @param bool|null   $supportsAdditionalTools the model takes message-anchored `additional_tools`
      *        items (Responses; default false), which win over tool search
+     * @param bool|null   $nonNullAssistantContent a replayed assistant turn with no text (one that only
+     *        called tools) sends `""` rather than `null` content — upstream's
+     *        `requiresNonNullAssistantContent` (#8118), for endpoints that reject a null; `false` by default
      * @param bool|null   $supportsMidConvoEffort upstream's `OpenAIResponsesCompat.supportsMidConvoEffort`
      *        (Responses; default false): "thinking level changes are sent as configuration_update input
      *        items instead of changing reasoning.effort, so a change keeps the prompt cache" — ignored
@@ -147,6 +150,7 @@ final readonly class OpenAiCompat
         public ?bool $supportsToolSearch = null,
         public ?bool $supportsAdditionalTools = null,
         public ?bool $supportsMidConvoEffort = null,
+        public ?bool $nonNullAssistantContent = null,
     ) {
     }
 
@@ -209,6 +213,8 @@ final readonly class OpenAiCompat
             supportsToolSearch: $explicit->supportsToolSearch,
             supportsAdditionalTools: $explicit->supportsAdditionalTools,
             supportsMidConvoEffort: $explicit->supportsMidConvoEffort,
+            // Upstream detects `false` for every endpoint; only a `compat` block turns it on.
+            nonNullAssistantContent: $explicit->nonNullAssistantContent ?? false,
         );
     }
 

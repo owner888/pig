@@ -51,6 +51,7 @@ final class RetryTest extends TestCase
         yield 'anthropic stream ended' => ['Anthropic stream ended before message_stop'];
         yield 'ended without' => ['Mistral stream ended without a finish reason'];
         yield 'responses terminal' => ['OpenAI Responses stream ended before a terminal response event'];
+        yield 'gateway relaying a dropped stream' => ["Claude Code's stream from Anthropic was cut short after the reply had begun"];
         yield 'retry delay cap' => ['Server requested 120s retry delay (max: 60s). 429 rate limited'];
         yield 'retry guidance' => ['An error occurred. You can retry your request.'];
         yield 'grpc' => ['ResourceExhausted: try later'];

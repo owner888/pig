@@ -9,6 +9,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
+use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Async\AbortController;
 use Pig\Async\AbortError;
@@ -59,7 +60,9 @@ final class SdkRequest
         return match (true) {
             $error instanceof AbortError => self::DOM_ABORT_MESSAGE,
             $error instanceof SocketError, $error instanceof HttpError => self::BODY_TERMINATED,
-            default => ProviderHttpError::displayOf($error),
+            // A refused request carries its own text; a transport failure keeps its cause (#11783).
+            $error instanceof ProviderHttpError && $error->display !== null => $error->display,
+            default => ErrorBody::withCauseDetail($error),
         };
     }
 

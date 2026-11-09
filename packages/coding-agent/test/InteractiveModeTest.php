@@ -1040,6 +1040,25 @@ final class InteractiveModeTest extends TestCase
         yield 'off' => [false];
     }
 
+    /** Upstream: back-to-back warms are one line with the running total, not a line each. */
+    public function testConsecutiveCacheWarmsShareOneLine(): void
+    {
+        $this->start(settings: Settings::inMemory(['showCacheMissNotices' => true]));
+        $warm = fn (float $cost): mixed => (new \ReflectionMethod($this->mode, 'onEvent'))->invoke(
+            $this->mode,
+            new \Pig\CodingAgent\Session\CacheWarmedEvent(
+                new \Pig\CodingAgent\Session\UsageEntry('cache_warming', 'anthropic', 'm', new Usage(cost: new Cost(cacheRead: $cost, total: $cost))),
+            ),
+        );
+
+        $warm(0.0125);
+        $warm(0.0025);
+        $this->settle();
+
+        $this->assertSame(1, substr_count($this->screenText(), 'Cache warmed'));
+        $this->assertStringContainsString('Cache warmed: $0.015', $this->screenText());
+    }
+
     public function testACompactionSaysWhatItCostWhenTheSettingAsksForIt(): void
     {
         $this->start(
@@ -2851,13 +2870,21 @@ final class InteractiveModeTest extends TestCase
 
         $this->start(auth: $auth, reasoning: true, modelScope: $scope);
 
+        // Upstream's startup notice, each model with the level its pattern named.
+        $this->assertStringContainsString('Model scope: zzp-plain, zzp-alpha:high (Ctrl+P to cycle)', $this->screenText());
+
         $this->type("\x10");
 
         // Two models in the scope and the current one is in neither — the test model is
-        // `claude-test` — so the first press lands on the second entry, which is upstream's
-        // `indexOf` quirk. What matters here is the level: `--models opus:high` says how hard
-        // *that* model thinks, and a cycle that applied the model and forgot the level would be
-        // the wired-at-one-end shape again.
+        // `claude-test` — so the first press lands on the first entry (upstream #11832; it used to
+        // count as being at the start and skip it).
+        $this->assertSame('zzp-plain', $this->session->model()?->id);
+
+        $this->type("\x10");
+
+        // What matters here is the level: `--models opus:high` says how hard *that* model thinks,
+        // and a cycle that applied the model and forgot the level would be the wired-at-one-end
+        // shape again.
         $this->assertSame('zzp-alpha', $this->session->model()?->id);
         $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
         $this->assertStringContainsString('thinking high', $this->screen());
@@ -2894,6 +2921,11 @@ final class InteractiveModeTest extends TestCase
         [$scope] = ModelResolver::scope(['claude-haiku-4-5'], $auth->availableModels());
 
         $this->start(auth: $auth, modelScope: $scope);
+
+        // The model in use is outside the scope, so the first press selects the scope's only model
+        // (upstream #11832 — it used to say "only one" and stay where it was).
+        $this->type("\x10");
+        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
 
         $this->type("\x10");
 
@@ -4419,7 +4451,7 @@ final class InteractiveModeTest extends TestCase
         // The account sign-ins: `Auth::signIns()`, by upstream's provider names, sorted.
         $screen = $this->screen();
         $this->assertStringContainsString('Select provider to configure:', $screen);
-        $this->assertMatchesRegularExpression('/Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex \(legacy\).*Radius/s', $screen);
+        $this->assertMatchesRegularExpression('/Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex • not configured.*Radius/s', $screen);
         $this->assertStringNotContainsString('Antigravity', $screen);
 
         // Escape goes back to the kinds, as upstream's does.

@@ -817,6 +817,30 @@ final class AgentSessionTest extends TestCase
         );
     }
 
+    /** Upstream #11782: a queued message's pictures go through the same fitting as a prompt's. */
+    public function testASteeredMessagesImagesAreFittedLikeAPromptsAre(): void
+    {
+        $steered = false;
+        $session = $this->session(['one', 'two'], static function (Agent $agent) use (&$session, &$steered): void {
+            if (!$steered) {
+                $steered = true;
+                $session->steer('and this', [new ImageContent(base64_encode('not a picture'), 'image/tiff')]);
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $steeredMessages = array_values(array_filter(
+            $session->messages(),
+            static fn (mixed $m): bool => $m instanceof UserMessage && str_starts_with($m->content[0]->text ?? '', 'and this'),
+        ));
+        $this->assertCount(1, $steeredMessages);
+        $this->assertEquals(
+            [new TextContent("and this\n\n[Image omitted: could not be converted to a supported inline image format.]")],
+            $steeredMessages[0]->content,
+        );
+    }
+
     public function testEveryToolsPicturesAreFittedAndReadTakesTheSessionsImageSettings(): void
     {
         $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
@@ -2594,6 +2618,43 @@ final class AgentSessionTest extends TestCase
         // A root's parent is the root's own id in the file; the point before a root is nothing.
         $this->assertSame([], $session->messages());
         $this->assertSame('the first question', $jump->editorText);
+    }
+
+    /**
+     * Upstream #11888: going back can leave the latest `thinking_level_change` on the branch just
+     * left, so a resume restored a stale level. The live one is recorded before the next prompt.
+     */
+    public function testTheLiveThinkingLevelIsRecordedOnTheBranchGoneBackTo(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one', 'two', 'three'], model: $this->thinkingModel(), store: $store);
+
+        $session->setThinkingLevel(ThinkingLevel::High);
+        Async::run(static fn () => $session->prompt('one'));
+        $firstAnswer = $store->branch()[1]['id'];
+        $session->setThinkingLevel(ThinkingLevel::Low);
+        Async::run(static fn () => $session->prompt('two'));
+        Async::run(static fn () => $session->goTo($firstAnswer));
+        $this->assertSame('high', $store->settings()['thinking']?->level);
+
+        Async::run(static fn () => $session->prompt('three'));
+
+        $this->assertSame(ThinkingLevel::Low, $session->thinkingLevel());
+        // What a resume restores.
+        $this->assertSame('low', $store->settings()['thinking']?->level);
+    }
+
+    public function testALevelThatDiffersFromTheBranchOnlyByClampingIsNotRecorded(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['one'], model: $this->thinkingModel(), store: $store);
+
+        $session->setThinkingLevel(ThinkingLevel::High);
+        // As after resuming a session that asked for xhigh on a model without it: it runs at high.
+        $store->appendThinkingLevelChange('xhigh');
+        Async::run(static fn () => $session->prompt('one'));
+
+        $this->assertSame('xhigh', $store->settings()['thinking']?->level);
     }
 
     public function testGoingToWhereYouAlreadyAreIsNotACancellation(): void

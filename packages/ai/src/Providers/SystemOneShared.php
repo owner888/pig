@@ -196,7 +196,9 @@ final class SystemOneShared
             throw $error;
         } catch (Throwable $error) {
             if ($timedOut && !($signal?->aborted() ?? false)) {
-                throw new ProviderHttpError("Request timed out after {$timeoutMs}ms", previous: $error);
+                // Upstream's `timeoutError()` has no cause, so `withCauseDetail()` leaves it as it is:
+                // the abort under it would only repeat "timed out" in other words.
+                throw new ProviderHttpError("Request timed out after {$timeoutMs}ms");
             }
 
             if ($signal?->aborted() ?? false) {
