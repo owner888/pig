@@ -11024,7 +11024,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 2000000,
-        "maxTokens": 65536,
+        "maxTokens": 64000,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -11061,7 +11061,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 2000000,
-        "maxTokens": 65536,
+        "maxTokens": 64000,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -13410,9 +13410,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.132,
-            "output": 0.528,
-            "cacheRead": 0.033,
+            "input": 0.0825,
+            "output": 0.33,
+            "cacheRead": 0.020625,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -13526,9 +13526,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.834,
-            "output": 2.501,
-            "cacheRead": 0.042,
+            "input": 0.7506,
+            "output": 2.2509,
+            "cacheRead": 0.0378,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -13697,7 +13697,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1000000,
-        "maxTokens": 65536,
+        "maxTokens": 64000,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -14842,7 +14842,7 @@
             "text"
         ],
         "cost": {
-            "input": 0.0075,
+            "input": 0.006,
             "output": 6.8,
             "cacheRead": 0.005,
             "cacheWrite": 0.0
@@ -14994,13 +14994,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.05,
-            "output": 0.18,
-            "cacheRead": 0.01,
+            "input": 0.043,
+            "output": 0.087,
+            "cacheRead": 0.018,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -15629,9 +15629,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.1824,
+            "input": 0.1634,
             "output": 10.1489,
-            "cacheRead": 0.18,
+            "cacheRead": 0.16,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,

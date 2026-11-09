@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-09T16:03:20Z';
+    public const string GENERATED_AT = '2026-11-09T16:33:10Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -2074,8 +2074,8 @@ final class BuiltinCatalog
         'openai/o3:batch' => ['OpenAI: o3 (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 1.0, 4.0, 0.25, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'openai/o4-mini:batch' => ['OpenAI: o4 Mini (batch)', Api::OpenAiCompletions, 200_000, 100_000, true, true, 0.55, 2.2, 0.1375, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'openrouter/auto' => ['Auto Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, true, 0.0, 0.0, 0.0, 0.0],
-        'openrouter/auto-beta' => ['Auto Router (Beta)', Api::OpenAiCompletions, 2_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
-        'openrouter/auto-code' => ['Auto Code', Api::OpenAiCompletions, 2_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
+        'openrouter/auto-beta' => ['Auto Router (Beta)', Api::OpenAiCompletions, 2_000_000, 64_000, true, true, 0.0, 0.0, 0.0, 0.0],
+        'openrouter/auto-code' => ['Auto Code', Api::OpenAiCompletions, 2_000_000, 64_000, true, true, 0.0, 0.0, 0.0, 0.0],
         'openrouter/free' => ['Free Models Router', Api::OpenAiCompletions, 200_000, 4_096, true, true, 0.0, 0.0, 0.0, 0.0],
         'openrouter/fusion' => ['OpenRouter: Fusion', Api::OpenAiCompletions, 1_000_000, 30_000, true, false, 0.0, 0.0, 0.0, 0.0],
         'openrouter/pareto-code' => ['Pareto Code Router', Api::OpenAiCompletions, 2_000_000, 4_096, true, false, 0.0, 0.0, 0.0, 0.0],
@@ -2138,14 +2138,14 @@ final class BuiltinCatalog
         'stepfun/step-3.5-flash' => ['StepFun: Step 3.5 Flash', Api::OpenAiCompletions, 262_144, 65_536, true, false, 0.1, 0.3, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null]],
         'stepfun/step-3.7-flash' => ['StepFun: Step 3.7 Flash', Api::OpenAiCompletions, 256_000, 230_400, true, true, 0.2, 1.15, 0.04, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'stepfun/step-5-preview' => ['StepFun: Step 5 Preview', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 1.0, 2.7, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'tencent/hy3' => ['Tencent: Hy3', Api::OpenAiCompletions, 262_144, 128_000, true, false, 0.132, 0.528, 0.033, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'tencent/hy3' => ['Tencent: Hy3', Api::OpenAiCompletions, 262_144, 128_000, true, false, 0.0825, 0.33, 0.020625, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'tencent/hy3-preview' => ['Tencent: Hy3 preview', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.18, 0.6, 0.06, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'tencent/hy4' => ['Tencent: Hy4', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.417, 1.2505, 0.021, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'tencent/hy4-preview' => ['Tencent: Hy4 preview', Api::OpenAiCompletions, 1_048_576, 64_000, true, false, 0.834, 2.501, 0.042, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'tencent/hy4-preview' => ['Tencent: Hy4 preview', Api::OpenAiCompletions, 1_048_576, 64_000, true, false, 0.7506, 2.2509, 0.0378, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/inkling' => ['Thinking Machines: Inkling', Api::OpenAiCompletions, 524_288, 471_859, true, true, 1.0, 4.05, 0.17, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/inkling-small' => ['Thinking Machines: Inkling Small', Api::OpenAiCompletions, 524_288, 262_144, true, true, 0.45, 1.2, 0.1, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/inkling-small:batch' => ['Thinking Machines: Inkling Small (batch)', Api::OpenAiCompletions, 524_288, 262_144, true, true, 0.36, 0.96, 0.08, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'typesafe/jev-router' => ['TypeSafe: Jev Router', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
+        'typesafe/jev-router' => ['TypeSafe: Jev Router', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.0, 0.0, 0.0, 0.0],
         'unbiased/pareto-26.10' => ['Pareto 26.10', Api::OpenAiCompletions, 1_048_576, 131_072, false, true, 0.8, 3.2, 0.03, 0.0],
         'unbiased/pareto-26.9' => ['Pareto 26.9', Api::OpenAiCompletions, 262_144, 131_072, false, true, 2.5, 7.5, 0.25, 0.0],
         'upstage/solar-mini4' => ['Upstage: Solar Mini 4', Api::OpenAiCompletions, 524_288, 131_072, true, false, 0.05, 0.2, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
@@ -2175,11 +2175,11 @@ final class BuiltinCatalog
         'z-ai/glm-5' => ['Z.ai: GLM 5', Api::OpenAiCompletions, 202_752, 131_072, true, false, 0.6, 1.9, 0.119, 0.0],
         'z-ai/glm-5-turbo' => ['Z.ai: GLM 5 Turbo', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
         'z-ai/glm-5.1' => ['Z.ai: GLM 5.1', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
-        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0075, 6.8, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.006, 6.8, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.2:batch' => ['Z.ai: GLM 5.2 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.623, 1.271, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0699, 1.4, 0.0689, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0335, 0.083, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.05, 0.18, 0.01, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.043, 0.087, 0.018, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flashx' => ['Z.ai: GLM 5.3 FlashX', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.37, 1.25, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flashx-legal' => ['Z.ai: GLM 5.3 FlashX Legal', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.37, 1.25, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-prime' => ['Z.ai: GLM 5.3 Prime', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 2.8, 8.8, 0.56, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2194,7 +2194,7 @@ final class BuiltinCatalog
         '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0434, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~google/gemini-flash-latest' => ['Google: Gemini Flash Latest', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.1824, 10.1489, 0.18, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.1634, 10.1489, 0.16, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~openai/gpt-astra-latest' => ['OpenAI: GPT Astra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         '~openai/gpt-luna-latest' => ['OpenAI: GPT Luna Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         '~openai/gpt-mini-latest' => ['OpenAI: GPT Mini Latest', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
