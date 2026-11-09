@@ -412,9 +412,25 @@ final class AutocompleteTest extends TestCase
         // about 80 bytes are ~320 KB, five pipe buffers over. Written by one `cat` (`noisyFd()`),
         // the size no longer costs time: it was cut to 1,200 when a loop of `echo`s took a loaded
         // machine past the picker's 2 s `FD_TIMEOUT`, and still did once at that.
-        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(4000));
+        $fd = $this->noisyFd(4000);
+        $provider = new CombinedAutocompleteProvider([], $this->root, $fd);
 
         $suggestions = $this->suggest($provider, '@Age');
+
+        if ($suggestions === null) {
+            // What the picker saw, run again by hand, so a failure says whether it was the clock,
+            // the command not starting, or the command answering something else.
+            $started = microtime(true);
+            [$exit, $stdout, $stderr] = \Pig\Tui\Process::run([$fd], 2.0);
+            $this->fail(sprintf(
+                'no suggestions; the same fd by hand: exit %s (STOPPED is a timeout or no start), %.2f s, %d bytes out, %d bytes err, PATH=%s',
+                var_export($exit, true),
+                microtime(true) - $started,
+                strlen($stdout),
+                strlen($stderr),
+                (string) getenv('PATH'),
+            ));
+        }
 
         $this->assertNotNull($suggestions);
         $this->assertSame('@src/Agent.php', $suggestions->items[0]->value);

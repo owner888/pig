@@ -57,13 +57,16 @@ final class AuthCommandTest extends TestCase
     {
         $this->assertSame(0, $this->auth([]));
         $this->assertStringContainsString('pig auth check [--provider <provider>]', $this->out);
+        // `login` and `logout` are `bin/pig`'s to run (`Cli\AuthLogin`, `Cli\AuthLogout`), listed here.
+        $this->assertStringContainsString('pig auth login <provider> [--api-key] [--no-browser]', $this->out);
+        $this->assertStringContainsString('pig auth logout <provider>', $this->out);
         $this->assertSame(0, $this->auth([], 'check', '--help'));
     }
 
     public function testAnUnknownCommandIsUpstreamsError(): void
     {
-        $this->assertSame(1, $this->auth([], 'login'));
-        $this->assertStringContainsString('Unknown auth command "login"', $this->err);
+        $this->assertSame(1, $this->auth([], 'dance'));
+        $this->assertStringContainsString('Unknown auth command "dance". Use "pig auth login", "pig auth logout", "pig auth print-api-key"', $this->err);
     }
 
     public function testParseCommandKeepsTheCommandsOwnOptions(): void

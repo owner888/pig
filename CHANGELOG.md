@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.5] - 2026-11-09
+
+### Added
+
+- `pig auth login <provider>` and `pig auth logout <provider>` (upstream): log in or out from the shell without starting a session, as `/login` and `/logout` do. Account sign-in takes the provider's browser method and names the others; `--no-browser` takes one of those instead (Anthropic's copy-code, OpenAI's device code), and `--api-key` saves an API key, asked for without echo. The provider's model catalog is fetched after a login. Logout leaves environment variables and `models.json` alone and is safe to repeat.
+
+### Changed
+
+- `pig mcp login`'s pasted redirect URL is read through the same off-the-loop question as `pig auth login` (`Cli\TerminalQuestion`, upstream's `questionTerminal()`), and the end of input now ends the sign-in instead of waiting on for the browser.
+
 ## [1.9.4] - 2026-11-09
 
 ### Added

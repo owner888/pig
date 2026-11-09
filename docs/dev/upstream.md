@@ -34,6 +34,11 @@ each side from its own tokens), #11514 (reordering the same active tools — `To
 registration order), #11853 (extension overlays left behind on `/reload` — `ExtensionUi::custom()`
 has no overlay mode) and #11775 (CR-only SSE lines — `SseParser` already splits on them).
 
+`pig auth login` (upstream 9b9cb30a) has no Radius step: upstream points the global `mcp.json`'s Radius
+server at the login (`planRadiusMcpServer()`), and changes `pig mcp login`'s hint for a server using a
+provider's credentials to name `pig auth login`. pig's MCP servers have no `auth: {provider}`, so
+there is nothing to point and no such server to hint about.
+
 #11751's second half, diffing a window around each edit instead of the whole file, is not ported:
 upstream's diff is jsdiff's general one, ten to fifteen times the file in memory, where `EditDiff`
 compares a common prefix and suffix and splits by the replacements it already knows — linear, with

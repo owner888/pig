@@ -305,35 +305,21 @@ final class McpCli
             return ($this->askRedirectUrl)($signal);
         }
 
-        $answer = new \Pig\Async\Deferred();
-        $listener = $signal->onAbort(static function () use ($answer): void {
-            if (!$answer->isComplete()) {
-                $answer->complete(null);
-            }
-        });
-        $watcher = null;
+        // A terminal can paste; anything else waits for the browser alone.
+        if (!\Pig\CodingAgent\Cli\TerminalQuestion::isTerminal(STDIN)) {
+            $done = new \Pig\Async\Deferred();
+            $listener = $signal->onAbort(static fn () => $done->isComplete() ? null : $done->complete(null));
 
-        if (defined('STDIN') && function_exists('posix_isatty') && posix_isatty(STDIN)) {
-            fwrite(STDERR, "If the browser cannot reach this machine, paste the URL it was redirected to: ");
-            stream_set_blocking(STDIN, false);
-            $watcher = \Pig\Async\Loop::get()->onReadable(STDIN, static function () use ($answer): void {
-                $line = fgets(STDIN);
-
-                if ($line !== false && !$answer->isComplete()) {
-                    $answer->complete(trim($line));
-                }
-            });
-        }
-
-        try {
-            return $answer->future->await();
-        } finally {
-            $signal->removeListener($listener);
-
-            if ($watcher !== null) {
-                \Pig\Async\Loop::get()->cancel($watcher);
+            try {
+                return $done->future->await();
+            } finally {
+                $signal->removeListener($listener);
             }
         }
+
+        $line = \Pig\CodingAgent\Cli\TerminalQuestion::ask('If the browser cannot reach this machine, paste the URL it was redirected to: ', $signal, STDERR);
+
+        return $line === null ? null : trim($line);
     }
 
     // ---- add / remove ---------------------------------------------------------------------------

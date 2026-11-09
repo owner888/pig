@@ -133,6 +133,51 @@ if (($argv[1] ?? '') === 'auth') {
     $custom = CustomModels::discover();
     $custom->install($auth);
 
+    // `pig auth login` / `logout` — upstream's `runAuthLoginCommand()` / `runAuthLogoutCommand()`.
+    // A login reaches the network, so the settings' proxy first, as `pig-ai` takes it; `--offline`
+    // was applied above and is not an argument of either.
+    if (in_array($argv[2] ?? '', ['login', 'logout'], true)) {
+        $rest = array_values(array_filter(array_slice($argv, 3), static fn (string $arg): bool => $arg !== '--offline'));
+
+        if ($argv[2] === 'logout') {
+            exit((new \Pig\CodingAgent\Cli\AuthLogout(
+                $auth,
+                static function (string $line): void { fwrite(STDOUT, $line . "\n"); },
+                static function (string $line): void { fwrite(STDERR, $line . "\n"); },
+            ))->run($rest));
+        }
+
+        $loginSettings = Settings::load(getcwd() ?: '.');
+
+        try {
+            $environment = getenv();
+
+            if ($loginSettings->httpProxy() !== null) {
+                $environment['HTTP_PROXY'] ??= $loginSettings->httpProxy();
+                $environment['HTTPS_PROXY'] ??= $loginSettings->httpProxy();
+            }
+
+            $bypass = $loginSettings->proxyBypass();
+            $proxy = Proxy::fromEnvironment($environment);
+            HttpClient::useProxy($bypass === [] ? $proxy : $proxy?->bypassing($bypass));
+        } catch (HttpError $error) {
+            fwrite(STDERR, Style::red('proxy: ' . $error->getMessage() . "\n"));
+
+            exit(1);
+        }
+
+        // Ctrl+C cancels the login, as upstream's `SIGINT` handler aborts it: the prompt in hand
+        // answers null and the flow ends, rather than the process dying with a listener bound.
+        $controller = new \Pig\Async\AbortController();
+
+        if (function_exists('pcntl_signal')) {
+            pcntl_async_signals(true);
+            pcntl_signal(SIGINT, static fn () => $controller->abort('Login cancelled'));
+        }
+
+        exit((int) Async::run(static fn (): int => \Pig\CodingAgent\Cli\AuthLogin::forTerminal($auth)->run($rest, $controller->signal)));
+    }
+
     exit((new AuthCommand(
         $auth,
         static function (string $text): void { fwrite(STDOUT, $text); },
@@ -215,7 +260,7 @@ if (isset($options['help'])) {
       update            update pig; --extensions / --all / <source> for packages (pig update --help)
       list              list the packages in the user and project settings
       config [-l]       switch a package's extensions, skills, prompts and themes on and off
-      auth <command>    print credentials or check provider readiness (pig auth --help)
+      auth <command>    log in or out, print credentials, or check provider readiness (pig auth --help)
       mcp               add, remove and check MCP servers (pig mcp --help)
       web               the browser UI as a server: start [-d], stop, status, restart, install (pig web --help)
 
