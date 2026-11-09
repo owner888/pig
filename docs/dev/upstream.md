@@ -73,6 +73,12 @@ space left on device`), so nothing the errno said is lost.
 
 `Tools\LocalShellOperations` is `createLocalShellOperations()`.
 
+`Tools\RunsElsewhere` is pig's own, for operations whose files are on another machine (an
+account's Docker container, `Tools\DockerOperations`). Upstream's `grep` takes only `isDirectory()`
+from its operations and runs `rg` here, and its `find` swaps `fd` for `glob()`; neither reaches files
+that only the other machine has. With operations that run elsewhere, `GrepTool` and `FindTool` run
+the same `rg` / `fd` command there, and `grep` reads its context lines through the operations.
+
 Nothing to port: #11947 fixes the renumbering of `[paste #N]` markers after a
 backspace, which pig's editor does not renumber; and the native Shift+Enter fallback for ESC+CR
 (86dc686c) reads the Shift key through upstream's native addon, which PHP has no counterpart for.

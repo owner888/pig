@@ -3167,6 +3167,8 @@ final class AgentSession
                 $onUpdate,
                 onChunk: fn (string $delta) => $this->announce(new BashExecutionUpdateEvent($id, $delta)),
                 spillDirectory: $this->scratch,
+                // A Docker account's `!command` runs where its `bash` tool does: in its container.
+                operations: \Pig\CodingAgent\Tools\ToolSet::operations(),
             );
             $exit = $run->run($this->bash->signal, null);
             $truncation = Truncate::tail($run->output());

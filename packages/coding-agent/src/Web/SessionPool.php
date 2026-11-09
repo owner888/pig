@@ -60,10 +60,12 @@ final class SessionPool
     private array $bySubscription = [];
 
     /**
-     * @param Closure(string $cwd, ?string $sessionPath, ?string $theme, bool $incognito): RpcClient $spawn
+     * @param Closure(string $cwd, ?string $sessionPath, ?string $theme, bool $incognito, ?string $owner, array<string, string> $environment): RpcClient $spawn
      *        how a child is made — injectable so a test can hand back a client over a fixture rather
      *        than `bin/pig`. `$theme` is the page's, for the child to draw in from the start;
-     *        `$incognito` asks for a private session (`--incognito`).
+     *        `$incognito` asks for a private session (`--incognito`); `$owner` is the account a new
+     *        conversation is started for, with accounts; `$environment` what else the child is
+     *        started with (a Docker account's container, `PIG_SANDBOX_CONTAINER`).
      * @param Closure(ManagedSession, array<string, mixed>): void $onEvent every event from
      *        any child, with the session it came from; `HttpServer` fans it out
      */
@@ -112,6 +114,8 @@ final class SessionPool
         ?string $tabId = null,
         ?string $theme = null,
         bool $incognito = false,
+        ?string $owner = null,
+        array $environment = [],
     ): ManagedSession {
         $tabId ??= 'default';
         $subKey = "{$connectionId}:{$tabId}";
@@ -131,7 +135,7 @@ final class SessionPool
         $managed = $this->byKey[$key] ?? null;
 
         if ($managed === null || $managed->closing) {
-            $managed = $this->spawnSession($cwd, $sessionFile, $key, $theme, $incognito);
+            $managed = $this->spawnSession($cwd, $sessionFile, $key, $theme, $incognito, $owner, $environment);
         }
 
         $managed->clients[$connectionId][$tabId] = true;
@@ -149,11 +153,12 @@ final class SessionPool
      * The idle timer is armed for a child nobody is bound to, so one whose prompt never starts a
      * turn is stopped like any other; `agent_start` disarms it.
      *
+     * @param array<string, string> $environment what a child started for it is started with (`bind()`)
      * @throws \Throwable whatever `RpcClient::start()` throws when the child cannot be started
      */
-    public function open(string $cwd, string $sessionFile): ManagedSession
+    public function open(string $cwd, string $sessionFile, ?string $owner = null, array $environment = []): ManagedSession
     {
-        $managed = $this->find($cwd, $sessionFile) ?? $this->spawnSession($cwd, $sessionFile, self::key($cwd, $sessionFile));
+        $managed = $this->find($cwd, $sessionFile) ?? $this->spawnSession($cwd, $sessionFile, self::key($cwd, $sessionFile), owner: $owner, environment: $environment);
         $this->reapIfIdle($managed);
 
         return $managed;
@@ -291,9 +296,10 @@ final class SessionPool
 
     // ---- internals -------------------------------------------------------------------------
 
-    private function spawnSession(string $cwd, ?string $sessionFile, string $key, ?string $theme = null, bool $incognito = false): ManagedSession
+    /** @param array<string, string> $environment */
+    private function spawnSession(string $cwd, ?string $sessionFile, string $key, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []): ManagedSession
     {
-        $client = ($this->spawn)($cwd, $sessionFile, $theme, $incognito);
+        $client = ($this->spawn)($cwd, $sessionFile, $theme, $incognito, $owner, $environment);
         $managed = new ManagedSession($cwd, $sessionFile, $client, $incognito);
         $managed->keys[$key] = true;
         $this->byKey[$key] = $managed;

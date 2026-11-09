@@ -577,6 +577,34 @@ final class OauthTest extends TestCase
         });
     }
 
+    public function testAConnectionThatNeverSaysAnythingDoesNotTakeTheLoopDownWhenTheServerCloses(): void
+    {
+        Async::run(function (): void {
+            $server = OauthCallbackServer::listen(timeout: 5.0);
+            $parsed = parse_url($server->redirectUrl);
+            $port = (int) ($parsed['port'] ?? 80);
+
+            $idle = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+            self::assertNotFalse($idle, $errstr);
+            stream_set_blocking($idle, false);
+
+            $waiter = Async::spawn(static fn () => $server->waitForCallback('s'));
+            Async::delay(0.01);
+            $server->close();
+            fclose($idle);
+
+            try {
+                $waiter->await();
+                $this->fail('closed');
+            } catch (\RuntimeException $error) {
+                $this->assertSame('OAuth callback server closed', $error->getMessage());
+            }
+        });
+
+        Loop::get()->tick();
+        $this->assertTrue(Loop::get()->isIdle(), 'closing cancels the timers and watchers including idle preconnects');
+    }
+
     /** A GET from the loop, as a browser would make it; answers the raw response. */
     private function browse(string $url): string
     {

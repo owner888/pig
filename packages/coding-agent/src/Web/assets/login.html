@@ -9,11 +9,11 @@
   <link rel="stylesheet" href="/assets/css/style.css">
 </head>
 <body class="login-body">
-  <!-- `WebLogin`: the first password with the setup code, or the password. Drawn by login.js. -->
+  <!-- `WebLogin`: the first account while there is none, or logging in — a name and a password either way. Drawn by login.js. -->
   <form id="login-form" class="login-card" autocomplete="on">
     <div class="login-title">🐷 pig</div>
     <div id="login-hint" class="login-hint"></div>
-    <input id="login-code" class="login-field" autocomplete="off" spellcheck="false" hidden>
+    <input id="login-name" class="login-field" autocomplete="username" autocapitalize="off" spellcheck="false" required>
     <input id="login-password" class="login-field" type="password" autocomplete="current-password" required>
     <input id="login-confirm" class="login-field" type="password" autocomplete="new-password" hidden>
     <div id="login-error" class="login-error" hidden></div>

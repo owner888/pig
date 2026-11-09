@@ -91,8 +91,11 @@ final class FindTool implements AgentTool, ReplayableTool
         $root = rtrim(Paths::resolve($given, $this->cwd), '/');
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
 
+        // Files somewhere else (`RunsElsewhere`, an account's container) are found by the `fd` there.
+        $elsewhere = $this->operations instanceof RunsElsewhere ? $this->operations : null;
+
         // Upstream: "If custom operations provide glob(), use that instead of fd."
-        if ($this->operations !== null) {
+        if ($this->operations !== null && $elsewhere === null) {
             if (!$this->operations->exists($root)) {
                 throw new AgentError("No such directory: {$given}");
             }
@@ -106,9 +109,9 @@ final class FindTool implements AgentTool, ReplayableTool
             return $this->result($found, $limit);
         }
 
-        $fd = ExternalTool::fd();
+        $fd = $elsewhere !== null ? 'fd' : ExternalTool::fd();
 
-        if (!is_dir($root)) {
+        if ($elsewhere !== null ? !$this->operations->exists($root) : !is_dir($root)) {
             throw new AgentError("No such directory: {$given}");
         }
 
@@ -142,6 +145,10 @@ final class FindTool implements AgentTool, ReplayableTool
         //
         // With no fiber to suspend — a test calling the tool directly — `runAsync()` is `run()`,
         // so nothing outside a session changes.
+        if ($elsewhere !== null) {
+            [$command] = $elsewhere->elsewhere($command, null);
+        }
+
         [$exit, $output, $errors] = Process::runAsync($command, self::TIMEOUT);
 
         // fd exits 0 when it found nothing, so a non-zero code is a real failure — most

@@ -27,6 +27,13 @@ use RuntimeException;
  */
 final class ScheduleClient
 {
+    /**
+     * The account a conversation's pig speaks for (`PIG_SESSION_OWNER`). The server believes it
+     * only from a request that carries the local token, which only pig on the server's own machine
+     * can read (`HttpServer::userOf()`).
+     */
+    public const string OWNER_HEADER = 'X-Pig-Owner';
+
     private function __construct(
         public readonly string $url,
         private readonly string $token,
@@ -119,6 +126,11 @@ final class ScheduleClient
     private function call(string $method, string $path, ?array $body = null): array
     {
         $headers = ['Authorization' => "Bearer {$this->token}", 'Accept' => 'application/json'];
+        // Started by the web shell for an account: the tasks asked about and made are that
+        // account's (`OWNER_HEADER`, believed only with the local token).
+        if ((string) getenv('PIG_SESSION_OWNER') !== '') {
+            $headers[self::OWNER_HEADER] = (string) getenv('PIG_SESSION_OWNER');
+        }
         if ($body !== null) {
             $headers['Content-Type'] = 'application/json';
         }

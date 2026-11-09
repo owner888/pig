@@ -17,6 +17,23 @@ use Pig\Agent\AgentTool;
 final class ToolSet
 {
     /**
+     * The operations every built-in tool is made with, when not this machine's: a Docker account's
+     * container (`DockerOperations`, docs/dev/design/storage.md phase 4), set once by `bin/pig`
+     * for the whole run. Null for this machine, as upstream's tools default to.
+     */
+    private static ?DockerOperations $operations = null;
+
+    public static function useOperations(?DockerOperations $operations): void
+    {
+        self::$operations = $operations;
+    }
+
+    public static function operations(): ?DockerOperations
+    {
+        return self::$operations;
+    }
+
+    /**
      * Everything there is, in the order a prompt lists them — upstream's `allToolNames`, `powershell`
      * among them though no default names it and it runs only on native Windows.
      */
@@ -60,19 +77,25 @@ final class ToolSet
     /** @param array{read?: array{autoResizeImages?: bool, resizeOptions?: \Closure(): ?array<string, int>}, bash?: array{commandPrefix?: ?string, sessionEnvironment?: \Closure(): ?SessionEnvironment}, powershell?: array{sessionEnvironment?: \Closure(): ?SessionEnvironment}} $options */
     public static function one(string $cwd, string $name, array $options = []): AgentTool
     {
+        $operations = self::$operations;
+
         return match ($name) {
-            'read' => new ReadTool($cwd, $options['read']['autoResizeImages'] ?? true, $options['read']['resizeOptions'] ?? null),
+            'read' => new ReadTool($cwd, $options['read']['autoResizeImages'] ?? true, $options['read']['resizeOptions'] ?? null, operations: $operations),
             'bash' => new BashTool(
                 $cwd,
                 $options['bash']['commandPrefix'] ?? null,
                 sessionEnvironment: $options['bash']['sessionEnvironment'] ?? null,
+                operations: $operations,
             ),
-            'powershell' => new PowerShellTool($cwd, sessionEnvironment: $options['powershell']['sessionEnvironment'] ?? null),
-            'edit' => new EditTool($cwd),
-            'write' => new WriteTool($cwd),
-            'grep' => new GrepTool($cwd),
-            'find' => new FindTool($cwd),
-            'ls' => new LsTool($cwd),
+            // PowerShell is Windows's, and a container is Linux: there is none there.
+            'powershell' => $operations === null
+                ? new PowerShellTool($cwd, sessionEnvironment: $options['powershell']['sessionEnvironment'] ?? null)
+                : throw new AgentError('There is no PowerShell in the container this account works in.'),
+            'edit' => new EditTool($cwd, $operations),
+            'write' => new WriteTool($cwd, $operations),
+            'grep' => new GrepTool($cwd, $operations),
+            'find' => new FindTool($cwd, $operations),
+            'ls' => new LsTool($cwd, $operations),
             default => throw new AgentError("Unknown tool '{$name}'. Available: " . implode(', ', self::ALL)),
         };
     }

@@ -93,7 +93,9 @@ final class GrepTool implements AgentTool, ReplayableTool
     ): AgentToolResult {
         $signal?->throwIfAborted();
 
-        $rg = ExternalTool::ripgrep();
+        // Files somewhere else (`RunsElsewhere`, an account's container) are searched by the `rg` there.
+        $elsewhere = $this->operations instanceof RunsElsewhere ? $this->operations : null;
+        $rg = $elsewhere !== null ? 'rg' : ExternalTool::ripgrep();
         $given = (string) ($arguments['path'] ?? '.');
         $root = Paths::resolve($given, $this->cwd);
 
@@ -117,8 +119,12 @@ final class GrepTool implements AgentTool, ReplayableTool
         // half-second command with a 20ms timer armed, the blocking call let the loop tick 0
         // times against 24 of ~25. Upstream's `grep.ts` is an async `spawn`, so this was the
         // shape the port was missing — unlike `find.ts`, which is `spawnSync` there too.
+        [$command, $directory] = $elsewhere !== null
+            ? $elsewhere->elsewhere($this->command($rg, $arguments, $root, $searchingDirectory), $searchingDirectory ? $root : null)
+            : [$this->command($rg, $arguments, $root, $searchingDirectory), $searchingDirectory ? $root : null];
+
         [$exit, $errors] = Process::streamAsync(
-            $this->command($rg, $arguments, $root, $searchingDirectory),
+            $command,
             function (string $line) use (
                 &$lines,
                 &$matches,
@@ -140,7 +146,7 @@ final class GrepTool implements AgentTool, ReplayableTool
                 // A directory search ran inside the root and reports `./…` paths (#11895).
                 $file = $searchingDirectory ? Paths::resolve($file, $root) : $file;
 
-                foreach (self::block($file, $number, $context, $root, $searchingDirectory, $cache, $shortened) as $out) {
+                foreach (self::block($file, $number, $context, $root, $searchingDirectory, $cache, $shortened, $this->reader()) as $out) {
                     $lines[] = $out;
                 }
 
@@ -155,7 +161,7 @@ final class GrepTool implements AgentTool, ReplayableTool
             // rg roots `--glob` at its own working directory, so a directory search runs inside
             // the root (upstream #11895): `migrations/main/*.js` with `path: repo` was matched
             // from the session's folder and found nothing.
-            $searchingDirectory ? $root : null,
+            $directory,
         );
 
         $signal?->throwIfAborted();
@@ -291,9 +297,10 @@ final class GrepTool implements AgentTool, ReplayableTool
         bool $searchingDirectory,
         array &$cache,
         bool &$shortened,
+        Closure $read,
     ): array {
         $name = $searchingDirectory ? Paths::relative($file, $root) : basename($file);
-        $lines = $cache[$file] ??= self::read($file);
+        $lines = $cache[$file] ??= $read($file);
 
         if ($lines === []) {
             return ["{$name}:{$number}: (unable to read file)"];
@@ -314,10 +321,37 @@ final class GrepTool implements AgentTool, ReplayableTool
         return $block;
     }
 
-    /** @return list<string> */
-    private static function read(string $file): array
+    /**
+     * How a matched file's lines are read for its context: from where `rg` found it — the
+     * container's file, through the operations, when it ran there; a link to `/etc` is the
+     * container's `/etc` then, never this machine's.
+     *
+     * @return Closure(string): list<string>
+     */
+    private function reader(): Closure
     {
-        $contents = file_get_contents($file);
+        $operations = $this->operations instanceof RunsElsewhere && $this->operations instanceof ReadOperations ? $this->operations : null;
+
+        return static function (string $file) use ($operations): array {
+            if ($operations === null) {
+                if (!is_file($file) || !is_readable($file)) {
+                    return [];
+                }
+
+                return self::read(file_get_contents($file));
+            }
+
+            try {
+                return self::read($operations->readFile($file));
+            } catch (FileAccessError) {
+                return [];
+            }
+        };
+    }
+
+    /** @return list<string> */
+    private static function read(string|false $contents): array
+    {
 
         // A file rg could read and this cannot — a race with a build, most likely. The
         // match is still reported, with a note instead of the line.

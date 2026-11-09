@@ -9,11 +9,16 @@ use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Accounts\User;
+use Pig\CodingAgent\Database\Databases;
 use Pig\CodingAgent\Rpc\RpcClient;
+use Pig\CodingAgent\Session\SqlSessionStore;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\ManagedSession;
 use Pig\CodingAgent\Web\Schedule\ScheduledTask;
 use Pig\CodingAgent\Web\Schedule\ScheduleManager;
+use Pig\CodingAgent\Web\Schedule\ScheduleStore;
+use Pig\CodingAgent\Web\Schedule\SqlScheduleStore;
 use Pig\CodingAgent\Web\SessionPool;
 use RuntimeException;
 
@@ -37,6 +42,9 @@ final class ScheduleManagerTest extends TestCase
     private array $pools = [];
 
     private string|false $previousHome = false;
+
+    /** @var list<array{owner: ?string, environment: array<string, string>}> what each child was started as */
+    private array $spawned = [];
 
     #[\Override]
     protected function setUp(): void
@@ -67,16 +75,21 @@ final class ScheduleManagerTest extends TestCase
         Loop::reset();
     }
 
-    private function manager(?string $url = null): ScheduleManager
+    /** @param (Closure(?string): array<string, string>)|null $environmentFor */
+    private function manager(?string $url = null, ?ScheduleStore $store = null, ?Closure $environmentFor = null): ScheduleManager
     {
         $manager = null;
         $pool = new SessionPool(
-            spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(
-                cwd: $cwd,
-                binary: self::FAKE,
-                arguments: $file !== null ? ['--session', $file] : [],
-                timeout: 5.0,
-            ),
+            spawn: function (string $cwd, ?string $file, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []): RpcClient {
+                $this->spawned[] = ['owner' => $owner, 'environment' => $environment];
+
+                return new RpcClient(
+                    cwd: $cwd,
+                    binary: self::FAKE,
+                    arguments: $file !== null ? ['--session', $file] : [],
+                    timeout: 5.0,
+                );
+            },
             onEvent: static function (ManagedSession $managed, array $event) use (&$manager): void {
                 $manager?->observe($managed, $event);
             },
@@ -92,6 +105,8 @@ final class ScheduleManagerTest extends TestCase
             fn (): int => $this->now,
             0.02,
             $url,
+            $store,
+            $environmentFor,
         );
 
         $this->pools[] = $pool;
@@ -721,5 +736,107 @@ final class ScheduleManagerTest extends TestCase
         $older = $this->manager();
         $older->start();
         self::assertSame(['url' => null, 'pid' => null], ScheduleManager::owner($this->dir), 'a server that wrote no address: held, but nowhere to ask');
+    }
+
+    // ---- accounts ------------------------------------------------------------------------------
+
+    public function testEachAccountSeesAndChangesOnlyItsOwnTasks(): void
+    {
+        $ada = new User('ada-id', 'ada', true);
+        $bob = new User('bob-id', 'bob', false);
+        $manager = $this->manager();
+        $manager->start();
+
+        $old = $manager->save($this->task(['name' => 'From before accounts']));
+        $adas = $manager->save($this->task(['name' => 'Ada\'s']), $ada);
+        $bobs = $manager->save($this->task(['name' => 'Bob\'s', 'owner' => 'ada-id']), $bob);
+        $names = static fn (array $list): array => array_column($list, 'name');
+
+        $this->assertSame('bob-id', $bobs->owner, 'whose a task is, is not the page\'s to say');
+        $this->assertNull($old->owner);
+        $this->assertSame(['Bob\'s'], $names($manager->list($bob)));
+        $this->assertSame(['From before accounts', 'Ada\'s'], $names($manager->list($ada)), 'the admin\'s, and nobody\'s');
+        $this->assertCount(3, $manager->list(), 'the server itself sees them all');
+
+        $this->assertSame([], $manager->runs($adas->id, $bob));
+        $this->assertSame([], $manager->sessionTaskIds($bob)[basename((string) $adas->sessionFile)] ?? []);
+        $this->assertArrayHasKey(basename((string) $bobs->sessionFile), $manager->sessionTaskIds($bob));
+
+        foreach ([
+            static fn () => $manager->delete($adas->id, $bob),
+            static fn () => $manager->runNow($adas->id, $bob),
+            static fn () => $manager->setEnabled($adas->id, false, $bob),
+            fn () => $manager->save(['id' => $adas->id, ...$this->task()], $bob),
+        ] as $attempt) {
+            try {
+                $attempt();
+                $this->fail('somebody else\'s task');
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString("There is no task '{$adas->id}'", $e->getMessage());
+            }
+        }
+
+        $this->assertSame('ada-id', $manager->save(['id' => $adas->id, ...$this->task(['name' => 'Renamed'])], $ada)->owner, 'a task changed stays whose it was');
+
+        $manager->disableAllOf('bob-id');
+        $this->assertFalse($manager->list($bob)[0]['enabled'], 'a removed account\'s tasks stop');
+        $this->assertTrue($manager->list($ada)[1]['enabled']);
+    }
+
+    public function testARunStartsItsChildAsTheTasksOwner(): void
+    {
+        $bob = new User('bob-id', 'bob', false, User::DOCKER);
+        $manager = $this->manager(environmentFor: static fn (?string $owner): array => $owner === null ? [] : ['PIG_SANDBOX_CONTAINER' => "pig-{$owner}"]);
+        $manager->start();
+        $task = $manager->save($this->task(), $bob);
+
+        Async::run(function () use ($manager, $task, $bob): void {
+            $manager->runNow($task->id, $bob);
+            $this->until(fn (): bool => $this->spawned !== [], 'the child');
+        });
+
+        $this->assertSame(['owner' => 'bob-id', 'environment' => ['PIG_SANDBOX_CONTAINER' => 'pig-bob-id']], $this->spawned[0]);
+    }
+
+    public function testWithSessionsInADatabaseTheTasksAreKeptThereTakenOverFromTheFileOnce(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('needs pdo_sqlite');
+        }
+
+        // The tasks of before, in the file.
+        $before = $this->manager();
+        $before->start();
+        $old = $before->save($this->task(['name' => 'From the file']));
+        $before->stop();
+        $this->assertFileExists("{$this->dir}/scheduled-tasks.json");
+
+        $db = Databases::open("sqlite:{$this->dir}/pig.db");
+        $sessions = new SqlSessionStore($db);
+        SessionManager::useSessionStore($sessions);
+
+        try {
+            $manager = $this->manager(store: new SqlScheduleStore($db, "{$this->dir}/scheduled-tasks.json"));
+            $manager->start();
+            $this->assertSame(['From the file'], array_column($manager->list(), 'name'));
+            $this->assertFileDoesNotExist("{$this->dir}/scheduled-tasks.json");
+            $this->assertFileExists("{$this->dir}/scheduled-tasks.json.imported", 'kept, under another name');
+
+            $bob = new User('bob-id', 'bob', false);
+            $bobs = $manager->save($this->task(['name' => 'Bob\'s']), $bob);
+            $this->assertSame('bob-id', $sessions->ownerOf((string) $bobs->sessionFile), 'its conversation is his too');
+            $manager->delete($old->id);
+            $manager->stop();
+
+            // Opened again: what is in the table, and the file is not taken over twice.
+            file_put_contents("{$this->dir}/scheduled-tasks.json", (string) file_get_contents("{$this->dir}/scheduled-tasks.json.imported"));
+            $again = $this->manager(store: new SqlScheduleStore($db, "{$this->dir}/scheduled-tasks.json"));
+            $again->start();
+            $this->assertSame(['Bob\'s'], array_column($again->list(), 'name'));
+            $this->assertSame('bob-id', $again->list()[0]['owner']);
+            $this->assertSame(1, (int) $db->query("SELECT COUNT(*) FROM {$db->table('scheduled_tasks')} WHERE deleted_at IS NOT NULL")->fetchColumn(), 'deleted the soft way');
+        } finally {
+            SessionManager::useSessionStore(null);
+        }
     }
 }

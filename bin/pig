@@ -498,7 +498,20 @@ try {
     $storage = Settings::startupStorage();
 
     if ($storage !== null) {
-        SessionManager::useSessionStore(Pig\CodingAgent\Session\SqlSessionStore::open($storage['dsn'], $storage['user'], $storage['password'], $storage['prefix']));
+        // Started by the web shell for somebody with an account: the sessions this run starts are
+        // theirs (docs/dev/design/storage.md, phase 4).
+        SessionManager::useSessionStore(Pig\CodingAgent\Session\SqlSessionStore::open($storage['dsn'], $storage['user'], $storage['password'], $storage['prefix'])
+            ->withOwner((string) getenv('PIG_SESSION_OWNER')));
+    }
+
+    // Started by the web shell for a Docker account: every tool, and `!command`, runs in its
+    // container, and nothing of the project's own `.pig/` is loaded — `--no-approve` comes with
+    // it (docs/dev/design/storage.md, phase 4 step 3b).
+    if ((string) getenv('PIG_SANDBOX_CONTAINER') !== '') {
+        Pig\CodingAgent\Tools\ToolSet::useOperations(new Pig\CodingAgent\Tools\DockerOperations(new Pig\CodingAgent\Sandbox\DockerContainer(
+            (string) getenv('PIG_SANDBOX_CONTAINER'),
+            (string) getenv('PIG_SANDBOX_DOCKER') ?: 'docker',
+        )));
     }
 } catch (Pig\Agent\AgentError|CodingAgentError $error) {
     fwrite(STDERR, "pig: {$error->getMessage()}\n");

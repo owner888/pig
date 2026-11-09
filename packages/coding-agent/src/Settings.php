@@ -167,6 +167,29 @@ final class Settings
     }
 
     /**
+     * Where the Docker accounts of `pig web` work (`Sandbox\DockerSandbox`, docs/dev/design/storage.md
+     * phase 4): global only, as `storage` is, since it is the server's. `{"image": …, "workspaces":
+     * …, "docker": …}`, each optional: the image every account's container is made from
+     * (`pig-sandbox`, built from `docker/sandbox/Dockerfile`), the directory the accounts'
+     * directories go in (`workspaces` beside the settings; a relative path is from there), and the
+     * `docker` command.
+     */
+    public static function sandbox(?string $home = null): \Pig\CodingAgent\Sandbox\DockerSandbox
+    {
+        $home ??= Config::home();
+        $value = self::read($home . '/' . self::FILE)[0]['sandbox'] ?? [];
+        $value = is_array($value) ? $value : [];
+        $text = static fn (string $key, string $default): string => is_string($value[$key] ?? null) && trim($value[$key]) !== '' ? trim($value[$key]) : $default;
+        $workspaces = $text('workspaces', 'workspaces');
+
+        return new \Pig\CodingAgent\Sandbox\DockerSandbox(
+            $text('image', 'pig-sandbox'),
+            str_starts_with($workspaces, '/') ? $workspaces : $home . '/' . $workspaces,
+            $text('docker', 'docker'),
+        );
+    }
+
+    /**
      * Settings that are never written anywhere, for tests.
      *
      * @param array<string, mixed> $values

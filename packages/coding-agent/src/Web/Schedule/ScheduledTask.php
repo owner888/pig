@@ -75,6 +75,8 @@ final class ScheduledTask
         public readonly int $anchorAt,
         public readonly ?string $sessionFile = null,
         public readonly string $permissionMode = self::ASK,
+        // The account it is (`User::$id`), with accounts; null for one from before them, the admin's.
+        public readonly ?string $owner = null,
     ) {
         $first = $triggers[0] ?? null;
         $this->schedule = $first['type'] ?? self::MANUAL;
@@ -146,6 +148,7 @@ final class ScheduledTask
             anchorAt: isset($data['anchorAt']) ? self::int($data, 'anchorAt') : $now,
             sessionFile: is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null,
             permissionMode: $mode,
+            owner: is_string($data['owner'] ?? null) && $data['owner'] !== '' ? $data['owner'] : null,
         );
     }
 
@@ -214,6 +217,7 @@ final class ScheduledTask
             'anchorAt' => $this->anchorAt,
             'sessionFile' => $this->sessionFile,
             'permissionMode' => $this->permissionMode,
+            'owner' => $this->owner,
         ];
     }
 
@@ -269,6 +273,7 @@ final class ScheduledTask
         return new self(
             $this->id, $this->name, $this->prompt, $this->cwd, $left, $this->timezone, $this->model, $this->thinkingLevel,
             $spent && $left === [] ? false : $this->enabled, $this->createdAt, $now, $this->sessionFile, $this->permissionMode,
+            $this->owner,
         );
     }
 
@@ -283,7 +288,18 @@ final class ScheduledTask
             $this->id, $this->name, $this->prompt, $this->cwd, $this->triggers,
             $this->timezone, $this->model, $this->thinkingLevel,
             $enabled ?? $this->enabled, $this->createdAt, $anchorAt ?? $this->anchorAt, $sessionFile ?? $this->sessionFile,
-            $this->permissionMode,
+            $this->permissionMode, $this->owner,
+        );
+    }
+
+    /** The same task, `$owner`'s (an account id; null for nobody's, the admin's). */
+    public function ownedBy(?string $owner): self
+    {
+        return new self(
+            $this->id, $this->name, $this->prompt, $this->cwd, $this->triggers,
+            $this->timezone, $this->model, $this->thinkingLevel,
+            $this->enabled, $this->createdAt, $this->anchorAt, $this->sessionFile,
+            $this->permissionMode, $owner === '' ? null : $owner,
         );
     }
 

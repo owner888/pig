@@ -2526,6 +2526,172 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       openKeysModal();
     });
 
+    // Who is logged in (`/api/login/state`). With accounts (sessions kept in a database) what is the
+    // server's — the API keys, the SSH nodes, the accounts — is an admin's, and the menu shows each
+    // person only what they may use; the server refuses the rest anyway (`AdminMiddleware`).
+    let me = { accounts: false, admin: true, name: "" };
+    const meReady = (async () => {
+      try {
+        const state = await (await fetch("/api/login/state", { cache: "no-store" })).json();
+        me = { accounts: state.accounts === true, admin: state.user?.admin !== false, name: state.user?.name || "" };
+      } catch {}
+      const notAdmin = me.accounts && !me.admin;
+      for (const id of ["more-keys-btn", "nodes-btn", "more-nodes-btn"]) {
+        const item = document.getElementById(id);
+        if (item) item.hidden = notAdmin;
+      }
+      const accountsItem = document.getElementById("more-accounts-btn");
+      if (accountsItem) accountsItem.hidden = !(me.accounts && me.admin);
+    })();
+
+    // The accounts (`/api/accounts`), an admin's: who may log in, who else is an admin, and where
+    // each one's tools run — this machine, or a container of their own (docs/dev/design/storage.md,
+    // phase 4). Nothing of anybody's conversations is here: those are theirs.
+    async function openAccountsModal() {
+      let accounts = [];
+      const call = async (path, body) => {
+        const res = await apiFetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        accounts = data.accounts;
+      };
+      try {
+        await call("/api/accounts");
+      } catch (err) {
+        pigUnreachable(t("accounts"), err);
+        return;
+      }
+
+      const runtimeOptions = (chosen) => ["docker", "host"]
+        .map((r) => `<option value="${r}"${r === chosen ? " selected" : ""}>${escapeHtml(t(`runtime_${r}`))}</option>`).join("");
+
+      openModal({
+        title: t("accounts"),
+        width: "560px",
+        bodyHtml: `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div class="modal-section">${escapeHtml(t("accounts_add"))}</div>
+            <input class="modal-input" id="account-name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${escapeHtml(t("account_name"))}">
+            <input class="modal-input" id="account-password" type="password" autocomplete="new-password" placeholder="${escapeHtml(t("account_password"))}">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <select class="select-pill" id="account-runtime">${runtimeOptions("docker")}</select>
+              <label style="display:flex; align-items:center; gap:6px; font-size:var(--text-base);"><input type="checkbox" id="account-admin"> ${escapeHtml(t("account_admin"))}</label>
+            </div>
+            <div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("account_runtime_hint"))}</div>
+            <div id="account-error" style="color:var(--color-error); font-size:var(--text-sm);" hidden></div>
+            <div class="modal-section">${escapeHtml(t("accounts"))}</div>
+            <div id="account-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+          </div>
+        `,
+        confirmText: t("accounts_add"),
+        cancelText: t("close"),
+        onOpen: (modalEl) => {
+          const error = modalEl.querySelector("#account-error");
+          const list = modalEl.querySelector("#account-list");
+          const say = (text) => { error.hidden = !text; error.textContent = text || ""; };
+          const change = async (path, body) => {
+            try {
+              await call(path, body);
+              say("");
+            } catch (err) { say(err.message); }
+            render();
+          };
+
+          const render = () => {
+            list.innerHTML = "";
+            for (const a of accounts) {
+              const row = document.createElement("div");
+              row.style.cssText = "display:flex; align-items:center; gap:8px; font-size:var(--text-base); flex-wrap:wrap;";
+              const you = a.name === me.name ? ` <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("account_you"))}</span>` : "";
+              row.innerHTML = `
+                <span style="flex:1; min-width:120px;">${escapeHtml(a.name)}${you}</span>
+                <select class="select-pill">${runtimeOptions(a.runtime)}</select>
+                <label style="display:flex; align-items:center; gap:4px; font-size:var(--text-sm);"><input type="checkbox"${a.admin ? " checked" : ""}> ${escapeHtml(t("account_admin"))}</label>
+              `;
+              row.querySelector("select").addEventListener("change", (e) => change("/api/accounts/update", { name: a.name, runtime: e.target.value }));
+              row.querySelector("input[type=checkbox]").addEventListener("change", (e) => change("/api/accounts/update", { name: a.name, admin: e.target.checked }));
+
+              const reset = document.createElement("button");
+              reset.className = "mini-btn";
+              reset.textContent = t("account_reset_password");
+              reset.addEventListener("click", () => openModal({
+                title: `${t("account_reset_password")} · ${a.name}`,
+                bodyHtml: `<input class="modal-input" id="account-new-password" type="password" autocomplete="new-password" placeholder="${escapeHtml(t("account_password"))}">
+                  <div id="account-new-error" style="color:var(--color-error); font-size:var(--text-sm); margin-top:8px;" hidden></div>`,
+                confirmText: t("save"),
+                cancelText: t("cancel"),
+                onOpen: (inner) => inner.querySelector("#account-new-password").focus(),
+                onConfirm: async (inner) => {
+                  try {
+                    await call("/api/accounts/password", { name: a.name, password: inner.querySelector("#account-new-password").value });
+                  } catch (err) {
+                    const e = inner.querySelector("#account-new-error");
+                    e.hidden = false;
+                    e.textContent = err.message;
+                    return false;
+                  }
+                  render();
+                  if (a.name === me.name) location.replace("/login");
+                  return true;
+                },
+              }));
+              row.appendChild(reset);
+
+              const remove = document.createElement("button");
+              remove.className = "mini-btn danger";
+              remove.textContent = t("delete");
+              remove.addEventListener("click", () => openModal({
+                title: t("delete"),
+                bodyHtml: `<div>${escapeHtml(t("account_remove_confirm", { name: a.name }))}</div>`,
+                confirmText: t("delete"),
+                cancelText: t("cancel"),
+                isDanger: true,
+                onConfirm: async () => {
+                  await change("/api/accounts/remove", { name: a.name });
+                  if (a.name === me.name && !accounts.some((x) => x.name === me.name)) location.replace("/login");
+                  return true;
+                },
+              }));
+              row.appendChild(remove);
+              list.appendChild(row);
+            }
+          };
+
+          modalEl._accounts = { say, render };
+          render();
+          modalEl.querySelector("#account-name").focus();
+        },
+        onConfirm: async (modalEl) => {
+          const { say, render } = modalEl._accounts;
+          const name = modalEl.querySelector("#account-name");
+          const password = modalEl.querySelector("#account-password");
+          if (!name.value.trim()) return true;
+          try {
+            await call("/api/accounts/add", {
+              name: name.value.trim(),
+              password: password.value,
+              runtime: modalEl.querySelector("#account-runtime").value,
+              admin: modalEl.querySelector("#account-admin").checked,
+            });
+          } catch (err) {
+            say(err.message);
+            return false;
+          }
+          say("");
+          name.value = "";
+          password.value = "";
+          render();
+          name.focus();
+          return false;
+        },
+      });
+    }
+    document.getElementById("more-accounts-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMoreMenu(false);
+      openAccountsModal();
+    });
+
     // Logging out (`WebLogin`): the session ends on the server, and the page goes to the login.
     async function logOut() {
       try { await fetch("/api/logout", { method: "POST" }); } catch {}
@@ -2933,10 +3099,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       try {
         availableModels = await fetchJson("/api/models", t("what_model_list"));
         populateProviders(availableModels);
-        // No model has a key, so nothing in the page can answer: ask for one, once per page.
+        // No model has a key, so nothing in the page can answer: ask for one, once per page — or,
+        // where the keys are an admin's and this is not one, say who to ask.
         if (availableModels.length === 0 && !keysAsked) {
           keysAsked = true;
-          openKeysModal(true);
+          await meReady;
+          if (me.accounts && !me.admin) {
+            openModal({ title: t("api_keys"), bodyHtml: `<div>${escapeHtml(t("keys_ask_admin"))}</div>`, confirmText: t("close"), hideFooter: false, cancelText: t("close") });
+          } else {
+            openKeysModal(true);
+          }
         }
       } catch (err) { pigUnreachable(t("what_model_list"), err); }
     }

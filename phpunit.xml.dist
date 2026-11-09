@@ -20,9 +20,13 @@
             <directory>packages/codemode/test</directory>
             <!-- Needs a MySQL server: set PIG_TEST_MYSQL_DSN and run the testsuite named mysql. -->
             <exclude>packages/coding-agent/test/Session/MysqlSessionStoreTest.php</exclude>
+            <exclude>packages/coding-agent/test/Database/MysqlDatabaseTest.php</exclude>
+            <exclude>packages/coding-agent/test/Web/MysqlWebLoginAccountsTest.php</exclude>
         </testsuite>
         <testsuite name="mysql">
             <file>packages/coding-agent/test/Session/MysqlSessionStoreTest.php</file>
+            <file>packages/coding-agent/test/Database/MysqlDatabaseTest.php</file>
+            <file>packages/coding-agent/test/Web/MysqlWebLoginAccountsTest.php</file>
         </testsuite>
     </testsuites>
     <source>

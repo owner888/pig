@@ -209,7 +209,7 @@ pig web start -d              # Start daemon on 127.0.0.1:8088 (or specify --por
 pig web status                # Check status and PID
 pig web restart               # Restart daemon
 pig web stop                  # Stop daemon gracefully
-pig web password              # Set or change the web UI's password
+pig web password <name>       # Set or change an account's password (the first one is the admin)
 
 # macOS: run it as a login service, so it is back after a restart
 pig web install               # launchd LaunchAgent (--port / --host as above)
@@ -219,7 +219,7 @@ pig web uninstall             # remove it
 `pig web install` writes `~/Library/LaunchAgents/dev.pigagent.web.plist` and loads it: launchd starts the server when you log in, restarts it if it dies, and runs it in the folder you typed `install` in, with that shell's `PATH` and proxy settings. API keys exported in your shell are not copied into the plist — sign in with `/login` or keep them in `auth.json`. While it is installed, `start`, `stop`, `status` and `restart` go through `launchctl`; `stop` lasts until the next login or `pig web start`, and `pig web install --port N` again changes the port.
 
 Open `http://localhost:8088` in your browser or mobile phone:
-- **Login**: the web UI runs a terminal and agents on your machine, so it always asks for a password. The first time, `pig web start` prints a one-time setup code; enter it on the page and choose a password (or set one with `pig web password`). Requests from other websites are refused.
+- **Login**: the web UI runs a terminal and agents on your machine, so it always asks for a name and a password. The first time, the page asks you to make the admin account (or make it with `pig web password <name>` on the server); a password set before this version is the account `admin`'s. Requests from other websites are refused.
 - **Interactive Local PTY Terminals**: Press <code>Ctrl+`</code> or <code>Cmd+`</code> (or click the terminal icon) to slide out a full multi-tab terminal drawer powered by `xterm.js` and a native Unix PTY engine, with full support for `vim`, `nvim`, `htop`, `tmux`, and `nano`.
 - **SSH Node Workbench & SFTP File Explorer**: Click `🖥️ Nodes` to manage server inventory, verify SHA-256 host key fingerprints, import from `~/.ssh/config`, open remote interactive SSH terminals, and view/edit remote files via SFTP (up to 512 KiB).
 - **Auto Browser Launch**: Running `/web` inside an interactive TUI session starts the server and automatically opens your default system browser.

@@ -8,8 +8,10 @@ use Closure;
 use InvalidArgumentException;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Accounts\User;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Session\SqlSessionStore;
 use Pig\CodingAgent\Web\ManagedSession;
 use Pig\CodingAgent\Web\SessionPool;
 use RuntimeException;
@@ -47,9 +49,16 @@ use Throwable;
  *   The occurrence is compared against the wall clock each time, so a clock that was changed, a
  *   timezone shift or a long sleep is noticed within a minute.
  *
- * Tasks and their run logs are one JSON file, `scheduled-tasks.json` under `Config::home()`. A task
- * that no longer reads — a folder deleted, a hand edit — is kept as it was written and reported in
+ * Tasks and their run logs are kept by a `ScheduleStore`: `scheduled-tasks.json` under
+ * `Config::home()`, or two tables beside the sessions when those are in a database. A task that no
+ * longer reads — a folder deleted, a hand edit — is kept as it was written and reported in
  * `problems()`, so saving the others does not delete it.
+ *
+ * **Each task is somebody's** (docs/dev/design/storage.md, phase 4 step 5): its `owner` is the
+ * account that made it, and the methods that take a `User` show and change only that account's
+ * tasks — an admin's too, with the ones from before accounts, which nobody owns, as with
+ * conversations. A run starts the child as the task's owner (`$environmentFor`): a Docker account's
+ * runs in its container, and the conversation a task gets is its owner's.
  */
 final class ScheduleManager
 {
@@ -65,7 +74,7 @@ final class ScheduleManager
     public const string ERROR = 'error';
     public const string SKIPPED = 'skipped';
 
-    private readonly string $file;
+    private readonly ScheduleStore $store;
     private readonly string $lockFile;
     private readonly Closure $now;
 
@@ -98,6 +107,11 @@ final class ScheduleManager
      * @param float $maxWait `MAX_WAIT`; a test whose clock jumps a day looks again sooner
      * @param string|null $url where this server can be reached from this machine, written into the
      *        lock once it is this server's (`owner()`)
+     * @param ScheduleStore|null $store where the tasks are kept; `scheduled-tasks.json` in `$dataDir`
+     *        when not given
+     * @param (Closure(?string): array<string, string>)|null $environmentFor what a run's child is
+     *        started with for the task's owner (an account id, null for nobody's): a Docker account's
+     *        container. Throws to refuse the run, with the reason
      */
     public function __construct(
         private readonly SessionPool $pool,
@@ -106,9 +120,11 @@ final class ScheduleManager
         ?Closure $now = null,
         private readonly float $maxWait = self::MAX_WAIT,
         private readonly ?string $url = null,
+        ?ScheduleStore $store = null,
+        private readonly ?Closure $environmentFor = null,
     ) {
         $dir = $dataDir ?? Config::home();
-        $this->file = $dir . '/scheduled-tasks.json';
+        $this->store = $store ?? new FileScheduleStore($dir . '/scheduled-tasks.json');
         $this->lockFile = $dir . '/scheduled-tasks.lock';
         $this->now = $now ?? static fn (): int => (int) floor(microtime(true) * 1000);
     }
@@ -200,8 +216,51 @@ final class ScheduleManager
         return $this->problems;
     }
 
-    /** @return list<array<string, mixed>> every task, with when it next runs and how it last went */
-    public function list(): array
+    /**
+     * Whether `$who` sees `$task`: their own, and for an admin the ones nobody owns; everything for
+     * null, which is the server itself.
+     */
+    public static function visibleTo(ScheduledTask $task, ?User $who): bool
+    {
+        if ($who === null) {
+            return true;
+        }
+
+        $id = $who->id === '' ? null : $who->id;
+
+        return $task->owner === $id || ($task->owner === null && $who->admin);
+    }
+
+    /** @return array<string, ScheduledTask> the tasks `$who` sees, by id */
+    private function tasksOf(?User $who): array
+    {
+        return array_filter($this->tasks, static fn (ScheduledTask $task): bool => self::visibleTo($task, $who));
+    }
+
+    /**
+     * Stop every task of `$owner`, an account that has been removed: they are kept, switched off,
+     * and nobody sees them.
+     */
+    public function disableAllOf(string $owner): void
+    {
+        $changed = false;
+
+        foreach ($this->tasks as $id => $task) {
+            if ($task->owner === $owner && $task->enabled) {
+                $this->tasks[$id] = $task->with(enabled: false);
+                $this->disarm($id);
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            $this->write();
+            ($this->onChange)();
+        }
+    }
+
+    /** @return list<array<string, mixed>> every task `$who` sees, with when it next runs and how it last went */
+    public function list(?User $who = null): array
     {
         if (!$this->owns()) {
             $this->load();
@@ -209,7 +268,7 @@ final class ScheduleManager
 
         $list = [];
 
-        foreach ($this->tasks as $id => $task) {
+        foreach ($this->tasksOf($who) as $id => $task) {
             $runs = $this->runs[$id] ?? [];
             $last = $runs === [] ? null : $runs[array_key_last($runs)];
 
@@ -225,14 +284,14 @@ final class ScheduleManager
         return $list;
     }
 
-    /** @return list<array<string, mixed>> a task's runs, newest first */
-    public function runs(string $taskId): array
+    /** @return list<array<string, mixed>> a task's runs, newest first; none of a task `$who` does not see */
+    public function runs(string $taskId, ?User $who = null): array
     {
         if (!$this->owns()) {
             $this->load();
         }
 
-        return array_reverse($this->runs[$taskId] ?? []);
+        return $who === null || isset($this->tasksOf($who)[$taskId]) ? array_reverse($this->runs[$taskId] ?? []) : [];
     }
 
     /**
@@ -241,11 +300,12 @@ final class ScheduleManager
      *
      * @return array<string, string>
      */
-    public function sessionTasks(): array
+    public function sessionTasks(?User $who = null): array
     {
         $map = [];
+        $tasks = $this->tasksOf($who);
 
-        foreach ($this->tasks as $task) {
+        foreach ($tasks as $task) {
             if ($task->sessionFile !== null) {
                 $map[basename($task->sessionFile)] = $task->name;
             }
@@ -253,7 +313,7 @@ final class ScheduleManager
 
         // Runs from before tasks had a conversation of their own were one conversation each.
         foreach ($this->runs as $taskId => $runs) {
-            $name = isset($this->tasks[$taskId]) ? $this->tasks[$taskId]->name : null;
+            $name = isset($tasks[$taskId]) ? $tasks[$taskId]->name : null;
 
             foreach ($runs as $run) {
                 if ($name !== null && is_string($run['sessionFile'] ?? null)) {
@@ -271,11 +331,11 @@ final class ScheduleManager
      *
      * @return array<string, string>
      */
-    public function sessionTaskIds(): array
+    public function sessionTaskIds(?User $who = null): array
     {
         $map = [];
 
-        foreach ($this->tasks as $task) {
+        foreach ($this->tasksOf($who) as $task) {
             if ($task->sessionFile !== null) {
                 $map[basename($task->sessionFile)] = $task->id;
             }
@@ -290,11 +350,11 @@ final class ScheduleManager
      *
      * @return array<string, true>
      */
-    public function unread(): array
+    public function unread(?User $who = null): array
     {
         $map = [];
 
-        foreach ($this->tasks as $id => $task) {
+        foreach ($this->tasksOf($who) as $id => $task) {
             if ($task->sessionFile !== null && $this->hasUnread($id)) {
                 $map[basename($task->sessionFile)] = true;
             }
@@ -307,12 +367,12 @@ final class ScheduleManager
      * Somebody has the conversation `$sessionFile` (a path or its basename) on screen: every
      * finished run of the task it belongs to is read. Nothing for a conversation no task has.
      */
-    public function markSeen(string $sessionFile): void
+    public function markSeen(string $sessionFile, ?User $who = null): void
     {
         $this->mustOwn();
         $name = basename($sessionFile);
 
-        foreach ($this->tasks as $id => $task) {
+        foreach ($this->tasksOf($who) as $id => $task) {
             if ($task->sessionFile === null || basename($task->sessionFile) !== $name || !$this->hasUnread($id)) {
                 continue;
             }
@@ -332,15 +392,17 @@ final class ScheduleManager
      * Create or replace a task. Saving counts as switching it on again: the next occurrence is
      * counted from now, so an edit is never an instant catch-up run.
      *
+     * A new task is `$who`'s; one changed stays whose it was.
+     *
      * @param array<string, mixed> $data what the page sent
      * @throws InvalidArgumentException naming what is wrong
      */
-    public function save(array $data): ScheduledTask
+    public function save(array $data, ?User $who = null): ScheduledTask
     {
         $this->mustOwn();
 
         $id = is_string($data['id'] ?? null) && $data['id'] !== '' ? $data['id'] : null;
-        $existing = $id !== null ? ($this->tasks[$id] ?? null) : null;
+        $existing = $id !== null ? ($this->tasksOf($who)[$id] ?? null) : null;
 
         if ($id !== null && $existing === null) {
             throw new InvalidArgumentException("There is no task '{$id}'.");
@@ -351,6 +413,7 @@ final class ScheduleManager
             'createdAt' => $existing?->createdAt ?? ($this->now)(),
             'anchorAt' => ($this->now)(),
             'sessionFile' => null,
+            'owner' => $existing !== null ? $existing->owner : ($who !== null && $who->id !== '' ? $who->id : null),
         ]);
         $this->refuseAPast($task);
 
@@ -369,10 +432,10 @@ final class ScheduleManager
     }
 
     /** Delete a task and its run log. A run in flight carries on; it is only no longer written down. */
-    public function delete(string $id): void
+    public function delete(string $id, ?User $who = null): void
     {
         $this->mustOwn();
-        $this->task($id);
+        $this->task($id, $who);
 
         $this->disarm($id);
         unset($this->tasks[$id], $this->runs[$id]);
@@ -387,10 +450,10 @@ final class ScheduleManager
         ($this->onChange)();
     }
 
-    public function setEnabled(string $id, bool $enabled): void
+    public function setEnabled(string $id, bool $enabled, ?User $who = null): void
     {
         $this->mustOwn();
-        $task = $this->task($id)->with(enabled: $enabled, anchorAt: ($this->now)());
+        $task = $this->task($id, $who)->with(enabled: $enabled, anchorAt: ($this->now)());
         $this->refuseAPast($task);
 
         $this->tasks[$id] = $task;
@@ -400,10 +463,10 @@ final class ScheduleManager
     }
 
     /** Run a task now, whatever its schedule says. Leaves the schedule as it was. */
-    public function runNow(string $id): void
+    public function runNow(string $id, ?User $who = null): void
     {
         $this->mustOwn();
-        $task = $this->task($id);
+        $task = $this->task($id, $who);
 
         if ($this->activeRunOf($id) !== null) {
             throw new InvalidArgumentException('This task is already running.');
@@ -558,7 +621,8 @@ final class ScheduleManager
         $entry = ['task' => $taskId, 'run' => $runId];
 
         try {
-            $managed = $this->pool->open($cwd, $file);
+            $owner = $this->tasks[$taskId]->owner ?? null;
+            $managed = $this->pool->open($cwd, $file, $owner, $this->environmentFor($owner));
         } catch (Throwable $e) {
             $this->updateRun($entry, [
                 'status' => self::ERROR,
@@ -594,7 +658,7 @@ final class ScheduleManager
                 $this->write();
             }
 
-            $managed = $this->pool->open($task->cwd, (string) $task->sessionFile);
+            $managed = $this->pool->open($task->cwd, (string) $task->sessionFile, $task->owner, $this->environmentFor($task->owner));
         } catch (Throwable $e) {
             $this->updateRun($entry, [
                 'status' => self::ERROR,
@@ -648,11 +712,27 @@ final class ScheduleManager
      */
     private function conversationFor(ScheduledTask $task): string
     {
-        $session = SessionManager::create($task->cwd);
-        $session->setSessionName($task->name);
-        $session->persist();
+        // The task's owner's, as a conversation they started would be.
+        $store = SessionManager::sessionStore();
+        $make = static function () use ($task): string {
+            $session = SessionManager::create($task->cwd);
+            $session->setSessionName($task->name);
+            $session->persist();
 
-        return $session->path;
+            return $session->path;
+        };
+
+        return $store instanceof SqlSessionStore ? SessionManager::withSessionStore($store->withOwner($task->owner), $make) : $make();
+    }
+
+    /**
+     * What the child of a run of `$owner`'s task is started with (`$environmentFor`).
+     *
+     * @return array<string, string>
+     */
+    private function environmentFor(?string $owner): array
+    {
+        return $this->environmentFor !== null ? ($this->environmentFor)($owner) : [];
     }
 
     private function finish(int $key, string $status, ?string $error): void
@@ -747,9 +827,9 @@ final class ScheduleManager
 
     // ---- the file ------------------------------------------------------------------------------
 
-    private function task(string $id): ScheduledTask
+    private function task(string $id, ?User $who = null): ScheduledTask
     {
-        return $this->tasks[$id] ?? throw new InvalidArgumentException("There is no task '{$id}'.");
+        return $this->tasksOf($who)[$id] ?? throw new InvalidArgumentException("There is no task '{$id}'.");
     }
 
     private function refuseAPast(ScheduledTask $task): void
@@ -832,24 +912,10 @@ final class ScheduleManager
         $this->tasks = [];
         $this->broken = [];
         $this->problems = [];
-        $this->runs = [];
 
-        if (!is_file($this->file)) {
-            return;
-        }
+        ['tasks' => $entries, 'runs' => $this->runs] = $this->store->load();
 
-        $raw = file_get_contents($this->file);
-        $json = is_string($raw) ? json_decode($raw, true) : null;
-
-        if (!is_array($json)) {
-            throw new RuntimeException("{$this->file} is not JSON; fix or remove it.");
-        }
-
-        foreach ((array) ($json['tasks'] ?? []) as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
-
+        foreach ($entries as $entry) {
             try {
                 $task = ScheduledTask::fromArray($entry);
                 $this->tasks[$task->id] = $task;
@@ -857,12 +923,6 @@ final class ScheduleManager
                 $this->broken[] = $entry;
                 $name = is_string($entry['name'] ?? null) ? $entry['name'] : '(no name)';
                 $this->problems[] = "{$name}: {$e->getMessage()}";
-            }
-        }
-
-        foreach ((array) ($json['runs'] ?? []) as $taskId => $runs) {
-            if (is_array($runs)) {
-                $this->runs[(string) $taskId] = array_values(array_filter($runs, static fn ($r): bool => is_array($r) && is_string($r['id'] ?? null) && is_string($r['status'] ?? null)));
             }
         }
     }
@@ -873,23 +933,15 @@ final class ScheduleManager
             return;
         }
 
-        $this->ensureDirectory();
-        $json = json_encode([
-            'tasks' => [...array_values(array_map(static fn (ScheduledTask $t): array => $t->toArray(), $this->tasks)), ...$this->broken],
-            'runs' => (object) $this->runs,
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
-
-        // A rename, so a reader never sees half a file.
-        $temp = $this->file . '.' . getmypid() . '.tmp';
-
-        if (file_put_contents($temp, $json . "\n") === false || !rename($temp, $this->file)) {
-            throw new RuntimeException("Could not write {$this->file}.");
-        }
+        $this->store->save(
+            [...array_values(array_map(static fn (ScheduledTask $t): array => $t->toArray(), $this->tasks)), ...$this->broken],
+            $this->runs,
+        );
     }
 
     private function ensureDirectory(): void
     {
-        $dir = dirname($this->file);
+        $dir = dirname($this->lockFile);
 
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new RuntimeException("Could not create {$dir}.");

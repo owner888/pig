@@ -190,12 +190,14 @@ smart-book's `handle(ctx, $next)` shape without OmniPHP) before `route()`:
 2. `LoginMiddleware` — without a session, a page is a 302 to `/login`, anything else a 401;
    `LoginMiddleware::PUBLIC` is what the login page needs.
 
-`WebLogin` is one password (`password_hash` in `web-login.json`, 0600) and sessions (a random token
-in an HttpOnly, SameSite=Strict `pig_session` cookie; only its SHA-256 kept, 30 days, surviving a
-restart). The first password is set on the page with a one-time setup code that `pig web start`
-(and `-d`, `status`, the TUI's `/web`) prints and `web-setup-code` keeps, so whoever reaches the page
-first cannot take it. `pig web password` sets or changes it and logs every browser out; ten tries a
-minute per address. Failures carry a `reason` (`WebLogin::REASONS`) the login page words in its
+`WebLogin` is accounts — a name and a `password_hash` each, in `web-login.json` (0600, one account)
+or in the sessions' database (several, `Accounts\SqlAccounts`, docs/dev/design/storage.md phase 4) —
+and sessions (a random token in an HttpOnly, SameSite=Strict `pig_session` cookie; only its SHA-256
+kept, 30 days, surviving a restart). While there is no account the page makes the first, the
+admin. The one-time setup code that once guarded that is gone (the developer's call: the server
+listens on this machine alone unless told otherwise). `pig web password <name>` sets or changes a
+password and logs that account's browsers out, or makes the first account; a password from before
+accounts is the account `admin`'s. Ten tries a minute per address. Failures carry a `reason` (`WebLogin::REASONS`) the login page words in its
 language. A session ended elsewhere takes effect at the page's next connection: the WebSocket
 already open stays until it drops, and the page then goes to `/login`. Tests of everything else
 build the server with `WebLogin::off()`; regression tests: `WebLoginTest` and

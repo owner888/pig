@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Session;
 
 use PDO;
+use Pig\CodingAgent\Database\Database;
+use Pig\CodingAgent\Database\Databases;
 use Pig\CodingAgent\Session\SessionStore;
 use Pig\CodingAgent\Session\SqlSessionStore;
 
@@ -16,18 +18,19 @@ use Pig\CodingAgent\Session\SqlSessionStore;
  */
 final class MysqlSessionStoreTest extends SessionStoreConformance
 {
-    private ?PDO $pdo = null;
+    use SqlSessionStoreChecks;
 
     private string $prefix = '';
+
+    /** @var list<Database> every database the test opened, its tables dropped after */
+    private array $opened = [];
 
     private ?SqlSessionStore $store = null;
 
     #[\Override]
     protected function setUp(): void
     {
-        $dsn = (string) getenv('PIG_TEST_MYSQL_DSN');
-
-        if ($dsn === '') {
+        if ((string) getenv('PIG_TEST_MYSQL_DSN') === '') {
             self::markTestSkipped('set PIG_TEST_MYSQL_DSN to run the session store against MySQL');
         }
 
@@ -35,26 +38,36 @@ final class MysqlSessionStoreTest extends SessionStoreConformance
             self::markTestSkipped('needs pdo_mysql');
         }
 
-        $this->pdo = new PDO($dsn, getenv('PIG_TEST_MYSQL_USER') ?: null, getenv('PIG_TEST_MYSQL_PASSWORD') ?: null);
         $this->prefix = 'pigtest_' . bin2hex(random_bytes(3)) . '_';
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        if ($this->pdo !== null) {
-            foreach (['sessions', 'session_lines', 'session_sidecars'] as $table) {
-                $this->pdo->exec("DROP TABLE IF EXISTS {$this->prefix}{$table}");
+        foreach ($this->opened as $db) {
+            foreach (['sessions', 'session_lines', 'session_sidecars', 'sessions_v1', 'session_lines_v1', 'session_sidecars_v1'] as $table) {
+                $db->dropTable($table);
             }
         }
 
+        $this->opened = [];
         $this->store = null;
-        $this->pdo = null;
+    }
+
+    #[\Override]
+    protected function database(string $prefix): Database
+    {
+        return $this->opened[] = Databases::open(
+            (string) getenv('PIG_TEST_MYSQL_DSN'),
+            getenv('PIG_TEST_MYSQL_USER') ?: null,
+            getenv('PIG_TEST_MYSQL_PASSWORD') ?: null,
+            $this->prefix . $prefix,
+        );
     }
 
     #[\Override]
     protected function store(): SessionStore
     {
-        return $this->store ??= new SqlSessionStore($this->pdo ?? throw new \LogicException('no database'), $this->prefix);
+        return $this->store ??= new SqlSessionStore($this->database(''));
     }
 }

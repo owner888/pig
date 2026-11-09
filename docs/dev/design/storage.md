@@ -289,6 +289,347 @@ These apply under B or C. They go in a later phase, but they shape the interface
    empty, the files stay where they are (switching `storage` back to `jsonl` shows them again), and
    `/export` then `/import` moves the one that is wanted. It is a loop over `create()` once somebody
    needs it.
+   **Design (2026-11-09, to be decided before any code):**
+
+   What exists:
+   - The web shell (`pig web`) is one process. Each conversation is a `pig --mode rpc` child it
+     spawns (`SessionPool`, keyed `cwd::session`).
+   - Every child runs as the server's OS user, with the full tools: `bash`, `read`, `write`.
+   - The login (`WebLogin`) is one password for one person: `web-login.json`, a cookie session.
+   - Everything else is one person's too: `auth.json` / keychain credentials, `settings.json`,
+     `models.json`, scheduled tasks, extensions.
+
+   **The question everything else hangs on is isolation.** Owners on sessions, filtered lists and
+   accounts are easy. But as long as every child runs as one OS user with `bash`, any user can
+   `cat` another user's files and the server's database password, so the filtering is a
+   courtesy, not a boundary. Three levels:
+
+   - **(a) Trusted users** (a family, a small team that already shares the machine): accounts and
+     owners keep each person's sessions apart in the UI. Nobody is defended against anybody else.
+     Cheapest; honest only if the docs say so.
+   - **(b) A sandbox per user, through phase 2's `operations`:** each user's tools run in their own
+     container (or over SSH as their own OS user). The agent process stays shared, but the tools
+     touch only that user's files. It needs a container runtime on the server and an image. The
+     database password and the credentials still live in the shared process, which runs no user
+     code, so they stay out of reach.
+   - **(c) An OS user per user:** the web shell spawns each child with `sudo -u <user> pig --mode
+     rpc` (or `su`). This is the classic Unix answer. The server needs root to set up, and each
+     user needs a home with their own `~/.pig/agent`.
+
+   Proposed: **build (a) now and leave room for (b)**. Owners, accounts and filtering are needed by
+   all three. The sandbox is a separate step that plugs into `operations` without touching what (a)
+   built. The docs say plainly that until (b), users of one server can read each other's files.
+
+   What (a) adds, in order:
+   1. **Accounts:** a `users` table in the store's database (name, `password_hash`, admin flag,
+      created). `WebLogin` keeps its cookie sessions and gains a user on each. With JSONL storage
+      there are no accounts, and the single password stays.
+   2. **The owner of a session:** written when it is created (the column exists already). The
+      web shell passes the logged-in user to its child (`--owner`, or an RPC header), and the child
+      passes it to `SessionManager::create()`. `listFor()`, `listAll()`, `searchAll()`, `find*()`
+      and `canonical()` see only the owner's sessions, an admin sees all. A session created
+      before accounts has no owner (null) and is the admin's.
+   3. **Working directories:** each user gets a workspace root (`/srv/pig/<user>`, say). The
+      folder picker starts there, and a child's `cwd` must be inside it. This is the line (b)
+      later enforces for real.
+   4. **Scheduled tasks:** move from `scheduled-tasks.json` into the store with an owner. The one
+      scheduler still runs them all, each run spawned as its owner's child.
+   5. **Credentials and settings stay the server's** (one API key, one `settings.json`, one
+      `models.json`), so every user's requests are billed to it. Per-user keys are a later
+      choice.
+   6. **The TUI and `--mode rpc` without the web shell** are the local user, the admin. Nothing
+      changes for them.
+
+   **Decided 2026-11-09:**
+   - **Isolation:** (a) now, (b) later, as proposed. The docs say that users of one server can
+     read each other's files until (b).
+   - **Credentials:** one, the server's.
+   - **Accounts:** an admin adds and removes them on a page in the web UI. The first admin is
+     the existing password's owner: the setup code makes the first account, and it is an admin.
+   - **Admin visibility:** first decided as "the admin sees and can open every user's
+     conversations", then changed the same day: **nobody sees anybody else's conversations, the
+     admin included** (privacy; the developer's call). The admin manages accounts and nothing
+     more, and keeps the conversations from before accounts, which nobody owns.
+   - **Every table has `created_at`, `updated_at` and `deleted_at`.** The database keeps the first
+     two; the code never writes them. SQLite is made to behave as MySQL does. So the SQL goes
+     through a small database interface of pig's own, with one implementation per database.
+
+   **Built first (2026-11-09): the database layer.** `Database\Database` (interface),
+   `PdoDatabase` (what both share), `MysqlDatabase`, `SqliteDatabase`, and `Databases::open()`,
+   which picks one by DSN. What it borrows from omniphp's `DB` and what it does not:
+   - Kept from omniphp: the connection set up per driver. SQLite gets WAL, `synchronous = FULL`,
+     `busy_timeout` and `foreign_keys`. MySQL gets `utf8mb4` and associative rows. Identifiers are
+     quoted per driver, and the table prefix lives in the database (`table('sessions')` →
+     `pig_sessions`).
+   - Also kept: **a lost connection is made again.** A statement outside a transaction runs once
+     more. A transaction runs again from the start (MySQL's 2006 / 2013 / 2055 / 1927 and the
+     messages without a code). `pig web` is long-running, and MySQL's `wait_timeout` would
+     otherwise end it.
+   - Added: a transaction ended by **a deadlock or lock wait** (1213 / 1205, SQLSTATE 40001) also
+     runs again, up to three attempts in all. Two processes starting the same new session on
+     MySQL deadlock on gap locks, and the server's own advice is to restart the transaction.
+   - Not taken: the query builder, migrations as classes, models. The SQL stays written out in the
+     store. The one schema change so far is moved by hand (below).
+   - **The timestamps.**
+     - MySQL: `DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`, with
+       `time_zone = '+00:00'` on each connection.
+     - SQLite: a `strftime('%Y-%m-%d %H:%M:%f','now')` default, plus an `AFTER UPDATE` trigger
+       that sets `updated_at` (by `rowid`) when another column changed and `updated_at` itself did
+       not.
+     - So on both, an update that changes nothing leaves `updated_at` alone, and an `updated_at`
+       the code sets stays. omniphp's trigger updates on every row change by `id` and overwrites
+       an explicit value.
+     - UTC to the millisecond on both; `timestamp()` reads one back as Unix milliseconds, and
+       `at()` writes one.
+   - `exclusively($name, $work)` runs table changes one process at a time. On MySQL it uses
+     `GET_LOCK()`, because DDL commits by itself. On SQLite it is one `BEGIN IMMEDIATE`, since DDL
+     is transactional there. Two pigs starting on an empty database made the same index twice
+     before this.
+   - `renameTable()` on SQLite renames the table's indexes and trigger too. They follow the table
+     but keep their names, which the new table would then ask for and, with `IF NOT EXISTS`,
+     quietly go without.
+
+   `SqlSessionStore` now runs on it:
+   - `sessions.modified_at` is gone: `modifiedAt()` is `updated_at`.
+   - `owner` is null until accounts (it was `''`).
+   - `remove()` sets `deleted_at` on the session's rows in all three tables, and every read skips
+     deleted rows. A session started again at that location clears what was left first. A deleted
+     sidecar written again comes back.
+   - `replace()` rewrites the lines outright: they are the file's contents, not records of their
+     own.
+   - Removed sessions stay in the tables until something purges them. The user management page is
+     the natural place for that.
+   - **1.9.9's tables are moved over on open:**
+     1. Each table without `created_at` is renamed `…_v1`.
+     2. The new tables are made.
+     3. The rows are copied in one transaction, `modified_at` becoming `created_at` / `updated_at`.
+     4. The old tables are dropped.
+
+     A start that stopped half way picks up where it was.
+   - Measured in the container with five and six processes appending 200 lines each to one new
+     session: all lines there, positions unbroken, on SQLite and MariaDB. Before the deadlock
+     retry MariaDB lost a writer.
+   - Tests: `DatabaseConformance` (`SqliteDatabaseTest`, and `MysqlDatabaseTest` in the mysql
+     suite, which also kills its own connection to check the reconnect). `SqlSessionStoreChecks`
+     covers the soft delete and the 1.9.9 move, on both.
+
+   **Step 1 built (2026-11-09): accounts.**
+   - `Accounts\Accounts` keeps who may log in and their login sessions. `Web\WebLogin` keeps
+     the rest: the setup code, slowing guesses, cookies, the local token.
+     - `FileAccounts` is `web-login.json`, file for file as before: one password, its user
+       unnamed and the admin.
+     - `SqlAccounts` keeps accounts in the sessions' database, in two tables:
+       - `users`: id, name, `password_hash`, admin.
+       - `login_sessions`: `token_hash`, `user_id`, `expires_at`.
+   - `WebLogin::configured($home)` picks one by `storage`. It uses the store already open (the
+     server), or opens the database from the setting (`pig web password`, and the setup code that
+     `start` / `status` print). With files nothing changes.
+   - **With accounts:**
+     - The page asks for a name as well. The setup code makes the first account, an admin.
+     - `pig web password <name>` changes that account's password. When there is no account yet,
+       it makes the first one, an admin, so a server can be set up without a browser.
+     - A wrong name and a wrong password get the same answer, `wrong_login`. A missing name is
+       checked against a dummy bcrypt hash, so the two take the same time.
+     - A password change logs out that account's browsers only.
+   - **Names** are unique among existing accounts. That is checked in a transaction rather than
+     by a unique index, so a removed account's name can be used again.
+   - **Removing** an account marks it deleted and ends its login sessions. The last admin cannot be
+     removed. Login sessions that ran out are deleted as new ones come, as the file did.
+   - **What a 1.9.9 server with a database sees:** the existing `web-login.json` password is not
+     carried over. The first visit asks for the setup code and a name, as the decision said ("the
+     setup code makes the first account").
+   - `/api/login/state` also says `accounts` (whether to ask for a name) and `user` (`{name,
+     admin}`). Steps 2 and 3 build on it.
+   - Not in this step: filtering by account (step 2, below) and adding accounts in the page (step
+     3). Until step 3, accounts other than the first are added only in code. The user docs wait
+     for step 3.
+   - Tests: `WebLoginAccountsTest` (SQLite), and `MysqlWebLoginAccountsTest` in the mysql suite.
+     `WebLoginTest` runs the file case unchanged.
+
+   **Step 2 built (2026-11-09): the owner of a session.**
+   - **Written by the child.** The web shell starts each `pig --mode rpc` child with
+     `PIG_SESSION_OWNER`, and `bin/pig` opens the store with `withOwner()`. A session the child
+     starts gets that account id in `owner`; appending never changes it.
+   - **Whose the child writes as.** For a new conversation, whoever opened it. For an existing one,
+     its owner (`ownerOf()`). So what is forked or started from inside a conversation belongs to
+     the conversation's owner. That matters for the ones from before accounts, which the admin
+     opens and which stay nobody's.
+   - **Read through a view.** `visibleTo($id, unowned:)` is a copy of the store whose
+     `exists()`, `every()`, `candidates()`, `projects()`, `findLocal()` / `findGlobal()` and
+     `canonical()` see only that account's sessions. With `unowned`, it also sees the sessions with
+     no owner (from before accounts), which are the admin's.
+   - **Nobody sees anybody else's, the admin included** (see the decision above).
+     `HttpServer::asUser()` reads through `visibleTo($id, unowned: $admin)` for every list, open,
+     delete and rename. It sees the account's own sessions, and the unowned ones for the admin.
+   - **What is filtered:**
+     - `/api/sessions`, `/api/sessions/all` (and its search), `/api/folders` (the counts): only
+       one's own.
+     - `/api/sessions/delete` and `/rename`: somebody else's is "Invalid session file", as one
+       that is not there.
+     - `start_session` on somebody else's: "no such conversation", without starting a child.
+     - `/api/session-image` and `/api/running`. A new conversation not saved yet is listed only to
+       the pages it is open on (and the admin).
+   - **Not filtered yet:**
+     - The scheduled tasks are still the server's, one list for everybody. That is step 5.
+     - `/api/file`, the terminal and the tools reach the whole machine as the server's OS user.
+       That is isolation (a), as decided, until (b).
+   - Without accounts (session files) nothing changes.
+   - Tests:
+     - `SqlSessionStoreChecks` covers owners and the view, on SQLite and MySQL.
+     - `WebModeTest::testWithAccountsEachSeesOnlyTheirOwnConversationsTheAdminToo` goes through
+       the server, with two accounts:
+       - each account's own list;
+       - `delete`, `rename` and `start_session` refused on somebody else's, the admin's attempts
+         included;
+       - the admin keeping the conversations from before accounts.
+
+   **Changed the same day: one login for both, no setup code** (the developer's call).
+   - Logging in is a name and a password with session files too. `FileAccounts` is one named
+     account, the admin, and a `web-login.json` from before accounts is the account `admin`'s.
+   - `Accounts::named()` became `several()`: whether there can be more than one account, which
+     only a database has. The accounts page, `AdminMiddleware` and the Docker runtime ask that.
+   - **The setup code is gone.** While there is no account, the page makes the first, and so
+     does `pig web password <name>` on the server. Whoever opens the page first makes it, which
+     the developer accepted: `pig web` listens on this machine alone unless told otherwise. The
+     old `web-setup-code` file is removed when a password is next set.
+   - With that, "a 1.9.9 server with a database does not carry its password over" no longer holds
+     for files. A database's accounts start empty, so its first visit makes the admin.
+
+   **Step 3a built (2026-11-09): the accounts page.**
+   - The ⋯ menu has **Accounts** for an admin. It can add an account (name, password, admin or
+     not, where its tools run), set one's password, make one an admin or not, change where its
+     tools run, and remove one. Nothing of anybody's conversations is on it.
+   - The routes are `GET /api/accounts`, then `POST /api/accounts/{add,remove,update,password}`.
+     Each change answers the list as it now is. Setting a password or removing an account also
+     closes the pages that account has open, as logging out does.
+   - `users.runtime` is `host` or `docker` (`User::RUNTIMES`). A new account made in the page is
+     `docker` unless the admin says otherwise; the first account, made with the setup code, is
+     `host`. The table is not released yet, so the column is in its first schema and needs no
+     migration.
+   - **The server's things are an admin's** (`Middlewares\AdminMiddleware`): `/api/accounts` and
+     `/api/keys`, which are the keys everybody's requests are billed to. The WebSocket's SSH nodes
+     (`node_request`) are checked where they are answered. Anybody else gets a 403, and the menu
+     does not show those entries. A page with no model and no admin says to ask an admin rather
+     than opening the keys.
+   - Tests:
+     - `WebLoginAccountsTest` covers admin, runtime and the last admin.
+     - `WebModeTest::testTheAccountsAndTheServersKeysAreAnAdminsOnly` covers the 403s, adding,
+       changing, setting a password and removing.
+
+   **Step 3b, decided 2026-11-09 and built the same day: where a Docker account's tools run.**
+   - **One long-lived container per account.**
+     - It is started the first time it is needed (`docker run -d`), and the tools reach it with
+       `docker exec`.
+     - What is installed in it stays until the container is made again.
+     - It runs as the uid that owns the account's directory, not root.
+   - **One image for every Docker account**, a global setting (`sandbox.image`, with
+     `sandbox.workspaces` for the directory below). The image carries `git`, `rg`, `fd` and the
+     languages the server's people need.
+   - **The account's files on the host:** `<workspaces>/<name>-<id>/`, mounted **at the same path**
+     in the container (decided while building, instead of at `/workspace`). A path then means the
+     same thing to the model, the session's `cwd`, the web page and the container, and nothing is
+     translated. The directory outlives the container, and the admin can back it up on the host.
+     The id is in the name so that a new account given a removed one's name does not get its
+     files. A new conversation's directory is chosen inside it (step 4, folded in here).
+   - **The agent stays on the host.** The `pig --mode rpc` child, the model calls, the stored
+     sessions and the keys are all on the host, out of the container's reach.
+     - Only the tools go in, as the phase 2 `*Operations` (`DockerOperations` for read, write,
+       edit, ls, find, grep and bash).
+     - The model is told the paths its commands run at, which are the host's as well.
+   - **What else has to go with it, or the container is no boundary:**
+     - **The web terminal:** a Docker account's is `docker exec -it` into its container, not a
+       shell on the host.
+     - **`/api/file`, `/api/upload`, `/api/dirs`:** only inside the account's directory.
+     - **Project extensions and project MCP servers are not loaded** for a Docker account. They
+       would run in the agent on the host. The admin's global extensions still load. (The
+       developer's call.)
+   - **As built:**
+     - **The account's container.** `Sandbox\DockerSandbox::ensure()` makes the directory, then
+       finds the container `pig-<id>`: started when it is stopped, made when there is none. It is
+       made with these, and asked on the loop (`Process::runAsync()`):
+       - `docker run -d --init --restart unless-stopped --pull never`;
+       - `--user <the server's uid:gid>`;
+       - `HOME=<directory>`, with the directory mounted at its own path.
+     - **Settings and image.** `Settings::sandbox()` reads `sandbox: {image, workspaces, docker}`,
+       which is global, as `storage` is. The image is `pig-sandbox` by default, from
+       `docker/sandbox/Dockerfile`, built by the admin and never pulled by pig.
+     - **The tools.** `Tools\DockerOperations` implements all seven operations with one
+       `docker exec` each (`Sandbox\DockerContainer`):
+       - the files through `cat`, `test`, `mkdir -p` and `find -print0`;
+       - `rg` and `fd` run there as well. `Tools\RunsElsewhere` is pig's own interface for that:
+         upstream's grep runs `rg` here, and its find swaps `fd` for `glob()`, so neither reaches
+         files only another machine has. `grep` reads its context lines there too.
+       - `bash` runs as `setsid -w bash -c` there, with the process group written down, so
+         stopping a command signals that group from a second `docker exec`. Stopping the client
+         here would leave the command running in the container.
+       - Of the session's environment, only `PIG_*` goes in.
+     - **The child process.** `PIG_SANDBOX_CONTAINER` / `PIG_SANDBOX_DOCKER` tell
+       `bin/pig` to give every built-in tool these operations (`ToolSet::useOperations()`),
+       `!command` included (`AgentSession::executeBash()`). `--no-approve` comes with them, so
+       nothing of the project's own `.pig/` loads.
+     - **The web server, for a Docker account:**
+       - `start_session` keeps the `cwd` inside the directory and starts the container.
+       - `/api/dirs` stays inside the directory.
+       - `/api/file` reads through the container.
+       - `/api/upload` writes into `<directory>/.pig-uploads/` through the container, so a link
+         cannot aim the write at the host.
+       - `/api/terminal/exec` runs in the container, and `/complete` answers nothing.
+       - The page's terminal is `docker exec -it` into the container.
+     - **Terminals are now per account, for everybody.** Until now every terminal was listed to
+       every page and could be typed into from any of them. Now nobody else's can be listed,
+       read or typed into.
+     - **Tests:**
+       - `DockerOperationsTest` uses a stand-in `docker` written at test time, which runs `exec`
+         here. It covers the files, binary data past a pipe's size, errors, the image check,
+         `bash` with only `PIG_*`, stopping a command stopping what it started, `grep` through it,
+         `ToolSet::useOperations()`, the container made once, and a link out of the directory
+         being outside it.
+       - `WebModeTest::testADockerAccountWorksInItsOwnDirectoryAndContainer` covers the
+         conversation's `cwd` and environment, the folder picker, the upload, the terminal
+         command, and a host account untouched.
+       - The `bash` tests need util-linux `setsid`, so they are skipped on macOS. They ran in
+         the container this was built in.
+   - Docker is the boundary for people who share a server and should not see each other's
+     things. It shares the host's kernel, so it is not one against somebody set on breaking out.
+     That would be gVisor or a VM, behind the same `*Operations`.
+
+
+   **Step 5 built (2026-11-09): each account's scheduled tasks.**
+   - **Whose a task is.** `ScheduledTask::$owner` is the account that made the task. A change
+     keeps it, and what the page sends cannot set it. A task from before accounts has none and is
+     the admin's.
+   - **Seeing only one's own.** `ScheduleManager`'s public methods take the `User` asking and see
+     only that account's tasks: the list, the runs, the sidebar's marks, save, delete, toggle, run
+     now and seen. The admin sees theirs and the unowned ones, as with conversations. Null is the
+     server itself, which sees all.
+   - **The `schedule` tool.** It runs in a conversation's pig, and reaches the server with the
+     local token. `ScheduleClient` sends the account the conversation is for (`X-Pig-Owner`, from
+     `PIG_SESSION_OWNER`), and `HttpServer::userOf()` believes that header only beside the local
+     token, which only pig on the server's machine can read.
+   - **A run is its owner's.** It starts its child through `SessionPool::open($cwd, $file, $owner,
+     $environment)`, the environment from `HttpServer::environmentOf()`. A Docker account's run is
+     in its container, started if need be, and the conversation a task gets is the owner's
+     (`SqlSessionStore::withOwner()`). A Docker account's task works in a folder inside its own
+     directory. A removed account's tasks are switched off (`disableAllOf()`), kept, and seen by
+     nobody, and a run of one that is still somehow due says the account is gone.
+   - **Where tasks are kept** is a `ScheduleStore`:
+     - `FileScheduleStore` is `scheduled-tasks.json` as before, with sessions in files.
+     - `SqlScheduleStore`, with sessions in a database, keeps them in `scheduled_tasks` (id,
+       `owner`, the task as JSON in `data`) and `scheduled_runs` (id, `task_id`, `data`), with
+       the three timestamps.
+     - A save writes only the rows that changed, so `updated_at` is a row's last change. What is
+       gone (a deleted task, a run past the last fifty) is deleted the soft way.
+     - The first time, with no task in the table, `scheduled-tasks.json` is copied in and renamed
+       `….json.imported`.
+     - Which server runs the schedule is still the lock file in the home, so one machine for
+       now; that is phase 5's.
+   - Tests (`ScheduleManagerTest`):
+     - each account sees and changes only its own, the admin the unowned too, and nobody can set
+       the owner from the page;
+     - a run's child is started as its owner, with its environment;
+     - with a database the tasks are there, taken over from the file once, with the
+       conversation the owner's and a delete soft.
+
 5. **Several instances**, when a second one is actually wanted: session leases, and the pool and the
    scheduler routing by them.
 6. **pi-durable**, reconsidered then.

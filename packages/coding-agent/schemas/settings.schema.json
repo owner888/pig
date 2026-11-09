@@ -674,6 +674,16 @@
         }
       ]
     },
+    "sandbox": {
+      "type": "object",
+      "description": "Where the Docker accounts of pig web work, with sessions kept in a database: each account's own long-lived container, with its own directory mounted at the same path. Global setting only.",
+      "properties": {
+        "image": { "type": "string", "description": "The image every account's container is made from; pig-sandbox when not given (docker build -t pig-sandbox docker/sandbox). Never pulled by pig." },
+        "workspaces": { "type": "string", "description": "The directory the accounts' directories go in; workspaces beside settings.json when not given, and a relative path is from there." },
+        "docker": { "type": "string", "description": "The docker command; docker when not given." }
+      },
+      "additionalProperties": false
+    },
     "httpProxy": {
       "type": "string",
       "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for pig-managed HTTP clients. Global setting only."

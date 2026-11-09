@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Session;
 
 use PDO;
+use Pig\CodingAgent\Database\Database;
+use Pig\CodingAgent\Database\Databases;
 use Pig\CodingAgent\Session\SessionStore;
 use Pig\CodingAgent\Session\SqlSessionStore;
 
 /** The conformance suite against `SqlSessionStore` on SQLite, a file of its own per test. */
 final class SqliteSessionStoreTest extends SessionStoreConformance
 {
+    use SqlSessionStoreChecks;
+
     private string $file;
 
     private ?SqlSessionStore $store = null;
@@ -41,6 +45,12 @@ final class SqliteSessionStoreTest extends SessionStoreConformance
     protected function store(): SessionStore
     {
         return $this->store ??= SqlSessionStore::open('sqlite:' . $this->file);
+    }
+
+    #[\Override]
+    protected function database(string $prefix): Database
+    {
+        return Databases::open('sqlite:' . $this->file, prefix: $prefix);
     }
 
     public function testALocationEndsInPisFileName(): void

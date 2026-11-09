@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.0] - 2026-11-10
+
+### New Features
+
+- **Several people on one `pig web`** — with sessions kept in MySQL or SQLite (`storage` in `settings.json`), the web UI has accounts. Each account sees and opens only its own conversations, scheduled tasks and terminals, the admin's included; the admin adds and removes accounts, sets their passwords and makes others admins (⋯ → Accounts), and alone holds the server's API keys and SSH nodes. With session files there is one account, the admin.
+- **An account in a container of its own** — an account runs on the host or, the default for new ones, in a long-lived Docker container: its tools, its `!commands`, its scheduled runs and its web terminal run there, in its own directory, mounted at the same path inside; nothing of its projects' `.pig/` is loaded, and the host's keys and files stay out of reach. Build the image once with `docker build -t pig-sandbox "$(composer global config home)/vendor/pigagent/pig/docker/sandbox"`; `sandbox` in `settings.json` names another image (`image`), where the accounts' directories go (`workspaces`) and the `docker` command.
+
+### Changed
+
+- Logging in to `pig web` is a name and a password, with session files too. The one-time setup code is gone: while there is no account, the page makes the first, the admin (or `pig web password <name>` on the server does). **A password set before is the account `admin`'s: log in as `admin` with it.** `pig web password` takes the account's name.
+- With sessions in a database, the scheduled tasks are kept there too: `scheduled-tasks.json` is taken over the first time and kept as `scheduled-tasks.json.imported`. A task runs as the account that made it.
+- A MySQL or SQLite session store keeps `created_at`, `updated_at` and `deleted_at` on every table, set by the database itself (SQLite through a trigger, so both behave alike), in UTC to the millisecond. Deleting a session in the web UI marks it deleted rather than erasing it. The tables from 1.9.9 are moved over the first time pig opens them, each session keeping when it was last written.
+- A long-running `pig web` on MySQL reconnects when the server drops the connection (`wait_timeout`, a restart) rather than failing every write afterwards, and a write the server ended to break a deadlock is run again.
+
+### Fixed
+
+- Every page could list the web UI's terminals and type into any of them; each terminal is now its opener's.
+- Several processes starting the same new session on MySQL at once could have one fail with a deadlock; several pigs opening an empty database at once could fail creating the same index.
+
 ## [1.9.9] - 2026-11-09
 
 ### Added

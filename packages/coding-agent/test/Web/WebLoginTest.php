@@ -8,9 +8,9 @@ use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Web\WebLogin;
 
 /**
- * `pig web`'s one password: set the first time with the code the terminal printed, then logged in
- * with, sessions that outlive a restart and run out, guessing slowed, and a change that logs
- * everybody out.
+ * `pig web` with sessions in files: one account, made in the page while there is none, then logged
+ * in with by name and password; sessions that outlive a restart and run out, guessing slowed, and a
+ * new password that logs everybody out.
  */
 final class WebLoginTest extends TestCase
 {
@@ -41,41 +41,50 @@ final class WebLoginTest extends TestCase
         return $token === null ? [] : ['cookie' => 'theme=dark; ' . WebLogin::COOKIE . "={$token}"];
     }
 
-    public function testTheFirstPasswordNeedsTheCodeTheTerminalPrinted(): void
+    public function testTheFirstAccountIsMadeInThePageWhileThereIsNone(): void
     {
         $login = $this->login();
-        $code = $login->setupCode();
+        $this->assertFalse($login->hasPassword());
+        $this->assertFalse($login->several(), 'with files, one account');
 
-        $this->assertMatchesRegularExpression('/^[A-Z0-9]{4}-[A-Z0-9]{4}$/', (string) $code);
-        $this->assertSame($code, $this->login()->setupCode(), 'the same code for the daemon and the command that started it');
-        $this->assertSame('0600', substr(sprintf('%o', fileperms("{$this->home}/web-setup-code")), -4));
+        $this->assertSame('weak', $login->setUp('ada', 'short', '1.2.3.4')[0]);
+        $this->assertSame('bad_name', $login->setUp('a b', 'long enough', '1.2.3.4')[0]);
 
-        [$error, $token] = $login->setUp('WRON-GCOD', 'long enough', '1.2.3.4');
-        $this->assertNull($token);
-        $this->assertSame('wrong_code', $error);
-
-        [$error] = $login->setUp((string) $code, 'short', '1.2.3.4');
-        $this->assertSame('weak', $error);
-
-        [$error, $token] = $login->setUp(strtolower((string) $code), 'long enough', '1.2.3.4');
+        [$error, $token] = $login->setUp('ada', 'long enough', '1.2.3.4');
         $this->assertNull($error);
-        $this->assertTrue($login->isLoggedIn(self::with($token)));
-        $this->assertNull($login->setupCode(), 'spent');
-        $this->assertFileDoesNotExist("{$this->home}/web-setup-code");
+        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host'], $login->user(self::with($token))?->toArray());
         $this->assertSame('0600', substr(sprintf('%o', fileperms("{$this->home}/web-login.json")), -4));
 
-        [$error] = $login->setUp((string) $code, 'another one', '1.2.3.4');
-        $this->assertSame('already_set', $error);
+        $this->assertSame('already_set', $login->setUp('bob', 'another one', '1.2.3.4')[0], 'nobody takes it after');
+        $this->assertSame('wrong_login', $login->logIn('bob', 'another one', '1.2.3.4')[0]);
+    }
+
+    public function testAPasswordFromBeforeAccountsIsTheAccountAdmins(): void
+    {
+        mkdir($this->home, 0o700, true);
+        file_put_contents("{$this->home}/web-login.json", json_encode(['password' => password_hash('correct horse', PASSWORD_DEFAULT), 'sessions' => []]));
+        file_put_contents("{$this->home}/web-setup-code", "ABCD-2345\n");
+
+        $this->assertTrue($this->login()->hasPassword());
+        $this->assertSame('wrong_login', $this->login()->logIn('', 'correct horse', '1.2.3.4')[0], 'a name, always');
+        [$error, $token] = $this->login()->logIn('admin', 'correct horse', '1.2.3.4');
+        $this->assertNull($error);
+        $this->assertSame('admin', $this->login()->user(self::with($token))?->name);
+
+        // `pig web password` with no name is the one account's.
+        $this->login()->setPassword('battery staple');
+        $this->assertNotNull($this->login()->logIn('admin', 'battery staple', '1.2.3.4')[1]);
+        $this->assertFileDoesNotExist("{$this->home}/web-setup-code", 'the old setup code is cleared away');
     }
 
     public function testThePasswordOpensASessionThatOutlivesARestartAndRunsOut(): void
     {
         $this->login()->setPassword('correct horse');
 
-        [$error, $token] = $this->login()->logIn('wrong horse', '1.2.3.4');
-        $this->assertSame(['wrong_password', null], [$error, $token]);
+        [$error, $token] = $this->login()->logIn('admin', 'wrong horse', '1.2.3.4');
+        $this->assertSame(['wrong_login', null], [$error, $token]);
 
-        [$error, $token] = $this->login()->logIn('correct horse', '1.2.3.4');
+        [$error, $token] = $this->login()->logIn('admin', 'correct horse', '1.2.3.4');
         $this->assertNull($error);
         $this->assertTrue($this->login()->isLoggedIn(self::with($token)), 'another instance: a restart');
         $this->assertFalse($this->login()->isLoggedIn(self::with(str_repeat('0', 64))));
@@ -89,8 +98,8 @@ final class WebLoginTest extends TestCase
     public function testLoggingOutAndChangingThePasswordEndSessions(): void
     {
         $this->login()->setPassword('correct horse');
-        [, $a] = $this->login()->logIn('correct horse', '1.2.3.4');
-        [, $b] = $this->login()->logIn('correct horse', '1.2.3.4');
+        [, $a] = $this->login()->logIn('admin', 'correct horse', '1.2.3.4');
+        [, $b] = $this->login()->logIn('admin', 'correct horse', '1.2.3.4');
 
         $this->login()->logOut(self::with($a));
         $this->assertFalse($this->login()->isLoggedIn(self::with($a)));
@@ -98,8 +107,8 @@ final class WebLoginTest extends TestCase
 
         $this->login()->setPassword('battery staple');
         $this->assertFalse($this->login()->isLoggedIn(self::with($b)), 'a new password logs everybody out');
-        $this->assertNull($this->login()->logIn('correct horse', '1.2.3.4')[1]);
-        $this->assertNotNull($this->login()->logIn('battery staple', '1.2.3.4')[1]);
+        $this->assertNull($this->login()->logIn('admin', 'correct horse', '1.2.3.4')[1]);
+        $this->assertNotNull($this->login()->logIn('admin', 'battery staple', '1.2.3.4')[1]);
     }
 
     public function testGuessingIsSlowedPerAddress(): void
@@ -108,13 +117,13 @@ final class WebLoginTest extends TestCase
         $login->setPassword('correct horse');
 
         for ($i = 0; $i < WebLogin::TRIES; $i++) {
-            $this->assertSame('wrong_password', $login->logIn("guess {$i}", '6.6.6.6')[0]);
+            $this->assertSame('wrong_login', $login->logIn('admin', "guess {$i}", '6.6.6.6')[0]);
         }
-        $this->assertSame('throttled', $login->logIn('correct horse', '6.6.6.6')[0], 'even the right one');
-        $this->assertNull($login->logIn('correct horse', '1.2.3.4')[0], 'another address is not slowed');
+        $this->assertSame('throttled', $login->logIn('admin', 'correct horse', '6.6.6.6')[0], 'even the right one');
+        $this->assertNull($login->logIn('admin', 'correct horse', '1.2.3.4')[0], 'another address is not slowed');
 
         $this->now += 61;
-        $this->assertNull($login->logIn('correct horse', '6.6.6.6')[0], 'a minute later');
+        $this->assertNull($login->logIn('admin', 'correct horse', '6.6.6.6')[0], 'a minute later');
     }
 
     public function testAWeakPasswordIsRefusedFromTheCommandLineToo(): void
@@ -129,7 +138,6 @@ final class WebLoginTest extends TestCase
 
         $this->assertFalse($off->enabled());
         $this->assertTrue($off->isLoggedIn([]));
-        $this->assertNull($off->setupCode());
     }
 
     public function testTheCookieIsHttpOnlyAndStrict(): void

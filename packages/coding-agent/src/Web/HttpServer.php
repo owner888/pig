@@ -17,7 +17,10 @@ use Pig\CodingAgent\Packages\PackageError;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Rpc\RpcUi;
+use Pig\CodingAgent\Accounts\User;
+use Pig\CodingAgent\Sandbox\DockerSandbox;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Session\SqlSessionStore;
 use Pig\CodingAgent\Web\Node\NodeManager;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\Websocket;
@@ -87,6 +90,15 @@ final class HttpServer
     /** @var array<int, string> per WebSocket, the login session it was opened with (`WebLogin::sessionKey()`) */
     private array $wsSessions = [];
 
+    /** @var array<int, User> per WebSocket, who opened it */
+    private array $wsUsers = [];
+
+    /** @var array<string, string> terminalId => the account it is (`User::$id`), with accounts */
+    private array $terminalOwners = [];
+
+    /** Where Docker accounts work (`Settings::sandbox()`), read when first needed. */
+    private ?DockerSandbox $sandbox = null;
+
     private ?PtyManager $ptyManager = null;
 
     /** @var array<string, int> terminalId => connectionId */
@@ -149,8 +161,9 @@ final class HttpServer
      * @param (Closure(string, ?string): RpcClient)|null $spawn how a child is made; the default
      *        starts `bin/pig --mode rpc` in the conversation's directory, with `--session <file>`
      *        when it has one. Injectable so a test can hand back a client over a fixture.
-     * @param WebLogin|null $login the password and sessions kept in the agent directory unless
-     *        given; `WebLogin::off()` only for tests of everything else
+     * @param WebLogin|null $login what the `storage` setting means unless given — the password in
+     *        the agent directory, or the accounts in the database (`WebLogin::configured()`);
+     *        `WebLogin::off()` only for tests of everything else
      */
     public function __construct(
         private readonly string $cwd,
@@ -162,28 +175,50 @@ final class HttpServer
         ?WebLogin $login = null,
     ) {
         $this->auth = $auth ?? Auth::discover();
-        $this->login = $login ?? WebLogin::at(\Pig\CodingAgent\Config::home());
-        $this->middlewares = [new Middlewares\SameOriginMiddleware(), new Middlewares\LoginMiddleware($this->login)];
+        $this->login = $login ?? WebLogin::configured(\Pig\CodingAgent\Config::home());
+        $this->middlewares = [new Middlewares\SameOriginMiddleware(), new Middlewares\LoginMiddleware($this->login), new Middlewares\AdminMiddleware($this->login)];
         $this->nodeManager = new NodeManager();
         $this->pool = new SessionPool(
-            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null, bool $incognito = false): RpcClient {
+            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []): RpcClient {
                 $sessionArg = $sessionFile !== null && !$incognito ? SessionManager::find($cwd, $sessionFile) : null;
+                // With accounts, the child writes as the conversation's owner: the one opening a new
+                // conversation, or whoever owns the one opened — nobody, for one from before
+                // accounts — so what is forked from it is the same person's.
+                $store = SessionManager::sessionStore();
+                if ($store instanceof SqlSessionStore && $sessionArg !== null) {
+                    $owner = $store->ownerOf($sessionArg);
+                }
 
                 return new RpcClient(
                     cwd: $cwd,
-                    arguments: match (true) {
-                        $incognito => ['--incognito'],
-                        $sessionArg !== null => ['--session', $sessionArg],
-                        default => [],
-                    },
+                    arguments: [
+                        ...match (true) {
+                            $incognito => ['--incognito'],
+                            $sessionArg !== null => ['--session', $sessionArg],
+                            default => [],
+                        },
+                        // A Docker account's child loads nothing of the project's own `.pig/`: it
+                        // would run here, on the host, outside the container.
+                        ...(isset($environment['PIG_SANDBOX_CONTAINER']) ? ['--no-approve'] : []),
+                    ],
                     // The page's theme, which `RpcMode` makes the child's before `session_start`.
-                    environment: $theme !== null ? ['PIG_WEB_THEME' => $theme] : [],
+                    environment: array_filter([...$environment, 'PIG_WEB_THEME' => $theme, 'PIG_SESSION_OWNER' => $owner ?? ''], static fn (?string $v): bool => $v !== null),
                 );
             },
             onEvent: $this->onSessionEvent(...),
             idleTtl: $idleTtl,
         );
-        $this->schedules = new ScheduleManager($this->pool, $this->broadcastSchedules(...), url: $this->localUrl());
+        // With sessions in a database the tasks are kept there too, beside them (phase 4 step 5).
+        $sessions = SessionManager::sessionStore();
+        $this->schedules = new ScheduleManager(
+            $this->pool,
+            $this->broadcastSchedules(...),
+            url: $this->localUrl(),
+            store: $sessions instanceof SqlSessionStore
+                ? new Schedule\SqlScheduleStore($sessions->database(), \Pig\CodingAgent\Config::home() . '/scheduled-tasks.json')
+                : null,
+            environmentFor: $this->environmentOf(...),
+        );
     }
 
     /**
@@ -202,7 +237,7 @@ final class HttpServer
         return 'http://' . (str_contains($host, ':') ? "[{$host}]" : $host) . ":{$this->port}";
     }
 
-    /** The login the page is behind: what `pig web start` asks for the setup code. */
+    /** The login the page is behind: what `pig web start` asks whether there is an account yet. */
     public function login(): WebLogin
     {
         return $this->login;
@@ -437,7 +472,7 @@ final class HttpServer
         unset($this->panelUis[$connectionId]);
 
         $this->pool->detach($connectionId);
-        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId], $this->wsSessions[$connectionId]);
+        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId], $this->wsSessions[$connectionId], $this->wsUsers[$connectionId]);
     }
 
     private function ptyManager(): PtyManager
@@ -524,8 +559,9 @@ final class HttpServer
 
     /**
      * The login page and its four endpoints (`WebLogin`), which `LoginMiddleware` lets through
-     * without a session: whether one is needed and how (`state`), the first password with the setup
-     * code (`setup`), the password (`/api/login`), and logging out. Answers whether it was one.
+     * without a session: whether one is needed and how (`state`: the first account to make or not,
+     * whether there can be several, and who is logged in), the first account while there is none (`setup`), a name and its
+     * password (`/api/login`), and logging out. Answers whether it was one.
      *
      * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
      */
@@ -541,9 +577,12 @@ final class HttpServer
         }
 
         if ($path === '/api/login/state') {
+            $user = $this->login->user($req['headers']);
             $conn->sendResponse(200, $json, (string) json_encode([
-                'loggedIn' => $this->login->isLoggedIn($req['headers']),
+                'loggedIn' => $user !== null,
                 'setup' => $this->login->enabled() && !$this->login->hasPassword(),
+                'accounts' => $this->login->several(),
+                'user' => $user?->toArray(),
             ]));
 
             return true;
@@ -581,11 +620,12 @@ final class HttpServer
         $data = json_decode($req['body'], true);
         $data = is_array($data) ? $data : [];
         $password = is_string($data['password'] ?? null) ? $data['password'] : '';
+        $name = is_string($data['name'] ?? null) ? trim($data['name']) : '';
         $address = $conn->remoteAddress();
 
         [$reason, $token] = $path === '/api/login/setup'
-            ? $this->login->setUp(is_string($data['code'] ?? null) ? $data['code'] : '', $password, $address)
-            : $this->login->logIn($password, $address);
+            ? $this->login->setUp($name, $password, $address)
+            : $this->login->logIn($name, $password, $address);
 
         if ($token === null) {
             $conn->sendResponse(401, $json, (string) json_encode(['ok' => false, 'reason' => $reason, 'error' => WebLogin::REASONS[$reason] ?? $reason]));
@@ -606,7 +646,7 @@ final class HttpServer
         $path = $req['path'];
         $json = ['Content-Type' => 'application/json'];
 
-        if ($this->routeLogin($conn, $req)) {
+        if ($this->routeLogin($conn, $req) || $this->routeAccounts($conn, $req)) {
             return;
         }
 
@@ -619,6 +659,7 @@ final class HttpServer
                 if ($key !== null) {
                     $this->wsSessions[$connectionId] = $key;
                 }
+                $this->wsUsers[$connectionId] = $this->userOf($req);
 
                 return;
             }
@@ -728,7 +769,7 @@ final class HttpServer
             $cwd = is_string($query['cwd'] ?? null) ? $query['cwd'] : '';
             $file = is_string($query['file'] ?? null) ? $query['file'] : '';
             $ref = is_string($query['ref'] ?? null) ? $query['ref'] : '';
-            $managed = $cwd !== '' && $file !== '' && $ref !== '' ? $this->pool->find($cwd, $file) : null;
+            $managed = $cwd !== '' && $file !== '' && $ref !== '' && $this->mayOpen($this->userOf($req), $cwd, $file) ? $this->pool->find($cwd, $file) : null;
 
             if ($managed === null) {
                 $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'No such conversation running.');
@@ -814,7 +855,17 @@ final class HttpServer
         // tab whose agent is still working from one whose process has gone.
         if ($path === '/api/running') {
             $running = [];
+            $user = $this->userOf($req);
             foreach ($this->pool->all() as $managed) {
+                // Somebody else's conversation is not anybody else's business, an admin's included:
+                // one's own, and of the new ones not saved yet, those one's own pages are on.
+                $theirs = $managed->sessionFile !== null
+                    ? $this->mayOpen($user, $managed->cwd, $managed->sessionFile)
+                    : array_filter(array_keys($managed->clients), fn (int $id): bool => ($this->wsUsers[$id] ?? null)?->id === $user->id) !== [];
+                if (!$theirs) {
+                    continue;
+                }
+
                 $running[] = [
                     'cwd' => $managed->cwd,
                     'sessionFile' => $managed->sessionFile,
@@ -837,8 +888,10 @@ final class HttpServer
 
         // 8. Folders / Workspaces list (matching pi-web /api/folders)
         if ($path === '/api/folders') {
-            $currentCwd = $this->cwd;
-            $workspaces = $this->listAllWorkspaces($currentCwd);
+            // A Docker account's own directory is where its new conversations start.
+            $folderUser = $this->userOf($req);
+            $currentCwd = ($sandbox = $this->sandboxOf($folderUser)) !== null ? $sandbox->workspace($folderUser) : $this->cwd;
+            $workspaces = $this->asUser($this->userOf($req), fn (): array => $this->listAllWorkspaces($currentCwd));
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
@@ -852,12 +905,24 @@ final class HttpServer
 
         // 8b. A directory's subdirectories, for the working-directory picker of a new conversation
         if ($path === '/api/dirs') {
+            // A Docker account picks a directory inside its own, and nowhere else on the host.
+            $user = $this->userOf($req);
+            $sandbox = $this->sandboxOf($user);
+            $asked = (string) ($req['query']['path'] ?? '');
+            if ($sandbox !== null) {
+                $workspace = $sandbox->workspace($user);
+                if (!is_dir($workspace)) {
+                    mkdir($workspace, 0o700, true);
+                }
+                $asked = $asked !== '' && $sandbox->contains($user, $asked) ? $asked : $workspace;
+            }
+
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
             ], (string) json_encode(DirectoryListing::list(
-                (string) ($req['query']['path'] ?? ''),
-                $this->cwd,
-                getenv('HOME') ?: '/',
+                $asked,
+                $sandbox !== null ? $sandbox->workspace($user) : $this->cwd,
+                $sandbox !== null ? $sandbox->workspace($user) : (getenv('HOME') ?: '/'),
                 ($req['query']['hidden'] ?? '') === '1',
             )));
 
@@ -867,7 +932,7 @@ final class HttpServer
         // 9. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
         if ($path === '/api/sessions') {
             $targetCwd = $req['query']['cwd'] ?? $this->cwd;
-            $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($targetCwd);
+            $sessions = $this->asUser($this->userOf($req), static fn (): array => SessionManager::listFor($targetCwd));
             $items = array_map(static fn ($s) => [
                 'id' => $s->id,
                 'path' => $s->path,
@@ -889,16 +954,20 @@ final class HttpServer
             $offset = max(0, (int) ($req['query']['offset'] ?? 0));
             $query = trim((string) ($req['query']['q'] ?? ''));
 
-            $scheduled = $this->schedules->sessionTasks();
-            $taskIds = $this->schedules->sessionTaskIds();
-            $unread = $this->schedules->unread();
+            $viewer = $this->userOf($req);
+            $scheduled = $this->schedules->sessionTasks($viewer);
+            $taskIds = $this->schedules->sessionTaskIds($viewer);
+            $unread = $this->schedules->unread($viewer);
 
-            if ($query === '') {
-                [$sessions, $total] = SessionManager::listAll($limit, $offset, glance: true);
-            } else {
-                $sessions = SessionManager::searchAll($query, $limit);
-                $total = count($sessions);
-            }
+            [$sessions, $total] = $this->asUser($this->userOf($req), static function () use ($query, $limit, $offset): array {
+                if ($query === '') {
+                    return SessionManager::listAll($limit, $offset, glance: true);
+                }
+
+                $found = SessionManager::searchAll($query, $limit);
+
+                return [$found, count($found)];
+            });
 
             $items = array_map(static fn ($s) => [
                 'id' => $s->id,
@@ -936,7 +1005,7 @@ final class HttpServer
             $data = json_decode($req['body'] ?? '{}', true) ?: [];
             $rawPath = is_string($data['path'] ?? null) ? $data['path'] : '';
             $targetCwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : null;
-            $safePath = $this->resolveSafeSessionPath($rawPath, $targetCwd);
+            $safePath = $this->asUser($this->userOf($req), fn (): ?string => $this->resolveSafeSessionPath($rawPath, $targetCwd));
 
             if ($safePath === null) {
                 $conn->sendResponse(400, $headers, json_encode(['success' => false, 'error' => 'Invalid session file']));
@@ -970,7 +1039,7 @@ final class HttpServer
             $rawPath = is_string($data['path'] ?? null) ? $data['path'] : '';
             $newName = trim((string) ($data['name'] ?? ''));
             $targetCwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : null;
-            $safePath = $this->resolveSafeSessionPath($rawPath, $targetCwd);
+            $safePath = $this->asUser($this->userOf($req), fn (): ?string => $this->resolveSafeSessionPath($rawPath, $targetCwd));
 
             if ($safePath === null) {
                 $conn->sendResponse(400, $headers, json_encode(['success' => false, 'error' => 'Invalid session file']));
@@ -992,6 +1061,26 @@ final class HttpServer
         // 10.2b Serve local file/image for preview
         if ($path === '/api/file') {
             $filePath = $req['query']['path'] ?? '';
+
+            // A Docker account's files are read in its container, as its tools read them: a link
+            // it made to the host's `/etc` is the container's `/etc` there.
+            $user = $this->userOf($req);
+            if (($sandbox = $this->sandboxOf($user)) !== null) {
+                [$exit, $bytes] = $sandbox->container($user)->run(['cat', '--', (string) $filePath]);
+                $mime = match (strtolower(pathinfo((string) $filePath, PATHINFO_EXTENSION))) {
+                    'png' => 'image/png',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'gif' => 'image/gif',
+                    'webp' => 'image/webp',
+                    default => 'application/octet-stream',
+                };
+                $exit === 0
+                    ? $conn->sendResponse(200, ['Content-Type' => $mime, 'Cache-Control' => 'max-age=86400'], $bytes)
+                    : $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'File not found');
+
+                return;
+            }
+
             $realPath = realpath($filePath);
             if ($realPath && is_file($realPath)) {
                 $ext = strtolower(pathinfo($realPath, PATHINFO_EXTENSION));
@@ -1036,6 +1125,21 @@ final class HttpServer
             $safeName = trim($safeName, '. ');
             if ($safeName === '') {
                 $safeName = 'file';
+            }
+
+            // A Docker account's file goes into its own directory, written from inside its
+            // container: the agent reads it there, and a link it made cannot point the write at
+            // the host.
+            $user = $this->userOf($req);
+            if (($sandbox = $this->sandboxOf($user)) !== null) {
+                $target = $sandbox->workspace($user) . "/.pig-uploads/{$id}/{$safeName}";
+                $redirect = ($query['append'] ?? '') === '1' ? '>>' : '>';
+                [$exit, , $errors] = $sandbox->ensure($user)->run(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat ' . $redirect . ' "$1"', 'sh', $target], $req['body']);
+                $exit === 0
+                    ? $conn->sendResponse(200, $json, (string) json_encode(['ok' => true, 'path' => $target]))
+                    : $conn->sendResponse(500, $json, (string) json_encode(['ok' => false, 'error' => 'Could not write uploaded file: ' . trim($errors)]));
+
+                return;
             }
 
             $dir = rtrim(sys_get_temp_dir(), '/') . '/pig-upload-' . $id;
@@ -1104,6 +1208,19 @@ final class HttpServer
 
         // 10.5 Web Terminal info & command execution
         if ($path === '/api/terminal/info') {
+            $user = $this->userOf($req);
+            if (($sandbox = $this->sandboxOf($user)) !== null) {
+                $conn->sendResponse(200, ['Content-Type' => 'application/json'], (string) json_encode([
+                    'success' => true,
+                    'user' => $user->name,
+                    'hostname' => 'pig-sandbox',
+                    'cwd' => (string) ($req['query']['cwd'] ?? '') ?: $sandbox->workspace($user),
+                    'home' => $sandbox->workspace($user),
+                ]));
+
+                return;
+            }
+
             $targetCwd = $req['query']['cwd'] ?? $this->cwd;
             $safeCwd = realpath($targetCwd) ?: $this->cwd;
             $user = getenv('USER') ?: (getenv('LOGNAME') ?: 'user');
@@ -1127,6 +1244,13 @@ final class HttpServer
             $headers = [
                 'Content-Type' => 'application/json',
             ];
+
+            // Completion reads the host's files and commands: a Docker account gets none.
+            if ($this->sandboxOf($this->userOf($req)) !== null) {
+                $conn->sendResponse(200, $headers, (string) json_encode(['success' => true, 'prefix' => '', 'completions' => [], 'commonPrefix' => '']));
+
+                return;
+            }
 
             $line = (string) ($req['query']['line'] ?? '');
             $targetCwd = (string) ($req['query']['cwd'] ?? $this->cwd);
@@ -1159,6 +1283,32 @@ final class HttpServer
 
             if ($command === '') {
                 $conn->sendResponse(400, $headers, (string) json_encode(['success' => false, 'error' => 'Command is required']));
+                return;
+            }
+
+            // A Docker account's command runs in its container — `cd` too, which is asked there.
+            $user = $this->userOf($req);
+            if (($sandbox = $this->sandboxOf($user)) !== null) {
+                $cwd = $targetCwd !== '' ? $targetCwd : $sandbox->workspace($user);
+                Async::spawn(function () use ($conn, $headers, $command, $cwd, $sandbox, $user): void {
+                    try {
+                        $container = $sandbox->ensure($user);
+                        $cd = preg_match('/^cd(?:\s+(.*))?$/', $command, $m) === 1;
+                        $inside = $cd ? ['bash', '-c', 't=$1; case $t in "~"*) t=$HOME${t#"~"};; esac; cd -- "${t:-$HOME}" && pwd', 'bash', trim($m[1] ?? '')] : ['bash', '-c', $command];
+                        [$exit, $stdout, $stderr] = \Pig\Tui\Process::runAsync($container->exec($inside, $cwd), timeout: 120.0);
+                        $conn->sendResponse(200, $headers, (string) json_encode([
+                            'success' => true,
+                            'stdout' => $cd ? '' : $stdout,
+                            'stderr' => $stderr,
+                            'exitCode' => $exit,
+                            'stopped' => $exit === \Pig\Tui\Process::STOPPED,
+                            'cwd' => $cd && $exit === 0 ? trim($stdout) : $cwd,
+                        ]));
+                    } catch (\Throwable $e) {
+                        $conn->sendResponse(500, $headers, (string) json_encode(['success' => false, 'error' => $e->getMessage()]));
+                    }
+                });
+
                 return;
             }
 
@@ -1256,9 +1406,31 @@ final class HttpServer
             // watchers — synchronous, no fiber needed. What *is* needed is a catch: a child that
             // cannot start (no `bin/pig`, a bad `--session` path) is an `error` line for this
             // tab and nothing else, not a server that falls over.
+            // Somebody else's conversation is answered as one that is not there.
+            $user = $this->wsUsers[$connectionId] ?? new User('', '', true);
+            if ($file !== null && !$incognito && !$this->mayOpen($user, $cwd, $file)) {
+                $conn->send(array_filter([
+                    'type' => 'error',
+                    'tabId' => $tabId !== 'default' ? $tabId : null,
+                    'message' => 'Could not start the session: no such conversation.',
+                ], static fn (mixed $v): bool => $v !== null));
+
+                return;
+            }
+
             try {
+                // A Docker account works in its own directory, its tools in its own container,
+                // which is started here if it is not running.
+                $environment = [];
+                $sandbox = $this->sandboxOf($user);
+                if ($sandbox !== null) {
+                    $container = $sandbox->ensure($user);
+                    $cwd = $sandbox->contains($user, $cwd) ? $cwd : $sandbox->workspace($user);
+                    $environment = ['PIG_SANDBOX_CONTAINER' => $container->name, 'PIG_SANDBOX_DOCKER' => $container->docker];
+                }
+
                 $clientTag = ($pageId ?? $this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito);
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id, $environment);
             } catch (Throwable $e) {
                 $conn->send(array_filter([
                     'type' => 'error',
@@ -1299,13 +1471,22 @@ final class HttpServer
 
         if (str_starts_with($type, 'terminal_')) {
             $pty = $this->ptyManager();
+            $user = $this->wsUsers[$connectionId] ?? new User('', '', true);
             $targetTermId = (string) ($data['terminalId'] ?? $data['id'] ?? '');
+
+            // A terminal is the account's that opened it: nobody else's page may type into it,
+            // read it or list it.
+            if ($targetTermId !== '' && isset($this->terminalOwners[$targetTermId]) && $this->terminalOwners[$targetTermId] !== $user->id) {
+                return;
+            }
+
             if ($targetTermId !== '') {
                 $this->terminalClient[$targetTermId] = $connectionId;
             }
+            $mine = fn (): array => array_values(array_filter($pty->list(), fn (array $t): bool => ($this->terminalOwners[$t['id']] ?? $user->id) === $user->id));
 
             match ($type) {
-                'terminal_create' => (function () use ($conn, $pty, $data, $connectionId): void {
+                'terminal_create' => (function () use ($conn, $pty, $data, $connectionId, $user, $mine): void {
                     $id = (string) ($data['terminalId'] ?? $data['id'] ?? bin2hex(random_bytes(6)));
                     $this->terminalClient[$id] = $connectionId;
                     $cwd = (string) ($data['cwd'] ?? $this->cwd);
@@ -1316,6 +1497,20 @@ final class HttpServer
                         : null;
 
                     try {
+                        // A Docker account's terminal is a shell in its container, never one here.
+                        $sandbox = $this->sandboxOf($user);
+                        if ($sandbox !== null) {
+                            $container = $sandbox->ensure($user);
+                            $cwd = $sandbox->contains($user, $cwd) ? $cwd : $sandbox->workspace($user);
+                            $command = 'exec ' . implode(' ', array_map('escapeshellarg', $container->exec(
+                                $command === null ? ['bash', '-l'] : ['bash', '-lc', $command],
+                                $cwd,
+                                ['TERM' => 'xterm-256color'],
+                                tty: true,
+                            )));
+                        }
+
+                        $this->terminalOwners[$id] = $user->id;
                         $proc = $pty->create($id, $cwd, $cols, $rows, $command);
                     } catch (Throwable $e) {
                         $conn->send([
@@ -1329,7 +1524,7 @@ final class HttpServer
 
                     $conn->send([
                         'type' => 'terminal_list',
-                        'terminals' => $pty->list(),
+                        'terminals' => $mine(),
                     ]);
 
                     if ($proc->scrollback() !== '') {
@@ -1350,17 +1545,18 @@ final class HttpServer
                     (int) ($data['cols'] ?? 80),
                     (int) ($data['rows'] ?? 24),
                 ),
-                'terminal_kill' => (function () use ($conn, $pty, $data): void {
+                'terminal_kill' => (function () use ($conn, $pty, $data, $mine): void {
                     $id = (string) ($data['terminalId'] ?? '');
                     $pty->kill($id);
+                    unset($this->terminalOwners[$id]);
                     $conn->send([
                         'type' => 'terminal_list',
-                        'terminals' => $pty->list(),
+                        'terminals' => $mine(),
                     ]);
                 })(),
                 'terminal_list' => $conn->send([
                     'type' => 'terminal_list',
-                    'terminals' => $pty->list(),
+                    'terminals' => $mine(),
                 ]),
                 default => null,
             };
@@ -1409,6 +1605,13 @@ final class HttpServer
         if ($type === 'node_request') {
             $action = (string) ($data['action'] ?? '');
             $requestId = (string) ($data['requestId'] ?? '');
+
+            // The SSH nodes are the server's, as its keys are (`Middlewares\AdminMiddleware`).
+            if ($this->login->several() && !($this->wsUsers[$connectionId] ?? null)?->admin) {
+                $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Only an admin may use the SSH nodes.']);
+
+                return;
+            }
             $nodeId = isset($data['nodeId']) && is_string($data['nodeId']) ? $data['nodeId'] : null;
             $p = isset($data['payload']) && is_array($data['payload']) ? $data['payload'] : [];
 
@@ -1853,10 +2056,13 @@ final class HttpServer
     private function handleScheduled(Connection $conn, array $req, string $path, array $json): void
     {
         $answer = static fn (int $status, array $body) => $conn->sendResponse($status, $json, (string) json_encode($body, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+        // Each account its own tasks (phase 4 step 5): the page's by its login, pig's on this
+        // machine by the account its conversation speaks for.
+        $user = $this->userOf($req);
 
         if ($path === '/api/scheduled') {
             $answer(200, [
-                'tasks' => $this->schedules->list(),
+                'tasks' => $this->schedules->list($user),
                 'owner' => $this->schedules->owns(),
                 'problems' => $this->schedules->problems(),
             ]);
@@ -1865,7 +2071,7 @@ final class HttpServer
         }
 
         if ($path === '/api/scheduled/runs') {
-            $answer(200, ['runs' => $this->schedules->runs((string) ($req['query']['id'] ?? ''))]);
+            $answer(200, ['runs' => $this->schedules->runs((string) ($req['query']['id'] ?? ''), $user)]);
 
             return;
         }
@@ -1881,12 +2087,21 @@ final class HttpServer
         $id = is_string($data['id'] ?? null) ? $data['id'] : '';
 
         try {
+            // A Docker account's task works in its own directory, as its conversations do.
+            $sandbox = $this->sandboxOf($user);
+            if ($path === '/api/scheduled/save' && $sandbox !== null) {
+                $cwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : '';
+                if ($cwd === '' || !$sandbox->contains($user, $cwd)) {
+                    throw new \InvalidArgumentException('A task works in a folder inside your own: ' . $sandbox->workspace($user));
+                }
+            }
+
             $result = match ($path) {
-                '/api/scheduled/save' => ['task' => $this->schedules->save($data)->toArray()],
-                '/api/scheduled/delete' => $this->schedules->delete($id) ?? [],
-                '/api/scheduled/toggle' => $this->schedules->setEnabled($id, ($data['enabled'] ?? false) === true) ?? [],
-                '/api/scheduled/run' => $this->schedules->runNow($id) ?? [],
-                '/api/scheduled/seen' => $this->schedules->markSeen(is_string($data['sessionFile'] ?? null) ? $data['sessionFile'] : '') ?? [],
+                '/api/scheduled/save' => ['task' => $this->schedules->save($data, $user)->toArray()],
+                '/api/scheduled/delete' => $this->schedules->delete($id, $user) ?? [],
+                '/api/scheduled/toggle' => $this->schedules->setEnabled($id, ($data['enabled'] ?? false) === true, $user) ?? [],
+                '/api/scheduled/run' => $this->schedules->runNow($id, $user) ?? [],
+                '/api/scheduled/seen' => $this->schedules->markSeen(is_string($data['sessionFile'] ?? null) ? $data['sessionFile'] : '', $user) ?? [],
                 default => null,
             };
         } catch (\InvalidArgumentException $e) {
@@ -2052,6 +2267,224 @@ final class HttpServer
         });
 
         return $list;
+    }
+
+    /**
+     * The accounts, for the page that manages them — an admin's only (`Middlewares\AdminMiddleware`
+     * has seen to that): the list (`GET /api/accounts`), and adding, removing, changing and setting a
+     * password (`POST /api/accounts/{add,remove,update,password}`). Each change answers the list as it
+     * is now. Only with accounts: with the one password there is nothing to manage here.
+     *
+     * Removing an account or setting its password ends its login sessions, and with them the pages
+     * it has open, as logging out does. What its conversations hold stays, theirs.
+     *
+     * @param array{method: string, path: string, headers: array<string, string>, body: string} $req
+     */
+    private function routeAccounts(Connection $conn, array $req): bool
+    {
+        $path = $req['path'];
+
+        if ($path !== '/api/accounts' && !str_starts_with($path, '/api/accounts/')) {
+            return false;
+        }
+
+        $json = ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store'];
+        $answer = function (int $status, array $body) use ($conn, $json): bool {
+            $conn->sendResponse($status, $json, (string) json_encode($body));
+
+            return true;
+        };
+
+        if (!$this->login->several()) {
+            return $answer(404, ['ok' => false, 'error' => 'There are accounts only with sessions kept in a database.']);
+        }
+
+        $accounts = $this->login->accounts();
+        $list = static fn (): array => array_map(static fn (User $u): array => $u->toArray(), $accounts->users());
+
+        if ($path === '/api/accounts') {
+            return $answer(200, ['ok' => true, 'accounts' => $list()]);
+        }
+
+        if ($req['method'] !== 'POST') {
+            return $answer(405, ['ok' => false, 'error' => 'POST only.']);
+        }
+
+        $data = json_decode($req['body'], true);
+        $data = is_array($data) ? $data : [];
+        $name = is_string($data['name'] ?? null) ? trim($data['name']) : '';
+        $password = is_string($data['password'] ?? null) ? $data['password'] : '';
+        $id = (array_values(array_filter($accounts->users(), static fn (User $u): bool => $u->name === $name))[0] ?? null)?->id;
+
+        try {
+            $done = match ($path) {
+                '/api/accounts/add' => (function () use ($accounts, $name, $password, $data): bool {
+                    if (!WebLogin::validName($name)) {
+                        throw new \InvalidArgumentException(WebLogin::REASONS['bad_name']);
+                    }
+                    if (($weak = WebLogin::weak($password)) !== null) {
+                        throw new \InvalidArgumentException($weak);
+                    }
+
+                    $accounts->add($name, $password, ($data['admin'] ?? false) === true, is_string($data['runtime'] ?? null) ? $data['runtime'] : User::DOCKER);
+
+                    return true;
+                })(),
+                '/api/accounts/remove' => $accounts->remove($name),
+                '/api/accounts/update' => $accounts->update(
+                    $name,
+                    is_bool($data['admin'] ?? null) ? $data['admin'] : null,
+                    is_string($data['runtime'] ?? null) ? $data['runtime'] : null,
+                ),
+                '/api/accounts/password' => (function () use ($name, $password): bool {
+                    $this->login->setPassword($password, $name);
+
+                    return true;
+                })(),
+                default => null,
+            };
+        } catch (\InvalidArgumentException $e) {
+            return $answer(400, ['ok' => false, 'error' => $e->getMessage()]);
+        }
+
+        if ($done === null) {
+            return $answer(404, ['ok' => false, 'error' => "Not Found: {$path}"]);
+        }
+        if ($done === false) {
+            return $answer(404, ['ok' => false, 'error' => "There is no account named {$name}."]);
+        }
+
+        if ($id !== null && in_array($path, ['/api/accounts/remove', '/api/accounts/password'], true)) {
+            $this->closeSocketsOf($id);
+        }
+
+        // A removed account's tasks stop with it: kept, switched off, and nobody's to see.
+        if ($id !== null && $path === '/api/accounts/remove') {
+            $this->schedules->disableAllOf($id);
+        }
+
+        return $answer(200, ['ok' => true, 'accounts' => $list()]);
+    }
+
+    /** Close the pages `$userId` has open: their login sessions have just ended. */
+    private function closeSocketsOf(string $userId): void
+    {
+        foreach ($this->wsUsers as $connectionId => $user) {
+            if ($user->id === $userId && isset($this->wsClients[$connectionId]) && !$this->wsClients[$connectionId]->isClosed()) {
+                $this->wsClients[$connectionId]->close();
+            }
+        }
+    }
+
+    /**
+     * Where `$user`'s tools run, when that is a container of theirs (`User::DOCKER`, with accounts):
+     * the sandbox to start it in and confine them to. Null for this machine.
+     */
+    private function sandboxOf(User $user): ?DockerSandbox
+    {
+        if ($user->runtime !== User::DOCKER || !$this->login->several()) {
+            return null;
+        }
+
+        return $this->sandbox ??= \Pig\CodingAgent\Settings::sandbox();
+    }
+
+    /**
+     * Who made the request: the account its cookie is logged in as. A request without one got past
+     * the login only as pig on this machine (the local token) or with the login off, and is the
+     * admin's.
+     *
+     * @param array{headers: array<string, string>} $req
+     */
+    private function userOf(array $req): User
+    {
+        $user = $this->login->user($req['headers']);
+
+        if ($user !== null) {
+            return $user;
+        }
+
+        // pig on this machine, from a conversation started for an account: that account, said in a
+        // header that is believed only beside the local token, which nobody else can read.
+        $owner = $req['headers'][strtolower(Schedule\ScheduleClient::OWNER_HEADER)] ?? '';
+        if ($owner !== '' && $this->login->enabled() && $this->login->several() && $this->login->hasLocalToken($req['headers'])) {
+            foreach ($this->login->accounts()->users() as $account) {
+                if ($account->id === $owner) {
+                    return $account;
+                }
+            }
+
+            // An account that is gone speaks for nobody.
+            return new User($owner, '', false);
+        }
+
+        return new User('', '', true);
+    }
+
+    /**
+     * What the child of a scheduled run of `$owner`'s task is started with: a Docker account's
+     * container, started if need be (`ScheduleManager::$environmentFor`).
+     *
+     * @return array<string, string>
+     * @throws \RuntimeException when the account is gone, which stops the run with that reason
+     */
+    private function environmentOf(?string $owner): array
+    {
+        if ($owner === null || !$this->login->enabled() || !$this->login->several()) {
+            return [];
+        }
+
+        foreach ($this->login->accounts()->users() as $account) {
+            if ($account->id === $owner) {
+                $sandbox = $this->sandboxOf($account);
+                if ($sandbox === null) {
+                    return [];
+                }
+
+                $container = $sandbox->ensure($account);
+
+                return ['PIG_SANDBOX_CONTAINER' => $container->name, 'PIG_SANDBOX_DOCKER' => $container->docker];
+            }
+        }
+
+        throw new \RuntimeException('The account this task belongs to has been removed.');
+    }
+
+    /**
+     * Run `$work` seeing the sessions `$user` may list, open, delete or rename: with accounts, only
+     * their own (`SqlSessionStore::visibleTo()`) — an admin's too, with those from before accounts
+     * that nobody owns. Nobody sees anybody else's conversations, an admin included: what people
+     * say to the agent is theirs (the developer's call). `$work` must not wait
+     * (`withSessionStore()`).
+     *
+     * @template T
+     * @param Closure(): T $work
+     * @return T
+     */
+    private function asUser(User $user, Closure $work): mixed
+    {
+        $store = SessionManager::sessionStore();
+
+        return $store instanceof SqlSessionStore
+            ? SessionManager::withSessionStore($store->visibleTo($user->id, unowned: $user->admin), $work)
+            : $work();
+    }
+
+    /**
+     * Whether `$user` may open the conversation `$sessionFile` in `$cwd`: always without accounts,
+     * and any new one; otherwise only one `asUser()` sees.
+     */
+    private function mayOpen(User $user, string $cwd, ?string $sessionFile): bool
+    {
+        if ($sessionFile === null || $sessionFile === '' || !SessionManager::sessionStore() instanceof SqlSessionStore) {
+            return true;
+        }
+
+        return $this->asUser($user, static function () use ($cwd, $sessionFile): bool {
+            $store = SessionManager::sessionStore();
+
+            return $store->canonical($sessionFile) !== null || SessionManager::find($cwd, $sessionFile) !== null;
+        });
     }
 
     /**

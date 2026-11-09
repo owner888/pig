@@ -60,6 +60,28 @@ final class SessionManager
         self::$sessionStore = $store;
     }
 
+    /**
+     * Run `$work` with sessions kept by `$store`, then the store before again: the web shell
+     * lists, finds and removes a user's sessions through a view of the store that sees only theirs
+     * (`SqlSessionStore::visibleTo()`). `$work` must not wait on anything — another request in
+     * another fiber would see the view while it waited.
+     *
+     * @template T
+     * @param \Closure(): T $work
+     * @return T
+     */
+    public static function withSessionStore(SessionStore $store, \Closure $work): mixed
+    {
+        $before = self::$sessionStore;
+        self::$sessionStore = $store;
+
+        try {
+            return $work();
+        } finally {
+            self::$sessionStore = $before;
+        }
+    }
+
     /** Where sessions are kept ([storage.md](../../../../docs/dev/design/storage.md)). */
     public static function sessionStore(): SessionStore
     {

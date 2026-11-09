@@ -141,7 +141,7 @@ final class WebDaemon
             'stop' => $this->stop(),
             'status' => $this->status(),
             'restart' => $this->restart($rest),
-            'password' => $this->password(),
+            'password' => $this->password($rest),
             'install' => $this->install($rest),
             'uninstall' => $this->uninstall(),
             default => $this->unknown($command),
@@ -268,7 +268,7 @@ final class WebDaemon
 
         // Made here rather than by the daemon, whose output goes to its log: the code is printed
         // below, and the daemon reads the same file.
-        $code = WebLogin::at($home)->setupCode();
+        $first = $this->needsAccount($home);
 
         try {
             $pid = $this->daemonise($argv, $host, $port);
@@ -280,7 +280,7 @@ final class WebDaemon
 
         echo Style::green('✔ Web UI daemon started') . Style::dim(" (pid {$pid}) at ") . Style::bold("http://{$host}:{$port}") . "\n";
         echo Style::dim("  log: {$this->logFile()}\n  stop: pig web stop\n");
-        self::sayCode($code);
+        self::sayFirstVisit($first);
 
         return 0;
     }
@@ -335,19 +335,37 @@ final class WebDaemon
         $address = $this->runningAddress();
         $at = $address !== null ? " at http://{$address[0]}:{$address[1]}" : '';
         echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}{$at}, log {$this->logFile()})") . "\n";
-        self::sayCode(WebLogin::at($this->home ?? Config::home())->setupCode());
+        self::sayFirstVisit($this->needsAccount($this->home ?? Config::home()));
 
         return 0;
     }
 
     /**
-     * `pig web password`: set or change the web UI's password. Asked twice with the terminal's echo
-     * off, or read from standard input when that is not a terminal (`… | pig web password`).
-     * Every browser logged in before has to log in again.
+     * `pig web password <name>`: set or change an account's password — the first account, an admin,
+     * when there is none yet. With sessions in files the name may be left out: there is one account.
+     * Asked twice with the terminal's echo off, or read from standard input when that is not a
+     * terminal (`… | pig web password <name>`). That account's browsers have to log in again.
+     *
+     * @param list<string> $args
      */
-    private function password(): int
+    private function password(array $args): int
     {
-        $login = WebLogin::at($this->home ?? Config::home());
+        try {
+            $login = WebLogin::configured($this->home ?? Config::home());
+            $several = $login->several();
+        } catch (\Pig\Agent\AgentError|\Pig\CodingAgent\CodingAgentError $e) {
+            fwrite($this->err, Style::red("Error: {$e->getMessage()}\n"));
+
+            return 1;
+        }
+
+        $name = $args[0] ?? '';
+        if ($several && $name === '') {
+            fwrite($this->err, Style::red("Error: name the account, `pig web password <name>`.\n"));
+
+            return 1;
+        }
+
         $terminal = stream_isatty(STDIN);
 
         $first = self::ask($terminal ? 'New password: ' : null);
@@ -360,14 +378,14 @@ final class WebDaemon
         }
 
         try {
-            $login->setPassword($first);
+            $login->setPassword($first, $name);
         } catch (\InvalidArgumentException $e) {
             fwrite($this->err, Style::red("Error: {$e->getMessage()}\n"));
 
             return 1;
         }
 
-        echo Style::green('✔ Web UI password set.') . Style::dim(' Browsers logged in before log in again.') . "\n";
+        echo Style::green($name !== '' ? "✔ Password set for {$name}." : '✔ Password set.') . Style::dim(' Browsers logged in before log in again.') . "\n";
 
         return 0;
     }
@@ -391,14 +409,27 @@ final class WebDaemon
         return $line;
     }
 
-    /** The setup code, while there is no password yet: what the first visit to the page asks for. */
-    public static function sayCode(?string $code): void
+    /**
+     * Whether the login `storage` means has no account yet — false too when its database cannot be
+     * opened, which the server says itself when it starts.
+     */
+    private function needsAccount(string $home): bool
     {
-        if ($code === null) {
+        try {
+            return !WebLogin::configured($home)->hasPassword();
+        } catch (\Pig\Agent\AgentError|\Pig\CodingAgent\CodingAgentError) {
+            return false;
+        }
+    }
+
+    /** While there is no account: what the first visit to the page does. */
+    public static function sayFirstVisit(bool $needed): void
+    {
+        if (!$needed) {
             return;
         }
 
-        echo Style::yellow('  First visit: set a password with the setup code ') . Style::bold($code) . Style::dim(' (or run `pig web password`)') . "\n";
+        echo Style::yellow('  First visit: make the admin account in the page') . Style::dim(' (or run `pig web password <name>`)') . "\n";
     }
 
     /** @param list<string> $args */
@@ -488,7 +519,7 @@ final class WebDaemon
         echo Style::green('✔ Web UI installed as a login service') . Style::dim(' at ') . Style::bold("http://{$host}:{$port}") . "\n";
         echo Style::dim("  plist: {$this->plistFile()}\n  log: {$this->logFile()}\n  directory: {$cwd}\n");
         echo Style::dim("  It starts when you log in and is restarted if it dies. `pig web uninstall` removes it.\n");
-        self::sayCode(WebLogin::at($home)->setupCode());
+        self::sayFirstVisit($this->needsAccount($home));
 
         return 0;
     }
@@ -575,7 +606,7 @@ final class WebDaemon
         }
 
         echo "pig web: " . Style::green('running') . Style::dim(" (pid {$pid}, launchd service, log {$this->logFile()})") . "\n";
-        self::sayCode(WebLogin::at($this->home ?? Config::home())->setupCode());
+        self::sayFirstVisit($this->needsAccount($this->home ?? Config::home()));
 
         return 0;
     }
@@ -944,7 +975,8 @@ final class WebDaemon
           pig web stop                                stop the daemon
           pig web status                              is it running? (exit 0 yes, 3 no)
           pig web restart [--port N] [--host H]       stop, then start -d
-          pig web password                            set or change the web UI's password
+          pig web password <name>                     set or change an account's password (the
+                                                      first account, an admin, when there is none)
           pig web install [--port N] [--host H]       macOS: a login service (launchd) that starts
                                                       at login and restarts if it dies
           pig web uninstall                           remove the login service

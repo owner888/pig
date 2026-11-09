@@ -35,6 +35,9 @@ final class OauthCallbackServer
     /** @var array<string, string> */
     private array $partial = [];
 
+    /** @var array<string, string> each open connection's reader, so `drop()` can cancel it before closing */
+    private array $readers = [];
+
     private int $next = 0;
 
     private ?string $watcher = null;
@@ -140,12 +143,8 @@ final class OauthCallbackServer
             $this->watcher = null;
         }
 
-        foreach ($this->connections as $id => $connection) {
-            unset($this->connections[$id], $this->partial[$id]);
-
-            if (is_resource($connection)) {
-                fclose($connection);
-            }
+        foreach (array_keys($this->connections) as $id) {
+            $this->drop((string) $id);
         }
 
         if (is_resource($this->socket)) {
@@ -169,23 +168,22 @@ final class OauthCallbackServer
         $this->connections[$id] = $connection;
         $this->partial[$id] = '';
 
-        $reader = null;
-        $reader = Loop::get()->onReadable($connection, function (mixed $peer) use ($id, &$reader): void {
+        $this->readers[$id] = Loop::get()->onReadable($connection, function (mixed $peer) use ($id): void {
             $chunk = fread($peer, 8192);
 
-            if ($chunk === false || $chunk === '') {
-                if (feof($peer)) {
-                    Loop::get()->cancel((string) $reader);
-                    $this->drop($id);
-                }
+            if ($chunk === false || ($chunk === '' && feof($peer))) {
+                $this->drop($id);
 
+                return;
+            }
+
+            if ($chunk === '') {
                 return;
             }
 
             $this->partial[$id] = ($this->partial[$id] ?? '') . $chunk;
 
             if (strlen($this->partial[$id]) > self::MAX_REQUEST) {
-                Loop::get()->cancel((string) $reader);
                 $this->drop($id);
 
                 return;
@@ -195,7 +193,7 @@ final class OauthCallbackServer
                 return;
             }
 
-            Loop::get()->cancel((string) $reader);
+            $this->cancelReader($id);
             $this->handle($id, $this->partial[$id]);
         });
     }
@@ -286,11 +284,20 @@ final class OauthCallbackServer
 
     private function drop(string $id): void
     {
+        $this->cancelReader($id);
         $connection = $this->connections[$id] ?? null;
         unset($this->connections[$id], $this->partial[$id]);
 
         if ($connection !== null && is_resource($connection)) {
             fclose($connection);
+        }
+    }
+
+    private function cancelReader(string $id): void
+    {
+        if (isset($this->readers[$id])) {
+            Loop::get()->cancel($this->readers[$id]);
+            unset($this->readers[$id]);
         }
     }
 }

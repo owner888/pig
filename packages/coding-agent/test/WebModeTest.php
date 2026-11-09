@@ -871,15 +871,14 @@ final class WebModeTest extends TestCase
     public function testNothingButTheLoginPageWithoutLoggingIn(): void
     {
         // `WebLogin` behind `LoginMiddleware` and `SameOriginMiddleware`, through the server: the
-        // page sends you to /login, the API and the WebSocket say 401, the first password needs the
-        // setup code, and the session cookie it sets opens everything — but not to another site.
+        // page sends you to /login, the API and the WebSocket say 401, the first account is made in
+        // the page, and the session cookie it sets opens everything — but not to another site.
         $port = 28107;
         $home = $this->cwd . '/login-home';
         $login = WebLogin::at($home);
         $server = $this->server($port, login: $login);
-        $code = (string) $login->setupCode();
 
-        Async::run(function () use ($server, $port, $code): void {
+        Async::run(function () use ($server, $port): void {
             $server->start();
             $http = new HttpClient();
             $url = "http://127.0.0.1:{$port}";
@@ -894,11 +893,11 @@ final class WebModeTest extends TestCase
             $this->assertSame(200, $http->send(new Request('GET', "{$url}/theme.css", ['Origin' => 'http://127.0.0.1', 'Sec-Fetch-Site' => 'same-origin']))->status);
             $this->assertSame(403, $http->send(new Request('GET', "{$url}/theme.css", ['Origin' => "http://127.0.0.1:{$port}", 'Sec-Fetch-Site' => 'cross-site']))->status);
             $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models"))->status);
-            $this->assertSame(['loggedIn' => false, 'setup' => true], json_decode($http->send(new Request('GET', "{$url}/api/login/state"))->body->all(), true));
+            $this->assertSame(['loggedIn' => false, 'setup' => true, 'accounts' => false, 'user' => null], json_decode($http->send(new Request('GET', "{$url}/api/login/state"))->body->all(), true));
             $this->assertStringContainsString('401', $this->wsStatus($port), 'no conversation, no terminal');
 
-            $this->assertSame(401, $post('/api/login/setup', ['code' => 'WRON-GCOD', 'password' => 'long enough'])->status);
-            $set = $post('/api/login/setup', ['code' => $code, 'password' => 'long enough']);
+            $this->assertSame(401, $post('/api/login/setup', ['name' => 'ada', 'password' => 'short'])->status);
+            $set = $post('/api/login/setup', ['name' => 'ada', 'password' => 'long enough']);
             $this->assertSame(200, $set->status);
             $cookie = (string) $set->header('set-cookie');
             $this->assertStringContainsString('HttpOnly; SameSite=Strict', $cookie);
@@ -914,8 +913,9 @@ final class WebModeTest extends TestCase
             $this->assertStringContainsString('403', $this->wsStatus($port, [...$session, 'Origin' => 'http://evil.example']));
             $this->assertStringContainsString('101', $this->wsStatus($port, [...$session, 'Origin' => "http://127.0.0.1:{$port}"]));
 
-            $this->assertSame(401, $post('/api/login', ['password' => 'wrong one'])->status);
-            $again = $post('/api/login', ['password' => 'long enough']);
+            $this->assertSame(401, $post('/api/login/setup', ['name' => 'eve', 'password' => 'long enough'])->status, 'made once');
+            $this->assertSame(401, $post('/api/login', ['name' => 'ada', 'password' => 'wrong one'])->status);
+            $again = $post('/api/login', ['name' => 'ada', 'password' => 'long enough']);
             $this->assertSame(200, $again->status);
 
             // A page open on the session — its WebSocket — goes with the session when it is logged
@@ -931,6 +931,249 @@ final class WebModeTest extends TestCase
 
             $server->stop();
         });
+    }
+
+    public function testWithAccountsEachSeesOnlyTheirOwnConversationsTheAdminToo(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('needs pdo_sqlite');
+        }
+
+        // Sessions in a database with two accounts (docs/dev/design/storage.md, phase 4): ada the
+        // admin, bob not. Each conversation is somebody's; one from before accounts is nobody's.
+        $port = 28200;
+        $store = \Pig\CodingAgent\Session\SqlSessionStore::open('sqlite:' . $this->cwd . '/pig.db');
+        $login = WebLogin::at($this->cwd . '/login-home', database: $store->database());
+        $ada = $login->accounts()->add('ada', 'correct horse', true);
+        $bob = $login->accounts()->add('bob', 'battery staple', false);
+
+        $write = function (?string $owner, string $id) use ($store): string {
+            $location = $store->locationFor($this->cwd, "2026-01-01T00-00-00-000Z_{$id}");
+            $store->withOwner($owner)->append($location, json_encode(['type' => 'session', 'version' => 3, 'id' => $id, 'timestamp' => '2026-01-01T00:00:00.000Z', 'cwd' => $this->cwd]) . "\n");
+
+            return $location;
+        };
+        $adas = $write($ada->id, 'aaaaaaaa-0000-4000-8000-000000000001');
+        $bobs = $write($bob->id, 'bbbbbbbb-0000-4000-8000-000000000002');
+        $nobodys = $write(null, 'cccccccc-0000-4000-8000-000000000003');
+
+        \Pig\CodingAgent\Session\SessionManager::useSessionStore($store);
+
+        try {
+            $server = $this->server($port, login: $login);
+
+            Async::run(function () use ($server, $port, $adas, $bobs, $nobodys): void {
+                $server->start();
+                $http = new HttpClient();
+                $url = "http://127.0.0.1:{$port}";
+                $post = fn (string $path, array $body, array $headers = []): \Pig\Ai\Http\Response => $http->send(new Request('POST', $url . $path, ['Content-Type' => 'application/json', ...$headers], json_encode($body)));
+                $as = function (string $name, string $password) use ($post): array {
+                    $in = $post('/api/login', ['name' => $name, 'password' => $password]);
+                    $this->assertSame(200, $in->status, $name);
+
+                    return ['Cookie' => (string) strtok((string) $in->header('set-cookie'), ';')];
+                };
+                $paths = function (array $session, string $path) use ($http, $url): array {
+                    $body = json_decode($http->send(new Request('GET', $url . $path, $session))->body->all(), true);
+                    $list = array_column($body['sessions'] ?? $body, 'path');
+                    sort($list);
+
+                    return $list;
+                };
+
+                $bob = $as('bob', 'battery staple');
+                $this->assertSame([$bobs], $paths($bob, '/api/sessions/all'));
+                $this->assertSame([$bobs], $paths($bob, '/api/sessions?cwd=' . rawurlencode($this->cwd)));
+                $this->assertSame([1], array_column(json_decode($http->send(new Request('GET', "{$url}/api/folders", $bob))->body->all(), true)['workspaces'], 'sessionCount'));
+                $this->assertSame(400, $post('/api/sessions/delete', ['path' => $adas], $bob)->status, 'not his to delete');
+                $this->assertSame(400, $post('/api/sessions/rename', ['path' => $nobodys, 'name' => 'mine now'], $bob)->status);
+
+                $ws = $this->wsOpen($port, $bob);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => $adas]);
+                $seen = $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                $this->assertSame('error', end($seen)['type'] ?? null);
+                $this->assertStringContainsString('no such conversation', (string) (end($seen)['message'] ?? ''));
+                fclose($ws);
+
+                // The admin's are theirs and those from before accounts, and nobody else's: what
+                // people say to the agent is theirs, whoever manages the accounts.
+                $ada = $as('ada', 'correct horse');
+                $own = [$adas, $nobodys];
+                sort($own);
+                $this->assertSame($own, $paths($ada, '/api/sessions/all'));
+                $this->assertSame(200, $post('/api/sessions/rename', ['path' => $nobodys, 'name' => 'old one'], $ada)->status, 'one from before accounts is the admin\'s');
+                $this->assertSame(400, $post('/api/sessions/delete', ['path' => $bobs], $ada)->status, 'bob\'s is not');
+
+                $ws = $this->wsOpen($port, $ada);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => $bobs]);
+                $seen = $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                $this->assertSame('error', end($seen)['type'] ?? null, 'nor open it');
+                fclose($ws);
+                $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host'], json_decode($http->send(new Request('GET', "{$url}/api/login/state", $ada))->body->all(), true)['user']);
+
+                $server->stop();
+            });
+        } finally {
+            \Pig\CodingAgent\Session\SessionManager::useSessionStore(null);
+        }
+    }
+
+    public function testTheAccountsAndTheServersKeysAreAnAdminsOnly(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('needs pdo_sqlite');
+        }
+
+        $port = 28201;
+        $store = \Pig\CodingAgent\Session\SqlSessionStore::open('sqlite:' . $this->cwd . '/pig.db');
+        $login = WebLogin::at($this->cwd . '/login-home', database: $store->database());
+        $login->accounts()->add('ada', 'correct horse', true);
+        $login->accounts()->add('bob', 'battery staple', false, 'docker');
+        $server = $this->server($port, login: $login);
+
+        Async::run(function () use ($server, $port): void {
+            $server->start();
+            $http = new HttpClient();
+            $url = "http://127.0.0.1:{$port}";
+            $post = fn (string $path, array $body, array $headers = []): \Pig\Ai\Http\Response => $http->send(new Request('POST', $url . $path, ['Content-Type' => 'application/json', ...$headers], json_encode($body)));
+            $as = function (string $name, string $password) use ($post): array {
+                $in = $post('/api/login', ['name' => $name, 'password' => $password]);
+                $this->assertSame(200, $in->status, $name);
+
+                return ['Cookie' => (string) strtok((string) $in->header('set-cookie'), ';')];
+            };
+            $names = static fn (\Pig\Ai\Http\Response $r): array => array_column(json_decode($r->body->all(), true)['accounts'] ?? [], 'name');
+
+            $bob = $as('bob', 'battery staple');
+            $this->assertSame(403, $http->send(new Request('GET', "{$url}/api/accounts", $bob))->status);
+            $this->assertSame(403, $http->send(new Request('GET', "{$url}/api/keys", $bob))->status, 'the keys everybody is billed to');
+            $this->assertSame(403, $post('/api/accounts/add', ['name' => 'eve', 'password' => 'long enough', 'admin' => true], $bob)->status);
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/api/models", $bob))->status, 'the models are everybody\'s');
+
+            $ada = $as('ada', 'correct horse');
+            $this->assertSame(['ada', 'bob'], $names($http->send(new Request('GET', "{$url}/api/accounts", $ada))));
+            $this->assertSame(200, $http->send(new Request('GET', "{$url}/api/keys", $ada))->status);
+
+            // A response's body is read once: the list is taken from it a single time.
+            $added = json_decode($post('/api/accounts/add', ['name' => 'carol', 'password' => 'long enough'], $ada)->body->all(), true)['accounts'];
+            $this->assertSame(['ada', 'bob', 'carol'], array_column($added, 'name'));
+            $this->assertSame(['name' => 'carol', 'admin' => false, 'runtime' => 'docker'], $added[2], 'Docker unless said');
+            $this->assertSame(400, $post('/api/accounts/add', ['name' => 'carol', 'password' => 'long enough'], $ada)->status, 'one carol');
+            $this->assertSame(400, $post('/api/accounts/add', ['name' => 'dan', 'password' => 'short'], $ada)->status);
+            $this->assertSame(400, $post('/api/accounts/update', ['name' => 'ada', 'admin' => false], $ada)->status, 'the last admin');
+            $this->assertSame(200, $post('/api/accounts/update', ['name' => 'carol', 'runtime' => 'host'], $ada)->status);
+
+            // A new password, or no account at all, logs bob out.
+            $this->assertSame(200, $post('/api/accounts/password', ['name' => 'bob', 'password' => 'new battery'], $ada)->status);
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models", $bob))->status);
+            $bob = $as('bob', 'new battery');
+            $this->assertSame(['ada', 'carol'], $names($post('/api/accounts/remove', ['name' => 'bob'], $ada)));
+            $this->assertSame(401, $http->send(new Request('GET', "{$url}/api/models", $bob))->status);
+            $this->assertSame(404, $post('/api/accounts/remove', ['name' => 'bob'], $ada)->status, 'gone');
+
+            $server->stop();
+        });
+    }
+
+    public function testADockerAccountWorksInItsOwnDirectoryAndContainer(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true) || PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('needs pdo_sqlite, and bash for the stand-in for docker');
+        }
+
+        // A stand-in for `docker` (`DockerOperationsTest` has the same): it writes down what it
+        // was asked, "makes" a container, and runs what `exec` was given here.
+        $docker = $this->cwd . '/docker';
+        file_put_contents($docker, <<<'SH'
+            #!/bin/bash
+            echo "$*" >> "$(dirname "$0")/docker.log"
+            case "$1" in
+              inspect) [ -f "$(dirname "$0")/docker.running" ] && echo true && exit 0; exit 1;;
+              run|start) touch "$(dirname "$0")/docker.running"; echo id; exit 0;;
+              exec) shift; cwd=
+                while [ $# -gt 0 ]; do case "$1" in -i|-t) shift;; -w) cwd=$2; shift 2;; -e) export "$2"; shift 2;; *) break;; esac; done
+                shift; [ -n "$cwd" ] && cd "$cwd"; exec "$@";;
+            esac
+            exit 99
+            SH);
+        chmod($docker, 0o755);
+        file_put_contents($this->home . '/settings.json', json_encode(['sandbox' => ['docker' => $docker, 'workspaces' => $this->cwd . '/workspaces']]));
+
+        $port = 28202;
+        $store = \Pig\CodingAgent\Session\SqlSessionStore::open('sqlite:' . $this->cwd . '/pig.db');
+        $login = WebLogin::at($this->cwd . '/login-home', database: $store->database());
+        $login->accounts()->add('ada', 'correct horse', true);
+        $bob = $login->accounts()->add('bob', 'battery staple', false, 'docker');
+        $workspace = $this->cwd . '/workspaces/bob-' . substr($bob->id, 0, 8);
+        $spawned = [];
+
+        \Pig\CodingAgent\Session\SessionManager::useSessionStore($store);
+
+        try {
+            $server = new HttpServer(
+                $this->cwd,
+                $port,
+                auth: Auth::inMemory(),
+                spawn: function (string $cwd, ?string $file, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []) use (&$spawned): RpcClient {
+                    $spawned[] = [$cwd, $environment];
+
+                    return new RpcClient(cwd: $cwd, binary: self::FAKE, timeout: 5.0);
+                },
+                idleTtl: 0.2,
+                login: $login,
+            );
+
+            Async::run(function () use ($server, $port, $workspace, $bob, &$spawned): void {
+                $server->start();
+                $http = new HttpClient();
+                $url = "http://127.0.0.1:{$port}";
+                $post = fn (string $path, string $body, array $headers = []): \Pig\Ai\Http\Response => $http->send(new Request('POST', $url . $path, ['Content-Type' => 'application/json', ...$headers], $body));
+                $as = function (string $name, string $password) use ($post): array {
+                    $in = $post('/api/login', (string) json_encode(['name' => $name, 'password' => $password]));
+                    $this->assertSame(200, $in->status, $name);
+
+                    return ['Cookie' => (string) strtok((string) $in->header('set-cookie'), ';')];
+                };
+                $bobs = $as('bob', 'battery staple');
+
+                // A conversation asked for in the server's directory starts in bob's, its tools in
+                // his container, which is made for it.
+                $ws = $this->wsOpen($port, $bobs);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd]);
+                $seen = $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                fclose($ws);
+                $this->assertSame('session_bound', end($seen)['type'] ?? null, json_encode($seen));
+                $this->assertSame($workspace, $spawned[0][0] ?? null);
+                $this->assertSame('pig-' . $bob->id, $spawned[0][1]['PIG_SANDBOX_CONTAINER'] ?? null);
+                $this->assertNotEmpty(array_filter(file($this->cwd . '/docker.log') ?: [], static fn (string $l): bool => str_starts_with($l, 'run -d --name pig-' . $bob->id)));
+
+                // The folder picker starts in his directory and does not leave it.
+                $dirs = json_decode($http->send(new Request('GET', "{$url}/api/dirs?path=" . rawurlencode('/'), $bobs))->body->all(), true);
+                $this->assertSame(realpath($workspace), $dirs['path'] ?? null);
+
+                // An uploaded file lands in his directory, written through the container.
+                $up = json_decode($http->send(new Request('POST', "{$url}/api/upload?name=note.txt", [...$bobs, 'Content-Type' => 'application/octet-stream'], 'hello'))->body->all(), true);
+                $this->assertStringStartsWith($workspace . '/.pig-uploads/', (string) ($up['path'] ?? ''));
+                $this->assertSame('hello', file_get_contents((string) $up['path']));
+
+                // A command from the page's terminal runs in the container.
+                $ran = json_decode($post('/api/terminal/exec', (string) json_encode(['command' => 'echo hi', 'cwd' => $workspace]), $bobs)->body->all(), true);
+                $this->assertSame("hi\n", $ran['stdout'] ?? null);
+                $this->assertNotEmpty(array_filter(file($this->cwd . '/docker.log') ?: [], static fn (string $l): bool => str_contains($l, "exec -w {$workspace} pig-{$bob->id} bash -c echo hi")));
+
+                // Ada's are this machine's, as before.
+                $adas = $as('ada', 'correct horse');
+                $ws = $this->wsOpen($port, $adas);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd]);
+                $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                fclose($ws);
+                $this->assertSame([$this->cwd, []], end($spawned));
+
+                $server->stop();
+            });
+        } finally {
+            \Pig\CodingAgent\Session\SessionManager::useSessionStore(null);
+        }
     }
 
     public function testRenameAndDeleteSessionEndpoints(): void
