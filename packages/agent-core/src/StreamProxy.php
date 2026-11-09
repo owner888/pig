@@ -173,7 +173,8 @@ final class StreamProxy
      *
      * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have, in
      * its order — `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for
-     * the same level), `cacheRetention`, `sessionId`, `headers` (nulls and all: a null deletes a
+     * the same level), `cacheRetention`, `sessionId`, `disableContinuation` (only when true: false
+     * is pig's unset), `headers` (nulls and all: a null deletes a
      * header on the server's side), `metadata`, `transport`, `thinkingBudgets` and
      * `maxRetryDelayMs` — each left out when unset, as `JSON.stringify` leaves out an `undefined`.
      *
@@ -206,6 +207,7 @@ final class StreamProxy
                 'reasoning' => $options?->reasoning?->value,
                 'cacheRetention' => $options?->cacheRetention,
                 'sessionId' => $options?->sessionId,
+                'disableContinuation' => $options?->disableContinuation === true ? true : null,
                 'headers' => $options?->headers,
                 'metadata' => $options?->metadata,
                 'transport' => $options?->transport,
@@ -296,6 +298,7 @@ final class StreamProxy
                 ),
                 'supportsMidConvoSystemMessages' => $model->compat->supportsMidConvoSystemMessages,
                 'supportsMidConvoToolChanges' => $model->compat->supportsMidConvoToolChanges,
+                'supportsMessageThreads' => $model->compat->supportsMessageThreads,
             ], static fn (mixed $value): bool => $value !== null);
         } elseif ($model->compat !== null) {
             // Upstream's key names, one per pig field, and

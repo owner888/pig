@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Session;
 
 use Closure;
-use Pig\Ai\AnthropicMessagesCompat;
-use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\CacheWarming;
+use Pig\Ai\CacheWarmingDecision;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -42,21 +42,6 @@ use Throwable;
  */
 final class CacheWarmer
 {
-    /** Streaming warming never continues past this long after the real request that started it. */
-    private const int MAX_WARMING_AGE_MS = 60 * 60_000;
-
-    /** Idle warming uses a shorter horizon because continuation estimates become less reliable with age. */
-    private const int MAX_IDLE_WARMING_AGE_MS = 30 * 60_000;
-
-    /** A refresh is sent only when it is expected to save at least this many dollars. */
-    public const float MINIMUM_EXPECTED_SAVINGS = 0.05;
-
-    /**
-     * Chance that a real request arrives before the cache entry expires while the agent sits idle —
-     * upstream's constant, "measured from our own usage; per-session estimates were not better".
-     */
-    private const float IDLE_CONTINUATION_PROBABILITY = 0.15;
-
     /**
      * @var array{
      *     model: Model, context: TranscriptContext, options: SimpleStreamOptions,
@@ -89,49 +74,6 @@ final class CacheWarmer
         private readonly ?Closure $now = null,
     ) {
         $this->inactive = new CacheWarmingStatus('inactive', 'waiting for first request');
-    }
-
-    /** Refresh at 90% of the TTL while preserving at least ten seconds of margin. */
-    public static function delayMs(int $ttlMs): ?int
-    {
-        if ($ttlMs <= 10_000) {
-            return null;
-        }
-
-        return max(1, (int) floor(min($ttlMs * 0.9, $ttlMs - 10_000)));
-    }
-
-    /**
-     * Lifetime of the prompt cache entry a request writes, from the model's `promptCache` tier for
-     * the retention the request used. Null when the model has no lifetime for that tier or caching
-     * is off.
-     */
-    public static function ttlMs(Model $model, SimpleStreamOptions $options): ?int
-    {
-        $retention = $options->resolvedCacheRetention();
-
-        if ($retention === 'none') {
-            return null;
-        }
-
-        $seconds = $model->promptCache[$retention] ?? null;
-
-        return $seconds === null ? null : (int) ($seconds * 1000);
-    }
-
-    /**
-     * Whether replaying the request with a one-token output cap leaves its cache entry untouched.
-     * Anthropic's budget-based thinking derives `budget_tokens` from `max_tokens`; the replay would
-     * get a different budget, which Anthropic keys the message cache on, and the model could still
-     * think for thousands of tokens.
-     */
-    public static function isReplayable(Model $model, SimpleStreamOptions $options): bool
-    {
-        if ($options->reasoning === null || $model->api !== Api::AnthropicMessages) {
-            return true;
-        }
-
-        return $model->compat instanceof AnthropicMessagesCompat && $model->compat->forceAdaptiveThinking === true;
     }
 
     public function status(): CacheWarmingStatus
@@ -181,13 +123,13 @@ final class CacheWarmer
             return;
         }
 
-        if (!self::isReplayable($model, $options)) {
+        if (!CacheWarming::isCacheWarmingReplayable($model, $options)) {
             $this->stop('request cannot be replayed safely');
 
             return;
         }
 
-        $ttlMs = self::ttlMs($model, $options);
+        $ttlMs = CacheWarming::getPromptCacheTtlMs($model, $options);
 
         if ($ttlMs === null) {
             $this->stop($options->cacheRetention === 'none' ? 'request disabled prompt caching' : 'cache lifetime unavailable');
@@ -195,7 +137,7 @@ final class CacheWarmer
             return;
         }
 
-        $delayMs = self::delayMs($ttlMs);
+        $delayMs = CacheWarming::getCacheWarmingDelayMs($ttlMs);
 
         if ($delayMs === null) {
             $this->stop('cache lifetime unavailable');
@@ -234,7 +176,7 @@ final class CacheWarmer
         }
 
         $this->run['phase'] = 'idle';
-        $deadline = $this->run['startedAt'] + self::MAX_IDLE_WARMING_AGE_MS;
+        $deadline = $this->run['startedAt'] + CacheWarming::CACHE_WARMING_MAX_IDLE_AGE_MS;
 
         if ($this->run['nextWarmAt'] > $deadline || $this->now() >= $deadline) {
             $this->stop('30-minute idle safety limit reached');
@@ -297,7 +239,7 @@ final class CacheWarmer
         // margin for that delay and request dispatch; a late refresh is likely a full-price cache
         // write, not a cache warm.
         $run['refreshDeadlineAt'] = $run['nextWarmAt'] + intdiv($run['ttlMs'] - $run['delayMs'], 2);
-        $deadline = $run['startedAt'] + ($run['phase'] === 'idle' ? self::MAX_IDLE_WARMING_AGE_MS : self::MAX_WARMING_AGE_MS);
+        $deadline = $run['startedAt'] + ($run['phase'] === 'idle' ? CacheWarming::CACHE_WARMING_MAX_IDLE_AGE_MS : CacheWarming::CACHE_WARMING_MAX_AGE_MS);
 
         if ($run['nextWarmAt'] > $deadline || $this->now() >= $deadline) {
             $phase = $run['phase'];
@@ -357,14 +299,7 @@ final class CacheWarmer
         $run = $this->run;
 
         try {
-            $response = ($this->stream)($run['model'], $run['context'], new SimpleStreamOptions(...[
-                ...$run['options']->baseArgs(),
-                'reasoning' => $run['options']->reasoning,
-                'toolChoice' => $run['options']->toolChoice,
-                'maxTokens' => 1,
-                'maxRetries' => 0,
-                'signal' => $controller->signal,
-            ]));
+            $response = ($this->stream)($run['model'], $run['context'], CacheWarming::getCacheWarmingRequestOptions($run['options'], $controller->signal));
 
             foreach ($response as $ignored) {
                 // Nothing to show: the answer is one token nobody reads.
@@ -443,26 +378,10 @@ final class CacheWarmer
     /** @param array{model: Model, phase: string} $run */
     private function evaluate(array $run): CacheWarmingDecision
     {
-        $model = $run['model'];
-        $promptTokens = ($this->lastPromptTokens)();
-        $price = static fn (Usage $usage): float => $usage->withCost($model)->cost->total;
-        $cacheHitCost = $price(new Usage(cacheRead: $promptTokens));
-        $cacheMissCost = $price($model->pricing->cacheWrite > 0 ? new Usage(cacheWrite: $promptTokens) : new Usage(input: $promptTokens));
-        $warmCost = $price(new Usage(output: 1, cacheRead: $promptTokens));
-        $missCost = max(0.0, $cacheMissCost - $cacheHitCost);
-        $continuationProbability = $run['phase'] === 'idle' ? self::IDLE_CONTINUATION_PROBABILITY : 1.0;
-        $economicsAvailable = $promptTokens > 0 && ($cacheHitCost > 0 || $cacheMissCost > 0);
-        $expectedSavings = $continuationProbability * $missCost - $warmCost;
+        /** @var 'streaming'|'idle' $phase */
+        $phase = $run['phase'];
 
-        return new CacheWarmingDecision(
-            $run['phase'],
-            $warmCost,
-            $missCost,
-            $continuationProbability,
-            $expectedSavings,
-            $economicsAvailable,
-            $expectedSavings >= self::MINIMUM_EXPECTED_SAVINGS ? 'warm' : 'stop',
-        );
+        return CacheWarming::evaluateCacheWarming($run['model'], ($this->lastPromptTokens)(), $phase);
     }
 
     /**
@@ -512,7 +431,7 @@ final class CacheWarmer
             : "{$probability}% continuation probability";
         $comparison = $decision->action === 'warm' ? '>=' : '<';
 
-        return sprintf('%s, expected savings %s %s $%.3f', $probabilityText, self::dollars($decision->expectedSavings), $comparison, self::MINIMUM_EXPECTED_SAVINGS);
+        return sprintf('%s, expected savings %s %s $%.3f', $probabilityText, self::dollars($decision->expectedSavings), $comparison, CacheWarming::CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS);
     }
 
     private static function dollars(float $value): string

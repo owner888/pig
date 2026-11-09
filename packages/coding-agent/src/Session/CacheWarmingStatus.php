@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Pig\Ai\CacheWarmingDecision;
+
 /** What the cache warmer is doing — upstream's `CacheWarmingStatus`. */
 final readonly class CacheWarmingStatus
 {

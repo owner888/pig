@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.6] - 2026-11-09
+
+### Added
+
+- Anthropic message threads (upstream #11545): with a session id and caching on, a request continues the server-side thread of the previous reply (`message-threads-2026-08-12` beta) and sends only the new messages, without the system prompt and tools. When anything earlier in the request changed, or the server can't continue, the full request is sent — a rejected `continue` is resent once as a new thread, and an endpoint that rejects threads gets them turned off for the session; either is recorded as an `anthropic_thread_fallback` diagnostic. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; the `compat.supportsMessageThreads` key in `models.json` changes that, for example for a gateway that forwards `thread`. A session's thread state is dropped when the session ends.
+- `StreamOptions::$disableContinuation` (upstream): a request that neither uses nor replaces server-side continuation state such as message threads. Cache-warming refreshes set it, so a refresh never takes over where the conversation continues from.
+
+### Changed
+
+- Cache warming's policy — when a refresh is due, whether a request can be replayed, whether a refresh pays for itself — is `Pig\Ai\CacheWarming` with `Pig\Ai\CacheWarmingDecision`, moved out of `CodingAgent\Session\CacheWarmer` as upstream moved it into `pi-ai` (#11857), under upstream's names. `CacheWarmer` keeps the scheduling.
+
+### Fixed
+
+- Fixed a cache refresh leaving out the request's `thinkingBudgets`: the refresh asked for a different thinking budget from the request it repeated, which Anthropic keys its cache on. It now repeats the request's options whole, as upstream's does.
+- Fixed MCP stdio servers' large messages being framed in quadratic time (upstream #11791): every chunk searched the whole buffered message from its first byte for a newline, and every line cut copied the rest of the buffer. The search now starts where the last one stopped, and the buffer is cut once per chunk.
+- Fixed the startup header printing `Pig vdev-main` when pig runs from a branch: the `v` now goes only before a release number, so a checkout reads `Pig dev-main`.
+
 ## [1.9.5] - 2026-11-09
 
 ### Added

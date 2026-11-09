@@ -55,6 +55,7 @@ use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\JsonRepair;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Utf8;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Throwable;
 
@@ -81,6 +82,31 @@ final class Anthropic
     private const string SERVER_SIDE_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
     private const string INLINE_TOOLS_BETA = 'inline-tools-2026-09-15';
+
+    private const string MESSAGE_THREADS_BETA = 'message-threads-2026-08-12';
+
+    /** Upstream's `MAX_THREAD_STATE_ENTRIES`. */
+    private const int MAX_THREAD_STATE_ENTRIES = 10_000;
+
+    /**
+     * Upstream's `NEW_THREAD_ERRORS`: "Rejections of a `continue` that a new thread fixes: expired,
+     * raced, or a fixed setting changed."
+     */
+    private const array NEW_THREAD_ERRORS = [
+        'thread_not_found',
+        'thread_already_continued',
+        'thread_continue_in_flight',
+        'thread_fingerprint_mismatch',
+    ];
+
+    /**
+     * Upstream's `threadState`: "Per session: where the next request can continue, or "off" after
+     * the endpoint rejected threads." In insertion order, oldest first, for the cap
+     * (`setThreadState()`).
+     *
+     * @var array<array-key, array{prefixCount: int, prefixHash: string, replyId: string}|'off'>
+     */
+    private static array $threadState = [];
 
     /**
      * Upstream's `DEFERRED_TOOL_PLACEHOLDER`: "Stable deferred tool declared whenever native tool
@@ -212,34 +238,20 @@ final class Anthropic
                 : null;
 
             $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
-            // Straight to non-strict when an earlier request of this session was rejected for the
-            // limits (upstream #11626): the tools rarely change, so strict again would only fail again.
-            $disablePreferredStrictTools = StrictToolLimits::hasExceeded($options?->sessionId);
-
-            // Upstream's loop: a request rejected for Anthropic's strict tool limits is sent once
-            // more with the `prefer` tools non-strict (#10409); `require` tools stay strict.
-            for (;;) {
-                $signal?->throwIfAborted();
-                // `buildParams()`, then `onPayload` — whose answer replaces the params, `{...next,
-                // stream: true}`.
-                $hasPreferredStrictTools = false;
-                $params = $this->params($model, $context, $options, $isOAuth, $disablePreferredStrictTools, $hasPreferredStrictTools);
-                $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
-
-                if ($nextParams !== null) {
-                    $params = (array) $nextParams;
-                    $params['stream'] = true;
-                }
-
-                try {
-            // `retryProviderRequest(() => client.beta.messages.create(params, {signal, timeout,
+            // Session whose requests may use threads; null when threads don't apply (upstream
+            // #11545). "Sessions where the endpoint rejected threads ("off") still send the threads
+            // beta, which the resend that turned them off was accepted with;
+            // `prepareThreadRequest()` just sends no `thread`."
+            $cacheSessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+            $threadSessionId = self::supportsMessageThreads($model) ? $cacheSessionId : null;
+            // `retryProviderRequest(() => client.beta.messages.create(body, {signal, timeout,
             // maxRetries: 0}).asResponse(), {maxRetries, maxRetryDelayMs, signal})`.
-            $response = ProviderRetry::retryProviderRequest(
-                function () use ($model, $context, $options, $params, $isOAuth, $federationClient, $timeoutMs, $signal): Response {
+            $send = fn (array $body): Response => ProviderRetry::retryProviderRequest(
+                function () use ($model, $context, $options, $body, $isOAuth, $federationClient, $timeoutMs, $signal): Response {
                     try {
                         return SdkRequest::send(
                             $this->http,
-                            $this->request($model, $context, $options, $params, $isOAuth, $federationClient?->getToken(), $timeoutMs),
+                            $this->request($model, $context, $options, $body, $isOAuth, $federationClient?->getToken(), $timeoutMs),
                             $signal,
                             $timeoutMs,
                             $this->explain(...),
@@ -259,6 +271,38 @@ final class Anthropic
                 $options?->maxRetryDelayMs,
                 $signal,
             );
+            // Straight to non-strict when an earlier request of this session was rejected for the
+            // limits (upstream #11626): the tools rarely change, so strict again would only fail again.
+            $disablePreferredStrictTools = StrictToolLimits::hasExceeded($options?->sessionId);
+            // The thread request that produced the response; null when no `thread` was sent.
+            $thread = null;
+
+            // Upstream's loop: a request rejected for Anthropic's strict tool limits is sent once
+            // more with the `prefer` tools non-strict (#10409); `require` tools stay strict.
+            for (;;) {
+                $signal?->throwIfAborted();
+                // `buildParams()`, then `onPayload` — whose answer replaces the params, `{...next,
+                // stream: true}`.
+                $hasPreferredStrictTools = false;
+                $params = $this->params($model, $context, $options, $isOAuth, $disablePreferredStrictTools, $hasPreferredStrictTools, $threadSessionId !== null);
+                $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+
+                if ($nextParams !== null) {
+                    $params = (array) $nextParams;
+                    $params['stream'] = true;
+                }
+
+                $prepared = $threadSessionId !== null && $options?->disableContinuation !== true
+                    ? self::prepareThreadRequest($model, $threadSessionId, $params)
+                    : null;
+
+                try {
+                    if ($prepared !== null) {
+                        [$response, $thread] = self::sendThreadRequest($prepared, $params, $send, $builder, $signal);
+                    } else {
+                        $response = $send($params);
+                        $thread = null;
+                    }
 
                     break;
                 } catch (Throwable $error) {
@@ -345,6 +389,10 @@ final class Anthropic
                 $message = $builder->errorMessage();
 
                 throw new ProviderError($message !== null && $message !== '' ? $message : 'An unknown error occurred');
+            }
+
+            if ($thread !== null) {
+                $this->recordThreadReply($model, $thread, $params, $builder->snapshot(), $isOAuth);
             }
 
             // Upstream records these only on a turn that finished, after that throw.
@@ -722,7 +770,7 @@ final class Anthropic
      *
      * @return array<string, mixed>
      */
-    private function params(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $disablePreferredStrictTools = false, bool &$hasPreferredStrictTools = false): array
+    private function params(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $disablePreferredStrictTools = false, bool &$hasPreferredStrictTools = false, bool $messageThreads = false): array
     {
         // "Native tool changes keep the request-level tool list fixed and define every later tool
         // by value in a `tool_addition` block, which also expresses same-name redefinitions.
@@ -734,7 +782,7 @@ final class Anthropic
             && ($compat?->supportsMidConvoToolChanges ?? false)
             && $initialTools !== [];
         $body = $this->body($model, $context, $options, $isOAuth, $nativeToolChanges, $disablePreferredStrictTools, $hasPreferredStrictTools);
-        $betas = $this->betaFeatures($model, $context, $isOAuth, $nativeToolChanges, $options);
+        $betas = $this->betaFeatures($model, $context, $isOAuth, $nativeToolChanges, $options, $messageThreads);
 
         if ($betas === []) {
             return $body;
@@ -906,13 +954,14 @@ final class Anthropic
      * `interleaved-thinking` for a non-adaptive thinking turn; and the two managed-effort betas for a
      * `supportsMidConvoEffort` model.
      *
-     * `server-side-fallback` goes with a model whose compat lists `allowedFallbackModels`, and
-     * `inline-tools` with a request that makes native mid-conversation tool changes (`params()`).
+     * `server-side-fallback` goes with a model whose compat lists `allowedFallbackModels`,
+     * `inline-tools` with a request that makes native mid-conversation tool changes (`params()`), and
+     * `message-threads` with a session that uses message threads (`$messageThreads`).
      * An `anthropic-beta` in `options.headers` counts as the model's does, read after it.
      *
      * @return list<string>
      */
-    private function betaFeatures(Model $model, TranscriptContext $context, bool $isOAuth, bool $nativeToolChanges, ?AnthropicOptions $options): array
+    private function betaFeatures(Model $model, TranscriptContext $context, bool $isOAuth, bool $nativeToolChanges, ?AnthropicOptions $options, bool $messageThreads = false): array
     {
         $configured = false;
         $configuredFeatures = null;
@@ -976,6 +1025,10 @@ final class Anthropic
             $features[] = self::INLINE_TOOLS_BETA;
         }
 
+        if ($messageThreads) {
+            $features[] = self::MESSAGE_THREADS_BETA;
+        }
+
         return array_values(array_unique($features));
     }
 
@@ -983,6 +1036,253 @@ final class Anthropic
     private static function compat(Model $model): ?AnthropicMessagesCompat
     {
         return $model->compat instanceof AnthropicMessagesCompat ? $model->compat : null;
+    }
+
+    /**
+     * Upstream's `supportsMessageThreads` in `getAnthropicCompat()`: "Gateways that drop unknown
+     * request fields would silently turn a `continue` into a request without the earlier
+     * conversation, so the default is limited to Anthropic's own endpoint."
+     */
+    private static function supportsMessageThreads(Model $model): bool
+    {
+        return self::compat($model)?->supportsMessageThreads
+            ?? ($model->provider === 'anthropic' && str_contains($model->baseUrl, 'api.anthropic.com'));
+    }
+
+    /**
+     * Upstream's `registerSessionResourceCleanup()` hook for the thread state: one session's, or
+     * every session's for null. `AgentSession` calls it when a session ends, beside
+     * `StrictToolLimits::cleanup()`.
+     */
+    public static function cleanupSessionResources(?string $sessionId = null): void
+    {
+        if ($sessionId !== null) {
+            unset(self::$threadState[$sessionId]);
+        } else {
+            self::$threadState = [];
+        }
+    }
+
+    /**
+     * Upstream's `setThreadState()`: "keeping at most `MAX_THREAD_STATE_ENTRIES` sessions. … The
+     * cap bounds memory for library users that never call [the cleanup] … Dropping the least
+     * recently updated session is cheap: its thread has most likely expired on the server already
+     * (after a few minutes idle), and otherwise its next request just starts a new thread."
+     *
+     * @param array{prefixCount: int, prefixHash: string, replyId: string}|'off' $value
+     */
+    private static function setThreadState(string $sessionId, array|string $value): void
+    {
+        // "Re-insert so Map order stays oldest-first for the cap."
+        unset(self::$threadState[$sessionId]);
+        self::$threadState[$sessionId] = $value;
+
+        if (count(self::$threadState) > self::MAX_THREAD_STATE_ENTRIES) {
+            unset(self::$threadState[array_key_first(self::$threadState)]);
+        }
+    }
+
+    /**
+     * Upstream's `hashThreadPrefix()`: "Hash of everything a `continue` builds on: the settings
+     * that must stay the same within a thread and the messages the server already holds."
+     *
+     * The settings, as sent: the endpoint ("a thread exists on one endpoint only") and the fixed
+     * request fields — "A `continue` omits `system` and `tools` and the server keeps the thread's
+     * own, so only this check can notice a change to them, including their cache markers." The
+     * messages normalized "so messages that mean the same to the API hash the same": no
+     * `cache_control` (the newest message carries the marker, so last request's has it and this
+     * one's does not), and a string `content` as the one text block it is sent as when marked.
+     * Upstream's `shortHash()` is any stable digest; pig's is 16 hex digits of SHA-256.
+     *
+     * @param array<string, mixed> $params
+     * @param list<mixed> $messages
+     */
+    private static function hashThreadPrefix(Model $model, array $params, array $messages): string
+    {
+        $settings = [$model->provider, $model->baseUrl, $params['model'] ?? null];
+
+        foreach (['system', 'tools', 'thinking', 'output_config', 'tool_choice', 'betas', 'fallbacks'] as $key) {
+            $settings[] = $params[$key] ?? null;
+        }
+
+        $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR;
+
+        return substr(hash('sha256', json_encode($settings, $flags) . json_encode(self::normalizeThreadMessages($messages), $flags)), 0, 16);
+    }
+
+    /** `hashThreadPrefix()`'s `JSON.stringify` replacer, applied at every depth. */
+    private static function normalizeThreadMessages(mixed $value): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $value = get_object_vars($value);
+        }
+
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        $out = [];
+
+        foreach ($value as $key => $item) {
+            if ($key === 'cache_control') {
+                continue;
+            }
+
+            $out[$key] = $key === 'content' && is_string($item)
+                ? [['type' => 'text', 'text' => $item]]
+                : self::normalizeThreadMessages($item);
+        }
+
+        return $out;
+    }
+
+    /**
+     * Upstream's `createThreadRequest()`: the full request, `thread: {type: "create"}` last.
+     *
+     * @param array<string, mixed> $params
+     * @return array{sessionId: string, body: array<string, mixed>}
+     */
+    private static function createThreadRequest(string $sessionId, array $params): array
+    {
+        return ['sessionId' => $sessionId, 'body' => [...$params, 'thread' => ['type' => 'create']]];
+    }
+
+    /**
+     * Upstream's `prepareThreadRequest()`. pig still builds the full request; this compares it
+     * with the previous request of the session and, "when nothing earlier changed", sends only the
+     * new messages, without `system` and `tools`, continuing from the previous reply. Null for a
+     * session whose endpoint turned threads off.
+     *
+     * @param array<string, mixed> $params
+     * @return array{sessionId: string, body: array<string, mixed>}|null
+     */
+    private static function prepareThreadRequest(Model $model, string $sessionId, array $params): ?array
+    {
+        $state = self::$threadState[$sessionId] ?? null;
+
+        if ($state === 'off') {
+            return null;
+        }
+
+        $messages = is_array($params['messages'] ?? null) ? array_values($params['messages']) : [];
+
+        if ($state !== null
+            && count($messages) > $state['prefixCount']
+            && self::hashThreadPrefix($model, $params, array_slice($messages, 0, $state['prefixCount'])) === $state['prefixHash']) {
+            // "Each reply can be continued once; deleting also keeps a concurrent request from trying."
+            unset(self::$threadState[$sessionId]);
+            $body = $params;
+            unset($body['system'], $body['tools']);
+            $body['messages'] = array_slice($messages, $state['prefixCount']);
+            $body['thread'] = ['type' => 'continue', 'previous_message_id' => $state['replyId']];
+
+            return ['sessionId' => $sessionId, 'body' => $body];
+        }
+
+        return self::createThreadRequest($sessionId, $params);
+    }
+
+    /**
+     * Upstream's `getThreadErrorCode()`: "The `error_code` Anthropic puts in `error.details` of
+     * thread rejections" — read from the body JSON the SDK's message carries (`400 {…}`), as
+     * `isStrictToolLimitError()` reads its `type`.
+     */
+    private static function threadErrorCode(ProviderHttpError $error): ?string
+    {
+        $message = $error->getMessage();
+        $json = json_decode((string) substr($message, (int) strpos($message, ' ') + 1), true);
+        $code = is_array($json) && is_array($json['error'] ?? null) && is_array($json['error']['details'] ?? null)
+            ? ($json['error']['details']['error_code'] ?? null)
+            : null;
+
+        return is_string($code) ? $code : null;
+    }
+
+    /**
+     * Upstream's `sendThreadRequest()`: "A rejection about the thread (never a started stream) is
+     * resent once in full: as a new thread when the old one can't be continued, or without
+     * `thread` when the endpoint can't use threads, which also turns threads off for the session.
+     * Other errors are passed on." Returns the response and the thread request that produced it,
+     * if any.
+     *
+     * @param array{sessionId: string, body: array<string, mixed>} $thread
+     * @param array<string, mixed> $params
+     * @param \Closure(array<string, mixed>): Response $send
+     * @return array{0: Response, 1: array{sessionId: string, body: array<string, mixed>}|null}
+     */
+    private static function sendThreadRequest(array $thread, array $params, \Closure $send, AssistantMessageBuilder $builder, ?AbortSignal $signal): array
+    {
+        try {
+            return [$send($thread['body']), $thread];
+        } catch (ProviderHttpError $error) {
+            if ($signal?->aborted() ?? false) {
+                throw $error;
+            }
+
+            $errorCode = self::threadErrorCode($error);
+            $startNewThread = $errorCode !== null && in_array($errorCode, self::NEW_THREAD_ERRORS, true);
+            // "The endpoint can't use threads: it can't thread this request, or it doesn't know the
+            // `thread` field and rejects it without a code ("thread: Extra inputs are not
+            // permitted"), e.g. with an `anthropic-beta` header that lacks the threads beta."
+            $threadsUnsupported = $errorCode === 'thread_unsupported_request'
+                || ($errorCode === null && $error->status === 400 && str_contains($error->getMessage(), 'thread'));
+
+            // "Any other error (prompt too long, unknown model, strict tool limits, ...) is not
+            // about the thread, and resending would only fail again."
+            if (!$startNewThread && !$threadsUnsupported) {
+                throw $error;
+            }
+
+            // "Recorded before the resend, so a failed resend keeps it."
+            $builder->addDiagnostic(new AssistantMessageDiagnostic(
+                'anthropic_thread_fallback',
+                Timestamp::nowMs(),
+                new DiagnosticErrorInfo($error->getMessage()),
+                ['reason' => $errorCode ?? (string) $error->status],
+            ));
+
+            if ($startNewThread) {
+                $created = self::createThreadRequest($thread['sessionId'], $params);
+
+                return [$send($created['body']), $created];
+            }
+
+            // "With the threads beta, a request without `thread` is a normal request."
+            $response = $send($params);
+            self::setThreadState($thread['sessionId'], 'off');
+
+            return [$response, null];
+        }
+    }
+
+    /**
+     * Upstream's `recordThreadReply()`: "Records where the session's next request can continue:
+     * after `output`, the clean reply to the thread request `thread`, whose full request was
+     * `params`." A reply a fallback model gave (`responseModel` set) is not stored by the server,
+     * so it cannot be continued.
+     *
+     * @param array{sessionId: string, body: array<string, mixed>} $thread
+     * @param array<string, mixed> $params
+     */
+    private function recordThreadReply(Model $model, array $thread, array $params, AssistantMessage $output, bool $isOAuth): void
+    {
+        if ($output->responseId === null || $output->responseModel !== null) {
+            return;
+        }
+
+        // "Convert the reply like the next request will, keeping only the assistant message
+        // (transformMessages adds placeholder results for trailing tool calls)."
+        $reply = array_values(array_filter(
+            $this->messages(new TranscriptContext([$output]), $model, $isOAuth),
+            static fn (array $message): bool => ($message['role'] ?? null) === 'assistant',
+        ));
+        $prefix = [...(is_array($params['messages'] ?? null) ? array_values($params['messages']) : []), ...$reply];
+
+        self::setThreadState($thread['sessionId'], [
+            'prefixCount' => count($prefix),
+            'prefixHash' => self::hashThreadPrefix($model, $params, $prefix),
+            'replyId' => $output->responseId,
+        ]);
     }
 
     /**

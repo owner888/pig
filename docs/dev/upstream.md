@@ -39,6 +39,23 @@ server at the login (`planRadiusMcpServer()`), and changes `pig mcp login`'s hin
 provider's credentials to name `pig auth login`. pig's MCP servers have no `auth: {provider}`, so
 there is nothing to point and no such server to hint about.
 
+Cache warming's policy is `Pig\Ai\CacheWarming` (upstream's `cache-warming.ts`), moved out of
+`Session\CacheWarmer` as upstream moved it into `pi-ai` for its p2 app (#11857), with upstream's
+function and constant names so the two read side by side; `CacheWarmer` keeps the scheduling.
+
+Anthropic message threads (#11545) keep upstream's function names inside `Providers\Anthropic`
+(`prepareThreadRequest()`, `sendThreadRequest()`, `recordThreadReply()`, `hashThreadPrefix()`), with
+the thread state a static of that class. Upstream registers its cleanup with
+`registerSessionResourceCleanup()`; pig has no such registry, so `AgentSession::closeSessionResources()`
+calls `Anthropic::cleanupSessionResources()` beside `StrictToolLimits::cleanup()`. Upstream's
+`shortHash()` is any stable digest and pig's is the first 16 hex digits of SHA-256: the hash is only
+ever compared with another from the same process. `StreamProxy` sends `disableContinuation` only when
+it is true, false being pig's unset.
+
+Nothing to port: #11947 fixes the renumbering of `[paste #N]` markers after a
+backspace, which pig's editor does not renumber; and the native Shift+Enter fallback for ESC+CR
+(86dc686c) reads the Shift key through upstream's native addon, which PHP has no counterpart for.
+
 #11751's second half, diffing a window around each edit instead of the whole file, is not ported:
 upstream's diff is jsdiff's general one, ten to fifteen times the file in memory, where `EditDiff`
 compares a common prefix and suffix and splits by the replacements it already knows — linear, with

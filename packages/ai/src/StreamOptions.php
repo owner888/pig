@@ -50,6 +50,9 @@ readonly class StreamOptions
      *        and `auto` is what it does when this is unset
      * @param int|null $websocketConnectTimeoutMs upstream's `websocketConnectTimeoutMs`: how long a
      *        WebSocket's connection and handshake may take (15,000 when unset, 0 for no limit)
+     * @param bool $disableContinuation upstream's `disableContinuation`: the request neither uses nor
+     *        replaces server-side continuation state such as Anthropic message threads — for a
+     *        request that repeats an earlier one, such as a cache-warming refresh. False is unset
      */
     public function __construct(
         public ?float $temperature = null,
@@ -70,6 +73,7 @@ readonly class StreamOptions
         public ?string $transport = null,
         public ?int $websocketConnectTimeoutMs = null,
         public ?ClientIdentity $identity = null,
+        public bool $disableContinuation = false,
     ) {
     }
 
@@ -135,6 +139,7 @@ readonly class StreamOptions
             'transport' => $this->transport,
             'websocketConnectTimeoutMs' => $this->websocketConnectTimeoutMs,
             'identity' => $this->identity,
+            'disableContinuation' => $this->disableContinuation,
         ];
     }
 }

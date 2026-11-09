@@ -50,7 +50,8 @@ final readonly class OpenAiCodexResponsesOptions extends StreamOptions
         public ?string $textVerbosity = null,
         public ?string $toolChoice = null,
         ?\Pig\Ai\ClientIdentity $identity = null,
+        bool $disableContinuation = false,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity, $disableContinuation);
     }
 }

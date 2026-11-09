@@ -94,6 +94,55 @@ final class StdioTransportTest extends TestCase
         $this->assertNotSame([], $chunks);
     }
 
+    /**
+     * Upstream #11791: lines framed the same whatever the chunks — a byte at a time, several to a
+     * chunk, CRLF, blank lines, a line that is not JSON, multi-byte characters cut across chunks —
+     * now that the search starts where the last one stopped and the buffer is cut once per chunk.
+     */
+    public function testLinesAreFramedTheSameWhateverTheChunks(): void
+    {
+        $line = static fn (int $id): string => (string) json_encode(['jsonrpc' => '2.0', 'id' => $id, 'result' => ['text' => str_repeat('é', $id * 10)]], JSON_UNESCAPED_UNICODE);
+        $stream = $line(1) . "\r\n\n" . $line(2) . "\nnot json\n" . $line(3) . "\n" . $line(4);
+
+        foreach ([1, 7, 64, 4096, strlen($stream)] as $size) {
+            $transport = new StdioTransport(PHP_BINARY, maxMessageBytes: 250);
+            $ids = [];
+            $errors = [];
+            $transport->onMessage(static function (array $message) use (&$ids): void {
+                $ids[] = $message['id'];
+            });
+            $transport->onError(static function (mixed $error) use (&$errors): void {
+                $errors[] = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+            });
+            $feed = new \ReflectionMethod($transport, 'handleStdout');
+
+            foreach (str_split($stream, $size) as $chunk) {
+                $feed->invoke($transport, $chunk);
+            }
+
+            $this->assertSame([1, 2, 3], $ids, "chunks of {$size}: the fourth has no newline yet");
+            $this->assertCount(1, $errors, "chunks of {$size}: the line that is not JSON");
+        }
+    }
+
+    public function testALineOverTheLimitIsAnErrorAndTheNextOneStillArrives(): void
+    {
+        $transport = new StdioTransport(PHP_BINARY, maxMessageBytes: 250);
+        $ids = [];
+        $errors = [];
+        $transport->onMessage(static function (array $message) use (&$ids): void {
+            $ids[] = $message['id'];
+        });
+        $transport->onError(static function (mixed $error) use (&$errors): void {
+            $errors[] = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+        });
+
+        (new \ReflectionMethod($transport, 'handleStdout'))->invoke($transport, str_repeat('x', 300) . "\n" . '{"jsonrpc":"2.0","id":7,"result":{}}' . "\n");
+
+        $this->assertSame(['MCP stdio message exceeds 250 bytes'], $errors);
+        $this->assertSame([7], $ids);
+    }
+
     public function testCrlfLinesAndGarbageBeforeTheFirstReplyAreSurvived(): void
     {
         $transport = $this->transport(['--crlf', '--garbage']);

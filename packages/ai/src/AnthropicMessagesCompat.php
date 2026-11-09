@@ -76,6 +76,11 @@ final readonly class AnthropicMessagesCompat
      *        `tool_removal` blocks with inline tool definitions (`inline-tools-2026-09-15`) —
      *        upstream's `supportsMidConvoToolChanges` (default false; needs
      *        `supportsMidConvoSystemMessages`)
+     * @param bool|null $supportsMessageThreads requests of a session continue the server-side
+     *        thread of the previous reply and send only the new messages
+     *        (`message-threads-2026-08-12`) — upstream's `supportsMessageThreads` (default: true for
+     *        the `anthropic` provider on `api.anthropic.com`, false otherwise, since a gateway that
+     *        drops the `thread` field would silently lose the earlier conversation)
      */
     public function __construct(
         public ?bool $forceAdaptiveThinking = null,
@@ -91,6 +96,7 @@ final readonly class AnthropicMessagesCompat
         public ?array $allowedFallbackModels = null,
         public ?bool $supportsMidConvoSystemMessages = null,
         public ?bool $supportsMidConvoToolChanges = null,
+        public ?bool $supportsMessageThreads = null,
     ) {
     }
 
@@ -111,6 +117,7 @@ final readonly class AnthropicMessagesCompat
             $allowedFallbackModels,
             $this->supportsMidConvoSystemMessages,
             $this->supportsMidConvoToolChanges,
+            $this->supportsMessageThreads,
         );
     }
 

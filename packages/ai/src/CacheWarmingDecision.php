@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Session;
+namespace Pig\Ai;
 
-/** Inputs and outcome of one warm-or-stop decision, as `/session` shows it — upstream's `CacheWarmingDecision`. */
+/** Inputs and outcome of one warm-or-stop decision, as `/session` shows it — upstream's `CacheWarmingDecision`, in `pi-ai` with `CacheWarming` since #11857. */
 final readonly class CacheWarmingDecision
 {
     /**

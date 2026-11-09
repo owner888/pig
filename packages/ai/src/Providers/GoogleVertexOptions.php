@@ -46,7 +46,8 @@ final readonly class GoogleVertexOptions extends StreamOptions
         ?string $transport = null,
         ?int $websocketConnectTimeoutMs = null,
         ?\Pig\Ai\ClientIdentity $identity = null,
+        bool $disableContinuation = false,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env, $transport, $websocketConnectTimeoutMs, $identity, $disableContinuation);
     }
 }

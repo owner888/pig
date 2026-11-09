@@ -1029,14 +1029,16 @@ final class AgentSession
     }
 
     /**
-     * Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket, and the note that
-     * this session's strict tools went over Claude's limits.
+     * Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket, the note that
+     * this session's strict tools went over Claude's limits, and where its Anthropic message
+     * thread continues.
      */
     private function closeSessionResources(): void
     {
         if ($this->agent->sessionId !== null) {
             OpenAiCodexResponses::closeWebSocketSessions($this->agent->sessionId);
             \Pig\Ai\Utils\StrictToolLimits::cleanup($this->agent->sessionId);
+            \Pig\Ai\Providers\Anthropic::cleanupSessionResources($this->agent->sessionId);
         }
     }
 

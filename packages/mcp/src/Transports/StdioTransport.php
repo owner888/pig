@@ -54,6 +54,9 @@ final class StdioTransport extends TransportEvents
 
     private string $stdoutBuffer = '';
 
+    /** How much of `$stdoutBuffer` is known to hold no newline, so it is not searched again. */
+    private int $stdoutScanned = 0;
+
     private string $stderrBuffer = '';
 
     private bool $started = false;
@@ -321,31 +324,52 @@ final class StdioTransport extends TransportEvents
         }
     }
 
+    /**
+     * Every complete line in what has arrived, each handed on as a message or an error.
+     *
+     * In linear time, upstream's `JsonRpcLineReader` since #11791: the search for a newline starts
+     * where the last one stopped, not at the front of the buffer — a 12 MiB tool result in 64 KiB
+     * chunks was searched from its first byte again for every chunk — and the lines are cut by
+     * position, the buffer shortened once at the end, rather than the rest copied after each line.
+     */
     private function handleStdout(string $chunk): void
     {
         $this->stdoutBuffer .= $chunk;
+        $start = 0;
+        // Cut first and handed on after, so a handler that reads stdout again finds the buffer
+        // already settled rather than shortened under the loop's feet.
+        $lines = [];
+        $tooLong = false;
 
-        while (true) {
-            $newline = strpos($this->stdoutBuffer, "\n");
+        while (($newline = strpos($this->stdoutBuffer, "\n", max($start, $this->stdoutScanned))) !== false) {
+            $length = $newline - $start;
 
-            if ($newline === false) {
-                if (strlen($this->stdoutBuffer) > $this->maxMessageBytes) {
-                    $this->stdoutBuffer = '';
-                    $this->emitError(new RuntimeException("MCP stdio message exceeds {$this->maxMessageBytes} bytes"));
-                }
-
-                return;
+            if ($length > $this->maxMessageBytes) {
+                $lines[] = null;
+            } else {
+                $lines[] = rtrim(substr($this->stdoutBuffer, $start, $length), "\r");
             }
 
-            $line = substr($this->stdoutBuffer, 0, $newline);
-            $this->stdoutBuffer = substr($this->stdoutBuffer, $newline + 1);
+            $start = $newline + 1;
+        }
 
-            if (strlen($line) > $this->maxMessageBytes) {
+        if ($start > 0) {
+            $this->stdoutBuffer = substr($this->stdoutBuffer, $start);
+        }
+
+        $this->stdoutScanned = strlen($this->stdoutBuffer);
+
+        if ($this->stdoutScanned > $this->maxMessageBytes) {
+            $this->stdoutBuffer = '';
+            $this->stdoutScanned = 0;
+            $tooLong = true;
+        }
+
+        foreach ($lines as $text) {
+            if ($text === null) {
                 $this->emitError(new RuntimeException("MCP stdio message exceeds {$this->maxMessageBytes} bytes"));
                 continue;
             }
-
-            $text = rtrim($line, "\r");
 
             if (trim($text) === '') {
                 continue;
@@ -357,6 +381,10 @@ final class StdioTransport extends TransportEvents
             } catch (Throwable $error) {
                 $this->emitError($error);
             }
+        }
+
+        if ($tooLong) {
+            $this->emitError(new RuntimeException("MCP stdio message exceeds {$this->maxMessageBytes} bytes"));
         }
     }
 
@@ -381,6 +409,7 @@ final class StdioTransport extends TransportEvents
         }
 
         $this->stdoutBuffer = '';
+        $this->stdoutScanned = 0;
 
         if (!$this->closed) {
             // The server died on its own. Reap it and tell the client, which fails every pending

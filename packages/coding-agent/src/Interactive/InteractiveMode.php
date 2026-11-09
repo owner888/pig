@@ -74,6 +74,7 @@ use Pig\CodingAgent\Extensions\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\CodingAgent\McpServerRegistry;
+use Pig\CodingAgent\Version;
 use Pig\CodingAgent\VirtualModelRegistry;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionError;
@@ -1236,7 +1237,9 @@ final class InteractiveMode
         ));
 
         $lines = [
-            PigLogo::wordmark() . ' ' . $theme->fg('dim', "v{$this->version}"),
+            // The `v` only before a release number: a checkout's `dev-main` or
+            // `1.0.0+no-version-set` is not a version, and `vdev-main` read as one.
+            PigLogo::wordmark() . ' ' . $theme->fg('dim', Version::isRelease($this->version) ? "v{$this->version}" : $this->version),
             $summaryStr,
         ];
 

@@ -71,6 +71,7 @@ final class ModelJson
         'allowedFallbackModels' => 'allowedFallbackModels',
         'supportsMidConvoSystemMessages' => 'supportsMidConvoSystemMessages',
         'supportsMidConvoToolChanges' => 'supportsMidConvoToolChanges',
+        'supportsMessageThreads' => 'supportsMessageThreads',
     ];
 
     /** The object-valued compat keys, written as JSON objects even when empty. */
@@ -254,6 +255,7 @@ final class ModelJson
                 allowedFallbackModels: self::allowedFallbackModels($compat['allowedFallbackModels'] ?? null),
                 supportsMidConvoSystemMessages: $flag('supportsMidConvoSystemMessages'),
                 supportsMidConvoToolChanges: $flag('supportsMidConvoToolChanges'),
+                supportsMessageThreads: $flag('supportsMessageThreads'),
             );
         }
 

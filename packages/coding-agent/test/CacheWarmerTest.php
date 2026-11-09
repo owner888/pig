@@ -24,7 +24,8 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\Events\CacheWarmingDecisionEvent;
 use Pig\CodingAgent\Session\CacheWarmer;
-use Pig\CodingAgent\Session\CacheWarmingDecision;
+use Pig\Ai\CacheWarming;
+use Pig\Ai\CacheWarmingDecision;
 use Pig\CodingAgent\Session\CacheWarmingStatus;
 use Pig\CodingAgent\Session\UsageEntry;
 
@@ -77,27 +78,27 @@ final class CacheWarmerTest extends TestCase
     #[DataProvider('lifetimes')]
     public function testTheRefreshIsDueAtNinetyPercentButNeverInTheLastTenSeconds(int $ttlMs, ?int $delayMs): void
     {
-        $this->assertSame($delayMs, CacheWarmer::delayMs($ttlMs));
+        $this->assertSame($delayMs, CacheWarming::getCacheWarmingDelayMs($ttlMs));
     }
 
     public function testTheLifetimeIsTheModelsTierForTheRetentionTheRequestUsed(): void
     {
         $model = self::model(promptCache: ['short' => 300, 'long' => 3600]);
 
-        $this->assertSame(300_000, CacheWarmer::ttlMs($model, new SimpleStreamOptions(cacheRetention: 'short')));
-        $this->assertSame(3_600_000, CacheWarmer::ttlMs($model, new SimpleStreamOptions(cacheRetention: 'long')));
-        $this->assertNull(CacheWarmer::ttlMs($model, new SimpleStreamOptions(cacheRetention: 'none')));
-        $this->assertNull(CacheWarmer::ttlMs(self::model(promptCache: null), new SimpleStreamOptions(cacheRetention: 'short')));
+        $this->assertSame(300_000, CacheWarming::getPromptCacheTtlMs($model, new SimpleStreamOptions(cacheRetention: 'short')));
+        $this->assertSame(3_600_000, CacheWarming::getPromptCacheTtlMs($model, new SimpleStreamOptions(cacheRetention: 'long')));
+        $this->assertNull(CacheWarming::getPromptCacheTtlMs($model, new SimpleStreamOptions(cacheRetention: 'none')));
+        $this->assertNull(CacheWarming::getPromptCacheTtlMs(self::model(promptCache: null), new SimpleStreamOptions(cacheRetention: 'short')));
     }
 
     public function testBudgetThinkingOnAnthropicCannotBeReplayedAndAdaptiveThinkingCan(): void
     {
         $thinking = new SimpleStreamOptions(reasoning: ReasoningEffort::High);
 
-        $this->assertTrue(CacheWarmer::isReplayable(self::model(), new SimpleStreamOptions()));
-        $this->assertFalse(CacheWarmer::isReplayable(self::model(), $thinking));
-        $this->assertTrue(CacheWarmer::isReplayable(self::model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)), $thinking));
-        $this->assertTrue(CacheWarmer::isReplayable(self::model(api: Api::OpenAiResponses), $thinking));
+        $this->assertTrue(CacheWarming::isCacheWarmingReplayable(self::model(), new SimpleStreamOptions()));
+        $this->assertFalse(CacheWarming::isCacheWarmingReplayable(self::model(), $thinking));
+        $this->assertTrue(CacheWarming::isCacheWarmingReplayable(self::model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)), $thinking));
+        $this->assertTrue(CacheWarming::isCacheWarmingReplayable(self::model(api: Api::OpenAiResponses), $thinking));
     }
 
     public function testARefreshReplaysTheRequestForOneTokenAndIsWrittenDown(): void
