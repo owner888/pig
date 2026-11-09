@@ -5135,32 +5135,6 @@
     },
     {
         "type": "chat",
-        "id": "minimax/minimax-m1",
-        "name": "MiniMax: MiniMax M1",
-        "api": "openai-completions",
-        "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.55,
-            "output": 2.2,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 40000,
-        "compat": {
-            "supportsDeveloperRole": false,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "minimax/minimax-m2.5",
         "name": "MiniMax: MiniMax M2.5",
         "api": "openai-completions",
@@ -5276,9 +5250,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.15,
-            "output": 0.6,
-            "cacheRead": 0.015,
+            "input": 0.075,
+            "output": 0.3,
+            "cacheRead": 0.0075,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -6335,9 +6309,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.917,
+            "input": 0.883,
             "output": 6.0,
-            "cacheRead": 0.226,
+            "cacheRead": 0.218,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -10735,13 +10709,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.018,
-            "output": 0.09,
-            "cacheRead": 0.009,
+            "input": 0.03,
+            "output": 0.13,
+            "cacheRead": 0.03,
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
-        "maxTokens": 32768,
+        "maxTokens": 117964,
         "compat": {
             "supportsStrictMode": true,
             "thinkingFormat": "openrouter",
@@ -12746,6 +12720,52 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1000000,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "qwen/qwen3.8-max-0902:batch",
+        "name": "Qwen: Qwen3.8 Max (0902) (batch)",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.15,
+            "output": 3.45,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
         "maxTokens": 131072,
         "compat": {
             "supportsDeveloperRole": false,
@@ -14822,7 +14842,7 @@
             "text"
         ],
         "cost": {
-            "input": 0.006,
+            "input": 0.0075,
             "output": 6.8,
             "cacheRead": 0.005,
             "cacheWrite": 0.0
@@ -15609,9 +15629,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.1539,
-            "output": 9.3388,
-            "cacheRead": 0.15,
+            "input": 0.1824,
+            "output": 10.1489,
+            "cacheRead": 0.18,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
