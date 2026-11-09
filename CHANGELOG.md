@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.7] - 2026-11-09
+
+### Changed
+
+- The built-in model catalogue is regenerated from models.dev: new Bedrock, Copilot, Hugging Face and Together models, OpenRouter's and Vercel AI Gateway's current lists and prices, and the models the Radius gateway, OpenCode and NVIDIA no longer serve gone (Radius no longer offers GPT-5.4, OpenCode no longer DeepSeek V4 Flash).
+- The command runner the terminal uses for `fd`, `git`, the clipboard and the like reads a command's output as it arrives, where it slept 5 ms between reads and took one pipe buffer each time: a few hundred KB of output, such as `fd`'s warnings on a tree with many unreadable directories, is read several times faster.
+
+### Fixed
+
+- Fixed Azure OpenAI models dropping OpenAI's long-context price tier (upstream #11949): the Azure copies of the `openai` models kept only the four base rates, so a request above 272K input tokens — realistic on Azure's 1.05M windows — was costed at the short-context rates. They now keep the tier, as Azure bills it.
+
 ## [1.9.6] - 2026-11-09
 
 ### Added

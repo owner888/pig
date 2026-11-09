@@ -392,13 +392,29 @@ final class AutocompleteTest extends TestCase
         file_put_contents($noise, $lines);
         $quoted = escapeshellarg($noise);
 
-        file_put_contents($path, <<<SH
+        return $this->fakeFd($path, <<<SH
             #!/bin/sh
             cat {$quoted} >&2
             echo "src/"
             echo "src/Agent.php"
             SH);
+    }
+
+    /**
+     * A script standing in for `fd`, written, made executable, and **run once before the test does**.
+     *
+     * macOS checks a newly written executable the first time it runs, and on the developer's machine
+     * that took 3 s for a three-line `sh` script (and 0.003 s for `/usr/bin/true` beside it). The
+     * picker gives `fd` 2 s, so whichever test ran a fresh script first came up with no suggestions
+     * now and then — `testFdFloodingStandardErrorDoesNotHangThePicker` most often, its stand-in being
+     * the first. Running it here, without a deadline that matters, takes that check out of the
+     * picker's time. A real `fd` was checked once, when it was installed.
+     */
+    private function fakeFd(string $path, string $script): string
+    {
+        file_put_contents($path, $script);
         chmod($path, 0o755);
+        \Pig\Tui\Process::run([$path], 30.0);
 
         return $path;
     }
@@ -417,21 +433,6 @@ final class AutocompleteTest extends TestCase
 
         $suggestions = $this->suggest($provider, '@Age');
 
-        if ($suggestions === null) {
-            // What the picker saw, run again by hand, so a failure says whether it was the clock,
-            // the command not starting, or the command answering something else.
-            $started = microtime(true);
-            [$exit, $stdout, $stderr] = \Pig\Tui\Process::run([$fd], 2.0);
-            $this->fail(sprintf(
-                'no suggestions; the same fd by hand: exit %s (STOPPED is a timeout or no start), %.2f s, %d bytes out, %d bytes err, PATH=%s',
-                var_export($exit, true),
-                microtime(true) - $started,
-                strlen($stdout),
-                strlen($stderr),
-                (string) getenv('PATH'),
-            ));
-        }
-
         $this->assertNotNull($suggestions);
         $this->assertSame('@src/Agent.php', $suggestions->items[0]->value);
     }
@@ -449,15 +450,13 @@ final class AutocompleteTest extends TestCase
 
     public function testModifiedGitFilesArePrioritizedToTheTop(): void
     {
-        $fd = "{$this->root}/mock-fd";
-        file_put_contents($fd, <<<'SH'
+        $fd = $this->fakeFd("{$this->root}/mock-fd", <<<'SH'
 #!/bin/sh
 echo "src/Normal.php"
 echo "src/Modified.php"
 echo "src/Another.php"
 SH
         );
-        chmod($fd, 0o755);
 
         // Without provider: normal alphabetical/score order
         $providerWithout = new CombinedAutocompleteProvider([], $this->root, $fd);

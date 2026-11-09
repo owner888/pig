@@ -651,7 +651,7 @@ final class Process
                 break;
             }
 
-            usleep(self::POLL_MICROSECONDS);
+            self::waitForOutput([$pipes[1], $pipes[2]], $deadline);
         }
 
         if (!$truncated) {
@@ -673,6 +673,42 @@ final class Process
         }
 
         return [$timedOut ? self::STOPPED : $exit, $output, $errors, false];
+    }
+
+    /**
+     * `run()`'s wait between reads: until one of its pipes has something to read, for at most
+     * `POLL_MICROSECONDS` and never past `$deadline`.
+     *
+     * It used to sleep the whole interval whatever was waiting, so a command that writes a lot was
+     * read a pipe buffer per 5 ms sleep: 320 KB on stderr took 16–27 ms on Linux, and 3–5 ms woken on
+     * data. Waking on data drains as fast as the command writes. A pipe at its end is left out, because
+     * it reads as ready for ever and would spin the loop until the process is reaped; with both
+     * there, the wait is the plain sleep, the gap between a command closing its output and exiting.
+     *
+     * @param list<resource> $pipes
+     */
+    private static function waitForOutput(array $pipes, float $deadline): void
+    {
+        $microseconds = (int) max(0, min(self::POLL_MICROSECONDS, ($deadline - microtime(true)) * 1_000_000));
+        $open = array_values(array_filter($pipes, static fn ($pipe): bool => !feof($pipe)));
+
+        if ($open === []) {
+            usleep($microseconds);
+
+            return;
+        }
+
+        $write = null;
+        $except = null;
+        // A signal landing during the wait makes `stream_select()` warn and return false; that is
+        // only a shorter wait, and the loop reads and checks again.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            stream_select($open, $write, $except, 0, $microseconds);
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /**
