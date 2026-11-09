@@ -2064,32 +2064,17 @@ final class HttpServer
             return null;
         }
 
-        $resolved = null;
-        if (is_file($rawPath)) {
-            $resolved = realpath($rawPath);
-        } elseif ($cwd !== null) {
+        // Only a session of the store, as the store names it — for pi's files a `.jsonl` under a
+        // sessions directory, links resolved — whether the page sent its location or its id.
+        $store = SessionManager::sessionStore();
+        $safe = $store->canonical($rawPath);
+
+        if ($safe === null && $cwd !== null && !$store->exists($rawPath)) {
             $found = SessionManager::find($cwd, $rawPath);
-            if ($found !== null && is_file($found)) {
-                $resolved = realpath($found);
-            }
+            $safe = $found !== null ? $store->canonical($found) : null;
         }
 
-        if ($resolved === false || $resolved === null || !str_ends_with($resolved, '.jsonl')) {
-            return null;
-        }
-
-        $allowedRoots = [
-            realpath(Config::home() . '/sessions'),
-            realpath(Config::piHome() . '/sessions'),
-        ];
-
-        foreach ($allowedRoots as $root) {
-            if ($root !== false && str_starts_with($resolved, $root . DIRECTORY_SEPARATOR)) {
-                return $resolved;
-            }
-        }
-
-        return null;
+        return $safe;
     }
 
     /**

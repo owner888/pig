@@ -657,6 +657,23 @@
       "type": "string",
       "description": "Custom session storage directory, in the same format as the --session-dir CLI flag."
     },
+    "storage": {
+      "description": "Where sessions are kept. \"jsonl\" (the default) is pi's session files. A \"mysql:host=…;dbname=…\" DSN or a \"sqlite:path\" (relative to ~/.pig/agent) keeps them in a database; an object gives the DSN with a user and password, which may be written $NAME to read an environment variable. Global setting only.",
+      "anyOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "dsn": { "type": "string" },
+            "user": { "type": "string" },
+            "password": { "type": "string" },
+            "prefix": { "type": "string", "description": "Put in front of each table name; pig_ when not given." }
+          },
+          "required": ["dsn"],
+          "additionalProperties": false
+        }
+      ]
+    },
     "httpProxy": {
       "type": "string",
       "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for pig-managed HTTP clients. Global setting only."

@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Closure;
-use Pig\Agent\AgentError;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
-use Pig\CodingAgent\Session\ToolProgress;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Component;
@@ -186,39 +184,8 @@ final class SessionList implements Component, Focusable, InputHandler, CapturesV
      */
     public static function deleteSessionFile(string $path): ?string
     {
-        if (!file_exists($path)) {
-            return null;
-        }
-
-        // pig's own: a tool's output kept for `continueRun()` goes with its conversation.
-        try {
-            SessionManager::sessionStore()->deleteSidecar($path, ToolProgress::SIDECAR);
-        } catch (AgentError) {
-            return 'could not remove ' . ToolProgress::pathOf($path);
-        }
-
-        if (self::moveToSystemTrash($path)) {
-            return null;
-        }
-
-        $error = null;
-        set_error_handler(static function (int $no, string $message) use (&$error): bool {
-            $error = $message;
-
-            return true;
-        });
-
-        try {
-            $removed = unlink($path);
-        } finally {
-            restore_error_handler();
-        }
-
-        if ($removed) {
-            return null;
-        }
-
-        return $error ?? 'could not remove the file';
+        // The store decides: pi's files go to the trash (`JsonlSessionStore::remove()`).
+        return SessionManager::sessionStore()->remove($path);
     }
 
     /**

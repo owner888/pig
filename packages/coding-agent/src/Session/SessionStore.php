@@ -115,6 +115,21 @@ interface SessionStore
      */
     public function projects(): array;
 
+    /**
+     * Take the session away, its sidecars with it — pi's files go to the system's trash, where the
+     * person can get one back.
+     *
+     * @return string|null why it is still there; null when it is gone, or was never there
+     */
+    public function remove(string $location): ?string;
+
+    /**
+     * `$location` as this store names it, when it is one of its sessions; null for anything else.
+     * What a location from outside (the web page) is checked with before it is opened or removed —
+     * for pi's files, a `.jsonl` under a sessions directory once links are resolved.
+     */
+    public function canonical(string $location): ?string;
+
     /** A sidecar's contents, or null when there is none. */
     public function readSidecar(string $location, string $name): ?string;
 

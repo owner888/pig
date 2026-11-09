@@ -164,4 +164,23 @@ abstract class SessionStoreConformance extends TestCase
         $store->deleteSidecar($location, 'running.json');
         $this->assertSame([self::HEADER], self::all($store->lines($location)), 'the session itself is untouched');
     }
+
+    public function testARemovedSessionIsGoneWithItsSidecars(): void
+    {
+        $store = $this->store();
+        $location = $this->newSession();
+        $store->append($location, self::joined([self::HEADER]));
+        $store->writeSidecar($location, 'running.json', '{}');
+
+        // A session of this store; named as the store names it, which for a file is its real path
+        // (`/var` is `/private/var` on macOS), and naming it again changes nothing.
+        $canonical = $store->canonical($location);
+        $this->assertNotNull($canonical);
+        $this->assertSame($canonical, $store->canonical($canonical));
+        $this->assertNull($store->remove($location));
+        $this->assertFalse($store->exists($location));
+        $this->assertNull($store->readSidecar($location, 'running.json'));
+        $this->assertNull($store->canonical($location), 'what is not there is not a session of this store');
+        $this->assertNull($store->remove($location), 'removing it again is not an error');
+    }
 }

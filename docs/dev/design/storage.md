@@ -265,6 +265,30 @@ These apply under B or C. They go in a later phase, but they shape the interface
    configured. An import command copies JSONL sessions in, pi's `~/.pi/agent/sessions/` included.
 4. **Several users, one instance.** Owners on sessions, accounts and per-user login, and the
    scheduled tasks moved into the store with an owner.
+   **Built (2026-11-09):**
+   - `Session\SqlSessionStore`, one class for both dialects. Three tables (`sessions`,
+     `session_lines`, `session_sidecars`, with a prefix), created on open.
+   - A location is `sql:<timestamp>_<id>.jsonl`.
+   - Each append is one transaction under a write lock: `BEGIN IMMEDIATE` on SQLite,
+     `SELECT … FOR UPDATE` on MySQL. Measured with three processes appending 200 lines each to one
+     session: 600 lines, positions 0–599, on both.
+   - The `storage` setting is global only: a string, or `{dsn, user, password, prefix}`, with `$NAME`
+     read from the environment. `bin/pig` opens the store before anything looks a session up. A store
+     that cannot be opened stops pig with the reason; it never falls back to files.
+   - The phase 1 gaps are closed with two more methods on the interface: `remove()` (pi's files to
+     the trash, as `SessionList::deleteSessionFile()` did) and `canonical()` (the web page's path
+     check).
+   - Tests: `SqliteSessionStoreTest` runs the conformance suite on every run. `MysqlSessionStoreTest`
+     is its own suite, `PIG_TEST_MYSQL_DSN=… vendor/bin/phpunit --testsuite mysql`, so the default
+     run has no skipped MySQL tests. Both dialects were run against SQLite and MariaDB while
+     building.
+
+   **Importing** is `/import x.jsonl`, which writes into whatever store keeps sessions
+   (`SessionStore::create()`): pi's files get a copy in the project's directory as before, and a
+   database gets the lines. A bulk `pig sessions import` was weighed and left out. A server starts
+   empty, the files stay where they are (switching `storage` back to `jsonl` shows them again), and
+   `/export` then `/import` moves the one that is wanted. It is a loop over `create()` once somebody
+   needs it.
 5. **Several instances**, when a second one is actually wanted: session leases, and the pool and the
    scheduler routing by them.
 6. **pi-durable**, reconsidered then.

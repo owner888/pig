@@ -7,7 +7,8 @@
          failOnNotice="true"
          failOnDeprecation="true"
          beStrictAboutOutputDuringTests="true"
-         cacheDirectory=".phpunit.cache">
+         cacheDirectory=".phpunit.cache"
+         defaultTestSuite="pig">
     <testsuites>
         <testsuite name="pig">
             <directory>packages/async/test</directory>
@@ -17,6 +18,11 @@
             <directory>packages/coding-agent/test</directory>
             <directory>packages/mcp/test</directory>
             <directory>packages/codemode/test</directory>
+            <!-- Needs a MySQL server: set PIG_TEST_MYSQL_DSN and run the testsuite named mysql. -->
+            <exclude>packages/coding-agent/test/Session/MysqlSessionStoreTest.php</exclude>
+        </testsuite>
+        <testsuite name="mysql">
+            <file>packages/coding-agent/test/Session/MysqlSessionStoreTest.php</file>
         </testsuite>
     </testsuites>
     <source>

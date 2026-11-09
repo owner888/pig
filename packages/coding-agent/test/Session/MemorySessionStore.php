@@ -191,4 +191,24 @@ final class MemorySessionStore implements SessionStore
     {
         unset($this->sidecars[$location . '#' . $name]);
     }
+
+    #[\Override]
+    public function remove(string $location): ?string
+    {
+        unset($this->sessions[$location], $this->modified[$location]);
+
+        foreach (array_keys($this->sidecars) as $key) {
+            if (str_starts_with($key, $location . '#')) {
+                unset($this->sidecars[$key]);
+            }
+        }
+
+        return null;
+    }
+
+    #[\Override]
+    public function canonical(string $location): ?string
+    {
+        return isset($this->sessions[$location]) ? $location : null;
+    }
 }

@@ -13,8 +13,8 @@ use Pig\CodingAgent\Config;
  *
  * This is what `SessionManager` did itself before `SessionStore` existed, moved here unchanged:
  * the directory and slug rules, the globs that list and find, `FILE_APPEND | LOCK_EX` for an append,
- * `x` for a fork, the best-effort rewrite of a migrated file, and `ToolProgress`' `.running.json`
- * renamed into place.
+ * `x` for a fork, the best-effort rewrite of a migrated file, `ToolProgress`' `.running.json`
+ * renamed into place, and a removal that goes to the system's trash.
  */
 final class JsonlSessionStore implements SessionStore
 {
@@ -469,5 +469,64 @@ final class JsonlSessionStore implements SessionStore
         if (is_file($path) && !unlink($path)) {
             throw new AgentError("Could not remove {$path}");
         }
+    }
+
+    /**
+     * Upstream's `deleteSessionFile()`: the file to the system trash/recycle bin
+     * (`SessionList::moveToSystemTrash()`), `unlink()` when that is not available. A tool's output
+     * kept for `continueRun()` goes with its conversation.
+     */
+    #[\Override]
+    public function remove(string $location): ?string
+    {
+        if (!file_exists($location)) {
+            return null;
+        }
+
+        try {
+            $this->deleteSidecar($location, ToolProgress::SIDECAR);
+        } catch (AgentError) {
+            return 'could not remove ' . ToolProgress::pathOf($location);
+        }
+
+        if (\Pig\CodingAgent\Cli\SessionList::moveToSystemTrash($location)) {
+            return null;
+        }
+
+        [$removed, $error] = (static function () use ($location): array {
+            $error = null;
+            set_error_handler(static function (int $no, string $message) use (&$error): bool {
+                $error = $message;
+
+                return true;
+            });
+
+            try {
+                return [unlink($location), $error];
+            } finally {
+                restore_error_handler();
+            }
+        })();
+
+        return $removed ? null : ($error ?? 'could not remove the file');
+    }
+
+    /** A `.jsonl` file under pig's or pi's `sessions/`, links resolved. */
+    #[\Override]
+    public function canonical(string $location): ?string
+    {
+        $resolved = is_file($location) ? realpath($location) : false;
+
+        if ($resolved === false || !str_ends_with($resolved, '.jsonl')) {
+            return null;
+        }
+
+        foreach ([realpath(Config::home() . '/sessions'), realpath(Config::piHome() . '/sessions')] as $root) {
+            if ($root !== false && str_starts_with($resolved, $root . DIRECTORY_SEPARATOR)) {
+                return $resolved;
+            }
+        }
+
+        return null;
     }
 }

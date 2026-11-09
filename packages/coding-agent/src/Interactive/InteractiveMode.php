@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Interactive;
 
 use Closure;
 use Pig\Agent\AgentEndEvent;
+use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentStartEvent;
@@ -3285,27 +3286,30 @@ final class InteractiveMode
                 return;
             }
 
-            $directory = SessionManager::directory($this->cwd);
-            $destination = $directory . '/' . basename($source);
-            $alreadyStored = (realpath($destination) ?: $destination) === (realpath($source) ?: $source);
+            // Into the session store, whatever keeps it: pi's files get a copy in this project's
+            // directory as before, a database gets the lines (`SessionStore::create()`).
+            $store = SessionManager::sessionStore();
+            $name = pathinfo($source, PATHINFO_FILENAME);
+            $destination = $store->locationFor($this->cwd, $name);
+            $alreadyStored = $store->canonical($source) !== null && $store->canonical($source) === $store->canonical($destination);
 
             if (!$alreadyStored) {
-                $name = pathinfo($destination, PATHINFO_FILENAME);
-                $extension = pathinfo($destination, PATHINFO_EXTENSION);
-                $suffix = 1;
-
-                while (file_exists($destination)) {
-                    $destination = "{$directory}/{$name}-" . $suffix++ . ($extension === '' ? '' : ".{$extension}");
+                for ($suffix = 1; $store->exists($destination); $suffix++) {
+                    $destination = $store->locationFor($this->cwd, "{$name}-{$suffix}");
                 }
 
-                if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
-                    $this->sayError("Failed to import session: could not create {$directory}");
+                $contents = file_get_contents($source);
+
+                if ($contents === false) {
+                    $this->sayError("Failed to import session: could not read {$source}");
 
                     return;
                 }
 
-                if (!copy($source, $destination)) {
-                    $this->sayError("Failed to import session: could not copy it to {$destination}");
+                try {
+                    $store->create($destination, str_ends_with($contents, "\n") ? $contents : $contents . "\n");
+                } catch (AgentError $error) {
+                    $this->sayError("Failed to import session: {$error->getMessage()}");
 
                     return;
                 }

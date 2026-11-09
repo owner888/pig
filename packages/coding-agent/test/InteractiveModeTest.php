@@ -157,6 +157,7 @@ final class InteractiveModeTest extends TestCase
     {
         $this->tearDownGlobalTheme();
         $this->mode->stop();
+        SessionManager::useSessionStore(null);
         putenv('PIG_CODING_AGENT_DIR');
         putenv('PIG_OFFLINE');
         $this->restoreProviderKeys();
@@ -6150,6 +6151,34 @@ final class InteractiveModeTest extends TestCase
         $copy = (string) $this->session->store()?->path;
         $this->assertSame(SessionManager::directory($this->cwd) . '/elsewhere.jsonl', $copy);
         $this->assertFileExists($source, 'the original is left alone');
+    }
+
+    public function testImportPutsTheSessionIntoTheStoreThatKeepsSessions(): void
+    {
+        // With sessions in a database, a copied file is nowhere the store looks: the lines go into
+        // the store, and the session opens from there.
+        $this->start(['the answer'], store: true);
+        $this->type('imported question');
+        $this->type(self::ENTER);
+        $this->settle();
+        $source = $this->cwd . '/elsewhere.jsonl';
+        file_put_contents($source, (string) $this->session->store()?->serializeBranch());
+        $this->mode->stop();
+
+        $memory = new \Pig\CodingAgent\Test\Session\MemorySessionStore();
+        SessionManager::useSessionStore($memory);
+        $this->start(store: true);
+        $this->type('/import ' . $source);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $this->assertStringContainsString('Session imported from: ' . $source, $this->screenText());
+        $this->assertStringContainsString('imported question', $this->screenText());
+        $copy = (string) $this->session->store()?->path;
+        $this->assertSame($memory->locationFor($this->cwd, 'elsewhere'), $copy);
+        $this->assertTrue($memory->exists($copy));
     }
 
     public function testImportingAnotherProjectsSessionCarriesOnInItsDirectory(): void

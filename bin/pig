@@ -491,6 +491,20 @@ $newSessionId = null;
 // Upstream's `cwdOverride`: the directory a resumed session carries on in when its own has gone.
 $sessionCwdOverride = null;
 
+// Where sessions are kept: the `storage` setting, before anything looks a session up — the web
+// shell's sidebar included. A database that cannot be opened stops pig with the reason, rather than
+// keeping this run's conversations in files somebody would not find on the server.
+try {
+    $storage = Settings::startupStorage();
+
+    if ($storage !== null) {
+        SessionManager::useSessionStore(Pig\CodingAgent\Session\SqlSessionStore::open($storage['dsn'], $storage['user'], $storage['password'], $storage['prefix']));
+    }
+} catch (Pig\Agent\AgentError|CodingAgentError $error) {
+    fwrite(STDERR, "pig: {$error->getMessage()}\n");
+    exit(1);
+}
+
 if ($choosesASession) {
     // Upstream's `sessionDir`: `--session-dir`, then `PIG_CODING_AGENT_SESSION_DIR`, then the
     // setting — the project's read before trust, as upstream reads it — and with none each project

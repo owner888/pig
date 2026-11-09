@@ -110,6 +110,63 @@ final class Settings
     }
 
     /**
+     * Where sessions are kept — the `storage` setting, read from the person's file alone (a
+     * project's file does not move every session it can see), before any session is looked up.
+     *
+     * `"jsonl"` or nothing is pi's files (null here). A string is a `mysql:` DSN or a `sqlite:`
+     * path; an object is `{dsn, user?, password?, prefix?}`. A `user` or `password` written `$NAME`
+     * or `${NAME}` is read from the environment, as `models.json` reads an `apiKey`. A relative
+     * `sqlite:` path is `~/.pig/agent`'s.
+     *
+     * @return array{dsn: string, user: ?string, password: ?string, prefix: string}|null
+     * @throws \Pig\CodingAgent\CodingAgentError when the setting is there and not one of those
+     */
+    public static function startupStorage(?string $home = null): ?array
+    {
+        $home ??= Config::home();
+        $value = self::read($home . '/' . self::FILE)[0]['storage'] ?? null;
+
+        if ($value === null || $value === 'jsonl' || $value === '') {
+            return null;
+        }
+
+        if (is_string($value)) {
+            $value = ['dsn' => $value];
+        }
+
+        if (!is_array($value) || !is_string($value['dsn'] ?? null) || $value['dsn'] === '') {
+            throw new \Pig\CodingAgent\CodingAgentError('The storage setting is "jsonl", a DSN, or {"dsn": …, "user": …, "password": …}');
+        }
+
+        $secret = static function (mixed $raw): ?string {
+            if (!is_string($raw) || $raw === '') {
+                return null;
+            }
+
+            if (preg_match('/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/', $raw, $match) === 1) {
+                $env = getenv($match[1]);
+
+                return is_string($env) && $env !== '' ? $env : null;
+            }
+
+            return $raw;
+        };
+
+        $dsn = $value['dsn'];
+
+        if (str_starts_with($dsn, 'sqlite:') && !in_array(substr($dsn, 7), ['', ':memory:'], true) && !str_starts_with(substr($dsn, 7), '/')) {
+            $dsn = 'sqlite:' . $home . '/' . substr($dsn, 7);
+        }
+
+        return [
+            'dsn' => $dsn,
+            'user' => $secret($value['user'] ?? null),
+            'password' => $secret($value['password'] ?? null),
+            'prefix' => is_string($value['prefix'] ?? null) ? $value['prefix'] : 'pig_',
+        ];
+    }
+
+    /**
      * Settings that are never written anywhere, for tests.
      *
      * @param array<string, mixed> $values

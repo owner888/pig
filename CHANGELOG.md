@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.9] - 2026-11-09
+
+### Added
+
+- Sessions can be kept in MySQL or SQLite instead of files, for a server: set `storage` in `~/.pig/agent/settings.json` to a `mysql:host=…;dbname=…` DSN or a `sqlite:pig.db` path, or to `{"dsn": …, "user": …, "password": "$MYSQL_PASSWORD"}`. What is kept is still pi's session file, line for line, so a session exports to the same `.jsonl`. It needs PHP's `pdo_mysql` or `pdo_sqlite`; a database that cannot be opened stops pig with the reason rather than falling back to files. Without the setting nothing changes. `/import x.jsonl` brings a session file into the database; the files you already have stay where they are, and setting `storage` back to `jsonl` shows them again.
+
 ## [1.9.8] - 2026-11-09
 
 ### Changed
