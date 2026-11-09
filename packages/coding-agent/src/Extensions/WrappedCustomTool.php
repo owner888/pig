@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 use Closure;
 use Pig\Agent\AgentTool;
@@ -11,7 +11,6 @@ use Pig\Agent\ReplayableTool;
 use Pig\Agent\ToolReplay;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\Extensions\ExtensionContext;
 
 /**
  * A custom tool, as the agent sees it.
@@ -29,26 +28,26 @@ final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
 {
     /** @param Closure(): ExtensionContext $context */
     public function __construct(
-        private CustomTool $tool,
+        private ToolDefinition $tool,
         private Closure $context,
     ) {
     }
 
     /**
-     * @param list<LoadedCustomTool>  $loaded
+     * @param list<RegisteredTool>  $loaded
      * @param Closure(): ExtensionContext  $context
      * @return list<AgentTool>
      */
     public static function wrap(array $loaded, Closure $context): array
     {
         return array_map(
-            static fn (LoadedCustomTool $one): AgentTool => new self($one->tool, $context),
+            static fn (RegisteredTool $one): AgentTool => new self($one->tool, $context),
             $loaded,
         );
     }
 
     /** The declaration underneath, for a caller that needs the real thing. */
-    public function inner(): CustomTool
+    public function inner(): ToolDefinition
     {
         return $this->tool;
     }
@@ -69,7 +68,7 @@ final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
         );
     }
 
-    /** What the declaration says — `CustomTool::$replay`. */
+    /** What the declaration says — `ToolDefinition::$replay`. */
     public function replay(): ToolReplay
     {
         return $this->tool->replay;

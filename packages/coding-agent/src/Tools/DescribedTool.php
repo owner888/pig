@@ -14,7 +14,7 @@ use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 
 /**
- * A tool with its description replaced — what a `CustomTool::$prepareLoadout` answer does to
+ * A tool with its description replaced — what a `ToolDefinition::$prepareLoadout` answer does to
  * the other tools, upstream's `ToolLoadoutChanges.descriptions`.
  *
  * Only the definition's description changes; the name, the schema, the sampling and the

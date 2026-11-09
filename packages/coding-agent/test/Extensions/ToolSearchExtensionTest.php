@@ -11,8 +11,8 @@ use Pig\Ai\TextContent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\DeferredTools;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 
@@ -54,9 +54,9 @@ final class ToolSearchExtensionTest extends TestCase
         return $set;
     }
 
-    private static function tool(string $name, string $description): CustomTool
+    private static function tool(string $name, string $description): ToolDefinition
     {
-        return new CustomTool($name, $name, $description, ['type' => 'object', 'properties' => []], static fn () => new AgentToolResult([new TextContent('ran')]));
+        return new ToolDefinition($name, $name, $description, ['type' => 'object', 'properties' => []], static fn () => new AgentToolResult([new TextContent('ran')]));
     }
 
     public function testToolSearchIsThereWhileSomethingIsListedAndLoadsTheMatches(): void
@@ -67,7 +67,7 @@ final class ToolSearchExtensionTest extends TestCase
         /** @var list<string> */
         $loaded = [];
         $list = static function (string $name, string $description, string $source, ?string $about) use (&$loaded): void {
-            DeferredTools::register($name, $description, ['type' => 'object', 'properties' => ['query' => ['type' => 'string']]], ['name' => $source, 'description' => $about], static function () use (&$loaded, $name, $description): CustomTool {
+            DeferredTools::register($name, $description, ['type' => 'object', 'properties' => ['query' => ['type' => 'string']]], ['name' => $source, 'description' => $about], static function () use (&$loaded, $name, $description): ToolDefinition {
                 $loaded[] = $name;
 
                 return self::tool($name, "{$description}\nSecond line.");
@@ -105,7 +105,7 @@ final class ToolSearchExtensionTest extends TestCase
     public function testToolSearchRefusesAnEmptyQueryAndABadLimit(): void
     {
         $set = $this->load();
-        DeferredTools::register('x_tool', 'A tool.', null, ['name' => 'x', 'description' => null], static fn (): CustomTool => self::tool('x_tool', 'A tool.'));
+        DeferredTools::register('x_tool', 'A tool.', null, ['name' => 'x', 'description' => null], static fn (): ToolDefinition => self::tool('x_tool', 'A tool.'));
         $search = $set->find('tool_search');
         $ctx = new ExtensionContext('.');
 

@@ -17,8 +17,8 @@ use Pig\Ai\Tool;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Transcript;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
@@ -556,7 +556,7 @@ final class CodingAgent
 
         foreach ($loadedExtensions as $ext) {
             foreach ($ext->api->tools() as $tool) {
-                $loadedTools[] = new LoadedCustomTool($ext->path, $ext->resolved, $tool);
+                $loadedTools[] = new RegisteredTool($ext->path, $ext->resolved, $tool);
             }
         }
 

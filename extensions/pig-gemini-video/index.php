@@ -9,7 +9,7 @@ use InvalidArgumentException;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Throwable;
@@ -28,7 +28,7 @@ return static function (ExtensionApi $pig): void {
 
     $video = new GeminiVideo(static fn (string $name): mixed => $pig->getSettings()?->get("geminiVideo.{$name}"));
 
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'analyze_video',
         label: 'Analyze Video',
         description: 'Watch a local video file with Google Gemini, which understands video (motion, audio, on-screen text, UI flows), '

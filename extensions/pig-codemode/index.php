@@ -32,8 +32,8 @@ use Pig\Codemode\Registry;
 use Pig\Codemode\Sandbox;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Theme\CodeHighlighter;
@@ -1125,7 +1125,7 @@ return static function (ExtensionApi $pig): void {
     // redraws is the running one.
     $scriptHighlighter = new CodeHighlighter();
 
-    $renderCall = static function (array $args, Theme $theme, ?RenderOptions $options = null) use ($codePreviewLines, $expandHint, $scriptHighlighter): Text {
+    $renderCall = static function (array $args, Theme $theme, ?ToolRenderResultOptions $options = null) use ($codePreviewLines, $expandHint, $scriptHighlighter): Text {
         $code = $args['code'] ?? '';
         $title = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
 
@@ -1148,7 +1148,7 @@ return static function (ExtensionApi $pig): void {
         return new Text($text, 0, 0);
     };
 
-    $renderResult = static function (AgentToolResult $result, RenderOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines, $expandHint, $expandKey, $formatCost): Text {
+    $renderResult = static function (AgentToolResult $result, ToolRenderResultOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines, $expandHint, $expandKey, $formatCost): Text {
         // Each part with a blank line above it, as upstream's `Spacer(1)` before each.
         $sections = [];
         $calls = is_array($result->details['calls'] ?? null) ? $result->details['calls'] : [];
@@ -1268,7 +1268,7 @@ return static function (ExtensionApi $pig): void {
         return ['descriptions' => $descriptions, 'hiddenDeclarations' => $hidden];
     };
 
-    $tool = new CustomTool(
+    $tool = new ToolDefinition(
         name: CodemodeDescription::TOOL_NAME,
         label: 'codemode',
         // Replaced through `prepareLoadout` with the declarations of the callable tools.

@@ -874,10 +874,10 @@ final class CodingAgentSessionTest extends TestCase
         mkdir($this->home . '/extensions', 0o755, true);
         file_put_contents($this->home . '/extensions/mine.php', <<<'PHP'
             <?php
-            use Pig\CodingAgent\CustomTools\CustomTool;
+            use Pig\CodingAgent\Extensions\ToolDefinition;
             use Pig\Agent\AgentToolResult;
             use Pig\Ai\TextContent;
-            return fn ($pig) => $pig->registerTool(new CustomTool(
+            return fn ($pig) => $pig->registerTool(new ToolDefinition(
                 name: 'mine', label: 'x', description: 'x',
                 parameters: ['type' => 'object', 'properties' => []],
                 execute: fn () => new AgentToolResult([new TextContent('ok')]),
@@ -903,10 +903,10 @@ final class CodingAgentSessionTest extends TestCase
         mkdir($this->home . '/extensions', 0o755, true);
         file_put_contents($this->home . '/extensions/own-bash.php', <<<'PHP'
             <?php
-            use Pig\CodingAgent\CustomTools\CustomTool;
+            use Pig\CodingAgent\Extensions\ToolDefinition;
             use Pig\Agent\AgentToolResult;
             use Pig\Ai\TextContent;
-            return fn ($pig) => $pig->registerTool(new CustomTool(
+            return fn ($pig) => $pig->registerTool(new ToolDefinition(
                 name: 'bash', label: 'own bash', description: 'mine',
                 parameters: ['type' => 'object', 'properties' => []],
                 execute: fn () => new AgentToolResult([new TextContent('mine ran')]),
@@ -1115,12 +1115,12 @@ final class CodingAgentSessionTest extends TestCase
         file_put_contents($extDir . '/index.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 return function (ExtensionApi $pig): void {
     $pig->registerCommand('bundled_cmd', fn () => null, 'Bundled Command');
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'bundled_tool',
         label: 'Bundled Tool',
         description: 'Tool from extension',
@@ -1153,12 +1153,12 @@ PHP);
         file_put_contents($extDir . '/index.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 return function (ExtensionApi $pig): void {
     foreach (['zoo_feed', 'zoo_clean', 'mcp__gh__issues'] as $name) {
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: $name, label: $name, description: $name,
             parameters: ['type' => 'object', 'properties' => []],
             execute: fn () => new AgentToolResult([new TextContent('ok')]),

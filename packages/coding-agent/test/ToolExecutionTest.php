@@ -13,8 +13,8 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\Interactive\ToolExecutionComponent;
 use Pig\CodingAgent\Tools\EditDiff;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Text;
@@ -803,7 +803,7 @@ final class ToolExecutionTest extends TestCase
     public function testARenderResultReplacesTheOutput(): void
     {
         $tool = $this->custom(
-            renderResult: static fn (AgentToolResult $result, RenderOptions $options): Component => new Text(
+            renderResult: static fn (AgentToolResult $result, ToolRenderResultOptions $options): Component => new Text(
                 'drawn by the tool',
                 0,
                 0,
@@ -849,7 +849,7 @@ final class ToolExecutionTest extends TestCase
     {
         $seen = [];
         $tool = $this->custom(
-            renderResult: static function (AgentToolResult $result, RenderOptions $options) use (&$seen): Component {
+            renderResult: static function (AgentToolResult $result, ToolRenderResultOptions $options) use (&$seen): Component {
                 $seen[] = [$options->expanded, $options->partial];
 
                 return new Text('drawn', 0, 0);
@@ -869,7 +869,7 @@ final class ToolExecutionTest extends TestCase
         // Upstream #10557: `context.outputPad`, for a renderer that lays out its own lines.
         $pads = [];
         $tool = $this->custom(
-            renderResult: static function (AgentToolResult $result, RenderOptions $options) use (&$pads): Component {
+            renderResult: static function (AgentToolResult $result, ToolRenderResultOptions $options) use (&$pads): Component {
                 $pads[] = $options->outputPad;
 
                 return new Text('drawn', 0, 0);
@@ -972,7 +972,7 @@ final class ToolExecutionTest extends TestCase
         ?Closure $renderResult = null,
         ?Closure $onError = null,
     ): ToolExecutionComponent {
-        $declaration = new CustomTool(
+        $declaration = new ToolDefinition(
             name: 'wc',
             label: 'Count lines',
             description: 'Counts the lines in a file.',

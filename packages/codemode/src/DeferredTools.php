@@ -37,7 +37,7 @@ final class DeferredTools
      * `$inputSchema` are what the search reads — the tool as its source describes it.
      *
      * @param array{name: string, aliases?: list<string>, description: ?string} $namespace where it comes from — an MCP server
-     * @param Closure(): \Pig\CodingAgent\CustomTools\CustomTool $load registers the tool and answers it
+     * @param Closure(): \Pig\CodingAgent\Extensions\ToolDefinition $load registers the tool and answers it
      * @param bool $loaded already registered — a tool a resumed session declared
      */
     public static function register(string $name, string $description, mixed $inputSchema, array $namespace, Closure $load, bool $loaded = false): void
@@ -57,7 +57,7 @@ final class DeferredTools
      * Load a listed tool that is not loaded yet — upstream's `setActiveTools([...active, name])`.
      * Answers the registered tool, or null when there is nothing to load under that name.
      */
-    public static function load(string $name): ?\Pig\CodingAgent\CustomTools\CustomTool
+    public static function load(string $name): ?\Pig\CodingAgent\Extensions\ToolDefinition
     {
         $entry = self::$tools[$name] ?? null;
 

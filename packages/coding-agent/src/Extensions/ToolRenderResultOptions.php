@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 /**
  * How a result is being shown, for a tool drawing it itself.
@@ -21,7 +21,7 @@ namespace Pig\CodingAgent\CustomTools;
  * `$outputPad` is upstream's `context.outputPad` (#10557): "Horizontal padding configured by the
  * outputPad setting" — the blank column either side, for a renderer that lays out its own lines.
  */
-final readonly class RenderOptions
+final readonly class ToolRenderResultOptions
 {
     public function __construct(
         public bool $expanded = false,

@@ -6,7 +6,7 @@ namespace Pig\CodingAgent;
 
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Model;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;

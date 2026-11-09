@@ -851,10 +851,9 @@ $settleTrust = static function (bool $trusted) use (&$projectTrusted, &$settings
 $trustOverride = isset($options['approve']) ? true : (isset($options['no-approve']) ? false : null);
 
 $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrust, &$settings, $trustOverride): bool {
-    $runner = new \Pig\CodingAgent\Extensions\ExtensionRunner(
-        array_map(static fn ($ext) => new \Pig\CodingAgent\Extensions\LoadedHook($ext->path, $ext->resolved, $ext->api), $loaded),
-        $cwd,
-    );
+    // `$loaded` is the loader's `list<LoadedExtension>`, which is what the runner takes since hooks
+    // became extensions; the `LoadedHook` it used to be wrapped in is gone.
+    $runner = new \Pig\CodingAgent\Extensions\ExtensionRunner($loaded, $cwd);
     $runner->initialize(static fn () => null);
     $runner->onError(static function (\Pig\CodingAgent\Extensions\ExtensionError $error): void {
         fwrite(STDERR, Style::yellow("Extension \"{$error->extensionPath}\" {$error->event} error: {$error->error}\n"));

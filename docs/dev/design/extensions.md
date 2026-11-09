@@ -233,21 +233,24 @@ checks `$event->messageType === 'user'`.
 `bin/pig` loads and constructs but wires none of it, because it has no screen to draw a
 dialog on and a second mode will have a different one.
 
-`CustomTools\` is what pig calls a tool an extension registers — upstream's `ToolDefinition`
-and its `registerTool()`. There is no tool file any more: tool files were merged into
-extensions, as hooks were and as upstream merged both. An extension `registerTool()`s one or
-more of these from its factory:
+`Extensions\ToolDefinition` is a tool an extension registers — upstream's `ToolDefinition`
+and its `registerTool()`, under upstream's name since the `CustomTools\` namespace folded into
+`Extensions\` (`CustomTool` → `ToolDefinition`, `LoadedCustomTool` → `RegisteredTool`,
+`RenderOptions` → `ToolRenderResultOptions`; `CustomToolSet`, `WrappedCustomTool`, `ToolProblem`
+and `CustomToolSessionEvent` moved with their names, being pig's own). There is no tool file any
+more: tool files were merged into extensions, as hooks were and as upstream merged both. An
+extension `registerTool()`s one or more of these from its factory:
 
 ```php
 <?php // ~/.pig/agent/extensions/wc.php
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 
 return static function (ExtensionApi $pig): void {
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'wc',
         label: 'Count lines',
         description: 'Count the lines in a file.',
@@ -540,13 +543,13 @@ calls it from there. The registry is static for `Models::register()`'s reason �
 either load order have to see one list — and registering into it is what activates codemode
 (upstream's `ensureDiscoveryActive()`: it only ever activates, never deactivates).
 
-**codemode is registered inactive, as upstream's (`defaultActive: false`).** `CustomTool::$defaultActive`
+**codemode is registered inactive, as upstream's (`defaultActive: false`).** `ToolDefinition::$defaultActive`
 is upstream's `ToolDefinition.defaultActive`; `ToolLoadout::isActivatedByDefault()` keeps such a tool
 off unless the run named it (`useNamed()`): an entry of `--tools` matching it by name or pattern, or
 the resolved `defaultTools` list with its `+name` modifiers. So `--tools read,codemode`, `--tools
 +codemode` and `"defaultTools": ["+codemode"]` turn it on; there is no `codemode.enabled`.
 
-**`CustomTool::$replay` is pi-durable's `replay`, not upstream coding-agent's** — the default
+**`ToolDefinition::$replay` is pi-durable's `replay`, not upstream coding-agent's** — the default
 `ToolReplay::Unsafe` answers a call a stopped process left half done `interrupted`; `Safe` runs it
 again on `continueRun()` ([session.md](session.md#carrying-on-a-run-that-stopped-inside-a-tool-call)).
 
@@ -554,7 +557,7 @@ again on `continueRun()` ([session.md](session.md#carrying-on-a-run-that-stopped
 and `promptGuidelines` were not ported — the paragraph on custom tools above says "the system
 prompt's Available tools list stays the built-ins" — and codemode is the tool that needs them:
 without "Use codemode to batch or chain several tool calls…" in the Guidelines, a model knows the
-tool exists and issues one tool call at a time anyway. `CustomTool::$promptSnippet`/`$promptGuidelines`,
+tool exists and issues one tool call at a time anyway. `ToolDefinition::$promptSnippet`/`$promptGuidelines`,
 `CustomToolSet::promptContributions()`, two parameters on `SystemPrompt::build()`, and the prompt is
 rebuilt in the same `onChange()` that rebuilds the tools.
 
@@ -584,7 +587,7 @@ script (a second parameter of the eval'd function, `__CodemodeModels` bridging t
 `Models::findOfType()`/`classify()`/`generateImages()`, upstream's context checks word for word
 (pig's `ClassifierContext` has no images, so `images` is refused by name), a four-slot limiter on
 `Deferred`s, one call row per model call with its cost, and the combined usage on the result's
-`usage` (see (1) below). **`codemode.mode: on|only`** is `CustomTool::$prepareLoadout`
+`usage` (see (1) below). **`codemode.mode: on|only`** is `ToolDefinition::$prepareLoadout`
 (upstream's `ToolDefinition.prepareLoadout`), asked by `ToolLoadout::apply()` after the hook wrap
 with the whole active list: it answers descriptions (`DescribedTool` is the tool with its
 description replaced, a decorator for `ExtensionGuardedTool`'s reason) and names to hide from the agent.

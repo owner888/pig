@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 use Closure;
 use InvalidArgumentException;
@@ -20,11 +20,11 @@ use Pig\Agent\ToolReplay;
  *
  * use Pig\Agent\AgentToolResult;
  * use Pig\Ai\TextContent;
- * use Pig\CodingAgent\CustomTools\CustomTool;
+ * use Pig\CodingAgent\Extensions\ToolDefinition;
  * use Pig\CodingAgent\Extensions\ExtensionApi;
  *
  * return static function (ExtensionApi $pig): void {
- *     $pig->registerTool(new CustomTool(
+ *     $pig->registerTool(new ToolDefinition(
  *         name: 'wc',
  *         label: 'Count lines',
  *         description: 'Count the lines in a file.',
@@ -50,7 +50,7 @@ use Pig\Agent\ToolReplay;
  * native rather than bolted on: without them the transcript shows the tool's name and its
  * text output, which is right for most tools and wrong for one whose result is a table.
  */
-final readonly class CustomTool
+final readonly class ToolDefinition
 {
     /** What a provider will accept as a tool name. */
     private const string NAME = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
@@ -61,10 +61,10 @@ final readonly class CustomTool
      * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Extensions\ExtensionContext): void|null $onSession
      *        called on `/new`, `/resume`, `/tree` and on the way out — for rebuilding
      *        state from the conversation, or letting go of something that was held
-     * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Theme, RenderOptions): \Pig\Tui\Component|null $renderCall
+     * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Theme, ToolRenderResultOptions): \Pig\Tui\Component|null $renderCall
      *        the heading line, in place of the tool's name — given the arguments, which are
      *        still arriving and may be half a JSON object
-     * @param Closure(\Pig\Agent\AgentToolResult, RenderOptions, \Pig\CodingAgent\Theme\Theme): \Pig\Tui\Component|null $renderResult
+     * @param Closure(\Pig\Agent\AgentToolResult, ToolRenderResultOptions, \Pig\CodingAgent\Theme\Theme): \Pig\Tui\Component|null $renderResult
      *        what came back, in place of its text
      * @param string|null $promptSnippet one line for the system prompt's "Available tools" list —
      *        upstream's `promptSnippet`. Without one the tool reaches the model as a definition only,

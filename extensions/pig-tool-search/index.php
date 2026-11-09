@@ -7,7 +7,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Codemode\DeferredTools;
 use Pig\Codemode\ToolSearch;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 
 /**
@@ -68,7 +68,7 @@ return static function (ExtensionApi $pig): void {
 
         if ($listed === []) {
             if ($registered) {
-                $pig->removeTools(static fn (CustomTool $tool): bool => $tool->name === ToolSearch::TOOL_NAME);
+                $pig->removeTools(static fn (ToolDefinition $tool): bool => $tool->name === ToolSearch::TOOL_NAME);
                 $registered = false;
             }
 
@@ -90,7 +90,7 @@ return static function (ExtensionApi $pig): void {
         // Registered again on every change, as pig-mcp did when it owned the tool: the
         // description stays current, and the tool goes after the ones just loaded.
         $registered = true;
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: ToolSearch::TOOL_NAME,
             label: ToolSearch::TOOL_NAME,
             description: ToolSearch::description(array_values($sources)),

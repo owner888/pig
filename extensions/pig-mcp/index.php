@@ -182,7 +182,7 @@ return static function (ExtensionApi $pig): void {
             if ($next === 'direct') {
                 $pig->registerTool($tool);
             } elseif ($next === 'deferred') {
-                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pig, $tool): \Pig\CodingAgent\CustomTools\CustomTool {
+                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pig, $tool): \Pig\CodingAgent\Extensions\ToolDefinition {
                     $pig->registerTool($tool);
 
                     return $tool;
@@ -226,7 +226,7 @@ return static function (ExtensionApi $pig): void {
 
             // A deferred tool waits for `tool_search` — unless it was loaded before this server
             // reconnected, in which case the model already knows it and it stays declared.
-            $define = static fn (): \Pig\CodingAgent\CustomTools\CustomTool => McpTools::define($server, $tool, $name, $connection, $resourcesReadable);
+            $define = static fn (): \Pig\CodingAgent\Extensions\ToolDefinition => McpTools::define($server, $tool, $name, $connection, $resourcesReadable);
 
             // A codemode tool is never on the model: scripts reach it through the registry the
             // codemode extension reads, and registering it there is what activates codemode.
@@ -258,7 +258,7 @@ return static function (ExtensionApi $pig): void {
                     (string) ($tool['description'] ?? ''),
                     $tool['inputSchema'] ?? null,
                     ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
-                    static function () use ($pig, $define): \Pig\CodingAgent\CustomTools\CustomTool {
+                    static function () use ($pig, $define): \Pig\CodingAgent\Extensions\ToolDefinition {
                         $defined = $define();
                         $pig->registerTool($defined);
 

@@ -364,7 +364,7 @@ Logger::timeEnd('benchmark');
 
 从 1.0 起，下面这些（且只有这些）遵循语义化版本：小版本只增不改，删除或改变只在大版本里发生。
 
-- **扩展 API**：`ExtensionApi`（扩展里的 `$pig`）与 `ExtensionContext`（处理函数里的 `$ctx`）、`CustomTool`、事件名及 `Extensions/Events` 下的事件类，以及扩展实现的 `Provider` / `StreamApi` / `OauthFlow`。标了 `@internal` 的 public 方法属于宿主，不属于扩展。
+- **扩展 API**：`ExtensionApi`（扩展里的 `$pig`）与 `ExtensionContext`（处理函数里的 `$ctx`）、`ToolDefinition`、事件名及 `Extensions/Events` 下的事件类，以及扩展实现的 `Provider` / `StreamApi` / `OauthFlow`。标了 `@internal` 的 public 方法属于宿主，不属于扩展。
 - **`~/.pig/agent` 里的文件**：`settings.json`、`models.json`、`keybindings.json` 和主题，以已发布的 JSON Schema 为准；`auth.json`、`mcp.json`、`trust.json`。
 - **会话文件**：`.jsonl` 格式第 3 版，与 pi 相同——任一方写的会话另一方都能打开。
 - **RPC 协议**：`--mode rpc` 的命令、响应与事件，以及 `--mode json` 输出的 JSON 行。

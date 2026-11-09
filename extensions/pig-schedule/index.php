@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Web\Schedule\ScheduleTool;
@@ -19,7 +19,7 @@ use Pig\CodingAgent\Web\Schedule\ScheduleTool;
 return static function (ExtensionApi $pig): void {
     $tool = new ScheduleTool();
 
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: ScheduleTool::NAME,
         label: 'Schedule',
         description: ScheduleTool::description(),

@@ -34,7 +34,7 @@ final class SystemPrompt
      * @param list<Skill>            $skills       passed in rather than discovered, so the
      *        banner and the prompt cannot disagree about what was picked up
      * @param array<string, string>  $toolSnippets extension tools that asked for a line in the list
-     * @param list<string>           $toolGuidelines rules those tools add — see `CustomTool::$promptSnippet`
+     * @param list<string>           $toolGuidelines rules those tools add — see `ToolDefinition::$promptSnippet`
      */
     public static function build(
         string $cwd,

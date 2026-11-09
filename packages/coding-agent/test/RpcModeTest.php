@@ -28,10 +28,10 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSessionEvent;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSessionEvent;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
@@ -1899,7 +1899,7 @@ final class RpcModeTest extends TestCase
     public function testACustomToolIsToldTheSessionStartedAndCanReachTheWireUi(): void
     {
         $told = [];
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'noop',
             label: 'Noop',
             description: 'Does nothing.',
@@ -1910,14 +1910,14 @@ final class RpcModeTest extends TestCase
             },
         );
 
-        $this->start(customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]));
+        $this->start(customTools: new CustomToolSet([new RegisteredTool('t/index.php', 't', $tool)]));
 
         $this->assertSame(['start'], $told);
     }
 
     public function testABrokenCustomToolIsReportedOnTheWire(): void
     {
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'noop',
             label: 'Noop',
             description: 'Does nothing.',
@@ -1928,7 +1928,7 @@ final class RpcModeTest extends TestCase
             },
         );
 
-        $this->start(customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]));
+        $this->start(customTools: new CustomToolSet([new RegisteredTool('t/index.php', 't', $tool)]));
         $errors = $this->of('tool_error');
 
         $this->assertSame('t/index.php', $errors[0]['path']);

@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Test\Extensions;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\ExtensionContext;
@@ -77,11 +77,11 @@ PHP);
         file_put_contents($dirExt . '/index.php', <<<'PHP'
 <?php
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 return function (ExtensionApi $pig): void {
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'sample_tool',
         label: 'Sample Tool',
         description: 'Sample description',

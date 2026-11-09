@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Mcp;
 
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
 use Pig\CodingAgent\Extensions\ExtensionContext;

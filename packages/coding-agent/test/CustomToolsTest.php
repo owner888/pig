@@ -11,11 +11,11 @@ use Pig\Ai\Api;
 use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\CustomTools\WrappedCustomTool;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
+use Pig\CodingAgent\Extensions\WrappedCustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
@@ -78,7 +78,7 @@ final class CustomToolsTest extends TestCase
     public function testATooNamelessToolIsRefusedAtTheDeclaration(): void
     {
         try {
-            new CustomTool('', 'x', 'y', ['type' => 'object'], static fn () => null);
+            new ToolDefinition('', 'x', 'y', ['type' => 'object'], static fn () => null);
             $this->fail('expected the name to be refused');
         } catch (InvalidArgumentException $error) {
             $this->assertStringContainsString('cannot be a tool name', $error->getMessage());
@@ -88,7 +88,7 @@ final class CustomToolsTest extends TestCase
     public function testANameWithASpaceIsRefused(): void
     {
         try {
-            new CustomTool('my tool', 'x', 'y', ['type' => 'object'], static fn () => null);
+            new ToolDefinition('my tool', 'x', 'y', ['type' => 'object'], static fn () => null);
             $this->fail('expected the name to be refused');
         } catch (InvalidArgumentException $error) {
             $this->assertStringContainsString('cannot be a tool name', $error->getMessage());
@@ -99,7 +99,7 @@ final class CustomToolsTest extends TestCase
     public function testADescriptionIsRequired(): void
     {
         try {
-            new CustomTool('wc', 'Count', '  ', ['type' => 'object'], static fn () => null);
+            new ToolDefinition('wc', 'Count', '  ', ['type' => 'object'], static fn () => null);
             $this->fail('expected the description to be required');
         } catch (InvalidArgumentException $error) {
             $this->assertStringContainsString('needs a description', $error->getMessage());
@@ -109,7 +109,7 @@ final class CustomToolsTest extends TestCase
     public function testTheParametersHaveToBeASchemaObject(): void
     {
         try {
-            new CustomTool('wc', 'Count', 'Counts', ['path' => 'string'], static fn () => null);
+            new ToolDefinition('wc', 'Count', 'Counts', ['path' => 'string'], static fn () => null);
             $this->fail('expected the schema to be refused');
         } catch (InvalidArgumentException $error) {
             $this->assertStringContainsString('JSON Schema object', $error->getMessage());
@@ -126,12 +126,12 @@ final class CustomToolsTest extends TestCase
 
             use Pig\Agent\AgentToolResult;
             use Pig\Ai\TextContent;
-            use Pig\CodingAgent\CustomTools\CustomTool;
+            use Pig\CodingAgent\Extensions\ToolDefinition;
 
             return function ($pig): void {
                 $run = $pig->exec(['echo', 'ready']);
 
-                $pig->registerTool(new CustomTool(
+                $pig->registerTool(new ToolDefinition(
                     name: 'probe',
                     label: 'Probe',
                     description: 'Reports what the factory saw.',
@@ -174,7 +174,7 @@ final class CustomToolsTest extends TestCase
     public function testAWrappedToolKeepsTheConstrainedSamplingItAskedFor(): void
     {
         $strict = ['type' => 'json_schema', 'strict' => 'prefer'];
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'wc',
             label: 'Count',
             description: 'Counts things.',
@@ -192,7 +192,7 @@ final class CustomToolsTest extends TestCase
     public function testTheToolIsGivenTheSessionContext(): void
     {
         $seen = null;
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'peek',
             label: 'Peek',
             description: 'Looks at the session.',
@@ -215,7 +215,7 @@ final class CustomToolsTest extends TestCase
     {
         $cwd = '/first';
         $seen = [];
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'peek',
             label: 'Peek',
             description: 'Looks at the session.',
@@ -241,7 +241,7 @@ final class CustomToolsTest extends TestCase
     public function testArgumentsAndProgressReachTheTool(): void
     {
         $updates = [];
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'slow',
             label: 'Slow',
             description: 'Takes its time.',
@@ -266,7 +266,7 @@ final class CustomToolsTest extends TestCase
 
     public function testASetWithNoContextStillRuns(): void
     {
-        $set = new CustomToolSet([new LoadedCustomTool('a.php', 'a.php', $this->tool('wc'))]);
+        $set = new CustomToolSet([new RegisteredTool('a.php', 'a.php', $this->tool('wc'))]);
 
         $this->assertSame('wc ran', $set->agentTools()[0]->execute('1', [])->content[0]->text);
     }
@@ -277,10 +277,10 @@ final class CustomToolsTest extends TestCase
     {
         $seen = [];
         $set = new CustomToolSet([
-            new LoadedCustomTool('a.php', 'a.php', $this->tool('a', function ($event) use (&$seen): void {
+            new RegisteredTool('a.php', 'a.php', $this->tool('a', function ($event) use (&$seen): void {
                 $seen[] = ['a', $event->reason, $event->previousSessionFile];
             })),
-            new LoadedCustomTool('b.php', 'b.php', $this->tool('b', function ($event) use (&$seen): void {
+            new RegisteredTool('b.php', 'b.php', $this->tool('b', function ($event) use (&$seen): void {
                 $seen[] = ['b', $event->reason, $event->previousSessionFile];
             })),
         ]);
@@ -294,7 +294,7 @@ final class CustomToolsTest extends TestCase
 
     public function testAToolWithNoCallbackIsSkippedRatherThanFailing(): void
     {
-        $set = new CustomToolSet([new LoadedCustomTool('a.php', 'a.php', $this->tool('wc'))]);
+        $set = new CustomToolSet([new RegisteredTool('a.php', 'a.php', $this->tool('wc'))]);
 
         $this->assertSame([], $set->notify('start'));
     }
@@ -304,10 +304,10 @@ final class CustomToolsTest extends TestCase
     {
         $reached = false;
         $set = new CustomToolSet([
-            new LoadedCustomTool('bad.php', 'bad.php', $this->tool('a', static function (): void {
+            new RegisteredTool('bad.php', 'bad.php', $this->tool('a', static function (): void {
                 throw new RuntimeException('could not save');
             })),
-            new LoadedCustomTool('good.php', 'good.php', $this->tool('b', function () use (&$reached): void {
+            new RegisteredTool('good.php', 'good.php', $this->tool('b', function () use (&$reached): void {
                 $reached = true;
             })),
         ]);
@@ -324,8 +324,8 @@ final class CustomToolsTest extends TestCase
     public function testTheSetKnowsWhatItHasAndWhereItCameFrom(): void
     {
         $set = new CustomToolSet([
-            new LoadedCustomTool('a/index.php', 'a/index.php', $this->tool('a')),
-            new LoadedCustomTool('b/index.php', 'b/index.php', $this->tool('b')),
+            new RegisteredTool('a/index.php', 'a/index.php', $this->tool('a')),
+            new RegisteredTool('b/index.php', 'b/index.php', $this->tool('b')),
         ]);
 
         $this->assertFalse($set->isEmpty());
@@ -338,7 +338,7 @@ final class CustomToolsTest extends TestCase
 
     public function testACustomToolIsOfferedToTheModelBesideTheBuiltInOnes(): void
     {
-        $set = new CustomToolSet([new LoadedCustomTool('a.php', 'a.php', $this->tool('wc'))]);
+        $set = new CustomToolSet([new RegisteredTool('a.php', 'a.php', $this->tool('wc'))]);
         $agent = CodingAgent::create(
             $this->model(),
             sys_get_temp_dir(),
@@ -361,7 +361,7 @@ final class CustomToolsTest extends TestCase
             : null);
 
         $extensionRunner = new ExtensionRunner([new LoadedExtension('guard.php', 'guard.php', $api->name, $api)], '.');
-        $set = new CustomToolSet([new LoadedCustomTool('a.php', 'a.php', $this->tool('wc'))]);
+        $set = new CustomToolSet([new RegisteredTool('a.php', 'a.php', $this->tool('wc'))]);
 
         $agent = CodingAgent::create(
             $this->model(),
@@ -386,9 +386,9 @@ final class CustomToolsTest extends TestCase
 
     // ---- scaffolding -------------------------------------------------------------------
 
-    private function tool(string $name, ?\Closure $onSession = null): CustomTool
+    private function tool(string $name, ?\Closure $onSession = null): ToolDefinition
     {
-        return new CustomTool(
+        return new ToolDefinition(
             name: $name,
             label: 'Count',
             description: 'Counts things.',

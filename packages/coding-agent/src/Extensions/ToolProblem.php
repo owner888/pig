@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 /**
  * A tool file that would not load, or a session callback that failed, and where it was.

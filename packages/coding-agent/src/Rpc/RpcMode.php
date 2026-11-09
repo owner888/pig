@@ -17,7 +17,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\ModelRefresh;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
@@ -1386,7 +1386,7 @@ final class RpcMode
         }
     }
 
-    /** @param list<\Pig\CodingAgent\CustomTools\ToolProblem> $problems */
+    /** @param list<\Pig\CodingAgent\Extensions\ToolProblem> $problems */
     private function report(array $problems): void
     {
         foreach ($problems as $problem) {

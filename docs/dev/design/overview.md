@@ -32,6 +32,6 @@ the agent: OAuth, twenty-five selector components. What is being ported is the p
 that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done), enough of
 `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an interactive mode
 built on `pig/tui` (done — `Interactive\`), `core/extensions/` (done — `Extensions\`),
-`core/custom-tools/` (done — `CustomTools\`), `core/messages.ts` (done — the four app message
+`core/custom-tools/` (done — folded into `Extensions\`, `ToolDefinition` and company), `core/messages.ts` (done — the four app message
 types under `Session\`), `modes/rpc/` (done — `Rpc\`) and `modes/print-mode.ts` (done —
 `PrintMode`). The rest is left out until something needs it.

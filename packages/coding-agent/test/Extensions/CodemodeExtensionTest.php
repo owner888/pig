@@ -306,10 +306,10 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\Cost;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 return function (ExtensionApi $pig): void {
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'spend',
         label: 'Spend',
         description: 'Spends a little on a model.',

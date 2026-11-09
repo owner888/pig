@@ -25,9 +25,9 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\RegisteredTool;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\EventBus;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
@@ -266,7 +266,7 @@ PHP);
         $agent->setModel($model);
 
         $customTools = new CustomToolSet([
-            new LoadedCustomTool('mock.php', 'mock.php', new CustomTool(
+            new RegisteredTool('mock.php', 'mock.php', new ToolDefinition(
                 'mock_tool',
                 'Mock tool',
                 'Mock',
@@ -358,8 +358,8 @@ PHP);
         $runner = new ExtensionRunner();
 
         $customTools = new CustomToolSet([
-            new LoadedCustomTool('a.php', 'a.php', new CustomTool('tool_a', 'Tool A', 'A', ['type' => 'object'], static fn () => new AgentToolResult([]))),
-            new LoadedCustomTool('b.php', 'b.php', new CustomTool('tool_b', 'Tool B', 'B', ['type' => 'object'], static fn () => new AgentToolResult([]))),
+            new RegisteredTool('a.php', 'a.php', new ToolDefinition('tool_a', 'Tool A', 'A', ['type' => 'object'], static fn () => new AgentToolResult([]))),
+            new RegisteredTool('b.php', 'b.php', new ToolDefinition('tool_b', 'Tool B', 'B', ['type' => 'object'], static fn () => new AgentToolResult([]))),
         ]);
 
         $loadout = new ToolLoadout($agent, sys_get_temp_dir(), ['read', 'bash'], $customTools, $runner);
@@ -410,7 +410,7 @@ PHP);
         $agent->setModel(new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
 
         $customTools = new CustomToolSet([
-            new LoadedCustomTool('calc.php', 'calc.php', new CustomTool(
+            new RegisteredTool('calc.php', 'calc.php', new ToolDefinition(
                 'my_calc',
                 'Calculator',
                 'add',

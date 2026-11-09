@@ -28,10 +28,10 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSessionEvent;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSessionEvent;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
@@ -547,7 +547,7 @@ final class PrintModeTest extends TestCase
     public function testACustomToolIsToldTheSessionStartedAndABrokenOneComplains(): void
     {
         $told = [];
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'noop',
             label: 'Noop',
             description: 'Does nothing.',
@@ -563,7 +563,7 @@ final class PrintModeTest extends TestCase
         );
 
         $this->answers = ['ok'];
-        $this->execute(['ask'], customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]));
+        $this->execute(['ask'], customTools: new CustomToolSet([new RegisteredTool('t/index.php', 't', $tool)]));
 
         $this->assertSame(['start', 'shutdown'], $told);
         $this->assertStringContainsString('cannot start', $this->complained());
@@ -572,7 +572,7 @@ final class PrintModeTest extends TestCase
     public function testACustomToolGetsTheRealSessionHereToo(): void
     {
         $seen = null;
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: 'noop',
             label: 'Noop',
             description: 'Does nothing.',
@@ -589,7 +589,7 @@ final class PrintModeTest extends TestCase
         $this->execute(
             ['ask'],
             extensionRunner: $this->extensionRunner([]),
-            customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]),
+            customTools: new CustomToolSet([new RegisteredTool('t/index.php', 't', $tool)]),
             store: true,
         );
 

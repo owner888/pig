@@ -23,8 +23,8 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Config;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\Events\ToolResultEvent;
 use Pig\CodingAgent\Extensions\ExtensionContext;
@@ -156,7 +156,7 @@ return static function (ExtensionApi $pig): void {
         }
     };
 
-    $pig->registerTool(new CustomTool(
+    $pig->registerTool(new ToolDefinition(
         name: 'subagent',
         label: 'Subagent',
         description: implode(' ', [
@@ -374,7 +374,7 @@ return static function (ExtensionApi $pig): void {
                 $makeDetails('single', true)([]),
             );
         },
-        renderCall: static function (array $args, Theme $theme, ?RenderOptions $options = null): Component {
+        renderCall: static function (array $args, Theme $theme, ?ToolRenderResultOptions $options = null): Component {
             $scope = is_string($args['agentScope'] ?? null) ? $args['agentScope'] : 'user';
             $title = $theme->fg('toolTitle', $theme->bold('subagent '));
             $preview = static fn (string $text, int $max): string => mb_strlen($text) > $max ? mb_substr($text, 0, $max) . '...' : $text;
@@ -414,7 +414,7 @@ return static function (ExtensionApi $pig): void {
 
             return new Text($title . $theme->fg('accent', $agentName) . $theme->fg('muted', " [{$scope}]") . "\n  " . $theme->fg('dim', $task), 0, 0);
         },
-        renderResult: static function (AgentToolResult $result, RenderOptions $options, Theme $theme) use (
+        renderResult: static function (AgentToolResult $result, ToolRenderResultOptions $options, Theme $theme) use (
             $renderDisplayItems,
             $resultIcon,
             $aggregateUsage,

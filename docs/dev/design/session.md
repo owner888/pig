@@ -740,7 +740,7 @@ the intent record pi-durable writes, and nothing new is stored.
 - **`Pig\Agent\ToolReplay`** (`Safe`/`Unsafe`) and **`ReplayableTool`**, optional as the field is;
   `read`, `grep`, `find` and `ls` are `Safe`. Each wrapper (`ExtensionGuardedTool`, `DescribedTool`,
   `ResultImagesTool`, `WrappedCustomTool`) forwards `ToolReplay::of()` of what it wraps, or the
-  declaration is lost one layer down. An extension declares it with `CustomTool(replay: ToolReplay::Safe)`.
+  declaration is lost one layer down. An extension declares it with `ToolDefinition(replay: ToolReplay::Safe)`.
 - **`AgentLoop::resume()` / `Agent::resume()`**, pig's own; `continue()` stays upstream's and still
   refuses an assistant message. `unansweredToolCalls()` is the last assistant message's calls with
   no result after it — a crash between two tools leaves some answered and some not, and before this

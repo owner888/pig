@@ -10,7 +10,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\Mcp\Protocol\Content;
 use RuntimeException;
@@ -57,13 +57,13 @@ final class McpTools
      *
      * @param array<string, mixed> $tool as the server listed it
      */
-    public static function define(string $server, array $tool, string $name, ServerConnection $connection, ?Closure $readableResources = null): CustomTool
+    public static function define(string $server, array $tool, string $name, ServerConnection $connection, ?Closure $readableResources = null): ToolDefinition
     {
         $toolName = (string) $tool['name'];
         $title = $tool['title'] ?? ($tool['annotations']['title'] ?? null);
         $description = trim((string) ($tool['description'] ?? ''));
 
-        return new CustomTool(
+        return new ToolDefinition(
             name: $name,
             label: "{$server}/{$toolName}",
             description: $description !== '' ? $description : (is_string($title) ? $title : "MCP tool {$toolName} from server {$server}"),

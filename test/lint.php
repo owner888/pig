@@ -627,8 +627,8 @@ function declaredClassNames(string $source): array
  * now had five guises: that catch, an `instanceof Component` that could never match, a
  * `new Text(...)` in a test that threw where the code under test catches, a `#[DataProvider]`
  * attribute that resolved to the test's own namespace so no provider was ever found, and the one
- * that cost a turn with nothing on screen — a parameter typed `?CustomTool` in a file importing
- * four other things from `CustomTools\` and not that one, so the only call site was a `TypeError`
+ * that cost a turn with nothing on screen — a parameter typed `?ToolDefinition` in a file importing
+ * four other things from `Extensions\` and not that one, so the only call site was a `TypeError`
  * in a listener. Every one of them was found by reaching the line; this reads them off the tokens.
  *
  * Where a name counts: after `new`, `instanceof`, `extends`, `implements`, in `catch (…)`, as a

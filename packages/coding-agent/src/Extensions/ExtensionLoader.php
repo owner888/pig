@@ -340,7 +340,7 @@ final class ExtensionLoader
         }
 
         if ($found !== []) {
-            $found[] = '(`Pig\\CodingAgent\\Extensions\\HookApi` and `Pig\\CodingAgent\\CustomTools\\CustomToolApi` are `Pig\\CodingAgent\\Extensions\\ExtensionApi` now, which has everything they had)';
+            $found[] = '(`Pig\\CodingAgent\\Hooks\\HookApi` and `Pig\\CodingAgent\\CustomTools\\CustomToolApi` are `Pig\\CodingAgent\\Extensions\\ExtensionApi` now, which has everything they had)';
         }
 
         return $found;
@@ -489,7 +489,24 @@ final class ExtensionLoader
     {
         $type = $error::class;
         $where = basename($error->getFile()) . ':' . $error->getLine();
+        $message = $error->getMessage();
 
-        return "{$type}: {$error->getMessage()} ({$where})";
+        // An extension written against a name that moved: PHP says "not found" or "must be of
+        // type" with the old name in it, which does not say where the class went. Say it.
+        foreach (self::MOVED_NAMESPACES as $old => $hint) {
+            if (str_contains($message, $old)) {
+                $message .= " — {$hint}";
+
+                break;
+            }
+        }
+
+        return "{$type}: {$message} ({$where})";
     }
+
+    /** Namespaces an older extension may still name, and what to write instead. */
+    private const array MOVED_NAMESPACES = [
+        'Pig\\CodingAgent\\CustomTools\\' => '`Pig\\CodingAgent\\CustomTools\\` is `Pig\\CodingAgent\\Extensions\\` now: `CustomTool` is `ToolDefinition`, `LoadedCustomTool` is `RegisteredTool`, `RenderOptions` is `ToolRenderResultOptions`; the rest kept their names',
+        'Pig\\CodingAgent\\Hooks\\' => '`Pig\\CodingAgent\\Hooks\\` is `Pig\\CodingAgent\\Extensions\\` now: `HookApi` is `ExtensionApi`, `HookContext` is `ExtensionContext`, the events kept their names',
+    ];
 }

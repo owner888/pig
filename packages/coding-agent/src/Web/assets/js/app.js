@@ -538,6 +538,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     let currentModelId = "";
     let availableModels = [];
     let pendingImages = []; // list of {mimeType: string, data: string, url: string}
+    // Files other than pictures, uploaded and waiting to go with the next message as their paths:
+    // {name, path}. Shown as tiles beside the pictures, not as paths in the prompt — the developer
+    // asked for the two to look alike. A `!` bash line still gets the quoted path in place.
+    let pendingFiles = [];
     let userIsInteracting = false;
     let preferredThinkingLevel = "medium";
 
@@ -939,6 +943,72 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const UPLOAD_CHUNK = 4 * 1024 * 1024;
     let uploadingFiles = []; // list of { id, name, progress }
 
+    /** The glyph and colour class a tile shows for a file: common kinds by extension, the extension itself for the rest. */
+    const FILE_KINDS = [
+      ["code", "</>", ["php", "js", "mjs", "ts", "tsx", "jsx", "py", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "m", "mm", "sh", "rb", "dart", "lua", "css", "html", "vue", "sql"]],
+      ["pdf", "PDF", ["pdf"]],
+      ["archive", "ZIP", ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "apk", "ipa", "jar"]],
+      ["audio", "\u266a", ["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"]],
+      ["video", "\u25b6", ["mp4", "mov", "mkv", "webm", "avi", "m4v"]],
+      ["sheet", "\u229e", ["xls", "xlsx", "csv", "tsv", "numbers"]],
+      ["doc", "\u00b6", ["doc", "docx", "rtf", "pages", "odt"]],
+      ["text", "TXT", ["txt", "md", "log", "json", "yaml", "yml", "xml", "toml", "ini", "conf", "env"]],
+    ];
+
+    function humanSize(bytes) {
+      if (!(bytes >= 1024)) return `${bytes || 0} B`;
+      const units = ["KB", "MB", "GB"];
+      let n = bytes / 1024;
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+    }
+
+    /** "70 lines" for a text file (read here, before it is sent), its size for anything else. */
+    async function fileMetaOf(file, kind) {
+      if ((kind === "text" || kind === "code") && file.size <= 4 * 1024 * 1024) {
+        try {
+          const content = await file.text();
+          const lines = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+          return t("file_lines", { n: lines });
+        } catch {}
+      }
+      return humanSize(file.size);
+    }
+
+    const DEL_ICON = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+
+    /** A tile clicked: the file's name, a line about it, and its text when it is text — the way the Claude app shows one. */
+    async function openFileViewer(pending) {
+      const file = pending.file;
+      const textual = file && (pending.kind === "text" || pending.kind === "code") && file.size <= 4 * 1024 * 1024;
+      let content = null;
+      if (textual) {
+        try { content = await file.text(); } catch { content = null; }
+      }
+      const parts = [humanSize(file?.size || 0)];
+      if (content !== null) parts.push(t("file_lines", { n: content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0) }));
+      openModal({
+        title: pending.name,
+        width: "min(760px, 94vw)",
+        hideFooter: true,
+        bodyHtml: `
+          <div class="file-viewer-meta">${escapeHtml(parts.join(" · "))}</div>
+          ${content !== null
+            ? `<pre class="file-viewer-pre">${escapeHtml(content)}</pre>`
+            : `<div class="file-viewer-none">${escapeHtml(t("file_no_preview"))}</div>`}
+        `,
+      });
+    }
+
+    function fileKindOf(name) {
+      const ext = (name || "").split(".").pop()?.toLowerCase() || "";
+      for (const [kind, glyph, exts] of FILE_KINDS) {
+        if (exts.includes(ext)) return { kind, glyph };
+      }
+      return { kind: "other", glyph: (ext || "file").slice(0, 4).toUpperCase() };
+    }
+
     function imageMimeOf(file) {
       if (SUPPORTED_IMAGE_MIMES.has(file.type)) return file.type;
       const ext = (file.name || "").split(".").pop()?.toLowerCase() || "";
@@ -1004,6 +1074,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               mimeType: mime,
               data: base64,
               url: result,
+              name: f.name || "image",
             });
             renderPendingImages();
           };
@@ -1039,7 +1110,21 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             renderPendingImages();
           }
         }
-        insertPathsAtCursor(paths);
+        // A `!` bash line wants the path where the cursor is, quoted; a prompt gets a tile, and
+        // the path goes with the message when it is sent.
+        if (promptInput.value.trimStart().startsWith("!")) {
+          insertPathsAtCursor(paths);
+        } else {
+          for (let i = 0; i < paths.length; i++) {
+            const entry = entries[i];
+            const name = entry?.name || paths[i].split("/").pop();
+            const { kind, glyph } = fileKindOf(name);
+            const pending = { name, path: paths[i], kind, glyph, file: entry?.file || null, meta: humanSize(entry?.file?.size || 0) };
+            pendingFiles.push(pending);
+            if (entry?.file) fileMetaOf(entry.file, kind).then((meta) => { pending.meta = meta; renderPendingImages(); });
+          }
+          renderPendingImages();
+        }
       } catch (err) {
         appendErrorMessage(err.message || t("send_failed"));
       } finally {
@@ -1052,7 +1137,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     function renderPendingImages() {
-      if (pendingImages.length === 0 && uploadingFiles.length === 0) {
+      if (pendingImages.length === 0 && pendingFiles.length === 0 && uploadingFiles.length === 0) {
         pendingImagesBar.style.display = "none";
         pendingImagesBar.innerHTML = "";
         return;
@@ -1063,11 +1148,30 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const item = document.createElement("div");
         item.className = "pending-img-item";
         item.innerHTML = `
-          <img src="${img.url}" class="pending-img-thumb" alt="${escapeHtml(t("attach_title"))}">
-          <div class="pending-img-del" title="${escapeHtml(t("remove_image"))}">×</div>
+          <img src="${img.url}" class="pending-img-thumb" alt="${escapeHtml(img.name || "")}" title="${escapeHtml(img.name || "")}">
+          <button type="button" class="pending-img-del" data-tip="${escapeHtml(t("remove_named", { name: img.name || t("remove_image") }))}" aria-label="${escapeHtml(t("remove_image"))}">${DEL_ICON}</button>
         `;
+        item.querySelector(".pending-img-thumb").addEventListener("click", () => openImageLightbox(img.url));
         item.querySelector(".pending-img-del").addEventListener("click", () => {
           pendingImages.splice(idx, 1);
+          renderPendingImages();
+        });
+        pendingImagesBar.appendChild(item);
+      });
+      pendingFiles.forEach((file, idx) => {
+        const item = document.createElement("div");
+        item.className = "pending-img-item";
+        item.innerHTML = `
+          <div class="pending-file-tile" data-kind="${file.kind}">
+            <span class="pending-file-name">${escapeHtml(file.name)}</span>
+            <span class="pending-file-meta">${escapeHtml(file.meta || "")}</span>
+            <span class="pending-file-glyph">${escapeHtml(file.glyph)}</span>
+          </div>
+          <button type="button" class="pending-img-del" data-tip="${escapeHtml(t("remove_named", { name: file.name }))}" aria-label="${escapeHtml(t("remove_file"))}">${DEL_ICON}</button>
+        `;
+        item.querySelector(".pending-file-tile").addEventListener("click", () => openFileViewer(file));
+        item.querySelector(".pending-img-del").addEventListener("click", () => {
+          pendingFiles.splice(idx, 1);
           renderPendingImages();
         });
         pendingImagesBar.appendChild(item);
@@ -1617,6 +1721,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     /** A new conversation is a new tab — and a new child. */
     async function startNewSession(cwd = null, incognito = false) {
       pendingImages = [];
+      pendingFiles = [];
       renderPendingImages();
 
       // A cwd passed in (the tab bar's '+') wins; otherwise the active tab's, then the server's.
@@ -1637,14 +1742,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     async function submitMessage(followUp = false) {
       // A keystroke or a click: the moment a page may unlock sound and ask about notifications.
       primeAttention();
-      const text = promptInput.value.trim();
+      const typed = promptInput.value.trim();
       const imgsToSend = [...pendingImages];
+      const filesToSend = [...pendingFiles];
+      // The uploaded files go as their paths, one a line ahead of the question — what the prompt
+      // held before they became tiles, so the model and the transcript see the same thing.
+      const text = [...filesToSend.map((f) => f.path), typed].filter((line) => line !== "").join("\n");
 
       if (!text && imgsToSend.length === 0) return;
 
       promptInput.value = "";
       promptInput.style.height = "38px";
       pendingImages = [];
+      pendingFiles = [];
       renderPendingImages();
 
       if (!active) return;
@@ -1782,8 +1892,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const until = Date.now() + 10000;
         while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
         if (!tab.bound) {
-          promptInput.value = text;
+          promptInput.value = typed;
           pendingImages = imgsToSend;
+          pendingFiles = filesToSend;
           renderPendingImages();
           appendErrorMessage(t("agent_unreachable"));
           return;
@@ -1832,8 +1943,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Refused by the child: nothing was taken, so the next send is a new request.
         if (!err.refused && requestId !== null) tab.unsent = { text, requestId };
         setRunningState(false);
-        promptInput.value = text;
+        promptInput.value = typed;
         pendingImages = imgsToSend;
+        pendingFiles = filesToSend;
         renderPendingImages();
         appendErrorMessage(err.message || t("send_failed"));
       }

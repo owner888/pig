@@ -55,7 +55,7 @@ use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Logger;
@@ -691,7 +691,7 @@ return function (ExtensionApi $pig): void {
     $noImageTool = $noExtraTools || (getenv('ANTIGRAVITY_NO_IMAGE_TOOL') ?: getenv('NOAGY_NO_IMAGE_TOOL')) === '1';
 
     if (!$noSearchTool) {
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'google_search',
             label: 'Google Search',
             description: 'Search the live web using Google Search grounding over Google Cloud Code Assist. Returns an evidence brief, sources, and verified citations.',
@@ -729,7 +729,7 @@ return function (ExtensionApi $pig): void {
     }
 
     if (!$noImageTool) {
-        $pig->registerTool(new CustomTool(
+        $pig->registerTool(new ToolDefinition(
             name: 'generate_image',
             label: 'Generate image',
             description: 'Generate an image via Antigravity using the signed-in Google account. Saves under .pig/generated-images/ unless path is set.',

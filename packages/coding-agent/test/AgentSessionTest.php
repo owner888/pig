@@ -54,7 +54,7 @@ use Pig\CodingAgent\Extensions\Events\SessionCompactFailedEvent;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Session\ToolProgress;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\ModelChoice;

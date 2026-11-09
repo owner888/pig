@@ -30,8 +30,8 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\Events\BeforeAgentStartEvent;
@@ -358,7 +358,7 @@ final class SystemMessageTranscriptTest extends TestCase
         // "Tools of the restored or reloaded loadout that are not registered yet, such as tools of
         // MCP servers that are still connecting. They are activated when they are registered, and
         // dropped when `setActiveToolsByName()` deactivates a tool or the next agent run starts."
-        $late = static fn (): CustomTool => new CustomTool('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
+        $late = static fn (): ToolDefinition => new ToolDefinition('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
         [$first, $firstExtension] = self::extensionTools();
         $firstExtension->registerTool($late());
         [$session, $store] = $this->session(['one'], customTools: $first);
@@ -384,7 +384,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
     public function testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething(): void
     {
-        $late = new CustomTool('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
+        $late = new ToolDefinition('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
         [$first, $firstExtension] = self::extensionTools();
         $firstExtension->registerTool($late);
         [$session, $store] = $this->session(['one'], customTools: $first);

@@ -495,7 +495,7 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertTrue($r['detached'], 'closing a tab sends detach_session');
     }
 
-    public function testAnyFileCanBePickedOrDroppedAndNonImagesInsertTheirStagedPath(): void
+    public function testAnyFileCanBePickedOrDroppedAndNonImagesBecomeTilesOrABashPath(): void
     {
         $html = (string) file_get_contents(__DIR__ . '/../src/Web/assets/index.html');
         $this->assertStringNotContainsString('id="file-input" accept=', $html, 'the file picker must not grey out non-image files');
@@ -513,6 +513,7 @@ final class WebMessageBlocksTest extends TestCase
             if (start === -1 || end === -1) throw new Error('Could not extract file handlers');
 
             const pendingImages = [];
+            const pendingFiles = [];
             const promptInput = {
                 value: '',
                 selectionStart: 0,
@@ -522,13 +523,14 @@ final class WebMessageBlocksTest extends TestCase
             };
             const attachBtn = { disabled: false };
             const fn = new Function(
-                'promptInput', 'attachBtn', 'pendingImages', 'renderPendingImages', 'resizePrompt', 'randomHex', 'fetch', 'FileReader', 'appendErrorMessage', 't',
+                'promptInput', 'attachBtn', 'pendingImages', 'pendingFiles', 'renderPendingImages', 'resizePrompt', 'randomHex', 'fetch', 'FileReader', 'appendErrorMessage', 't',
                 `${src.slice(start, end)}\nreturn { handleFiles, insertPathsAtCursor };`,
             );
             const { handleFiles } = fn(
                 promptInput,
                 attachBtn,
                 pendingImages,
+                pendingFiles,
                 () => {},
                 () => {},
                 () => '0123456789abcdef0123456789abcdef',
@@ -547,6 +549,7 @@ final class WebMessageBlocksTest extends TestCase
                 await handleFiles([fakeFile('Doka 1.3.apk', 'application/vnd.android.package-archive')]);
                 console.log(JSON.stringify({
                     firstPrompt,
+                    files: pendingFiles.map((f) => [f.name, f.path, f.kind, f.glyph]),
                     bashPrompt: promptInput.value,
                     images: pendingImages.length,
                     imageMime: pendingImages[0]?.mimeType,
@@ -559,7 +562,11 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(0, $code, implode("\n", $out));
         $r = json_decode(implode('', $out), true);
 
-        $this->assertSame('/tmp/pig-upload/changelog-1.5.3.md ', $r['firstPrompt']);
+        // In a prompt the file is a tile — its name, the staged path that goes with the message
+        // when it is sent, and the kind its pill shows — and the prompt itself is left alone; on
+        // a `!` bash line it is the quoted path at the cursor, as before.
+        $this->assertSame('', $r['firstPrompt']);
+        $this->assertSame([['changelog-1.5.3.md', '/tmp/pig-upload/changelog-1.5.3.md', 'text', 'TXT']], $r['files']);
         $this->assertSame("!adb install '/tmp/pig-upload/Doka 1.3.apk' ", $r['bashPrompt']);
         $this->assertSame(1, $r['images']);
         $this->assertSame('image/png', $r['imageMime']);

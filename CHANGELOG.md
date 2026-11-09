@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.8.0] - 2026-11-09
+
+### Changed
+
+- **Breaking: `Pig\CodingAgent\CustomTools\` is folded into `Pig\CodingAgent\Extensions\`**, where upstream keeps it (`core/extensions/types.ts`, `wrapper.ts`) — the namespace was the tool-files era's and 1.7.0 left it behind. Upstream's names where it has them: `CustomTool` → `ToolDefinition`, `LoadedCustomTool` → `RegisteredTool`, `RenderOptions` → `ToolRenderResultOptions`; `CustomToolSet`, `WrappedCustomTool`, `ToolProblem` and `CustomToolSessionEvent` are pig's own and moved with their names. Fields and constructors are unchanged, so an extension changes its `use` lines and `new CustomTool(` → `new ToolDefinition(` and nothing else. An extension that still names the old namespace, or `Hooks\`, now fails to load with a line that says where the class went.
+- A file dropped, pasted or attached in `pig web` that is not a picture shows as a tile beside the pictures — a glyph for its kind (code, PDF, archive, audio, video, sheet, document, text) or its extension for anything else, its name under, × to drop it — instead of its upload path landing in the prompt. The path still goes with the message when it is sent, one a line ahead of the question, so the model and the transcript see what they did. A `!` bash line still gets the quoted path at the cursor.
+
+### Fixed
+
+- Fixed `pig crashed: Class "Pig\CodingAgent\Extensions\LoadedHook" not found` on opening a project whose `.pig/` had not been trusted yet: the `project_trust` question in `bin/pig` still wrapped each extension in the class 1.7.0 removed. The runner takes the loader's extensions as they are.
+
 ## [1.7.0] - 2026-11-08
 
 ### Added

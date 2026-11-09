@@ -34,9 +34,9 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
@@ -4266,7 +4266,7 @@ final class InteractiveModeTest extends TestCase
      *
      * Every custom-tool test above drives `/tools`, the banner or `onSession`; none had the model
      * *call* one — and `addTool()`'s `toolRenderers($name, $custom)` is only reached with a
-     * non-null `$custom`. Its signature named `CustomTool` without the import, so the one real
+     * non-null `$custom`. Its signature named `ToolDefinition` without the import, so the one real
      * call site was a `TypeError` in a listener: the turn ended with nothing drawn and nothing
      * written, and `/debug` was the only place the error existed. Red if the import goes again:
      * the tool never runs, so `ran` and `done` never reach the screen. The other half — the
@@ -4358,7 +4358,7 @@ final class InteractiveModeTest extends TestCase
     private function tools(string $name, ?Closure $onSession = null): CustomToolSet
     {
         $path = "{$name}/index.php";
-        $tool = new CustomTool(
+        $tool = new ToolDefinition(
             name: $name,
             label: 'Count lines',
             description: 'Counts the lines in a file.',
@@ -4367,7 +4367,7 @@ final class InteractiveModeTest extends TestCase
             onSession: $onSession,
         );
 
-        return new CustomToolSet([new LoadedCustomTool($path, $path, $tool)]);
+        return new CustomToolSet([new RegisteredTool($path, $path, $tool)]);
     }
 
     /**

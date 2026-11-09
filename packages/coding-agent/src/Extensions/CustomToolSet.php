@@ -2,11 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 use Closure;
 use Pig\Agent\AgentTool;
-use Pig\CodingAgent\Extensions\ExtensionContext;
 use Throwable;
 
 /**
@@ -28,7 +27,7 @@ use Throwable;
  */
 final class CustomToolSet
 {
-    /** @var list<LoadedCustomTool> */
+    /** @var list<RegisteredTool> */
     private array $tools;
 
     private ?Closure $context = null;
@@ -39,10 +38,10 @@ final class CustomToolSet
     /** `--tools` / `--exclude-tools`, applied to what is here now and to whatever arrives later. */
     private ?Closure $keep = null;
 
-    /** @var list<LoadedCustomTool> everything adopted, before `$keep` — so a filter set later still sees it */
+    /** @var list<RegisteredTool> everything adopted, before `$keep` — so a filter set later still sees it */
     private array $all;
 
-    /** @param list<LoadedCustomTool> $tools */
+    /** @param list<RegisteredTool> $tools */
     public function __construct(array $tools = [])
     {
         $this->all = $tools;
@@ -103,11 +102,11 @@ final class CustomToolSet
         $extension->api->onToolsChanged(function (\Pig\CodingAgent\Extensions\ExtensionApi $api) use ($extension): void {
             $this->all = array_values(array_filter(
                 $this->all,
-                static fn (LoadedCustomTool $one): bool => $one->resolvedPath !== $extension->resolved,
+                static fn (RegisteredTool $one): bool => $one->resolvedPath !== $extension->resolved,
             ));
 
             foreach ($api->tools() as $tool) {
-                $this->all[] = new LoadedCustomTool($extension->path, $extension->resolved, $tool);
+                $this->all[] = new RegisteredTool($extension->path, $extension->resolved, $tool);
             }
 
             $this->tools = $this->filtered($this->all);
@@ -119,8 +118,8 @@ final class CustomToolSet
     }
 
     /**
-     * @param list<LoadedCustomTool> $tools
-     * @return list<LoadedCustomTool>
+     * @param list<RegisteredTool> $tools
+     * @return list<RegisteredTool>
      */
     private function filtered(array $tools): array
     {
@@ -130,7 +129,7 @@ final class CustomToolSet
             return $tools;
         }
 
-        return array_values(array_filter($tools, static fn (LoadedCustomTool $one): bool => $keep($one->tool->name)));
+        return array_values(array_filter($tools, static fn (RegisteredTool $one): bool => $keep($one->tool->name)));
     }
 
     /** @param Closure(self): void $listener */
@@ -140,7 +139,7 @@ final class CustomToolSet
     }
 
     /**
-     * What the tools in the set want the system prompt to say — `CustomTool::$promptSnippet` by
+     * What the tools in the set want the system prompt to say — `ToolDefinition::$promptSnippet` by
      * name, and every `$promptGuidelines` line. Both empty for a set with nothing to add.
      *
      * @param list<string>|null $names only these tools — what `ToolLoadout` has active — or all
@@ -171,13 +170,13 @@ final class CustomToolSet
     /** What each tool is called, in load order. @return list<string> */
     public function names(): array
     {
-        return array_map(static fn (LoadedCustomTool $one): string => $one->tool->name, $this->tools);
+        return array_map(static fn (RegisteredTool $one): string => $one->tool->name, $this->tools);
     }
 
     /** Where each one came from. @return list<string> */
     public function paths(): array
     {
-        return array_map(static fn (LoadedCustomTool $one): string => $one->path, $this->tools);
+        return array_map(static fn (RegisteredTool $one): string => $one->path, $this->tools);
     }
 
     /**
@@ -186,7 +185,7 @@ final class CustomToolSet
      * For the transcript: it is the declaration that carries `renderCall` and
      * `renderResult`, and the component drawing a call only knows the name.
      */
-    public function find(string $name): ?CustomTool
+    public function find(string $name): ?ToolDefinition
     {
         foreach ($this->tools as $one) {
             if ($one->tool->name === $name) {
@@ -197,7 +196,7 @@ final class CustomToolSet
         return null;
     }
 
-    /** @return list<LoadedCustomTool> */
+    /** @return list<RegisteredTool> */
     public function loaded(): array
     {
         return $this->tools;

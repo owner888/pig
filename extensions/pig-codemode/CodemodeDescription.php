@@ -27,7 +27,7 @@ final class CodemodeDescription
     private const string DISCOVERY_GLOBALS = '/\b(search_tools|describe_namespace|describe_tool|ALL_TOOLS)\b/';
 
     /**
-     * Upstream's `getScriptReach()` — the tools a script may call (`CustomTool::$reachesTools`):
+     * Upstream's `getScriptReach()` — the tools a script may call (`ToolDefinition::$reachesTools`):
      * "every tool when it uses a discovery global, else the words of its source", so
      * `$tools->mcp__docs__search(...)` and `$tools->{'mcp__docs__' . $name}` both name the
      * `mcp__docs` namespace.

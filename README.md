@@ -385,7 +385,7 @@ Tokens are renewed automatically when they expire; the file is the same one pi r
 
 From 1.0, pig follows semantic versioning for these, and only these — a minor release adds to them, only a major release takes away or changes:
 
-- **The extension API**: `ExtensionApi` (`$pig` in an extension) and `ExtensionContext` (`$ctx` in a handler), `CustomTool`, the event names with their event classes under `Extensions/Events`, and the `Provider` / `StreamApi` / `OauthFlow` an extension implements. A public method marked `@internal` is the host's, not an extension's.
+- **The extension API**: `ExtensionApi` (`$pig` in an extension) and `ExtensionContext` (`$ctx` in a handler), `ToolDefinition`, the event names with their event classes under `Extensions/Events`, and the `Provider` / `StreamApi` / `OauthFlow` an extension implements. A public method marked `@internal` is the host's, not an extension's.
 - **The files in `~/.pig/agent`**: `settings.json`, `models.json`, `keybindings.json` and themes, as their published JSON Schemas describe them; `auth.json`, `mcp.json` and `trust.json`.
 - **The session file**: the `.jsonl` format, version 3, which is pi's — a session written by either opens in the other.
 - **The RPC protocol** of `--mode rpc` (commands, responses, events) and the JSON lines of `--mode json`.

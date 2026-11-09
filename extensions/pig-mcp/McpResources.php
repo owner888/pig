@@ -9,7 +9,7 @@ use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 
 /**
@@ -59,7 +59,7 @@ final class McpResources
      * The three tools. `$servers` answers the connections whose resources they reach, at call time.
      *
      * @param Closure(): list<ServerConnection> $servers
-     * @return list<CustomTool>
+     * @return list<ToolDefinition>
      */
     public static function define(Closure $servers): array
     {
@@ -153,7 +153,7 @@ final class McpResources
         };
 
         return [
-            new CustomTool(
+            new ToolDefinition(
                 name: self::LIST,
                 label: self::LIST,
                 description: 'Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.',
@@ -174,7 +174,7 @@ final class McpResources
                     return $jsonResult(self::LIST, self::stringArgument($params, 'server'), $payload);
                 },
             ),
-            new CustomTool(
+            new ToolDefinition(
                 name: self::LIST_TEMPLATES,
                 label: self::LIST_TEMPLATES,
                 description: 'Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.',
@@ -195,7 +195,7 @@ final class McpResources
                     return $jsonResult(self::LIST_TEMPLATES, self::stringArgument($params, 'server'), $payload);
                 },
             ),
-            new CustomTool(
+            new ToolDefinition(
                 name: self::READ,
                 label: self::READ,
                 description: 'Read a specific resource from an MCP server given the server name and resource URI.',

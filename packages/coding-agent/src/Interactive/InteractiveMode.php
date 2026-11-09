@@ -66,11 +66,11 @@ use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
 use Pig\Tui\Images\TerminalImage;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\CustomTools\LoadedCustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
-use Pig\CodingAgent\CustomTools\ToolProblem;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Extensions\RegisteredTool;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
+use Pig\CodingAgent\Extensions\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\CodingAgent\McpServerRegistry;
@@ -862,7 +862,7 @@ final class InteractiveMode
                 if (isset($entryRenderers[$entry->customType])) {
                     $comp = ($entryRenderers[$entry->customType])(
                         $entry,
-                        new \Pig\CodingAgent\CustomTools\RenderOptions($this->expanded, false),
+                        new \Pig\CodingAgent\Extensions\ToolRenderResultOptions($this->expanded, false),
                         Themes::theme(),
                     );
                     if ($comp instanceof \Pig\Tui\Component) {
@@ -4224,7 +4224,7 @@ final class InteractiveMode
 
         foreach ($loadedExtensions as $ext) {
             foreach ($ext->api->tools() as $tool) {
-                $loadedTools[] = new LoadedCustomTool($ext->path, $ext->resolved, $tool);
+                $loadedTools[] = new RegisteredTool($ext->path, $ext->resolved, $tool);
             }
         }
 
@@ -8398,7 +8398,7 @@ final class InteractiveMode
 
         if ($renderer !== null) {
             try {
-                $drawn = $renderer($message, new RenderOptions($this->expanded, outputPad: $this->outputPad), Themes::theme());
+                $drawn = $renderer($message, new ToolRenderResultOptions($this->expanded, outputPad: $this->outputPad), Themes::theme());
             } catch (Throwable $problem) {
                 $this->sayWarning("The renderer for '{$message->customType}' failed: {$problem->getMessage()}");
                 $drawn = null;
@@ -8424,7 +8424,7 @@ final class InteractiveMode
     }
 
     /** @param array<string, mixed> $arguments */
-    private function toolRenderers(string $name, ?CustomTool $custom = null): ?array
+    private function toolRenderers(string $name, ?ToolDefinition $custom = null): ?array
     {
         $base = $custom === null ? null : static fn (): array => array_filter([
             'renderCall' => $custom->renderCall,

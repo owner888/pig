@@ -10,8 +10,8 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Utf8;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\CodingAgent\Theme\CodeHighlighter;
 use Pig\CodingAgent\Theme\Highlight;
 use Pig\CodingAgent\Theme\Themes;
@@ -128,7 +128,7 @@ final class ToolExecutionComponent extends Container
 
     /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
-     * @param CustomTool|null               $custom    the declaration, when this is a tool
+     * @param ToolDefinition|null               $custom    the declaration, when this is a tool
      *        somebody wrote — for `renderCall` and `renderResult`
      * @param Closure(string): void|null    $onError   told once when a renderer throws
      * @param int  $bashLines  how much command output to keep unexpanded
@@ -141,7 +141,7 @@ final class ToolExecutionComponent extends Container
     public function __construct(
         private readonly string $tool,
         private array $arguments,
-        private readonly ?CustomTool $custom = null,
+        private readonly ?ToolDefinition $custom = null,
         private readonly ?Closure $onError = null,
         // Trailing, and they stay trailing: everything before them is passed positionally
         // from three call sites and a test, and a parameter inserted above this line is a
@@ -459,9 +459,9 @@ final class ToolExecutionComponent extends Container
         }
     }
 
-    private function renderOptions(): RenderOptions
+    private function renderOptions(): ToolRenderResultOptions
     {
-        return new RenderOptions($this->expanded, $this->partial, $this->failed, $this->timerText(), $this->durationMs, $this->outputPad);
+        return new ToolRenderResultOptions($this->expanded, $this->partial, $this->failed, $this->timerText(), $this->durationMs, $this->outputPad);
     }
 
     /**

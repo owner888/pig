@@ -13,8 +13,8 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\CodingAgent\Extensions\ExecResult;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\RegisteredCommand;
@@ -131,7 +131,7 @@ final class ExtensionApi
     /** @var Closure(): ExtensionContext|null */
     private ?Closure $context = null;
 
-    /** @var list<CustomTool> */
+    /** @var list<ToolDefinition> */
     private array $tools = [];
 
     /** @var array<string, array{label: string, translations: array<string, string>}> */
@@ -301,7 +301,7 @@ final class ExtensionApi
      * One per type, last registration wins, because two renderers for one message is a
      * question with no answer.
      *
-     * @param callable(CustomMessage, RenderOptions, Theme): mixed $renderer
+     * @param callable(CustomMessage, ToolRenderResultOptions, Theme): mixed $renderer
      */
     public function registerMessageRenderer(string $customType, callable $renderer): void
     {
@@ -321,7 +321,7 @@ final class ExtensionApi
      * Draw this extension's custom session entries in the transcript.
      * Upstream's `registerEntryRenderer`. Custom entries do not participate in LLM context.
      *
-     * @param callable(CustomEntry, RenderOptions, Theme): mixed $renderer
+     * @param callable(CustomEntry, ToolRenderResultOptions, Theme): mixed $renderer
      */
     public function registerEntryRenderer(string $customType, callable $renderer): void
     {
@@ -542,7 +542,7 @@ final class ExtensionApi
 
     /**
      * Every registered tool, active or not, with its description and schema — and `reachesTools`
-     * for one that declares it (`CustomTool::$reachesTools`). Upstream's `getAllTools()`.
+     * for one that declares it (`ToolDefinition::$reachesTools`). Upstream's `getAllTools()`.
      *
      * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, reachesTools?: \Closure(array<string, mixed>): ('all'|list<string>)}>
      */
@@ -576,11 +576,11 @@ final class ExtensionApi
     /**
      * Register a tool that the model can call.
      */
-    public function registerTool(CustomTool $tool): void
+    public function registerTool(ToolDefinition $tool): void
     {
         // A second registration under one name replaces the first, as upstream's does: an MCP
         // server that reconnects lists its tools again, and the new list is the list.
-        $this->tools = array_values(array_filter($this->tools, static fn (CustomTool $t): bool => $t->name !== $tool->name));
+        $this->tools = array_values(array_filter($this->tools, static fn (ToolDefinition $t): bool => $t->name !== $tool->name));
         $this->tools[] = $tool;
         $this->notifyToolsChanged();
     }
@@ -589,12 +589,12 @@ final class ExtensionApi
      * Take tools away again — the ones `$which` says yes to. An MCP server that dropped a tool,
      * or was disabled, has nothing to offer under that name any more.
      *
-     * @param Closure(CustomTool): bool $which
+     * @param Closure(ToolDefinition): bool $which
      */
     public function removeTools(Closure $which): void
     {
         $before = count($this->tools);
-        $this->tools = array_values(array_filter($this->tools, static fn (CustomTool $t): bool => !$which($t)));
+        $this->tools = array_values(array_filter($this->tools, static fn (ToolDefinition $t): bool => !$which($t)));
 
         if (count($this->tools) !== $before) {
             $this->notifyToolsChanged();
@@ -1138,7 +1138,7 @@ final class ExtensionApi
     }
 
     /**
-     * @return list<CustomTool>
+     * @return list<ToolDefinition>
      * @internal
      */
     public function tools(): array

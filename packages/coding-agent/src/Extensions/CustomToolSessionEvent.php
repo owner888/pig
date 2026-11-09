@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\CustomTools;
+namespace Pig\CodingAgent\Extensions;
 
 /**
  * Something happened to the session that a tool holding state should know about.
