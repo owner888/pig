@@ -1381,7 +1381,8 @@ function applyOverrides(array $rows, string $provider): array
 /**
  * Upstream's Azure clone, after its temporary overrides: every `openai` Responses row as an
  * `azure-openai-responses` one, with `AZURE_CONTEXT_WINDOW_OVERRIDES`' window where it names one and
- * the cost's four rates alone — `cost: {input, output, cacheRead, cacheWrite}`, so no tiers — and none
+ * the cost as the `openai` row has it, "including OpenAI's long-context price tier above 272K input
+ * tokens" (upstream #11949: Azure bills that tier too, and these rows have 1.05M windows) — and none
  * of the metadata applied after the clone: no models.dev efforts (those are recorded under
  * `openai:<id>`, which an `azure` row is not). Then the DeepSeek row.
  *
@@ -1403,6 +1404,7 @@ function azureRows(array $openai): array
             'out' => $row['out'],
             'cacheRead' => $row['cacheRead'],
             'cacheWrite' => $row['cacheWrite'],
+            ...(($row['tiers'] ?? []) === [] ? [] : ['tiers' => $row['tiers']]),
             'api' => Api::AzureOpenAiResponses,
         ];
     }

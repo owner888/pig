@@ -156,6 +156,50 @@
     },
     {
         "type": "chat",
+        "id": "MiniMaxAI/MiniMax-M3.1-Flash",
+        "name": "MiniMax-M3.1-Flash",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 512000,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
         "name": "Qwen2.5-Coder-32B-Instruct",
         "api": "openai-completions",

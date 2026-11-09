@@ -330,6 +330,51 @@
     },
     {
         "type": "chat",
+        "id": "moonshotai/Kimi-K3.1-Pro",
+        "name": "Kimi K3.1 Pro",
+        "api": "openai-completions",
+        "provider": "together",
+        "baseUrl": "https://api.together.ai/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": false,
+            "thinkingFormat": "together",
+            "supportsLongCacheRetention": false
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
         "name": "Nemotron 3.5 Super VL 120B A12B",
         "api": "openai-completions",

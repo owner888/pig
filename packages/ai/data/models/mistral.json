@@ -41,6 +41,35 @@
     },
     {
         "type": "chat",
+        "id": "deepseek-v4-1-flash-1017",
+        "name": "DeepSeek V4.1 Flash 1017",
+        "api": "mistral-conversations",
+        "provider": "mistral",
+        "baseUrl": "https://api.mistral.ai",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.007,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 128000
+    },
+    {
+        "type": "chat",
         "id": "devstral-2512",
         "name": "Devstral 2",
         "api": "mistral-conversations",
@@ -434,10 +463,10 @@
         "baseUrl": "https://api.mistral.ai",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": "none",
+            "off": null,
             "minimal": null,
-            "low": null,
-            "medium": null,
+            "low": "low",
+            "medium": "medium",
             "high": "high",
             "xhigh": null,
             "max": null
@@ -447,9 +476,49 @@
             "image"
         ],
         "cost": {
-            "input": 1.36,
-            "output": 4.18,
-            "cacheRead": 0.14,
+            "input": 0.7,
+            "output": 2.1,
+            "cacheRead": 0.07,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 262144,
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "mistral-large-4-0-8",
+        "name": "Mistral Large 4.0.8",
+        "api": "mistral-conversations",
+        "provider": "mistral",
+        "baseUrl": "https://api.mistral.ai",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.7,
+            "output": 2.1,
+            "cacheRead": 0.07,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,

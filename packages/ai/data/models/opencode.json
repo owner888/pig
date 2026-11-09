@@ -604,39 +604,45 @@
     },
     {
         "type": "chat",
-        "id": "deepseek-v4-flash",
-        "name": "DeepSeek V4 Flash",
-        "api": "openai-completions",
+        "id": "crouton-alpha-free",
+        "name": "Crouton Alpha Free",
+        "api": "openai-responses",
         "provider": "opencode",
         "baseUrl": "https://opencode.ai/inference/openai/v1",
         "reasoning": true,
         "thinkingLevelMap": {
             "off": null,
-            "minimal": null,
+            "minimal": "minimal",
             "low": "low",
-            "medium": null,
+            "medium": "medium",
             "high": "high",
-            "xhigh": null,
+            "xhigh": "xhigh",
             "max": "max"
         },
         "input": [
-            "text"
+            "text",
+            "image"
         ],
         "cost": {
-            "input": 0.14,
-            "output": 0.28,
-            "cacheRead": 0.028,
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
-        "contextWindow": 1000000,
-        "maxTokens": 384000,
+        "contextWindow": 1048576,
+        "maxTokens": 270000,
         "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "requiresReasoningContentOnAssistantMessages": true,
-            "supportsStrictMode": true,
-            "supportsLongCacheRetention": false
+            "sessionAffinityFormat": "openai-nosession"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
         }
     },
     {
@@ -2659,6 +2665,78 @@
     },
     {
         "type": "chat",
+        "id": "iceman-free",
+        "name": "Iceman Free",
+        "api": "openai-completions",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/inference/openai/v1",
+        "reasoning": true,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": true
+        }
+    },
+    {
+        "type": "chat",
+        "id": "inkling-2-small-free",
+        "name": "Inkling 2 Small Free",
+        "api": "openai-completions",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/inference/openai/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "kimi-k2.5",
         "name": "Kimi K2.5",
         "api": "openai-completions",
@@ -2808,6 +2886,43 @@
             "supportsStrictMode": true,
             "supportsMidConvoSystemMessages": true,
             "supportsMidConvoToolAdditions": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "longcat-2.5-free",
+        "name": "LongCat 2.5 Free",
+        "api": "openai-completions",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/inference/openai/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 262144,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": true
         },
         "inputLimits": {
             "images": {
@@ -3120,32 +3235,6 @@
                     "jpegQuality": 80
                 }
             }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "nemotron-3-ultra-free",
-        "name": "Nemotron 3 Ultra Free",
-        "api": "openai-completions",
-        "provider": "opencode",
-        "baseUrl": "https://opencode.ai/inference/openai/v1",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 128000,
-        "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "supportsStrictMode": true
         }
     },
     {

@@ -524,7 +524,7 @@
         "cost": {
             "input": 2.0,
             "output": 10.0,
-            "cacheRead": 0.2,
+            "cacheRead": 0.1,
             "cacheWrite": 2.5
         },
         "contextWindow": 1000000,
@@ -1528,6 +1528,59 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.1-terra",
+        "name": "GPT-6.1 Terra",
+        "api": "openai-responses",
+        "provider": "cloudflare-ai-gateway",
+        "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cacheRead": 0.05,
+            "cacheWrite": 1.25,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 2.0,
+                    "output": 7.5,
+                    "cacheRead": 0.1,
+                    "cacheWrite": 2.5
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "o3",
         "name": "o3",
         "api": "openai-responses",
@@ -1721,7 +1774,7 @@
     {
         "type": "chat",
         "id": "workers-ai/@cf/deepseek-ai/deepseek-v4.1-flash-1017",
-        "name": "Deepseek V4.1 Flash 1017",
+        "name": "DeepSeek V4.1 Flash 1017",
         "api": "openai-completions",
         "provider": "cloudflare-ai-gateway",
         "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",

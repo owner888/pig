@@ -1158,6 +1158,45 @@
     },
     {
         "type": "chat",
+        "id": "au.anthropic.claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5 (AU)",
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.2,
+            "output": 11.0,
+            "cacheRead": 0.11,
+            "cacheWrite": 2.75
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "maxPerMessage": 20,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "ca.amazon.nova-lite-v1:0",
         "name": "Nova Lite (CA)",
         "api": "bedrock-converse-stream",
@@ -2868,6 +2907,53 @@
                     "output": 15.0,
                     "cacheRead": 0.2,
                     "cacheWrite": 5.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "maxPerMessage": 20,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "global.openai.gpt-6.1-terra",
+        "name": "GPT-6.1 Terra (Global)",
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cacheRead": 0.05,
+            "cacheWrite": 1.25,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 2.0,
+                    "output": 7.5,
+                    "cacheRead": 0.1,
+                    "cacheWrite": 2.5
                 }
             ]
         },
@@ -4702,6 +4788,53 @@
     },
     {
         "type": "chat",
+        "id": "openai.gpt-6.1-terra",
+        "name": "GPT-6.1 Terra",
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.1,
+            "output": 5.5,
+            "cacheRead": 0.055,
+            "cacheWrite": 1.375,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 2.2,
+                    "output": 8.25,
+                    "cacheRead": 0.11,
+                    "cacheWrite": 2.75
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "maxPerMessage": 20,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "openai.gpt-oss-120b",
         "name": "gpt-oss-120b",
         "api": "bedrock-converse-stream",
@@ -6312,6 +6445,53 @@
                     "output": 16.5,
                     "cacheRead": 0.22,
                     "cacheWrite": 5.5
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "maxPerMessage": 20,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "us.openai.gpt-6.1-terra",
+        "name": "GPT-6.1 Terra (US)",
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.1,
+            "output": 5.5,
+            "cacheRead": 0.055,
+            "cacheWrite": 1.375,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 2.2,
+                    "output": 8.25,
+                    "cacheRead": 0.11,
+                    "cacheWrite": 2.75
                 }
             ]
         },

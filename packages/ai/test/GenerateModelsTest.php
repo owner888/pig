@@ -654,12 +654,13 @@ final class GenerateModelsTest extends TestCase
     public function testAzureRowsAreUpstreamsCloneOfTheOpenAiRows(): void
     {
         // Upstream's Azure clone of every `openai` Responses row, after the temporary overrides: the
-        // capped 272k window replaced by `AZURE_CONTEXT_WINDOW_OVERRIDES`' 1,050,000, and the cost's
-        // four rates alone — the long-context tier and the models.dev efforts stay on OpenAI's row.
+        // capped 272k window replaced by `AZURE_CONTEXT_WINDOW_OVERRIDES`' 1,050,000, and OpenAI's cost
+        // with its long-context tier (#11949: Azure bills it too) — the models.dev efforts stay on
+        // OpenAI's row.
         $output = $this->generated();
 
         self::assertStringContainsString(
-            "'gpt-5.5' => ['GPT-5.5', Api::AzureOpenAiResponses, 1_050_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0],",
+            "'gpt-5.5' => ['GPT-5.5', Api::AzureOpenAiResponses, 1_050_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],",
             $output,
         );
         // An id the overrides do not name keeps OpenAI's window, its output fix included.

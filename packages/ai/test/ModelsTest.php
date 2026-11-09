@@ -344,8 +344,9 @@ final class ModelsTest extends TestCase
 
     public function testBedrockRowsAreUpstreamsCatalogueRows(): void
     {
-        // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0).
-        $this->assertCount(193, self::of(Models::AMAZON_BEDROCK));
+        // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0), as models.dev
+        // lists Bedrock at the last `generate-models.php`.
+        $this->assertCount(197, self::of(Models::AMAZON_BEDROCK));
 
         $opus = Models::find(Models::AMAZON_BEDROCK, 'global.anthropic.claude-opus-4-6-v1');
         $this->assertNotNull($opus);
@@ -381,8 +382,9 @@ final class ModelsTest extends TestCase
     public function testAzureRowsAreUpstreamsCatalogueRows(): void
     {
         // Pinned from upstream's published catalogue (`azure.json`, pi-ai 1.1.0): OpenAI's Responses
-        // rows cloned before the metadata — no strict mode, no tool search, no models.dev efforts, no
-        // tiers — at Azure's larger window for the ids it names, and no base URL.
+        // rows cloned before the metadata — no strict mode, no tool search, no models.dev efforts — with
+        // OpenAI's long-context tier (#11949), at Azure's larger window for the ids it names, and no
+        // base URL.
         // Less the models models.dev has since retired, plus GPT-6.1 Terra (upstream 363ad78).
         $this->assertCount(44, self::of(Models::AZURE));
 
@@ -391,7 +393,9 @@ final class ModelsTest extends TestCase
         $this->assertSame(Api::AzureOpenAiResponses, $gpt->api);
         $this->assertSame('', $gpt->baseUrl);
         $this->assertSame(1_050_000, $gpt->contextWindow);
-        $this->assertSame([], $gpt->pricing->tiers);
+        $this->assertCount(1, $gpt->pricing->tiers);
+        $this->assertSame(272_000, $gpt->pricing->tiers[0]->inputTokensAbove);
+        $this->assertSame(Models::find('openai', 'gpt-5.5')?->pricing->tiers[0]->input, $gpt->pricing->tiers[0]->input);
         $this->assertSame(['off' => null, 'xhigh' => 'xhigh'], $gpt->thinkingLevelMap);
         $this->assertInstanceOf(OpenAiCompat::class, $gpt->compat);
         $this->assertTrue($gpt->compat->grammarTools);
@@ -496,13 +500,14 @@ final class ModelsTest extends TestCase
         $this->assertSame(['images' => ['resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $balanced->inputLimits);
         $this->assertSame('radius', Models::get('balanced')?->provider);
 
-        $gpt = Models::find(Models::RADIUS, 'gpt-5.4');
+        // The gateway no longer serves GPT-5.4; GPT-6 Sol stands in, tier and level map as it sends them.
+        $gpt = Models::find(Models::RADIUS, 'gpt-6-sol');
         $this->assertNotNull($gpt);
         $this->assertCount(1, $gpt->pricing->tiers);
-        $this->assertSame(['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], $gpt->thinkingLevelMap);
+        $this->assertSame(['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], $gpt->thinkingLevelMap);
 
         // A bare id the gateway shares with its maker is still the maker's.
-        $this->assertSame('openai', Models::get('gpt-5.4')?->provider);
+        $this->assertSame('openai', Models::get('gpt-6-sol')?->provider);
         $this->assertSame('anthropic', Models::get('claude-opus-4-8')?->provider);
     }
 
@@ -593,8 +598,9 @@ final class ModelsTest extends TestCase
         // OpenCode Go no longer lists MiniMax M2.7, whose rule sent it to Anthropic Messages; M3 is there.
         $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/inference/go/anthropic'], [Models::find('opencode-go', 'minimax-m3')?->api, Models::find('opencode-go', 'minimax-m3')?->baseUrl]);
         // `OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS`: no
-        // `prompt_cache_retention` for these, DeepSeek V4.1 Flash (renamed from V4 Flash) included.
-        foreach (['deepseek-v4-flash', 'deepseek-v4.1-flash', 'deepseek-v4-pro', 'kimi-k2.6'] as $id) {
+        // `prompt_cache_retention` for these, DeepSeek V4.1 Flash (renamed from V4 Flash, which OpenCode
+        // no longer lists) included.
+        foreach (['deepseek-v4.1-flash', 'deepseek-v4-pro', 'kimi-k2.6'] as $id) {
             $compat = Models::find('opencode', $id)?->compat;
             $this->assertInstanceOf(OpenAiCompat::class, $compat, $id);
             $this->assertFalse($compat->supportsLongCacheRetention, $id);
