@@ -767,8 +767,7 @@ final class BashToolTest extends ToolTestCase
         $run = new Run($this->cwd, $command, null);
 
         Async::run(static function () use ($run): void {
-            $run->start();
-            $run->wait(null, null);
+            $run->run(null, null);
         });
 
         return $run->spillPath;

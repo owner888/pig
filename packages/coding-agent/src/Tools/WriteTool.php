@@ -36,8 +36,12 @@ use Pig\Async\AbortSignal;
  */
 final class WriteTool implements AgentTool
 {
-    public function __construct(private readonly string $cwd)
+    private readonly WriteOperations $operations;
+
+    /** @param WriteOperations|null $operations upstream's `operations`: where the file is written; this machine when null */
+    public function __construct(private readonly string $cwd, ?WriteOperations $operations = null)
     {
+        $this->operations = $operations ?? new LocalWriteOperations();
     }
 
     #[\Override]
@@ -83,19 +87,20 @@ final class WriteTool implements AgentTool
         $absolute = Paths::resolve($path, $this->cwd);
         $directory = dirname($absolute);
 
-        if (!is_dir($directory) && !mkdir($directory, 0o755, true) && !is_dir($directory)) {
-            throw new AgentError("Could not create directory {$directory}");
+        try {
+            $this->operations->mkdir($directory);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->explain("Could not create directory {$directory}"));
         }
 
-        if (is_dir($absolute)) {
-            throw new AgentError("{$path} is a directory");
+        try {
+            $this->operations->writeFile($absolute, $content);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->kind === FileAccessError::IS_DIRECTORY ? "{$path} is a directory" : $error->explain("Could not write {$path}"));
         }
 
-        $written = file_put_contents($absolute, $content);
-
-        if ($written === false) {
-            throw new AgentError("Could not write {$path}");
-        }
+        // What was written is the content, byte for byte: `strlen()`, not upstream's UTF-16 length.
+        $written = strlen($content);
 
         return new AgentToolResult([new TextContent("Wrote {$written} bytes to {$path}")]);
     }

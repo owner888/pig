@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.8] - 2026-11-09
+
+### Changed
+
+- The built-in tools take upstream's `operations` (`ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations`, `FindOperations`, `GrepOperations`, and `BashOperations` for `bash` and `powershell`), so an extension can create tools that work somewhere other than this machine, over SSH or in a container, as upstream's can. Without them the tools work on this machine as before. A file tool's failure now ends with the reason the file system gave (`Could not write a.txt: No space left on device`).
+- Sessions are read and written through a `SessionStore` (`SessionManager::sessionStore()`), the first step towards keeping them elsewhere than in files (MySQL or SQLite for a server with several users, see `docs/dev/design/storage.md`). `JsonlSessionStore`, pi's session files exactly as before, is the default, and nothing changes in what is written or where. The web UI's folder list, a tool's running output kept for picking a stopped run back up, the scheduled tasks' check for their conversation and `/doctor`'s session size go through it too.
+
 ## [1.9.7] - 2026-11-09
 
 ### Changed

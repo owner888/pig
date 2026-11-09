@@ -17,8 +17,9 @@ use RuntimeException;
  *
  * pig's own, from pi-durable, which commits a tool's output to its `pi.live` document as it runs and
  * puts it in the `interrupted` result after a restart. pig's session file is pi's and append-only, so
- * the output goes in a file of its own instead, `<session>.running.json`, rewritten whole as the tool
- * reports and removed when the tool's result is written. It holds the tail `Truncate::tail()` keeps,
+ * the output goes in a sidecar of its own instead (`SessionStore::writeSidecar()`; beside a JSONL
+ * session, `<session>.running.json`), rewritten whole as the tool reports and removed when the tool's
+ * result is written. It holds the tail `Truncate::tail()` keeps,
  * which is what a result would have shown.
  *
  * **Written at pi-durable's pace** (`Progress` in its `harness/output.ts`, with its defaults): the first
@@ -34,6 +35,9 @@ final class ToolProgress
     /** pi-durable's `PROGRESS_BYTES_PER_SECOND`. */
     private const int BYTES_PER_SECOND = 100 * 1024;
 
+    /** The sidecar's name: `<session>.running.json` beside a JSONL session. */
+    public const string SIDECAR = 'running.json';
+
     /** @var array{toolCallId: string, output: string}|null what is waiting to be written */
     private ?array $pending = null;
 
@@ -46,10 +50,10 @@ final class ToolProgress
     {
     }
 
-    /** Where a session file's running tool output is kept. */
+    /** Where a session file's running tool output is kept, when the session is a JSONL file. */
     public static function pathOf(string $sessionPath): string
     {
-        return (str_ends_with($sessionPath, '.jsonl') ? substr($sessionPath, 0, -6) : $sessionPath) . '.running.json';
+        return JsonlSessionStore::sidecarPath($sessionPath, self::SIDECAR);
     }
 
     /**
@@ -59,22 +63,16 @@ final class ToolProgress
      */
     public static function read(string $sessionPath): ?array
     {
-        $path = self::pathOf($sessionPath);
+        $json = SessionManager::sessionStore()->readSidecar($sessionPath, self::SIDECAR);
 
-        if (!is_file($path)) {
+        if ($json === null) {
             return null;
-        }
-
-        $json = file_get_contents($path);
-
-        if ($json === false) {
-            throw new RuntimeException("Could not read {$path}");
         }
 
         $data = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
 
         if (!is_array($data) || !is_string($data['toolCallId'] ?? null) || !is_string($data['output'] ?? null)) {
-            throw new RuntimeException("{$path} is not a tool's running output");
+            throw new RuntimeException("The running output kept for {$sessionPath} is not a tool's");
         }
 
         return ['toolCallId' => $data['toolCallId'], 'output' => $data['output']];
@@ -127,11 +125,7 @@ final class ToolProgress
             return;
         }
 
-        $path = self::pathOf($session);
-
-        if (is_file($path) && !unlink($path)) {
-            throw new RuntimeException("Could not remove {$path}");
-        }
+        SessionManager::sessionStore()->deleteSidecar($session, self::SIDECAR);
     }
 
     private function flush(): void
@@ -144,15 +138,11 @@ final class ToolProgress
             return;
         }
 
-        $path = self::pathOf($session);
         $json = json_encode($pending, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-        $temp = $path . '.tmp';
 
         // Readable by the user alone, as the spill file is: a command's output can be a `.env`.
-        // Renamed into place, so a crash mid-write leaves the last whole copy rather than half of one.
-        if (file_put_contents($temp, $json) === false || !chmod($temp, 0600) || !rename($temp, $path)) {
-            throw new RuntimeException("Could not write {$path}");
-        }
+        // Replaced whole, so a crash mid-write leaves the last whole copy rather than half of one.
+        SessionManager::sessionStore()->writeSidecar($session, self::SIDECAR, $json);
 
         $this->nextAt = microtime(true) + max(self::MIN_INTERVAL, strlen($json) / self::BYTES_PER_SECOND);
     }

@@ -22,9 +22,9 @@ use Pig\Async\AbortSignal;
  * );
  * ```
  *
- * Upstream's `operations` (a replacement for local execution, for running over SSH) is not here:
- * a pig command is a process the event loop watches, and a `spawnHook` that rewrites the command
- * into `ssh host …` does what most of those wanted.
+ * Upstream's `operations` is `$operations`: a `BashOperations` that runs the command somewhere
+ * other than this machine (over SSH, in a container). A `spawnHook` that rewrites the command into
+ * `ssh host …` is the lighter way to do the same.
  */
 final readonly class BashTool implements AgentTool
 {
@@ -47,6 +47,8 @@ final readonly class BashTool implements AgentTool
      * @param (Closure(): ?SessionEnvironment)|null $sessionEnvironment the session those describe,
      *        asked as each command starts; the session wires its own, and a tool without one sets none
      * @param (Closure(SpawnContext): SpawnContext)|null $spawnHook upstream's `spawnHook`
+     * @param BashOperations|null $operations upstream's `operations`: what runs the command; this
+     *        machine's bash when null
      */
     public function __construct(
         string $cwd,
@@ -55,6 +57,7 @@ final readonly class BashTool implements AgentTool
         bool $exposeSessionEnvironment = true,
         ?Closure $sessionEnvironment = null,
         ?Closure $spawnHook = null,
+        ?BashOperations $operations = null,
     ) {
         $this->tool = new ShellTool(
             $cwd,
@@ -68,6 +71,7 @@ final readonly class BashTool implements AgentTool
             $exposeSessionEnvironment,
             $sessionEnvironment,
             $spawnHook,
+            $operations,
         );
     }
 

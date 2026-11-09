@@ -25,8 +25,12 @@ final class LsTool implements AgentTool, ReplayableTool
 {
     private const int DEFAULT_LIMIT = 500;
 
-    public function __construct(private readonly string $cwd)
+    private readonly LsOperations $operations;
+
+    /** @param LsOperations|null $operations upstream's `operations`: where the directory is listed; this machine when null */
+    public function __construct(private readonly string $cwd, ?LsOperations $operations = null)
     {
+        $this->operations = $operations ?? new LocalLsOperations();
     }
 
     #[\Override]
@@ -77,21 +81,19 @@ final class LsTool implements AgentTool, ReplayableTool
         $absolute = Paths::resolve($path, $this->cwd);
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
 
-        if (!file_exists($absolute)) {
+        if (!$this->operations->exists($absolute)) {
             throw new AgentError("No such directory: {$path}");
         }
 
-        if (!is_dir($absolute)) {
+        if (!$this->operations->stat($absolute)->isDirectory()) {
             throw new AgentError("Not a directory: {$path}");
         }
 
-        $entries = scandir($absolute);
-
-        if ($entries === false) {
-            throw new AgentError("Could not read directory: {$path}");
+        try {
+            $names = $this->operations->readdir($absolute);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->explain("Could not read directory: {$path}"));
         }
-
-        $names = array_values(array_diff($entries, ['.', '..']));
 
         // Case-insensitive, so `README` and `src` sort where a person would look for them
         // rather than in two groups by case.
@@ -107,7 +109,7 @@ final class LsTool implements AgentTool, ReplayableTool
                 break;
             }
 
-            $listed[] = $name . (is_dir($absolute . '/' . $name) ? '/' : '');
+            $listed[] = $name . ($this->isDirectory($absolute . '/' . $name) ? '/' : '');
         }
 
         if ($listed === []) {
@@ -147,5 +149,15 @@ final class LsTool implements AgentTool, ReplayableTool
                 static fn (mixed $value): bool => $value !== null,
             ),
         );
+    }
+
+    /** Whether an entry gets the trailing `/`: one that cannot be looked at (gone meanwhile) does not. */
+    private function isDirectory(string $absolute): bool
+    {
+        try {
+            return $this->operations->stat($absolute)->isDirectory();
+        } catch (FileAccessError) {
+            return false;
+        }
     }
 }

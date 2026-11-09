@@ -909,7 +909,7 @@ final class HttpServer
                 'timestamp' => $s->timestamp,
                 // Grouped by the last write, which is the order the list is in; the header's
                 // timestamp is when the conversation started.
-                'modified' => filemtime($s->path) * 1000,
+                'modified' => $s->modified,
                 'scheduledTask' => $scheduled[basename($s->path)] ?? null,
                 'scheduledTaskId' => $taskIds[basename($s->path)] ?? null,
                 'scheduledUnread' => isset($unread[basename($s->path)]),
@@ -2015,54 +2015,18 @@ final class HttpServer
     /** The first thing said in this conversation, as a tab label when nobody named it. */
     private function listAllWorkspaces(string $currentCwd): array
     {
-        $roots = [
-            \Pig\CodingAgent\Config::home() . '/sessions',
-            \Pig\CodingAgent\Config::piHome() . '/sessions',
-        ];
-
         $workspaces = [];
 
-        foreach ($roots as $root) {
-            if (!is_dir($root)) {
-                continue;
-            }
-
-            foreach (scandir($root) ?: [] as $dir) {
-                if ($dir === '.' || $dir === '..') {
-                    continue;
-                }
-
-                $fullDir = $root . '/' . $dir;
-                if (!is_dir($fullDir)) {
-                    continue;
-                }
-
-                $files = glob($fullDir . '/*.jsonl') ?: [];
-                if ($files === []) {
-                    continue;
-                }
-
-                $firstLine = '';
-                $fh = fopen($files[0], 'r');
-                if ($fh !== false) {
-                    $firstLine = fgets($fh) ?: '';
-                    fclose($fh);
-                }
-                $header = json_decode($firstLine, true);
-                $cwd = is_array($header) ? ($header['cwd'] ?? null) : null;
-
-                if (is_string($cwd) && $cwd !== '') {
-                    if (!isset($workspaces[$cwd])) {
-                        $workspaces[$cwd] = [
-                            'path' => $cwd,
-                            'name' => basename($cwd) ?: $cwd,
-                            'sessionCount' => count($files),
-                            'isCurrent' => $cwd === $currentCwd,
-                        ];
-                    } else {
-                        $workspaces[$cwd]['sessionCount'] += count($files);
-                    }
-                }
+        foreach (SessionManager::sessionStore()->projects() as ['cwd' => $cwd, 'sessions' => $count]) {
+            if (!isset($workspaces[$cwd])) {
+                $workspaces[$cwd] = [
+                    'path' => $cwd,
+                    'name' => basename($cwd) ?: $cwd,
+                    'sessionCount' => $count,
+                    'isCurrent' => $cwd === $currentCwd,
+                ];
+            } else {
+                $workspaces[$cwd]['sessionCount'] += $count;
             }
         }
 

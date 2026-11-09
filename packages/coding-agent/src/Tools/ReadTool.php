@@ -16,7 +16,6 @@ use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Utils\ImageProcess;
-use Pig\Tui\Images\ImageType;
 
 /**
  * Read a file.
@@ -58,12 +57,21 @@ final class ReadTool implements AgentTool, ReplayableTool
      * @param (Closure(): ?array{maxWidth?: int, maxHeight?: int, maxBytes?: int, jpegQuality?: int})|null $resizeOptions
      *        the model's `inputLimits.images.resize`, asked at each read because the model can change
      */
+    private readonly ReadOperations $operations;
+
+    /**
+     * @param int $chunkBytes how much one read of the default operations' stream takes in
+     * @param ReadOperations|null $operations upstream's `operations`: where the file is read from;
+     *        this machine (`LocalReadOperations`) when null
+     */
     public function __construct(
         private readonly string $cwd,
         private readonly bool $autoResizeImages = true,
         private readonly ?Closure $resizeOptions = null,
-        private readonly int $chunkBytes = self::CHUNK_BYTES,
+        int $chunkBytes = self::CHUNK_BYTES,
+        ?ReadOperations $operations = null,
     ) {
+        $this->operations = $operations ?? new LocalReadOperations($chunkBytes);
     }
 
     /** How much of a file one read takes in: big, because a part only counted is counted in C. */
@@ -126,15 +134,13 @@ final class ReadTool implements AgentTool, ReplayableTool
         $path = (string) $arguments['path'];
         $absolute = Paths::resolveForRead($path, $this->cwd);
 
-        if (!is_file($absolute)) {
-            throw new AgentError("No such file: {$path}");
+        try {
+            $this->operations->access($absolute);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->kind === FileAccessError::NOT_FOUND ? "No such file: {$path}" : "Not readable: {$path}");
         }
 
-        if (!is_readable($absolute)) {
-            throw new AgentError("Not readable: {$path}");
-        }
-
-        $mimeType = ImageType::ofFile($absolute);
+        $mimeType = $this->operations->detectImageMimeType($absolute);
 
         if ($mimeType !== null) {
             return $this->image($absolute, $mimeType);
@@ -145,10 +151,10 @@ final class ReadTool implements AgentTool, ReplayableTool
 
     private function image(string $absolute, string $mimeType): AgentToolResult
     {
-        $bytes = file_get_contents($absolute);
-
-        if ($bytes === false) {
-            throw new AgentError("Could not read {$absolute}");
+        try {
+            $bytes = $this->operations->readFile($absolute);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->explain("Could not read {$absolute}"));
         }
 
         // Upstream's `processImage()` with the read's own wording: an image that cannot be fitted
@@ -236,136 +242,107 @@ final class ReadTool implements AgentTool, ReplayableTool
      */
     private function scan(string $absolute, int $start, ?int $limit, ?AbortSignal $signal): array
     {
-        // The warning caught rather than printed, as `SessionManager::appendLines()` does: its text
-        // is the reason, and it belongs in the error rather than on the terminal.
-        $reason = null;
-        set_error_handler(static function (int $errno, string $errstr) use (&$reason): bool {
-            $reason = $errstr;
+        // The bytes come from the operations' stream (`LocalReadOperations` reads a regular file
+        // up to the size it had when opened, as `fs.readFile` does); this only counts and keeps.
+        $chunks = $this->operations->createReadStream($absolute, $signal);
 
-            return true;
-        });
+        $end = $limit === null ? PHP_INT_MAX : $start + $limit;
+        $maxLines = Truncate::MAX_LINES;
+        $maxBytes = Truncate::MAX_BYTES;
 
-        try {
-            $handle = fopen($absolute, 'rb');
-        } finally {
-            restore_error_handler();
-        }
+        $line = 0;            // the line being read, from 0
+        $read = 0;            // bytes consumed so far
+        $startAt = $start === 0 ? 0 : null; // where the first selected line begins
+        $endAt = null;        // where the last selected line ends
+        $firstLineBytes = null;
+        $prefix = [];
+        $prefixBytes = 0;
+        $storing = true;
+        $current = '';        // the selected line being read, cut at $maxBytes + 1
+        $sinceYield = 0;
 
-        if ($handle === false) {
-            throw new AgentError("Could not read {$absolute}" . ($reason !== null ? ": {$reason}" : ''));
-        }
+        foreach ($chunks as $data) {
+            $length = strlen($data);
+            $at = 0;
 
-        try {
-            $stat = fstat($handle);
-            $size = $stat !== false && ($stat['mode'] & 0o170000) === 0o100000 && $stat['size'] > 0 ? (int) $stat['size'] : null;
+            while ($at < $length) {
+                if ($line < $start) {
+                    // Before the selection: count, and find where it begins only when it is here.
+                    $needed = $start - $line;
+                    $newlines = substr_count($data, "\n", $at);
 
-            $end = $limit === null ? PHP_INT_MAX : $start + $limit;
-            $maxLines = Truncate::MAX_LINES;
-            $maxBytes = Truncate::MAX_BYTES;
+                    if ($newlines < $needed) {
+                        $line += $newlines;
+                        break;
+                    }
 
-            $line = 0;            // the line being read, from 0
-            $read = 0;            // bytes consumed so far
-            $startAt = $start === 0 ? 0 : null; // where the first selected line begins
-            $endAt = null;        // where the last selected line ends
-            $firstLineBytes = null;
-            $prefix = [];
-            $prefixBytes = 0;
-            $storing = true;
-            $current = '';        // the selected line being read, cut at $maxBytes + 1
-            $sinceYield = 0;
+                    for ($i = 0; $i < $needed; $i++) {
+                        $at = (int) strpos($data, "\n", $at) + 1;
+                    }
 
-            while ($size === null || $read < $size) {
-                $want = $size === null ? $this->chunkBytes : min($this->chunkBytes, $size - $read);
-                $data = fread($handle, $want);
+                    $line = $start;
+                    $startAt = $read + $at;
+                    continue;
+                }
 
-                if ($data === false || $data === '') {
+                if ($line >= $end) {
+                    $line += substr_count($data, "\n", $at);
                     break;
                 }
 
-                $length = strlen($data);
-                $at = 0;
+                if (!$storing) {
+                    // Past what can be shown: only where the selection ends still matters.
+                    $needed = $end - $line;
+                    $newlines = substr_count($data, "\n", $at);
 
-                while ($at < $length) {
-                    if ($line < $start) {
-                        // Before the selection: count, and find where it begins only when it is here.
-                        $needed = $start - $line;
-                        $newlines = substr_count($data, "\n", $at);
-
-                        if ($newlines < $needed) {
-                            $line += $newlines;
-                            break;
-                        }
-
-                        for ($i = 0; $i < $needed; $i++) {
-                            $at = (int) strpos($data, "\n", $at) + 1;
-                        }
-
-                        $line = $start;
-                        $startAt = $read + $at;
-                        continue;
-                    }
-
-                    if ($line >= $end) {
-                        $line += substr_count($data, "\n", $at);
+                    if ($newlines < $needed) {
+                        $line += $newlines;
                         break;
                     }
 
-                    if (!$storing) {
-                        // Past what can be shown: only where the selection ends still matters.
-                        $needed = $end - $line;
-                        $newlines = substr_count($data, "\n", $at);
-
-                        if ($newlines < $needed) {
-                            $line += $newlines;
-                            break;
-                        }
-
-                        for ($i = 0; $i < $needed; $i++) {
-                            $at = (int) strpos($data, "\n", $at) + 1;
-                        }
-
-                        $line = $end;
-                        $endAt = $read + $at - 1;
-                        continue;
+                    for ($i = 0; $i < $needed; $i++) {
+                        $at = (int) strpos($data, "\n", $at) + 1;
                     }
 
-                    // A selected line, of which as much as could be shown is kept.
-                    $newline = strpos($data, "\n", $at);
-                    $piece = $newline === false ? substr($data, $at) : substr($data, $at, $newline - $at);
-
-                    if ($storing && strlen($current) <= $maxBytes) {
-                        $current .= substr($piece, 0, $maxBytes + 1 - strlen($current));
-                    }
-
-                    if ($newline === false) {
-                        break;
-                    }
-
-                    $this->finishLine($read + $newline, $line, $start, $startAt, $firstLineBytes, $current, $storing, $prefix, $prefixBytes, $maxLines, $maxBytes);
-                    $line++;
-                    $at = $newline + 1;
-
-                    if ($line === $end) {
-                        $endAt = $read + $newline;
-                    }
+                    $line = $end;
+                    $endAt = $read + $at - 1;
+                    continue;
                 }
 
-                $read += $length;
-                $sinceYield += $length;
+                // A selected line, of which as much as could be shown is kept.
+                $newline = strpos($data, "\n", $at);
+                $piece = $newline === false ? substr($data, $at) : substr($data, $at, $newline - $at);
 
-                if ($sinceYield >= self::YIELD_EVERY_BYTES) {
-                    $sinceYield = 0;
-                    $signal?->throwIfAborted();
+                if ($storing && strlen($current) <= $maxBytes) {
+                    $current .= substr($piece, 0, $maxBytes + 1 - strlen($current));
+                }
 
-                    if (\Fiber::getCurrent() !== null) {
-                        Async::delay(0);
-                    }
+                if ($newline === false) {
+                    break;
+                }
 
-                    $signal?->throwIfAborted();
+                $this->finishLine($read + $newline, $line, $start, $startAt, $firstLineBytes, $current, $storing, $prefix, $prefixBytes, $maxLines, $maxBytes);
+                $line++;
+                $at = $newline + 1;
+
+                if ($line === $end) {
+                    $endAt = $read + $newline;
                 }
             }
-        } finally {
-            fclose($handle);
+
+            $read += $length;
+            $sinceYield += $length;
+
+            if ($sinceYield >= self::YIELD_EVERY_BYTES) {
+                $sinceYield = 0;
+                $signal?->throwIfAborted();
+
+                if (\Fiber::getCurrent() !== null) {
+                    Async::delay(0);
+                }
+
+                $signal?->throwIfAborted();
+            }
         }
 
         // The end of the file ends the line being read: `explode()` counts one more line than

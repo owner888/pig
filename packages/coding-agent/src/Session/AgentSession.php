@@ -3168,8 +3168,7 @@ final class AgentSession
                 onChunk: fn (string $delta) => $this->announce(new BashExecutionUpdateEvent($id, $delta)),
                 spillDirectory: $this->scratch,
             );
-            $run->start();
-            $exit = $run->wait($this->bash->signal, null);
+            $exit = $run->run($this->bash->signal, null);
             $truncation = Truncate::tail($run->output());
 
             $execution = new BashExecutionMessage(

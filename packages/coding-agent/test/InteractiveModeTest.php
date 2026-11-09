@@ -4824,6 +4824,13 @@ final class InteractiveModeTest extends TestCase
         $marker = $bin . '/opened';
         file_put_contents($bin . '/' . $opener, "#!/bin/sh\necho \"\$1\" > " . escapeshellarg($marker) . "\n");
         chmod($bin . '/' . $opener, 0700);
+        // Run once now and its mark taken away: macOS checks a newly written executable the first
+        // time it runs, which took 3 s on the developer's machine, and the wait below is 5 s on a
+        // loaded one (`AutocompleteTest::fakeFd()` has the measurement).
+        \Pig\Tui\Process::run([$bin . '/' . $opener, ''], 30.0);
+        if (is_file($marker)) {
+            unlink($marker);
+        }
         $path = (string) getenv('PATH');
         putenv('PATH=' . $bin . ':' . $path);
 

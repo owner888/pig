@@ -9,17 +9,13 @@ use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
-use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Utils\Ansi;
-use Pig\Tui\Process;
 
 /**
- * One running command.
- *
- * Split out because a command has a good deal of state while it runs — two pipes, a
- * rolling buffer, a spill file, watchers, a timer — and threading all of it through one
- * method is how the upstream version ended up two hundred lines of nested callbacks.
+ * One command, and what it prints: upstream's `OutputAccumulator` with the live updates and the
+ * spill file. The command itself is run by `BashOperations` — `LocalShellOperations` on this
+ * machine, the default — which hands each piece of output here as it arrives.
  *
  * @internal
  */
@@ -30,8 +26,6 @@ final class Run
 
     /** Kept in memory: twice the limit, so truncation always has whole lines to work with. */
     private const int KEEP_BYTES = Truncate::MAX_BYTES * 2;
-
-    private const int READ_CHUNK = 65536;
 
     /**
      * The least time between two live updates of the output (`$onUpdate`).
@@ -54,17 +48,8 @@ final class Run
 
     public ?string $spillPath = null;
 
-    /** @var resource|null */
-    private mixed $process = null;
-
-    /** @var array<int, resource> */
-    private array $pipes = [];
-
-    /** @var array<int, string> loop watcher ids, by pipe */
-    private array $watchers = [];
-
     /**
-     * Upstream's `pendingAnsi` (#10504), by pipe: the end of the last read that the next one
+     * Upstream's `pendingAnsi` (#10504), by stream: the end of the last read that the next one
      * completes — an unfinished escape sequence, or a UTF-8 character cut short (upstream's
      * `TextDecoder` with `stream: true` holds that back for it).
      *
@@ -82,12 +67,7 @@ final class Run
 
     private int $totalLines = 0;
 
-    private int $open = 0;
-
-    private ?Deferred $finished = null;
-
-    /** What the command reported, once `wait()` has waited for it. */
-    private int $exit = 0;
+    private readonly BashOperations $operations;
 
     /**
      * @param Closure(AgentToolResult): void|null $onUpdate
@@ -103,6 +83,8 @@ final class Run
      * @param string|null $spillDirectory where the spill file goes — a private session's own
      *        temporary directory (`AgentSession::scratchDirectory()`), removed with it; null is the
      *        system's
+     * @param BashOperations|null $operations what runs the command; null is this machine's bash with
+     *        `$shell`
      */
     public function __construct(
         private readonly string $cwd,
@@ -113,150 +95,34 @@ final class Run
         private readonly string $spillPrefix = 'pig-bash',
         private readonly ?Closure $onChunk = null,
         private readonly ?string $spillDirectory = null,
+        ?BashOperations $operations = null,
     ) {
+        $shell = $this->shell;
+        $this->operations = $operations ?? new LocalShellOperations('bash', static fn (): ShellConfig => $shell ?? Shell::config());
     }
 
-    public function start(): void
+    /**
+     * Run the command and keep what it prints, until it finishes, is aborted or runs out of time —
+     * `$aborted` and `$timedOut` say which of the last two.
+     *
+     * @return int|null its exit code; for a stopped command, what it reported when stopped
+     * @throws AgentError when it could not be started
+     */
+    public function run(?AbortSignal $signal, ?float $timeout): ?int
     {
-        $shell = $this->shell ?? Shell::config();
-        $fromStdin = $shell->commandTransport === 'stdin';
-
-        // stdin is /dev/null rather than inherited: a command that decides to prompt
-        // would otherwise sit there waiting for a person who is not watching it. The one
-        // exception is a shell that reads its command from there (the legacy WSL bash).
-        $descriptors = [
-            0 => $fromStdin ? ['pipe', 'r'] : ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ];
-
-        $argv = $shell->argv($this->command);
-
-        // Upstream's `spawn(..., { detached: true })` calls `setsid()` in the child before exec,
-        // which detaches `/dev/tty`. Without it, `proc_open()` leaves the child in pig's session
-        // with pig's controlling terminal, so a command that opens `/dev/tty` directly (`ssh`
-        // asking about a host key, `git` or `sudo` asking for a password) writes onto the raw TUI
-        // screen — scrolling the alternate screen behind the differential renderer's back — and
-        // hangs waiting for an answer nobody can type.
-        // `Process::inNewSession()`, which the clipboard writers go through too.
-        if (str_contains($argv[0], '/')) {
-            $argv = Process::inNewSession($argv);
-        }
-
-        $process = proc_open($argv, $descriptors, $pipes, $this->cwd, $this->env);
-
-        if (!is_resource($process)) {
-            throw new AgentError("Could not start a shell ({$shell->shell})");
-        }
-
-        if ($fromStdin) {
-            fwrite($pipes[0], $this->command);
-            fclose($pipes[0]);
-            unset($pipes[0]);
-        }
-
-        $this->process = $process;
-        $this->pipes = $pipes;
-        $this->finished = new Deferred();
-        $this->open = 2;
-
-        foreach ([1, 2] as $fd) {
-            stream_set_blocking($pipes[$fd], false);
-            $this->watchers[$fd] = Loop::get()->onReadable($pipes[$fd], function () use ($fd): void {
-                $this->read($fd);
-            });
-        }
-    }
-
-    /** Suspend until the command finishes, is aborted, or runs out of time. */
-    public function wait(?AbortSignal $signal, ?float $timeout): int
-    {
-        $listener = $signal?->onAbort(function (): void {
-            $this->aborted = true;
-            $this->stop();
-        });
-
-        $timer = $timeout !== null && $timeout > 0
-            ? Loop::get()->delay($timeout, function (): void {
-                $this->timedOut = true;
-                $this->stop();
-            })
-            : null;
-
-        // A background grandchild (`(cmd) &`) inherits the pipes unless explicitly closed.
-        // If the main shell has already exited, waiting for pipe EOF hangs indefinitely.
-        // Periodically check if the primary process has finished; once it exits, drain
-        // remaining output and resolve without waiting for orphaned background grandchildren.
-        $pollTimer = null;
-        $drainTimer = null;
-        $finalStatus = null;
-        $pollProcess = function () use (&$pollProcess, &$pollTimer, &$drainTimer, &$finalStatus): void {
-            $pollTimer = Loop::get()->delay(0.1, function () use (&$pollProcess, &$drainTimer, &$finalStatus): void {
-                if (!is_resource($this->process)) {
-                    return;
-                }
-
-                $status = proc_get_status($this->process);
-
-                if ($status['running'] !== true) {
-                    $finalStatus = $status;
-                    $drainTimer = Loop::get()->delay(0.05, function (): void {
-                        if ($this->finished !== null && !$this->finished->future->isComplete()) {
-                            foreach ([1, 2] as $fd) {
-                                if (isset($this->pipes[$fd]) && is_resource($this->pipes[$fd])) {
-                                    $this->read($fd);
-                                }
-                            }
-                            $this->finished->complete(null);
-                        }
-                    });
-
-                    return;
-                }
-
-                $pollProcess();
-            });
-        };
-        $pollProcess();
-
         try {
-            $this->finished?->future->await();
-
-            if ($pollTimer !== null) {
-                Loop::get()->cancel($pollTimer);
-                $pollTimer = null;
+            return $this->operations->exec($this->command, $this->cwd, $this->accept(...), $signal, $timeout, $this->env);
+        } catch (CommandStopped $stopped) {
+            if ($stopped->timedOut) {
+                $this->timedOut = true;
+            } else {
+                $this->aborted = true;
             }
 
-            if ($drainTimer !== null) {
-                Loop::get()->cancel($drainTimer);
-                $drainTimer = null;
-            }
-
-            // The pipes closing is not the command exiting, and the code is a fact about the
-            // process — see `Process::awaitFinish()`, which is also what keeps that wait from
-            // being a freeze. Inside the try, so the timer and the signal above still reach a
-            // command that shut its own output and carried on.
-            $this->exit = Process::awaitFinish($this->process, $finalStatus);
-            $this->process = null;
+            return $stopped->exitCode;
         } finally {
-            if ($timer !== null) {
-                Loop::get()->cancel($timer);
-            }
-
-            if ($pollTimer !== null) {
-                Loop::get()->cancel($pollTimer);
-            }
-
-            if ($drainTimer !== null) {
-                Loop::get()->cancel($drainTimer);
-            }
-
-            if ($listener !== null) {
-                $signal?->removeListener($listener);
-            }
+            $this->close();
         }
-
-        return $this->close();
     }
 
     public function output(): string
@@ -268,7 +134,7 @@ final class Run
      * Upstream's `OutputAccumulator.readFullOutput(maxBytes)`, for the structured result a codemode
      * script gets: the whole output when it is at most $maxBytes, otherwise its first and last
      * halves around `[... N bytes omitted ...]`, cut at character boundaries. Read from the spill
-     * file when there is one, since the buffer holds only the tail; called after `wait()`, which
+     * file when there is one, since the buffer holds only the tail; called after `run()`, which
      * has closed it.
      *
      * @return array{content: string, truncated: bool}
@@ -334,34 +200,16 @@ final class Run
         return $bytes;
     }
 
-    /** Read what is there, spill it, keep the tail, and tell the UI. */
-    private function read(int $fd): void
+    /**
+     * A piece of output from `$stream` (1 stdout, 2 stderr). Upstream's
+     * `splitIncompleteAnsiSuffix(pendingAnsi + chunk)`: an escape sequence split across two reads
+     * is held back until the rest arrives, so it is stripped whole instead of leaving its halves in
+     * the output.
+     */
+    private function accept(string $chunk, int $stream = 1): void
     {
-        $pipe = $this->pipes[$fd] ?? null;
-
-        if (!is_resource($pipe)) {
-            return;
-        }
-
-        $chunk = fread($pipe, self::READ_CHUNK);
-
-        if ($chunk === false || $chunk === '') {
-            if (feof($pipe)) {
-                // Upstream's `flushOutput()`: what was held back goes out as it is.
-                $rest = $this->pending[$fd] ?? '';
-                unset($this->pending[$fd]);
-                $this->accept($rest);
-                $this->closePipe($fd);
-            }
-
-            return;
-        }
-
-        // Upstream's `splitIncompleteAnsiSuffix(pendingAnsi + chunk)`: an escape sequence split
-        // across two reads is held back until the rest arrives, so it is stripped whole instead of
-        // leaving its halves in the output.
-        [$complete, $this->pending[$fd]] = self::splitIncompleteEnd(($this->pending[$fd] ?? '') . $chunk);
-        $this->accept($complete);
+        [$complete, $this->pending[$stream]] = self::splitIncompleteEnd(($this->pending[$stream] ?? '') . $chunk);
+        $this->keep($complete);
     }
 
     /**
@@ -381,7 +229,7 @@ final class Run
     }
 
     /** Clean what was read, spill it, keep the tail, and tell the UI. */
-    private function accept(string $chunk): void
+    private function keep(string $chunk): void
     {
         // Cleaned here, at the source, which is upstream's own words for it in
         // `bash-executor.ts`: what reaches the model, the session file, the spill file and the
@@ -478,43 +326,15 @@ final class Run
         }
     }
 
-    private function closePipe(int $fd): void
+    private function close(): void
     {
-        // Cancelled before the close: stream_select() drops a closed stream silently and
-        // then fails with an error that names nothing.
-        if (isset($this->watchers[$fd])) {
-            Loop::get()->cancel($this->watchers[$fd]);
-            unset($this->watchers[$fd]);
+        // Upstream's `flushOutput()`: what was held back goes out as it is.
+        foreach (array_keys($this->pending) as $stream) {
+            $rest = $this->pending[$stream];
+            unset($this->pending[$stream]);
+            $this->keep($rest);
         }
 
-        if (is_resource($this->pipes[$fd] ?? null)) {
-            fclose($this->pipes[$fd]);
-        }
-
-        unset($this->pipes[$fd]);
-        $this->open--;
-
-        if ($this->open <= 0 && $this->finished !== null && !$this->finished->future->isComplete()) {
-            $this->finished->complete(null);
-        }
-    }
-
-    /** Kill the command and everything it started. */
-    private function stop(): void
-    {
-        if (!is_resource($this->process)) {
-            return;
-        }
-
-        $status = proc_get_status($this->process);
-
-        if ($status['running'] === true) {
-            Shell::killTree((int) $status['pid']);
-        }
-    }
-
-    private function close(): int
-    {
         // An update still waiting goes out now, before the result does.
         if ($this->updateTimer !== null) {
             Loop::get()->cancel($this->updateTimer);
@@ -522,19 +342,9 @@ final class Run
             $this->flushUpdate();
         }
 
-        foreach (array_keys($this->watchers) as $fd) {
-            $this->closePipe($fd);
-        }
-
         if (is_resource($this->spill)) {
             fclose($this->spill);
             $this->spill = null;
         }
-
-        // The process was waited for and closed in `wait()`, where the timer was still armed and
-        // the status was still readable — asked a second time it says `signaled: false`, so
-        // there is nothing left to ask here. What "$? would have said" is `Process`'s one
-        // answer, so a command reports the same whether it came through here or `runAsync()`.
-        return $this->exit;
     }
 }

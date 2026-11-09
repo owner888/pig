@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Closure;
+use Pig\Agent\AgentError;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\ToolProgress;
@@ -190,10 +191,10 @@ final class SessionList implements Component, Focusable, InputHandler, CapturesV
         }
 
         // pig's own: a tool's output kept for `continueRun()` goes with its conversation.
-        $running = ToolProgress::pathOf($path);
-
-        if (is_file($running) && !unlink($running)) {
-            return "could not remove {$running}";
+        try {
+            SessionManager::sessionStore()->deleteSidecar($path, ToolProgress::SIDECAR);
+        } catch (AgentError) {
+            return 'could not remove ' . ToolProgress::pathOf($path);
         }
 
         if (self::moveToSystemTrash($path)) {

@@ -58,6 +58,8 @@ final class ShellTool implements AgentTool
         'required' => ['output', 'truncated', 'exit_code', 'wall_time_seconds'],
     ];
 
+    private readonly BashOperations $operations;
+
     /**
      * @param string $name upstream's `ShellToolConfig.name` — `bash`, `powershell`
      * @param string $label what the UI calls it while it runs
@@ -75,6 +77,8 @@ final class ShellTool implements AgentTool
      *        when each command starts — pig's stand-in for upstream's `ctx`. Null describes none
      * @param (Closure(SpawnContext): SpawnContext)|null $spawnHook upstream's `spawnHook`: adjust the
      *        command, the directory or the environment before it runs
+     * @param BashOperations|null $operations upstream's `operations`: what runs the command; this
+     *        machine's shell (`LocalShellOperations` with `$resolveShell`) when null
      */
     public function __construct(
         private readonly string $cwd,
@@ -88,7 +92,9 @@ final class ShellTool implements AgentTool
         private readonly bool $exposeSessionEnvironment = true,
         private readonly ?Closure $sessionEnvironment = null,
         private readonly ?Closure $spawnHook = null,
+        ?BashOperations $operations = null,
     ) {
+        $this->operations = $operations ?? new LocalShellOperations($shellName, $resolveShell);
     }
 
     #[\Override]
@@ -140,25 +146,20 @@ final class ShellTool implements AgentTool
 
         $context = $this->spawnContext($this->commandPrefix !== null ? "{$this->commandPrefix}\n{$command}" : $command);
 
-        // Upstream's `createLocalShellOperations()` check, before anything is started.
-        if (!is_dir($context->cwd)) {
-            throw new AgentError("Working directory does not exist: {$context->cwd}\nCannot execute {$this->shellName} commands.");
-        }
-
         $startedAt = microtime(true);
         $run = new Run(
             $context->cwd,
             ($this->wrapCommand)($context->command),
             $onUpdate,
-            ($this->resolveShell)(),
-            $context->env,
-            $this->spillPrefix,
+            env: $context->env,
+            spillPrefix: $this->spillPrefix,
             // Asked whether or not the variables are exposed: a private session's output stays in
             // its own directory either way.
             spillDirectory: $this->sessionEnvironment !== null ? ($this->sessionEnvironment)()?->tempDirectory : null,
+            operations: $this->operations,
         );
-        $run->start();
-        $exit = $run->wait($signal, $timeout);
+        // `LocalShellOperations` checks the working directory first, as upstream's does.
+        $exit = $run->run($signal, $timeout);
         $output = $run->output();
 
         if ($run->aborted) {
@@ -204,7 +205,7 @@ final class ShellTool implements AgentTool
         if ($exit !== 0) {
             // A failing command is something the model reads and reacts to, so the
             // output goes with the error rather than being swallowed by it.
-            throw new AgentError($text . "\n\nCommand exited with code {$exit}", $details, structuredContent: $structured);
+            throw new AgentError($text . "\n\nCommand exited with code " . ($exit ?? 'unknown'), $details, structuredContent: $structured);
         }
 
         return new AgentToolResult([new TextContent($text)], $details, structuredContent: $structured);

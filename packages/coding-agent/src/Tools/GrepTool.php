@@ -31,8 +31,12 @@ final class GrepTool implements AgentTool, ReplayableTool
 
     private const float TIMEOUT = 30.0;
 
-    public function __construct(private readonly string $cwd)
+    private readonly GrepOperations $operations;
+
+    /** @param GrepOperations|null $operations upstream's `operations`: whether the path is a directory; this machine when null */
+    public function __construct(private readonly string $cwd, ?GrepOperations $operations = null)
     {
+        $this->operations = $operations ?? new LocalGrepOperations();
     }
 
     #[\Override]
@@ -93,13 +97,14 @@ final class GrepTool implements AgentTool, ReplayableTool
         $given = (string) ($arguments['path'] ?? '.');
         $root = Paths::resolve($given, $this->cwd);
 
-        if (!file_exists($root)) {
+        try {
+            $searchingDirectory = $this->operations->isDirectory($root);
+        } catch (FileAccessError) {
             throw new AgentError("No such file or directory: {$given}");
         }
 
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
         $context = max(0, (int) ($arguments['context'] ?? 0));
-        $searchingDirectory = is_dir($root);
 
         $lines = [];
         $matches = 0;

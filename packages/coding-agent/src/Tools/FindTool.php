@@ -30,7 +30,11 @@ final class FindTool implements AgentTool, ReplayableTool
     /** A search across a large tree, with a ceiling so one cannot hang the agent. */
     private const float TIMEOUT = 30.0;
 
-    public function __construct(private readonly string $cwd)
+    /**
+     * @param FindOperations|null $operations upstream's `operations`: given one, the path is checked
+     *        with its `exists()` and the files come from its `glob()` instead of `fd`
+     */
+    public function __construct(private readonly string $cwd, private readonly ?FindOperations $operations = null)
     {
     }
 
@@ -82,11 +86,27 @@ final class FindTool implements AgentTool, ReplayableTool
     ): AgentToolResult {
         $signal?->throwIfAborted();
 
-        $fd = ExternalTool::fd();
         $pattern = (string) $arguments['pattern'];
         $given = (string) ($arguments['path'] ?? '.');
         $root = rtrim(Paths::resolve($given, $this->cwd), '/');
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
+
+        // Upstream: "If custom operations provide glob(), use that instead of fd."
+        if ($this->operations !== null) {
+            if (!$this->operations->exists($root)) {
+                throw new AgentError("No such directory: {$given}");
+            }
+
+            // At most `$limit`, as `--max-results` gives `fd`; the notice then says the limit was reached.
+            $globbed = array_slice($this->operations->glob($pattern, $root, ['**/node_modules/**', '**/.git/**'], $limit), 0, $limit);
+            $found = $this->relative(implode("\n", $globbed), $root);
+
+            $signal?->throwIfAborted();
+
+            return $this->result($found, $limit);
+        }
+
+        $fd = ExternalTool::fd();
 
         if (!is_dir($root)) {
             throw new AgentError("No such directory: {$given}");
@@ -117,7 +137,7 @@ final class FindTool implements AgentTool, ReplayableTool
         // Upstream's `find.ts` is `spawnSync(fdPath, …)`, so it freezes its own event loop here
         // too — this is not a rule pig failed to port, it is one upstream does not have. Its
         // `grep.ts` is async `spawn`, and `bash.ts` is too, which is what makes `find` the odd
-        // one out in *both* trees. pig's `bash` was never affected, because `Tools\Run` is on the
+        // one out in *both* trees. pig's `bash` was never affected, because `Tools\LocalShellRun` is on the
         // loop with an `onReadable` per pipe.
         //
         // With no fiber to suspend — a test calling the tool directly — `runAsync()` is `run()`,
@@ -133,8 +153,17 @@ final class FindTool implements AgentTool, ReplayableTool
             throw new AgentError($said === '' ? "fd exited with code {$exit}" : $said);
         }
 
-        $found = $this->relative($output, $root);
+        return $this->result($this->relative($output, $root), $limit);
+    }
 
+    /**
+     * The files found, as the model reads them: the list, cut to the byte budget, with a line
+     * saying which limit was reached.
+     *
+     * @param list<string> $found relative to the search root
+     */
+    private function result(array $found, int $limit): AgentToolResult
+    {
         if ($found === []) {
             return new AgentToolResult([new TextContent('No files found matching pattern')]);
         }

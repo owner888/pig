@@ -14,11 +14,11 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
-use Pig\CodingAgent\Config;
 use Pig\Tui\Fuzzy;
 
 /**
- * The conversation on disk, one JSON object per line.
+ * The conversation on disk, one JSON object per line — pi's session file, kept by a `SessionStore`
+ * (`sessionStore()`: `JsonlSessionStore`, the files themselves, unless another was chosen).
  *
  * Appended to rather than rewritten, so a session survives whatever ends the process —
  * a crash, a closed laptop, Ctrl+C twice. Reading one back is reading the file top to
@@ -47,6 +47,24 @@ final class SessionManager
 
     /** How many to offer in a list before it stops being a list. */
     private const int LISTED = 30;
+
+    /** Where sessions are kept; `JsonlSessionStore` (pi's files) unless `useSessionStore()` said otherwise. */
+    private static ?SessionStore $sessionStore = null;
+
+    /**
+     * Keep sessions in `$store` from now on, or in pi's files again for null. Process-wide, as
+     * `useSessionDir()` is: `bin/pig` chooses once, before any session is opened.
+     */
+    public static function useSessionStore(?SessionStore $store): void
+    {
+        self::$sessionStore = $store;
+    }
+
+    /** Where sessions are kept ([storage.md](../../../../docs/dev/design/storage.md)). */
+    public static function sessionStore(): SessionStore
+    {
+        return self::$sessionStore ??= new JsonlSessionStore();
+    }
 
     /**
      * @var array<string, array{message: mixed, parent: string|null}> every entry, by id
@@ -143,7 +161,7 @@ final class SessionManager
         $stamp = str_replace([':', '.'], '-', SessionEntries::iso($now));
 
         return new self(
-            $path ?? self::directory($cwd) . '/' . $stamp . '_' . $id . '.jsonl',
+            $path ?? self::sessionStore()->locationFor($cwd, $stamp . '_' . $id),
             $id,
             $cwd,
             $now,
@@ -195,11 +213,6 @@ final class SessionManager
 
         $target = realpath($cwd) ?: $cwd;
         $fork = self::create($target, parentSession: $source, id: $id);
-        $directory = dirname($fork->path);
-
-        if (!is_dir($directory) && !mkdir($directory, 0o755, true) && !is_dir($directory)) {
-            throw new AgentError("Could not create {$directory} for the forked session.");
-        }
 
         $newHeader = [
             'type' => 'session',
@@ -210,20 +223,14 @@ final class SessionManager
             'parentSession' => $source,
         ];
 
-        // Upstream's `{ flag: "wx" }`: a fork never lands on a file that is already there.
-        $handle = is_file($fork->path) ? false : fopen($fork->path, 'x');
-
-        if ($handle === false) {
-            throw new AgentError("Could not write the forked session to {$fork->path}");
-        }
-
-        fwrite($handle, self::line($newHeader));
+        $content = self::line($newHeader);
 
         foreach (array_slice($lines, 1) as $line) {
-            fwrite($handle, $line . "\n");
+            $content .= $line . "\n";
         }
 
-        fclose($handle);
+        // `SessionStore::create()` refuses a session that is already there: upstream's `{ flag: "wx" }`.
+        self::sessionStore()->create($fork->path, $content);
 
         return self::open($fork->path);
     }
@@ -246,7 +253,7 @@ final class SessionManager
     /** Whether this session has been written to disk. */
     public function isPersisted(): bool
     {
-        return $this->started && is_file($this->path);
+        return $this->started && self::sessionStore()->exists($this->path);
     }
 
     /**
@@ -288,23 +295,15 @@ final class SessionManager
     }
 
     /**
-     * A file's lines, or null when there is nothing readable there.
-     *
-     * The readability is checked rather than the warning suppressed: `@` hides every
-     * other thing that could go wrong in the same call, and a session that will not open
-     * is exactly when you want to be told why.
+     * A session's lines, all of them, or null when there is nothing readable there.
      *
      * @return list<string>|null
      */
     private static function lines(string $path): ?array
     {
-        if (!is_file($path) || !is_readable($path)) {
-            return null;
-        }
+        $lines = self::sessionStore()->lines($path);
 
-        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-
-        return $lines === false ? null : $lines;
+        return $lines === null ? null : array_values([...$lines]);
     }
 
     /**
@@ -317,59 +316,40 @@ final class SessionManager
      */
     public static function open(string $path, ?string $cwdOverride = null): self
     {
-        if (!is_file($path) || !is_readable($path)) {
-            throw new AgentError("Could not read the session at {$path}");
-        }
+        $lines = self::sessionStore()->lines($path) ?? throw new AgentError("Could not read the session at {$path}");
+        $session = null;
+        $previous = null;
+        $upgrade = null;
 
-        $fh = fopen($path, 'rb');
+        // Read as it streams: a session of screenshots is tens of megabytes, and only a file that
+        // needs migrating is held whole.
+        foreach ($lines as $line) {
+            if ($session === null) {
+                $header = json_decode(trim($line), true);
 
-        if ($fh === false) {
-            throw new AgentError("Could not read the session at {$path}");
-        }
+                if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+                    throw new AgentError("Not a pig session file: {$path}");
+                }
 
-        $firstLine = fgets($fh);
+                // Rare migration branch for legacy v1/v2 files: read full lines array and rewrite
+                if ((int) ($header['version'] ?? 1) < self::VERSION) {
+                    $upgrade = $header;
 
-        if ($firstLine === false || trim($firstLine) === '') {
-            fclose($fh);
-            throw new AgentError("Not a pig session file: {$path}");
-        }
+                    break;
+                }
 
-        $header = json_decode(trim($firstLine), true);
+                $session = new self(
+                    $path,
+                    (string) ($header['id'] ?? ''),
+                    $cwdOverride ?? (string) ($header['cwd'] ?? ''),
+                    SessionEntries::millis($header['timestamp'] ?? null),
+                    is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
+                );
+                $session->started = true;
 
-        if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
-            fclose($fh);
-            throw new AgentError("Not a pig session file: {$path}");
-        }
-
-        $version = (int) ($header['version'] ?? 1);
-
-        // Rare migration branch for legacy v1/v2 files: read full lines array and rewrite
-        if ($version < self::VERSION) {
-            fclose($fh);
-            $lines = self::lines($path) ?? throw new AgentError("Could not read the session at {$path}");
-            $upgraded = self::upgrade($lines, $header);
-
-            if ($upgraded !== null) {
-                $lines = $upgraded;
-                $header = json_decode($lines[0], true);
-                self::rewrite($path, $lines);
+                continue;
             }
 
-            return self::buildFromLines($path, $lines, $header, $cwdOverride);
-        }
-
-        $session = new self(
-            $path,
-            (string) ($header['id'] ?? ''),
-            $cwdOverride ?? (string) ($header['cwd'] ?? ''),
-            SessionEntries::millis($header['timestamp'] ?? null),
-            is_string($header['parentSession'] ?? null) ? $header['parentSession'] : null,
-        );
-
-        $session->started = true;
-        $previous = null;
-
-        while (($line = fgets($fh)) !== false) {
             $line = trim($line);
 
             if ($line === '') {
@@ -385,7 +365,25 @@ final class SessionManager
             self::populateEntry($session, $raw, $previous);
         }
 
-        fclose($fh);
+        if ($upgrade !== null) {
+            $all = self::lines($path) ?? throw new AgentError("Could not read the session at {$path}");
+            $upgraded = self::upgrade($all, $upgrade);
+
+            if ($upgraded !== null) {
+                $all = $upgraded;
+                $upgrade = json_decode($all[0], true);
+                // Put the upgraded lines back, and carry on regardless if that cannot be done
+                // (`SessionStore::replace()`).
+                self::sessionStore()->replace($path, $all);
+            }
+
+            return self::buildFromLines($path, $all, $upgrade, $cwdOverride);
+        }
+
+        if ($session === null) {
+            throw new AgentError("Not a pig session file: {$path}");
+        }
+
         $session->leaf = $previous;
 
         return $session;
@@ -555,25 +553,6 @@ final class SessionManager
         }
 
         return $out;
-    }
-
-    /**
-     * Put the upgraded lines back, and carry on regardless if that cannot be done.
-     *
-     * A read-only checkout or somebody else's file that is not ours to write is not a reason to
-     * refuse the conversation: the entries in memory are already right, and the only cost is that
-     * the next open upgrades it again. `Migrations`' rule — every step skipped at the first sign of
-     * trouble, because half-migrating somebody else's data is worse than not starting.
-     *
-     * @param list<string> $lines
-     */
-    private static function rewrite(string $path, array $lines): void
-    {
-        if (!is_writable($path)) {
-            return;
-        }
-
-        file_put_contents($path, implode("\n", $lines) . "\n");
     }
 
     /**
@@ -1795,28 +1774,7 @@ final class SessionManager
 
     private function appendLines(string $lines): void
     {
-        $directory = dirname($this->path);
-
-        if (!is_dir($directory) && !mkdir($directory, 0o700, true) && !is_dir($directory)) {
-            throw new AgentError("Could not create {$directory}");
-        }
-
-        $reason = null;
-        set_error_handler(static function (int $errno, string $errstr) use (&$reason): bool {
-            $reason = $errstr;
-
-            return true;
-        });
-
-        try {
-            $ok = file_put_contents($this->path, $lines, FILE_APPEND | LOCK_EX) !== false;
-        } finally {
-            restore_error_handler();
-        }
-
-        if (!$ok) {
-            throw new AgentError("Could not write the session to {$this->path}" . ($reason !== null ? ": {$reason}" : ''));
-        }
+        self::sessionStore()->append($this->path, $lines);
     }
 
     /** @param array<string, mixed> $entry */
@@ -1827,88 +1785,89 @@ final class SessionManager
 
     // ---- finding one again --------------------------------------------------------------
 
-    /** `sessionDir` / `--session-dir`, when one was given: see `useSessionDir()`. */
-    private static ?string $sessionDir = null;
-
     /**
-     * Upstream's `sessionDir`: one directory for every session, in place of one per project.
-     * Process-wide for `Shell::useShellPath()`'s reason — `bin/pig` sets it once, and `/new`,
-     * `/resume`, `--continue` and the web mode all reach it through `directory()`.
-     *
-     * With it set, pi's directory is not read, and the listings keep only the sessions whose
-     * header names this project — upstream's `filterCwd`, which it skips when the directory given
-     * is the project's own default.
+     * Upstream's `sessionDir` (`--session-dir`): one directory for every session, in place of one
+     * per project. pi's files' own setting, kept by `JsonlSessionStore`; see its `useSessionDir()`.
      */
     public static function useSessionDir(?string $dir): void
     {
-        self::$sessionDir = $dir === null || $dir === '' ? null : rtrim($dir, '/');
+        JsonlSessionStore::useSessionDir($dir);
     }
 
     public static function sessionDir(): ?string
     {
-        return self::$sessionDir;
+        return JsonlSessionStore::sessionDir();
     }
 
-    /** Where $cwd's sessions live: one directory per project, named after its path. */
+    /** Where $cwd's session files live — `JsonlSessionStore::directory()`. */
     public static function directory(string $cwd, ?string $home = null): string
     {
-        if ($home === null && self::$sessionDir !== null) {
-            return self::$sessionDir;
-        }
+        return JsonlSessionStore::directory($cwd, $home);
+    }
 
-        return ($home ?? Config::home()) . '/sessions/' . self::slug($cwd);
+    /** pi's directory name for a working directory — `JsonlSessionStore::slug()`. */
+    public static function slug(string $cwd): string
+    {
+        return JsonlSessionStore::slug($cwd);
     }
 
     /**
-     * The session files to look through for $cwd, and whether each must be checked for naming it.
+     * The sessions to look through for $cwd, and whether each must be checked for naming it.
      *
      * @return array{0: list<string>, 1: bool}
      */
     private static function candidates(string $cwd): array
     {
-        if (self::$sessionDir !== null) {
-            $filter = self::$sessionDir !== Config::home() . '/sessions/' . self::slug($cwd);
-
-            return [glob(self::$sessionDir . '/*.jsonl') ?: [], $filter];
-        }
-
-        return [[
-            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
-            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
-        ], false];
+        return self::sessionStore()->candidates($cwd);
     }
 
-    /** Upstream's `sessionCwdMatches()`: whether the file's header names $cwd. */
+    /** The session's header, decoded, or null when its first line is not one. */
+    private static function storedHeader(string $path): ?array
+    {
+        $line = self::sessionStore()->firstLine($path);
+        $header = $line === null ? null : json_decode($line, true);
+
+        return is_array($header) ? $header : null;
+    }
+
+    /** Upstream's `sessionCwdMatches()`: whether the session's header names $cwd. */
     private static function namesCwd(string $path, string $cwd): bool
     {
-        $handle = is_readable($path) ? fopen($path, 'r') : false;
-
-        if ($handle === false) {
-            return false;
-        }
-
-        $line = fgets($handle);
-        fclose($handle);
-        $header = $line === false ? null : json_decode(trim($line), true);
-        $named = is_array($header) && is_string($header['cwd'] ?? null) ? $header['cwd'] : '';
+        $header = self::storedHeader($path);
+        $named = $header !== null && is_string($header['cwd'] ?? null) ? $header['cwd'] : '';
 
         return $named !== '' && (realpath($named) ?: $named) === (realpath($cwd) ?: $cwd);
     }
 
     /**
-     * A directory name for a working directory, exactly as pi builds one.
+     * $paths that are still there, newest first by when each was last written to, the name breaking
+     * a tie — the order every listing here uses.
      *
-     * The leading separator goes, every `/`, `\\` and `:` becomes a dash, and the whole
-     * thing is wrapped in `--`. pig used to squash every run of unusual characters into
-     * one dash and not wrap it, which named the same project two different things — so
-     * pointing pig at pi's directory would have found nothing.
+     * @param list<string> $paths
+     * @return list<string>
      */
-    public static function slug(string $cwd): string
+    private static function newestFirst(array $paths): array
     {
-        $flat = (string) preg_replace('#^[/\\\\]#', '', $cwd);
-        $flat = (string) preg_replace('#[/\\\\:]#', '-', $flat);
+        $store = self::sessionStore();
+        $times = [];
 
-        return '--' . $flat . '--';
+        foreach ($paths as $path) {
+            $time = $store->modifiedAt($path);
+
+            if ($time !== null) {
+                $times[$path] = $time;
+            }
+        }
+
+        $paths = array_map('strval', array_keys($times));
+
+        usort(
+            $paths,
+            static fn (string $a, string $b): int
+                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
+        );
+
+        return $paths;
     }
 
     /**
@@ -1937,21 +1896,7 @@ final class SessionManager
         // The name breaks a tie, so two files written in the same second have a fixed order
         // rather than whatever the directory happened to hand over. A path that has gone
         // between the glob and the stat is not a session to list.
-        $times = [];
-
-        foreach ($paths as $path) {
-            if (is_file($path)) {
-                $times[$path] = filemtime($path);
-            }
-        }
-
-        $paths = array_keys($times);
-
-        usort(
-            $paths,
-            static fn (string $a, string $b): int
-                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
-        );
+        $paths = self::newestFirst($paths);
 
         $sessions = [];
 
@@ -2028,30 +1973,7 @@ final class SessionManager
      */
     private static function everyFile(): array
     {
-        $paths = self::$sessionDir !== null
-            ? (glob(self::$sessionDir . '/*.jsonl') ?: [])
-            : [
-                ...(glob(Config::home() . '/sessions/*/*.jsonl') ?: []),
-                ...(glob(Config::piHome() . '/sessions/*/*.jsonl') ?: []),
-            ];
-
-        $times = [];
-
-        foreach ($paths as $path) {
-            if (is_file($path)) {
-                $times[$path] = filemtime($path);
-            }
-        }
-
-        $paths = array_keys($times);
-
-        usort(
-            $paths,
-            static fn (string $a, string $b): int
-                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
-        );
-
-        return $paths;
+        return self::newestFirst(self::sessionStore()->every());
     }
 
     /**
@@ -2066,38 +1988,8 @@ final class SessionManager
             $paths = array_values(array_filter($paths, static fn (string $path): bool => self::namesCwd($path, $cwd)));
         }
 
-        $times = [];
-
-        foreach ($paths as $path) {
-            if (is_file($path)) {
-                $times[$path] = filemtime($path);
-            }
-        }
-
-        $paths = array_keys($times);
-
-        usort(
-            $paths,
-            static fn (string $a, string $b): int
-                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
-        );
-
-        foreach ($paths as $path) {
-            $fh = fopen($path, 'r');
-            if ($fh === false) {
-                continue;
-            }
-
-            $firstLine = fgets($fh);
-            fclose($fh);
-
-            if ($firstLine === false) {
-                continue;
-            }
-
-            $header = json_decode(trim($firstLine), true);
-
-            if (is_array($header) && ($header['type'] ?? null) === 'session') {
+        foreach (self::newestFirst($paths) as $path) {
+            if ((self::storedHeader($path)['type'] ?? null) === 'session') {
                 return $path;
             }
         }
@@ -2147,20 +2039,12 @@ final class SessionManager
         return new FoundSession($path, $elsewhere);
     }
 
-    /** The `cwd` a session file's header names, or null when it names none. */
+    /** The `cwd` a session's header names, or null when it names none. */
     private static function headerCwd(string $path): ?string
     {
-        $handle = is_readable($path) ? fopen($path, 'r') : false;
+        $header = self::storedHeader($path);
 
-        if ($handle === false) {
-            return null;
-        }
-
-        $line = fgets($handle);
-        fclose($handle);
-        $header = $line === false ? null : json_decode(trim($line), true);
-
-        return is_array($header) && is_string($header['cwd'] ?? null) && $header['cwd'] !== '' ? $header['cwd'] : null;
+        return $header !== null && is_string($header['cwd'] ?? null) && $header['cwd'] !== '' ? $header['cwd'] : null;
     }
 
     /** `find()`'s search; `$global` says whether the match came from the all-projects pass. */
@@ -2173,63 +2057,16 @@ final class SessionManager
             return null;
         }
 
-        // Direct path with directory separators: resolve relative to cwd or as absolute path
+        // A location as typed, then this project's sessions by exact id and by id prefix.
+        $local = self::sessionStore()->findLocal($cwd, $sessionArg);
+
+        if ($local !== null) {
+            return $local;
+        }
+
+        // A path or file name that names nothing is not an id to look for further.
         if (str_contains($sessionArg, '/') || str_contains($sessionArg, '\\')) {
-            if (is_file($sessionArg)) {
-                return $sessionArg;
-            }
-
-            $local = $cwd . '/' . $sessionArg;
-
-            if (is_file($local)) {
-                return $local;
-            }
-
             return null;
-        }
-
-        // Bare filename ending in .jsonl: check cwd first
-        if (str_ends_with($sessionArg, '.jsonl')) {
-            if (is_file($sessionArg)) {
-                return $sessionArg;
-            }
-
-            $local = $cwd . '/' . $sessionArg;
-
-            if (is_file($local)) {
-                return $local;
-            }
-        }
-
-        // Local project session directory (pig and pi)
-        $localDirs = self::$sessionDir !== null ? [self::$sessionDir] : [
-            self::directory($cwd),
-            self::directory($cwd, Config::piHome()),
-        ];
-
-        foreach ($localDirs as $dir) {
-            if (!is_dir($dir)) {
-                continue;
-            }
-
-            // 0. Direct filename match inside project session directory (e.g. "2026-10-04...jsonl")
-            if (str_ends_with($sessionArg, '.jsonl') && is_file($dir . '/' . $sessionArg)) {
-                return $dir . '/' . $sessionArg;
-            }
-
-            // 1. Exact ID match (files are named {timestamp}_{id}.jsonl)
-            $exact = glob($dir . '/*_' . $sessionArg . '.jsonl') ?: [];
-
-            if ($exact !== []) {
-                return $exact[0];
-            }
-
-            // 2. Prefix match
-            $prefix = glob($dir . '/*_' . $sessionArg . '*.jsonl') ?: [];
-
-            if ($prefix !== []) {
-                return $prefix[0];
-            }
         }
 
         // Search through recent session entries in case of custom or migrated filenames
@@ -2239,34 +2076,10 @@ final class SessionManager
             }
         }
 
-        // Global search across all project session directories
-        // With a `sessionDir` every session is already in that one directory, searched above.
-        $globalRoots = self::$sessionDir !== null ? [] : [
-            Config::home() . '/sessions',
-            Config::piHome() . '/sessions',
-        ];
-
+        // Every project's sessions.
         $global = true;
 
-        foreach ($globalRoots as $root) {
-            if (!is_dir($root)) {
-                continue;
-            }
-
-            $exact = glob($root . '/*/*_' . $sessionArg . '.jsonl') ?: [];
-
-            if ($exact !== []) {
-                return $exact[0];
-            }
-
-            $prefix = glob($root . '/*/*_' . $sessionArg . '*.jsonl') ?: [];
-
-            if ($prefix !== []) {
-                return $prefix[0];
-            }
-        }
-
-        return null;
+        return self::sessionStore()->findGlobal($sessionArg);
     }
 
     /**
@@ -2280,17 +2093,7 @@ final class SessionManager
         [$paths, $filter] = self::candidates($cwd);
 
         foreach ($paths as $path) {
-            $handle = is_readable($path) ? fopen($path, 'r') : false;
-
-            if ($handle === false) {
-                continue;
-            }
-
-            $line = fgets($handle);
-            fclose($handle);
-            $header = $line === false ? null : json_decode(trim($line), true);
-
-            if (is_array($header) && ($header['id'] ?? null) === $id && (!$filter || self::namesCwd($path, $cwd))) {
+            if ((self::storedHeader($path)['id'] ?? null) === $id && (!$filter || self::namesCwd($path, $cwd))) {
                 return $path;
             }
         }
@@ -2306,35 +2109,31 @@ final class SessionManager
      */
     private static function describe(string $path): ?SessionInfo
     {
-        if (!is_file($path) || !is_readable($path)) {
+        $store = self::sessionStore();
+        $lines = $store->lines($path);
+
+        if ($lines === null) {
             return null;
         }
 
-        $fh = fopen($path, 'r');
-        if ($fh === false) {
-            return null;
-        }
-
-        $firstLine = fgets($fh);
-        if ($firstLine === false) {
-            fclose($fh);
-            return null;
-        }
-
-        $header = json_decode(trim($firstLine), true);
-
-        if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
-            fclose($fh);
-            return null;
-        }
-
+        $header = null;
         $opening = '';
         $sessionName = null;
         $messages = 0;
         $said = [];
         $totalSaidLength = 0;
 
-        while (($line = fgets($fh)) !== false) {
+        foreach ($lines as $line) {
+            if ($header === null) {
+                $header = json_decode(trim($line), true);
+
+                if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+                    return null;
+                }
+
+                continue;
+            }
+
             $line = trim($line);
             if ($line === '') {
                 continue;
@@ -2380,7 +2179,9 @@ final class SessionManager
             }
         }
 
-        fclose($fh);
+        if ($header === null) {
+            return null;
+        }
 
         return new SessionInfo(
             $path,
@@ -2392,7 +2193,7 @@ final class SessionManager
             implode(' ', $said),
             $sessionName,
             is_string($header['parentSession'] ?? null) && $header['parentSession'] !== '' ? $header['parentSession'] : null,
-            ((int) filemtime($path)) * 1000,
+            $store->modifiedAt($path) ?? 0,
         );
     }
 
@@ -2411,45 +2212,48 @@ final class SessionManager
      */
     public static function glance(string $path): ?SessionInfo
     {
-        if (!is_file($path) || !is_readable($path)) {
+        $store = self::sessionStore();
+        $lines = $store->lines($path);
+
+        if ($lines === null) {
             return null;
         }
 
-        $fh = fopen($path, 'rb');
-        if ($fh === false) {
+        $header = null;
+        $opening = '';
+
+        foreach ($lines as $line) {
+            if ($header === null) {
+                $header = json_decode(trim($line), true);
+
+                if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+                    return null;
+                }
+
+                continue;
+            }
+
+            // Every entry starts with its type, and a message with its role soon after; a
+            // screenshot several megabytes long is told from a prompt without decoding it.
+            $head = substr($line, 0, 200);
+            if (!str_starts_with($head, '{"type":"message"') || !str_contains($head, '"role":"user"')) {
+                continue;
+            }
+
+            $entry = json_decode($line, true);
+            if (is_array($entry) && is_array($entry['message'] ?? null)) {
+                $opening = self::opening($entry['message']);
+                if ($opening !== '') {
+                    break;
+                }
+            }
+        }
+
+        if ($header === null) {
             return null;
         }
 
-        try {
-            $header = json_decode(trim((string) fgets($fh)), true);
-
-            if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
-                return null;
-            }
-
-            $opening = '';
-
-            while (($line = fgets($fh)) !== false) {
-                // Every entry starts with its type, and a message with its role soon after; a
-                // screenshot several megabytes long is told from a prompt without decoding it.
-                $head = substr($line, 0, 200);
-                if (!str_starts_with($head, '{"type":"message"') || !str_contains($head, '"role":"user"')) {
-                    continue;
-                }
-
-                $entry = json_decode($line, true);
-                if (is_array($entry) && is_array($entry['message'] ?? null)) {
-                    $opening = self::opening($entry['message']);
-                    if ($opening !== '') {
-                        break;
-                    }
-                }
-            }
-
-            $name = self::lastSessionName($fh);
-        } finally {
-            fclose($fh);
-        }
+        $name = self::lastSessionName($path);
 
         return new SessionInfo(
             $path,
@@ -2461,46 +2265,29 @@ final class SessionManager
             '',
             $name,
             is_string($header['parentSession'] ?? null) && $header['parentSession'] !== '' ? $header['parentSession'] : null,
-            ((int) filemtime($path)) * 1000,
+            $store->modifiedAt($path) ?? 0,
         );
     }
 
     /**
-     * The name of the last `session_info` entry in the file, found from the end in blocks — the
-     * last one is the name in force, and a name given with `/name` is usually near the end.
-     *
-     * @param resource $fh
+     * The name of the last `session_info` entry in the session, read from the end
+     * (`SessionStore::linesFromEnd()`) — the last one is the name in force, and a name given with
+     * `/name` is usually near the end.
      */
-    private static function lastSessionName($fh): ?string
+    private static function lastSessionName(string $path): ?string
     {
-        $needle = "\n{\"type\":\"session_info\"";
-        $block = 1 << 16;
-        $end = (int) fstat($fh)['size'];
-        $carry = '';
-
-        while ($end > 0) {
-            $start = max(0, $end - $block);
-            fseek($fh, $start);
-            // The block, and the start of the one after it, so a needle cut in two is still found.
-            $chunk = (string) fread($fh, $end - $start) . $carry;
-            $carry = substr($chunk, 0, strlen($needle) - 1);
-            $end = $start;
-
-            $found = [];
-            for ($at = strpos($chunk, $needle); $at !== false; $at = strpos($chunk, $needle, $at + 1)) {
-                $found[] = $at;
+        foreach (self::sessionStore()->linesFromEnd($path) as $line) {
+            if (!str_starts_with($line, '{"type":"session_info"')) {
+                continue;
             }
 
-            foreach (array_reverse($found) as $at) {
-                fseek($fh, $start + $at + 1);
-                $entry = json_decode(trim((string) fgets($fh)), true);
-                $name = is_array($entry) && is_string($entry['name'] ?? null) ? self::cleanSessionName($entry['name']) : null;
+            $entry = json_decode(trim($line), true);
+            $name = is_array($entry) && is_string($entry['name'] ?? null) ? self::cleanSessionName($entry['name']) : null;
 
-                // `describe()`'s rule: a name that cleans to nothing, or a line too broken to read,
-                // leaves the one before it in force.
-                if ($name !== null) {
-                    return $name;
-                }
+            // `describe()`'s rule: a name that cleans to nothing, or a line too broken to read,
+            // leaves the one before it in force.
+            if ($name !== null) {
+                return $name;
             }
         }
 

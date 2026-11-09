@@ -88,7 +88,7 @@ final class MarkdownExport
     public static function defaultPath(SessionManager $store, string $cwd, string $suffix = '.md'): string
     {
         $sessionFile = $store->path();
-        if ($sessionFile !== null && is_file($sessionFile)) {
+        if ($sessionFile !== null && SessionManager::sessionStore()->exists($sessionFile)) {
             $base = preg_replace('/\.jsonl$/i', '', basename($sessionFile));
 
             return $cwd . '/' . $base . $suffix;

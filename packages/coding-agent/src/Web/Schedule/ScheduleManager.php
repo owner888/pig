@@ -144,7 +144,7 @@ final class ScheduleManager
 
                 $file = $run['sessionFile'] ?? null;
 
-                if (is_string($file) && is_file($file) && isset($this->tasks[$taskId])) {
+                if (is_string($file) && SessionManager::sessionStore()->exists($file) && isset($this->tasks[$taskId])) {
                     $this->runs[$taskId][$at] = [...$run, 'status' => self::RUNNING, 'resumedAt' => ($this->now)()];
                     $resume[] = [(string) $taskId, (string) $run['id'], $file, (string) ($run['cwd'] ?? $this->tasks[$taskId]->cwd)];
 
@@ -588,7 +588,7 @@ final class ScheduleManager
         try {
             // A task saved before tasks had conversations, or whose conversation was deleted from
             // the sidebar, gets a new one now.
-            if ($task->sessionFile === null || !is_file($task->sessionFile)) {
+            if ($task->sessionFile === null || !SessionManager::sessionStore()->exists($task->sessionFile)) {
                 $task = $task->with(sessionFile: $this->conversationFor($task));
                 $this->tasks[$task->id] = $task;
                 $this->write();

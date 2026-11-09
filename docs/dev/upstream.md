@@ -52,6 +52,27 @@ calls `Anthropic::cleanupSessionResources()` beside `StrictToolLimits::cleanup()
 ever compared with another from the same process. `StreamProxy` sends `disableContinuation` only when
 it is true, false being pig's unset.
 
+`Session\SessionStore` has no upstream counterpart: pi's `SessionManager` writes its JSONL file
+itself. pig's reads and writes the same lines through the store, so pig can keep sessions somewhere
+other than files (a server, several users, MySQL — [storage.md](design/storage.md)). `JsonlSessionStore`
+is the code that was in `SessionManager`, moved, and the file it writes is still pi's. The class above
+the seam keeps upstream's names and logic, so it still reads against `session-manager.ts`.
+
+The file tools' `*Operations` are upstream's interfaces with synchronous methods (a tool runs in a
+fiber, so an implementation that waits suspends it rather than returning a promise). They throw
+`Tools\FileAccessError` with a reason, so each tool keeps pig's own error wording, the path as the
+model wrote it, where upstream passes on its file system's `ENOENT …`. A failure keeps its reason,
+in the file system's words without their paths, after the tool's sentence (`Could not write a.txt: No
+space left on device`), so nothing the errno said is lost.
+
+`BashOperations` is upstream's with three differences:
+- the timeout is in seconds;
+- a stopped command is `CommandStopped` instead of the rejections `"aborted"` / `"timeout:N"`;
+- `$onData($chunk, $stream)` carries the stream (1 stdout, 2 stderr), so the escape sequence or
+  character a read cut short is held per stream (#10504) as pig always held it.
+
+`Tools\LocalShellOperations` is `createLocalShellOperations()`.
+
 Nothing to port: #11947 fixes the renumbering of `[paste #N]` markers after a
 backspace, which pig's editor does not renumber; and the native Shift+Enter fallback for ESC+CR
 (86dc686c) reads the Shift key through upstream's native addon, which PHP has no counterpart for.

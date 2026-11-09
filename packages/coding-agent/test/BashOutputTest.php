@@ -33,8 +33,7 @@ final class BashOutputTest extends TestCase
     {
         return Async::run(static function () use ($command): string {
             $run = new Run(sys_get_temp_dir(), $command, null);
-            $run->start();
-            $run->wait(null, 5.0);
+            $run->run(null, 5.0);
 
             return $run->output();
         });

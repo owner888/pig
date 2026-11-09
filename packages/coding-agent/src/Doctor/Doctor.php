@@ -9,6 +9,7 @@ use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Env;
@@ -119,7 +120,7 @@ final class Doctor
 
         $sessionStore = $session->store();
         $sessionFile = $sessionStore?->path;
-        $sessionSize = $sessionFile !== null && is_file($sessionFile) ? filesize($sessionFile) : null;
+        $sessionSize = $sessionFile !== null ? SessionManager::sessionStore()->size($sessionFile) : null;
         $messageCount = count($session->messages());
 
         return new DoctorReport(

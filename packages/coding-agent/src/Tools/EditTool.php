@@ -47,8 +47,12 @@ use Pig\Async\AbortSignal;
  */
 final class EditTool implements AgentTool, PreparesArguments
 {
-    public function __construct(private readonly string $cwd)
+    private readonly EditOperations $operations;
+
+    /** @param EditOperations|null $operations upstream's `operations`: where the file is read and written; this machine when null */
+    public function __construct(private readonly string $cwd, ?EditOperations $operations = null)
     {
+        $this->operations = $operations ?? new LocalEditOperations();
     }
 
     #[\Override]
@@ -187,18 +191,16 @@ final class EditTool implements AgentTool, PreparesArguments
         $path = (string) $arguments['path'];
         $absolute = Paths::resolve($path, $this->cwd);
 
-        if (!is_file($absolute)) {
-            throw new AgentError("File not found: {$path}");
+        try {
+            $this->operations->access($absolute);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->kind === FileAccessError::NOT_FOUND ? "File not found: {$path}" : "Not readable and writable: {$path}");
         }
 
-        if (!is_readable($absolute) || !is_writable($absolute)) {
-            throw new AgentError("Not readable and writable: {$path}");
-        }
-
-        $raw = file_get_contents($absolute);
-
-        if ($raw === false) {
-            throw new AgentError("Could not read {$path}");
+        try {
+            $raw = $this->operations->readFile($absolute);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->explain("Could not read {$path}"));
         }
 
         [$bom, $content] = EditDiff::splitBom($raw);
@@ -217,8 +219,10 @@ final class EditTool implements AgentTool, PreparesArguments
 
         $signal?->throwIfAborted();
 
-        if (file_put_contents($absolute, $bom . $written) === false) {
-            throw new AgentError("Could not write {$path}");
+        try {
+            $this->operations->writeFile($absolute, $bom . $written);
+        } catch (FileAccessError $error) {
+            throw new AgentError($error->explain("Could not write {$path}"));
         }
 
         return new AgentToolResult(

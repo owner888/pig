@@ -23,8 +23,8 @@ use Pig\Async\AbortSignal;
  * and `defaultTools` can name (`["-bash", "+powershell"]`), and on anything but native Windows a
  * call to it fails with upstream's "only available on Windows". `!` and `!!` keep using bash.
  *
- * $shell replaces the resolution — upstream's `operations` option is how its tests do the same —
- * so the tool can be exercised on a machine without PowerShell.
+ * $shell replaces the resolution, so the tool can be exercised on a machine without PowerShell;
+ * `$operations`, upstream's option, replaces what runs the command.
  */
 final readonly class PowerShellTool implements AgentTool
 {
@@ -39,6 +39,7 @@ final readonly class PowerShellTool implements AgentTool
      * @param (Closure(SpawnContext): SpawnContext)|null $spawnHook as `BashTool`'s
      * @param ShellConfig|null $shell the PowerShell to run; null resolves it as upstream does when a
      *        command starts
+     * @param BashOperations|null $operations upstream's `operations`: what runs the command
      */
     public function __construct(
         string $cwd,
@@ -46,6 +47,7 @@ final readonly class PowerShellTool implements AgentTool
         ?Closure $sessionEnvironment = null,
         ?Closure $spawnHook = null,
         ?ShellConfig $shell = null,
+        ?BashOperations $operations = null,
     ) {
         $this->tool = new ShellTool(
             $cwd,
@@ -59,6 +61,7 @@ final readonly class PowerShellTool implements AgentTool
             $exposeSessionEnvironment,
             $sessionEnvironment,
             $spawnHook,
+            $operations,
         );
     }
 
