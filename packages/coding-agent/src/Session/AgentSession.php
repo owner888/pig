@@ -1659,18 +1659,23 @@ final class AgentSession
         try {
             $arguments = ToolArguments::validate($tool->definition(), ToolArguments::prepare($tool, new ToolCall($toolCallId, $name, $arguments)));
             $startedAt = hrtime(true);
-            $result = $tool->execute(
-                $toolCallId,
-                $arguments,
-                $signal ?? $this->signal(),
-                function (AgentToolResult $partial) use ($toolCallId, $name, $arguments, $parentToolCallId, $onUpdate): void {
-                    if ($onUpdate !== null) {
-                        $onUpdate($partial);
-                    }
+            $progress = function (AgentToolResult $partial) use ($toolCallId, $name, $arguments, $parentToolCallId, $onUpdate): void {
+                if ($onUpdate !== null) {
+                    $onUpdate($partial);
+                }
 
-                    $this->onAgentEvent(new ToolExecutionUpdateEvent($toolCallId, $name, $arguments, $partial, $parentToolCallId));
-                },
-            );
+                $this->onAgentEvent(new ToolExecutionUpdateEvent($toolCallId, $name, $arguments, $partial, $parentToolCallId));
+            };
+            // The runner is told whose call this is while it runs, so the hooked tool's `tool_call`
+            // / `tool_result` events carry `parentToolCallId` as upstream's do — through the runner
+            // rather than the tool, because the hooked tool sits inside wrappers of its own.
+            $this->extensionRunner?->noteNestedCall($toolCallId, $parentToolCallId);
+
+            try {
+                $result = $tool->execute($toolCallId, $arguments, $signal ?? $this->signal(), $progress);
+            } finally {
+                $this->extensionRunner?->forgetNestedCall($toolCallId);
+            }
             $durationMs = AgentLoop::elapsedMs($startedAt);
         } catch (Throwable $error) {
             $durationMs = $startedAt === null ? null : AgentLoop::elapsedMs($startedAt);

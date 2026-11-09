@@ -29,6 +29,8 @@ final readonly class ToolResultEvent implements ExtensionEvent
         public array $content,
         public mixed $details = null,
         public bool $isError = false,
+        /** Set when another tool (a codemode script) issued this call — see `ToolCallEvent`. */
+        public readonly ?string $parentToolCallId = null,
     ) {
     }
 

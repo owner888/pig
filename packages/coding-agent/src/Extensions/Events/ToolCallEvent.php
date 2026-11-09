@@ -21,11 +21,17 @@ use Pig\CodingAgent\Extensions\ExtensionEvent;
  */
 final class ToolCallEvent implements ExtensionEvent
 {
-    /** @param array<string, mixed> $input the arguments, already validated against the schema */
+    /**
+     * @param array<string, mixed> $input            the arguments, already validated against the schema
+     * @param ?string              $parentToolCallId set when another tool (a codemode script) issued
+     *        this call — upstream's: such a call's id is `<parent id>/<n>`, and it never appears as a
+     *        tool call or a tool result in the transcript, only in the parent result's `nestedCalls`
+     */
     public function __construct(
         public readonly string $toolName,
         public readonly string $toolCallId,
         public array $input,
+        public readonly ?string $parentToolCallId = null,
     ) {
     }
 

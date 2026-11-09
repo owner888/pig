@@ -88,9 +88,14 @@ final readonly class ExtensionGuardedTool implements AgentTool, ReplayableTool, 
         ?AbortSignal $signal = null,
         ?Closure $onUpdate = null,
     ): AgentToolResult {
+        // Whose call this is: set for a call another tool made through the session (a codemode
+        // script's), null for the model's — upstream's `parentToolCallId` on `tool_call` and
+        // `tool_result`, which its `_beforeToolCall()` / `_afterToolCall()` spread in. A permission
+        // gate can hold a script's call to a different rule than the model's.
+        $parentToolCallId = $this->extensionRunner->nestedParentOf($toolCallId);
         $name = $this->definition()->name;
 
-        $arguments = $this->guard($name, $toolCallId, $arguments);
+        $arguments = $this->guard($name, $toolCallId, $arguments, $parentToolCallId);
 
         try {
             $result = $this->tool->execute($toolCallId, $arguments, $signal, $onUpdate);
@@ -98,12 +103,12 @@ final readonly class ExtensionGuardedTool implements AgentTool, ReplayableTool, 
             // Failures are shown to the hooks too — a hook that counts what goes wrong
             // cannot do it from the successes — and then rethrown unchanged, because the
             // loop is what decides what a failed tool means.
-            $this->announce($name, $toolCallId, $arguments, [new TextContent($error->getMessage())], null, true);
+            $this->announce($name, $toolCallId, $arguments, [new TextContent($error->getMessage())], null, true, $parentToolCallId);
 
             throw $error;
         }
 
-        $answer = $this->announce($name, $toolCallId, $arguments, $result->content, $result->details, false);
+        $answer = $this->announce($name, $toolCallId, $arguments, $result->content, $result->details, false, $parentToolCallId);
 
         if ($answer === null) {
             return $result;
@@ -137,13 +142,13 @@ final readonly class ExtensionGuardedTool implements AgentTool, ReplayableTool, 
      * @return array<string, mixed> the arguments as the hooks left them
      * @throws AgentError when a hook blocks it, or when one fails while being asked
      */
-    private function guard(string $name, string $toolCallId, array $arguments): array
+    private function guard(string $name, string $toolCallId, array $arguments, ?string $parentToolCallId = null): array
     {
         if (!$this->extensionRunner->hasHandlers('tool_call')) {
             return $arguments;
         }
 
-        $event = new ToolCallEvent($name, $toolCallId, $arguments);
+        $event = new ToolCallEvent($name, $toolCallId, $arguments, $parentToolCallId);
 
         try {
             $result = $this->extensionRunner->emitToolCall($event);
@@ -172,13 +177,14 @@ final readonly class ExtensionGuardedTool implements AgentTool, ReplayableTool, 
         array $content,
         mixed $details,
         bool $isError,
+        ?string $parentToolCallId = null,
     ): ?Results\ToolResultEventResult {
         if (!$this->extensionRunner->hasHandlers('tool_result')) {
             return null;
         }
 
         return $this->extensionRunner->emitToolResult(
-            new ToolResultEvent($name, $toolCallId, $arguments, $content, $details, $isError),
+            new ToolResultEvent($name, $toolCallId, $arguments, $content, $details, $isError, $parentToolCallId),
         );
     }
 

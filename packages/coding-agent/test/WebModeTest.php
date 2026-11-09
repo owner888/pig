@@ -1479,6 +1479,36 @@ final class WebModeTest extends TestCase
         );
         assert.equal(notes("grep", { matchLimitReached: 5, linesTruncated: true }), "[Truncated: 5 matches limit, some lines truncated]");
         assert.equal(notes("ls", { entryLimitReached: 200 }), "[Truncated: 200 entries limit]");
+        // The calls a tool made through the session: rows under the header, live from the nested
+        // events and, read back, from the result's `nestedCalls`; a codemode card lists its own.
+        const nested = new ToolCard({ toolCallId: "p", toolName: "orchestrate", arguments: {} });
+        nested.nestedStart({ toolCallId: "p/1", toolName: "read", args: { path: "a.php" } });
+        nested.nestedStart({ toolCallId: "p/2", toolName: "bash", args: { command: "id" } });
+        let rows = nested.element.querySelector(".tool-nested");
+        assert.equal(rows.hidden, false);
+        assert.match(rows.innerHTML, /data-status="running".*read.*path=a\.php/s);
+        nested.nestedEnd({ toolCallId: "p/1", isError: false, durationMs: 12 });
+        nested.nestedEnd({ toolCallId: "p/2", isError: true, result: { content: [{ type: "text", text: "No shells from scripts.\nmore" }] } });
+        assert.match(rows.innerHTML, /data-status="ok".*read.*12ms/s);
+        assert.match(rows.innerHTML, /data-status="error".*bash.*tool-nested-error">No shells from scripts\.</s, "the first line of the error, under the row");
+        nested.finish({ result: { content: [{ type: "text", text: "done" }], details: {} }, isError: false });
+        assert.equal(rows.hidden, false, "the rows stay after the result");
+
+        const back = new ToolCard({ toolCallId: "q", toolName: "orchestrate", arguments: {} });
+        back.finish({ result: { content: [], details: {} }, isError: false, nestedCalls: { calls: [
+          { id: "q/1", name: "read", arguments: { path: "b.php" }, status: "ok", durationMs: 3 },
+          { id: "q/2", name: "write", argumentsBytes: 9000, status: "unfinished" },
+        ], complete: false } });
+        rows = back.element.querySelector(".tool-nested");
+        assert.match(rows.innerHTML, /read.*path=b\.php.*3ms/s);
+        assert.match(rows.innerHTML, /data-status="running".*write.*arguments 8\.8KB, not kept/s, "an unfinished row runs; omitted arguments say their size");
+        assert.match(rows.innerHTML, /record incomplete/);
+
+        const codemode = new ToolCard({ toolCallId: "c", toolName: "codemode", arguments: { code: "1" } });
+        codemode.nestedStart({ toolCallId: "c/1", toolName: "read", args: { path: "a.php" } });
+        codemode.finish({ result: { content: [], details: { calls: [{ name: "read", status: "ok", args: "a.php" }] } }, isError: false });
+        assert.equal(codemode.element.querySelector(".tool-nested").hidden, true, "codemode lists its own calls");
+
         console.log("titles ok");
         JS;
 

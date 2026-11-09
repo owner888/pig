@@ -398,7 +398,11 @@ final class AutocompleteTest extends TestCase
         // Reading only stdout deadlocks: fd blocks writing to a full stderr pipe, so it never
         // closes stdout, so the read never returns — inside the loop's own input callback,
         // which is the whole terminal. `Process::run()` drains both and says why in a comment.
-        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(4000));
+        // Past a pipe buffer (64 KB on macOS, 16 pages on Linux) is what matters: 1,200 lines of
+        // about 80 bytes are ~95 KB. It was 4,000, which a loaded machine (the whole suite, web
+        // daemons starting beside it) could take past the picker's 2 s `FD_TIMEOUT` — an empty
+        // answer for a reason that has nothing to do with the deadlock this guards against.
+        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(1200));
 
         $suggestions = $this->suggest($provider, '@Age');
 

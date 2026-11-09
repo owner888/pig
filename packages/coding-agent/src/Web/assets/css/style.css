@@ -1377,6 +1377,24 @@
       display: block;
     }
     /* Upstream's `[Truncated: …]` / `[Full output: …]` lines, in its warning colour. */
+    /* The calls a tool made while it ran, under its header and visible with the body collapsed. */
+    .tool-nested {
+      padding: 6px 14px;
+      border-top: 1px dashed var(--color-divider);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      line-height: 1.6;
+      color: var(--color-text-secondary);
+    }
+    .tool-nested-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tool-nested-icon { display: inline-block; width: 1.2em; }
+    .tool-nested-row[data-status="ok"] .tool-nested-icon { color: var(--color-success); }
+    .tool-nested-row[data-status="error"] .tool-nested-icon { color: var(--color-error); }
+    .tool-nested-row[data-status="running"] .tool-nested-icon { color: var(--color-warning); }
+    .tool-nested-name { color: var(--color-text-primary); }
+    .tool-nested-args, .tool-nested-time { color: var(--color-dim); }
+    .tool-nested-error { padding-left: 1.2em; color: var(--color-error); white-space: pre-wrap; }
+    .tool-nested-note { color: var(--color-warning); }
     .tool-details-footer {
       padding: 8px 14px;
       border-top: 1px dashed var(--color-divider);

@@ -134,7 +134,6 @@ use Pig\Tui\Component;
 use Pig\Tui\Clipboard\SystemClipboard;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
-use Pig\Tui\Components\Loader;
 use Pig\Tui\Components\Markdown;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
@@ -251,15 +250,13 @@ final class InteractiveMode
     /** The session `$tokenSpeed`'s average belongs to; another one starts it over. */
     private ?string $tokenSpeedFor = null;
 
-    private ?Loader $working = null;
-
     /**
-     * What `$working` is showing, as upstream's `activeStatusIndicator.kind` says it:
-     * `working`, `retry`, or `other` (compaction, branch summary, a command's own).
-     *
-     * @var 'working'|'retry'|'other'|null
+     * The status above the prompt — upstream's `activeStatusIndicator`: a `StatusIndicator`
+     * whose `kind` says what is showing (`working`, `retry`, `compaction`, `branchSummary`, or
+     * `other` for a command's own loader). One at a time, and `hideLoader()` is the one place
+     * that takes it down.
      */
-    private ?string $loaderKind = null;
+    private ?StatusIndicator $working = null;
 
     /** Upstream's `workingVisible`: an extension's `setWorkingVisible(false)` keeps it hidden. */
     private bool $workingVisible = true;
@@ -537,10 +534,10 @@ final class InteractiveMode
                 $this->workingVisible = $visible;
 
                 if (!$visible) {
-                    if ($this->loaderKind === 'working') {
+                    if ($this->working?->kind === 'working') {
                         $this->hideLoader();
                     }
-                } elseif ($this->session->isStreaming() && $this->loaderKind !== 'working') {
+                } elseif ($this->session->isStreaming() && $this->working?->kind !== 'working') {
                     $this->showWorking();
                 }
             },
@@ -937,7 +934,7 @@ final class InteractiveMode
             $this->webServer = null;
             Async::spawn(static fn () => $server->stop());
         }
-        $this->working?->stop();
+        $this->working?->dispose();
         if ($this->commandHudTimer !== null) {
             Loop::get()->cancel($this->commandHudTimer);
             $this->commandHudTimer = null;
@@ -2475,7 +2472,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader($this->compactionLabel('manual'), timer: true);
+        $this->showIndicator(new CompactionStatusIndicator($this->tui, $this->keybindings, 'manual'), timer: true);
         $this->terminalProgress(true);
 
         $this->compaction = new AbortController();
@@ -5410,7 +5407,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader($this->branchSummaryLabel(), timer: true);
+        $this->showIndicator(new BranchSummaryStatusIndicator($this->tui, $this->keybindings), timer: true);
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -7786,14 +7783,14 @@ final class InteractiveMode
         $this->terminalProgress(true);
 
         if (!$this->workingVisible) {
-            if ($this->loaderKind !== null) {
+            if ($this->working !== null) {
                 $this->hideLoader();
             }
 
             return;
         }
 
-        if ($this->loaderKind !== 'working') {
+        if ($this->working?->kind !== 'working') {
             $this->showWorking();
         }
     }
@@ -7804,8 +7801,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader('Working', timer: true);
-        $this->loaderKind = 'working';
+        $this->showIndicator(new WorkingStatusIndicator($this->tui, $this->customWorkingMessage ?? 'Working', $this->workingIndicatorOptions), timer: true);
     }
 
     /**
@@ -7821,43 +7817,51 @@ final class InteractiveMode
      * @param bool $timer the elapsed time after the message, `Working · 16s` — the developer's
      *        choice, which upstream's loader does not have (docs/dev/decisions.md)
      */
-    private function showLoader(string $message, bool $timer = false): Loader
+    private function showLoader(string $message, bool $timer = false): StatusIndicator
     {
-        if ($this->customWorkingMessage !== null && $message === 'Working') {
-            $message = $this->customWorkingMessage;
-        }
-
-        $this->working?->stop();
-        $this->status->clear();
-        $this->paintBorder();
-
-        $this->working = new Loader(
+        $indicator = new StatusIndicator(
+            'other',
             $this->tui,
             static fn (string $text): string => Themes::theme()->fg('accent', $text),
             static fn (string $text): string => Themes::theme()->fg('muted', $text),
             $message,
         );
 
-        if ($timer) {
-            $this->working->withTimer();
-        }
-
         if ($this->workingIndicatorOptions !== null) {
-            $this->working->setIndicator($this->workingIndicatorOptions);
+            $indicator->setIndicator($this->workingIndicatorOptions);
         }
 
-        $this->editor->setWorkingStatus($this->working, fn (string $text): string => $this->borderColour()($text));
-        $this->tui->requestRender();
-        $this->loaderKind = 'other';
+        return $this->showIndicator($indicator, $timer);
+    }
 
-        return $this->working;
+    /**
+     * Upstream's `showStatusIndicator()`: the one before it taken down (its countdown with it),
+     * the new one in the border.
+     *
+     * @param bool $timer the elapsed time after the message, `Working · 16s` — the developer's
+     *        choice, which upstream's loader does not have (docs/dev/decisions.md)
+     */
+    private function showIndicator(StatusIndicator $indicator, bool $timer = false): StatusIndicator
+    {
+        $this->working?->dispose();
+        $this->status->clear();
+        $this->paintBorder();
+
+        if ($timer) {
+            $indicator->withTimer();
+        }
+
+        $this->working = $indicator;
+        $this->editor->setWorkingStatus($indicator, fn (string $text): string => $this->borderColour()($text));
+        $this->tui->requestRender();
+
+        return $indicator;
     }
 
     private function hideLoader(): void
     {
-        $this->working?->stop();
+        $this->working?->dispose();
         $this->working = null;
-        $this->loaderKind = null;
         $this->editor->setWorkingStatus(null);
         $this->status->clear();
         $this->paintBorder();
@@ -8210,47 +8214,8 @@ final class InteractiveMode
      */
     private function onRetryStart(RetryStartEvent $event): void
     {
-        // Upstream's `RetryStatusIndicator`: `Retrying (n/max) in <s>s... (${keyText("app.interrupt")}
-        // to cancel)` — `escape` with the default bindings — the seconds rounded up
-        // (`Math.ceil(delayMs / 1000)`) and counted down once a second (`CountdownTimer`) until the
-        // retry starts.
-        $key = $this->keybindings->keyText('app.interrupt');
-        $message = static fn (int $seconds): string => "Retrying ({$event->attempt}/{$event->maxAttempts}) in {$seconds}s... ({$key} to cancel)";
-        $remaining = (int) ceil($event->delaySeconds);
-        $loader = $this->showLoader($message($remaining));
-        $this->loaderKind = 'retry';
-        $this->stopRetryCountdown();
-
-        $tick = function () use (&$tick, &$remaining, $loader, $message): void {
-            $this->retryCountdown = null;
-            $remaining--;
-
-            if ($this->working !== $loader) {
-                return;
-            }
-
-            $loader->setMessage($message(max(0, $remaining)));
-            $this->tui->requestRender();
-
-            if ($remaining > 0) {
-                $this->retryCountdown = Loop::get()->delay(1.0, $tick);
-            }
-        };
-
-        if ($remaining > 0) {
-            $this->retryCountdown = Loop::get()->delay(1.0, $tick);
-        }
-    }
-
-    /** The retry countdown's next tick, while one is counting. */
-    private ?string $retryCountdown = null;
-
-    private function stopRetryCountdown(): void
-    {
-        if ($this->retryCountdown !== null) {
-            Loop::get()->cancel($this->retryCountdown);
-            $this->retryCountdown = null;
-        }
+        // Upstream's `RetryStatusIndicator`, countdown and all.
+        $this->showIndicator(new RetryStatusIndicator($this->tui, $this->keybindings, $event->attempt, $event->maxAttempts, $event->delaySeconds));
     }
 
     /**
@@ -8269,9 +8234,11 @@ final class InteractiveMode
         }
 
         if ($event->phase === SummarizationRetryEvent::ATTEMPT_START) {
-            $this->stopRetryCountdown();
-            $this->showLoader(
-                $event->source === 'branchSummary' ? $this->branchSummaryLabel() : $this->compactionLabel($event->reason ?? 'manual'),
+            // The new indicator takes the retry's countdown down with the retry.
+            $this->showIndicator(
+                $event->source === 'branchSummary'
+                    ? new BranchSummaryStatusIndicator($this->tui, $this->keybindings)
+                    : new CompactionStatusIndicator($this->tui, $this->keybindings, $event->reason ?? 'manual'),
                 timer: true,
             );
         }
@@ -8297,12 +8264,10 @@ final class InteractiveMode
 
     private function onRetryEnd(RetryEndEvent $event): void
     {
-        $this->stopRetryCountdown();
-
-        // Upstream's `clearStatusIndicator("retry")`: only the countdown. A successful retry is
-        // announced at the end of the answer it got — mid-run, with `Working` back up since the
-        // attempt's start — and taking that down left the rest of the run without it.
-        if ($this->loaderKind === 'retry') {
+        // Upstream's `clearStatusIndicator("retry")`: only the retry, its countdown with it. A
+        // successful retry is announced at the end of the answer it got — mid-run, with `Working`
+        // back up since the attempt's start — and taking that down left the rest of the run without it.
+        if ($this->working?->kind === 'retry') {
             $this->hideLoader();
         }
 
@@ -8335,29 +8300,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader($this->compactionLabel($reason), timer: true);
-    }
-
-    /**
-     * Upstream's `CompactionStatusIndicator` label: `Compacting context...` for `/compact`,
-     * `Auto-compacting...` for the threshold, with `Context overflow detected, ` in front for an
-     * overflow — each followed by the interrupt key as `keyText()` names it.
-     *
-     * @param string $reason `manual`, `threshold` or `overflow`
-     */
-    private function compactionLabel(string $reason): string
-    {
-        $cancelHint = '(' . $this->keybindings->keyText('app.interrupt') . ' to cancel)';
-
-        return $reason === 'manual'
-            ? "Compacting context... {$cancelHint}"
-            : ($reason === 'overflow' ? 'Context overflow detected, ' : '') . "Auto-compacting... {$cancelHint}";
-    }
-
-    /** Upstream's `BranchSummaryStatusIndicator` label. */
-    private function branchSummaryLabel(): string
-    {
-        return 'Summarizing branch... (' . $this->keybindings->keyText('app.interrupt') . ' to cancel)';
+        $this->showIndicator(new CompactionStatusIndicator($this->tui, $this->keybindings, $reason), timer: true);
     }
 
     private function onAutoCompactionHandled(CompactionEndEvent $event): void

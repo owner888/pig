@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.2] - 2026-11-09
+
+### Added
+
+- A tool card in `pig web` lists the calls the tool made through the session while it ran — a codemode script's `read`, an orchestrating tool's calls — as rows under its header: live from the nested `tool_execution_*` events (which were drawn as cards of their own), and read back later from the result's `nestedCalls` record, with a note when the record is incomplete. A codemode card keeps its own list.
+- `tool_call` and `tool_result` extension events carry `parentToolCallId` for a call another tool made (a codemode script's), as upstream's do: a permission gate can hold a script's call to a different rule than the model's, where before only the `/` in the call's id said as much.
+
+### Changed
+
+- The status above the prompt is upstream's `StatusIndicator` family — `Interactive\StatusIndicator` with `WorkingStatusIndicator`, `RetryStatusIndicator` (its countdown inside, stopped with it), `CompactionStatusIndicator` and `BranchSummaryStatusIndicator` — where `InteractiveMode` built each loader inline and kept a string beside it for the kind. Same labels, same place (the prompt's border); `docs/dev/upstream.md` closes the last of the audit's open rows with it, and records why the 3D easter egg and the Earendil announcement are not ported.
+
+
 ## [1.9.1] - 2026-11-09
 
 ### Changed

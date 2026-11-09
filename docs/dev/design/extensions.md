@@ -654,8 +654,11 @@ the loop asks `Agent::$nestedCallsOf` (`AgentSession::takeNestedCalls()`) as it 
 `Usage::plus()` (upstream's `combineUsage()`, now one method where there were three copies).
 `codemode`'s own result therefore bills only the script's `models.*` calls, as upstream's does;
 `Compaction::extractFileOpsFromMessage()` reads a tool result's `nestedCalls` for the files a script
-touched. Still not ported: `parentToolCallId` on the `tool_call` and `tool_result` hook events (the
-id's `/` says as much). Regression tests: `NestedCallRecorderTest`, `MessageTest::testTheNestedCalls…`,
+touched. `parentToolCallId` is on the `tool_call` and `tool_result` hook events too, as upstream's
+`_beforeToolCall()` / `_afterToolCall()` spread it in: `executeNestedTool()` tells the runner whose
+call it is while it runs (`ExtensionRunner::noteNestedCall()`), and `ExtensionGuardedTool` asks the
+runner when it raises the two events — through the runner, not a method on the tool, because the
+hooked tool sits inside `ResultImagesTool` and the loadout's wrappers. Regression tests: `NestedCallRecorderTest`, `MessageTest::testTheNestedCalls…`,
 `CompactionTest::testTheCallsAScriptMade…`,
 `OpenAiDecisionsTest` (twelve cases, upstream's `openai-decisions.test.ts`),
 `CodemodeExtensionTest::testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript`,

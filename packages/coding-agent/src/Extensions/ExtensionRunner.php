@@ -362,6 +362,32 @@ final class ExtensionRunner
         }
     }
 
+    /** @var array<string, string> the parent of each nested call that is running, by the nested call's id */
+    private array $nestedParents = [];
+
+    /**
+     * Note that `$toolCallId` is a call `$parentToolCallId` made through the session, for as long
+     * as it runs — `AgentSession::executeNestedTool()` says so before the call and takes it back
+     * after. `ExtensionGuardedTool` asks here when it raises `tool_call` / `tool_result`, so both
+     * carry upstream's `parentToolCallId` for such a call whatever wraps the guarded tool
+     * (`ResultImagesTool`, a described tool), without the wrappers having to know.
+     */
+    public function noteNestedCall(string $toolCallId, string $parentToolCallId): void
+    {
+        $this->nestedParents[$toolCallId] = $parentToolCallId;
+    }
+
+    public function forgetNestedCall(string $toolCallId): void
+    {
+        unset($this->nestedParents[$toolCallId]);
+    }
+
+    /** The parent of a running nested call, null for a call the model issued. */
+    public function nestedParentOf(string $toolCallId): ?string
+    {
+        return $this->nestedParents[$toolCallId] ?? null;
+    }
+
     public function hasHandlers(string $event): bool
     {
         foreach ($this->extensions as $extension) {

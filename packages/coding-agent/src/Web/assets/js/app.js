@@ -1192,6 +1192,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     // text in a `<skill>` block, with whatever the person typed after it below. The TUI draws
     // that as a collapsed `[skill] name` line (`SkillInvocationMessageComponent`); before this
     // the page poured the whole SKILL.md into the user bubble on every replay.
+    /**
+     * The card a nested call's row goes in: its parent's, or — for a call below a nested call,
+     * whose parent is a `<root>/<n>` id with no card — the model-issued call's at the root.
+     */
+    function parentCard(tab, parentToolCallId) {
+      const cards = tab?.toolCards;
+      if (!cards) return null;
+      return cards.get(parentToolCallId) ?? cards.get(String(parentToolCallId).split("/")[0]) ?? null;
+    }
+
     // ---- files: kinds, tiles, staged lines --------------------------------------------------
     // Shared by the composer (the tiles before a send) and the conversation (the tiles a sent
     // message is drawn with); the test fixtures slice this region by its two marker lines.
@@ -1583,6 +1593,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           currentAssistantText += d.delta || "";
           drawStreamingText();
         }
+      } else if (evt.type === "tool_execution_start" && evt.parentToolCallId) {
+        // A call a tool made through the session (a codemode script's): a row in its parent's
+        // card, as upstream shows them inside the parent's row, not a card of its own.
+        parentCard(tab, evt.parentToolCallId)?.nestedStart(evt);
+      } else if (evt.type === "tool_execution_update" && evt.parentToolCallId) {
+        // Its progress is its parent's business.
+      } else if (evt.type === "tool_execution_end" && evt.parentToolCallId) {
+        parentCard(tab, evt.parentToolCallId)?.nestedEnd(evt);
       } else if (evt.type === "tool_execution_start") {
         if (currentThinkingBox?.finish) {
           currentThinkingBox.finish();
@@ -3575,6 +3593,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           card.finish({
             result: { content: m.content || [], details: m.details },
             isError: m.isError,
+            nestedCalls: m.nestedCalls,
           });
         } else if (m.role === "compactionSummary" || m.role === "branchSummary") {
           appendSummaryMessage(m);

@@ -1016,7 +1016,10 @@ final class HttpServer
         }
 
         // 10.2c Stage a file picked or dropped in the browser (`ClipboardFile` for any file),
-        // under its own name in a temp directory so its path goes into the prompt.
+        // under its own name in a temp directory so its path goes into the prompt. Left behind on
+        // purpose, as `ClipboardFile`'s are and as upstream leaves its `pi-clipboard-*`: the agent
+        // reads the file after the prompt is sent, and a later visit to the conversation opens it
+        // from the message's tile; the system temp directory is what cleans them up.
         if ($path === '/api/upload') {
             if ($req['method'] !== 'POST') {
                 $conn->sendResponse(405, $json, (string) json_encode(['ok' => false, 'error' => 'POST only']));

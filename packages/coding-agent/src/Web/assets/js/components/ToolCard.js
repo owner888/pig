@@ -55,6 +55,10 @@ export class ToolCard {
     this.result = null;
     this.isError = false;
     this.isFinished = false;
+    // The calls this tool made through the session while it ran (a codemode script's): rows under
+    // the header, drawn live from the nested `tool_execution_*` events and, read back later, from
+    // the result message's `nestedCalls` record — upstream's "shown inside their parent's row".
+    this.nested = [];
     this.startTime = Date.now();
 
     const cfg = TOOL_CONFIGS[this.toolName] || { icon: "🔧", defaultOpen: true };
@@ -146,6 +150,7 @@ export class ToolCard {
           </span>
         </div>
       </div>
+      <div class="tool-nested" hidden></div>
       <div class="tool-body ${isExpanded ? 'expanded' : ''}">${bodyHtml}</div>
       <div class="tool-details-footer" hidden></div>
     `;
@@ -185,10 +190,76 @@ export class ToolCard {
     return this.toolName === "bash" ? highlightDiffs(text, escapeHtml) : escapeHtml(text);
   }
 
-  finish({ result, isError }) {
+  /** A nested call started: a row, running. */
+  nestedStart({ toolCallId, toolName, args }) {
+    this.nested.push({ id: toolCallId, name: toolName || "", arguments: args, status: "running", startedAt: Date.now() });
+    this.#renderNested();
+  }
+
+  /** A nested call ended: its row's status, time and, on an error, the first line of what it said. */
+  nestedEnd({ toolCallId, isError, durationMs, result }) {
+    const row = this.nested.find((r) => r.id === toolCallId);
+    if (!row) return;
+    row.status = isError ? "error" : "ok";
+    row.durationMs = durationMs ?? Date.now() - row.startedAt;
+    if (isError) {
+      const text = (result?.content || []).filter((b) => b?.type === "text").map((b) => b.text || "").join("\n").trim();
+      if (text) row.error = text.split("\n")[0].slice(0, 200);
+    }
+    this.#renderNested();
+  }
+
+  /** The record a finished result carries (`nestedCalls`), for a conversation read back later. */
+  #nestedFromRecord(record) {
+    const calls = Array.isArray(record?.calls) ? record.calls : [];
+    this.nested = calls.map((call) => ({
+      id: call.id,
+      name: call.name || "",
+      arguments: call.arguments,
+      argumentsBytes: call.argumentsBytes,
+      status: call.status === "unfinished" ? "running" : call.status,
+      durationMs: call.durationMs,
+      error: call.error ? String(call.error).split("\n")[0].slice(0, 200) : undefined,
+    }));
+    this.nestedIncomplete = record && record.complete === false;
+  }
+
+  #renderNested() {
+    const el = this.element.querySelector(".tool-nested");
+    if (!el) return;
+    // A codemode result lists its calls itself (`details.calls`, with costs); no second list.
+    const own = Array.isArray(this.result?.details?.calls);
+    if (this.nested.length === 0 || own) {
+      el.hidden = true;
+      el.innerHTML = "";
+      return;
+    }
+    const icon = { running: "…", ok: "✓", error: "✗" };
+    const rows = this.nested.map((row) => {
+      const args = row.arguments && typeof row.arguments === "object"
+        ? Object.entries(row.arguments).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ")
+        : row.argumentsBytes ? t("nested_args_omitted", { size: formatSize(row.argumentsBytes) }) : "";
+      const shown = args.length > 80 ? `${args.slice(0, 77)}...` : args;
+      const duration = row.durationMs === undefined ? "" : row.durationMs < 1000 ? `${Math.round(row.durationMs)}ms` : `${(row.durationMs / 1000).toFixed(1)}s`;
+      return `<div class="tool-nested-row" data-status="${row.status}">`
+        + `<span class="tool-nested-icon">${icon[row.status] ?? "⊘"}</span>`
+        + `<span class="tool-nested-name">${escapeHtml(row.name)}</span>`
+        + (shown ? ` <span class="tool-nested-args" title="${escapeHtml(args)}">${escapeHtml(shown)}</span>` : "")
+        + (duration ? ` <span class="tool-nested-time">${duration}</span>` : "")
+        + (row.error ? `<div class="tool-nested-error">${escapeHtml(row.error)}</div>` : "")
+        + `</div>`;
+    });
+    if (this.nestedIncomplete) rows.push(`<div class="tool-nested-row tool-nested-note">${escapeHtml(t("nested_incomplete"))}</div>`);
+    el.innerHTML = rows.join("");
+    el.hidden = false;
+  }
+
+  finish({ result, isError, nestedCalls }) {
     this.isFinished = true;
     this.isError = !!isError;
     this.result = result;
+    if (nestedCalls) this.#nestedFromRecord(nestedCalls);
+    this.#renderNested();
 
     const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
 

@@ -90,16 +90,14 @@ Listed so the next audit does not raise them again.
 From upstream's `export class` lines, sorted by what became of each. The first list is the
 one that matters; the other two are closed.
 
-**Not ported** — what is left after the audit's first list was worked through (five of its eight
-rows turned out to be ported under another name and have moved to the second table, with what was
-added to close the gap each had): the three that remain are drawing, and left as they are on purpose
-for now.
+**Not ported, on purpose** — what is left after the audit's first list was worked through (five of
+its eight rows turned out to be ported under another name and have moved to the second table, with
+what was added to close the gap each had; the status indicators were then ported too):
 
-| upstream | what it is | note |
+| upstream | what it is | why not |
 |---|---|---|
-| `WorkingStatusIndicator`, `IdleStatus`, `CompactionStatusIndicator`, `BranchSummaryStatusIndicator` (`status-indicator.ts`) | the family of status lines under the editor, one class each | `InteractiveMode` draws retry, compaction and summary status inline; `Loader` is the spinner only |
-| `EasterEgg3dAnimation` | the 3D logo and Armin animations | `/arminsayshi` here says hi in text |
-| `EarendilAnnouncementComponent` | upstream's one-time announcement banner | nothing to announce here; listed so it is not mistaken for a gap |
+| `EasterEgg3dAnimation` | a software 3D renderer for **pi's logo** and **Armin** (upstream's author) as point clouds, 1,300 lines, on a header click and `/arminsayshi` | the logo and the person are upstream's identity, not pig's; carrying them over would sign pig with someone else's name. `/arminsayshi` here says hi in text. A pig of pig's own would be a design of its own, not a port |
+| `EarendilAnnouncementComponent` | upstream's one-time banner: "pi has joined Earendil", a blog link, a picture | upstream's company news; pig has nothing to announce, and its changelog-on-start already says what is new |
 
 **Ported under another name, or folded into something** — closed:
 
@@ -128,7 +126,7 @@ for now.
 | `StdinBuffer` | inside `ProcessTerminal` (see the program status note above) |
 | `SteppedSubmenu` | `Interactive\ModelThinkingSubmenu` |
 | `DynamicBorder` | `Components\Rule` |
-| `StatusIndicator`, `RetryStatusIndicator`, `CountdownTimer` | `Components\Loader`, and `InteractiveMode` / `TerminalUi` inline |
+| `StatusIndicator`, `WorkingStatusIndicator`, `RetryStatusIndicator`, `CompactionStatusIndicator`, `BranchSummaryStatusIndicator` | `Interactive\StatusIndicator` and the four subclasses, ported after the audit (they were inline in `InteractiveMode`, with a string for the kind); the retry's `CountdownTimer` lives inside `RetryStatusIndicator`, as upstream's does. `IdleStatus` has no counterpart: pig's status is drawn in the prompt's border, which is there whether or not anything is in it |
 | `LoginDialogComponent`, `AuthUrlComponent` | `InteractiveMode`'s sign-in flow, inline |
 | `ExtensionEditorComponent`, `ExtensionInputComponent` | `ExtensionUi::editor()` / `input()` |
 | the `*SelectorComponent`s (`Session`, `Model`, `Theme`, `Thinking`, `Tree`, `Trust`, `UserMessage`, `Settings`, `ShowImages`, `Extension`, `Config`, `ScopedModels`), `CustomEntryComponent`, `BranchSummaryMessageComponent`, `CompactionSummaryMessageComponent` | pig's selectors and message components without the `Component` suffix (`SessionPicker`, `ConfigSelector`, `ScopedModelsSelector`, `TrustPrompt`, `StartupSelector`, …) |

@@ -23,6 +23,7 @@ use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\StartedSession;
+use Pig\CodingAgent\Test\GlobalThemeFixture;
 use Pig\Test\WithoutProviderKeys;
 
 /**
@@ -33,6 +34,7 @@ use Pig\Test\WithoutProviderKeys;
 final class CodemodeExtensionTest extends TestCase
 {
     use WithoutProviderKeys;
+    use GlobalThemeFixture;
 
     private string $root;
 
@@ -270,6 +272,7 @@ final class CodemodeExtensionTest extends TestCase
         // which, cut by lines, would wrap across the whole screen. The hint counts the hidden
         // rows; "Full output" follows straight under it; expanded shows everything.
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $this->setUpGlobalTheme();
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
         $theme = \Pig\CodingAgent\Theme\Themes::theme();
@@ -297,6 +300,7 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertCount(12, $call, 'the title, ten lines of code, the hint');
         $this->assertStringContainsString('... (4 more lines,', $call[11]);
         $this->stop($started);
+        $this->tearDownGlobalTheme();
     }
 
     public function testANestedCallGoesThroughTheToolCallHookLikeAnyOther(): void
@@ -308,16 +312,20 @@ final class CodemodeExtensionTest extends TestCase
 use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 return function ($pig): void {
     $pig->on('tool_call', function ($event) {
-        file_put_contents(getenv('PIG_CODING_AGENT_DIR') . '/seen-call-id', $event->toolCallId);
+        file_put_contents(getenv('PIG_CODING_AGENT_DIR') . '/seen-call-id', $event->toolCallId . '|' . ($event->parentToolCallId ?? 'none'));
 
         return $event->toolName === 'bash' ? new ToolCallEventResult(block: true, reason: 'No shells from scripts.') : null;
+    });
+    $pig->on('tool_result', function ($event) {
+        file_put_contents(getenv('PIG_CODING_AGENT_DIR') . '/seen-result-parent', $event->parentToolCallId ?? 'none');
     });
 };
 PHP);
         $started = $this->start();
         $codemode = $started->customTools->find('codemode');
 
-        $result = Async::run(static fn () => ($codemode->execute)('call-7', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine"]);'], null, $started->extensionRunner->context(), null));
+        file_put_contents($this->cwd . '/note.txt', "a note\n");
+        $result = Async::run(static fn () => ($codemode->execute)('call-7', ['code' => 'return parallel_settled([fn () => $tools->bash(["command" => "id"]), fn () => "fine", fn () => $tools->read(["path" => "note.txt"])]);'], null, $started->extensionRunner->context(), null));
 
         $value = json_decode($result->content[count($result->content) - 1]->text, true);
         $this->assertFalse($value[0]['ok']);
@@ -327,7 +335,12 @@ PHP);
         // The nested call's id is `<codemode call id>/<n>`, upstream's shape, and it is the id the
         // hook was handed — not a synthetic one the row alone knew.
         $this->assertSame('call-7/1', $result->details['calls'][0]['id']);
-        $this->assertSame('call-7/1', file_get_contents($this->home . '/seen-call-id'));
+        // And upstream's `parentToolCallId` with it, on `tool_call` and `tool_result` alike: a gate
+        // can hold a script's call to a different rule than the model's. The blocked call raises
+        // no `tool_result` (it never ran); the read that ran does, with the same parent.
+        $this->assertSame('call-7/2|call-7', file_get_contents($this->home . '/seen-call-id'), 'the last call asked about was the read');
+        $this->assertSame('call-7', file_get_contents($this->home . '/seen-result-parent'));
+        $this->assertSame('ok', $result->details['calls'][1]['status']);
         $this->stop($started);
     }
 
