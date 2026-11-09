@@ -689,8 +689,10 @@ final class Process
      * "Detach on POSIX so the daemon leaves pi's process group and Ctrl+Z suspend (SIGTSTP to the
      * group) does not stop the clipboard owner (#11179)" — `wl-copy`, `xclip` and `xsel` stay
      * behind to serve the clipboard, and a stopped one hangs every paste in the shell. PHP's
-     * `proc_open()` cannot start a new session itself, so it is `setsid` in front of the command
-     * where there is one (util-linux, which is where these writers live); without it nothing changes.
+     * `proc_open()` cannot start a new session itself, so the command goes through `inNewSession()`:
+     * `setsid` where there is one (util-linux), and on macOS, which has none, PHP's own
+     * `posix_setsid()` before the exec — `pbcopy` was left in pig's group there, the one platform
+     * upstream detaches everywhere and this did not.
      *
      * @param list<string> $command
      * @param string|null  $cwd     where to run it; null means wherever pig was started
@@ -702,8 +704,8 @@ final class Process
             throw new TuiError('Process::feed() needs a command');
         }
 
-        if ($detached && PHP_OS_FAMILY !== 'Windows' && ($setsid = self::onPath('setsid')) !== null) {
-            $command = [$setsid, ...$command];
+        if ($detached) {
+            $command = self::inNewSession($command);
         }
 
         // Same reason as run(): a missing program makes proc_open warn, and the value is
@@ -807,6 +809,42 @@ final class Process
      * @return int the exit code, or STOPPED when it could not be started
      */
     /** The first executable called $name on `PATH`, or null. */
+    /**
+     * $command started in a session of its own — upstream's `spawn(..., { detached: true })`, which
+     * calls `setsid()` in the child before the exec. `proc_open()` cannot, so it is `setsid` in front
+     * where there is one, and otherwise this PHP calling `posix_setsid()` and `pcntl_exec()`ing the
+     * command (macOS has no `setsid`). As it was where neither is there, and on Windows.
+     *
+     * @param list<string> $command
+     * @return list<string>
+     */
+    public static function inNewSession(array $command): array
+    {
+        if (PHP_OS_FAMILY === 'Windows' || $command === []) {
+            return $command;
+        }
+
+        if (($setsid = self::onPath('setsid')) !== null) {
+            return [$setsid, ...$command];
+        }
+
+        // `pcntl_exec()` takes no PATH lookup: the program by its full path, or nothing changes.
+        $program = str_contains($command[0], '/') ? $command[0] : self::onPath($command[0]);
+
+        if ($program === null || !function_exists('posix_setsid') || !function_exists('pcntl_exec')) {
+            return $command;
+        }
+
+        return [
+            PHP_BINARY,
+            '-r',
+            'if (function_exists("posix_setsid")) { posix_setsid(); } pcntl_exec($argv[1], array_slice($argv, 2)); exit(127);',
+            '--',
+            $program,
+            ...array_slice($command, 1),
+        ];
+    }
+
     private static function onPath(string $name): ?string
     {
         foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {

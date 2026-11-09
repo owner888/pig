@@ -117,19 +117,66 @@ final class RpcMode
         $this->ui = new RpcUi($this->send(...));
     }
 
+    /** SIGTERM / SIGHUP received so far — upstream's `signalCount`. */
+    private int $signals = 0;
+
+    /** What the process exits with: 0 for the end of input, 128 + the signal for a signal. */
+    private int $exitCode = 0;
+
     /**
-     * Wire everything up and serve until standard input closes.
+     * Wire everything up and serve until standard input closes or a signal says stop.
      *
      * Blocking, like `InteractiveMode::run()`: it is the program.
+     *
+     * @return int the exit code: 0 when input ended, 143 for SIGTERM, 129 for SIGHUP
      */
-    public function run(): void
+    public function run(): int
     {
         $this->start();
+        $this->handleSignals();
 
         try {
             Loop::get()->run();
         } finally {
             $this->stop();
+        }
+
+        return $this->exitCode;
+    }
+
+    /**
+     * Upstream's RPC signal handlers (#11752): SIGTERM or SIGHUP shuts down as the end of input
+     * does — `session_shutdown`, the custom tools told, the session disposed — and exits 143 or
+     * 129. They stay registered until exit, and a shutdown once started is not cut short by a
+     * single signal: process managers close stdin and send SIGTERM together, so one is not a
+     * request to skip cleanup (a pending MCP token refresh lost there revoked the grant). A second
+     * signal exits at once. Without these, SIGTERM was PHP's default — gone, with no cleanup.
+     */
+    private function handleSignals(): void
+    {
+        if (!function_exists('pcntl_signal')) {
+            return;
+        }
+
+        pcntl_async_signals(true);
+
+        foreach ([SIGTERM, SIGHUP] as $signal) {
+            pcntl_signal($signal, function (int $received): void {
+                $this->signals++;
+
+                if ($this->stopping) {
+                    if ($this->signals > 1) {
+                        exit(128 + $received);
+                    }
+
+                    return;
+                }
+
+                $this->exitCode = 128 + $received;
+                // Only a flag: the handler runs between any two opcodes, so the shutdown itself
+                // happens where `run()` returns from the loop.
+                Loop::get()->stop();
+            });
         }
     }
 
@@ -223,8 +270,18 @@ final class RpcMode
         $this->report($this->customTools->notify('switch', $previous));
     }
 
+    /** Whether the shutdown has begun — a signal from then on waits for it, and a second one does not. */
+    private bool $stopping = false;
+
+    /** Shut down once; a later call — the end of input after a signal, a hook's request — does nothing. */
     public function stop(): void
     {
+        if ($this->stopping) {
+            return;
+        }
+
+        $this->stopping = true;
+
         if ($this->watcher !== null) {
             Loop::get()->cancel($this->watcher);
             $this->watcher = null;

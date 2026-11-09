@@ -26,33 +26,86 @@ final class EditDiff
     /** Lines of unchanged text shown either side of a change. */
     public const int CONTEXT = 4;
 
-    /**
-     * The line ending the file already uses.
-     *
-     * Whichever kind comes first wins: a file with one stray CRLF near the end is an LF
-     * file, and rewriting all of it would turn a two-line edit into a whole-file diff in
-     * the person's version control.
-     */
-    public static function lineEnding(string $content): string
-    {
-        $crlf = strpos($content, "\r\n");
-        $lf = strpos($content, "\n");
-
-        if ($lf === false || $crlf === false) {
-            return "\n";
-        }
-
-        return $crlf < $lf ? "\r\n" : "\n";
-    }
-
+    /** Every line break as LF: CRLF first, then a lone CR — the text the edits are matched in. */
     public static function toLf(string $text): string
     {
         return str_replace(["\r\n", "\r"], "\n", $text);
     }
 
-    public static function restore(string $text, string $ending): string
+    /**
+     * The replacements `apply()` matched in `toLf($original)`, made in $original itself — upstream's
+     * `applyReplacementsToOriginal()` (#11751). Text outside the replaced ranges keeps its bytes,
+     * line endings included: the file used to be written back whole with the first line ending it
+     * held, so a two-line edit of a mixed file rewrote every other line's ending, and a lone CR
+     * anywhere became an LF.
+     *
+     * Only a CRLF changes length in `toLf()`, so a position in the LF text plus the CRLFs before
+     * it is the position in the original, and a range covering an LF covers its whole CRLF. A line
+     * break in the new text takes the ending of the line the range starts on (`lineEndingAt()`).
+     * A piece ending in CR followed by one starting with LF would merge into one CRLF and join two
+     * lines the diff shows apart, so an LF goes in at that seam — where the replaced text was.
+     *
+     * @param list<array{0: int, 1: int, 2: string}> $replacements `apply()`'s, in file order
+     */
+    public static function applyToOriginal(string $original, array $replacements): string
     {
-        return $ending === "\r\n" ? str_replace("\n", "\r\n", $text) : $text;
+        $crlfBefore = 0;
+        $nextCrlf = strpos($original, "\r\n");
+        $toOriginal = static function (int $offset) use ($original, &$crlfBefore, &$nextCrlf): int {
+            while ($nextCrlf !== false && $nextCrlf - $crlfBefore < $offset) {
+                $crlfBefore++;
+                $nextCrlf = strpos($original, "\r\n", $nextCrlf + 2);
+            }
+
+            return $offset + $crlfBefore;
+        };
+
+        $out = '';
+        $push = static function (string $part) use (&$out): void {
+            if ($part === '') {
+                return;
+            }
+
+            if ($part[0] === "\n" && str_ends_with($out, "\r")) {
+                $out .= "\n";
+            }
+
+            $out .= $part;
+        };
+
+        $position = 0;
+
+        foreach ($replacements as [$at, $length, $text]) {
+            $start = $toOriginal($at);
+            $push(substr($original, $position, $start - $position));
+            $ending = self::lineEndingAt($original, $start);
+            $push($ending === "\n" ? $text : str_replace("\n", $ending, $text));
+            $position = $toOriginal($at + $length);
+        }
+
+        $push(substr($original, $position));
+
+        return $out;
+    }
+
+    /**
+     * The ending of the line holding $offset: its own LF or CRLF, or the line before's for a last
+     * line with none. A lone CR counts only in a file with no LF at all — classic Mac endings;
+     * anywhere else it is likelier a control character inside a line. Upstream's `getLineEndingAt()`.
+     */
+    private static function lineEndingAt(string $content, int $offset): string
+    {
+        $lineFeed = strpos($content, "\n", $offset);
+
+        if ($lineFeed === false) {
+            $lineFeed = strrpos($content, "\n");
+        }
+
+        if ($lineFeed === false) {
+            return str_contains($content, "\r") ? "\r" : "\n";
+        }
+
+        return $lineFeed > 0 && $content[$lineFeed - 1] === "\r" ? "\r\n" : "\n";
     }
 
     /**

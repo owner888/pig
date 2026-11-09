@@ -93,6 +93,9 @@ final class WebDaemon
      */
     private readonly string $binary;
 
+    /** @var resource */
+    private mixed $err;
+
     public function __construct(
         string $binary,
         private readonly ?string $home = null,
@@ -100,7 +103,11 @@ final class WebDaemon
         private readonly mixed $launchctl = null,
         private readonly ?string $launchAgents = null,
         private readonly ?string $platform = null,
+        mixed $err = null,
     ) {
+        // Where refusals and errors go; a test hands in its own, as `RpcMode` and `PrintMode` take one.
+        $this->err = $err ?? STDERR;
+
         // Absolute before anything else happens: the daemon `chdir('/')`s before it execs, and
         // `$argv[0]` is `bin/pig` when pig was started from its checkout — which from `/` names
         // nothing. Found live: `start -d` printed ✔, the grandchild's exec failed on `/bin/pig`,
@@ -227,13 +234,13 @@ final class WebDaemon
         [$host, $port, $problem] = self::hostAndPort($args);
 
         if ($problem !== null) {
-            fwrite(STDERR, Style::red("Error: {$problem}\n"));
+            fwrite($this->err, Style::red("Error: {$problem}\n"));
 
             return 1;
         }
 
         if (($pid = $this->runningPid()) !== null) {
-            fwrite(STDERR, Style::yellow("The web UI is already running (pid {$pid}). `pig web stop` first, or `pig web restart`.\n"));
+            fwrite($this->err, Style::yellow("The web UI is already running (pid {$pid}). `pig web stop` first, or `pig web restart`.\n"));
 
             return 1;
         }
@@ -247,14 +254,14 @@ final class WebDaemon
         }
 
         if (!self::hasPosix()) {
-            fwrite(STDERR, Style::red("Error: `pig web start -d` needs ext-posix (for setsid). Run `pig web start` in the foreground, or install the extension.\n"));
+            fwrite($this->err, Style::red("Error: `pig web start -d` needs ext-posix (for setsid). Run `pig web start` in the foreground, or install the extension.\n"));
 
             return 1;
         }
 
         $home = $this->home ?? Config::home();
         if (!is_dir($home) && !mkdir($home, 0700, true) && !is_dir($home)) {
-            fwrite(STDERR, Style::red("Error: cannot create {$home}\n"));
+            fwrite($this->err, Style::red("Error: cannot create {$home}\n"));
 
             return 1;
         }
@@ -266,7 +273,7 @@ final class WebDaemon
         try {
             $pid = $this->daemonise($argv, $host, $port);
         } catch (\RuntimeException $e) {
-            fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
+            fwrite($this->err, Style::red("Error: {$e->getMessage()}\n"));
 
             return 1;
         }
@@ -289,7 +296,7 @@ final class WebDaemon
         }
 
         if (!self::hasPosix()) {
-            fwrite(STDERR, Style::red("Error: `pig web stop` needs ext-posix (for kill). The daemon is pid {$pid}; `kill {$pid}` stops it.\n"));
+            fwrite($this->err, Style::red("Error: `pig web stop` needs ext-posix (for kill). The daemon is pid {$pid}; `kill {$pid}` stops it.\n"));
 
             return 1;
         }
@@ -347,7 +354,7 @@ final class WebDaemon
         $second = $terminal ? self::ask('Once more: ') : $first;
 
         if ($first !== $second) {
-            fwrite(STDERR, Style::red("Error: the two passwords differ.\n"));
+            fwrite($this->err, Style::red("Error: the two passwords differ.\n"));
 
             return 1;
         }
@@ -355,7 +362,7 @@ final class WebDaemon
         try {
             $login->setPassword($first);
         } catch (\InvalidArgumentException $e) {
-            fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
+            fwrite($this->err, Style::red("Error: {$e->getMessage()}\n"));
 
             return 1;
         }
@@ -427,20 +434,20 @@ final class WebDaemon
     private function install(array $args): int
     {
         if (!$this->isMacos()) {
-            fwrite(STDERR, Style::red("Error: `pig web install` makes a macOS launchd service; this is " . ($this->platform ?? PHP_OS_FAMILY) . ". Run `pig web start -d` instead.\n"));
+            fwrite($this->err, Style::red("Error: `pig web install` makes a macOS launchd service; this is " . ($this->platform ?? PHP_OS_FAMILY) . ". Run `pig web start -d` instead.\n"));
 
             return 1;
         }
 
         [$host, $port, $problem] = self::hostAndPort($args);
         if ($problem !== null) {
-            fwrite(STDERR, Style::red("Error: {$problem}\n"));
+            fwrite($this->err, Style::red("Error: {$problem}\n"));
 
             return 1;
         }
 
         if (($pid = $this->runningPid()) !== null) {
-            fwrite(STDERR, Style::yellow("A web UI daemon is already running (pid {$pid}) and would hold the port. `pig web stop` first.\n"));
+            fwrite($this->err, Style::yellow("A web UI daemon is already running (pid {$pid}) and would hold the port. `pig web stop` first.\n"));
 
             return 1;
         }
@@ -448,7 +455,7 @@ final class WebDaemon
         $home = $this->home ?? Config::home();
         foreach ([$home, dirname($this->plistFile())] as $directory) {
             if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
-                fwrite(STDERR, Style::red("Error: cannot create {$directory}\n"));
+                fwrite($this->err, Style::red("Error: cannot create {$directory}\n"));
 
                 return 1;
             }
@@ -463,7 +470,7 @@ final class WebDaemon
         // `--no-browser`, or every login and every restart `KeepAlive` makes opens a browser tab.
         $cwd = getcwd() ?: '.';
         if (file_put_contents($this->plistFile(), $this->plist([...$this->serverArgv($host, $port), '--no-browser'], $cwd)) === false) {
-            fwrite(STDERR, Style::red("Error: cannot write {$this->plistFile()}\n"));
+            fwrite($this->err, Style::red("Error: cannot write {$this->plistFile()}\n"));
 
             return 1;
         }
@@ -473,7 +480,7 @@ final class WebDaemon
             // A plist launchd refused would be loaded again at the next login and refused again
             // there, with nobody watching; taking it back keeps "installed" meaning "running".
             unlink($this->plistFile());
-            fwrite(STDERR, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
+            fwrite($this->err, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
 
             return 1;
         }
@@ -497,7 +504,7 @@ final class WebDaemon
         if ($this->serviceLoaded()) {
             [$code, $said] = $this->launchctl(['bootout', $this->serviceTarget()]);
             if ($code !== 0) {
-                fwrite(STDERR, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
+                fwrite($this->err, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
 
                 return 1;
             }
@@ -513,7 +520,7 @@ final class WebDaemon
     private function serviceStart(array $args): int
     {
         if (($refusal = self::optionsTheServiceIgnores($args)) !== null) {
-            fwrite(STDERR, Style::red("Error: {$refusal}\n"));
+            fwrite($this->err, Style::red("Error: {$refusal}\n"));
 
             return 1;
         }
@@ -523,7 +530,7 @@ final class WebDaemon
         }
 
         if (($pid = $this->servicePid()) !== null) {
-            fwrite(STDERR, Style::yellow("The web UI service is already running (pid {$pid}). `pig web restart` restarts it.\n"));
+            fwrite($this->err, Style::yellow("The web UI service is already running (pid {$pid}). `pig web restart` restarts it.\n"));
 
             return 1;
         }
@@ -541,7 +548,7 @@ final class WebDaemon
 
         [$code, $said] = $this->launchctl(['bootout', $this->serviceTarget()]);
         if ($code !== 0) {
-            fwrite(STDERR, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
+            fwrite($this->err, Style::red("Error: launchctl bootout failed ({$code}): " . trim($said) . "\n"));
 
             return 1;
         }
@@ -577,7 +584,7 @@ final class WebDaemon
     private function serviceRestart(array $args): int
     {
         if (($refusal = self::optionsTheServiceIgnores($args)) !== null) {
-            fwrite(STDERR, Style::red("Error: {$refusal}\n"));
+            fwrite($this->err, Style::red("Error: {$refusal}\n"));
 
             return 1;
         }
@@ -589,7 +596,7 @@ final class WebDaemon
     {
         [$code, $said] = $this->launchctl(['bootstrap', $this->domain(), $this->plistFile()]);
         if ($code !== 0) {
-            fwrite(STDERR, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
+            fwrite($this->err, Style::red("Error: launchctl bootstrap failed ({$code}): " . trim($said) . "\n"));
 
             return 1;
         }
@@ -603,7 +610,7 @@ final class WebDaemon
     {
         [$code, $said] = $this->launchctl($kill ? ['kickstart', '-k', $this->serviceTarget()] : ['kickstart', $this->serviceTarget()]);
         if ($code !== 0) {
-            fwrite(STDERR, Style::red("Error: launchctl kickstart failed ({$code}): " . trim($said) . "\n"));
+            fwrite($this->err, Style::red("Error: launchctl kickstart failed ({$code}): " . trim($said) . "\n"));
 
             return 1;
         }
@@ -748,8 +755,8 @@ final class WebDaemon
 
     private function unknown(string $command): int
     {
-        fwrite(STDERR, Style::red("Error: unknown command `pig web {$command}`.\n\n"));
-        $this->help(STDERR);
+        fwrite($this->err, Style::red("Error: unknown command `pig web {$command}`.\n\n"));
+        $this->help($this->err);
 
         return 1;
     }
@@ -807,6 +814,14 @@ final class WebDaemon
 
         // Middle child: new session, fork again, exit — so the grandchild is not a session
         // leader and can never reacquire a controlling terminal.
+        //
+        // Output the parent had buffered (`ob_start()`) came over with the fork, and `exit()`
+        // flushes it: the parent's own lines printed a second time, by a process that never said
+        // them. Dropped here, before either child can exit.
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
         fclose($parentEnd);
         posix_setsid();
 

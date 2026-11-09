@@ -30,10 +30,33 @@ final class Truncate
     public static function head(string $content, int $maxLines = self::MAX_LINES, int $maxBytes = self::MAX_BYTES): Truncation
     {
         $lines = explode("\n", $content);
-        $totalLines = count($lines);
-        $totalBytes = strlen($content);
 
+        return self::headOf($lines, count($lines), strlen($content), strlen($lines[0]), $maxLines, $maxBytes);
+    }
+
+    /**
+     * `head()` over text that was never held whole — the streaming `read` (upstream #11750).
+     *
+     * $prefix is the text's first lines, as many as the loop below can keep and one more: past
+     * $maxLines, or past $maxBytes joined (that line may be cut short, since only its being too
+     * long counts). The counts are the whole text's. Upstream patches `totalLines` / `totalBytes`
+     * onto a `truncateHead()` of the stored lines; here `head()` itself goes through this, so the
+     * two cannot drift apart.
+     *
+     * @param list<string> $prefix
+     * @param int $firstLineBytes the first line's whole length, kept even when the line was not
+     */
+    public static function headOf(
+        array $prefix,
+        int $totalLines,
+        int $totalBytes,
+        int $firstLineBytes,
+        int $maxLines = self::MAX_LINES,
+        int $maxBytes = self::MAX_BYTES,
+    ): Truncation {
         if ($totalLines <= $maxLines && $totalBytes <= $maxBytes) {
+            $content = implode("\n", $prefix);
+
             return new Truncation(
                 $content,
                 false,
@@ -49,7 +72,7 @@ final class Truncate
 
         // Nothing whole fits. Saying so is more use than half a line, because the model
         // can act on it — the read tool turns this into "use bash and head -c".
-        if (strlen($lines[0]) > $maxBytes) {
+        if ($firstLineBytes > $maxBytes) {
             return new Truncation(
                 '',
                 true,
@@ -68,7 +91,7 @@ final class Truncate
         $bytes = 0;
         $by = 'lines';
 
-        foreach ($lines as $index => $line) {
+        foreach ($prefix as $index => $line) {
             if ($index >= $maxLines) {
                 break;
             }

@@ -17,6 +17,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\Tool;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Aws\EventStream;
+use Pig\Ai\Utils\StrictToolLimits;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -36,6 +37,46 @@ final class BedrockStrictToolFallbackTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
+        StrictToolLimits::cleanup();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        StrictToolLimits::cleanup();
+    }
+
+    /** Upstream #11626: one rejection per session, not one per turn. */
+    public function testASessionRejectedOnceSendsPreferredToolsNonStrictFromThenOn(): void
+    {
+        $tools = [self::tool('preferred', 'prefer')];
+        [, $bodies] = $this->converse([self::rejection(self::UNION_LIMIT_MESSAGE), self::success()], $tools, sessionId: 's1');
+        $this->assertCount(2, $bodies);
+
+        [$message, $bodies] = $this->converse([self::success()], $tools, sessionId: 's1');
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertCount(1, $bodies, 'no rejection to pay for again');
+        $this->assertArrayNotHasKey('strict', $bodies[0]['toolConfig']['tools'][0]['toolSpec']);
+        $this->assertNull($message->diagnostics, 'no fallback this time, so none recorded');
+
+        // Another session, and this one once it has been cleaned up, try strict first again.
+        [, $bodies] = $this->converse([self::success()], $tools, sessionId: 's2');
+        $this->assertTrue($bodies[0]['toolConfig']['tools'][0]['toolSpec']['strict']);
+
+        StrictToolLimits::cleanup('s1');
+        [, $bodies] = $this->converse([self::success()], $tools, sessionId: 's1');
+        $this->assertTrue($bodies[0]['toolConfig']['tools'][0]['toolSpec']['strict']);
+    }
+
+    public function testWithoutASessionNothingIsRemembered(): void
+    {
+        $tools = [self::tool('preferred', 'prefer')];
+        $this->converse([self::rejection(self::UNION_LIMIT_MESSAGE), self::success()], $tools);
+
+        [, $bodies] = $this->converse([self::success()], $tools);
+
+        $this->assertTrue($bodies[0]['toolConfig']['tools'][0]['toolSpec']['strict']);
     }
 
     public function testAStrictToolLimitRejectionIsRetriedWithPreferredToolsNonStrictAndRequiredOnesStrict(): void
@@ -109,7 +150,7 @@ final class BedrockStrictToolFallbackTest extends TestCase
      * @param (\Closure(array<string, mixed>): array<string, mixed>)|null $onPayload
      * @return array{0: AssistantMessage, 1: list<array<string, mixed>>}
      */
-    private function converse(array $replies, array $tools, ?\Closure $onPayload = null): array
+    private function converse(array $replies, array $tools, ?\Closure $onPayload = null, ?string $sessionId = null): array
     {
         $server = new CannedServer();
         $url = rtrim($server->startSequence($replies), '/');
@@ -129,13 +170,14 @@ final class BedrockStrictToolFallbackTest extends TestCase
         $context = new Context([new UserMessage('Hello', 1)], null, $tools);
         $message = null;
 
-        Async::run(function () use ($model, $context, $onPayload, &$message): void {
+        Async::run(function () use ($model, $context, $onPayload, $sessionId, &$message): void {
             $stream = (new Bedrock(sleep: static function (int $ms): void {
             }))->stream($model, Transcript::normalizeContext($context), new BedrockOptions(
                 region: 'us-east-1',
                 cacheRetention: 'none',
                 env: ['AWS_BEDROCK_SKIP_AUTH' => '1'],
                 onPayload: $onPayload,
+                sessionId: $sessionId,
             ));
 
             foreach ($stream as $event) {

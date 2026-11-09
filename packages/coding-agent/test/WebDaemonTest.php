@@ -11,11 +11,23 @@ final class WebDaemonTest extends TestCase
 {
     private string $home;
 
+    /** @var resource what the daemon wrote to standard error, kept off the test run's terminal */
+    private mixed $err;
+
     #[\Override]
     protected function setUp(): void
     {
         $this->home = sys_get_temp_dir() . '/pig-webdaemon-' . bin2hex(random_bytes(6));
         mkdir($this->home, 0700, true);
+        $this->err = fopen('php://temp', 'w+') ?: throw new \RuntimeException('no temp stream');
+    }
+
+    /** Everything written to standard error so far. */
+    private function stderr(): string
+    {
+        rewind($this->err);
+
+        return (string) stream_get_contents($this->err);
     }
 
     #[\Override]
@@ -52,7 +64,7 @@ final class WebDaemonTest extends TestCase
             $seen = $argv;
 
             throw new \RuntimeException('exec');
-        }, static fn (array $args): never => throw new \LogicException('launchctl ' . implode(' ', $args)), $this->home . '/LaunchAgents');
+        }, static fn (array $args): never => throw new \LogicException('launchctl ' . implode(' ', $args)), $this->home . '/LaunchAgents', err: $this->err);
     }
 
     /**
@@ -65,7 +77,7 @@ final class WebDaemonTest extends TestCase
 
         return new WebDaemon('/usr/local/bin/pig', $this->home, static function (array $argv): never {
             throw new \RuntimeException('exec');
-        }, $launchd, $this->home . '/LaunchAgents', $platform);
+        }, $launchd, $this->home . '/LaunchAgents', $platform, $this->err);
     }
 
     private function target(): string
@@ -116,16 +128,20 @@ final class WebDaemonTest extends TestCase
 
             $this->assertSame(1, $status, "port '{$bad}'");
             $this->assertNull($seen, "nothing exec'd for port '{$bad}'");
+            $this->assertStringContainsString("--port wants a number from 1 to 65535, not '{$bad}'", $this->stderr());
         }
     }
 
     public function testAnUnknownCommandIsRefusedAndHelpIsOnStderr(): void
     {
         $daemon = $this->daemon($seen);
-        [$status] = $this->invoke($daemon, ['dance']);
+        [$status, $out] = $this->invoke($daemon, ['dance']);
 
         $this->assertSame(1, $status);
         $this->assertNull($seen);
+        $this->assertStringContainsString('unknown command `pig web dance`', $this->stderr());
+        $this->assertStringContainsString('pig web start [-d]', $this->stderr(), 'and the help with it');
+        $this->assertSame('', $out);
     }
 
     // ---- status / stop against a real process ----------------------------------------------
@@ -243,7 +259,7 @@ final class WebDaemonTest extends TestCase
         $daemon = new WebDaemon('/bin/sleep', $this->home, static function (array $argv): never {
             pcntl_exec('/bin/sleep', ['30']);
             exit(127);
-        });
+        }, err: $this->err);
 
         [$status, $out] = $this->invoke($daemon, ['start', '-d']);
         $this->assertSame(0, $status, $out);
@@ -274,7 +290,7 @@ final class WebDaemonTest extends TestCase
         $daemon = new WebDaemon('/bin/sleep', $this->home, static function (array $argv): never {
             pcntl_exec('/bin/sleep', ['30']);
             exit(127);
-        });
+        }, err: $this->err);
 
         try {
             [$status, $out] = $this->invoke($daemon, ['start', '-d', '--host', '0.0.0.0', '--port', '9000']);
@@ -368,7 +384,7 @@ final class WebDaemonTest extends TestCase
 
     public function testAPathThatNeedsEscapingIsStillOneArgument(): void
     {
-        $daemon = new WebDaemon('/Users/dev/a & <b>/pig', $this->home, null, new Launchd(), $this->home . '/LaunchAgents', 'Darwin');
+        $daemon = new WebDaemon('/Users/dev/a & <b>/pig', $this->home, null, new Launchd(), $this->home . '/LaunchAgents', 'Darwin', $this->err);
         $this->invoke($daemon, ['install']);
 
         $this->assertSame('/Users/dev/a & <b>/pig', self::plist($daemon->plistFile())['ProgramArguments'][1]);

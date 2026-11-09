@@ -41,6 +41,7 @@ use Pig\Ai\Utils\Aws\Credentials;
 use Pig\Ai\Utils\Aws\ServiceError;
 use Pig\Ai\Utils\Aws\StreamError;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\StrictToolLimits;
 use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\PartialJson;
 use Pig\Ai\Utils\Text;
@@ -252,7 +253,8 @@ final class Bedrock
             }
 
             $client = new BedrockRuntimeClient($config, $this->http, $this->now, $this->sleep);
-            $disablePreferredStrictTools = false;
+            // As Anthropic's: a session rejected for the limits once goes non-strict straight away.
+            $disablePreferredStrictTools = StrictToolLimits::hasExceeded($options->sessionId);
 
             // Upstream's loop (#11416), as the Anthropic provider has it: a request rejected for
             // Claude's strict tool limits is sent once more with the `prefer` tools non-strict;
@@ -296,11 +298,12 @@ final class Bedrock
                         || !$error instanceof ServiceError
                         || !$error->bedrock
                         || $error->name !== 'ValidationException'
-                        || !ConstrainedSampling::isStrictToolLimitErrorMessage($error->getMessage())) {
+                        || !StrictToolLimits::isErrorMessage($error->getMessage())) {
                         throw $error;
                     }
 
                     $disablePreferredStrictTools = true;
+                    StrictToolLimits::markExceeded($options->sessionId);
                     $builder->addDiagnostic(new AssistantMessageDiagnostic(
                         'bedrock_strict_tools_fallback',
                         Timestamp::nowMs(),

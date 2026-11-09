@@ -1028,11 +1028,15 @@ final class AgentSession
         });
     }
 
-    /** Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket is the one there is. */
+    /**
+     * Upstream's `cleanupSessionResources(sessionId)`: Codex's cached WebSocket, and the note that
+     * this session's strict tools went over Claude's limits.
+     */
     private function closeSessionResources(): void
     {
         if ($this->agent->sessionId !== null) {
             OpenAiCodexResponses::closeWebSocketSessions($this->agent->sessionId);
+            \Pig\Ai\Utils\StrictToolLimits::cleanup($this->agent->sessionId);
         }
     }
 

@@ -102,13 +102,16 @@ final class SelfUpdateTest extends TestCase
             return 127;
         };
 
-        $updater = new SelfUpdate($runner);
+        $err = fopen('php://temp', 'w+') ?: throw new \RuntimeException('no temp stream');
+        $updater = new SelfUpdate($runner, err: $err);
 
         ob_start();
         $code = $updater->run();
         ob_end_clean();
 
         $this->assertSame(127, $code);
+        rewind($err);
+        $this->assertMatchesRegularExpression('/Failed to update pig via (git pull|Composer) \(exit code 127\)/', (string) stream_get_contents($err));
     }
 
     /** Upstream 8bc94b1: the person's own command in place of pig's, with its placeholders filled in. */
@@ -167,10 +170,14 @@ final class SelfUpdateTest extends TestCase
         };
         $latest = static fn (): string => throw new CodingAgentError('Could not determine latest pig version.');
 
-        $code = (new SelfUpdate($runner, static fn (): ?string => null, $latest))->updatePigWith(['true']);
+        $err = fopen('php://temp', 'w+') ?: throw new \RuntimeException('no temp stream');
+
+        $code = (new SelfUpdate($runner, static fn (): ?string => null, $latest, $err))->updatePigWith(['true']);
 
         $this->assertSame(1, $code);
         $this->assertSame([], $executed);
+        rewind($err);
+        $this->assertStringContainsString('Error: Could not determine latest pig version.', (string) stream_get_contents($err));
     }
 
     /** The newest release lookup fails loudly, where the startup check stays quiet. */

@@ -29,13 +29,20 @@ final class SelfUpdate
      * @param (callable(list<string>, ?string=): int)|null $runner execution handler for commands, injectable for tests
      * @param (callable(): ?string)|null $versionReader what `pig --version` on the PATH answers, injectable for tests
      * @param (callable(): string)|null $latestReader the newest release (`UpdateCheck::latest()`), injectable for tests
+     * @param resource|null $err where failures go; standard error by default
      */
     public function __construct(
         private readonly mixed $runner = null,
         private readonly mixed $versionReader = null,
         private readonly mixed $latestReader = null,
+        mixed $err = null,
     ) {
+        // Where failures are said; a test hands in its own, as `WebDaemon` takes one.
+        $this->err = $err ?? STDERR;
     }
+
+    /** @var resource */
+    private mixed $err;
 
     /**
      * `pig update …`, as a method — upstream's parser lives in `PackageCommands`, and this is the
@@ -58,7 +65,7 @@ final class SelfUpdate
             echo Style::dim("Updating pig from git repository at {$repoRoot}...\n");
             $code = $this->execute(['git', 'pull'], $repoRoot);
             if ($code !== 0) {
-                fwrite(STDERR, Style::red("Failed to update pig via git pull (exit code {$code}).\n"));
+                fwrite($this->err, Style::red("Failed to update pig via git pull (exit code {$code}).\n"));
 
                 return $code;
             }
@@ -84,7 +91,7 @@ final class SelfUpdate
 
         if ($composer === null) {
             fwrite(
-                STDERR,
+                $this->err,
                 Style::red("Error: 'composer' executable not found in PATH.\n")
                 . Style::dim("Please run: composer global require " . Version::PACKAGE . "\n"),
             );
@@ -97,7 +104,7 @@ final class SelfUpdate
         $code = $this->execute([$composer, 'global', 'require', Version::PACKAGE]);
 
         if ($code !== 0) {
-            fwrite(STDERR, Style::red("Failed to update pig via Composer (exit code {$code}).\n"));
+            fwrite($this->err, Style::red("Failed to update pig via Composer (exit code {$code}).\n"));
 
             return $code;
         }
@@ -147,7 +154,7 @@ final class SelfUpdate
         try {
             $version = $this->latestReader !== null ? ($this->latestReader)() : (new UpdateCheck())->latest();
         } catch (CodingAgentError $e) {
-            fwrite(STDERR, Style::red("Error: {$e->getMessage()}\n"));
+            fwrite($this->err, Style::red("Error: {$e->getMessage()}\n"));
 
             return 1;
         }
@@ -169,7 +176,7 @@ final class SelfUpdate
         $code = $this->execute($command);
 
         if ($code !== 0) {
-            fwrite(STDERR, Style::red("Error: {$display} exited with code {$code}\n"));
+            fwrite($this->err, Style::red("Error: {$display} exited with code {$code}\n"));
 
             return 1;
         }

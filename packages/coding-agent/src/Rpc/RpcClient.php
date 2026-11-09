@@ -231,8 +231,8 @@ final class RpcClient
      *
      * Closing standard input is the way: `RpcMode` sees the EOF, stops its loop and runs its
      * shutdown — the `session_shutdown` hook fires and the custom tools are notified. A SIGTERM
-     * would skip all of that, so it is the fallback rather than the method, and SIGKILL the fallback
-     * to that.
+     * runs the same shutdown (exiting 143), so it is the nudge for a child that did not notice its
+     * input closing, and SIGKILL the fallback to that.
      */
     public function stop(float $timeout = 5.0): void
     {
@@ -265,9 +265,9 @@ final class RpcClient
             // stop the reader that is meant to be draining them.
             Async::delay(0.02);
 
-            // Halfway through, ask properly. `RpcMode` handles SIGTERM as an interrupt rather than
-            // as "stop", so this is the nudge for a child that did not notice its input closing —
-            // not the normal path.
+            // Halfway through, SIGTERM: `RpcMode` shuts down on it as on the end of input, and a
+            // shutdown already under way is not cut short by it — the nudge for a child that did
+            // not notice its input closing, not the normal path.
             if (!$terminated && microtime(true) > $half) {
                 proc_terminate($this->process);
                 $terminated = true;

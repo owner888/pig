@@ -491,6 +491,12 @@ const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
  * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float, compat?: array<string, string|bool>}>
  */
 const HAND_KEPT_CLASSIFIERS = [
+    // Upstream's `MICROSOFT_DECISION_1` (#11679): "The authenticated Copilot catalog lists this
+    // decision model on /v1/systemone (checked 2026-11-02) without a context window or price, and
+    // GitHub's Copilot pricing page does not list it. These are Azure's values, which OpenRouter and
+    // Vercel AI Gateway also list." The `/v1` is added per request (`Models::classify()`), since the
+    // account's endpoint replaces the base URL; the headers are Copilot's (`BuiltinCatalog`).
+    'github-copilot/microsoft-decision-1' => ['name' => 'Microsoft-Decision-1', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://api.individual.githubcopilot.com', 'context' => 32_768, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/systemone/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/inference/systemone/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
     // "Cloudflare-hosted Clef decision models. They take up to four PNG, JPEG, or WebP images as data

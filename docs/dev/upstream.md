@@ -34,6 +34,11 @@ each side from its own tokens), #11514 (reordering the same active tools — `To
 registration order), #11853 (extension overlays left behind on `/reload` — `ExtensionUi::custom()`
 has no overlay mode) and #11775 (CR-only SSE lines — `SseParser` already splits on them).
 
+#11751's second half, diffing a window around each edit instead of the whole file, is not ported:
+upstream's diff is jsdiff's general one, ten to fifteen times the file in memory, where `EditDiff`
+compares a common prefix and suffix and splits by the replacements it already knows — linear, with
+no patch to build. Its first half (line endings) and the diff before the write are.
+
 ## Names that differ from upstream
 
 An audit of 2026-11-09, after `CustomTools\` folded into `Extensions\` (1.8.0) and `bin/pig` was

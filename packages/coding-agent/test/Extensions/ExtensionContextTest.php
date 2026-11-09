@@ -54,6 +54,7 @@ final class ExtensionContextTest extends TestCase
 {
     use GlobalThemeFixture;
     use AssertsThrows;
+    use \Pig\Test\CapturesLog;
 
     private string $home = '';
 
@@ -110,9 +111,10 @@ final class ExtensionContextTest extends TestCase
             $called = true;
         });
 
-        $bus->emit('ping', null);
+        $this->capturingLog(static fn () => $bus->emit('ping', null));
 
         $this->assertTrue($called);
+        $this->assertSame(['Event handler error (ping): RuntimeException: handler failed'], $this->loggedWarnings(), 'and the throw is logged, not lost');
     }
 
     public function testLoadedExtensionsShareTheSameEventBusAndClearRemovesAll(): void

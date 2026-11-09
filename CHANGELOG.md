@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.4] - 2026-11-09
+
+### Added
+
+- GitHub Copilot's `microsoft-decision-1` classifier (upstream #11679): `classify()` with a Copilot sign-in or key, at the account's endpoint under `/v1/systemone`, with Copilot's headers.
+
+### Fixed
+
+- Fixed `pbcopy` staying in pig's process group on macOS, so Ctrl+Z stopped it with pig: the clipboard writers' detaching (upstream #11179) put `setsid` in front of the command, and macOS has no `setsid`. Without one, PHP's own `posix_setsid()` starts the command now (`Process::inNewSession()`, shared with `bash`'s, which already did this).
+- Fixed Anthropic and Bedrock paying a rejected request on every turn once Claude had refused a session's strict tools for its limits: the session now sends its `strict: "prefer"` tools non-strict from then on, until it ends (upstream #11626). `Pig\Ai\Utils\StrictToolLimits` holds the check and the per-session note, where `ConstrainedSampling` held the check.
+- Fixed SIGTERM and SIGHUP killing `pig --mode rpc` and `pig -p` on the spot, with no `session_shutdown` and no disposal: they now shut down as the end of input does and exit 143 or 129. A shutdown under way is not cut short by one signal — process managers close stdin and send SIGTERM together — and a second exits at once (upstream #11752).
+- Fixed `edit` rewriting the line endings of lines it did not touch (upstream #11751): the file was written back whole with the first ending it held, so a two-line edit of a file mixing LF and CRLF changed every other line, and a lone CR anywhere became an LF. Only the replaced ranges are written now; new lines take the ending of the line they start on (CR only in a file with no LF at all), and the diff is drawn before the file is written.
+- Fixed `read` loading the whole file before applying `offset` / `limit` (upstream #11750): a one-line read of a 200 MB log held it three times over (546 MB peak; past a `memory_limit`, a fatal error that ends pig) and froze the screen and escape until it was done. It now streams the file in 1 MB chunks, counting the lines it does not show in C and storing only what the answer can hold — the same read takes 0.06 s and 4 MB — and looks at escape every few megabytes. The output is unchanged byte for byte, checked against the old algorithm over every range and chunk size.
+
 ## [1.9.3] - 2026-11-09
 
 ### Added

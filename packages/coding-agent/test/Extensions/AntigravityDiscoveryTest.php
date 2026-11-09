@@ -24,6 +24,7 @@ use RuntimeException;
 final class AntigravityDiscoveryTest extends TestCase
 {
     use LoadsAntigravity;
+    use \Pig\Test\CapturesLog;
 
     private string $home;
 
@@ -254,8 +255,9 @@ final class AntigravityDiscoveryTest extends TestCase
         $body = '{"error":{"message":"Bearer ya29.secret denied"}}';
         $url = rtrim($server->start(["HTTP/1.1 500 Oops\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]), '/');
 
-        $kept = Async::run(static fn (): array => Discovery::refresh(Catalog::none(), true, self::key(), false, null, static fn () => null, endpoints: [$url]));
+        $kept = $this->capturingLog(static fn (): array => Async::run(static fn (): array => Discovery::refresh(Catalog::none(), true, self::key(), false, null, static fn () => null, endpoints: [$url])));
         $this->assertSame(Discovery::fallbackCatalog()['models'], $kept);
+        $this->assertSame(['Antigravity model catalog refresh failed; keeping the last catalog: /v1internal:fetchAvailableModels failed: no endpoint available'], $this->loggedWarnings());
 
         try {
             Async::run(static fn (): array => Discovery::refresh(Catalog::none(), true, self::key(), true, null, static fn () => null, endpoints: [$url]));

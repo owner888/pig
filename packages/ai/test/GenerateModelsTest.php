@@ -514,7 +514,9 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString("        'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],", $output);
         self::assertStringContainsString("        'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['Clef Flash', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 24_576, ['text', 'image'], 0.038, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],", $output);
         self::assertStringContainsString("        'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne,", $output);
-        self::assertStringContainsString('classifiers      11 models', $output);
+        // Upstream's hand-kept Copilot decision model (#11679).
+        self::assertStringContainsString("        'github-copilot/microsoft-decision-1' => ['Microsoft-Decision-1', ClassifierApi::TypesafeSystemOne, 'https://api.individual.githubcopilot.com', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],", $output);
+        self::assertStringContainsString('classifiers      12 models', $output);
     }
 
     public function testImageRowsAreOpenRoutersImageListing(): void

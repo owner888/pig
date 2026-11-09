@@ -569,6 +569,8 @@ final class Models
 
             [$requestModel, $requestOptions] = self::applyClassifierAuth($model, $options);
 
+            $requestModel = self::copilotSystemOne($requestModel, $requestOptions->apiKey);
+
             return match ($model->api) {
                 ClassifierApi::TypesafeSystemOne => (new Providers\TypesafeSystemOne())->classify($requestModel, $context, $requestOptions),
                 ClassifierApi::CloudflareWorkersAiSystemOne => (new Providers\CloudflareWorkersAiSystemOne())->classify($requestModel, $context, $requestOptions),
@@ -625,6 +627,23 @@ final class Models
      *
      * @return array{0: ClassifierModel, 1: ClassifierOptions}
      */
+    /**
+     * Upstream's `copilotSystemOne()` (#11679): Copilot serves System One at `/v1/systemone` while
+     * its chat APIs have no version prefix, and the account's endpoint is the token's
+     * (`GithubCopilot::baseUrl()`, as Copilot's chat providers ask it), so the prefix is added per
+     * request. Any other model goes as it is.
+     */
+    private static function copilotSystemOne(ClassifierModel $model, ?string $token): ClassifierModel
+    {
+        if ($model->provider !== 'github-copilot' || $model->api !== ClassifierApi::TypesafeSystemOne) {
+            return $model;
+        }
+
+        $base = $token !== null && $token !== '' ? Utils\Oauth\GithubCopilot::baseUrl($token) : $model->baseUrl;
+
+        return $model->withBaseUrl(rtrim($base, '/') . '/v1');
+    }
+
     private static function applyClassifierAuth(ClassifierModel $model, ?ClassifierOptions $options): array
     {
         $args = ($options ?? new ClassifierOptions())->args();

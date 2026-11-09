@@ -50,8 +50,12 @@ final class ProcessTest extends TestCase
     {
         // Upstream #11179: a clipboard writer that stays behind must not be in pig's process group,
         // or Ctrl+Z stops it with pig and every paste in the shell hangs.
-        if (PHP_OS_FAMILY === 'Windows' || !function_exists('posix_getpgrp') || trim((string) shell_exec('command -v setsid')) === '') {
-            $this->markTestSkipped('needs setsid and ext-posix');
+        // `setsid` where there is one, and PHP's own `posix_setsid()` where there is not (macOS) —
+        // so this runs on a Mac too, which is where `pbcopy` used to stay in the group.
+        $setsid = trim((string) shell_exec('command -v setsid')) !== '';
+
+        if (PHP_OS_FAMILY === 'Windows' || !function_exists('posix_getpgrp') || (!$setsid && !function_exists('pcntl_exec'))) {
+            $this->markTestSkipped('needs ext-posix, and setsid or ext-pcntl');
         }
 
         $file = tempnam(sys_get_temp_dir(), 'pig-pgid-');
@@ -66,6 +70,38 @@ final class ProcessTest extends TestCase
 
         $this->assertSame(posix_getpgrp(), $attached, 'without it the child shares the group');
         $this->assertNotSame(posix_getpgrp(), $detached);
+    }
+
+    public function testWithoutSetsidANewSessionIsPhpsOwnSetsidBeforeTheExec(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            $this->markTestSkipped('no sessions on Windows');
+        }
+
+        $path = getenv('PATH');
+        // A PATH holding `sh` and not `setsid`, as on macOS.
+        $dir = sys_get_temp_dir() . '/pig-nosetsid-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+        symlink((string) trim((string) shell_exec('command -v sh')), $dir . '/sh');
+        putenv("PATH={$dir}");
+
+        try {
+            $argv = Process::inNewSession(['sh', '-c', 'true']);
+        } finally {
+            putenv("PATH={$path}");
+            unlink($dir . '/sh');
+            rmdir($dir);
+        }
+
+        if (!function_exists('posix_setsid') || !function_exists('pcntl_exec')) {
+            $this->assertSame(['sh', '-c', 'true'], $argv, 'nothing to do it with, so as it was');
+
+            return;
+        }
+
+        $this->assertSame(PHP_BINARY, $argv[0]);
+        $this->assertStringContainsString('posix_setsid()', $argv[2]);
+        $this->assertSame(['--', $dir . '/sh', '-c', 'true'], array_slice($argv, 3), 'the program by its full path, since pcntl_exec looks nothing up');
     }
 
     public function testAFailingCommandKeepsItsExitCode(): void

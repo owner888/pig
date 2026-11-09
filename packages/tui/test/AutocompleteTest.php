@@ -351,7 +351,7 @@ final class AutocompleteTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md', 'noisy-fd', 'mock-fd'] as $file) {
+        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md', 'noisy-fd', 'noisy-fd.stderr', 'mock-fd'] as $file) {
             if (is_file("{$this->root}/{$file}")) {
                 unlink("{$this->root}/{$file}");
             }
@@ -377,14 +377,24 @@ final class AutocompleteTest extends TestCase
     private function noisyFd(int $warnings): string
     {
         $path = "{$this->root}/noisy-fd";
+        $noise = "{$this->root}/noisy-fd.stderr";
+
+        // Written here and poured out with one `cat`, not echoed line by line by the script: a
+        // shell loop of a few thousand `echo`s is itself slow enough on a loaded machine to pass
+        // the picker's 2 s `FD_TIMEOUT`, and that failed this test for a reason unrelated to the
+        // deadlock it guards against. One write of the same bytes fills the pipe as surely.
+        $lines = '';
+
+        for ($i = 0; $i < $warnings; $i++) {
+            $lines .= "[fd::warning] Could not retrieve metadata for a/deep/path/{$i}: Permission denied\n";
+        }
+
+        file_put_contents($noise, $lines);
+        $quoted = escapeshellarg($noise);
 
         file_put_contents($path, <<<SH
             #!/bin/sh
-            i=0
-            while [ \$i -lt {$warnings} ]; do
-              echo "[fd::warning] Could not retrieve metadata for a/deep/path/\$i: Permission denied" >&2
-              i=\$((i+1))
-            done
+            cat {$quoted} >&2
             echo "src/"
             echo "src/Agent.php"
             SH);
@@ -398,11 +408,11 @@ final class AutocompleteTest extends TestCase
         // Reading only stdout deadlocks: fd blocks writing to a full stderr pipe, so it never
         // closes stdout, so the read never returns — inside the loop's own input callback,
         // which is the whole terminal. `Process::run()` drains both and says why in a comment.
-        // Past a pipe buffer (64 KB on macOS, 16 pages on Linux) is what matters: 1,200 lines of
-        // about 80 bytes are ~95 KB. It was 4,000, which a loaded machine (the whole suite, web
-        // daemons starting beside it) could take past the picker's 2 s `FD_TIMEOUT` — an empty
-        // answer for a reason that has nothing to do with the deadlock this guards against.
-        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(1200));
+        // Past a pipe buffer (64 KB on macOS, 16 pages on Linux) is what matters: 4,000 lines of
+        // about 80 bytes are ~320 KB, five pipe buffers over. Written by one `cat` (`noisyFd()`),
+        // the size no longer costs time: it was cut to 1,200 when a loop of `echo`s took a loaded
+        // machine past the picker's 2 s `FD_TIMEOUT`, and still did once at that.
+        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(4000));
 
         $suggestions = $this->suggest($provider, '@Age');
 

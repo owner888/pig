@@ -1951,10 +1951,13 @@ many parameters with union types …`, where the Anthropic provider retried and 
 
 **Cause**: only `Anthropic.php` had upstream's `anthropic_strict_tools_fallback` loop.
 
-**Rule**: both providers share `ConstrainedSampling::isStrictToolLimitErrorMessage()` and
-`prefersJsonSchemaStrictSampling()`. Bedrock retries once, only for a Bedrock `ValidationException`
+**Rule**: both providers share `StrictToolLimits::isErrorMessage()` and
+`ConstrainedSampling::prefersJsonSchemaStrictSampling()`. Bedrock retries once, only for a Bedrock `ValidationException`
 with one of those messages and only when a `prefer` tool went out strict, rebuilding the request
 (and calling `onPayload` again) with `prefer` tools non-strict; `require` tools stay strict, and a
-`bedrock_strict_tools_fallback` diagnostic records it (upstream #11416).
+`bedrock_strict_tools_fallback` diagnostic records it (upstream #11416). Both remember the rejection per
+`sessionId` (`StrictToolLimits::markExceeded()`), and that session's later requests send the
+`prefer` tools non-strict from the start until `AgentSession` cleans the session up — retrying strict
+every turn paid one rejected request per turn (upstream #11626).
 
 **Test**: `BedrockStrictToolFallbackTest`.

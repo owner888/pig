@@ -6,9 +6,12 @@ namespace Pig\CodingAgent\Test\Web;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Web\TcpConnection;
+use Pig\Test\CapturesLog;
 
 final class TcpConnectionTest extends TestCase
 {
+    use CapturesLog;
+
     public function testAPeerThatStopsReadingIsClosedInsteadOfBufferedWithoutEnd(): void
     {
         // A tab in the background: its socket is open and nothing is read from it. Before, every
@@ -25,13 +28,16 @@ final class TcpConnectionTest extends TestCase
         self::drainedAgo($conn, TcpConnection::STALLED_AFTER + 1);
         $sent = strlen($chunk);
 
-        while (!$conn->isClosed() && $sent < 2 * TcpConnection::MAX_SEND_BUFFER) {
-            $conn->sendRaw($chunk);
-            $sent += strlen($chunk);
-        }
+        $this->capturingLog(static function () use ($conn, $chunk, &$sent): void {
+            while (!$conn->isClosed() && $sent < 2 * TcpConnection::MAX_SEND_BUFFER) {
+                $conn->sendRaw($chunk);
+                $sent += strlen($chunk);
+            }
+        });
 
         $this->assertTrue($conn->isClosed(), 'closed once the buffer would pass its limit');
         $this->assertSame(1, $closed, 'and the server was told, so the session lets the tab go');
+        $this->assertSame(['[web] closing a connection: the peer has read nothing for ' . TcpConnection::STALLED_AFTER . ' s'], $this->loggedWarnings(), 'and the log says why');
         $this->assertLessThanOrEqual(TcpConnection::MAX_SEND_BUFFER + 2 * strlen($chunk), $sent);
 
         fclose($peer);
@@ -55,13 +61,17 @@ final class TcpConnectionTest extends TestCase
         $this->assertFalse($conn->isClosed(), 'something left the buffer a moment ago');
 
         // And memory has its own line, reading or not.
-        while (!$conn->isClosed() && $sent < 2 * TcpConnection::HARD_SEND_BUFFER) {
-            $conn->sendRaw($chunk);
-            $sent += strlen($chunk);
-        }
+        $this->capturingLog(static function () use ($conn, $chunk, &$sent): void {
+            while (!$conn->isClosed() && $sent < 2 * TcpConnection::HARD_SEND_BUFFER) {
+                $conn->sendRaw($chunk);
+                $sent += strlen($chunk);
+            }
+        });
 
         $this->assertTrue($conn->isClosed());
         $this->assertLessThanOrEqual(TcpConnection::HARD_SEND_BUFFER + 2 * strlen($chunk), $sent);
+        $this->assertCount(1, $this->loggedWarnings());
+        $this->assertStringStartsWith('[web] closing a connection: send buffer past', $this->loggedWarnings()[0]);
 
         fclose($peer);
     }

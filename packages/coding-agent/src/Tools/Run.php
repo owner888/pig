@@ -138,18 +138,9 @@ final class Run
         // asking about a host key, `git` or `sudo` asking for a password) writes onto the raw TUI
         // screen — scrolling the alternate screen behind the differential renderer's back — and
         // hangs waiting for an answer nobody can type.
-        if (PHP_OS_FAMILY !== 'Windows' && str_contains($argv[0], '/')) {
-            if (is_executable('/usr/bin/setsid')) {
-                $argv = ['/usr/bin/setsid', ...$argv];
-            } elseif (function_exists('posix_setsid') && function_exists('pcntl_exec')) {
-                $argv = [
-                    PHP_BINARY,
-                    '-r',
-                    'if (function_exists("posix_setsid")) { posix_setsid(); } pcntl_exec($argv[1], array_slice($argv, 2)); exit(127);',
-                    '--',
-                    ...$argv,
-                ];
-            }
+        // `Process::inNewSession()`, which the clipboard writers go through too.
+        if (str_contains($argv[0], '/')) {
+            $argv = Process::inNewSession($argv);
         }
 
         $process = proc_open($argv, $descriptors, $pipes, $this->cwd, $this->env);

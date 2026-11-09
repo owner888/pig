@@ -87,17 +87,6 @@ final class ConstrainedSampling
     }
 
     /**
-     * Upstream's `STRICT_TOOL_LIMIT_ERROR_MESSAGES`: "Claude rejects (on the Anthropic API and on
-     * Bedrock) a request whose strict tools exceed its limits with one of these messages. Observed
-     * limits: 20 strict tools, and 16 optional or union-typed parameters across all strict tools."
-     */
-    private const array STRICT_TOOL_LIMIT_ERROR_MESSAGES = [
-        'The compiled grammar is too large',
-        'Too many strict tools (',
-        'Schemas contains too many parameters with union types (',
-    ];
-
-    /**
      * Upstream's `prefersJsonSchemaStrictSampling()`: a tool that asks for strict JSON-schema
      * sampling only when possible (`strict: "prefer"`).
      */
@@ -106,21 +95,6 @@ final class ConstrainedSampling
         $config = $tool->constrainedSampling;
 
         return is_array($config) && ($config['type'] ?? null) === 'json_schema' && ($config['strict'] ?? null) === 'prefer';
-    }
-
-    /**
-     * Upstream's `isStrictToolLimitErrorMessage()`: whether a provider error message says the
-     * request's strict tools exceed the provider's limits.
-     */
-    public static function isStrictToolLimitErrorMessage(string $message): bool
-    {
-        foreach (self::STRICT_TOOL_LIMIT_ERROR_MESSAGES as $limitMessage) {
-            if (str_contains($message, $limitMessage)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

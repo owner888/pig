@@ -202,21 +202,24 @@ final class EditTool implements AgentTool, PreparesArguments
         }
 
         [$bom, $content] = EditDiff::splitBom($raw);
-        $ending = EditDiff::lineEnding($content);
 
-        // Matched with LF throughout, so a model that wrote `\n` can still edit a file
-        // saved with CRLF — and the file gets its own endings back on the way out.
+        // Matched with LF throughout, so a model that wrote `\n` can still edit a file saved
+        // with CRLF — and only the replaced ranges are written back, so every other line keeps
+        // the ending it had (upstream #11751). A file with no CR is the LF text as it is.
         $old = EditDiff::toLf($content);
 
         [$new, $replacements] = EditDiff::apply($old, array_values($edits), $path);
 
+        // The diff before the write, as upstream now has it: a failure drawing it leaves the
+        // file as it was rather than changed with nothing said about it.
+        [$diff, $firstChangedLine] = EditDiff::renderEdits($old, $new, $replacements);
+        $written = str_contains($content, "\r") ? EditDiff::applyToOriginal($content, $replacements) : $new;
+
         $signal?->throwIfAborted();
 
-        if (file_put_contents($absolute, $bom . EditDiff::restore($new, $ending)) === false) {
+        if (file_put_contents($absolute, $bom . $written) === false) {
             throw new AgentError("Could not write {$path}");
         }
-
-        [$diff, $firstChangedLine] = EditDiff::renderEdits($old, $new, $replacements);
 
         return new AgentToolResult(
             [new TextContent('Successfully replaced ' . count($edits) . " block(s) in {$path}.")],

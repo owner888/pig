@@ -250,6 +250,32 @@ final class PrintModeTest extends TestCase
 
     // ---- text ---------------------------------------------------------------------------
 
+    /**
+     * Upstream #11752: SIGTERM ends the run with 143 once the session is disposed — the prompts
+     * after it are not sent — and the handlers are put back afterwards.
+     */
+    public function testSigtermEndsTheRunWith143AndTheHandlersArePutBack(): void
+    {
+        if (!function_exists('pcntl_signal') || !function_exists('posix_kill')) {
+            $this->markTestSkipped('needs pcntl and posix');
+        }
+
+        $this->answers = ['first answer', 'second answer'];
+        $before = pcntl_signal_get_handler(SIGTERM);
+        Loop::get()->defer(static fn () => posix_kill(getmypid(), SIGTERM));
+
+        try {
+            $code = $this->execute(['first', 'second']);
+        } finally {
+            $after = pcntl_signal_get_handler(SIGTERM);
+            pcntl_signal(SIGTERM, $before);
+        }
+
+        $this->assertSame(143, $code);
+        $this->assertSame(['second answer'], $this->answers, 'the second prompt was never sent');
+        $this->assertSame($before, $after);
+    }
+
     public function testTheAnswerGoesToStandardOutputAndNothingElseDoes(): void
     {
         $this->answers = ['the sky is blue'];

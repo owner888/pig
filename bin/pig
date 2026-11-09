@@ -1270,7 +1270,7 @@ if ($mode === 'rpc') {
 
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
-    Async::run(static fn () => $running->run());
+    $exit = (int) Async::run(static fn (): int => $running->run());
 } elseif ($mode === 'mcp') {
     $mcpPort = isset($options['mcp-port']) && ctype_digit((string) $options['mcp-port']) ? (int) $options['mcp-port'] : 8089;
     $mcpHost = isset($options['mcp-host']) && $options['mcp-host'] !== '' ? (string) $options['mcp-host'] : '127.0.0.1';

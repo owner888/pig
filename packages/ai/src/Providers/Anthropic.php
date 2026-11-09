@@ -43,6 +43,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\StrictToolLimits;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
@@ -211,7 +212,9 @@ final class Anthropic
                 : null;
 
             $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
-            $disablePreferredStrictTools = false;
+            // Straight to non-strict when an earlier request of this session was rejected for the
+            // limits (upstream #11626): the tools rarely change, so strict again would only fail again.
+            $disablePreferredStrictTools = StrictToolLimits::hasExceeded($options?->sessionId);
 
             // Upstream's loop: a request rejected for Anthropic's strict tool limits is sent once
             // more with the `prefer` tools non-strict (#10409); `require` tools stay strict.
@@ -265,6 +268,7 @@ final class Anthropic
                     }
 
                     $disablePreferredStrictTools = true;
+                    StrictToolLimits::markExceeded($options?->sessionId);
                     $builder->addDiagnostic(new AssistantMessageDiagnostic(
                         'anthropic_strict_tools_fallback',
                         Timestamp::nowMs(),
@@ -1308,7 +1312,7 @@ final class Anthropic
             return false;
         }
 
-        return ConstrainedSampling::isStrictToolLimitErrorMessage($message);
+        return StrictToolLimits::isErrorMessage($message);
     }
 
     /**

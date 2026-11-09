@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
@@ -234,7 +235,35 @@ final class EditToolTest extends ToolTestCase
 
         $after = $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => 'one', 'newText' => 'ONE']]]);
 
-        $this->assertStringStartsWith("ONE\n", $after);
+        $this->assertSame("ONE\ntwo\r\nthree\n", $after, 'and the stray one is still there');
+    }
+
+    /**
+     * Upstream #11751: only the replaced ranges are written, so every other line keeps its ending.
+     * The file used to go back whole with the first ending found, and a lone CR became an LF.
+     */
+    #[DataProvider('mixedEndings')]
+    public function testLinesTheEditDidNotTouchKeepTheirEndings(string $file, string $oldText, string $newText, string $expected): void
+    {
+        $this->file('a.txt', $file);
+
+        $this->assertSame($expected, $this->apply(['path' => 'a.txt', 'edits' => [['oldText' => $oldText, 'newText' => $newText]]]));
+    }
+
+    /** @return iterable<string, array{0: string, 1: string, 2: string, 3: string}> */
+    public static function mixedEndings(): iterable
+    {
+        yield 'CRLF lines after an LF one' => ["a\nb\r\nX = 1\r\n", 'X = 1', 'X = 2', "a\nb\r\nX = 2\r\n"];
+        yield 'an LF line after a CRLF one' => ["a\r\nb\nc", 'c', 'C', "a\r\nb\nC"];
+        yield 'a lone CR elsewhere in the file' => ["a\rb\nX = 1\n", 'X = 1', 'X = 2', "a\rb\nX = 2\n"];
+        yield 'new lines take the ending of the line they start on' => ["one\r\ntwo\r\n", 'two', "t\nw", "one\r\nt\r\nw\r\n"];
+        yield 'a last line with no ending takes the one before' => ["a\r\nb", 'b', "b\nc", "a\r\nb\r\nc"];
+        yield 'classic Mac endings stay CR' => ["a\rb\rc", 'b', "B\nb2", "a\rB\rb2\rc"];
+        // A kept CR and an inserted LF would merge into one CRLF, joining two lines the diff
+        // shows apart: an LF goes in at the seam, where the replaced text was.
+        yield 'a CR before an inserted LF' => ["a\rb\nc", 'b', "\nB", "a\r\n\nB\nc"];
+        yield 'a CR and an LF either side of a deletion' => ["a\rb\nc", 'b', '', "a\r\n\nc"];
+        yield 'a whole CRLF line removed' => ["x\r\ny\r\nz\r\n", "y\n", '', "x\r\nz\r\n"];
     }
 
     public function testAByteOrderMarkIsKeptAndNotMatchedAgainst(): void

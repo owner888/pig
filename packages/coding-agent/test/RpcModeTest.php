@@ -533,6 +533,54 @@ final class RpcModeTest extends TestCase
         $this->assertTrue(true);
     }
 
+    /**
+     * Upstream #11752: SIGTERM shuts down as the end of input does, and exits 143. Sent to this
+     * process, with the mode's handlers installed as `run()` installs them.
+     */
+    public function testSigtermStopsTheLoopAndExitsWith143(): void
+    {
+        $this->needsSignals();
+        $this->start();
+        (new \ReflectionMethod($this->mode, 'handleSignals'))->invoke($this->mode);
+
+        try {
+            Loop::get()->delay(0.01, static fn () => posix_kill(getmypid(), SIGTERM));
+            Loop::get()->run();
+
+            $this->assertSame(143, (new \ReflectionProperty($this->mode, 'exitCode'))->getValue($this->mode));
+        } finally {
+            pcntl_signal(SIGTERM, SIG_DFL);
+            pcntl_signal(SIGHUP, SIG_DFL);
+        }
+    }
+
+    public function testOneSignalDuringTheShutdownDoesNotCutItShort(): void
+    {
+        $this->needsSignals();
+        $this->start();
+        (new \ReflectionMethod($this->mode, 'handleSignals'))->invoke($this->mode);
+
+        try {
+            // The end of input began the shutdown; a process manager's SIGTERM in the same tick
+            // is not a request to skip it. (A second one would exit, which a test cannot watch.)
+            $this->mode->stop();
+            posix_kill(getmypid(), SIGTERM);
+
+            $this->assertSame(0, (new \ReflectionProperty($this->mode, 'exitCode'))->getValue($this->mode), 'still here, and the exit code is the end of input\'s');
+            $this->mode->stop();
+        } finally {
+            pcntl_signal(SIGTERM, SIG_DFL);
+            pcntl_signal(SIGHUP, SIG_DFL);
+        }
+    }
+
+    private function needsSignals(): void
+    {
+        if (!function_exists('pcntl_signal') || !function_exists('posix_kill')) {
+            $this->markTestSkipped('needs pcntl and posix');
+        }
+    }
+
     // ---- state -------------------------------------------------------------------------
 
     public function testGetStateDescribesTheModelAndWhatItIsDoing(): void

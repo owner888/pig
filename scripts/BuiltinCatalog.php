@@ -917,6 +917,7 @@ final class BuiltinCatalog
         'cloudflare-workers-ai/@cf/cloudflare/clef-omni' => ['Clef Omni', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 64_000, ['text', 'image'], 0.15, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'images']],
         'cloudflare-workers-ai/typesafe/jev' => ['Jev', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
         'cloudflare-workers-ai/typesafe/jev-1.14.0' => ['Jev 1.14', ClassifierApi::CloudflareWorkersAiSystemOne, 'https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai', 32_000, ['text', 'image'], 0.042, 0.0, 0.0, 0.0, 'compat' => ['imageInput' => 'assets']],
+        'github-copilot/microsoft-decision-1' => ['Microsoft-Decision-1', ClassifierApi::TypesafeSystemOne, 'https://api.individual.githubcopilot.com', 32_768, ['text'], 0.042, 0.0, 0.0, 0.0],
         'openai/gpt-6-luna' => ['GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'https://api.openai.com/v1', 922_000, ['text', 'image'], 0.1, 0.0, 0.0, 0.0, 'tiers' => [[272_000, 0.2, 0.0, 0.0, 0.0]]],
         'opencode/jev-1.13' => ['Jev 1.13', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/systemone/v1', 32_000, ['text'], 0.042, 0.0, 0.0, 0.0],
         'opencode/jev-1.13-free' => ['Jev 1.13 Free', ClassifierApi::TypesafeSystemOne, 'https://opencode.ai/inference/systemone/v1', 32_000, ['text'], 0.0, 0.0, 0.0, 0.0],
@@ -4025,7 +4026,9 @@ final class BuiltinCatalog
         foreach (self::CLASSIFIER_MODELS as $key => $row) {
             [$name, $api, $baseUrl, $window, $input, $in, $out, $read, $write] = $row;
             [$provider, $id] = explode('/', $key, 2);
-            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []), compat: SystemOneCompat::fromArray($row['compat'] ?? null));
+            // Copilot's classifier carries Copilot's static headers, as its chat models do (upstream #11679).
+            $headers = $provider === 'github-copilot' ? self::COPILOT_HEADERS : [];
+            $models[$key] = new ClassifierModel($id, $name, $api, $provider, $baseUrl, $window, $input, self::pricing($in, $out, $read, $write, $row['tiers'] ?? []), $headers, compat: SystemOneCompat::fromArray($row['compat'] ?? null));
         }
 
         return array_values($models);

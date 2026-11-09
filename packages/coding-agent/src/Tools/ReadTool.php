@@ -14,6 +14,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\CodingAgent\Utils\ImageProcess;
 use Pig\Tui\Images\ImageType;
 
@@ -61,8 +62,15 @@ final class ReadTool implements AgentTool, ReplayableTool
         private readonly string $cwd,
         private readonly bool $autoResizeImages = true,
         private readonly ?Closure $resizeOptions = null,
+        private readonly int $chunkBytes = self::CHUNK_BYTES,
     ) {
     }
+
+    /** How much of a file one read takes in: big, because a part only counted is counted in C. */
+    public const int CHUNK_BYTES = 1 << 20;
+
+    /** How much is read between two looks at the signal, and two turns of the loop. */
+    private const int YIELD_EVERY_BYTES = 8 << 20;
 
     #[\Override]
     public function definition(): Tool
@@ -132,7 +140,7 @@ final class ReadTool implements AgentTool, ReplayableTool
             return $this->image($absolute, $mimeType);
         }
 
-        return $this->text($absolute, $path, $arguments);
+        return $this->text($absolute, $path, $arguments, $signal);
     }
 
     private function image(string $absolute, string $mimeType): AgentToolResult
@@ -164,27 +172,21 @@ final class ReadTool implements AgentTool, ReplayableTool
     }
 
     /** @param array<string, mixed> $arguments */
-    private function text(string $absolute, string $path, array $arguments): AgentToolResult
+    private function text(string $absolute, string $path, array $arguments, ?AbortSignal $signal): AgentToolResult
     {
-        $contents = file_get_contents($absolute);
-
-        if ($contents === false) {
-            throw new AgentError("Could not read {$absolute}");
-        }
-
-        $lines = explode("\n", $contents);
-        $total = count($lines);
         $offset = isset($arguments['offset']) ? max(1, (int) $arguments['offset']) : 1;
         $start = $offset - 1;
+        $limit = isset($arguments['limit']) ? max(0, (int) $arguments['limit']) : null;
+
+        $scan = $this->scan($absolute, $start, $limit, $signal);
+        $total = $scan['totalLines'];
 
         if ($start >= $total) {
             throw new AgentError("Offset {$offset} is past the end of the file, which has {$total} lines");
         }
 
-        $limit = isset($arguments['limit']) ? max(0, (int) $arguments['limit']) : null;
-        $selected = $limit === null ? array_slice($lines, $start) : array_slice($lines, $start, $limit);
-        $truncation = Truncate::head(implode("\n", $selected));
-        $notice = $this->notice($truncation, $lines, $path, $offset, $limit);
+        $truncation = Truncate::headOf($scan['prefix'], $scan['selectedLines'], $scan['selectedBytes'], $scan['firstLineBytes']);
+        $notice = $this->notice($truncation, $total, $scan['firstLineBytes'], $path, $offset, $limit);
 
         // The notice goes in the text *and* in the details, because it has two readers: the
         // model reads the text, and the transcript's collapsed view keeps the front of the
@@ -212,22 +214,238 @@ final class ReadTool implements AgentTool, ReplayableTool
     }
 
     /**
+     * The file read once, front to back, holding only what the answer can show — upstream's
+     * streaming `read` (#11750), which loaded the whole file before applying `offset` / `limit`.
+     * So did this, as `file_get_contents()` and `explode()`: a one-line read of a 200 MB log held
+     * it three times over, past a `memory_limit` a fatal error nothing catches, and the loop stood
+     * still for the whole of it, escape included.
+     *
+     * In chunks of `$chunkBytes`. Lines are split on the byte `\n`, which never occurs inside a
+     * UTF-8 character, so there is nothing to decode — upstream's streaming `TextDecoder` has no
+     * counterpart. The lines before `offset` and after what can be shown are only counted, with
+     * `substr_count()`; only the selected lines the truncation can keep are stored, and one more
+     * (see `Truncate::headOf()`), each cut at `MAX_BYTES + 1` since a longer one is never shown —
+     * its length is what counts, and the selection's length is two positions in the file.
+     *
+     * A regular file is read up to the size it had when opened, as `fs.readFile` reads it: text
+     * appended meanwhile is not counted, and a file that keeps growing still ends. One that says
+     * it is empty (`/proc`) is read to EOF. Every few megabytes the signal is looked at and, in a
+     * coroutine, the loop gets a turn.
+     *
+     * @return array{totalLines: int, selectedLines: int, selectedBytes: int, firstLineBytes: int, prefix: list<string>}
+     */
+    private function scan(string $absolute, int $start, ?int $limit, ?AbortSignal $signal): array
+    {
+        // The warning caught rather than printed, as `SessionManager::appendLines()` does: its text
+        // is the reason, and it belongs in the error rather than on the terminal.
+        $reason = null;
+        set_error_handler(static function (int $errno, string $errstr) use (&$reason): bool {
+            $reason = $errstr;
+
+            return true;
+        });
+
+        try {
+            $handle = fopen($absolute, 'rb');
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($handle === false) {
+            throw new AgentError("Could not read {$absolute}" . ($reason !== null ? ": {$reason}" : ''));
+        }
+
+        try {
+            $stat = fstat($handle);
+            $size = $stat !== false && ($stat['mode'] & 0o170000) === 0o100000 && $stat['size'] > 0 ? (int) $stat['size'] : null;
+
+            $end = $limit === null ? PHP_INT_MAX : $start + $limit;
+            $maxLines = Truncate::MAX_LINES;
+            $maxBytes = Truncate::MAX_BYTES;
+
+            $line = 0;            // the line being read, from 0
+            $read = 0;            // bytes consumed so far
+            $startAt = $start === 0 ? 0 : null; // where the first selected line begins
+            $endAt = null;        // where the last selected line ends
+            $firstLineBytes = null;
+            $prefix = [];
+            $prefixBytes = 0;
+            $storing = true;
+            $current = '';        // the selected line being read, cut at $maxBytes + 1
+            $sinceYield = 0;
+
+            while ($size === null || $read < $size) {
+                $want = $size === null ? $this->chunkBytes : min($this->chunkBytes, $size - $read);
+                $data = fread($handle, $want);
+
+                if ($data === false || $data === '') {
+                    break;
+                }
+
+                $length = strlen($data);
+                $at = 0;
+
+                while ($at < $length) {
+                    if ($line < $start) {
+                        // Before the selection: count, and find where it begins only when it is here.
+                        $needed = $start - $line;
+                        $newlines = substr_count($data, "\n", $at);
+
+                        if ($newlines < $needed) {
+                            $line += $newlines;
+                            break;
+                        }
+
+                        for ($i = 0; $i < $needed; $i++) {
+                            $at = (int) strpos($data, "\n", $at) + 1;
+                        }
+
+                        $line = $start;
+                        $startAt = $read + $at;
+                        continue;
+                    }
+
+                    if ($line >= $end) {
+                        $line += substr_count($data, "\n", $at);
+                        break;
+                    }
+
+                    if (!$storing) {
+                        // Past what can be shown: only where the selection ends still matters.
+                        $needed = $end - $line;
+                        $newlines = substr_count($data, "\n", $at);
+
+                        if ($newlines < $needed) {
+                            $line += $newlines;
+                            break;
+                        }
+
+                        for ($i = 0; $i < $needed; $i++) {
+                            $at = (int) strpos($data, "\n", $at) + 1;
+                        }
+
+                        $line = $end;
+                        $endAt = $read + $at - 1;
+                        continue;
+                    }
+
+                    // A selected line, of which as much as could be shown is kept.
+                    $newline = strpos($data, "\n", $at);
+                    $piece = $newline === false ? substr($data, $at) : substr($data, $at, $newline - $at);
+
+                    if ($storing && strlen($current) <= $maxBytes) {
+                        $current .= substr($piece, 0, $maxBytes + 1 - strlen($current));
+                    }
+
+                    if ($newline === false) {
+                        break;
+                    }
+
+                    $this->finishLine($read + $newline, $line, $start, $startAt, $firstLineBytes, $current, $storing, $prefix, $prefixBytes, $maxLines, $maxBytes);
+                    $line++;
+                    $at = $newline + 1;
+
+                    if ($line === $end) {
+                        $endAt = $read + $newline;
+                    }
+                }
+
+                $read += $length;
+                $sinceYield += $length;
+
+                if ($sinceYield >= self::YIELD_EVERY_BYTES) {
+                    $sinceYield = 0;
+                    $signal?->throwIfAborted();
+
+                    if (\Fiber::getCurrent() !== null) {
+                        Async::delay(0);
+                    }
+
+                    $signal?->throwIfAborted();
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        // The end of the file ends the line being read: `explode()` counts one more line than
+        // there are newlines, the empty one after a final newline included.
+        $totalLines = $line + 1;
+
+        // Past the end (an error), or `limit: 0`: nothing selected, which `explode('')` sees as
+        // one empty line of no bytes.
+        if ($start >= $totalLines || $end <= $start) {
+            return ['totalLines' => $totalLines, 'selectedLines' => 1, 'selectedBytes' => 0, 'firstLineBytes' => 0, 'prefix' => ['']];
+        }
+
+        if ($endAt === null) {
+            if ($firstLineBytes === null || $storing) {
+                $this->finishLine($read, $line, $start, $startAt, $firstLineBytes, $current, $storing, $prefix, $prefixBytes, $maxLines, $maxBytes);
+            }
+
+            $endAt = $read;
+        }
+
+        return [
+            'totalLines' => $totalLines,
+            'selectedLines' => min($end, $totalLines) - $start,
+            'selectedBytes' => $endAt - (int) $startAt,
+            'firstLineBytes' => (int) $firstLineBytes,
+            'prefix' => $prefix,
+        ];
+    }
+
+    /**
+     * A selected line has ended at byte $endsAt: its length if it is the first, and into the
+     * prefix while the prefix is still short of what the truncation can keep.
+     *
+     * @param list<string> $prefix
+     */
+    private function finishLine(
+        int $endsAt,
+        int $line,
+        int $start,
+        ?int $startAt,
+        ?int &$firstLineBytes,
+        string &$current,
+        bool &$storing,
+        array &$prefix,
+        int &$prefixBytes,
+        int $maxLines,
+        int $maxBytes,
+    ): void {
+        if ($line === $start) {
+            $firstLineBytes = $endsAt - (int) $startAt;
+        }
+
+        if ($storing) {
+            $prefixBytes += strlen($current) + ($prefix === [] ? 0 : 1);
+            $prefix[] = $current;
+
+            // One past either limit is enough for `Truncate::headOf()` to see why it stopped.
+            if (count($prefix) > $maxLines || $prefixBytes > $maxBytes) {
+                $storing = false;
+            }
+        }
+
+        $current = '';
+    }
+
+    /**
      * What was left out and how to get it, or null when nothing was.
      *
      * "Showing lines 1-2000 of 8431, use offset=2001" is a next step; "output truncated"
      * is a dead end that costs another turn to get past.
      *
-     * @param list<string> $lines
      */
-    private function notice(Truncation $truncation, array $lines, string $path, int $offset, ?int $limit): ?string
+    private function notice(Truncation $truncation, int $total, int $firstLineBytes, string $path, int $offset, ?int $limit): ?string
     {
-        $total = count($lines);
         $start = $offset - 1;
 
         if ($truncation->firstLineExceedsLimit) {
             // One line longer than the whole budget. There is nothing useful to send, so
             // send the command that gets a piece of it instead.
-            $size = Truncate::size(strlen($lines[$start]));
+            $size = Truncate::size($firstLineBytes);
             $cap = Truncate::MAX_BYTES;
 
             return "Line {$offset} is {$size}, over the " . Truncate::size($cap) . ' limit. '

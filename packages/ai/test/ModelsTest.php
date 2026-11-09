@@ -1385,4 +1385,39 @@ final class ModelsTest extends TestCase
         // exists for is untested, which is worth failing over.
         self::fail('no id is claimed by both a reseller and a direct provider');
     }
+
+    /** Upstream #11679: Copilot's System One classifier, with Copilot's headers. */
+    public function testCopilotsDecisionModelIsAClassifierWithCopilotsHeaders(): void
+    {
+        $models = array_values(array_filter(
+            BuiltinCatalog::classifiers(),
+            static fn (\Pig\Ai\ClassifierModel $model): bool => $model->provider === 'github-copilot',
+        ));
+
+        $this->assertCount(1, $models);
+        $this->assertSame('microsoft-decision-1', $models[0]->id);
+        $this->assertSame(\Pig\Ai\ClassifierApi::TypesafeSystemOne, $models[0]->api);
+        $this->assertSame(32_768, $models[0]->contextWindow);
+        $this->assertSame('vscode-chat', $models[0]->headers['Copilot-Integration-Id'] ?? null);
+    }
+
+    /**
+     * Copilot serves System One under `/v1`, where its chat APIs have no prefix, at the account's
+     * endpoint: the token's for a sign-in, the default for a key that names none.
+     */
+    public function testACopilotClassificationGoesToTheAccountsV1(): void
+    {
+        $model = BuiltinCatalog::classifiers();
+        $model = array_values(array_filter($model, static fn (\Pig\Ai\ClassifierModel $m): bool => $m->provider === 'github-copilot'))[0];
+        $resolve = new \ReflectionMethod(Models::class, 'copilotSystemOne');
+
+        $this->assertSame(
+            'https://api.enterprise.githubcopilot.com/v1',
+            $resolve->invoke(null, $model, 'tid=x;proxy-ep=proxy.enterprise.githubcopilot.com;st=dotcom')->baseUrl,
+        );
+        $this->assertSame('https://api.individual.githubcopilot.com/v1', $resolve->invoke(null, $model, 'ghp_a-plain-key')->baseUrl);
+
+        $other = array_values(array_filter(BuiltinCatalog::classifiers(), static fn (\Pig\Ai\ClassifierModel $m): bool => $m->provider === 'opencode'))[0];
+        $this->assertSame($other, $resolve->invoke(null, $other, 'k'), 'any other System One model goes as it is');
+    }
 }

@@ -18,6 +18,7 @@ use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\NoUi;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\Async\Loop;
 use Throwable;
 
 /**
@@ -78,11 +79,17 @@ final class PrintMode
     public function run(array $messages, array $images = []): int
     {
         $this->start();
+        $previous = $this->handleSignals();
 
         $code = 0;
 
         try {
             foreach ($messages as $at => $message) {
+                // A signal ends the run, not only the prompt it arrived during.
+                if ($this->signalExit !== null) {
+                    break;
+                }
+
                 // Only the first turn carries the attachments — an image sent again with the
                 // follow-up would be a second copy of the same picture in the context.
                 $this->session->prompt($message, $at === 0 ? $images : []);
@@ -97,9 +104,58 @@ final class PrintMode
             $code = 1;
         } finally {
             $this->stop();
+
+            // Upstream removes its handlers once the disposal is done.
+            foreach ($previous as $signal => $handler) {
+                pcntl_signal($signal, $handler);
+            }
         }
 
-        return $code;
+        return $this->signalExit ?? $code;
+    }
+
+    /** SIGTERM / SIGHUP received so far — upstream's `signalCount`. */
+    private int $signals = 0;
+
+    /** 128 + the first signal, once one came. */
+    private ?int $signalExit = null;
+
+    private bool $stopping = false;
+
+    /**
+     * Upstream's print-mode signal handlers (#11752): SIGTERM or SIGHUP stops the prompt, and the
+     * process exits 143 or 129 once the session is disposed — not before, so a signal during the
+     * final disposal waits for it (a pending MCP token refresh lost there revoked the grant). A
+     * second signal exits at once. Without these, SIGTERM was PHP's default: gone, no cleanup.
+     */
+    /** @return array<int, mixed> the handlers they replaced, by signal, to put back afterwards */
+    private function handleSignals(): array
+    {
+        if (!function_exists('pcntl_signal')) {
+            return [];
+        }
+
+        pcntl_async_signals(true);
+        $previous = [];
+
+        foreach ([SIGTERM, SIGHUP] as $signal) {
+            $previous[$signal] = pcntl_signal_get_handler($signal);
+            pcntl_signal($signal, function (int $received): void {
+                if (++$this->signals > 1) {
+                    exit(128 + $received);
+                }
+
+                $this->signalExit = 128 + $received;
+
+                // The handler runs between any two opcodes; the abort goes through the loop, and
+                // during the disposal there is nothing to abort — it is waited for.
+                if (!$this->stopping) {
+                    Loop::get()->defer(fn () => $this->session->abort());
+                }
+            });
+        }
+
+        return $previous;
     }
 
     private function start(): void
@@ -151,6 +207,7 @@ final class PrintMode
 
     private function stop(): void
     {
+        $this->stopping = true;
         $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->customTools?->notify('shutdown');
         $this->session->dispose();
