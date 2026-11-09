@@ -6,7 +6,7 @@ namespace PigAntigravity;
 
 use Closure;
 use Pig\Ai\Extension\OauthFlow;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Async\AbortSignal;
 
 /**
@@ -25,7 +25,7 @@ final class LazyAntigravityOauth implements OauthFlow
 {
     /**
      * @param Closure(bool): array{0: string, 1: string} $client
-     * @param (Closure(Credentials): void)|null          $onLogin told about a sign-in that finished
+     * @param (Closure(OauthCredentials): void)|null          $onLogin told about a sign-in that finished
      */
     public function __construct(private readonly Closure $client, private readonly ?Closure $onLogin = null)
     {
@@ -56,7 +56,7 @@ final class LazyAntigravityOauth implements OauthFlow
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         $credentials = $this->flow(false)->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
 
         if ($credentials !== null && $this->onLogin !== null) {
@@ -67,13 +67,13 @@ final class LazyAntigravityOauth implements OauthFlow
     }
 
     #[\Override]
-    public function refresh(Credentials $credentials): Credentials
+    public function refresh(OauthCredentials $credentials): OauthCredentials
     {
         return $this->flow(true)->refresh($credentials);
     }
 
     #[\Override]
-    public function apiKey(Credentials $credentials): string
+    public function apiKey(OauthCredentials $credentials): string
     {
         // Needs no client: it is arithmetic on the credential, and it runs on every turn.
         return AntigravityOauth::keyFor($credentials);

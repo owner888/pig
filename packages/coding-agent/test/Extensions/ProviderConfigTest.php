@@ -16,7 +16,7 @@ use Pig\Ai\ClassifierModel;
 use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\Cost;
-use Pig\Ai\Extension\ClassificationApi;
+use Pig\Ai\Extension\ProviderClassifier;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Extension\ProviderRegistry;
@@ -183,8 +183,8 @@ final class ProviderConfigTest extends TestCase
 
         foreach ([
             [['streamSimple' => static fn () => null], '"api" is required when registering streamSimple'],
-            [['images' => ['media-images' => new \stdClass()]], '"images": "media-images" must be a Closure or a Pig\\Ai\\Extension\\ImageGenerationApi'],
-            [['classifiers' => ['media-classifier' => 'classify']], '"classifiers": "media-classifier" must be a Closure or a Pig\\Ai\\Extension\\ClassificationApi'],
+            [['images' => ['media-images' => new \stdClass()]], '"images": "media-images" must be a Closure or a Pig\\Ai\\Extension\\ProviderImages'],
+            [['classifiers' => ['media-classifier' => 'classify']], '"classifiers": "media-classifier" must be a Closure or a Pig\\Ai\\Extension\\ProviderClassifier'],
             [['images' => [static fn () => null]], '"images" must be an array of implementations keyed by API name'],
             [['images' => ['extension' => static fn () => null]], '"extension" is not an API name'],
             [['models' => [['type' => 'image', 'id' => 'i', 'api' => 'media-images', 'baseUrl' => 'https://x']]], 'pig has no image API "media-images", and "images" does not implement it'],
@@ -215,7 +215,7 @@ final class ProviderConfigTest extends TestCase
                 return new AssistantImages($model->api, $model->provider, $model->id, [new ImageContent('aGk=', 'image/png')], StopReason::Stop, Timestamp::nowMs(), usage: new Usage(1, 2, 0, 0, 3, new Cost(0.1, 0.2, 0.0, 0.0, 0.3)));
             };
         };
-        $classifier = new class ($seen) implements ClassificationApi {
+        $classifier = new class ($seen) implements ProviderClassifier {
             public function __construct(private array &$seen)
             {
             }

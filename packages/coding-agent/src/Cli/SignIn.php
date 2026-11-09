@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Closure;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Extension\OauthFlow;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Auth;
 use Throwable;
@@ -81,7 +81,7 @@ final readonly class SignIn
 
         if ($command === 'list') {
             foreach (Auth::signIns() as $provider) {
-                $id = $provider instanceof Provider ? $provider->value : $provider->id();
+                $id = $provider instanceof OauthProvider ? $provider->value : $provider->id();
                 ($this->say)(sprintf('  %-20s %s', $id, $provider->label()));
             }
 
@@ -99,7 +99,7 @@ final readonly class SignIn
         return $provider === null ? 1 : $this->login($provider);
     }
 
-    private function chooseProvider(?string $named): Provider|OauthFlow|null
+    private function chooseProvider(?string $named): OauthProvider|OauthFlow|null
     {
         if ($named !== null) {
             $provider = Auth::signIn($named);
@@ -143,7 +143,7 @@ final readonly class SignIn
      * Antigravity listen on a socket for the browser to come back, and Copilot's device flow
      * sleeps between polls.
      */
-    private function login(Provider|OauthFlow $provider): int
+    private function login(OauthProvider|OauthFlow $provider): int
     {
         ($this->say)("Signing in to {$provider->label()}…");
 

@@ -10,9 +10,9 @@ use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\Provider as ExtensionProvider;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\Anthropic;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\OauthError;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\Async\AbortSignal;
@@ -24,7 +24,7 @@ use Pig\Test\WithoutProviderKeys;
  * The keys and the tokens on disk.
  *
  * Nothing here reaches the network. The one path that would — renewing an expired token — is
- * exercised through a credential whose refresh token is empty, which `Provider::refresh()`
+ * exercised through a credential whose refresh token is empty, which `OauthProvider::refresh()`
  * refuses before it opens a socket, so the interesting half (what happens to the stored
  * credential when a renewal fails) is answerable without one.
  */
@@ -131,7 +131,7 @@ final class AuthTest extends TestCase
     {
         $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "r1", "access": "sk-ant-oat-1", "expires": 99}}');
 
-        $credentials = $auth->credentials(Provider::Anthropic);
+        $credentials = $auth->credentials(OauthProvider::Anthropic);
 
         $this->assertNotNull($credentials);
         $this->assertSame('r1', $credentials->refresh);
@@ -149,7 +149,7 @@ final class AuthTest extends TestCase
             . ' "enterpriseUrl": "", "projectId": "", "email": ""}}',
         );
 
-        $credentials = $auth->credentials(Provider::Anthropic);
+        $credentials = $auth->credentials(OauthProvider::Anthropic);
 
         $this->assertNotNull($credentials);
         $this->assertNull($credentials->enterpriseUrl);
@@ -163,7 +163,7 @@ final class AuthTest extends TestCase
         // the other would send a key as a bearer token, which fails as an auth error.
         $auth = $this->given('{"anthropic": {"type": "api_key", "key": "sk-ant-plain"}}');
 
-        $this->assertNull($auth->credentials(Provider::Anthropic));
+        $this->assertNull($auth->credentials(OauthProvider::Anthropic));
     }
 
     public function testAProviderNeitherToolKnowsIsKeptRatherThanDropped(): void
@@ -192,7 +192,7 @@ final class AuthTest extends TestCase
         $auth = $this->given('{}');
         $auth->useSecondStore(
             'zzp-provider',
-            static fn (): ?Credentials => new Credentials('a-refresh-token', 'an-access-token', 9_000_000_000_000, projectId: 'a-cloud-project'),
+            static fn (): ?OauthCredentials => new OauthCredentials('a-refresh-token', 'an-access-token', 9_000_000_000_000, projectId: 'a-cloud-project'),
             static function (): void {
             },
         );
@@ -216,7 +216,7 @@ final class AuthTest extends TestCase
         ]]) ?: '{}');
         $auth->useSecondStore(
             'zzp-provider',
-            static fn (): ?Credentials => new Credentials('the-one-in-the-store', 'the-stores-access-token', 0),
+            static fn (): ?OauthCredentials => new OauthCredentials('the-one-in-the-store', 'the-stores-access-token', 0),
             static function (): void {
             },
         );
@@ -231,12 +231,12 @@ final class AuthTest extends TestCase
         $auth = $this->given('{}');
         $auth->useSecondStore(
             'zzp-provider',
-            static fn (): ?Credentials => new Credentials('r', 'a', 0),
+            static fn (): ?OauthCredentials => new OauthCredentials('r', 'a', 0),
             static function (): void {
             },
         );
 
-        $this->assertNull($auth->credentials(Provider::Anthropic));
+        $this->assertNull($auth->credentials(OauthProvider::Anthropic));
     }
 
     // ---- writing -------------------------------------------------------------------------
@@ -250,9 +250,9 @@ final class AuthTest extends TestCase
 
     public function testTokensSurviveBeingWrittenAndReadBack(): void
     {
-        $this->auth()->setCredentials(Provider::Anthropic, new Credentials('r2', 'a2', 1_234, email: 'me@example.com'));
+        $this->auth()->setCredentials(OauthProvider::Anthropic, new OauthCredentials('r2', 'a2', 1_234, email: 'me@example.com'));
 
-        $back = $this->auth()->credentials(Provider::Anthropic);
+        $back = $this->auth()->credentials(OauthProvider::Anthropic);
 
         $this->assertNotNull($back);
         $this->assertSame('r2', $back->refresh);
@@ -267,9 +267,9 @@ final class AuthTest extends TestCase
     {
         // Upstream's `credentialsFromToken()` stores `accountId` beside the tokens, and the file is
         // shared with pi — so a rewrite that dropped it would take it out of pi's credential too.
-        $this->auth()->setCredentials(Provider::OpenAiCodex, new Credentials('r3', 'a3', PHP_INT_MAX, accountId: 'acc_1'));
+        $this->auth()->setCredentials(OauthProvider::OpenAiCodex, new OauthCredentials('r3', 'a3', PHP_INT_MAX, accountId: 'acc_1'));
 
-        $this->assertSame('acc_1', $this->auth()->credentials(Provider::OpenAiCodex)?->accountId);
+        $this->assertSame('acc_1', $this->auth()->credentials(OauthProvider::OpenAiCodex)?->accountId);
         $this->assertSame('a3', $this->auth()->apiKey('openai-codex'));
         $this->assertStringContainsString('"accountId": "acc_1"', (string) file_get_contents($this->home . '/auth.json'));
     }
@@ -279,7 +279,7 @@ final class AuthTest extends TestCase
         $asked = null;
 
         $credentials = $this->auth()->login(
-            Provider::OpenAiCodex,
+            OauthProvider::OpenAiCodex,
             static function (): void {
             },
             static fn (): ?string => null,
@@ -528,8 +528,8 @@ final class AuthTest extends TestCase
         // path is entered without a provider to talk to.
         $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "", "access": "old", "expires": 1}}');
 
-        $this->assertSame('old', $auth->credentials(Provider::Anthropic)?->access, 'the raw read is the stale one');
-        $this->assertThrows(OauthError::class, static fn (): mixed => Async::run(static fn (): mixed => $auth->freshCredentials(Provider::Anthropic)), 'Could not renew');
+        $this->assertSame('old', $auth->credentials(OauthProvider::Anthropic)?->access, 'the raw read is the stale one');
+        $this->assertThrows(OauthError::class, static fn (): mixed => Async::run(static fn (): mixed => $auth->freshCredentials(OauthProvider::Anthropic)), 'Could not renew');
     }
 
     public function testFreshCredentialsIsTheStoredOnesWhileTheyStillHold(): void
@@ -537,8 +537,8 @@ final class AuthTest extends TestCase
         $future = (int) (microtime(true) * 1000) + 3600_000;
         $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "r", "access": "sk-ant-oat-live", "expires": ' . $future . '}}');
 
-        $this->assertSame('sk-ant-oat-live', $auth->freshCredentials(Provider::Anthropic)?->access);
-        $this->assertNull($auth->freshCredentials(Provider::GithubCopilot));
+        $this->assertSame('sk-ant-oat-live', $auth->freshCredentials(OauthProvider::Anthropic)?->access);
+        $this->assertNull($auth->freshCredentials(OauthProvider::GithubCopilot));
     }
 
     // ---- renewing under a lock, against another pig ---------------------------------------------
@@ -620,19 +620,19 @@ final class AuthTest extends TestCase
                 return false;
             }
 
-            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?OauthCredentials
             {
                 return null;
             }
 
-            public function refresh(Credentials $credentials): Credentials
+            public function refresh(OauthCredentials $credentials): OauthCredentials
             {
                 $this->refreshed++;
 
-                return new Credentials('r-new', 'sk-renewed', 9_000_000_000_000);
+                return new OauthCredentials('r-new', 'sk-renewed', 9_000_000_000_000);
             }
 
-            public function apiKey(Credentials $credentials): string
+            public function apiKey(OauthCredentials $credentials): string
             {
                 return $credentials->access;
             }
@@ -671,7 +671,7 @@ final class AuthTest extends TestCase
         // back, so nothing is exchanged, no request is made, and this is a cancellation rather
         // than a failure — which is why it answers null instead of throwing.
         $credentials = $this->auth()->login(
-            Provider::Anthropic,
+            OauthProvider::Anthropic,
             static function (string $url, ?string $instructions) use (&$seen): void {
                 $seen = $url;
             },
@@ -689,7 +689,7 @@ final class AuthTest extends TestCase
     public function testAnEmptyPasteIsACancellationToo(): void
     {
         $credentials = $this->auth()->login(
-            Provider::Anthropic,
+            OauthProvider::Anthropic,
             static function (string $url, ?string $instructions): void {
             },
             static fn (string $message, string $placeholder, bool $allowEmpty): ?string => '   ',
@@ -705,7 +705,7 @@ final class AuthTest extends TestCase
         $shown = 0;
 
         $credentials = $this->auth()->login(
-            Provider::Anthropic,
+            OauthProvider::Anthropic,
             static function (string $url, ?string $instructions) use (&$shown): void {
                 $shown++;
             },
@@ -747,19 +747,19 @@ final class AuthTest extends TestCase
                 return false;
             }
 
-            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?OauthCredentials
             {
                 $onAuth('https://probe.invalid/authorize', null);
 
-                return new Credentials('r', 'sk-probe', 9_000_000_000_000);
+                return new OauthCredentials('r', 'sk-probe', 9_000_000_000_000);
             }
 
-            public function refresh(Credentials $credentials): Credentials
+            public function refresh(OauthCredentials $credentials): OauthCredentials
             {
                 return $credentials;
             }
 
-            public function apiKey(Credentials $credentials): string
+            public function apiKey(OauthCredentials $credentials): string
             {
                 return $credentials->access;
             }
@@ -786,7 +786,7 @@ final class AuthTest extends TestCase
         // Escaping the domain prompt ends it before a request is made, which is what makes
         // this answerable without reaching github.com.
         $credentials = $this->auth()->login(
-            Provider::GithubCopilot,
+            OauthProvider::GithubCopilot,
             static function (string $url, ?string $instructions): void {
             },
             static function (string $message, string $placeholder, bool $allowEmpty) use (&$asked): ?string {
@@ -808,7 +808,7 @@ final class AuthTest extends TestCase
     {
         $problem = $this->assertThrows(OauthError::class, function (): void {
             $this->auth()->login(
-                Provider::GithubCopilot,
+                OauthProvider::GithubCopilot,
                 static function (string $url, ?string $instructions): void {
                 },
                 static fn (string $message, string $placeholder, bool $allowEmpty): ?string => '???',
@@ -846,16 +846,16 @@ final class AuthTest extends TestCase
     {
         $auth = $this->auth();
         // A credential expired 1 hour ago
-        $expired = new Credentials(
+        $expired = new OauthCredentials(
             refresh: 'r_token',
             access: 'old_access',
             expires: (time() - 3600) * 1000,
         );
-        $auth->setCredentials(Provider::Anthropic, $expired);
+        $auth->setCredentials(OauthProvider::Anthropic, $expired);
 
         // Outside a coroutine (e.g. during startup, restoreSettings, or peeking): must not throw
         $this->assertNull(\Fiber::getCurrent());
-        $key = $auth->apiKey(Provider::Anthropic->value);
+        $key = $auth->apiKey(OauthProvider::Anthropic->value);
         $this->assertNotNull($key);
         $this->assertStringContainsString('old_access', $key);
     }

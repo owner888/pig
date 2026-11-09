@@ -22,7 +22,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\Transcript;
@@ -252,7 +252,7 @@ final class OpenAiResponses
             return $apiKey;
         }
 
-        if (Headers::has($headers, 'authorization') || Headers::has($headers, 'cf-aig-authorization')) {
+        if (ProviderHeaders::has($headers, 'authorization') || ProviderHeaders::has($headers, 'cf-aig-authorization')) {
             return 'unused';
         }
 

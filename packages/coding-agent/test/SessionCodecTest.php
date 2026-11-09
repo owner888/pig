@@ -11,12 +11,12 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
-use Pig\CodingAgent\Session\Label;
-use Pig\CodingAgent\Session\ModelChange;
+use Pig\CodingAgent\Session\LabelEntry;
+use Pig\CodingAgent\Session\ModelChangeEntry;
 use Pig\CodingAgent\Session\SessionCodec;
 
 /**
@@ -47,8 +47,8 @@ final class SessionCodecTest extends TestCase
         // A label, the model that was being used, a hook's private note: each is a line of its
         // own with its own `type`, and `SessionEntries` writes those itself. Null is how this
         // says so — anything else and a label would be written as `message: <that>`.
-        $this->assertNull(SessionCodec::encode(new Label('zzzzzzzz', 'the start')));
-        $this->assertNull(SessionCodec::encode(new ModelChange('anthropic', 'claude-x')));
+        $this->assertNull(SessionCodec::encode(new LabelEntry('zzzzzzzz', 'the start')));
+        $this->assertNull(SessionCodec::encode(new ModelChangeEntry('anthropic', 'claude-x')));
     }
 
     public function testAnLlmMessageStillGoesThroughTheSharedEncoder(): void
@@ -109,7 +109,7 @@ final class SessionCodecTest extends TestCase
     {
         $mine = SessionCodec::decode(['role' => 'compactionSummary', 'summary' => 'we talked']);
 
-        $this->assertInstanceOf(CompactionSummary::class, $mine);
+        $this->assertInstanceOf(CompactionEntry::class, $mine);
         $this->assertFalse($mine->fromHook);
 
         $theirs = SessionCodec::decode([
@@ -118,7 +118,7 @@ final class SessionCodecTest extends TestCase
             'fromHook' => true,
         ]);
 
-        $this->assertInstanceOf(CompactionSummary::class, $theirs);
+        $this->assertInstanceOf(CompactionEntry::class, $theirs);
         $this->assertTrue($theirs->fromHook);
     }
 
@@ -129,7 +129,7 @@ final class SessionCodecTest extends TestCase
         // Null is "the kept part starts nowhere" — a summary standing in for everything before
         // it. An empty string is an entry id that matches no entry, which keeps nothing either
         // and says something different about why.
-        $this->assertInstanceOf(CompactionSummary::class, $decoded);
+        $this->assertInstanceOf(CompactionEntry::class, $decoded);
         $this->assertNull($decoded->firstKeptEntryId);
     }
 
@@ -137,7 +137,7 @@ final class SessionCodecTest extends TestCase
     {
         $decoded = SessionCodec::decode(['role' => 'branchSummary', 'summary' => 'where I got to']);
 
-        $this->assertInstanceOf(BranchSummary::class, $decoded);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $decoded);
         $this->assertNull($decoded->fromId);
         $this->assertFalse($decoded->fromHook);
     }
@@ -149,7 +149,7 @@ final class SessionCodecTest extends TestCase
         // Both are drawn: `(cancelled)` and the truncation notice. Reading an absent field as
         // true tells somebody a command they watched finish was stopped, and points them at a
         // spill file that was never written.
-        $this->assertInstanceOf(BashExecution::class, $decoded);
+        $this->assertInstanceOf(BashExecutionMessage::class, $decoded);
         $this->assertFalse($decoded->cancelled);
         $this->assertFalse($decoded->truncated);
         $this->assertNull($decoded->exitCode);
@@ -163,13 +163,13 @@ final class SessionCodecTest extends TestCase
         $line = ['role' => 'bashExecution', 'command' => 'seq 9', 'output' => '9', 'exitCode' => 0, 'cancelled' => false, 'truncated' => true, 'fullOutputPath' => '/tmp/pi-bash-1.log', 'timestamp' => 5, 'excludeFromContext' => true];
         $decoded = SessionCodec::decode($line);
 
-        $this->assertInstanceOf(BashExecution::class, $decoded);
+        $this->assertInstanceOf(BashExecutionMessage::class, $decoded);
         $this->assertSame('/tmp/pi-bash-1.log', $decoded->fullOutputPath);
         $this->assertTrue($decoded->excludeFromContext);
         $this->assertSame($line, SessionCodec::encode($decoded), 'and written back as pi wrote it');
 
         // Neither field is written when it says nothing, as `JSON.stringify` drops an undefined one.
-        $plain = SessionCodec::encode(new BashExecution('ls', 'a', 0, timestamp: 6));
+        $plain = SessionCodec::encode(new BashExecutionMessage('ls', 'a', 0, timestamp: 6));
         $this->assertArrayNotHasKey('fullOutputPath', $plain);
         $this->assertArrayNotHasKey('excludeFromContext', $plain);
     }
@@ -177,9 +177,9 @@ final class SessionCodecTest extends TestCase
     public function testEveryOneOfThemCarriesTheMomentItNames(): void
     {
         $expected = [
-            'compactionSummary' => CompactionSummary::class,
-            'branchSummary' => BranchSummary::class,
-            'bashExecution' => BashExecution::class,
+            'compactionSummary' => CompactionEntry::class,
+            'branchSummary' => BranchSummaryEntry::class,
+            'bashExecution' => BashExecutionMessage::class,
         ];
 
         foreach ($expected as $role => $class) {

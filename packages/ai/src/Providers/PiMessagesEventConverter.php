@@ -29,7 +29,7 @@ use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\MessageJson;
-use Pig\Ai\Utils\StreamingJson;
+use Pig\Ai\Utils\StreamingJsonParser;
 
 /**
  * Upstream's `createEventConverter(model)` in `pi-messages.ts`: one message, built from the
@@ -53,7 +53,7 @@ final class PiMessagesEventConverter
      * Upstream's `toolJson`, by content index — a reader of a tool call's arguments rather than their
      * text, so each delta is read once; reparsing the text so far per delta was quadratic.
      *
-     * @var array<int, StreamingJson>
+     * @var array<int, StreamingJsonParser>
      */
     private array $toolJson = [];
 
@@ -171,13 +171,13 @@ final class PiMessagesEventConverter
                     'name' => (string) ($event['toolName'] ?? ''),
                     'arguments' => [],
                 ];
-                $this->toolJson[$index] = new StreamingJson();
+                $this->toolJson[$index] = new StreamingJsonParser();
 
                 return new ToolCallStartEvent($index, $this->snapshot());
 
             case 'toolcall_delta':
                 $delta = (string) ($event['delta'] ?? '');
-                $reader = $this->toolJson[$index] ??= new StreamingJson();
+                $reader = $this->toolJson[$index] ??= new StreamingJsonParser();
                 $reader->append($delta);
                 $this->assign($index, ['arguments' => $reader->value()]);
 

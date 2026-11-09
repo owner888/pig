@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use PigAntigravity\Accounts;
 
 /**
@@ -90,8 +90,8 @@ final class AntigravityAccountsTest extends TestCase
 
         $accounts = $this->accounts();
         $accounts->renewed(
-            new Credentials('refresh-first@example', 'a', 1, null, null, 'first@example'),
-            new Credentials('refresh-first@example', 'a-fresh-access-token', 2, null, null, 'first@example'),
+            new OauthCredentials('refresh-first@example', 'a', 1, null, null, 'first@example'),
+            new OauthCredentials('refresh-first@example', 'a-fresh-access-token', 2, null, null, 'first@example'),
         );
 
         self::assertSame('first@example', $this->read()['activeAccountId']);
@@ -173,7 +173,7 @@ final class AntigravityAccountsTest extends TestCase
 
         self::assertNotNull($previous);
 
-        $accounts->renewed($previous, new Credentials(
+        $accounts->renewed($previous, new OauthCredentials(
             'refresh-first@example',
             'a-fresh-access-token',
             9_000_000_000_000,
@@ -208,8 +208,8 @@ final class AntigravityAccountsTest extends TestCase
 
         $accounts = $this->accounts();
         $accounts->renewed(
-            new Credentials('a-refresh-token-from-nowhere', 'a', 1),
-            new Credentials('another', 'b', 2, null, null, 'stranger@example'),
+            new OauthCredentials('a-refresh-token-from-nowhere', 'a', 1),
+            new OauthCredentials('another', 'b', 2, null, null, 'stranger@example'),
         );
 
         self::assertSame(1, $this->accounts()->count());
@@ -268,8 +268,8 @@ final class AntigravityAccountsTest extends TestCase
 
         $accounts = $this->accounts();
         $accounts->renewed(
-            new Credentials('a-token-that-was-rotated-away', 'a', 1, null, null, '  First@Example  '),
-            new Credentials('a-rotated-refresh-token', 'b', 2, null, null, 'first@example'),
+            new OauthCredentials('a-token-that-was-rotated-away', 'a', 1, null, null, '  First@Example  '),
+            new OauthCredentials('a-rotated-refresh-token', 'b', 2, null, null, 'first@example'),
         );
 
         self::assertSame('a-rotated-refresh-token', $this->accounts()->active()?->refresh);
@@ -306,7 +306,7 @@ final class AntigravityAccountsTest extends TestCase
         // pig's `/login antigravity` writes `auth.json` only; the list read the store only, and said
         // there were no accounts while the conversation was using one.
         $accounts = $this->accounts();
-        $accounts->syncCurrentAuth(new Credentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
+        $accounts->syncCurrentAuth(new OauthCredentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
 
         $id = 'account-' . substr(hash('sha256', 'refresh-new'), 0, 16);
         self::assertSame([$id], array_keys($accounts->accounts()), 'no email: upstream\'s hashed id');
@@ -319,7 +319,7 @@ final class AntigravityAccountsTest extends TestCase
         clearstatcache();
         touch($this->directory . '/' . Accounts::FILE, $written - 10);
         clearstatcache();
-        $this->accounts()->syncCurrentAuth(new Credentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
+        $this->accounts()->syncCurrentAuth(new OauthCredentials('refresh-new', 'access-new', 9_000_000_000_000, null, 'project-new'));
         clearstatcache();
         self::assertSame($written - 10, filemtime($this->directory . '/' . Accounts::FILE), 'nothing new: not written again');
     }
@@ -332,7 +332,7 @@ final class AntigravityAccountsTest extends TestCase
             'accounts' => ['first@example' => $this->account('first@example'), 'second@example' => $this->account('second@example')],
         ]);
 
-        $this->accounts()->syncCurrentAuth(new Credentials('refresh-second@example', 'access-renewed', 9_100_000_000_000, null, null, 'Second@Example '));
+        $this->accounts()->syncCurrentAuth(new OauthCredentials('refresh-second@example', 'access-renewed', 9_100_000_000_000, null, null, 'Second@Example '));
 
         $store = $this->read();
         self::assertSame('second@example', $store['activeAccountId']);

@@ -70,7 +70,7 @@ and a component holding a closure it was given cannot hold a stale colour table.
 hands one to `ExtensionUi::custom()`, and the rules are what separate it from the transcript above and
 the prompt below. `TerminalUi`'s own dialogs draw no rules, because a question reads as one thing;
 this is a **wait**, and a wait with nothing around it reads as output that stopped. It is a
-`Container` **and** an `InputHandler`, which is the trap on `SettingsSubmenu` again — and here the
+`Container` **and** an `InputHandler`, which is the trap on `SelectSubmenu` again — and here the
 key a container would eat is the only one that cancels.
 
 Its `dispose()` is not a nicety: the spinner reschedules itself, so a loader nobody disposed of is
@@ -221,10 +221,10 @@ model's map (`Model::clampThinkingLevel()`) for completions as for Responses.
 `thinking: {type}` (`zai`, `deepseek`), `reasoning: {effort}` (`openrouter`), `enable_thinking`
 (`qwen`), `chat_template_kwargs` / `chat_template_args` with `$var` placeholders (`chat-template`,
 `qwen-chat-template`, `baseten`) and the rest of upstream's list — in `OpenAiCompletions::thinking()`,
-arm for arm. An `anthropic-messages` model carries `AnthropicCompat` instead (`forceAdaptiveThinking`,
+arm for arm. An `anthropic-messages` model carries `AnthropicMessagesCompat` instead (`forceAdaptiveThinking`,
 `supportsStrictTools`, `supportsTemperature`, `supportsEagerToolInputStreaming`,
 `supportsMidConvoEffort`), which is metadata `Models` writes on the built-ins as upstream's generator
-does (`AnthropicCompat::forBuiltIn()`); nothing at request time looks at a Claude model's id. An
+does (`AnthropicMessagesCompat::forBuiltIn()`); nothing at request time looks at a Claude model's id. An
 extension's models carry the compat the extension wrote and nothing derived from the id — upstream
 spreads the definition. A thinking turn sends `display: "summarized"` unless
 `AnthropicOptions::$thinkingDisplay` says otherwise, and a turn without thinking (`thinkingEnabled:
@@ -800,7 +800,7 @@ arrangement is the thing to know before reading any of them:**
   last assistant message, else `continuation`; summaries (`summariseAndSwapIn()`, `branchSummary()`)
   route with `direct` through `directModel()`. Router state is the last `pi.virtual-model-state`
   custom entry on the branch for that provider/id. `SessionManager::settings()` carries upstream's
-  `getBranchSelection()` rule: a virtual `ModelChange` holds over the physical responses after it,
+  `getBranchSelection()` rule: a virtual `ModelChangeEntry` holds over the physical responses after it,
   one no longer registered does not, and a response naming a virtual model (a failed routing) is
   never a selection; `recordSelection()` at the start of each prompt writes the selection down when
   the branch implies another. `routedModel()`, `limitsModel()` and `modelForMessage()` are

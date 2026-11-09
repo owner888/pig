@@ -8,9 +8,9 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Utils\Oauth\CallbackServer;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -129,7 +129,7 @@ final class OpenAiCodexOauthTest extends TestCase
         }
 
         $this->assertNull($thrown, $case);
-        $this->assertInstanceOf(Credentials::class, $result);
+        $this->assertInstanceOf(OauthCredentials::class, $result);
         $this->assertSame(
             [$upstream['result']['access'], $upstream['result']['refresh'], $upstream['result']['accountId']],
             [$result->access, $result->refresh, $result->accountId],
@@ -159,7 +159,7 @@ final class OpenAiCodexOauthTest extends TestCase
         $flow = new OpenAiCodex(authBaseUrl: $base, server: new CallbackServer($port, OpenAiCodex::CALLBACK_PATH, 'OpenAI'));
         $boxClosed = false;
 
-        $credentials = Async::run(static function () use ($flow, $port, &$boxClosed): ?Credentials {
+        $credentials = Async::run(static function () use ($flow, $port, &$boxClosed): ?OauthCredentials {
             return $flow->login(
                 static function (string $url) use ($port): void {
                     parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
@@ -191,7 +191,7 @@ final class OpenAiCodexOauthTest extends TestCase
         $flow = new OpenAiCodex(authBaseUrl: 'http://127.0.0.1:9', server: new CallbackServer(self::freePort(), OpenAiCodex::CALLBACK_PATH, 'OpenAI'));
         $shown = null;
 
-        Async::run(static function () use ($flow, &$shown): ?Credentials {
+        Async::run(static function () use ($flow, &$shown): ?OauthCredentials {
             return $flow->login(
                 static function (string $url) use (&$shown): void {
                     $shown = $url;
@@ -213,7 +213,7 @@ final class OpenAiCodexOauthTest extends TestCase
     {
         $flow = new OpenAiCodex(authBaseUrl: 'http://127.0.0.1:9', server: new CallbackServer(self::freePort(), OpenAiCodex::CALLBACK_PATH, 'OpenAI'));
 
-        $credentials = Async::run(static fn (): ?Credentials => $flow->login(
+        $credentials = Async::run(static fn (): ?OauthCredentials => $flow->login(
             static function (): void {
             },
             static fn (): ?string => null,
@@ -223,7 +223,7 @@ final class OpenAiCodexOauthTest extends TestCase
 
         $this->assertNull($credentials);
         // And escaping the choice is too.
-        $this->assertNull(Async::run(static fn (): ?Credentials => $flow->login(static function (): void {
+        $this->assertNull(Async::run(static fn (): ?OauthCredentials => $flow->login(static function (): void {
         }, static fn (): ?string => null, null, static fn (): ?string => null)));
     }
 
@@ -237,9 +237,9 @@ final class OpenAiCodexOauthTest extends TestCase
 
     public function testTheProviderRenewsThroughTheFlowAndSendsTheAccessToken(): void
     {
-        $this->assertSame('OpenAI (ChatGPT Plus/Pro)', Provider::OpenAiCodex->label());
-        $this->assertTrue(Provider::OpenAiCodex->isSubscription());
-        $this->assertSame('tok', Provider::OpenAiCodex->apiKey(new Credentials('r', 'tok', 0, accountId: 'acc')));
+        $this->assertSame('OpenAI (ChatGPT Plus/Pro)', OauthProvider::OpenAiCodex->label());
+        $this->assertTrue(OauthProvider::OpenAiCodex->isSubscription());
+        $this->assertSame('tok', OauthProvider::OpenAiCodex->apiKey(new OauthCredentials('r', 'tok', 0, accountId: 'acc')));
     }
 
     public function testTheCallbackServerKeepsWaitingThroughAnotherSignInsState(): void

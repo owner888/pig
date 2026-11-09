@@ -55,7 +55,7 @@ final class ModelJson
         'supportsMidConvoEffort' => 'supportsMidConvoEffort',
     ];
 
-    /** pi's `AnthropicMessagesCompat` keys, by `AnthropicCompat` property. */
+    /** pi's `AnthropicMessagesCompat` keys, by `AnthropicMessagesCompat` property. */
     private const array ANTHROPIC_KEYS = [
         'forceAdaptiveThinking' => 'forceAdaptiveThinking',
         'strictTools' => 'supportsStrictTools',
@@ -225,7 +225,7 @@ final class ModelJson
      *
      * @param array<string, mixed> $compat
      */
-    public static function compat(array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
+    public static function compat(array $compat, Api $api): OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null
     {
         if ($compat === []) {
             return null;
@@ -239,7 +239,7 @@ final class ModelJson
         }
 
         if ($api === Api::AnthropicMessages) {
-            return new AnthropicCompat(
+            return new AnthropicMessagesCompat(
                 forceAdaptiveThinking: $flag('forceAdaptiveThinking'),
                 strictTools: $flag('supportsStrictTools'),
                 supportsTemperature: $flag('supportsTemperature'),
@@ -301,7 +301,7 @@ final class ModelJson
     /** @var array<string, Pricing> `sharedPricing()`'s, by the rates they were built from */
     private static array $pricings = [];
 
-    /** @var array<string, OpenAiCompat|AnthropicCompat|BedrockCompat|null> `sharedCompat()`'s, by api and settings */
+    /** @var array<string, OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null> `sharedCompat()`'s, by api and settings */
     private static array $compats = [];
 
     /**
@@ -321,7 +321,7 @@ final class ModelJson
      *
      * @param array<string, mixed> $compat
      */
-    private static function sharedCompat(array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
+    private static function sharedCompat(array $compat, Api $api): OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null
     {
         $key = $api->value . "\0" . serialize($compat);
 
@@ -347,9 +347,9 @@ final class ModelJson
                 continue;
             }
 
-            // `PricingTier` counts tokens in whole numbers; a fractional threshold is compared as
+            // `ModelCostTier` counts tokens in whole numbers; a fractional threshold is compared as
             // the whole number below it, which no token count can tell apart.
-            $tiers[] = new PricingTier((int) $tier['inputTokensAbove'], $number($tier, 'input'), $number($tier, 'output'), $number($tier, 'cacheRead'), $number($tier, 'cacheWrite'));
+            $tiers[] = new ModelCostTier((int) $tier['inputTokensAbove'], $number($tier, 'input'), $number($tier, 'output'), $number($tier, 'cacheRead'), $number($tier, 'cacheWrite'));
         }
 
         return new Pricing($number($cost, 'input'), $number($cost, 'output'), $number($cost, 'cacheRead'), $number($cost, 'cacheWrite'), $tiers);
@@ -390,13 +390,13 @@ final class ModelJson
     }
 
     /** @return array<string, mixed> */
-    private static function encodeCompat(OpenAiCompat|AnthropicCompat|BedrockCompat $compat): array
+    private static function encodeCompat(OpenAiCompat|AnthropicMessagesCompat|BedrockCompat $compat): array
     {
         if ($compat instanceof BedrockCompat) {
             return $compat->supportsStrictMode === null ? [] : ['supportsStrictMode' => $compat->supportsStrictMode];
         }
 
-        $keys = $compat instanceof AnthropicCompat ? self::ANTHROPIC_KEYS : self::OPENAI_KEYS;
+        $keys = $compat instanceof AnthropicMessagesCompat ? self::ANTHROPIC_KEYS : self::OPENAI_KEYS;
         $encoded = [];
 
         foreach ($keys as $property => $key) {
@@ -433,7 +433,7 @@ final class ModelJson
         ];
 
         if ($pricing->tiers !== []) {
-            $cost['tiers'] = array_map(static fn (PricingTier $tier): array => [
+            $cost['tiers'] = array_map(static fn (ModelCostTier $tier): array => [
                 'inputTokensAbove' => $tier->inputTokensAbove,
                 'input' => $tier->input,
                 'output' => $tier->output,

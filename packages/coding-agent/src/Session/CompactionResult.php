@@ -12,12 +12,12 @@ use Pig\Ai\Usage;
  *
  * What `Compaction::compact()` returns, and what a `session_before_compact` handler answers with
  * (`SessionBeforeCompactResult::$compaction`) to supply its own. The session writes it as a
- * `CompactionSummary` entry: `$summary`, `$firstKeptEntryId`, `$tokensBefore` and `$usage` as given.
+ * `CompactionEntry` entry: `$summary`, `$firstKeptEntryId`, `$tokensBefore` and `$usage` as given.
  *
  * **One difference from upstream, and it is in `$summary`.** Upstream's `compact()` appends the
  * `<read-files>`/`<modified-files>` tags to the summary text and also records the lists in
  * `details`. pig's entry keeps the lists apart from the prose and adds the tags when the model is
- * shown it (`CompactionSummary::toText()`), so the summary here is the prose alone and the lists
+ * shown it (`CompactionEntry::toText()`), so the summary here is the prose alone and the lists
  * are `$details['readFiles']` and `$details['modifiedFiles']` — which is where the entry reads them
  * from, an extension's result included. Other keys of `$details` are not stored: pig's compaction
  * entry has nowhere for them yet.

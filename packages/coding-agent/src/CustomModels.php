@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\Model;
@@ -688,9 +688,9 @@ final readonly class CustomModels
      * level deeper. A base of another API's type, or none, is replaced.
      */
     private static function mergeTypedCompat(
-        OpenAiCompat|AnthropicCompat|BedrockCompat|null $base,
-        OpenAiCompat|AnthropicCompat|BedrockCompat|null $override,
-    ): OpenAiCompat|AnthropicCompat|BedrockCompat|null {
+        OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null $base,
+        OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null $override,
+    ): OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null {
         if ($override === null) {
             return $base;
         }
@@ -973,7 +973,7 @@ final readonly class CustomModels
      *
      * @param array<mixed>|null $compat
      */
-    public static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
+    public static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null
     {
         return $compat === null ? null : ModelJson::compat($compat, $api);
     }

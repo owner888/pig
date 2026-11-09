@@ -14,8 +14,8 @@ use Pig\Ai\ClassifierModel;
 use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\Cost;
-use Pig\Ai\Extension\ClassificationApi;
-use Pig\Ai\Extension\ImageGenerationApi;
+use Pig\Ai\Extension\ProviderClassifier;
+use Pig\Ai\Extension\ProviderImages;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\ImageApi;
@@ -35,7 +35,7 @@ use RuntimeException;
 
 /**
  * Upstream's provider-supplied `generateImages()` / `classify()` — a provider's `images` /
- * `classifiers` implementations — as pig's `ImageGenerationApi` / `ClassificationApi` behind
+ * `classifiers` implementations — as pig's `ProviderImages` / `ProviderClassifier` behind
  * `ImageApi::Extension` / `ClassifierApi::Extension`, from `Models`' side.
  */
 final class ExtensionOperationsTest extends TestCase
@@ -72,7 +72,7 @@ final class ExtensionOperationsTest extends TestCase
     private function register(?\Closure $images = null, ?\Closure $classify = null, bool $withImplementations = true): void
     {
         $seen = &$this->seen;
-        $imageApi = new class ($images, $seen) implements ImageGenerationApi {
+        $imageApi = new class ($images, $seen) implements ProviderImages {
             public function __construct(private ?\Closure $run, private array &$seen)
             {
             }
@@ -84,7 +84,7 @@ final class ExtensionOperationsTest extends TestCase
                 return ($this->run ?? static fn (): AssistantImages => throw new RuntimeException('unset'))($model, $context, $options);
             }
         };
-        $classifierApi = new class ($classify, $seen) implements ClassificationApi {
+        $classifierApi = new class ($classify, $seen) implements ProviderClassifier {
             public function __construct(private ?\Closure $run, private array &$seen)
             {
             }

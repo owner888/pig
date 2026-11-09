@@ -61,22 +61,22 @@ final class KimiCoding
      *
      * @param Closure(string, ?string): void $onAuth
      */
-    public function login(Closure $onAuth, ?AbortSignal $signal = null): Credentials
+    public function login(Closure $onAuth, ?AbortSignal $signal = null): OauthCredentials
     {
         $signal ??= (new AbortController())->signal;
         $device = $this->startDeviceAuthorization($signal);
         $onAuth($device['verificationUriComplete'], "Enter code: {$device['userCode']}");
         $token = $this->pollForToken($device, $signal);
 
-        return new Credentials($token['refresh'], $token['access'], $token['expires']);
+        return new OauthCredentials($token['refresh'], $token['access'], $token['expires']);
     }
 
     /** Upstream's `refresh(credential, signal)`. */
-    public function refresh(string $refreshToken, ?AbortSignal $signal = null): Credentials
+    public function refresh(string $refreshToken, ?AbortSignal $signal = null): OauthCredentials
     {
         $token = $this->refreshToken($refreshToken, $signal ?? (new AbortController())->signal);
 
-        return new Credentials($token['refresh'], $token['access'], $token['expires']);
+        return new OauthCredentials($token['refresh'], $token['access'], $token['expires']);
     }
 
     /**

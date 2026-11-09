@@ -19,7 +19,7 @@ use Pig\Ai\Timestamp;
  *
  * Ported from upstream's `LabelEntry`.
  */
-final readonly class Label
+final readonly class LabelEntry
 {
     public int $timestamp;
 

@@ -8,7 +8,7 @@ namespace Pig\Ai;
  * One request-wide price tier — upstream's `ModelCostTier`: the four rates, used for a whole
  * request whose input exceeds `$inputTokensAbove`.
  */
-final readonly class PricingTier
+final readonly class ModelCostTier
 {
     public function __construct(
         public int $inputTokensAbove,

@@ -17,14 +17,14 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Async\Loop;
-use Pig\Ai\Utils\Oauth\Credentials;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 
@@ -276,7 +276,7 @@ final class FooterTest extends TestCase
         $session = $this->session();
         $at = \Pig\Ai\Timestamp::nowMs();
         $this->spent($session, new Usage(190_000, 0, 0, 0), timestamp: $at - 20);
-        $session->agent->appendMessage(new CompactionSummary('what happened earlier', timestamp: $at - 10));
+        $session->agent->appendMessage(new CompactionEntry('what happened earlier', timestamp: $at - 10));
 
         $line = $this->lines($session)[1];
         $this->assertStringContainsString('?/200k', $line);
@@ -320,7 +320,7 @@ final class FooterTest extends TestCase
         $this->spent($session, new Usage(100, 50, 0, 0, 150, new Cost(0.5, 0.25, 0, 0, 0.75)));
 
         $auth = Auth::inMemory();
-        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+        $auth->setCredentials(OauthProvider::Anthropic, new OauthCredentials('r', 'a', 0));
 
         $footer = new FooterComponent($session, $this->cwd, null, $auth);
 
@@ -330,7 +330,7 @@ final class FooterTest extends TestCase
     public function testASubscriptionIsSaidEvenBeforeAnythingIsSpent(): void
     {
         $auth = Auth::inMemory();
-        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+        $auth->setCredentials(OauthProvider::Anthropic, new OauthCredentials('r', 'a', 0));
 
         $footer = new FooterComponent($this->session(), $this->cwd, null, $auth);
 

@@ -7,7 +7,7 @@ namespace PigAntigravity;
 use Closure;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Utils\Oauth\CallbackServer;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Http\HttpClient;
@@ -173,13 +173,13 @@ final class AntigravityOauth implements OauthFlow
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         return $this->signIn($onAuth, $onProgress, $signal);
     }
 
     /** The `OauthFlow` shape of `renew()`: the project id travels on the credential. */
     #[\Override]
-    public function refresh(Credentials $credentials): Credentials
+    public function refresh(OauthCredentials $credentials): OauthCredentials
     {
         if ($credentials->refresh === '') {
             throw new OauthError('The stored antigravity credentials have no refresh token — sign in again.');
@@ -202,13 +202,13 @@ final class AntigravityOauth implements OauthFlow
      * `AntigravityApi::credentials()` is what parses it back.
      */
     #[\Override]
-    public function apiKey(Credentials $credentials): string
+    public function apiKey(OauthCredentials $credentials): string
     {
         return self::keyFor($credentials);
     }
 
     /** Static, so `LazyAntigravityOauth` can answer without a client pair. */
-    public static function keyFor(Credentials $credentials): string
+    public static function keyFor(OauthCredentials $credentials): string
     {
         $project = $credentials->projectId;
 
@@ -226,7 +226,7 @@ final class AntigravityOauth implements OauthFlow
     }
 
     /** Listen, send the browser, take the code, find a project. Null means nobody finished. */
-    public function signIn(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null): ?Credentials
+    public function signIn(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null): ?OauthCredentials
     {
         $pkce = Pkce::create();
         $server = $this->server ?? new CallbackServer(self::PORT, self::CALLBACK_PATH);
@@ -259,7 +259,7 @@ final class AntigravityOauth implements OauthFlow
 
         self::say($onProgress, 'Looking for a Cloud project…');
 
-        return new Credentials(
+        return new OauthCredentials(
             $tokens['refresh'],
             $tokens['access'],
             $tokens['expires'],
@@ -306,7 +306,7 @@ final class AntigravityOauth implements OauthFlow
         ];
     }
 
-    public function renew(string $refreshToken, string $projectId): Credentials
+    public function renew(string $refreshToken, string $projectId): OauthCredentials
     {
         $data = $this->form($this->endpoint(self::TOKEN_URL), [
             'client_id' => $this->clientId,
@@ -324,7 +324,7 @@ final class AntigravityOauth implements OauthFlow
 
         $rotated = $data['refresh_token'] ?? null;
 
-        return new Credentials(
+        return new OauthCredentials(
             // A missing field means "keep the one you have", not "lost it" — Google usually does
             // not rotate this one and sends nothing rather than the same value again.
             is_string($rotated) && $rotated !== '' ? $rotated : $refreshToken,

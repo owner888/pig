@@ -42,7 +42,7 @@ use Pig\CodingAgent\Extensions\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Extensions\Results\ContextEventResult;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\SummarizationRetryEvent;
 use Pig\CodingAgent\Settings;
@@ -147,7 +147,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
         $summary = Async::run(static fn () => $session->compact());
 
-        $this->assertInstanceOf(CompactionSummary::class, $summary);
+        $this->assertInstanceOf(CompactionEntry::class, $summary);
         $this->assertNotNull($summary->systemMessage);
         $this->assertSame($summary->timestamp, $summary->systemMessage->timestamp);
 
@@ -163,7 +163,7 @@ final class SystemMessageTranscriptTest extends TestCase
         $saved = SessionManager::open($store->path)->messages();
         $this->assertInstanceOf(SystemMessage::class, $saved[0]);
         $this->assertSame($summary->systemMessage->sections, $saved[0]->sections);
-        $this->assertInstanceOf(CompactionSummary::class, $saved[1]);
+        $this->assertInstanceOf(CompactionEntry::class, $saved[1]);
     }
 
     public function testASummaryRetriesATransientFailureWithTheSessionsRetrySettings(): void

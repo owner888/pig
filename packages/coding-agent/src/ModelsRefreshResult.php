@@ -7,7 +7,7 @@ namespace Pig\CodingAgent;
 use Throwable;
 
 /** Upstream's `ModelsRefreshResult`: whether the caller's signal ended it, and each provider's failure. */
-final readonly class ModelRefreshResult
+final readonly class ModelsRefreshResult
 {
     /** @param array<string, Throwable> $errors by provider id */
     public function __construct(

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
 
 /**
@@ -15,7 +15,7 @@ final readonly class ExtensionResources
 {
     /**
      * @param list<Skill>       $skills
-     * @param list<FileCommand> $commands
+     * @param list<PromptTemplate> $commands
      */
     public function __construct(
         public array $skills,

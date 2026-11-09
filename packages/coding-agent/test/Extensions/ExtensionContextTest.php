@@ -42,8 +42,8 @@ use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\Results\InputEventResult;
 use Pig\CodingAgent\Extensions\Results\UserBashEventResult;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -188,7 +188,7 @@ PHP);
         $api = new ExtensionApi('.', 'test.php');
         $api->on('user_bash', static function (UserBashEvent $event): UserBashEventResult {
             return new UserBashEventResult(
-                new BashExecution($event->command, "intercepted: {$event->command}", 0),
+                new BashExecutionMessage($event->command, "intercepted: {$event->command}", 0),
             );
         });
 
@@ -336,7 +336,7 @@ PHP);
     public function testContextUsageReturnsNullTokensAfterCompactionUntilNextResponse(): void
     {
         $store = SessionManager::create(sys_get_temp_dir() . '/pig-usage-test-' . bin2hex(random_bytes(3)));
-        $summary = new CompactionSummary('summary text', [], [], 1000);
+        $summary = new CompactionEntry('summary text', [], [], 1000);
         $store->append($summary);
 
         $session = $this->createSession([], store: $store);

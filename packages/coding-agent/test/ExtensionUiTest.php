@@ -1216,7 +1216,7 @@ final class ExtensionUiTest extends TestCase
 
             $loader->handleInput("\x1b");
 
-            // The lesson from `SettingsSubmenu`: a `Container` forwards drawing and nothing
+            // The lesson from `SelectSubmenu`: a `Container` forwards drawing and nothing
             // else, so one given the focus eats every key — and here the key it would eat is
             // the only one that stops the wait.
             $this->assertTrue($signal->aborted());

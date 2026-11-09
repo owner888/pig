@@ -21,11 +21,11 @@ final readonly class Model
      *        several providers speak the same api
      * @param list<'text'|'image'>  $input    what the model accepts
      * @param array<string, string> $headers  extra headers every request to it carries
-     * @param OpenAiCompat|AnthropicCompat|BedrockCompat|null $compat what this model says about its
+     * @param OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null $compat what this model says about its
      *        endpoint, key by key, typed by API as upstream's `compat` is: `OpenAiCompat` for
      *        `openai-completions` (laid over what `OpenAiCompat::detect()` works out, by
      *        `OpenAiCompat::resolve()`) and `openai-responses` (which reads `strictMode` alone),
-     *        `AnthropicCompat` for `anthropic-messages`, `BedrockCompat` for `bedrock-converse-stream`.
+     *        `AnthropicMessagesCompat` for `anthropic-messages`, `BedrockCompat` for `bedrock-converse-stream`.
      *        A provider ignores a compat of another API's type.
      * @param array<string, string|null> $thinkingLevelMap what this model calls each thinking
      *        level, keyed by `ThinkingLevel`'s value. **Three states, not two**: a key that is
@@ -59,7 +59,7 @@ final readonly class Model
         public array $input = ['text'],
         public Pricing $pricing = new Pricing(),
         public array $headers = [],
-        public OpenAiCompat|AnthropicCompat|BedrockCompat|null $compat = null,
+        public OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null $compat = null,
         public array $thinkingLevelMap = [],
         public ?array $inputLimits = null,
         public ?array $promptCache = null,

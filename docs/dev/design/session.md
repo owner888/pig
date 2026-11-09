@@ -89,7 +89,7 @@ Themes are ported from upstream's `theme.ts` / `theme-schema.ts` / `system-theme
 `Session\BashExecution` — an app message, not an LLM one. `CodingAgent` supplies the
 `convertToLlm` that turns it into a user message on the way to the model; the agent's own
 default drops anything that is not one of the three LLM types, which is exactly what
-`!!command` wants, since it never makes a `BashExecution` at all. So the difference
+`!!command` wants, since it never makes a `BashExecutionMessage` at all. So the difference
 between the two is one boolean and no special case downstream.
 
 A command run while the agent is working is **held back until the run ends**. A message
@@ -324,7 +324,7 @@ full the window is, where the conversation can be cut, what the summariser is as
 which files were touched. Running the model and swapping the messages over is
 `AgentSession::compact()`, so everything with arithmetic or string handling in it is
 testable without a provider. The summary itself is `Session\CompactionSummary` — an app
-message like `BashExecution`, turned into a user message by `CodingAgent::toLlm()`.
+message like `BashExecutionMessage`, turned into a user message by `CodingAgent::toLlm()`.
 
 Three things about it are worth knowing before changing any of it:
 
@@ -362,7 +362,7 @@ beginning gets a second, smaller summary (`TURN_PREFIX_SUMMARIZATION_PROMPT`), m
 through `Retry::retryAssistantCall()` with the session's retry settings and the session's own
 stream function and request options, as upstream's `retryAssistantCall()` callers do; a retry is
 reported as `SummarizationRetryEvent` (RPC `summarization_retry_*`). A compaction records the
-replayed system message (`CompactionSummary::$systemMessage`, upstream's `systemMessage` on the
+replayed system message (`CompactionEntry::$systemMessage`, upstream's `systemMessage` on the
 entry), and the rebuilt context is `[system, summary, …kept]`.
 
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
@@ -563,7 +563,7 @@ as given.
 
 One divergence left: **the summary text is the prose alone and the lists stay in `details`**, where
 upstream's `compact()` also appends `<read-files>` / `<modified-files>` to the text. The model sees
-the same thing either way, because `CompactionSummary::toText()` adds the tags on replay; a
+the same thing either way, because `CompactionEntry::toText()` adds the tags on replay; a
 `CompactionResult`'s other `details` keys are not stored. The prompts themselves are upstream's
 verbatim, the update prompt's format block included.
 
@@ -576,7 +576,7 @@ whole prompt, and "No content to summarize" for an empty branch. `/tree` asks wh
 and it is appended to the branch being *joined*: context for carrying on here, not a note on the
 branch it describes.
 
-- **It replaces nothing.** A `CompactionSummary` stands in for the messages before it; a branch
+- **It replaces nothing.** A `CompactionEntry` stands in for the messages before it; a branch
   summary describes messages that were never on this branch, so nothing is spliced.
 - **File lists come from what fits the budget**, plus the lists of earlier branch summaries pig wrote
   — upstream's rule ("the messages being summarized"). pig used to collect them from the whole branch;

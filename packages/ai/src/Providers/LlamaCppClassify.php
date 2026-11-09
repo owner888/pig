@@ -21,7 +21,7 @@ use Pig\Ai\ProviderError;
 use Pig\Ai\StopReason;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderRetry;
 use stdClass;
@@ -374,7 +374,7 @@ final class LlamaCppClassify
         }
 
         $apiKey = $options?->apiKey;
-        $headers = Headers::providerHeadersToRecord(
+        $headers = ProviderHeaders::providerHeadersToRecord(
             ClientIdentity::headers($model, $options?->identity),
             ['content-type' => 'application/json', ...($apiKey !== null && $apiKey !== '' ? ['authorization' => "Bearer {$apiKey}"] : [])],
             $model->headers,

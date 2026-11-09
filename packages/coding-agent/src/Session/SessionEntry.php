@@ -8,7 +8,7 @@ namespace Pig\CodingAgent\Session;
  * One entry of a session file, with the id it is known by and the entry it hangs off.
  *
  * Upstream's `SessionEntry`. pig keeps an entry's *content* as the object it decodes to —
- * a message, a `CompactionSummary`, a `ModelChange`, a `Label` — rather than as a tagged
+ * a message, a `CompactionEntry`, a `ModelChangeEntry`, a `LabelEntry` — rather than as a tagged
  * record with a `type`, so the type here is the class of `$message`. What this adds is the two
  * facts the content alone does not carry and an extension reading a branch needs: which entry it
  * is (`firstKeptEntryId` names one) and which one came before it.
@@ -22,7 +22,7 @@ final readonly class SessionEntry
 {
     /**
      * @param mixed $message what the entry holds: a message, a summary, or one of the entries that
-     *        are not part of the conversation (`ModelChange`, `ThinkingLevelChange`, `Label`,
+     *        are not part of the conversation (`ModelChangeEntry`, `ThinkingLevelChangeEntry`, `LabelEntry`,
      *        `CustomEntry`, `ContextEdit`, `UsageEntry`, `SessionInfoEntry`)
      */
     public function __construct(

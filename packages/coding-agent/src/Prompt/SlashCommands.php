@@ -34,7 +34,7 @@ final class SlashCommands
      * `(user)`, `(package)` or `(path)` by where they came from.
      *
      * @param list<ResolvedResource> $resources
-     * @return array{0: list<FileCommand>, 1: list<string>} the templates, then the collisions
+     * @return array{0: list<PromptTemplate>, 1: list<string>} the templates, then the collisions
      */
     public static function fromResources(array $resources): array
     {
@@ -62,7 +62,7 @@ final class SlashCommands
      * `CodingAgent::session()`).
      *
      * @param list<string> $paths absolute
-     * @return array{0: list<FileCommand>, 1: list<string>}
+     * @return array{0: list<PromptTemplate>, 1: list<string>}
      */
     public static function fromPaths(array $paths, string $source = 'path'): array
     {
@@ -74,7 +74,7 @@ final class SlashCommands
      * source `extension`, each loaded as a templates directory is: its direct `.md` children.
      *
      * @param list<string> $directories
-     * @return list<FileCommand>
+     * @return list<PromptTemplate>
      */
     public static function fromDirectories(array $directories): array
     {
@@ -83,7 +83,7 @@ final class SlashCommands
 
     /**
      * @param list<array{0: string, 1: string}> $entries path, source
-     * @return array{0: list<FileCommand>, 1: list<string>}
+     * @return array{0: list<PromptTemplate>, 1: list<string>}
      */
     private static function load(array $entries): array
     {
@@ -150,7 +150,7 @@ final class SlashCommands
      * `expandPromptTemplate()`: the name runs to the first whitespace, the arguments are what
      * follows it.
      *
-     * @param list<FileCommand> $commands
+     * @param list<PromptTemplate> $commands
      */
     public static function expand(string $text, array $commands): ?string
     {
@@ -288,7 +288,7 @@ final class SlashCommands
      *
      * @throws YamlError when the frontmatter is not YAML
      */
-    private static function read(string $path, string $source): ?FileCommand
+    private static function read(string $path, string $source): ?PromptTemplate
     {
         $raw = is_readable($path) ? file_get_contents($path) : false;
 
@@ -306,7 +306,7 @@ final class SlashCommands
             $description = self::firstLine($content);
         }
 
-        return new FileCommand(
+        return new PromptTemplate(
             basename($path, '.md'),
             $description === '' ? $label : "{$description} {$label}",
             $content,

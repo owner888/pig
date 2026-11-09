@@ -589,7 +589,7 @@ PHP));
         \Pig\Ai\Extension\ProviderRegistry::forget();
 
         $auth = Auth::inMemory(Settings::load($this->cwd, $this->home));
-        $auth->setCredentials('antigravity', new \Pig\Ai\Utils\Oauth\Credentials('refresh', 'ya29.test', (int) (microtime(true) * 1000) + 3_600_000, projectId: 'proj-1'));
+        $auth->setCredentials('antigravity', new \Pig\Ai\Utils\Oauth\OauthCredentials('refresh', 'ya29.test', (int) (microtime(true) * 1000) + 3_600_000, projectId: 'proj-1'));
         $signedIn = $this->start(auth: $auth, extensions: ['pig-antigravity']);
         $codemode = $signedIn->customTools->find('codemode');
         $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedIn->extensionRunner->context(), null))->content;

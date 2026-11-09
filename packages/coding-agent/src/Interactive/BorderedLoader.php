@@ -24,7 +24,7 @@ use Pig\Tui\TUI;
  * is a *wait*, and a wait with nothing around it reads as output that stopped.
  *
  * It is a `Container` **and** an `InputHandler`, which is the whole lesson of the trap on
- * `SettingsSubmenu`: a container forwards drawing and nothing else, so one given the focus eats
+ * `SelectSubmenu`: a container forwards drawing and nothing else, so one given the focus eats
  * every key — and the key that matters here is the one that cancels.
  */
 final class BorderedLoader extends Container implements InputHandler

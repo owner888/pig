@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\ClientIdentity;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
@@ -44,7 +44,7 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Ai\Utils\ProviderRetry;
@@ -846,7 +846,7 @@ final class Anthropic
             $callHeaders['anthropic-workspace-id'] = JsJson::toString($workspaceId);
         }
 
-        $built = Headers::build($sdkDefaults, $auth, $defaultHeaders, ['content-type' => 'application/json'], $callHeaders);
+        $built = ProviderHeaders::build($sdkDefaults, $auth, $defaultHeaders, ['content-type' => 'application/json'], $callHeaders);
         $headers = $built['values'];
 
         if ($federationToken !== null) {
@@ -975,10 +975,10 @@ final class Anthropic
         return array_values(array_unique($features));
     }
 
-    /** The model's `AnthropicCompat`, or null — a compat of another API's type says nothing here. */
-    private static function compat(Model $model): ?AnthropicCompat
+    /** The model's `AnthropicMessagesCompat`, or null — a compat of another API's type says nothing here. */
+    private static function compat(Model $model): ?AnthropicMessagesCompat
     {
-        return $model->compat instanceof AnthropicCompat ? $model->compat : null;
+        return $model->compat instanceof AnthropicMessagesCompat ? $model->compat : null;
     }
 
     /**
@@ -1157,7 +1157,7 @@ final class Anthropic
 
                 // Upstream's `model.compat?.forceAdaptiveThinking === true`, and nothing else: no
                 // model id is looked at here. The ids are upstream's generator list, applied once
-                // where the built-in models are made (`AnthropicCompat::forBuiltIn()`, `Models`).
+                // where the built-in models are made (`AnthropicMessagesCompat::forBuiltIn()`, `Models`).
                 if ($compat?->forceAdaptiveThinking === true) {
                     $body['thinking'] = ['type' => 'adaptive', 'display' => $display];
                     if ($options->effort !== null) {
@@ -1344,7 +1344,7 @@ final class Anthropic
      * turn leaves behind, is refused outright rather than ignored, so the next thing anybody typed
      * failed until the conversation was compacted past it.
      *
-     * **A managed-effort model** (`AnthropicCompat::$supportsMidConvoEffort`) gets `$activeEffort`, and
+     * **A managed-effort model** (`AnthropicMessagesCompat::$supportsMidConvoEffort`) gets `$activeEffort`, and
      * then upstream's `insertThinkingLevelMessages()`: an effort-only system message (`{role:
      * "system", content: [], output_config: {effort}}`) in front of every earlier turn of this
      * provider on this API that recorded its `providerThinkingLevel`, and one more with the effort

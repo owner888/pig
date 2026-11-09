@@ -43,7 +43,7 @@ final class SessionEntries
             'timestamp' => self::iso(self::timestampOf($item)),
         ];
 
-        if ($item instanceof ModelChange) {
+        if ($item instanceof ModelChangeEntry) {
             return [
                 'type' => 'model_change',
                 ...$base,
@@ -63,7 +63,7 @@ final class SessionEntries
             ] + ($item->note !== null && $item->note !== '' ? ['note' => $item->note] : []);
         }
 
-        if ($item instanceof ThinkingLevelChange) {
+        if ($item instanceof ThinkingLevelChangeEntry) {
             return [
                 'type' => 'thinking_level_change',
                 ...$base,
@@ -71,7 +71,7 @@ final class SessionEntries
             ];
         }
 
-        if ($item instanceof Label) {
+        if ($item instanceof LabelEntry) {
             return [
                 'type' => 'label',
                 ...$base,
@@ -120,7 +120,7 @@ final class SessionEntries
             ];
         }
 
-        if ($item instanceof CompactionSummary) {
+        if ($item instanceof CompactionEntry) {
             return [
                 'type' => 'compaction',
                 ...$base,
@@ -143,7 +143,7 @@ final class SessionEntries
             ];
         }
 
-        if ($item instanceof BranchSummary) {
+        if ($item instanceof BranchSummaryEntry) {
             return [
                 'type' => 'branch_summary',
                 ...$base,
@@ -197,18 +197,18 @@ final class SessionEntries
                 $at,
             ),
 
-            'model_change' => new ModelChange(
+            'model_change' => new ModelChangeEntry(
                 (string) ($line['provider'] ?? ''),
                 (string) ($line['modelId'] ?? ''),
                 $at,
             ),
 
-            'thinking_level_change' => new ThinkingLevelChange(
+            'thinking_level_change' => new ThinkingLevelChangeEntry(
                 (string) ($line['thinkingLevel'] ?? ''),
                 $at,
             ),
 
-            'label' => new Label(
+            'label' => new LabelEntry(
                 (string) ($line['targetId'] ?? ''),
                 // An empty label is how one is cleared, so it and a missing one are the
                 // same thing: no name on that entry any more.
@@ -245,7 +245,7 @@ final class SessionEntries
                 $at,
             ),
 
-            'compaction' => new CompactionSummary(
+            'compaction' => new CompactionEntry(
                 (string) ($line['summary'] ?? ''),
                 self::files($details, 'readFiles'),
                 self::files($details, 'modifiedFiles'),
@@ -263,7 +263,7 @@ final class SessionEntries
                 is_array($line['usage'] ?? null) ? MessageJson::decodeUsage($line['usage']) : null,
             ),
 
-            'branch_summary' => new BranchSummary(
+            'branch_summary' => new BranchSummaryEntry(
                 (string) ($line['summary'] ?? ''),
                 self::files($details, 'readFiles'),
                 self::files($details, 'modifiedFiles'),

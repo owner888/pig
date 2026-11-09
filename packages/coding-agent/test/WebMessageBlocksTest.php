@@ -17,9 +17,9 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\CompactionEndEvent;
 use Pig\CodingAgent\Session\CompactionResult;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionCodec;
 
@@ -33,8 +33,8 @@ final class WebMessageBlocksTest extends TestCase
             $this->markTestSkipped('node is not available to run the browser renderers');
         }
 
-        $compaction = new CompactionSummary('A **summary**', tokensBefore: 256653, timestamp: 101);
-        $branch = new BranchSummary('A branch handover', fromHook: true, timestamp: 102);
+        $compaction = new CompactionEntry('A **summary**', tokensBefore: 256653, timestamp: 101);
+        $branch = new BranchSummaryEntry('A branch handover', fromHook: true, timestamp: 102);
         $hook = new CustomMessage('build', [new TextContent("one\ntwo\nthree\nfour\nfive\nsix")], timestamp: 103);
         $hidden = new CustomMessage('secret', [new TextContent('do not display')], display: false, timestamp: 104);
         $assistant = new AssistantMessage([
@@ -52,9 +52,9 @@ final class WebMessageBlocksTest extends TestCase
             new ToolResultMessage('edit1', 'edit', [new TextContent('Edited')], details: ['diff' => "-1 actual-old\n+1 actual-new"]),
             new ToolResultMessage('read1', 'read', [new TextContent('file excerpt')], details: ['notice' => 'Use offset=6 to continue']),
             new ToolResultMessage('write1', 'write', [new TextContent('Wrote 16 bytes')]),
-            new BashExecution('exit 3', '', 3, timestamp: 105),
-            new BashExecution('seq 2500', 'tail', 0, truncated: true, fullOutputPath: '/tmp/pig-output.txt', timestamp: 106),
-            new BashExecution('sleep 5', '', null, cancelled: true, timestamp: 107),
+            new BashExecutionMessage('exit 3', '', 3, timestamp: 105),
+            new BashExecutionMessage('seq 2500', 'tail', 0, truncated: true, fullOutputPath: '/tmp/pig-output.txt', timestamp: 106),
+            new BashExecutionMessage('sleep 5', '', null, cancelled: true, timestamp: 107),
         ];
         $fixture = [
             'messages' => array_map(SessionCodec::encode(...), $messages),

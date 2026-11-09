@@ -29,7 +29,7 @@ use Pig\Async\Deferred;
 use Pig\Codemode\Declarations;
 use Pig\Codemode\Identifier;
 use Pig\Codemode\Registry;
-use Pig\Codemode\Sandbox;
+use Pig\Codemode\CodemodeSandbox;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
 use Pig\CodingAgent\Extensions\ToolDefinition;
@@ -46,7 +46,7 @@ require_once __DIR__ . '/CodemodeDescription.php';
 
 /**
  * The `codemode` tool — upstream's `extensions/codemode`, with PHP where it has JavaScript and
- * a sandboxed `php` child where it has a QuickJS VM in a worker. See `Pig\Codemode\Sandbox` for
+ * a sandboxed `php` child where it has a QuickJS VM in a worker. See `Pig\Codemode\CodemodeSandbox` for
  * what the isolation is and is not.
  *
  * The model writes a script; the script calls nested tools as `$tools->name([...])`, fans out
@@ -897,7 +897,7 @@ return static function (ExtensionApi $pig): void {
             }
         }
 
-        $sandbox = new Sandbox($sandboxTools, $globals, isset($source->options['timeoutMs']) ? $source->options['timeoutMs'] / 1000 : null);
+        $sandbox = new CodemodeSandbox($sandboxTools, $globals, isset($source->options['timeoutMs']) ? $source->options['timeoutMs'] / 1000 : null);
         $result = $sandbox->execute($source->code, $signal, $store);
 
         foreach ($calls as &$call) {

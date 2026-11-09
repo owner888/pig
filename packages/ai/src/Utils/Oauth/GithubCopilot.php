@@ -176,7 +176,7 @@ final class GithubCopilot
         }
 
         // Lowercased, as WHATWG's host parser does it: the typed spelling reaches
-        // `Credentials::enterpriseUrl` and `baseUrl()`, so `COMPANY.GHE.COM` would otherwise be
+        // `OauthCredentials::enterpriseUrl` and `baseUrl()`, so `COMPANY.GHE.COM` would otherwise be
         // stored and sent as a different string from the same domain typed in lower case.
         return strtolower($host);
     }
@@ -287,7 +287,7 @@ final class GithubCopilot
      * Also the renewal: the Copilot token lasts under an hour and this is the only way to get
      * another, which is why the GitHub token is what gets stored as `refresh`.
      */
-    public function refresh(string $githubToken, ?string $enterpriseDomain = null): Credentials
+    public function refresh(string $githubToken, ?string $enterpriseDomain = null): OauthCredentials
     {
         $domain = $enterpriseDomain ?? self::DEFAULT_DOMAIN;
 
@@ -303,7 +303,7 @@ final class GithubCopilot
             throw new OauthError('GitHub answered the Copilot token request without a token in it.');
         }
 
-        return new Credentials(
+        return new OauthCredentials(
             $githubToken,
             $token,
             // Seconds there, milliseconds here, less the margin.
@@ -366,7 +366,7 @@ final class GithubCopilot
         Closure $onAuth,
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         $typed = $onPrompt('GitHub Enterprise URL/domain (blank for github.com)', 'company.ghe.com', true);
 
         if ($typed === null) {

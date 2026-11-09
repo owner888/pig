@@ -45,19 +45,19 @@ use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\OauthError;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Throwable;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Ai\TranscriptContext;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
@@ -1769,7 +1769,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('$ echo hello-from-bash', $screen);
         $this->assertStringContainsString('hello-from-bash', $screen);
         $this->assertCount(1, $this->session->messages());
-        $this->assertInstanceOf(BashExecution::class, $this->session->messages()[0]);
+        $this->assertInstanceOf(BashExecutionMessage::class, $this->session->messages()[0]);
     }
 
     public function testTwoBangsRunItAndKeepItOut(): void
@@ -1788,7 +1788,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('quiet', $screen);
         $this->assertStringNotContainsString('Not added', $screen);
         // Kept in the session, flagged, as upstream records it — and out of what the model is sent.
-        $kept = array_values(array_filter($this->session->messages(), static fn ($m) => $m instanceof \Pig\CodingAgent\Session\BashExecution));
+        $kept = array_values(array_filter($this->session->messages(), static fn ($m) => $m instanceof \Pig\CodingAgent\Session\BashExecutionMessage));
         $this->assertCount(1, $kept);
         $this->assertTrue($kept[0]->excludeFromContext);
         $this->assertSame([], \Pig\CodingAgent\CodingAgent::toLlm($kept));
@@ -1886,7 +1886,7 @@ final class InteractiveModeTest extends TestCase
         $this->start();
 
         // Over `Truncate::MAX_LINES`, so `Run` spills the whole of it to a file and the tail is what
-        // is kept. The model is told — `BashExecution::toText()` appends the sentence — and the
+        // is kept. The model is told — `BashExecutionMessage::toText()` appends the sentence — and the
         // person watching it happen was told nothing, which is the notice's two readers with only
         // one of them served.
         $this->type('!seq 2500');
@@ -2326,7 +2326,7 @@ final class InteractiveModeTest extends TestCase
     public function testAFileCommandIsSentAsTheMessageItStandsFor(): void
     {
         $this->start(['done'], fileCommands: [
-            new FileCommand('review', 'Review a file', 'Please review $1 closely.', '(user)'),
+            new PromptTemplate('review', 'Review a file', 'Please review $1 closely.', '(user)'),
         ]);
 
         $this->type('/review src/Foo.php');
@@ -2344,7 +2344,7 @@ final class InteractiveModeTest extends TestCase
     {
         // No scripted answers: if `/help` reached the model this would blow up on
         // "out of scripted answers" rather than pass.
-        $this->start(fileCommands: [new FileCommand('help', 'Not this one', 'send me instead', '(user)')]);
+        $this->start(fileCommands: [new PromptTemplate('help', 'Not this one', 'send me instead', '(user)')]);
 
         $this->type('/help');
         $this->type(self::ENTER);
@@ -2356,7 +2356,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testAFileCommandsNameIsMatchedExactlyLikeAnyOther(): void
     {
-        $this->start(['ok'], fileCommands: [new FileCommand('review', 'd', 'the stored prompt', '(user)')]);
+        $this->start(['ok'], fileCommands: [new PromptTemplate('review', 'd', 'the stored prompt', '(user)')]);
 
         // One character off the name of a command that does exist, which is the case the
         // exact match is for: it is not `/review`, so it is not expanded into the prompt.
@@ -3073,7 +3073,7 @@ final class InteractiveModeTest extends TestCase
     public function testCompactingTwiceOverSaysItIsAlreadyDone(): void
     {
         $this->start();
-        $this->session->agent->appendMessage(new CompactionSummary('already summarised'));
+        $this->session->agent->appendMessage(new CompactionEntry('already summarised'));
 
         $this->type('/compact');
         $this->type(self::ENTER);
@@ -3369,7 +3369,7 @@ final class InteractiveModeTest extends TestCase
     public function testAFileCommandQueuedMidTurnReachesTheModelAsItsPromptAndComesBackAsItsName(): void
     {
         $this->start(['first done', 'reviewed'], fileCommands: [
-            new FileCommand('review', 'Review a file', 'Please review $1 closely.', '(user)'),
+            new PromptTemplate('review', 'Review a file', 'Please review $1 closely.', '(user)'),
         ]);
 
         $held = $this->holdTheAgent();
@@ -4498,19 +4498,19 @@ final class InteractiveModeTest extends TestCase
                 return false;
             }
 
-            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?OauthCredentials
             {
                 $this->asked++;
 
                 return null;
             }
 
-            public function refresh(Credentials $credentials): Credentials
+            public function refresh(OauthCredentials $credentials): OauthCredentials
             {
                 return $credentials;
             }
 
-            public function apiKey(Credentials $credentials): string
+            public function apiKey(OauthCredentials $credentials): string
             {
                 return $credentials->access;
             }
@@ -4862,17 +4862,17 @@ final class InteractiveModeTest extends TestCase
                 return true;
             }
 
-            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?OauthCredentials
             {
                 throw new OauthError('Signing in needs PROBE_CLIENT_ID, which pig does not ship.');
             }
 
-            public function refresh(Credentials $credentials): Credentials
+            public function refresh(OauthCredentials $credentials): OauthCredentials
             {
                 return $credentials;
             }
 
-            public function apiKey(Credentials $credentials): string
+            public function apiKey(OauthCredentials $credentials): string
             {
                 return $credentials->access;
             }
@@ -4923,7 +4923,7 @@ final class InteractiveModeTest extends TestCase
                 return false;
             }
 
-            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?OauthCredentials
             {
                 $onAuth("file:///tmp/{$this->injected}", null);
                 $onAuth("https://example.com/device/{$this->injected}?u", null);
@@ -4931,12 +4931,12 @@ final class InteractiveModeTest extends TestCase
                 return null;
             }
 
-            public function refresh(Credentials $credentials): Credentials
+            public function refresh(OauthCredentials $credentials): OauthCredentials
             {
                 return $credentials;
             }
 
-            public function apiKey(Credentials $credentials): string
+            public function apiKey(OauthCredentials $credentials): string
             {
                 return $credentials->access;
             }
@@ -5000,7 +5000,7 @@ final class InteractiveModeTest extends TestCase
     public function testSlashLogoutForgetsTheSignIn(): void
     {
         $auth = Auth::inMemory();
-        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'sk-ant-oat-x', 0));
+        $auth->setCredentials(OauthProvider::Anthropic, new OauthCredentials('r', 'sk-ant-oat-x', 0));
 
         $this->start(auth: $auth);
 
@@ -5016,7 +5016,7 @@ final class InteractiveModeTest extends TestCase
     public function testSlashLogoutOnlyOffersWhatIsActuallySignedIn(): void
     {
         $auth = Auth::inMemory();
-        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+        $auth->setCredentials(OauthProvider::Anthropic, new OauthCredentials('r', 'a', 0));
 
         $this->start(auth: $auth);
 
@@ -5287,7 +5287,7 @@ final class InteractiveModeTest extends TestCase
     private static function signedInToClaude(): Auth
     {
         $auth = Auth::inMemory();
-        $auth->setCredentials('anthropic', new Credentials('refresh', 'access', PHP_INT_MAX));
+        $auth->setCredentials('anthropic', new OauthCredentials('refresh', 'access', PHP_INT_MAX));
 
         return $auth;
     }

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Test\Providers;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
@@ -55,7 +55,7 @@ final class SystemMessagesOnTheWireTest extends TestCase
 
     public function testAnthropicWithNativeToolChangesSendsTheUpdateInPlaceWithItsToolsByValue(): void
     {
-        $body = $this->anthropic(new AnthropicCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true));
+        $body = $this->anthropic(new AnthropicMessagesCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true));
 
         // The leading message is the `system` field; the tool list is the initial tools and the
         // placeholder, and never changes after that.
@@ -80,7 +80,7 @@ final class SystemMessagesOnTheWireTest extends TestCase
     {
         // Upstream #11091: another model's empty reply is dropped, and an update flushed before it
         // landed before the next user message, which Claude refuses with a 400.
-        $compat = new AnthropicCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true);
+        $compat = new AnthropicMessagesCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true);
         $reply = static fn (string $text, string $provider, Api $api, string $model): AssistantMessage
             => new AssistantMessage([new TextContent($text)], $api, $provider, $model, new Usage(), StopReason::Stop);
         $messages = [
@@ -103,7 +103,7 @@ final class SystemMessagesOnTheWireTest extends TestCase
     public function testAnthropicWithTextOnlyUpdatesSendsTheCurrentToolList(): void
     {
         // Copilot and OpenCode forward mid-conversation system messages but refuse tool blocks.
-        $body = $this->anthropic(new AnthropicCompat(supportsMidConvoSystemMessages: true));
+        $body = $this->anthropic(new AnthropicMessagesCompat(supportsMidConvoSystemMessages: true));
 
         $this->assertSame(['write'], array_column($body['tools'], 'name'));
         $this->assertSame(['user', 'assistant', 'user', 'system'], array_column($body['messages'], 'role'));
@@ -355,7 +355,7 @@ final class SystemMessagesOnTheWireTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function anthropic(?AnthropicCompat $compat, ?TranscriptContext $context = null): array
+    private function anthropic(?AnthropicMessagesCompat $compat, ?TranscriptContext $context = null): array
     {
         $url = $this->refusing();
         $model = new Model('claude-test', 'C', Api::AnthropicMessages, 'anthropic', rtrim($url, '/'), 200_000, 8_000, compat: $compat);

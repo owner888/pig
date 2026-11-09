@@ -7,10 +7,10 @@ namespace Pig\Ai\Test\Utils;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Timestamp;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\KimiCoding;
 use Pig\Ai\Utils\Oauth\OauthError;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\Async;
 use Pig\Test\CannedServer;
 
@@ -35,7 +35,7 @@ final class KimiCodingOauthTest extends TestCase
         $shown = [];
         $before = Timestamp::nowMs();
 
-        $credentials = Async::run(static function () use ($host, &$shown): Credentials {
+        $credentials = Async::run(static function () use ($host, &$shown): OauthCredentials {
             return (new KimiCoding(new HttpClient(5.0), $host))->login(static function (string $url, ?string $instructions) use (&$shown): void {
                 $shown = [$url, $instructions];
             });
@@ -90,7 +90,7 @@ final class KimiCodingOauthTest extends TestCase
         ]), '/');
         $shown = null;
 
-        Async::run(static function () use ($host, &$shown): Credentials {
+        Async::run(static function () use ($host, &$shown): OauthCredentials {
             return (new KimiCoding(new HttpClient(5.0), $host))->login(static function (string $url) use (&$shown): void {
                 $shown = $url;
             });
@@ -122,7 +122,7 @@ final class KimiCodingOauthTest extends TestCase
             [self::json(200, ['access_token' => 'new', 'refresh_token' => 'ref2', 'expires_in' => 60])],
         ]), '/');
 
-        $credentials = Async::run(static fn (): Credentials => (new KimiCoding(new HttpClient(5.0), $host))->refresh('old'));
+        $credentials = Async::run(static fn (): OauthCredentials => (new KimiCoding(new HttpClient(5.0), $host))->refresh('old'));
 
         $this->assertSame(['new', 'ref2'], [$credentials->access, $credentials->refresh]);
         $this->assertStringContainsString('grant_type=refresh_token&refresh_token=old', $server->received());
@@ -130,11 +130,11 @@ final class KimiCodingOauthTest extends TestCase
 
     public function testItIsABuiltInSubscriptionSignInForKimiCoding(): void
     {
-        $this->assertSame('kimi-coding', Provider::KimiCoding->value);
-        $this->assertSame('Kimi Code (subscription)', Provider::KimiCoding->label());
-        $this->assertTrue(Provider::KimiCoding->isSubscription());
-        $this->assertTrue(Provider::KimiCoding->available());
-        $this->assertSame('tok', Provider::KimiCoding->apiKey(new Credentials('r', 'tok', 0)));
+        $this->assertSame('kimi-coding', OauthProvider::KimiCoding->value);
+        $this->assertSame('Kimi Code (subscription)', OauthProvider::KimiCoding->label());
+        $this->assertTrue(OauthProvider::KimiCoding->isSubscription());
+        $this->assertTrue(OauthProvider::KimiCoding->available());
+        $this->assertSame('tok', OauthProvider::KimiCoding->apiKey(new OauthCredentials('r', 'tok', 0)));
         $this->assertSame(KimiCoding::DEFAULT_OAUTH_HOST, (new KimiCoding())->oauthHost());
     }
 

@@ -120,7 +120,7 @@ final class ThemeSubmenu extends Container implements InputHandler, CapturesView
         });
         $list->setCancelHandler($this->cancel(...));
 
-        $this->show(new SettingsSubmenu(
+        $this->show(new SelectSubmenu(
             $list,
             Themes::theme()->fg('accent', 'Theme'),
             Themes::theme()->fg('muted', '  Enter to select · Esc to go back'),
@@ -199,7 +199,7 @@ final class ThemeSubmenu extends Container implements InputHandler, CapturesView
             $done(null);
         });
 
-        return new SettingsSubmenu(
+        return new SelectSubmenu(
             $list,
             Themes::theme()->fg('accent', $title),
             Themes::theme()->fg('muted', '  Enter to select · Esc to go back'),

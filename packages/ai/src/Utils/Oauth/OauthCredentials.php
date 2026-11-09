@@ -18,7 +18,7 @@ use Pig\Ai\Timestamp;
  * and are null for the rest: a GitHub Enterprise host, a Google Cloud project, the address
  * a token was issued to, the ChatGPT account an OpenAI Codex token belongs to.
  */
-final readonly class Credentials
+final readonly class OauthCredentials
 {
     /**
      * @param int $expires milliseconds since the epoch, **already** short of the real expiry

@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Pig\Agent;
 
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\Providers\AssistantMessageBuilder;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
@@ -273,7 +273,7 @@ final class StreamProxy
             $encoded['headers'] = $model->headers;
         }
 
-        if ($model->compat instanceof AnthropicCompat) {
+        if ($model->compat instanceof AnthropicMessagesCompat) {
             // Upstream's `AnthropicMessagesCompat` names, again only the keys the model says.
             $encoded['compat'] = array_filter([
                 'forceAdaptiveThinking' => $model->compat->forceAdaptiveThinking,
@@ -357,7 +357,7 @@ final class StreamProxy
             'output' => $pricing->output,
             'cacheRead' => $pricing->cacheRead,
             'cacheWrite' => $pricing->cacheWrite,
-            ...($pricing->tiers === [] ? [] : ['tiers' => array_map(static fn (PricingTier $tier): array => [
+            ...($pricing->tiers === [] ? [] : ['tiers' => array_map(static fn (ModelCostTier $tier): array => [
                 'inputTokensAbove' => $tier->inputTokensAbove,
                 'input' => $tier->input,
                 'output' => $tier->output,

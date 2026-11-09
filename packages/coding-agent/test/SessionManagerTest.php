@@ -17,9 +17,9 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
@@ -139,7 +139,7 @@ final class SessionManagerTest extends TestCase
             StopReason::ToolUse,
         ));
         $session->append(new ToolResultMessage('c1', 'read', [new TextContent('<?php')], false, ['diff' => "-1 a\n+1 b"]));
-        $session->append(new BashExecution('ls', "a\nb", 0));
+        $session->append(new BashExecutionMessage('ls', "a\nb", 0));
 
         $back = SessionManager::open($session->path)->messages();
 
@@ -177,7 +177,7 @@ final class SessionManagerTest extends TestCase
         $this->assertSame([], SessionManager::open($session->path)->messages()[4]->content[0]->arguments);
 
         $bash = $back[3];
-        $this->assertInstanceOf(BashExecution::class, $bash);
+        $this->assertInstanceOf(BashExecutionMessage::class, $bash);
         $this->assertSame('ls', $bash->command);
         $this->assertSame(0, $bash->exitCode);
     }
@@ -239,7 +239,7 @@ final class SessionManagerTest extends TestCase
         // Where the kept part starts, by entry id — pi's way of saying it, and what the
         // file records. `entryAt()` is the join: index 3 of the conversation is the
         // fourth message, which is the one this summary keeps.
-        $session->append(new CompactionSummary(
+        $session->append(new CompactionEntry(
             'we talked about things',
             ['a.php'],
             ['b.php'],
@@ -253,7 +253,7 @@ final class SessionManagerTest extends TestCase
         // without knowing where the kept part starts would hand a resumed session back the
         // whole conversation that had just been compacted away.
         $this->assertCount(2, $back);
-        $this->assertInstanceOf(CompactionSummary::class, $back[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $back[0]);
         $this->assertSame('we talked about things', $back[0]->summary);
         $this->assertSame(['a.php'], $back[0]->readFiles);
         $this->assertSame(['b.php'], $back[0]->modifiedFiles);
@@ -270,7 +270,7 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('the first thing'));
         $session->append($this->answer());
-        $session->append(new CompactionSummary('we talked about things', [], [], 0, null));
+        $session->append(new CompactionEntry('we talked about things', [], [], 0, null));
 
         // Nothing is ever rewritten: a session log is a record of what happened, and what
         // happened is that these were said and then summarised.
@@ -282,7 +282,7 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
-        $session->append(new CompactionSummary('all of it', [], [], 0, null));
+        $session->append(new CompactionEntry('all of it', [], [], 0, null));
 
         // A null `firstKeptEntryId` is "the kept part starts nowhere", which is a summary
         // standing in for everything before it.
@@ -296,10 +296,10 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
-        $session->append(new CompactionSummary('first summary', [], [], 0, null));
+        $session->append(new CompactionEntry('first summary', [], [], 0, null));
         $session->append(new UserMessage('two'));
         $session->append($this->answer('again'));
-        $session->append(new CompactionSummary('second summary', [], [], 0, null));
+        $session->append(new CompactionEntry('second summary', [], [], 0, null));
 
         $back = SessionManager::open($session->path)->messages();
 
@@ -415,7 +415,7 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
-        $session->append(new BranchSummary(
+        $session->append(new BranchSummaryEntry(
             'what happened over there',
             ['read.php'],
             ['written.php'],
@@ -426,7 +426,7 @@ final class SessionManagerTest extends TestCase
         $reopened = SessionManager::open($session->path)->messages();
         $summary = $reopened[2];
 
-        $this->assertInstanceOf(BranchSummary::class, $summary);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $summary);
         $this->assertSame('what happened over there', $summary->summary);
         $this->assertSame(['read.php'], $summary->readFiles);
         $this->assertSame(['written.php'], $summary->modifiedFiles);
@@ -445,7 +445,7 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer('first'));
-        $session->append(new BranchSummary('from elsewhere'));
+        $session->append(new BranchSummaryEntry('from elsewhere'));
 
         $this->assertCount(3, SessionManager::open($session->path)->messages());
     }
@@ -523,12 +523,12 @@ final class SessionManagerTest extends TestCase
         $session->append(new UserMessage('one'));
         $session->append($this->answer('first'));
         $target = $session->branch()[0]['id'];
-        $session->append(new CompactionSummary('it was about one thing'));
+        $session->append(new CompactionEntry('it was about one thing'));
 
         $left = $session->abandoning($target);
 
         $this->assertCount(2, $left);
-        $this->assertInstanceOf(CompactionSummary::class, $left[1]);
+        $this->assertInstanceOf(CompactionEntry::class, $left[1]);
     }
 
     public function testACompactionOnAnAbandonedBranchDoesNotAffectTheOtherOne(): void
@@ -537,7 +537,7 @@ final class SessionManagerTest extends TestCase
         $session->append(new UserMessage('one'));
         $session->append($this->answer('first'));
         $fork = $session->leaf();
-        $session->append(new CompactionSummary('summarised', [], [], 0, null));
+        $session->append(new CompactionEntry('summarised', [], [], 0, null));
 
         $session->goTo($fork);
 
@@ -1306,7 +1306,7 @@ final class SessionManagerTest extends TestCase
         $session->append($this->answer('first'));
         $session->append(new UserMessage('two'));
         $session->append($this->answer('second'));
-        $session->append(new CompactionSummary('we talked', [], [], 0, $session->entryAt(3)));
+        $session->append(new CompactionEntry('we talked', [], [], 0, $session->entryAt(3)));
         $session->append(new UserMessage('three'));
         $session->append($this->answer('third'));
 
@@ -1316,7 +1316,7 @@ final class SessionManagerTest extends TestCase
         $back = SessionManager::open($session->path)->messages();
 
         $this->assertCount(4, $back);
-        $this->assertInstanceOf(CompactionSummary::class, $back[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $back[0]);
         $this->assertSame('second', $back[1]->content[0]->text);
         $this->assertSame('three', $back[2]->content[0]->text);
         $this->assertSame('third', $back[3]->content[0]->text);
@@ -1528,13 +1528,13 @@ final class SessionManagerTest extends TestCase
         $this->converse($session, 'B');
         $kept = $session->branch()[2]['id'];
         $session->appendLabel($kept, 'kept from here');
-        $session->append(new CompactionSummary('A happened', [], [], 0, $kept));
+        $session->append(new CompactionEntry('A happened', [], [], 0, $kept));
         $this->converse($session, 'C');
 
         $fork = SessionManager::open($session->fork($session->leaf())->path);
         $messages = $fork->messages();
 
-        $this->assertInstanceOf(CompactionSummary::class, $messages[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $messages[0]);
         $this->assertSame($kept, $messages[0]->firstKeptEntryId);
         $this->assertCount(5, $messages);
     }

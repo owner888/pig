@@ -494,7 +494,12 @@ final class ExtensionLoader
         // An extension written against a name that moved: PHP says "not found" or "must be of
         // type" with the old name in it, which does not say where the class went. Say it.
         foreach (self::MOVED_NAMESPACES as $old => $hint) {
-            if (str_contains($message, $old)) {
+            // A class key must end where it ends: `ModelReference` is not `ModelReferenceTarget`.
+            $named = str_ends_with($old, '\\')
+                ? str_contains($message, $old)
+                : preg_match('/' . preg_quote($old, '/') . '(?!\\w)/', $message) === 1;
+
+            if ($named) {
                 $message .= " — {$hint}";
 
                 break;
@@ -504,8 +509,30 @@ final class ExtensionLoader
         return "{$type}: {$message} ({$where})";
     }
 
-    /** Namespaces an older extension may still name, and what to write instead. */
+    /** Namespaces and classes an older extension may still name, and what to write instead. Longer keys first: a class before its namespace. */
     private const array MOVED_NAMESPACES = [
+        'Pig\\Ai\\PricingTier' => '`Pig\\Ai\\PricingTier` is `Pig\\Ai\\ModelCostTier` now (1.9.0)',
+        'Pig\\Ai\\AnthropicCompat' => '`Pig\\Ai\\AnthropicCompat` is `Pig\\Ai\\AnthropicMessagesCompat` now (1.9.0)',
+        'Pig\\Ai\\Utils\\Headers' => '`Pig\\Ai\\Utils\\Headers` is `Pig\\Ai\\Utils\\ProviderHeaders` now (1.9.0)',
+        'Pig\\Ai\\Utils\\StreamingJson' => '`Pig\\Ai\\Utils\\StreamingJson` is `Pig\\Ai\\Utils\\StreamingJsonParser` now (1.9.0)',
+        'Pig\\Ai\\Utils\\Oauth\\Credentials' => '`Pig\\Ai\\Utils\\Oauth\\Credentials` is `Pig\\Ai\\Utils\\Oauth\\OauthCredentials` now (1.9.0)',
+        'Pig\\Ai\\Utils\\Oauth\\Provider' => '`Pig\\Ai\\Utils\\Oauth\\Provider` is `Pig\\Ai\\Utils\\Oauth\\OauthProvider` now (1.9.0)',
+        'Pig\\Ai\\Extension\\ClassificationApi' => '`Pig\\Ai\\Extension\\ClassificationApi` is `Pig\\Ai\\Extension\\ProviderClassifier` now (1.9.0)',
+        'Pig\\Ai\\Extension\\ImageGenerationApi' => '`Pig\\Ai\\Extension\\ImageGenerationApi` is `Pig\\Ai\\Extension\\ProviderImages` now (1.9.0)',
+        'Pig\\Ai\\Providers\\AzureOpenAiConfig' => '`Pig\\Ai\\Providers\\AzureOpenAiConfig` is `Pig\\Ai\\Providers\\AzureEndpointOptions` now (1.9.0)',
+        'Pig\\CodingAgent\\ModelRefreshResult' => '`Pig\\CodingAgent\\ModelRefreshResult` is `Pig\\CodingAgent\\ModelsRefreshResult` now (1.9.0)',
+        'Pig\\CodingAgent\\ModelReference' => '`Pig\\CodingAgent\\ModelReference` is `Pig\\CodingAgent\\ModelReferenceResult` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\BashExecution' => '`Pig\\CodingAgent\\Session\\BashExecution` is `Pig\\CodingAgent\\Session\\BashExecutionMessage` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\BranchSummary' => '`Pig\\CodingAgent\\Session\\BranchSummary` is `Pig\\CodingAgent\\Session\\BranchSummaryEntry` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\CompactionSummary' => '`Pig\\CodingAgent\\Session\\CompactionSummary` is `Pig\\CodingAgent\\Session\\CompactionEntry` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\Label' => '`Pig\\CodingAgent\\Session\\Label` is `Pig\\CodingAgent\\Session\\LabelEntry` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\ModelChange' => '`Pig\\CodingAgent\\Session\\ModelChange` is `Pig\\CodingAgent\\Session\\ModelChangeEntry` now (1.9.0)',
+        'Pig\\CodingAgent\\Session\\ThinkingLevelChange' => '`Pig\\CodingAgent\\Session\\ThinkingLevelChange` is `Pig\\CodingAgent\\Session\\ThinkingLevelChangeEntry` now (1.9.0)',
+        'Pig\\CodingAgent\\Prompt\\FileCommand' => '`Pig\\CodingAgent\\Prompt\\FileCommand` is `Pig\\CodingAgent\\Prompt\\PromptTemplate` now (1.9.0)',
+        'Pig\\CodingAgent\\Interactive\\SettingsSubmenu' => '`Pig\\CodingAgent\\Interactive\\SettingsSubmenu` is `Pig\\CodingAgent\\Interactive\\SelectSubmenu` now (1.9.0)',
+        'Pig\\Mcp\\Transports\\Transport' => '`Pig\\Mcp\\Transports\\Transport` is `Pig\\Mcp\\Transports\\McpTransport` now (1.9.0)',
+        'Pig\\Codemode\\Sandbox' => '`Pig\\Codemode\\Sandbox` is `Pig\\Codemode\\CodemodeSandbox` now (1.9.0)',
+
         'Pig\\CodingAgent\\CustomTools\\' => '`Pig\\CodingAgent\\CustomTools\\` is `Pig\\CodingAgent\\Extensions\\` now: `CustomTool` is `ToolDefinition`, `LoadedCustomTool` is `RegisteredTool`, `RenderOptions` is `ToolRenderResultOptions`; the rest kept their names',
         'Pig\\CodingAgent\\Hooks\\' => '`Pig\\CodingAgent\\Hooks\\` is `Pig\\CodingAgent\\Extensions\\` now: `HookApi` is `ExtensionApi`, `HookContext` is `ExtensionContext`, the events kept their names',
     ];

@@ -8,13 +8,13 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Utils\Oauth\Anthropic;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\CallbackServer;
 use Pig\Ai\Utils\Oauth\DeviceCode;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -166,7 +166,7 @@ final class OauthTest extends TestCase
         // from the request this pig made. Upstream throws "OAuth state mismatch" here too.
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))
                 ->exchange('c#somebody-elses', 'the-verifier')),
         );
 
@@ -181,7 +181,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['access_token' => 'sk-ant-oat-x', 'refresh_token' => 'r1', 'expires_in' => 3600]);
 
         // The state *is* the verifier, so a paste whose state matches is the only one accepted.
-        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+        $credentials = $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))
             ->exchange('the-code#the-verifier', 'the-verifier'));
 
         $sent = $this->server->receivedJson();
@@ -200,7 +200,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
-        $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#v\n", 'v'));
+        $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#v\n", 'v'));
 
         // A code pasted out of a terminal arrives with a newline on it about half the time,
         // and a trailing newline inside the code is a 400 that says `invalid_grant`.
@@ -214,7 +214,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))
                 ->exchange('just-the-code', 'v')),
         );
 
@@ -234,7 +234,7 @@ final class OauthTest extends TestCase
         $shown = null;
         $boxClosed = false;
 
-        $credentials = $this->onTheLoop(function () use ($url, $server, $port, &$shown, &$boxClosed): ?Credentials {
+        $credentials = $this->onTheLoop(function () use ($url, $server, $port, &$shown, &$boxClosed): ?OauthCredentials {
             return (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
                 static function (string $u, ?string $i) use (&$shown, $port): void {
                     $shown = $u;
@@ -289,7 +289,7 @@ final class OauthTest extends TestCase
         $placeholder = null;
 
         try {
-            $credentials = $this->onTheLoop(function () use ($url, &$shown, &$placeholder): ?Credentials {
+            $credentials = $this->onTheLoop(function () use ($url, &$shown, &$placeholder): ?OauthCredentials {
                 return (new Anthropic(new HttpClient(), $url))->loginWithBrowser(
                     static function (string $u, ?string $i) use (&$shown): void {
                         $shown = $u;
@@ -333,7 +333,7 @@ final class OauthTest extends TestCase
         $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
         $url = $this->serve(['access_token' => 'sk-ant-oat-p', 'refresh_token' => 'r', 'expires_in' => 3600]);
 
-        $credentials = $this->onTheLoop(function () use ($url, $server): ?Credentials {
+        $credentials = $this->onTheLoop(function () use ($url, $server): ?OauthCredentials {
             $verifier = null;
 
             return (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
@@ -357,7 +357,7 @@ final class OauthTest extends TestCase
         $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
-        $credentials = $this->onTheLoop(fn (): ?Credentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+        $credentials = $this->onTheLoop(fn (): ?OauthCredentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
             static function (string $u, ?string $i): void {
             },
             static fn (string $m, string $p, bool $e, $closing): ?string => null,
@@ -374,7 +374,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
         $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
-            $this->onTheLoop(fn (): ?Credentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+            $this->onTheLoop(fn (): ?OauthCredentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
                 static function (string $u, ?string $i) use ($port): void {
                     Loop::get()->defer(static function () use ($port): void {
                         self::pretendBrowser($port, '/callback?code=c&state=not-the-verifier');
@@ -401,7 +401,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 3600]);
 
         $before = (int) (microtime(true) * 1000);
-        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange('c#v', 'v'));
+        $credentials = $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->exchange('c#v', 'v'));
 
         // An hour, less the five minutes upstream subtracts. A token that expires in flight
         // fails the request it was attached to rather than the next one.
@@ -415,7 +415,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'a2', 'refresh_token' => 'r2', 'expires_in' => 60]);
 
-        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1'));
+        $credentials = $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->refresh('r1'));
 
         $sent = $this->server->receivedJson();
 
@@ -436,7 +436,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         $this->assertStringContainsString('400', $problem->getMessage());
@@ -451,7 +451,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         // A credential built from half an answer is a session that fails later, elsewhere,
@@ -465,7 +465,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         $this->assertStringContainsString('not JSON', $problem->getMessage());
@@ -475,7 +475,7 @@ final class OauthTest extends TestCase
 
     public function testACredentialKnowsWhenItIsDone(): void
     {
-        $credentials = new Credentials('r', 'a', 1_000);
+        $credentials = new OauthCredentials('r', 'a', 1_000);
 
         $this->assertFalse($credentials->hasExpired(999));
         // `>=`, as upstream has it: the moment it is due is already too late.
@@ -489,14 +489,14 @@ final class OauthTest extends TestCase
         // upstream's shape, where it is a literal field on each entry. A third built-in would be
         // an unhandled `match`, which is the point of there being no `default`; a provider an
         // extension brings is an `OauthFlow` and never reaches this enum.
-        foreach (Provider::cases() as $provider) {
+        foreach (OauthProvider::cases() as $provider) {
             $this->assertTrue($provider->available(), $provider->value);
         }
     }
 
     public function testEveryProviderHasAName(): void
     {
-        foreach (Provider::cases() as $provider) {
+        foreach (OauthProvider::cases() as $provider) {
             $this->assertNotSame('', $provider->label());
         }
     }
@@ -507,13 +507,13 @@ final class OauthTest extends TestCase
         // reading `refresh` here would send the wrong one and fail as an auth error.
         $this->assertSame(
             'tid=x;proxy-ep=proxy.individual.githubcopilot.com',
-            Provider::GithubCopilot->apiKey(new Credentials('gho_abc', 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 0)),
+            OauthProvider::GithubCopilot->apiKey(new OauthCredentials('gho_abc', 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 0)),
         );
     }
 
     public function testAnthropicsKeyIsTheAccessTokenTheProviderRecognises(): void
     {
-        $key = Provider::Anthropic->apiKey(new Credentials('r', 'sk-ant-oat01-xyz', 0));
+        $key = OauthProvider::Anthropic->apiKey(new OauthCredentials('r', 'sk-ant-oat01-xyz', 0));
 
         $this->assertSame('sk-ant-oat01-xyz', $key);
         // The prefix is what `Providers\Anthropic` reads to decide between a bearer token and
@@ -525,7 +525,7 @@ final class OauthTest extends TestCase
     {
         $problem = $this->assertThrows(
             OauthError::class,
-            static fn (): Credentials => Provider::Anthropic->refresh(new Credentials('', 'a', 0)),
+            static fn (): OauthCredentials => OauthProvider::Anthropic->refresh(new OauthCredentials('', 'a', 0)),
         );
 
         $this->assertStringContainsString('sign in again', $problem->getMessage());
@@ -602,7 +602,7 @@ final class OauthTest extends TestCase
 
     public function testATypedDomainIsLowercasedTheWayTheUrlParserDoesIt(): void
     {
-        // The typed spelling reaches `Credentials::enterpriseUrl` and `baseUrl()`, so without
+        // The typed spelling reaches `OauthCredentials::enterpriseUrl` and `baseUrl()`, so without
         // this the same domain typed two ways is stored and sent as two different strings.
         $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('COMPANY.GHE.COM'));
         $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('HTTPS://Company.GHE.com/x'));
@@ -806,7 +806,7 @@ final class OauthTest extends TestCase
         // `allowEmpty` on the prompt is what makes blank an answer, and the guard in front of
         // the refusal is the other half of it: the two conditions are "something was typed" and
         // "it is not a host", and either one on its own turns pressing Enter into an error.
-        $answer = $this->onTheLoop(function () use ($url): ?Credentials {
+        $answer = $this->onTheLoop(function () use ($url): ?OauthCredentials {
             $controller = new AbortController();
             Loop::get()->delay(0.15, static fn () => $controller->abort('enough'));
 
@@ -830,7 +830,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): ?Credentials => $this->copilot($url)->login(
+            fn (): mixed => $this->onTheLoop(fn (): ?OauthCredentials => $this->copilot($url)->login(
                 // `???` rather than something with a space in it, which `parse_url()` hands back
                 // as a host where upstream's `new URL()` throws — see the entry in docs/dev/traps/auth.md.
                 static fn (): string => '???',
@@ -851,7 +851,7 @@ final class OauthTest extends TestCase
         $expires = (int) (microtime(true)) + 3600;
         $url = $this->serve(['token' => 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 'expires_at' => $expires]);
 
-        $credentials = $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc'));
+        $credentials = $this->onTheLoop(fn (): OauthCredentials => $this->copilot($url)->refresh('gho_abc'));
 
         $head = $this->server->receivedHead();
 
@@ -873,7 +873,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['token' => 'tid=x', 'expires_at' => 1_800_000_000]);
 
-        $credentials = $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc', 'company.ghe.com'));
+        $credentials = $this->onTheLoop(fn (): OauthCredentials => $this->copilot($url)->refresh('gho_abc', 'company.ghe.com'));
 
         // Kept, because renewing has to go back to the same GitHub and nothing else in the
         // file says which one it was.
@@ -886,7 +886,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc')),
+            fn (): mixed => $this->onTheLoop(fn (): OauthCredentials => $this->copilot($url)->refresh('gho_abc')),
             'without a token',
         );
     }

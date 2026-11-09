@@ -71,12 +71,12 @@ final class ModelRefresh
         ?AbortSignal $signal = null,
         bool $allowNetwork = true,
         ?bool $force = null,
-    ): ModelRefreshResult {
+    ): ModelsRefreshResult {
         $signal ??= AbortSignal::never();
         $errors = [];
 
         if ($signal->aborted()) {
-            return new ModelRefreshResult(true, $errors);
+            return new ModelsRefreshResult(true, $errors);
         }
 
         // The built-in providers' catalogs from the catalog server (upstream's `withRemoteCatalog()`),
@@ -85,7 +85,7 @@ final class ModelRefresh
         $errors = self::builtinCatalogs($auth, $providers, $allowNetwork, $force, $signal);
 
         if ($signal->aborted()) {
-            return new ModelRefreshResult(true, $errors);
+            return new ModelsRefreshResult(true, $errors);
         }
 
         foreach (ProviderRegistry::all() as $provider) {
@@ -128,7 +128,7 @@ final class ModelRefresh
             }
         }
 
-        return new ModelRefreshResult($signal->aborted(), $errors);
+        return new ModelsRefreshResult($signal->aborted(), $errors);
     }
 
     /**
@@ -136,7 +136,7 @@ final class ModelRefresh
      * upstream's `void session.modelRuntime.refresh(...)` after a sign-in or at startup.
      *
      * @param list<string>|null $providers
-     * @param (\Closure(ModelRefreshResult): void)|null $done
+     * @param (\Closure(ModelsRefreshResult): void)|null $done
      */
     public static function inBackground(Auth $auth, ?array $providers = null, bool $allowNetwork = true, ?\Closure $done = null): void
     {

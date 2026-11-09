@@ -13,14 +13,14 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\CustomMessage;
-use Pig\CodingAgent\Session\Label;
-use Pig\CodingAgent\Session\ModelChange;
-use Pig\CodingAgent\Session\ThinkingLevelChange;
+use Pig\CodingAgent\Session\LabelEntry;
+use Pig\CodingAgent\Session\ModelChangeEntry;
+use Pig\CodingAgent\Session\ThinkingLevelChangeEntry;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\CapturesViewportInput;
@@ -128,7 +128,7 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
     /** Upstream's `showLabelTimestamps`. */
     private bool $showLabelTimestamps = false;
 
-    /** @var array<string, int> target id to when its current name was given, in ms, from the `Label` entries */
+    /** @var array<string, int> target id to when its current name was given, in ms, from the `LabelEntry` entries */
     private array $labelTimestamps = [];
 
     /**
@@ -263,7 +263,7 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
 
             $this->rememberToolCalls($node['message']);
 
-            if ($node['message'] instanceof Label && $node['message']->label !== null) {
+            if ($node['message'] instanceof LabelEntry && $node['message']->label !== null) {
                 $target = $node['message']->targetId;
                 $this->labelTimestamps[$target] = max($this->labelTimestamps[$target] ?? 0, $node['message']->timestamp);
             }
@@ -565,10 +565,10 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
             }
         }
 
-        $bookkeeping = $message instanceof Label
+        $bookkeeping = $message instanceof LabelEntry
             || $message instanceof CustomEntry
-            || $message instanceof ModelChange
-            || $message instanceof ThinkingLevelChange;
+            || $message instanceof ModelChangeEntry
+            || $message instanceof ThinkingLevelChangeEntry;
 
         $passes = match ($this->filter) {
             self::USER_ONLY => $message instanceof UserMessage,
@@ -611,14 +611,14 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
                 . ' ' . ($message->errorMessage ?? ''),
             $message instanceof ToolResultMessage => 'toolresult ' . $message->toolName
                 . ' ' . ($this->calls[$message->toolCallId] ?? ''),
-            $message instanceof BashExecution => 'bash ' . $message->command,
+            $message instanceof BashExecutionMessage => 'bash ' . $message->command,
             $message instanceof CustomMessage => 'hook ' . self::textOf($message->content),
-            $message instanceof CompactionSummary => 'compaction ' . $message->summary,
-            $message instanceof BranchSummary => 'branch summary ' . $message->summary,
+            $message instanceof CompactionEntry => 'compaction ' . $message->summary,
+            $message instanceof BranchSummaryEntry => 'branch summary ' . $message->summary,
             $message instanceof CustomEntry => 'custom ' . $message->customType,
-            $message instanceof ModelChange => 'model ' . $message->provider . ' ' . $message->modelId,
-            $message instanceof ThinkingLevelChange => 'thinking ' . $message->level,
-            $message instanceof Label => 'label ' . $message->label,
+            $message instanceof ModelChangeEntry => 'model ' . $message->provider . ' ' . $message->modelId,
+            $message instanceof ThinkingLevelChangeEntry => 'thinking ' . $message->level,
+            $message instanceof LabelEntry => 'label ' . $message->label,
             $message instanceof SystemMessage => 'system',
             default => '',
         };
@@ -758,26 +758,26 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
                 'muted',
                 $this->calls[$message->toolCallId] ?? "[{$message->toolName}]",
             ),
-            $message instanceof BashExecution => Themes::theme()->fg(
+            $message instanceof BashExecutionMessage => Themes::theme()->fg(
                 'dim',
                 '[bash]: ' . self::oneLine($message->command),
             ),
             $message instanceof CustomMessage => Themes::theme()->fg('customMessageLabel', '[hook]: ')
                 . self::oneLine(self::textOf($message->content)),
-            $message instanceof CompactionSummary => Themes::theme()->fg(
+            $message instanceof CompactionEntry => Themes::theme()->fg(
                 'borderAccent',
                 sprintf('[compaction: %dk tokens]', (int) round($message->tokensBefore / 1000)),
             ),
-            $message instanceof BranchSummary => Themes::theme()->fg('warning', '[branch summary]: ')
+            $message instanceof BranchSummaryEntry => Themes::theme()->fg('warning', '[branch summary]: ')
                 . self::oneLine($message->summary),
-            $message instanceof ModelChange => Themes::theme()->fg(
+            $message instanceof ModelChangeEntry => Themes::theme()->fg(
                 'dim',
                 "[model: {$message->provider}/{$message->modelId}]",
             ),
-            $message instanceof ThinkingLevelChange => Themes::theme()->fg('dim', "[thinking: {$message->level}]"),
-            // A cleared name is a `Label` entry with no label — nothing is deleted from a session
+            $message instanceof ThinkingLevelChangeEntry => Themes::theme()->fg('dim', "[thinking: {$message->level}]"),
+            // A cleared name is a `LabelEntry` entry with no label — nothing is deleted from a session
             // file — and `[label: ]` is a row that reads like a rendering fault. Upstream's word.
-            $message instanceof Label => Themes::theme()->fg(
+            $message instanceof LabelEntry => Themes::theme()->fg(
                 'dim',
                 '[label: ' . ($message->label ?? '(cleared)') . ']',
             ),
@@ -975,11 +975,11 @@ final class TreeList implements Component, InputHandler, CapturesViewportInput
     private static function copyText(mixed $message): ?string
     {
         $text = match (true) {
-            $message instanceof BashExecution => $message->command,
+            $message instanceof BashExecutionMessage => $message->command,
             $message instanceof AssistantMessage => self::fullText($message->content) ?: ($message->errorMessage ?? ''),
             $message instanceof UserMessage, $message instanceof CustomMessage => self::fullText($message->content),
             $message instanceof ToolResultMessage => self::fullText($message->content),
-            $message instanceof CompactionSummary, $message instanceof BranchSummary => $message->summary,
+            $message instanceof CompactionEntry, $message instanceof BranchSummaryEntry => $message->summary,
             default => '',
         };
 

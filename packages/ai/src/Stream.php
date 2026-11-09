@@ -138,7 +138,7 @@ final class Stream
 
         if ($tokenHeaders !== null) {
             $apiKey = null;
-            $headers = Utils\Headers::has($headers, 'authorization') ? $headers : [...$tokenHeaders, ...($headers ?? [])];
+            $headers = Utils\ProviderHeaders::has($headers, 'authorization') ? $headers : [...$tokenHeaders, ...($headers ?? [])];
             $requestAuth = ['headers' => $headers];
         }
 
@@ -161,8 +161,8 @@ final class Stream
         $headerAuth = match ($model->api) {
             Api::AnthropicMessages => AnthropicFederation::hasRequestAuth($apiKey, $headers)
                 || AnthropicFederation::config($model, $apiKey, $headers, $options?->env) !== null,
-            Api::OpenAiCompletions, Api::OpenAiResponses => Utils\Headers::has($headers, 'authorization')
-                || Utils\Headers::has($headers, 'cf-aig-authorization'),
+            Api::OpenAiCompletions, Api::OpenAiResponses => Utils\ProviderHeaders::has($headers, 'authorization')
+                || Utils\ProviderHeaders::has($headers, 'cf-aig-authorization'),
             // Neither of upstream's two refuses a missing key: Vertex falls back on Application
             // Default Credentials and Bedrock on the AWS credential chain, and each says so itself
             // when there is nothing there either.
@@ -539,7 +539,7 @@ final class Stream
             return new AnthropicOptions(...$base, thinkingEnabled: false, toolChoice: $toolChoice);
         }
 
-        $compat = $model->compat instanceof AnthropicCompat ? $model->compat : null;
+        $compat = $model->compat instanceof AnthropicMessagesCompat ? $model->compat : null;
 
         if ($compat?->forceAdaptiveThinking === true) {
             return new AnthropicOptions(

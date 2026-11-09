@@ -5,7 +5,7 @@
  * (what the script sees) and `worker.ts` (the bridge) in one file, because there is one process
  * instead of a worker holding a VM.
  *
- * Started by `Sandbox` as `php -n -d disable_functions=… -d open_basedir=… -d memory_limit=… child.php`,
+ * Started by `CodemodeSandbox` as `php -n -d disable_functions=… -d open_basedir=… -d memory_limit=… child.php`,
  * so the script has no shell, no filesystem, no sockets and a bounded heap; everything it can do
  * besides compute goes over the pipe. **This file must stay self-contained**: no autoloader, no
  * `require`, because `open_basedir` forbids reaching the repository and that is the point.

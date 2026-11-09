@@ -37,7 +37,7 @@ use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\PrintMode;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
@@ -119,7 +119,7 @@ final class PrintModeTest extends TestCase
     /**
      * @param list<string>       $messages
      * @param list<ImageContent> $images
-     * @param list<FileCommand>  $fileCommands
+     * @param list<PromptTemplate>  $fileCommands
      * @return int the exit code
      */
     private function execute(
@@ -636,7 +636,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['reviewed'];
         $this->execute(['/review src/Foo.php'], fileCommands: [
-            new FileCommand('review', 'Review a file', 'Review $1 and say what is wrong.', '(user)'),
+            new PromptTemplate('review', 'Review a file', 'Review $1 and say what is wrong.', '(user)'),
         ]);
 
         $said = $this->session->messages()[0];
@@ -648,7 +648,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['ok'];
         $this->execute(['/review src/Foo.php'], fileCommands: [
-            new FileCommand('deploy', 'Deploy', 'Deploy it.', '(user)'),
+            new PromptTemplate('deploy', 'Deploy', 'Deploy it.', '(user)'),
         ]);
 
         // No command answers to `review` here, so the line is a message. The expansion is exact

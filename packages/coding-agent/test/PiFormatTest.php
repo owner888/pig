@@ -11,9 +11,9 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\ContextEdit;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\CustomMessage;
@@ -167,7 +167,7 @@ final class PiFormatTest extends TestCase
         $session->append($this->answer());
         $session->append(new UserMessage('two'));
         $session->append($this->answer('again'));
-        $session->append(new CompactionSummary('what happened', ['a.php'], [], 1_000, $session->entryAt(3)));
+        $session->append(new CompactionEntry('what happened', ['a.php'], [], 1_000, $session->entryAt(3)));
 
         $line = self::linesOf($session->path)[5];
 
@@ -194,7 +194,7 @@ final class PiFormatTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
-        $session->append(new BranchSummary('what the other branch was about', ['a.php'], [], null));
+        $session->append(new BranchSummaryEntry('what the other branch was about', ['a.php'], [], null));
 
         $line = self::linesOf($session->path)[3];
 
@@ -206,7 +206,7 @@ final class PiFormatTest extends TestCase
         $reopened = SessionManager::open($session->path);
         $summary = $reopened->messages()[2];
 
-        $this->assertInstanceOf(BranchSummary::class, $summary);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $summary);
         $this->assertNull($summary->fromId);
     }
 
@@ -216,7 +216,7 @@ final class PiFormatTest extends TestCase
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
         $leaf = $session->leaf();
-        $session->append(new BranchSummary('about that branch', [], [], $leaf));
+        $session->append(new BranchSummaryEntry('about that branch', [], [], $leaf));
 
         $this->assertSame($leaf, self::linesOf($session->path)[3]['fromId']);
     }
@@ -259,7 +259,7 @@ final class PiFormatTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('hi'));
         $session->append($this->answer());
-        $session->append(new BashExecution('ls', 'a.php', 0));
+        $session->append(new BashExecutionMessage('ls', 'a.php', 0));
 
         $line = self::linesOf($session->path)[3];
 
@@ -569,7 +569,7 @@ final class PiFormatTest extends TestCase
         $messages = SessionManager::open($path)->messages();
 
         $this->assertCount(2, $messages);
-        $this->assertInstanceOf(CompactionSummary::class, $messages[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $messages[0]);
         $this->assertSame('what pi summarised', $messages[0]->summary);
         $this->assertSame(2, $messages[0]->replaced, 'two messages before the kept one');
         $this->assertSame('kept', $messages[1]->content[0]->text);
@@ -654,7 +654,7 @@ final class PiFormatTest extends TestCase
         $messages = SessionManager::open($path)->messages();
 
         $this->assertCount(2, $messages);
-        $this->assertInstanceOf(CompactionSummary::class, $messages[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $messages[0]);
         $this->assertSame('what pi summarised', $messages[0]->summary);
         $this->assertSame(2, $messages[0]->replaced, 'two messages before the kept one');
         $this->assertSame('kept', $messages[1]->content[0]->text);

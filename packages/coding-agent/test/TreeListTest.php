@@ -17,8 +17,8 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Interactive\TreeList;
 use Pig\CodingAgent\Session\CustomEntry;
-use Pig\CodingAgent\Session\Label;
-use Pig\CodingAgent\Session\ModelChange;
+use Pig\CodingAgent\Session\LabelEntry;
+use Pig\CodingAgent\Session\ModelChangeEntry;
 
 /**
  * The tree `/tree` draws, and the keys that move around it.
@@ -278,10 +278,10 @@ final class TreeListTest extends TestCase
 
     public function testAClearedNameSaysSoRatherThanShowingAnEmptyBracket(): void
     {
-        // Nothing is deleted from a session file, so clearing a name writes a `Label` with no
+        // Nothing is deleted from a session file, so clearing a name writes a `LabelEntry` with no
         // label. Its row is only visible under the `all` filter, which is where bookkeeping lives.
         $tree = [self::node('a', self::said('hello'), [
-            self::node('b', new Label('a')),
+            self::node('b', new LabelEntry('a')),
         ])];
 
         $list = self::list($tree, 'b');
@@ -318,7 +318,7 @@ final class TreeListTest extends TestCase
 
     public function testTheDefaultViewHidesTheBookkeeping(): void
     {
-        $tree = [self::node('a', new ModelChange('anthropic', 'claude-sonnet-4-5'), [
+        $tree = [self::node('a', new ModelChangeEntry('anthropic', 'claude-sonnet-4-5'), [
             self::node('b', self::said('hello')),
         ])];
 
@@ -330,7 +330,7 @@ final class TreeListTest extends TestCase
 
     public function testCtrlOCyclesThroughTheFiveFilters(): void
     {
-        $tree = [self::node('a', new ModelChange('anthropic', 'm'), [
+        $tree = [self::node('a', new ModelChangeEntry('anthropic', 'm'), [
             self::node('b', self::said('hello'), [
                 self::node('c', new ToolResultMessage('x', 'read', [new TextContent('out')]), [
                     self::node('d', self::said('named'), [], 'a name'),
@@ -653,7 +653,7 @@ final class TreeListTest extends TestCase
     public function testShiftTShowsWhenEachNameWasGiven(): void
     {
         $tree = [self::node('a', self::said('hello'), [
-            self::node('l', new Label('a', 'start', 0)),
+            self::node('l', new LabelEntry('a', 'start', 0)),
         ], 'start')];
         $list = self::list($tree, 'a');
 

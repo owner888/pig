@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Extensions\Events;
 
 use Pig\CodingAgent\Extensions\ExtensionEvent;
-use Pig\CodingAgent\Session\BranchSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
 
 /**
  * The jump happened; the leaf is now somewhere else. Upstream's `SessionTreeEvent`.
@@ -19,7 +19,7 @@ final readonly class SessionTreeEvent implements ExtensionEvent
     public function __construct(
         public ?string $newLeafId,
         public ?string $oldLeafId,
-        public ?BranchSummary $summaryEntry = null,
+        public ?BranchSummaryEntry $summaryEntry = null,
         public ?bool $fromExtension = null,
     ) {
     }

@@ -11,7 +11,7 @@ use Pig\Ai\Timestamp;
 /**
  * Something a hook put in the conversation.
  *
- * An app message like `BashExecution`: it sits in the transcript in order, and
+ * An app message like `BashExecutionMessage`: it sits in the transcript in order, and
  * `CodingAgent::toLlm()` turns it into a user message on the way to the model. What a hook
  * gets out of it is a way to tell the model something the model had no way to find out —
  * a build that just failed, a file that changed under it, a rule about this repository.

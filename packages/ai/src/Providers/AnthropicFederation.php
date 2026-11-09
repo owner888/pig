@@ -8,7 +8,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\StreamOptions;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Async\Async;
 use RuntimeException;
 use Throwable;
@@ -141,9 +141,9 @@ final class AnthropicFederation
     public static function hasRequestAuth(?string $apiKey, ?array $headers): bool
     {
         return ($apiKey !== null && $apiKey !== '')
-            || Headers::has($headers, 'authorization')
-            || Headers::has($headers, 'x-api-key')
-            || Headers::has($headers, 'cf-aig-authorization');
+            || ProviderHeaders::has($headers, 'authorization')
+            || ProviderHeaders::has($headers, 'x-api-key')
+            || ProviderHeaders::has($headers, 'cf-aig-authorization');
     }
 
     /**

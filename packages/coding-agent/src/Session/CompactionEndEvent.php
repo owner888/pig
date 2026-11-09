@@ -32,7 +32,7 @@ final readonly class CompactionEndEvent implements AgentEvent
         public bool $aborted,
         public bool $willRetry,
         public ?string $errorMessage = null,
-        public ?CompactionSummary $summary = null,
+        public ?CompactionEntry $summary = null,
     ) {
     }
 }

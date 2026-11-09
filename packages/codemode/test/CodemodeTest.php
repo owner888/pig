@@ -11,7 +11,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\Declarations;
 use Pig\Codemode\Identifier;
-use Pig\Codemode\Sandbox;
+use Pig\Codemode\CodemodeSandbox;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
 
@@ -116,9 +116,9 @@ final class CodemodeTest extends TestCase
     // ---- the sandbox ----------------------------------------------------------------------------
 
     /** @param list<array{name: string, description?: string, execute: \Closure}> $tools */
-    private function script(string $code, array $tools = [], ?float $timeout = 10.0, array $store = [], ?AbortController $abort = null, int $memory = Sandbox::DEFAULT_MEMORY_LIMIT_BYTES, array $globals = []): array
+    private function script(string $code, array $tools = [], ?float $timeout = 10.0, array $store = [], ?AbortController $abort = null, int $memory = CodemodeSandbox::DEFAULT_MEMORY_LIMIT_BYTES, array $globals = []): array
     {
-        $sandbox = new Sandbox($tools, [
+        $sandbox = new CodemodeSandbox($tools, [
             'search_tools' => static fn (array $args): array => [['name' => 'found_' . $args[0], 'description' => '']],
             'describe_tool' => static fn (array $args): ?string => $args[0] === 'known' ? 'the known tool' : null,
             ...$globals,

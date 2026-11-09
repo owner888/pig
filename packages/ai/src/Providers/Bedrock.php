@@ -41,7 +41,7 @@ use Pig\Ai\Utils\Aws\Credentials;
 use Pig\Ai\Utils\Aws\ServiceError;
 use Pig\Ai\Utils\Aws\StreamError;
 use Pig\Ai\Utils\ConstrainedSampling;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\PartialJson;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Transcript;
@@ -231,7 +231,7 @@ final class Bedrock
             }
 
             $config['customUserAgent'] = self::bedrockUserAgent($options->identity);
-            $customHeaders = Headers::providerHeadersToRecord($options->headers);
+            $customHeaders = ProviderHeaders::providerHeadersToRecord($options->headers);
 
             if ($customHeaders !== null) {
                 $config['headers'] = self::withoutReservedHeaders($customHeaders);

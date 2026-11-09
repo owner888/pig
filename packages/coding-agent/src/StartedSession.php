@@ -9,7 +9,7 @@ use Pig\Ai\Model;
 use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
@@ -31,7 +31,7 @@ use Pig\CodingAgent\Session\SessionManager;
  *
  * @param list<Skill>             $skills
  * @param list<ContextFile>       $contextFiles
- * @param list<FileCommand>      $fileCommands
+ * @param list<PromptTemplate>      $fileCommands
  * @param list<string>            $warnings
  */
 final readonly class StartedSession

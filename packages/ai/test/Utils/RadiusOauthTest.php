@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Test\Utils;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\Radius;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -36,7 +36,7 @@ final class RadiusOauthTest extends TestCase
         $shown = [];
         $asked = [];
 
-        [$result, $thrown] = self::inLoop(static function () use ($base, &$shown, &$asked): ?Credentials {
+        [$result, $thrown] = self::inLoop(static function () use ($base, &$shown, &$asked): ?OauthCredentials {
             return (new Radius(gateway: $base))->login(
                 static function (string $url, ?string $instructions) use (&$shown): void {
                     $shown[] = [$url, $instructions];
@@ -54,7 +54,7 @@ final class RadiusOauthTest extends TestCase
         $this->assertNull($thrown);
         $this->assertSame([['Sign in to Radius:', ['Sign in with browser (recommended)', 'Sign in with device code (when signing in from another device)']]], $asked);
         $this->assertSame([['https://radius.example/device', 'Enter code: ABCD-EFGH']], $shown);
-        $this->assertInstanceOf(Credentials::class, $result);
+        $this->assertInstanceOf(OauthCredentials::class, $result);
         $this->assertSame(['at-1', 'rt-1'], [$result->access, $result->refresh]);
         // An hour, less upstream's minute of skew.
         $this->assertEqualsWithDelta(time() * 1000 + 3_540_000, $result->expires, 5_000);
@@ -71,7 +71,7 @@ final class RadiusOauthTest extends TestCase
             self::reply(400, ['error' => 'access_denied']),
         ]);
 
-        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+        [, $thrown] = self::inLoop(static fn (): ?OauthCredentials => (new Radius(gateway: $base))->login(
             static function (): void {},
             onSelect: static fn (): string => Radius::METHOD_DEVICE_CODE,
         ));
@@ -85,7 +85,7 @@ final class RadiusOauthTest extends TestCase
         $server = new CannedServer();
         $base = $server->startSequence([self::reply(200, ['access_token' => 'at-2', 'refresh_token' => 'rt-2', 'expires_in' => 120])]);
 
-        [$result] = self::inLoop(static fn (): Credentials => (new Radius(gateway: $base))->refresh('rt-1'));
+        [$result] = self::inLoop(static fn (): OauthCredentials => (new Radius(gateway: $base))->refresh('rt-1'));
         $received = $server->received();
         $server->stop();
 
@@ -99,7 +99,7 @@ final class RadiusOauthTest extends TestCase
         $server = new CannedServer();
         $base = $server->startSequence([self::reply(400, ['error' => 'invalid_grant', 'error_description' => 'expired'])]);
 
-        [, $thrown] = self::inLoop(static fn (): Credentials => (new Radius(gateway: $base))->refresh('rt-1'));
+        [, $thrown] = self::inLoop(static fn (): OauthCredentials => (new Radius(gateway: $base))->refresh('rt-1'));
         $server->stop();
 
         $this->assertSame('Radius OAuth token request failed: invalid_grant: expired', $thrown);
@@ -110,7 +110,7 @@ final class RadiusOauthTest extends TestCase
         $server = new CannedServer();
         $base = $server->startSequence([self::reply(200, ['nope' => true])]);
 
-        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+        [, $thrown] = self::inLoop(static fn (): ?OauthCredentials => (new Radius(gateway: $base))->login(
             static function (): void {},
             onSelect: static fn (): string => Radius::METHOD_BROWSER,
         ));
@@ -128,7 +128,7 @@ final class RadiusOauthTest extends TestCase
         $base = $server->startSequence([self::reply(200, ['authorizationEndpoint' => 'file:///Users/victim/Downloads/payload.app'])]);
         $shown = [];
 
-        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+        [, $thrown] = self::inLoop(static fn (): ?OauthCredentials => (new Radius(gateway: $base))->login(
             static function (string $url) use (&$shown): void {
                 $shown[] = $url;
             },
@@ -149,7 +149,7 @@ final class RadiusOauthTest extends TestCase
         ]);
         $shown = [];
 
-        [, $thrown] = self::inLoop(static fn (): ?Credentials => (new Radius(gateway: $base))->login(
+        [, $thrown] = self::inLoop(static fn (): ?OauthCredentials => (new Radius(gateway: $base))->login(
             static function (string $url) use (&$shown): void {
                 $shown[] = $url;
             },

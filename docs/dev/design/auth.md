@@ -169,8 +169,8 @@ arrives on a socket rather than through a person.
 It is also the only one that does not finish when the tokens arrive. A Code Assist token is
 useless without a Cloud project to spend it against and most accounts have none, so `project()`
 asks for one and provisions a free-tier one when there is none — an API call that answers "not
-yet" and has to be asked again. That is what `projectId` on `Credentials` is for, and why
-`Provider::apiKey()` encodes it alongside the token: an api key field carries one string, and
+yet" and has to be asked again. That is what `projectId` on `OauthCredentials` is for, and why
+`OauthProvider::apiKey()` encodes it alongside the token: an api key field carries one string, and
 Code Assist needs two things.
 
 Six things worth keeping straight:

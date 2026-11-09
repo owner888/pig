@@ -15,7 +15,7 @@ use Pig\Ai\Timestamp;
  * usually the one that did the work on it. This is that work, written down and appended to
  * the branch being joined, so an hour of exploring is not thrown away by moving.
  *
- * Unlike a `CompactionSummary`, this **replaces nothing**: the messages it describes were
+ * Unlike a `CompactionEntry`, this **replaces nothing**: the messages it describes were
  * never on this branch. So there is no `replaced` count, and reading the log back never
  * splices anything out on its account.
  *
@@ -24,11 +24,11 @@ use Pig\Ai\Timestamp;
  *
  * Ported from upstream's `BranchSummaryEntry` and `BranchSummaryDetails`.
  */
-final readonly class BranchSummary
+final readonly class BranchSummaryEntry
 {
     /**
      * Upstream's `BRANCH_SUMMARY_PREFIX` and `_SUFFIX`, word for word — see
-     * `CompactionSummary::PREFIX` for why the tags are the part that matters.
+     * `CompactionEntry::PREFIX` for why the tags are the part that matters.
      *
      * Note the asymmetry, which is upstream's and is kept: the compaction suffix opens with a
      * newline and this one does not. It reaches a prompt either way, and a port that tidies one of
@@ -55,7 +55,7 @@ final readonly class BranchSummary
         public ?string $fromId = null,
         public bool $fromHook = false,
         ?int $timestamp = null,
-        /** Upstream's `BranchSummaryEntry.usage`, as `CompactionSummary::$usage`. */
+        /** Upstream's `BranchSummaryEntry.usage`, as `CompactionEntry::$usage`. */
         public ?Usage $usage = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();

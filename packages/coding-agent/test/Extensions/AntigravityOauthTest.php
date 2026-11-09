@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Test\Extensions;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Utils\Oauth\CallbackServer;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Async\Async;
@@ -221,7 +221,7 @@ final class AntigravityOauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'ya29.new', 'expires_in' => 3599]);
 
-        $renewed = $this->onTheLoop(fn (): Credentials => $this->antigravity($url)->renew('1//r', 'proj-1'));
+        $renewed = $this->onTheLoop(fn (): OauthCredentials => $this->antigravity($url)->renew('1//r', 'proj-1'));
 
         $sent = $this->server->received();
 
@@ -274,7 +274,7 @@ final class AntigravityOauthTest extends TestCase
 
     public function testAntigravitysKeyCarriesTheProjectAlongsideTheToken(): void
     {
-        $key = AntigravityOauth::keyFor(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
+        $key = AntigravityOauth::keyFor(new OauthCredentials('r', 'ya29.a', 0, projectId: 'proj-1'));
 
         // The same shape Gemini CLI's uses, because it is the same protocol — two deployments,
         // one provider class parsing the key back.

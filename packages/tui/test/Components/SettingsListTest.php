@@ -540,7 +540,7 @@ final class SettingsListTest extends TestCase
         // A component with no `handleInput` is a screen with nothing to press, not a crash.
         // The mistake this pairs with is the other way round: a `Container` *is* a
         // `Component`, so a submenu built from one compiles, draws, and silently eats every
-        // key. `SettingsSubmenu` is what the settings screen uses instead.
+        // key. `SelectSubmenu` is what the settings screen uses instead.
         $this->assertSame(['nothing to press'], $list->render(60));
     }
 

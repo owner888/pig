@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Test;
 use Closure;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
@@ -96,7 +96,7 @@ final class CacheWarmerTest extends TestCase
 
         $this->assertTrue(CacheWarmer::isReplayable(self::model(), new SimpleStreamOptions()));
         $this->assertFalse(CacheWarmer::isReplayable(self::model(), $thinking));
-        $this->assertTrue(CacheWarmer::isReplayable(self::model(compat: new AnthropicCompat(forceAdaptiveThinking: true)), $thinking));
+        $this->assertTrue(CacheWarmer::isReplayable(self::model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)), $thinking));
         $this->assertTrue(CacheWarmer::isReplayable(self::model(api: Api::OpenAiResponses), $thinking));
     }
 
@@ -311,7 +311,7 @@ final class CacheWarmerTest extends TestCase
     /** @param array{short?: int|float, long?: int|float}|null $promptCache */
     private static function model(
         Api $api = Api::AnthropicMessages,
-        ?AnthropicCompat $compat = null,
+        ?AnthropicMessagesCompat $compat = null,
         ?array $promptCache = ['short' => 10.1],
     ): Model {
         return new Model(

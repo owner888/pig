@@ -13,7 +13,7 @@ use Pig\Async\AbortSignal;
  * `start()` and `send()` suspend the calling fiber until done; messages, errors and the close
  * arrive on listeners, from the loop. A transport is started once and closed once.
  */
-interface Transport
+interface McpTransport
 {
     public function start(): void;
 

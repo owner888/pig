@@ -6,13 +6,13 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomModels;
 
@@ -644,7 +644,7 @@ final class CustomModelsTest extends TestCase
             ]])],
         ]))->models[0];
 
-        $this->assertEquals([new PricingTier(200_000, 2.0, 4.0, 0.2, 0.0)], $model->pricing->tiers);
+        $this->assertEquals([new ModelCostTier(200_000, 2.0, 4.0, 0.2, 0.0)], $model->pricing->tiers);
     }
 
     /**
@@ -716,7 +716,7 @@ final class CustomModelsTest extends TestCase
             'tiers' => [['inputTokensAbove' => 200_000.5, 'input' => -1, 'output' => 22.5, 'cacheRead' => 0.6, 'cacheWrite' => 7.5, 'note' => 'extra keys are allowed']],
         ]])]]))->models[0];
 
-        $this->assertEquals([new PricingTier(200_000, -1.0, 22.5, 0.6, 7.5)], $model->pricing->tiers);
+        $this->assertEquals([new ModelCostTier(200_000, -1.0, 22.5, 0.6, 7.5)], $model->pricing->tiers);
     }
 
     public function testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem(): void
@@ -778,7 +778,7 @@ final class CustomModelsTest extends TestCase
             ]])],
         ]))->models[0];
 
-        $this->assertInstanceOf(AnthropicCompat::class, $anthropic->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $anthropic->compat);
         $this->assertFalse($anthropic->compat->supportsLongCacheRetention);
         $this->assertTrue($anthropic->compat->sendSessionAffinityHeaders);
         $this->assertSame('openrouter', $anthropic->compat->sessionAffinityFormat);
@@ -856,7 +856,7 @@ final class CustomModelsTest extends TestCase
             ]])],
         ]))->models[0];
 
-        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
         $this->assertTrue($model->compat->forceAdaptiveThinking);
         $this->assertTrue($model->compat->strictTools);
         $this->assertFalse($model->compat->supportsTemperature);
@@ -876,7 +876,7 @@ final class CustomModelsTest extends TestCase
             ]])],
         ]))->models[0];
 
-        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
         $this->assertTrue($model->compat->supportsMidConvoSystemMessages);
         $this->assertFalse($model->compat->supportsMidConvoToolChanges);
     }

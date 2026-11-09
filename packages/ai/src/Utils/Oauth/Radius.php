@@ -71,7 +71,7 @@ final readonly class Radius
      * @param Closure(string): void|null $onProgress
      * @param Closure(string, list<array{0: string, 1: string}>): ?string|null $onSelect
      */
-    public function login(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+    public function login(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?OauthCredentials
     {
         $method = self::METHOD_BROWSER;
 
@@ -96,7 +96,7 @@ final readonly class Radius
     }
 
     /** Upstream's `refresh(credential)`. */
-    public function refresh(string $refreshToken, ?AbortSignal $signal = null): Credentials
+    public function refresh(string $refreshToken, ?AbortSignal $signal = null): OauthCredentials
     {
         return $this->requestToken([
             'grant_type' => 'refresh_token',
@@ -126,7 +126,7 @@ final readonly class Radius
     }
 
     /** Upstream's `loginWithBrowser()`. */
-    private function loginWithBrowser(string $authorizationEndpoint, Closure $onAuth, ?Closure $onProgress, AbortSignal $signal): Credentials
+    private function loginWithBrowser(string $authorizationEndpoint, Closure $onAuth, ?Closure $onProgress, AbortSignal $signal): OauthCredentials
     {
         $pkce = Pkce::create();
         $state = self::uuid();
@@ -171,7 +171,7 @@ final readonly class Radius
     }
 
     /** Upstream's `loginWithDeviceCode()`. */
-    private function loginWithDeviceCode(Closure $onAuth, AbortSignal $signal): Credentials
+    private function loginWithDeviceCode(Closure $onAuth, AbortSignal $signal): OauthCredentials
     {
         $response = $this->send(new Request(
             'POST',
@@ -229,7 +229,7 @@ final readonly class Radius
      *
      * @param array<string, string> $body
      */
-    private function requestToken(array $body, AbortSignal $signal): Credentials
+    private function requestToken(array $body, AbortSignal $signal): OauthCredentials
     {
         $response = $this->send(new Request(
             'POST',
@@ -251,7 +251,7 @@ final readonly class Radius
             throw new OauthError('Radius OAuth token response is missing fields: ' . JsJson::stringify($json));
         }
 
-        return new Credentials($refresh, $access, (int) (Timestamp::nowMs() + $expiresIn * 1000 - self::TOKEN_EXPIRY_SKEW_MS));
+        return new OauthCredentials($refresh, $access, (int) (Timestamp::nowMs() + $expiresIn * 1000 - self::TOKEN_EXPIRY_SKEW_MS));
     }
 
     /** A request whose failure, when the login was cancelled, says so — upstream's `catch` round `fetch`. */

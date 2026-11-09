@@ -32,7 +32,7 @@ final class SessionCodec
         }
 
         return match (true) {
-            $message instanceof CompactionSummary => [
+            $message instanceof CompactionEntry => [
                 'role' => 'compactionSummary',
                 'summary' => $message->summary,
                 'readFiles' => $message->readFiles,
@@ -44,7 +44,7 @@ final class SessionCodec
                 ...($message->usage === null ? [] : ['usage' => MessageJson::encodeUsage($message->usage)]),
                 'timestamp' => $message->timestamp,
             ],
-            $message instanceof BranchSummary => [
+            $message instanceof BranchSummaryEntry => [
                 'role' => 'branchSummary',
                 'summary' => $message->summary,
                 'readFiles' => $message->readFiles,
@@ -64,7 +64,7 @@ final class SessionCodec
                 'details' => self::plain($message->details),
                 'timestamp' => $message->timestamp,
             ],
-            $message instanceof BashExecution => [
+            $message instanceof BashExecutionMessage => [
                 'role' => 'bashExecution',
                 'command' => $message->command,
                 'output' => $message->output,
@@ -97,7 +97,7 @@ final class SessionCodec
         $timestamp = isset($entry['timestamp']) ? (int) $entry['timestamp'] : null;
 
         return match ($entry['role'] ?? null) {
-            'compactionSummary' => new CompactionSummary(
+            'compactionSummary' => new CompactionEntry(
                 (string) ($entry['summary'] ?? ''),
                 array_values(array_map(strval(...), (array) ($entry['readFiles'] ?? []))),
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
@@ -111,7 +111,7 @@ final class SessionCodec
                     : null,
                 is_array($entry['usage'] ?? null) ? MessageJson::decodeUsage($entry['usage']) : null,
             ),
-            'branchSummary' => new BranchSummary(
+            'branchSummary' => new BranchSummaryEntry(
                 (string) ($entry['summary'] ?? ''),
                 array_values(array_map(strval(...), (array) ($entry['readFiles'] ?? []))),
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
@@ -127,7 +127,7 @@ final class SessionCodec
                 $entry['details'] ?? null,
                 $timestamp,
             ),
-            'bashExecution' => new BashExecution(
+            'bashExecution' => new BashExecutionMessage(
                 (string) ($entry['command'] ?? ''),
                 (string) ($entry['output'] ?? ''),
                 isset($entry['exitCode']) ? (int) $entry['exitCode'] : null,

@@ -42,7 +42,7 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
@@ -876,7 +876,7 @@ final class OpenAiCompletions
             return $apiKey;
         }
 
-        if (Headers::has($headers, 'authorization') || Headers::has($headers, 'cf-aig-authorization')) {
+        if (ProviderHeaders::has($headers, 'authorization') || ProviderHeaders::has($headers, 'cf-aig-authorization')) {
             return 'unused';
         }
 
@@ -966,7 +966,7 @@ final class OpenAiCompletions
      */
     public static function sdkHeaders(string $apiKey, array $defaultHeaders, int $timeoutMs): array
     {
-        $built = Headers::build(
+        $built = ProviderHeaders::build(
             [
                 ...SdkHeaders::stainless('OpenAI/JS ' . SdkHeaders::OPENAI_SDK_VERSION, SdkHeaders::OPENAI_SDK_VERSION, $timeoutMs),
                 'OpenAI-Organization' => StreamOptions::providerEnvValue('OPENAI_ORG_ID', null),

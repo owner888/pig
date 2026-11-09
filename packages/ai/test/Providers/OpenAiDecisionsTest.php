@@ -20,7 +20,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
 use Pig\Ai\ModelType;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\StopReason;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -206,7 +206,7 @@ final class OpenAiDecisionsTest extends TestCase
         $this->assertSame(['text', 'image'], $row->input);
         $this->assertSame(922_000, $row->contextWindow);
         $this->assertSame(0.1, $row->pricing->input);
-        $this->assertEquals([new PricingTier(272_000, 0.2)], $row->pricing->tiers, 'the chat requests\' long-context multiplier, on input only');
+        $this->assertEquals([new ModelCostTier(272_000, 0.2)], $row->pricing->tiers, 'the chat requests\' long-context multiplier, on input only');
     }
 
     public function testImagesForAModelThatCannotSeeAreRefusedBeforeItsProviderIs(): void
@@ -245,7 +245,7 @@ final class OpenAiDecisionsTest extends TestCase
     /** Upstream's test model: the catalogue row, at the server. */
     private static function luna(string $base): ClassifierModel
     {
-        return new ClassifierModel('gpt-6-luna', 'GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'openai', $base . '/v1', 922_000, ['text', 'image'], new Pricing(0.1, 0.0, 0.0, 0.0, [new PricingTier(272_000, 0.2)]));
+        return new ClassifierModel('gpt-6-luna', 'GPT-6 Luna', ClassifierApi::OpenAiDecisions, 'openai', $base . '/v1', 922_000, ['text', 'image'], new Pricing(0.1, 0.0, 0.0, 0.0, [new ModelCostTier(272_000, 0.2)]));
     }
 
     private static function image(): ImageContent

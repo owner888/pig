@@ -20,7 +20,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
@@ -67,7 +67,7 @@ final class OpenRouterImages
             $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
             // `createClient()`: `defaultHeaders: providerHeadersToRecord(getIdentityHeaders(model, identity),
             // model.headers, optionsHeaders)`.
-            $defaultHeaders = Headers::providerHeadersToRecord(ClientIdentity::headers($model, $options?->identity), $model->headers, $options?->headers) ?? [];
+            $defaultHeaders = ProviderHeaders::providerHeadersToRecord(ClientIdentity::headers($model, $options?->identity), $model->headers, $options?->headers) ?? [];
             $request = new Request(
                 'POST',
                 rtrim($model->baseUrl, '/') . '/chat/completions',

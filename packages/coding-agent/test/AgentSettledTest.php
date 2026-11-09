@@ -44,7 +44,7 @@ use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CustomMessage;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Settings;
@@ -466,7 +466,7 @@ final class AgentSettledTest extends TestCase
         self::settle();
 
         $messages = $session->messages();
-        $this->assertInstanceOf(CompactionSummary::class, $messages[1] ?? null, 'the agent now holds the compacted conversation');
+        $this->assertInstanceOf(CompactionEntry::class, $messages[1] ?? null, 'the agent now holds the compacted conversation');
         $this->assertTrue($messages[1]->fromHook);
         $this->assertSame('second', self::textOf($messages[count($messages) - 1]));
 

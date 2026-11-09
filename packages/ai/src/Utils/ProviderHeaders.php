@@ -10,7 +10,7 @@ namespace Pig\Ai\Utils;
  * A header map here is upstream's `ProviderHeaders`: name => value, where a null value means
  * "remove any header of this name that an earlier source set".
  */
-final class Headers
+final class ProviderHeaders
 {
     /**
      * Upstream's `providerHeadersToRecord()`: merged case-insensitively, a later source replacing an
@@ -52,7 +52,7 @@ final class Headers
     /**
      * The OpenAI and Anthropic SDKs' `buildHeaders()` over object sources: each source's names
      * replace an earlier header of the same name whatever its case, a null removes it, and the
-     * result is what goes on the wire — names lowercased, as a `Headers` object holds them.
+     * result is what goes on the wire — names lowercased, as a `ProviderHeaders` object holds them.
      * (`x-stainless-helper`'s comma-append is not ported: nothing pig sends sets it.)
      *
      * @param array<string, string|null>|null ...$headerSources

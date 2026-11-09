@@ -173,7 +173,7 @@ final class ModelThinkingSubmenu extends Container implements InputHandler
         $this->list->setCancelHandler($onCancel);
 
         $this->clear();
-        $this->addChild(new SettingsSubmenu(
+        $this->addChild(new SelectSubmenu(
             $this->list,
             Themes::theme()->fg('accent', $title) . "\n" . Themes::theme()->fg('muted', $description),
             Themes::theme()->fg('muted', '  Enter to select · type to search · Esc to go back'),

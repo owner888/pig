@@ -17,7 +17,7 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\ModelRegistry;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\ContextUsage;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
@@ -229,7 +229,7 @@ final readonly class ExtensionContext
      * to make room after. `$onComplete` gets the summary (null when it was cancelled), `$onError`
      * the throwable — "Agent is working" among them, when it is asked mid-turn.
      *
-     * @param (Closure(CompactionSummary|null): void)|null $onComplete
+     * @param (Closure(CompactionEntry|null): void)|null $onComplete
      * @param (Closure(\Throwable): void)|null            $onError
      */
     public function compact(?string $customInstructions = null, ?Closure $onComplete = null, ?Closure $onError = null): void

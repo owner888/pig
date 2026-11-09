@@ -123,7 +123,7 @@ final class Compaction
         $compactedAt = 0;
 
         foreach ($messages as $message) {
-            if ($message instanceof CompactionSummary && $message->timestamp > $compactedAt) {
+            if ($message instanceof CompactionEntry && $message->timestamp > $compactedAt) {
                 $compactedAt = $message->timestamp;
             }
         }
@@ -269,7 +269,7 @@ final class Compaction
             for ($index = count($branchEntries) - 1; $index >= 0; $index--) {
                 $message = $branchEntries[$index]->message;
 
-                if ($message instanceof ContextEdit || $message instanceof CompactionSummary) {
+                if ($message instanceof ContextEdit || $message instanceof CompactionEntry) {
                     $latestInvalidatingEntryIndex = $index;
 
                     break;
@@ -305,15 +305,15 @@ final class Compaction
             $message instanceof UserMessage => self::textLength($message->content),
             $message instanceof AssistantMessage => self::assistantLength($message),
             $message instanceof ToolResultMessage => self::textLength($message->content),
-            $message instanceof BashExecution => strlen($message->command) + strlen($message->output),
+            $message instanceof BashExecutionMessage => strlen($message->command) + strlen($message->output),
             // Both summaries, and by what they *become*: `CodingAgent::toLlm()` turns each into a
             // user message built from `toText()`, so that is the string the request will carry.
             // Upstream measures `.summary` alone, which is a little short of what it sends.
             //
-            // `BranchSummary` was missing from this list, and a summary of an abandoned branch is
+            // `BranchSummaryEntry` was missing from this list, and a summary of an abandoned branch is
             // long — a 3,900-character one estimated as **zero tokens**. See docs/dev/traps/session.md.
-            $message instanceof CompactionSummary => strlen($message->toText()),
-            $message instanceof BranchSummary => strlen($message->toText()),
+            $message instanceof CompactionEntry => strlen($message->toText()),
+            $message instanceof BranchSummaryEntry => strlen($message->toText()),
             $message instanceof CustomMessage => strlen($message->toText()),
             default => 0,
         };
@@ -336,11 +336,11 @@ final class Compaction
     {
         $message = $entry->message;
 
-        if ($message instanceof CompactionSummary) {
+        if ($message instanceof CompactionEntry) {
             return $message->systemMessage === null ? [$message] : [$message->systemMessage, $message];
         }
 
-        if ($message instanceof BranchSummary && $message->summary === '') {
+        if ($message instanceof BranchSummaryEntry && $message->summary === '') {
             return [];
         }
 
@@ -356,25 +356,25 @@ final class Compaction
     {
         return $message instanceof UserMessage
             || $message instanceof AssistantMessage
-            || $message instanceof BashExecution
+            || $message instanceof BashExecutionMessage
             || $message instanceof CustomMessage
-            || $message instanceof BranchSummary
-            || $message instanceof CompactionSummary;
+            || $message instanceof BranchSummaryEntry
+            || $message instanceof CompactionEntry;
     }
 
     /** Upstream's `isTurnStartMessage()`: the kinds of message a turn begins with. */
     private static function isTurnStartMessage(mixed $message): bool
     {
         return $message instanceof UserMessage
-            || $message instanceof BashExecution
+            || $message instanceof BashExecutionMessage
             || $message instanceof CustomMessage
-            || $message instanceof BranchSummary
-            || $message instanceof CompactionSummary;
+            || $message instanceof BranchSummaryEntry
+            || $message instanceof CompactionEntry;
     }
 
     private static function isTurnStartEntry(SessionEntry $entry): bool
     {
-        if ($entry->message instanceof CompactionSummary) {
+        if ($entry->message instanceof CompactionEntry) {
             return false;
         }
 
@@ -426,7 +426,7 @@ final class Compaction
         $cutPoints = [];
 
         for ($index = $startIndex; $index < $endIndex; $index++) {
-            if ($entries[$index]->message instanceof CompactionSummary) {
+            if ($entries[$index]->message instanceof CompactionEntry) {
                 continue;
             }
 
@@ -469,7 +469,7 @@ final class Compaction
         while ($cutIndex > $startIndex) {
             $previous = $entries[$cutIndex - 1];
 
-            if ($previous->message instanceof CompactionSummary || self::entryMessages($previous) !== []) {
+            if ($previous->message instanceof CompactionEntry || self::entryMessages($previous) !== []) {
                 break;
             }
 
@@ -500,7 +500,7 @@ final class Compaction
 
     private static function isProjectedTurnStart(ProjectedSessionEntry $entry): bool
     {
-        if ($entry->sourceEntry->message instanceof CompactionSummary) {
+        if ($entry->sourceEntry->message instanceof CompactionEntry) {
             return false;
         }
 
@@ -543,7 +543,7 @@ final class Compaction
         $cutPoints = [];
 
         for ($index = $startIndex; $index < $endIndex; $index++) {
-            if ($entries[$index]->sourceEntry->message instanceof CompactionSummary) {
+            if ($entries[$index]->sourceEntry->message instanceof CompactionEntry) {
                 continue;
             }
 
@@ -613,7 +613,7 @@ final class Compaction
                 $hasOmittedAssistant = true;
             }
 
-            if ($source instanceof CompactionSummary || ($isIntrinsicallyVisible($entry) && !$isOmitted($entry))) {
+            if ($source instanceof CompactionEntry || ($isIntrinsicallyVisible($entry) && !$isOmitted($entry))) {
                 $allOmittedOrInvisible = false;
             }
         }
@@ -625,7 +625,7 @@ final class Compaction
         while ($cutIndex > $startIndex) {
             $previous = $entries[$cutIndex - 1];
 
-            if ($previous->sourceEntry->message instanceof CompactionSummary || $previous->messages !== []) {
+            if ($previous->sourceEntry->message instanceof CompactionEntry || $previous->messages !== []) {
                 break;
             }
 
@@ -654,7 +654,7 @@ final class Compaction
      */
     public static function prepareCompaction(array $pathEntries, CompactionSettings $settings): ?CompactionPreparation
     {
-        if ($pathEntries !== [] && $pathEntries[count($pathEntries) - 1]->message instanceof CompactionSummary) {
+        if ($pathEntries !== [] && $pathEntries[count($pathEntries) - 1]->message instanceof CompactionEntry) {
             return null;
         }
 
@@ -665,7 +665,7 @@ final class Compaction
         $previousCompactionIndex = -1;
 
         foreach ($projected as $index => $entry) {
-            if ($entry->sourceEntry->message instanceof CompactionSummary && $entry->messages !== []) {
+            if ($entry->sourceEntry->message instanceof CompactionEntry && $entry->messages !== []) {
                 $previousCompactionIndex = $index;
 
                 break;
@@ -734,7 +734,7 @@ final class Compaction
         $messages = [];
 
         foreach ($entries as $entry) {
-            if ($entry->sourceEntry->message instanceof CompactionSummary) {
+            if ($entry->sourceEntry->message instanceof CompactionEntry) {
                 continue;
             }
 
@@ -780,7 +780,7 @@ final class Compaction
         if ($previousCompactionIndex >= 0) {
             $previous = $entries[$previousCompactionIndex]->message;
 
-            if ($previous instanceof CompactionSummary && !$previous->fromHook) {
+            if ($previous instanceof CompactionEntry && !$previous->fromHook) {
                 foreach ($previous->readFiles as $path) {
                     $fileOps->addRead($path);
                 }
@@ -905,7 +905,7 @@ final class Compaction
         $fileOps = self::createFileOps();
 
         foreach ($messages as $message) {
-            if (($message instanceof CompactionSummary || $message instanceof BranchSummary) && !$message->fromHook) {
+            if (($message instanceof CompactionEntry || $message instanceof BranchSummaryEntry) && !$message->fromHook) {
                 foreach ($message->readFiles as $path) {
                     $fileOps->addRead($path);
                 }

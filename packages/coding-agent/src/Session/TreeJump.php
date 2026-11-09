@@ -27,7 +27,7 @@ final readonly class TreeJump
 {
     public function __construct(
         public bool $moved,
-        public ?BranchSummary $summary = null,
+        public ?BranchSummaryEntry $summary = null,
         public bool $aborted = false,
         public ?string $editorText = null,
         public bool $cancelled = false,

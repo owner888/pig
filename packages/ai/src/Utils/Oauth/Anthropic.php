@@ -128,7 +128,7 @@ final class Anthropic
         Closure $onPrompt,
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         $pkce = Pkce::create();
         $server = $this->listen();
         // Without a callback server, sign-in goes on with the pasted redirect URL.
@@ -202,7 +202,7 @@ final class Anthropic
      * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
      * @param Closure(string): void|null $onProgress
      */
-    public function loginWithCopyCode(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null): ?Credentials
+    public function loginWithCopyCode(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null): ?OauthCredentials
     {
         $pkce = Pkce::create();
         $onAuth(
@@ -229,7 +229,7 @@ final class Anthropic
      * @param string $pasted the `code#state` from the callback page, whitespace and all
      * @param string $verifier the one `authorizeUrl()` was built from
      */
-    public function exchange(string $pasted, string $verifier): Credentials
+    public function exchange(string $pasted, string $verifier): OauthCredentials
     {
         $parsed = self::parseAuthorizationInput($pasted);
 
@@ -304,7 +304,7 @@ final class Anthropic
     }
 
     /** A new access token from the refresh token, which is what every expired session needs. */
-    public function refresh(string $refreshToken): Credentials
+    public function refresh(string $refreshToken): OauthCredentials
     {
         return $this->token([
             'grant_type' => 'refresh_token',
@@ -415,7 +415,7 @@ final class Anthropic
      *
      * @param array<string, string> $payload
      */
-    private function token(array $payload): Credentials
+    private function token(array $payload): OauthCredentials
     {
         $response = $this->http->send(new Request(
             'POST',
@@ -449,7 +449,7 @@ final class Anthropic
             throw new OauthError('Anthropic answered the token request without the tokens in it.');
         }
 
-        return new Credentials(
+        return new OauthCredentials(
             $refresh,
             $access,
             Timestamp::nowMs() + $lifetime * 1000 - self::MARGIN_MS,

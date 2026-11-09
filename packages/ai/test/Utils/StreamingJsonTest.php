@@ -7,7 +7,7 @@ namespace Pig\Ai\Test\Utils;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Utils\PartialJson;
-use Pig\Ai\Utils\StreamingJson;
+use Pig\Ai\Utils\StreamingJsonParser;
 
 final class StreamingJsonTest extends TestCase
 {
@@ -145,7 +145,7 @@ final class StreamingJsonTest extends TestCase
      */
     public function testAContainerKeptOpenLagsButCatchesUp(): void
     {
-        $reader = new StreamingJson();
+        $reader = new StreamingJsonParser();
         $reader->append('{"ids":[');
 
         foreach (range(1, 5000) as $id) {
@@ -179,7 +179,7 @@ final class StreamingJsonTest extends TestCase
     /** @param list<string> $pieces @return array<array-key, mixed> */
     private static function read(array $pieces): array
     {
-        $reader = new StreamingJson();
+        $reader = new StreamingJsonParser();
 
         foreach ($pieces as $piece) {
             $reader->append($piece);
@@ -216,7 +216,7 @@ final class StreamingJsonTest extends TestCase
 
     private static function stream(string $json): void
     {
-        $reader = new StreamingJson();
+        $reader = new StreamingJsonParser();
 
         foreach (str_split($json, 20) as $piece) {
             $reader->append($piece);

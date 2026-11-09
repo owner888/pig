@@ -6,10 +6,10 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\Ai\Model;
 use Pig\Ai\Models;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\ModelReference;
+use Pig\CodingAgent\ModelReferenceResult;
 use Pig\CodingAgent\ModelResolver;
 use Pig\Tui\Style;
 use Throwable;
@@ -357,7 +357,7 @@ final class AuthCommand
                 }
 
                 // Upstream's `resolveModelReference()` per provider: a match there, not a custom id.
-                if (ModelResolver::reference((string) $cliModel, Models::all(), static fn (): bool => true, $provider, 'strict', true)->status === ModelReference::RESOLVED) {
+                if (ModelResolver::reference((string) $cliModel, Models::all(), static fn (): bool => true, $provider, 'strict', true)->status === ModelReferenceResult::RESOLVED) {
                     $providers[] = $provider;
                 }
             }
@@ -401,11 +401,11 @@ final class AuthCommand
             $type = $providerId === null ? null : ($types[$providerId] ?? null);
 
             if ($cliProvider !== null && $kind === 'api_key' && $type === 'oauth') {
-                throw new AuthCommandError("Provider \"{$providerId}\" is configured with OAuth, not an API key");
+                throw new AuthCommandError("OauthProvider \"{$providerId}\" is configured with OAuth, not an API key");
             }
 
             if ($cliProvider !== null && $kind === 'bearer_token' && $type !== 'oauth') {
-                throw new AuthCommandError("Provider \"{$providerId}\" is not configured with an OAuth bearer token");
+                throw new AuthCommandError("OauthProvider \"{$providerId}\" is not configured with an OAuth bearer token");
             }
 
             throw new AuthCommandError('No usable ' . ($kind === 'api_key' ? 'API key' : 'OAuth bearer token') . ' is configured');
@@ -469,7 +469,7 @@ final class AuthCommand
     {
         $ids = array_map(static fn (Model $model): string => $model->provider, Models::all());
 
-        foreach (Provider::cases() as $case) {
+        foreach (OauthProvider::cases() as $case) {
             $ids[] = $case->value;
         }
 

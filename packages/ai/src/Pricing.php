@@ -13,7 +13,7 @@ namespace Pig\Ai;
 final readonly class Pricing
 {
     /**
-     * @param list<PricingTier> $tiers upstream's `ModelCost.tiers`: "Request-wide pricing tiers. The
+     * @param list<ModelCostTier> $tiers upstream's `ModelCost.tiers`: "Request-wide pricing tiers. The
      *        highest matching input threshold applies to the full request." Empty for a flat price.
      */
     public function __construct(
@@ -30,10 +30,10 @@ final readonly class Pricing
      *
      * The input is everything the request read (`input + cacheRead + cacheWrite`), and the tier
      * whose `inputTokensAbove` is the highest one that input **exceeds** prices the whole request;
-     * at or below every threshold, the base rates do. A tier is a `PricingTier`, the base is this,
+     * at or below every threshold, the base rates do. A tier is a `ModelCostTier`, the base is this,
      * and both carry the same four rates.
      */
-    public function ratesFor(int $inputTokens): self|PricingTier
+    public function ratesFor(int $inputTokens): self|ModelCostTier
     {
         $rates = $this;
         $matchedThreshold = -1;

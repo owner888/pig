@@ -15,13 +15,13 @@ use Pig\Ai\Extension\ModelAuth;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\Anthropic;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
 use Pig\Ai\Utils\Oauth\KimiCoding;
 use Pig\Ai\Utils\Oauth\Radius;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\AbortSignal;
 use Throwable;
 
@@ -67,7 +67,7 @@ final class Auth
     private array $problems = [];
 
     /**
-     * @var array<string, array{0: Closure(): ?Credentials, 1: Closure(Credentials, Credentials): void}>
+     * @var array<string, array{0: Closure(): ?OauthCredentials, 1: Closure(OauthCredentials, OauthCredentials): void}>
      *      a second place a provider's credentials live, by provider id — see `useSecondStore()`
      */
     private array $secondStores = [];
@@ -103,7 +103,7 @@ final class Auth
         return new self(is_file($theirs) ? $theirs : Config::home() . '/' . self::FILE, $settings);
     }
 
-    /** Credentials that are never written anywhere, for tests. */
+    /** OauthCredentials that are never written anywhere, for tests. */
     public static function inMemory(?Settings $settings = null): self
     {
         return new self(null, $settings);
@@ -291,8 +291,8 @@ final class Auth
      * the store has to be told about (`$renewed`, with the old credential and the new), or the
      * extension presents a token as valid hours after it was replaced.
      *
-     * @param Closure(): ?Credentials $read
-     * @param Closure(Credentials, Credentials): void $renewed old, new
+     * @param Closure(): ?OauthCredentials $read
+     * @param Closure(OauthCredentials, OauthCredentials): void $renewed old, new
      */
     public function useSecondStore(string $provider, Closure $read, Closure $renewed): void
     {
@@ -312,9 +312,9 @@ final class Auth
      * name and not a case. Only when this file has nothing is a second store asked — a
      * credential that *is* in `auth.json` is the one both tools are using.
      */
-    public function credentials(Provider|string $provider): ?Credentials
+    public function credentials(OauthProvider|string $provider): ?OauthCredentials
     {
-        $id = $provider instanceof Provider ? $provider->value : $provider;
+        $id = $provider instanceof OauthProvider ? $provider->value : $provider;
         $entry = $this->entry($id);
 
         if ($entry === null || ($entry['type'] ?? null) !== 'oauth') {
@@ -328,7 +328,7 @@ final class Auth
             return null;
         }
 
-        return new Credentials(
+        return new OauthCredentials(
             $refresh,
             $access,
             is_int($entry['expires'] ?? null) ? $entry['expires'] : 0,
@@ -446,9 +446,9 @@ final class Auth
         return $credential;
     }
 
-    public function setCredentials(Provider|string $provider, Credentials $credentials): void
+    public function setCredentials(OauthProvider|string $provider, OauthCredentials $credentials): void
     {
-        $this->data[$provider instanceof Provider ? $provider->value : $provider] = array_filter(
+        $this->data[$provider instanceof OauthProvider ? $provider->value : $provider] = array_filter(
             [
                 'type' => 'oauth',
                 'refresh' => $credentials->refresh,
@@ -525,7 +525,7 @@ final class Auth
         // An extension's sign-in first, then the built-in enum: the registry is what knows how
         // to turn a stored credential into a key for a provider that did not ship with pig.
         $flow = ProviderRegistry::oauthFor($provider);
-        $named = $flow ?? Provider::tryFrom($provider);
+        $named = $flow ?? OauthProvider::tryFrom($provider);
         $credentials = $named === null ? null : $this->credentials($provider);
 
         if ($named !== null && $credentials !== null) {
@@ -598,13 +598,13 @@ final class Auth
      *        screen to ask on and the flow takes its default.
      */
     public function login(
-        Provider|OauthFlow $provider,
+        OauthProvider|OauthFlow $provider,
         Closure $onAuth,
         Closure $onPrompt,
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         if ($provider instanceof OauthFlow) {
             $credentials = $provider->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
             $id = $provider->id();
@@ -614,11 +614,11 @@ final class Auth
             }
 
             $credentials = match ($provider) {
-                Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
-                Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
-                Provider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
-                Provider::Radius => (new Radius())->login($onAuth, $onProgress, $signal, $onSelect),
-                Provider::KimiCoding => (new KimiCoding())->login($onAuth, $signal),
+                OauthProvider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
+                OauthProvider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
+                OauthProvider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
+                OauthProvider::Radius => (new Radius())->login($onAuth, $onProgress, $signal, $onSelect),
+                OauthProvider::KimiCoding => (new KimiCoding())->login($onAuth, $signal),
             };
             $id = $provider->value;
         }
@@ -635,17 +635,17 @@ final class Auth
     /**
      * Every sign-in on offer: the built-in four, then whatever the loaded extensions brought.
      *
-     * @return list<Provider|OauthFlow>
+     * @return list<OauthProvider|OauthFlow>
      */
     public static function signIns(): array
     {
-        return [...Provider::cases(), ...ProviderRegistry::oauthFlows()];
+        return [...OauthProvider::cases(), ...ProviderRegistry::oauthFlows()];
     }
 
     /** One sign-in by its id — `anthropic`, or an extension's — or null. */
-    public static function signIn(string $id): Provider|OauthFlow|null
+    public static function signIn(string $id): OauthProvider|OauthFlow|null
     {
-        return ProviderRegistry::oauthFor($id) ?? Provider::tryFrom($id);
+        return ProviderRegistry::oauthFor($id) ?? OauthProvider::tryFrom($id);
     }
 
     /**
@@ -664,7 +664,7 @@ final class Auth
         ?Closure $onProgress,
         ?AbortSignal $signal,
         ?Closure $onSelect,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         $method = Anthropic::METHOD_BROWSER;
 
         if ($onSelect !== null) {
@@ -697,7 +697,7 @@ final class Auth
         Closure $onPrompt,
         ?Closure $onProgress,
         ?AbortSignal $signal,
-    ): ?Credentials {
+    ): ?OauthCredentials {
         $flow = new GithubCopilot();
         $credentials = $flow->login($onPrompt, $onAuth, $onProgress, $signal);
 
@@ -746,17 +746,17 @@ final class Auth
      * @param int $minValidityMs renew a token with less than this left as well as an expired one —
      *        upstream's `minOAuthValidityMs`, which `pig auth print-bearer-token --min-expiry` asks for
      */
-    public function freshCredentials(Provider|string $provider, int $minValidityMs = 0): ?Credentials
+    public function freshCredentials(OauthProvider|string $provider, int $minValidityMs = 0): ?OauthCredentials
     {
-        $id = $provider instanceof Provider ? $provider->value : $provider;
-        $flow = ProviderRegistry::oauthFor($id) ?? Provider::tryFrom($id);
+        $id = $provider instanceof OauthProvider ? $provider->value : $provider;
+        $flow = ProviderRegistry::oauthFor($id) ?? OauthProvider::tryFrom($id);
         $credentials = $flow === null ? null : $this->credentials($id);
 
         return $credentials === null || $flow === null ? null : $this->fresh($flow, $credentials, $minValidityMs);
     }
 
     /** The token, renewed first if it is due. A renewal is written down, or it happens every turn. */
-    private function fresh(Provider|OauthFlow $provider, Credentials $credentials, int $minValidityMs = 0): Credentials
+    private function fresh(OauthProvider|OauthFlow $provider, OauthCredentials $credentials, int $minValidityMs = 0): OauthCredentials
     {
         // "Expired" as of $minValidityMs from now, so a token about to run out counts as run out.
         $by = \Pig\Ai\Timestamp::nowMs() + $minValidityMs;
@@ -775,13 +775,13 @@ final class Auth
             return $credentials;
         }
 
-        $id = $provider instanceof Provider ? $provider->value : $provider->id();
+        $id = $provider instanceof OauthProvider ? $provider->value : $provider->id();
 
         // Under the file's lock, and double-checked once it is held: another pig may have renewed
         // this token while we waited, and the refresh token we hold is then the one the provider
         // just rotated away. The file is read again and its token used when it is still good —
         // upstream's `refreshStoredOAuthCredential()`. No file means nothing to share.
-        $renew = function () use ($provider, $credentials, $id, $by): Credentials {
+        $renew = function () use ($provider, $credentials, $id, $by): OauthCredentials {
             if ($this->path !== null) {
                 $this->reload();
                 $stored = $this->credentials($id);

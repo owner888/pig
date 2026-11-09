@@ -12,7 +12,7 @@ namespace Pig\CodingAgent\Prompt;
  * `$1`, `$@`, `${1:-default}` and the rest in it are filled from whatever was typed after the name
  * (`SlashCommands::substitute()`).
  */
-final readonly class FileCommand
+final readonly class PromptTemplate
 {
     /**
      * @param string $description shown in the completion list; the frontmatter's, or the

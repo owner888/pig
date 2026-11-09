@@ -11,7 +11,7 @@ use Pig\Ai\Providers\AssistantMessageBuilder;
 use Pig\Ai\Utils\PartialJson;
 
 /**
- * The builder reads a tool call's argument deltas once each (see `StreamingJson`), and a custom
+ * The builder reads a tool call's argument deltas once each (see `StreamingJsonParser`), and a custom
  * tool's input without reading it at all. What a finished call carries must not change for that.
  */
 final class AssistantMessageBuilderToolArgumentsTest extends TestCase

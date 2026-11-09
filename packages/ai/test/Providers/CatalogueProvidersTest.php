@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Test\Providers;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -132,7 +132,7 @@ final class CatalogueProvidersTest extends TestCase
         $model = self::model('fireworks', 'accounts/fireworks/models/qwen3p8-max');
 
         $this->assertSame([Api::AnthropicMessages, 'https://api.fireworks.ai/inference', true], [$model->api, $model->baseUrl, $model->reasoning]);
-        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
         // "sets Fireworks-specific compat for session affinity and unsupported tool fields"
         $this->assertSame(
             [true, false, false, false, true],
@@ -163,7 +163,7 @@ final class CatalogueProvidersTest extends TestCase
     {
         $model = self::model('fireworks', 'accounts/fireworks/models/qwen3p8-2p4t-a95b');
 
-        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
         $this->assertTrue($model->compat->forceAdaptiveThinking);
         // "The 2.4T alias omits the verified toggle in models.dev": off is `none` on it anyway.
         $this->assertSame('none', $model->thinkingLevelMap['off'] ?? null);
@@ -280,7 +280,7 @@ final class CatalogueProvidersTest extends TestCase
             $model = self::model('openrouter', $id);
 
             $this->assertSame([Api::AnthropicMessages, 'https://openrouter.ai/api'], [$model->api, $model->baseUrl], $id);
-            $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+            $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
             $this->assertTrue($model->compat->forceAdaptiveThinking, $id);
         }
     }

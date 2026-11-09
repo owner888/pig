@@ -157,7 +157,7 @@ final class BranchSummarization
         $totalTokens = 0;
 
         foreach ($entries as $entry) {
-            if ($entry->message instanceof BranchSummary && !$entry->message->fromHook) {
+            if ($entry->message instanceof BranchSummaryEntry && !$entry->message->fromHook) {
                 foreach ($entry->message->readFiles as $path) {
                     $fileOps->addRead($path);
                 }
@@ -181,7 +181,7 @@ final class BranchSummarization
             $tokens = Compaction::estimateTokens($message);
 
             if ($tokenBudget > 0 && $totalTokens + $tokens > $tokenBudget) {
-                if (($entry->message instanceof CompactionSummary || $entry->message instanceof BranchSummary)
+                if (($entry->message instanceof CompactionEntry || $entry->message instanceof BranchSummaryEntry)
                     && $totalTokens < $tokenBudget * 0.9
                 ) {
                     array_unshift($messages, $message);

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Extensions\Events;
 
 use Pig\CodingAgent\Extensions\ExtensionEvent;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 
 /**
  * The conversation has been compacted — upstream's `SessionCompactEvent`.
@@ -21,7 +21,7 @@ final readonly class SessionCompactEvent implements ExtensionEvent
      * @param bool                             $willRetry the turn that overflowed is sent again now
      */
     public function __construct(
-        public CompactionSummary $compactionEntry,
+        public CompactionEntry $compactionEntry,
         public bool $fromExtension,
         public string $reason,
         public bool $willRetry,

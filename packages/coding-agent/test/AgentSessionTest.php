@@ -63,8 +63,8 @@ use Pig\CodingAgent\Extensions\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Extensions\Results\SessionBeforeForkResult;
 use Pig\CodingAgent\Extensions\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CompactionEndEvent;
 use Pig\CodingAgent\StartedSession;
 use Pig\CodingAgent\Session\SessionCwdIssue;
@@ -408,7 +408,7 @@ final class AgentSessionTest extends TestCase
         // Upstream's `recordBashResult()` records `!!` too, flagged; `convertToLlm()` drops it.
         $this->assertSame('hi', trim($execution->output));
         $this->assertTrue($execution->excludeFromContext);
-        $this->assertSame([$execution], array_values(array_filter($session->messages(), static fn ($m) => $m instanceof BashExecution)));
+        $this->assertSame([$execution], array_values(array_filter($session->messages(), static fn ($m) => $m instanceof BashExecutionMessage)));
         $this->assertSame([], CodingAgent::toLlm([$execution]));
     }
 
@@ -495,7 +495,7 @@ final class AgentSessionTest extends TestCase
 
         $this->assertSame(1, $during, 'held back while the agent was working');
         $this->assertCount(3, $session->messages());
-        $this->assertInstanceOf(BashExecution::class, $session->messages()[2]);
+        $this->assertInstanceOf(BashExecutionMessage::class, $session->messages()[2]);
     }
 
     // ---- making room -------------------------------------------------------------
@@ -548,7 +548,7 @@ final class AgentSessionTest extends TestCase
         Async::run(static fn () => $session->prompt('one more thing'));
 
         $this->assertSame(['threshold'], $reasons);
-        $this->assertInstanceOf(CompactionSummary::class, $session->messages()[0]);
+        $this->assertInstanceOf(CompactionEntry::class, $session->messages()[0]);
         $this->assertSame('and the answer', $session->lastAssistantText());
     }
 
@@ -585,7 +585,7 @@ final class AgentSessionTest extends TestCase
     public function testCompactingWhatIsAlreadyASummarySaysSo(): void
     {
         $session = $this->session([]);
-        $session->agent->appendMessage(new CompactionSummary('already summarised'));
+        $session->agent->appendMessage(new CompactionEntry('already summarised'));
 
         $this->assertThrows(
             AgentError::class,
@@ -608,7 +608,7 @@ final class AgentSessionTest extends TestCase
         $summary = Async::run(static fn () => $session->compact());
         $messages = $session->messages();
 
-        $this->assertInstanceOf(CompactionSummary::class, $summary);
+        $this->assertInstanceOf(CompactionEntry::class, $summary);
         $this->assertSame('the summary', $summary->summary);
         $this->assertSame($summary, $messages[0]);
         $this->assertSame('the last thing I said', self::textOf($messages[count($messages) - 1]));
@@ -618,7 +618,7 @@ final class AgentSessionTest extends TestCase
     public function testASummaryReachesTheModelAsSomethingItCanRead(): void
     {
         $session = $this->session(['answer']);
-        $session->agent->appendMessage(new CompactionSummary('what happened earlier', ['a.php']));
+        $session->agent->appendMessage(new CompactionEntry('what happened earlier', ['a.php']));
 
         // The agent's own converter keeps the three LLM message types and drops the rest;
         // a summary dropped there would compact the conversation into nothing at all.
@@ -650,7 +650,7 @@ final class AgentSessionTest extends TestCase
             // The point of writing the summary down: the conversation that comes back is
             // the compacted one, not the one that was compacted away.
             $this->assertSame(count($session->messages()), count($reopened));
-            $this->assertInstanceOf(CompactionSummary::class, $reopened[0]);
+            $this->assertInstanceOf(CompactionEntry::class, $reopened[0]);
         } finally {
             if (is_file($path)) {
                 unlink($path);
@@ -1952,7 +1952,7 @@ final class AgentSessionTest extends TestCase
         $this->assertNotNull($ends[0]->result);
         $this->assertFalse($ends[0]->aborted);
         $this->assertTrue($ends[0]->willRetry, 'the summary is the fix, so the turn goes again');
-        $this->assertInstanceOf(CompactionSummary::class, $ends[0]->summary);
+        $this->assertInstanceOf(CompactionEntry::class, $ends[0]->summary);
         $this->assertSame($ends[0]->summary->summary, $ends[0]->result->summary);
         $this->assertIsInt($ends[0]->result->estimatedTokensAfter);
 

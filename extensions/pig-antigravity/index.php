@@ -50,7 +50,7 @@ use Pig\Ai\ImagesOptions;
 use Pig\Ai\ModelType;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -196,7 +196,7 @@ return function (ExtensionApi $pig): void {
     };
 
     /** The same, unforced and in the background: what upstream does with `void modelRuntime.refresh()`. */
-    $refreshInBackground = static function (?Credentials $signedIn = null) use ($refreshCatalog): void {
+    $refreshInBackground = static function (?OauthCredentials $signedIn = null) use ($refreshCatalog): void {
         Async::spawn(static function () use ($refreshCatalog, $signedIn): void {
             try {
                 $refreshCatalog(false, $signedIn === null ? null : AntigravityOauth::keyFor($signedIn));
@@ -215,7 +215,7 @@ return function (ExtensionApi $pig): void {
         // account's key, which `auth.json` does not hold yet when the flow returns.
         oauth: new LazyAntigravityOauth(
             $antigravityClient,
-            static fn (Credentials $credentials) => $refreshInBackground($credentials),
+            static fn (OauthCredentials $credentials) => $refreshInBackground($credentials),
         ),
         resold: true,
         images: ImageGenerator::models(),
@@ -242,14 +242,14 @@ return function (ExtensionApi $pig): void {
 
     $auth->useSecondStore(
         Models::PROVIDER,
-        static fn (): ?Credentials => $accounts->active(),
-        static function (Credentials $previous, Credentials $next) use ($accounts): void {
+        static fn (): ?OauthCredentials => $accounts->active(),
+        static function (OauthCredentials $previous, OauthCredentials $next) use ($accounts): void {
             $accounts->renewed($previous, $next);
         },
     );
 
     /** Make one stored account the active one, in both files at once. */
-    $activate = static function (string $id) use ($auth, $accounts): ?Credentials {
+    $activate = static function (string $id) use ($auth, $accounts): ?OauthCredentials {
         if (!isset($accounts->accounts()[$id])) {
             return null;
         }
@@ -265,7 +265,7 @@ return function (ExtensionApi $pig): void {
     };
 
     /** The next account round-robin, in both files. */
-    $rotate = static function () use ($auth, $accounts): ?Credentials {
+    $rotate = static function () use ($auth, $accounts): ?OauthCredentials {
         $next = $accounts->rotateNext();
 
         if ($next !== null) {

@@ -20,7 +20,7 @@ use Pig\Ai\Timestamp;
  *
  * Ported from upstream's `ModelChangeEntry`.
  */
-final readonly class ModelChange
+final readonly class ModelChangeEntry
 {
     public int $timestamp;
 

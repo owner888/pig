@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace PigAntigravity;
 
 use Pig\Ai\Timestamp;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 
 /**
  * `antigravity-accounts.json`, the several sign-ins the `pi-antigravity` extension keeps.
@@ -94,7 +94,7 @@ final class Accounts
      * that then wants one asks for it by name. Picking an account on somebody's behalf is the
      * one thing this must not do — they are different Google accounts with different quotas.
      */
-    public function active(): ?Credentials
+    public function active(): ?OauthCredentials
     {
         $entry = $this->active === null ? null : $this->accounts[$this->active] ?? null;
 
@@ -134,9 +134,9 @@ final class Accounts
     /**
      * Switch to the next available account in the store (round-robin failover).
      *
-     * @return Credentials|null Returns new active credentials if rotated, or null if only one or no accounts.
+     * @return OauthCredentials|null Returns new active credentials if rotated, or null if only one or no accounts.
      */
-    public function rotateNext(): ?Credentials
+    public function rotateNext(): ?OauthCredentials
     {
         $keys = array_keys($this->accounts);
         $total = count($keys);
@@ -173,7 +173,7 @@ final class Accounts
      * — pig renewing a token is not pig signing somebody in, and a store this has never seen is
      * one the extension is entitled to own.
      */
-    public function renewed(Credentials $previous, Credentials $next): void
+    public function renewed(OauthCredentials $previous, OauthCredentials $next): void
     {
         $existing = $this->find($previous);
 
@@ -213,7 +213,7 @@ final class Accounts
      * Written only when that changes something, where upstream writes on every call: the page asks
      * for the list each time it is opened.
      */
-    public function syncCurrentAuth(?Credentials $current): void
+    public function syncCurrentAuth(?OauthCredentials $current): void
     {
         $this->reload();
 
@@ -310,7 +310,7 @@ final class Accounts
      * written from one sign-in and an `auth.json` written from another can disagree about the
      * capitalisation of an address and mean the same account.
      */
-    private function find(Credentials $credentials): ?string
+    private function find(OauthCredentials $credentials): ?string
     {
         $email = $credentials->email === null ? null : mb_strtolower(trim($credentials->email));
 
@@ -330,7 +330,7 @@ final class Accounts
     }
 
     /** @param array<string, mixed> $entry */
-    private static function credentials(array $entry): ?Credentials
+    private static function credentials(array $entry): ?OauthCredentials
     {
         $refresh = $entry['refresh'] ?? null;
 
@@ -338,7 +338,7 @@ final class Accounts
             return null;
         }
 
-        return new Credentials(
+        return new OauthCredentials(
             $refresh,
             is_string($entry['access'] ?? null) ? $entry['access'] : '',
             is_int($entry['expires'] ?? null) ? $entry['expires'] : 0,
@@ -349,7 +349,7 @@ final class Accounts
     }
 
     /** Upstream's `accountIdFor`, minus the hashed fallback — see `renewed()` for why. */
-    private static function idFor(Credentials $credentials): ?string
+    private static function idFor(OauthCredentials $credentials): ?string
     {
         $email = $credentials->email === null ? null : mb_strtolower(trim($credentials->email));
 

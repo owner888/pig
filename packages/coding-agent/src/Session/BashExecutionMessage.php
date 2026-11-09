@@ -24,7 +24,7 @@ use Pig\Ai\Timestamp;
  * `fullOutputPath` is the file the whole output was written to when it was too long to keep, and
  * is the session file's field name as pi writes it.
  */
-final readonly class BashExecution
+final readonly class BashExecutionMessage
 {
     public int $timestamp;
 

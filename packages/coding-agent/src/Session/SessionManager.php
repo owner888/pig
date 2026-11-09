@@ -437,7 +437,7 @@ final class SessionManager
 
         // In file order, so the last thing said about a point is what it is called —
         // including "nothing", which is how a name is taken off again.
-        if ($item instanceof Label) {
+        if ($item instanceof LabelEntry) {
             if ($item->label === null) {
                 unset($session->labels[$item->targetId]);
             } else {
@@ -899,7 +899,7 @@ final class SessionManager
         foreach ($path as $id) {
             $item = $this->entries[$id]['message'];
 
-            if ($item instanceof Label) {
+            if ($item instanceof LabelEntry) {
                 $pendingLabels[] = $id;
 
                 continue;
@@ -911,7 +911,7 @@ final class SessionManager
 
             $pendingLabels = [];
 
-            if ($item instanceof CompactionSummary && $item->firstKeptEntryId !== null && $item->firstKeptEntryId !== $id) {
+            if ($item instanceof CompactionEntry && $item->firstKeptEntryId !== null && $item->firstKeptEntryId !== $id) {
                 $item = self::withFirstKept($item, $replacement[$item->firstKeptEntryId] ?? $item->firstKeptEntryId);
             }
 
@@ -929,7 +929,7 @@ final class SessionManager
 
             $labelId = self::newId($fork->entries);
             $fork->entries[$labelId] = [
-                'message' => new Label((string) $targetId, $label, $this->labelTimestamp((string) $targetId)),
+                'message' => new LabelEntry((string) $targetId, $label, $this->labelTimestamp((string) $targetId)),
                 'parent' => $fork->leaf,
             ];
             $fork->labels[$targetId] = $label;
@@ -956,7 +956,7 @@ final class SessionManager
         foreach ($this->entries as $entry) {
             $item = $entry['message'];
 
-            if ($item instanceof Label && $item->targetId === $targetId && $item->label !== null) {
+            if ($item instanceof LabelEntry && $item->targetId === $targetId && $item->label !== null) {
                 $at = $item->timestamp;
             }
         }
@@ -964,9 +964,9 @@ final class SessionManager
         return $at;
     }
 
-    private static function withFirstKept(CompactionSummary $summary, string $firstKeptEntryId): CompactionSummary
+    private static function withFirstKept(CompactionEntry $summary, string $firstKeptEntryId): CompactionEntry
     {
-        return new CompactionSummary(
+        return new CompactionEntry(
             $summary->summary,
             $summary->readFiles,
             $summary->modifiedFiles,
@@ -1118,7 +1118,7 @@ final class SessionManager
         $compactionIndex = null;
 
         foreach ($path as $index => $entry) {
-            if ($entry->message instanceof CompactionSummary) {
+            if ($entry->message instanceof CompactionEntry) {
                 $compactionIndex = $index;
             }
         }
@@ -1147,7 +1147,7 @@ final class SessionManager
         foreach ($context as $index => $entry) {
             $projected[] = new ProjectedSessionEntry(
                 $entry,
-                $entry->message instanceof CompactionSummary && $index > 0 ? [] : ($contributed[$entry->id] ?? []),
+                $entry->message instanceof CompactionEntry && $index > 0 ? [] : ($contributed[$entry->id] ?? []),
             );
         }
 
@@ -1168,10 +1168,10 @@ final class SessionManager
     {
         return $item !== null
             && !$item instanceof CustomEntry
-            && !$item instanceof ModelChange
-            && !$item instanceof ThinkingLevelChange
+            && !$item instanceof ModelChangeEntry
+            && !$item instanceof ThinkingLevelChangeEntry
             && !$item instanceof UsageEntry
-            && !$item instanceof Label
+            && !$item instanceof LabelEntry
             && !$item instanceof SessionInfoEntry
             && !$item instanceof ContextEdit;
     }
@@ -1185,12 +1185,12 @@ final class SessionManager
      * ever changed it on purpose.
      *
      * Except under a virtual model (upstream's `getBranchSelection()`): its responses name the
-     * physical models it routed to, so a virtual `ModelChange` holds over the responses after it
-     * until the next `ModelChange`. One that is no longer registered does not hold, and the
+     * physical models it routed to, so a virtual `ModelChangeEntry` holds over the responses after it
+     * until the next `ModelChangeEntry`. One that is no longer registered does not hold, and the
      * selection falls back to the physical model that answered last. A response naming a virtual
      * model is a failed routing and never a selection.
      *
-     * @return array{model: ?ModelChange, thinking: ?ThinkingLevelChange}
+     * @return array{model: ?ModelChangeEntry, thinking: ?ThinkingLevelChangeEntry}
      */
     public function settings(): array
     {
@@ -1204,18 +1204,18 @@ final class SessionManager
             $item = $this->entries[$cur]['message'];
 
             if ($model === null) {
-                if ($item instanceof ModelChange) {
+                if ($item instanceof ModelChangeEntry) {
                     $model = $item;
                 } elseif ($item instanceof AssistantMessage && $item->model !== '' && $item->api !== Api::Virtual) {
                     $change = $this->lastModelChangeBefore($cur);
                     $selected = $change === null ? null : Models::find($change->provider, $change->modelId);
                     $model = $change !== null && $selected !== null && Models::isVirtual($selected)
                         ? $change
-                        : new ModelChange($item->provider, $item->model, $item->timestamp);
+                        : new ModelChangeEntry($item->provider, $item->model, $item->timestamp);
                 }
             }
 
-            if ($thinking === null && $item instanceof ThinkingLevelChange) {
+            if ($thinking === null && $item instanceof ThinkingLevelChangeEntry) {
                 $thinking = $item;
             }
 
@@ -1229,15 +1229,15 @@ final class SessionManager
         return ['model' => $model, 'thinking' => $thinking];
     }
 
-    /** The nearest `ModelChange` above entry $id, or null when nothing above it changed the model. */
-    private function lastModelChangeBefore(string $id): ?ModelChange
+    /** The nearest `ModelChangeEntry` above entry $id, or null when nothing above it changed the model. */
+    private function lastModelChangeBefore(string $id): ?ModelChangeEntry
     {
         $cur = $this->entries[$id]['parent'];
 
         while ($cur !== null && isset($this->entries[$cur])) {
             $item = $this->entries[$cur]['message'];
 
-            if ($item instanceof ModelChange) {
+            if ($item instanceof ModelChangeEntry) {
                 return $item;
             }
 
@@ -1310,7 +1310,7 @@ final class SessionManager
                 continue;
             }
 
-            if ($item instanceof CompactionSummary) {
+            if ($item instanceof CompactionEntry) {
                 $kept = self::edited(self::keptFrom($path, $item->firstKeptEntryId, $id), $edits);
 
                 // Replaced, not seen: what came before minus what is being kept. Counting
@@ -1468,7 +1468,7 @@ final class SessionManager
 
             // pi's `buildContextEntries()` leaves the kept part's system messages out: the
             // compaction's own `systemMessage` already holds their replay.
-            if ($keeping && self::isSaid($item) && !$item instanceof CompactionSummary && !$item instanceof SystemMessage) {
+            if ($keeping && self::isSaid($item) && !$item instanceof CompactionEntry && !$item instanceof SystemMessage) {
                 $kept[] = [$id, $item];
             }
         }
@@ -1484,9 +1484,9 @@ final class SessionManager
      * "1,204 earlier messages summarised".
      *
      */
-    private static function withCount(CompactionSummary $summary, int $replaced): CompactionSummary
+    private static function withCount(CompactionEntry $summary, int $replaced): CompactionEntry
     {
-        return new CompactionSummary(
+        return new CompactionEntry(
             $summary->summary,
             $summary->readFiles,
             $summary->modifiedFiles,
@@ -1611,7 +1611,7 @@ final class SessionManager
 
         $label = $label === null || trim($label) === '' ? null : trim($label);
 
-        $this->append(new Label($entryId, $label));
+        $this->append(new LabelEntry($entryId, $label));
 
         if ($label === null) {
             unset($this->labels[$entryId]);
@@ -1665,13 +1665,13 @@ final class SessionManager
     /** Record that the model changed here, so resuming this conversation comes back to it. */
     public function appendModelChange(string $provider, string $modelId): void
     {
-        $this->append(new ModelChange($provider, $modelId));
+        $this->append(new ModelChangeEntry($provider, $modelId));
     }
 
     /** The same for the thinking level. */
     public function appendThinkingLevelChange(string $level): void
     {
-        $this->append(new ThinkingLevelChange($level));
+        $this->append(new ThinkingLevelChangeEntry($level));
     }
 
     /**

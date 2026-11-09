@@ -101,7 +101,7 @@ use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
@@ -173,7 +173,7 @@ final class AgentSession
 
     private ?AbortController $bash = null;
 
-    /** @var list<BashExecution> run while the agent was working, waiting for it to stop */
+    /** @var list<BashExecutionMessage> run while the agent was working, waiting for it to stop */
     private array $pendingBash = [];
 
     /** How many turns this run has had, for the turn events. */
@@ -264,7 +264,7 @@ final class AgentSession
      * that only expands in front of a person is a stored prompt `pig -p "/review foo.php"` sends
      * to the model as the six characters `/review`. See `prompt()`.
      *
-     * @var list<FileCommand>
+     * @var list<PromptTemplate>
      */
     private array $fileCommands;
 
@@ -302,7 +302,7 @@ final class AgentSession
     private ?string $scratch = null;
 
     /**
-     * @param list<FileCommand> $fileCommands
+     * @param list<PromptTemplate> $fileCommands
      * @param list<ModelChoice> $modelScope
      */
     public function __construct(
@@ -519,13 +519,13 @@ final class AgentSession
         $extensionRunner?->setSession($this);
     }
 
-    /** @return list<FileCommand> the prompt templates `/name` expands — upstream's `promptTemplates` */
+    /** @return list<PromptTemplate> the prompt templates `/name` expands — upstream's `promptTemplates` */
     public function fileCommands(): array
     {
         return $this->fileCommands;
     }
 
-    /** @param list<FileCommand> $fileCommands */
+    /** @param list<PromptTemplate> $fileCommands */
     public function setFileCommands(array $fileCommands): void
     {
         $this->fileCommands = $fileCommands;
@@ -573,7 +573,7 @@ final class AgentSession
         Themes::setExtensionThemeDirs($paths($found->themePaths));
 
         $this->fileCommands = [
-            ...array_values(array_filter($this->fileCommands, static fn (FileCommand $c): bool => !str_starts_with($c->source, '(extension'))),
+            ...array_values(array_filter($this->fileCommands, static fn (PromptTemplate $c): bool => !str_starts_with($c->source, '(extension'))),
             ...$commands,
         ];
         $this->loadout?->addSkills($skills);
@@ -1466,7 +1466,7 @@ final class AgentSession
 
         $messages = $this->messages();
         $usage = Compaction::lastUsage($messages);
-        $compacted = array_filter($messages, static fn ($m): bool => $m instanceof CompactionSummary) !== [];
+        $compacted = array_filter($messages, static fn ($m): bool => $m instanceof CompactionEntry) !== [];
 
         if ($usage === null && $compacted) {
             return new ContextUsage(null, $model->contextWindow, null);
@@ -3021,7 +3021,7 @@ final class AgentSession
      * @param Closure(string): void|null $onOutput called with the output so far as it arrives
      * @param string|null $id what the update events name this command by — RPC's command id
      */
-    public function executeBash(string $command, bool $excludeFromContext = false, ?Closure $onOutput = null, ?string $id = null): BashExecution
+    public function executeBash(string $command, bool $excludeFromContext = false, ?Closure $onOutput = null, ?string $id = null): BashExecutionMessage
     {
         if ($this->bash !== null) {
             throw new AgentError('A command is already running. Press esc to stop it first.');
@@ -3034,7 +3034,7 @@ final class AgentSession
 
         if ($handled !== null) {
             $result = $handled->result;
-            $execution = $result->excludeFromContext === $excludeFromContext ? $result : new BashExecution(
+            $execution = $result->excludeFromContext === $excludeFromContext ? $result : new BashExecutionMessage(
                 $result->command,
                 $result->output,
                 $result->exitCode,
@@ -3073,7 +3073,7 @@ final class AgentSession
             $exit = $run->wait($this->bash->signal, null);
             $truncation = Truncate::tail($run->output());
 
-            $execution = new BashExecution(
+            $execution = new BashExecutionMessage(
                 $command,
                 $truncation->content,
                 $run->aborted ? null : $exit,
@@ -3104,7 +3104,7 @@ final class AgentSession
      * that sees those two separated rejects the whole request. So anything that arrives
      * while the agent is working waits for it to stop.
      */
-    private function append(BashExecution $execution): void
+    private function append(BashExecutionMessage $execution): void
     {
         if ($this->isStreaming()) {
             $this->pendingBash[] = $execution;
@@ -3119,7 +3119,7 @@ final class AgentSession
         $this->store?->append($execution);
     }
 
-    /** @return list<BashExecution> what was held back, now in the conversation */
+    /** @return list<BashExecutionMessage> what was held back, now in the conversation */
     private function flushBash(): array
     {
         $held = $this->pendingBash;
@@ -3502,7 +3502,7 @@ final class AgentSession
             if ($fromExtension) {
                 $given = $answer->summary;
                 $details = is_array($given['details'] ?? null) ? $given['details'] : [];
-                $summary = new BranchSummary(
+                $summary = new BranchSummaryEntry(
                     (string) ($given['summary'] ?? ''),
                     self::fileList($details['readFiles'] ?? []),
                     self::fileList($details['modifiedFiles'] ?? []),
@@ -3622,7 +3622,7 @@ final class AgentSession
      * compaction's) and the session's stream function, retry policy and retry announcements.
      *
      * @param list<SessionEntry> $entries
-     * @return BranchSummary|null null when summarising was called off
+     * @return BranchSummaryEntry|null null when summarising was called off
      * @throws AgentError when the model failed
      */
     private function generateBranchSummary(
@@ -3631,7 +3631,7 @@ final class AgentSession
         ?string $instructions,
         ?bool $replaceInstructions,
         AbortSignal $signal,
-    ): ?BranchSummary {
+    ): ?BranchSummaryEntry {
         // The routed level with the routed model, as upstream's `_getSummarizationRequestAuth()`.
         $direct = $this->directModel($this->model() ?? throw new AgentError('No model to write the summary with.'), $signal);
         $model = $direct->model;
@@ -3658,7 +3658,7 @@ final class AgentSession
             throw new AgentError($result->error);
         }
 
-        return new BranchSummary(
+        return new BranchSummaryEntry(
             (string) $result->summary,
             $result->readFiles ?? [],
             $result->modifiedFiles ?? [],
@@ -4296,7 +4296,7 @@ final class AgentSession
         $latest = null;
 
         foreach ($this->messages() as $message) {
-            if ($message instanceof CompactionSummary && ($latest === null || $message->timestamp > $latest)) {
+            if ($message instanceof CompactionEntry && ($latest === null || $message->timestamp > $latest)) {
                 $latest = $message->timestamp;
             }
         }
@@ -4624,7 +4624,7 @@ final class AgentSession
                     $tokensBefore += Compaction::estimateTokens($message);
                 }
 
-                $manager->append(new CompactionSummary(
+                $manager->append(new CompactionEntry(
                     $draft->summary,
                     tokensBefore: $tokensBefore,
                     firstKeptEntryId: $draft->firstKeptEntryId,
@@ -4742,11 +4742,11 @@ final class AgentSession
      * `checkCompaction()`, and are not started from outside.
      *
      * @param string|null $instructions what to pay particular attention to, from `/compact foo`
-     * @return CompactionSummary|null the entry written, or null when it was called off part-way
+     * @return CompactionEntry|null the entry written, or null when it was called off part-way
      * @throws AgentError if the agent is working, there is no model, there is nothing to
      *                    compact, a hook cancelled it, or the model fails
      */
-    public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionSummary
+    public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionEntry
     {
         if ($this->isStreaming()) {
             throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
@@ -4762,7 +4762,7 @@ final class AgentSession
      *
      * @param 'manual'|'threshold'|'overflow' $reason
      */
-    private function compactNow(?string $instructions, ?AbortSignal $signal, string $reason, bool $willRetry, ?CompactionPreparation $preparation = null): ?CompactionSummary
+    private function compactNow(?string $instructions, ?AbortSignal $signal, string $reason, bool $willRetry, ?CompactionPreparation $preparation = null): ?CompactionEntry
     {
         // One controller for both doors, so `isCompacting()` and `abortCompaction()` answer for a
         // summarisation whoever started it. A signal the caller brought is *forwarded* into it
@@ -4873,13 +4873,13 @@ final class AgentSession
      * shared by its three doors.
      *
      * `Compaction::prepareCompaction()` over the branch, `session_before_compact`, then the hook's
-     * `CompactionResult` or `Compaction::compact()`'s, written as a `CompactionSummary` and the
+     * `CompactionResult` or `Compaction::compact()`'s, written as a `CompactionEntry` and the
      * agent's messages rebuilt from the projection — upstream's `appendCompaction()` and
      * `_refreshFinalizedContext()`. A session that is not being saved compacts a copy of itself
      * held in memory (`SessionManager::previewOf()`), so the cut, the ids and the rebuilt context
      * are worked out the one way either way.
      *
-     * @return array{0: CompactionSummary, 1: CompactionResult}|null the entry as the conversation
+     * @return array{0: CompactionEntry, 1: CompactionResult}|null the entry as the conversation
      *         now holds it, and upstream's `CompactionResult` for `compaction_end` and RPC's
      *         `compact` — `estimatedTokensAfter` measured over the rebuilt conversation, as
      *         upstream's `estimateMessagesTokens()` measures it; null when it was called off
@@ -4898,7 +4898,7 @@ final class AgentSession
             // conversation being smaller than the recent window compaction always keeps is
             // the usual reason, and the footer does not show it — that percentage is the
             // provider's count of a whole request, tool schemas and system prompt included.
-            throw new AgentError($last?->message instanceof CompactionSummary ? 'Already compacted' : 'Nothing to compact (session too small)');
+            throw new AgentError($last?->message instanceof CompactionEntry ? 'Already compacted' : 'Nothing to compact (session too small)');
         }
 
         $answer = $this->extensionRunner?->emitBeforeCompact(new SessionBeforeCompactEvent(
@@ -4957,7 +4957,7 @@ final class AgentSession
             $compactedAt,
         );
 
-        $session->append(new CompactionSummary(
+        $session->append(new CompactionEntry(
             $result->summary,
             self::fileList($result->details['readFiles'] ?? []),
             self::fileList($result->details['modifiedFiles'] ?? []),
@@ -4980,7 +4980,7 @@ final class AgentSession
         $summary = null;
 
         foreach ($messages as $message) {
-            if ($message instanceof CompactionSummary) {
+            if ($message instanceof CompactionEntry) {
                 $summary = $message;
             }
         }
@@ -5174,7 +5174,7 @@ final class AgentSession
                 $message instanceof UsageEntry => $message->usage,
                 // Upstream's compaction and branch-summary `usage`: "included in session token and
                 // cost totals".
-                $message instanceof CompactionSummary, $message instanceof BranchSummary => $message->usage,
+                $message instanceof CompactionEntry, $message instanceof BranchSummaryEntry => $message->usage,
                 default => null,
             };
 

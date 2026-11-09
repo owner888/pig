@@ -81,7 +81,7 @@ final class CacheStats
         $misses = new SplObjectStorage();
 
         foreach ($entries as $entry) {
-            if ($entry instanceof CompactionSummary || $entry instanceof BranchSummary) {
+            if ($entry instanceof CompactionEntry || $entry instanceof BranchSummaryEntry) {
                 $previous = null;
 
                 continue;

@@ -19,7 +19,7 @@ use Pig\Ai\ClassifierResult;
  * provider — `StreamApi`'s arrangement for chat. `Models` has checked the input
  * (`assertClassifierInputSupported()`) and resolved the key onto `$options->apiKey` first.
  */
-interface ClassificationApi
+interface ProviderClassifier
 {
     /**
      * Upstream: "Never rejects." Every failure should be a `ClassifierResult` with `stopReason` error

@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Extensions;
 
 use Closure;
 use InvalidArgumentException;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\AssistantImages;
@@ -15,8 +15,8 @@ use Pig\Ai\ClassifierContext;
 use Pig\Ai\ClassifierModel;
 use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
-use Pig\Ai\Extension\ClassificationApi;
-use Pig\Ai\Extension\ImageGenerationApi;
+use Pig\Ai\Extension\ProviderClassifier;
+use Pig\Ai\Extension\ProviderImages;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\Provider;
 use Pig\Ai\Extension\ProviderRegistry;
@@ -105,8 +105,8 @@ final class ProviderConfig
             throw new InvalidArgumentException("{$where}: \"api\" is required when registering streamSimple.");
         }
 
-        $imageImplementations = self::implementations($config['images'] ?? null, ImageGenerationApi::class, "{$where}: \"images\"");
-        $classifierImplementations = self::implementations($config['classifiers'] ?? null, ClassificationApi::class, "{$where}: \"classifiers\"");
+        $imageImplementations = self::implementations($config['images'] ?? null, ProviderImages::class, "{$where}: \"images\"");
+        $classifierImplementations = self::implementations($config['classifiers'] ?? null, ProviderClassifier::class, "{$where}: \"classifiers\"");
         // Which implementation each `Extension` model goes to, by model id; kept current with the models
         // themselves, a `refreshModels` included.
         $imageRouter = $imageImplementations === [] ? null : self::imageRouter($id, $imageImplementations);
@@ -350,7 +350,7 @@ final class ProviderConfig
             // "A model's `compat` is the extension's to write and is used as written" — a typed compat as
             // it is, an array read under upstream's key names.
             match (true) {
-                $compat instanceof OpenAiCompat, $compat instanceof AnthropicCompat, $compat instanceof BedrockCompat => $compat,
+                $compat instanceof OpenAiCompat, $compat instanceof AnthropicMessagesCompat, $compat instanceof BedrockCompat => $compat,
                 is_array($compat) => CustomModels::compat($compat, $chatApi),
                 default => null,
             },
@@ -428,18 +428,18 @@ final class ProviderConfig
     }
 
     /**
-     * The config's `images` as the provider's one `ImageGenerationApi`: upstream's
+     * The config's `images` as the provider's one `ProviderImages`: upstream's
      * `images[model.api]`, with the API name each model was defined under standing in for `model.api`.
      *
-     * @param array<string, ImageGenerationApi|Closure> $implementations
+     * @param array<string, ProviderImages|Closure> $implementations
      */
-    private static function imageRouter(string $provider, array $implementations): ImageGenerationApi
+    private static function imageRouter(string $provider, array $implementations): ProviderImages
     {
-        return new class ($provider, $implementations) implements ImageGenerationApi {
+        return new class ($provider, $implementations) implements ProviderImages {
             /** @var array<string, string> model id => API name */
             private array $routes = [];
 
-            /** @param array<string, ImageGenerationApi|Closure> $implementations */
+            /** @param array<string, ProviderImages|Closure> $implementations */
             public function __construct(private readonly string $provider, private readonly array $implementations)
             {
             }
@@ -472,17 +472,17 @@ final class ProviderConfig
     }
 
     /**
-     * The config's `classifiers` as the provider's one `ClassificationApi` — `imageRouter()`'s twin.
+     * The config's `classifiers` as the provider's one `ProviderClassifier` — `imageRouter()`'s twin.
      *
-     * @param array<string, ClassificationApi|Closure> $implementations
+     * @param array<string, ProviderClassifier|Closure> $implementations
      */
-    private static function classifierRouter(string $provider, array $implementations): ClassificationApi
+    private static function classifierRouter(string $provider, array $implementations): ProviderClassifier
     {
-        return new class ($provider, $implementations) implements ClassificationApi {
+        return new class ($provider, $implementations) implements ProviderClassifier {
             /** @var array<string, string> model id => API name */
             private array $routes = [];
 
-            /** @param array<string, ClassificationApi|Closure> $implementations */
+            /** @param array<string, ProviderClassifier|Closure> $implementations */
             public function __construct(private readonly string $provider, private readonly array $implementations)
             {
             }

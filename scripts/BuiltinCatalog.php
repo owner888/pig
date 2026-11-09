@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Scripts;
 
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\ClassifierApi;
@@ -17,7 +17,7 @@ use Pig\Ai\ModelJson;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 
 /**
  * The built-in catalogue before it is JSON: the generated rows, and the rules upstream's generator
@@ -167,7 +167,7 @@ final class BuiltinCatalog
     /**
      * Upstream's generator `ANTHROPIC_ALLOWED_FALLBACK_MODELS`: model => the models Anthropic may
      * answer with in its place (server-side refusal fallback). Each becomes an
-     * `AnthropicCompat::$allowedFallbackModels` entry with the fallback row's own price, and for a
+     * `AnthropicMessagesCompat::$allowedFallbackModels` entry with the fallback row's own price, and for a
      * `supportsMidConvoEffort` model only fallbacks that are managed-effort too — so Opus 5's single
      * candidate, Opus 4.8, is dropped and Opus 5 sends no `fallbacks` at all.
      */
@@ -2720,7 +2720,7 @@ final class BuiltinCatalog
      * every model (`generateModels()`' last loop), in its order: the provider's own compat
      * (`catalogueCompat()`, what the generator's processing of that provider wrote), then
      * `applyOpenAICompletionsCompatMetadata()` (`completionsCompat()`), the Anthropic compat arm and
-     * `applyThinkingLevelMetadata()`'s two compat keys (`AnthropicCompat::forBuiltIn()`),
+     * `applyThinkingLevelMetadata()`'s two compat keys (`AnthropicMessagesCompat::forBuiltIn()`),
      * `applyModelsDevReasoningOptionMetadata()` gated by `supportsDirectReasoningEffort()` — on the
      * compat the model had *before* the thinking metadata, which is when upstream asks, so a Claude that
      * thinks adaptively only by its id takes no efforts from models.dev — the level-map rules
@@ -2759,7 +2759,7 @@ final class BuiltinCatalog
         $own = self::catalogueCompat($provider, $api, $id, $reasoning, $row);
         $compat = match ($api) {
             Api::OpenAiCompletions => self::completionsCompat($provider, $baseUrl, $id, $own instanceof OpenAiCompat ? $own : null),
-            Api::AnthropicMessages => AnthropicCompat::forBuiltIn($provider, $id, $own instanceof AnthropicCompat ? $own : null),
+            Api::AnthropicMessages => AnthropicMessagesCompat::forBuiltIn($provider, $id, $own instanceof AnthropicMessagesCompat ? $own : null),
             Api::OpenAiResponses => self::responsesCompat($provider, $id, $own instanceof OpenAiCompat ? $own : null),
             Api::GoogleGenerativeAi => null,
         };
@@ -2786,7 +2786,7 @@ final class BuiltinCatalog
                 effortLevelMap: $direct ? ($row['effortLevelMap'] ?? null) : null,
                 reasoning: $reasoning,
                 supportsToggle: ($row['supportsToggle'] ?? false) === true,
-                forceAdaptiveThinking: $compat instanceof AnthropicCompat && $compat->forceAdaptiveThinking === true,
+                forceAdaptiveThinking: $compat instanceof AnthropicMessagesCompat && $compat->forceAdaptiveThinking === true,
             ),
             inputLimits: Models::inputLimits($provider, $input, $window),
         );
@@ -2803,7 +2803,7 @@ final class BuiltinCatalog
      *
      * @param array<int|string, mixed> $row
      */
-    private static function catalogueCompat(string $provider, Api $api, string $id, bool $reasoning, array $row): OpenAiCompat|AnthropicCompat|null
+    private static function catalogueCompat(string $provider, Api $api, string $id, bool $reasoning, array $row): OpenAiCompat|AnthropicMessagesCompat|null
     {
         $own = match ($provider) {
             // `antLingCompat`, and the Ring row's `thinkingFormat: "ant-ling"` — the one row of the
@@ -2823,7 +2823,7 @@ final class BuiltinCatalog
             // cache/routing affinity" — and nothing on its OpenAI ones.
             'cloudflare-workers-ai' => new OpenAiCompat(sendSessionAffinityHeaders: true),
             'cloudflare-ai-gateway' => match ($api) {
-                Api::AnthropicMessages => new AnthropicCompat(sendSessionAffinityHeaders: true),
+                Api::AnthropicMessages => new AnthropicMessagesCompat(sendSessionAffinityHeaders: true),
                 Api::OpenAiCompletions => new OpenAiCompat(sendSessionAffinityHeaders: true),
                 default => null,
             },
@@ -2843,7 +2843,7 @@ final class BuiltinCatalog
             'meta' => null,
             // A row with models.dev effort levels takes adaptive thinking with `output_config.effort`
             // (upstream #11121: MiniMax-M3.1-Flash rejects `thinking.type: "disabled"`).
-            'minimax', 'minimax-cn' => isset($row['thinkingLevelMap']) ? new AnthropicCompat(forceAdaptiveThinking: true) : null,
+            'minimax', 'minimax-cn' => isset($row['thinkingLevelMap']) ? new AnthropicMessagesCompat(forceAdaptiveThinking: true) : null,
             // `moonshotCompat`, and Kimi K3's: `requiresReasoningContentOnAssistantMessages`, the
             // `openai` format, `supportsReasoningEffort`.
             'moonshotai', 'moonshotai-cn' => new OpenAiCompat(
@@ -2877,7 +2877,7 @@ final class BuiltinCatalog
                 thinkingFormat: 'qwen',
             ),
             'together' => self::togetherCompat($id, $reasoning),
-            'vercel-ai-gateway' => new AnthropicCompat(allowEmptySignature: true),
+            'vercel-ai-gateway' => new AnthropicMessagesCompat(allowEmptySignature: true),
             // `xiaomiCompat`.
             'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-sgp' => new OpenAiCompat(
                 // "MiMo Chat Completions only documents thinking.type enabled/disabled and rejects
@@ -2959,10 +2959,10 @@ final class BuiltinCatalog
      *
      * @param array<int|string, mixed> $row
      */
-    private static function fireworksCompat(Api $api, string $id, array $row): OpenAiCompat|AnthropicCompat
+    private static function fireworksCompat(Api $api, string $id, array $row): OpenAiCompat|AnthropicMessagesCompat
     {
         if ($api === Api::AnthropicMessages) {
-            return new AnthropicCompat(
+            return new AnthropicMessagesCompat(
                 // "Use adaptive thinking for cataloged effort controls, with verified fallbacks where
                 // models.dev is incomplete. New models need no allowlist entry."
                 forceAdaptiveThinking: ($row['supportsEffort'] ?? false) === true || in_array($id, self::FIREWORKS_ADAPTIVE_THINKING_FALLBACK_MODELS, true) ? true : null,
@@ -3290,7 +3290,7 @@ final class BuiltinCatalog
 
         // 2.
         if ($api === Api::AnthropicMessages
-            && AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true
+            && AnthropicMessagesCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true
             && !self::supportsAnthropicDisabledThinkingWithMidConvoEffort($id)) {
             $map = [...$map, 'off' => null];
         }
@@ -3468,7 +3468,7 @@ final class BuiltinCatalog
     private static function pricing(float $in, float $out, float $read, float $write, array $tiers = []): Pricing
     {
         return new Pricing($in, $out, $read, $write, array_map(
-            static fn (array $tier): PricingTier => new PricingTier(...$tier),
+            static fn (array $tier): ModelCostTier => new ModelCostTier(...$tier),
             $tiers,
         ));
     }
@@ -3480,10 +3480,10 @@ final class BuiltinCatalog
      * then its own laid over it, as `OpenAiCompat::resolve()` does — says `thinkingFormat: "openai"`
      * and `supportsReasoningEffort`. Any other API is false.
      */
-    private static function supportsDirectReasoningEffort(Api $api, string $provider, string $baseUrl, string $id, OpenAiCompat|AnthropicCompat|BedrockCompat|null $compat): bool
+    private static function supportsDirectReasoningEffort(Api $api, string $provider, string $baseUrl, string $id, OpenAiCompat|AnthropicMessagesCompat|BedrockCompat|null $compat): bool
     {
         if ($api === Api::AnthropicMessages) {
-            return $compat instanceof AnthropicCompat && $compat->forceAdaptiveThinking === true;
+            return $compat instanceof AnthropicMessagesCompat && $compat->forceAdaptiveThinking === true;
         }
 
         if ($api === Api::OpenAiResponses || $api === Api::AzureOpenAiResponses || $api === Api::OpenAiCodexResponses) {
@@ -3526,12 +3526,12 @@ final class BuiltinCatalog
         foreach (self::ANTHROPIC_ALLOWED_FALLBACK_MODELS as $id => $fallbackIds) {
             $model = $models[Models::ANTHROPIC . '/' . $id] ?? null;
 
-            if ($model === null || !$model->compat instanceof AnthropicCompat) {
+            if ($model === null || !$model->compat instanceof AnthropicMessagesCompat) {
                 continue;
             }
 
             if ($model->compat->supportsMidConvoEffort === true) {
-                $fallbackIds = array_values(array_filter($fallbackIds, AnthropicCompat::supportsMidConvoEffortModel(...)));
+                $fallbackIds = array_values(array_filter($fallbackIds, AnthropicMessagesCompat::supportsMidConvoEffortModel(...)));
             }
 
             $allowed = [];
@@ -3715,8 +3715,8 @@ final class BuiltinCatalog
             // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
             // model (`applyStrictToolCompatMetadata()`), `forceAdaptiveThinking` and
             // `supportsTemperature: false` by id, `supportsMidConvoEffort` by id — absent, not
-            // false, where it writes nothing. See `AnthropicCompat::forBuiltIn()`.
-            $compat = AnthropicCompat::forBuiltIn(Models::ANTHROPIC, $id);
+            // false, where it writes nothing. See `AnthropicMessagesCompat::forBuiltIn()`.
+            $compat = AnthropicMessagesCompat::forBuiltIn(Models::ANTHROPIC, $id);
             $models[Models::ANTHROPIC . '/' . $id] = new Model(
                 $id,
                 $name,
@@ -3980,7 +3980,7 @@ final class BuiltinCatalog
                 // Copilot rejects) on the ids that take it — and no `supportsStrictTools` (that is
                 // `provider === "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/
                 // `openrouter` only).
-                Api::AnthropicMessages => AnthropicCompat::forBuiltIn(Models::COPILOT, $id),
+                Api::AnthropicMessages => AnthropicMessagesCompat::forBuiltIn(Models::COPILOT, $id),
                 // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
                 // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5; and
                 // `applyOpenAIResponsesTranscriptMetadata()`.

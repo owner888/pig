@@ -16,7 +16,7 @@ namespace Pig\Ai;
  *
  * @see OpenAiCompat the same idea for `openai-completions`, which also detects
  */
-final readonly class AnthropicCompat
+final readonly class AnthropicMessagesCompat
 {
     /**
      * Upstream's generator `EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS`, keyed

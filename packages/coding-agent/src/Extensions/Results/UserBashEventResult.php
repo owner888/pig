@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Extensions\Results;
 
-use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BashExecutionMessage;
 
 /**
  * A `user_bash` handler ran the command itself, and this is what came of it.
@@ -15,7 +15,7 @@ use Pig\CodingAgent\Session\BashExecution;
  */
 final readonly class UserBashEventResult
 {
-    public function __construct(public BashExecution $result)
+    public function __construct(public BashExecutionMessage $result)
     {
     }
 }

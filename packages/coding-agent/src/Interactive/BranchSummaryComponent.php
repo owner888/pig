@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
-use Pig\CodingAgent\Session\BranchSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Box;
 use Pig\Tui\Components\DefaultTextStyle;
@@ -36,7 +36,7 @@ final class BranchSummaryComponent extends Container
     private bool $expanded = false;
 
     public function __construct(
-        private readonly BranchSummary $summary,
+        private readonly BranchSummaryEntry $summary,
         bool $expanded = false,
         int $outputPad = 1,
         /** `keyText("app.tools.expand")`, for the collapsed line. */

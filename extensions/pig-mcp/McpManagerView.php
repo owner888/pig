@@ -31,7 +31,7 @@ use Pig\Tui\Width;
  * trick every hook dialog uses, which is what lets `manage()` read as a loop over menus.
  *
  * A `Container` **and** an `InputHandler`: a container given the focus eats every key, which is
- * the trap `SettingsSubmenu` exists for.
+ * the trap `SelectSubmenu` exists for.
  */
 final class McpManagerView extends Container implements InputHandler, CapturesViewportInput
 {

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [1.9.0] - 2026-11-09
+
+### Changed
+
+- **Breaking: twenty-one classes take upstream's names**, from the audit in `docs/dev/upstream.md` ("Names that differ from upstream"). `Pig\Ai`: `PricingTier` → `ModelCostTier`, `AnthropicCompat` → `AnthropicMessagesCompat`, `Utils\Headers` → `Utils\ProviderHeaders`, `Utils\StreamingJson` → `Utils\StreamingJsonParser`, `Utils\Oauth\Credentials` → `Utils\Oauth\OauthCredentials`, `Utils\Oauth\Provider` → `Utils\Oauth\OauthProvider`, `Extension\ClassificationApi` → `Extension\ProviderClassifier`, `Extension\ImageGenerationApi` → `Extension\ProviderImages`, `Providers\AzureOpenAiConfig` → `Providers\AzureEndpointOptions`. `Pig\CodingAgent`: `ModelRefreshResult` → `ModelsRefreshResult`, `ModelReference` → `ModelReferenceResult`, `Prompt\FileCommand` → `Prompt\PromptTemplate`, `Interactive\SettingsSubmenu` → `Interactive\SelectSubmenu`, and the session-file entries take upstream's suffix — `Session\BashExecution` → `BashExecutionMessage`, `BranchSummary` → `BranchSummaryEntry`, `CompactionSummary` → `CompactionEntry`, `Label` → `LabelEntry`, `ModelChange` → `ModelChangeEntry`, `ThinkingLevelChange` → `ThinkingLevelChangeEntry` (their stored forms are unchanged). `Pig\Mcp\Transports\Transport` → `McpTransport`; `Pig\Codemode\Sandbox` → `CodemodeSandbox`. Fields and methods are as they were; an extension changes its `use` lines. Kept on purpose, and why, is in the same document: `ReasoningEffort` (the provider-side subset of `Pig\Agent\ThinkingLevel`), `OauthFlow`, `StartedSession`, `VirtualModelRegistry`.
+
 ## [1.8.0] - 2026-11-09
 
 ### Changed

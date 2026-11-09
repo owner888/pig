@@ -48,12 +48,12 @@ final readonly class ModelRegistry
      *
      * @param list<string>|null $providers only these
      */
-    public function refresh(?array $providers = null, ?AbortSignal $signal = null, ?bool $allowNetwork = null, ?bool $force = null): ModelRefreshResult
+    public function refresh(?array $providers = null, ?AbortSignal $signal = null, ?bool $allowNetwork = null, ?bool $force = null): ModelsRefreshResult
     {
         CustomModels::discover()->install($this->auth);
 
         if ($this->auth === null) {
-            return new ModelRefreshResult($signal?->aborted() ?? false, []);
+            return new ModelsRefreshResult($signal?->aborted() ?? false, []);
         }
 
         return ModelRefresh::refresh($this->auth, $providers, $signal, $allowNetwork ?? ModelRefresh::networkEnabled(), $force);

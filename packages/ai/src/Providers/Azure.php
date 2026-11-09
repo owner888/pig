@@ -61,7 +61,7 @@ final class Azure
             $model->name,
             $model->api,
             $model->provider,
-            AzureOpenAiConfig::resolveAzureBaseUrl($model, $options),
+            AzureEndpointOptions::resolveAzureBaseUrl($model, $options),
             $model->contextWindow,
             $model->maxTokens,
             $model->reasoning,
@@ -83,7 +83,7 @@ final class Azure
      */
     private static function withDeploymentName(Model $model, OpenAiOptions $options): OpenAiOptions
     {
-        $deploymentName = AzureOpenAiConfig::resolveDeploymentName($model, $options);
+        $deploymentName = AzureEndpointOptions::resolveDeploymentName($model, $options);
 
         if ($deploymentName === $model->id) {
             return $options;

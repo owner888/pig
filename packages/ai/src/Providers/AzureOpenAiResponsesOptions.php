@@ -12,7 +12,7 @@ use Pig\Async\AbortSignal;
  * Upstream's `AzureOpenAIResponsesOptions`: `AzureEndpointOptions` (`azure-openai-config.ts`) and
  * the three Responses knobs Azure's arm reads.
  *
- * @see AzureOpenAiConfig for what the four endpoint fields decide
+ * @see AzureEndpointOptions for what the four endpoint fields decide
  */
 final readonly class AzureOpenAiResponsesOptions extends StreamOptions
 {

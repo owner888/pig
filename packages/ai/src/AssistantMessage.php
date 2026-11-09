@@ -36,7 +36,7 @@ final readonly class AssistantMessage
      *        noticed about the turn, for `/bug`
      * @param string|null            $providerThinkingLevel upstream's "exact provider-native effort
      *        level used for this response" — set by `Anthropic` on a managed-effort model
-     *        (`AnthropicCompat::$supportsMidConvoEffort`), which replays it in front of this turn on
+     *        (`AnthropicMessagesCompat::$supportsMidConvoEffort`), which replays it in front of this turn on
      *        later requests. Null for every other response
      * @param array<string, mixed>|null $deferred upstream's `DeferredHandle` on a `deferred` turn —
      *        `{provider, modelId, api, id, expiresAt?, pollAfterMs?, data?}`, the provider's token for

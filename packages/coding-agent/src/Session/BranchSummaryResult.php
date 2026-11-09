@@ -12,7 +12,7 @@ use Pig\Ai\Usage;
  *
  * Exactly one of three: a `$summary` (with what it cost and the file lists), `$aborted`, or an
  * `$error`. As with `CompactionResult`, the summary is the prose without the file tags, which a
- * `BranchSummary` adds itself when the model is shown it.
+ * `BranchSummaryEntry` adds itself when the model is shown it.
  */
 final readonly class BranchSummaryResult
 {

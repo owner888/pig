@@ -25,7 +25,7 @@ use Pig\Ai\SystemOneCompat;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Ai\Utils\ProviderRetry;
@@ -422,7 +422,7 @@ final class SystemOneShared
      */
     public static function requestHeaders(ClassifierModel $model, string $apiKey, ?array $optionsHeaders, ?ClientIdentity $identity = null): array
     {
-        return Headers::providerHeadersToRecord(
+        return ProviderHeaders::providerHeadersToRecord(
             ClientIdentity::headers($model, $identity),
             ['authorization' => "Bearer {$apiKey}", 'content-type' => 'application/json'],
             $model->headers,

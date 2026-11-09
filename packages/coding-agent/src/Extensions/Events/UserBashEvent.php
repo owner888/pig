@@ -9,7 +9,7 @@ use Pig\CodingAgent\Extensions\ExtensionEvent;
 /**
  * Somebody typed `!command` (or `!!command`). Upstream's `user_bash`.
  *
- * A handler may answer `UserBashEventResult` with a finished `BashExecution` and the command is
+ * A handler may answer `UserBashEventResult` with a finished `BashExecutionMessage` and the command is
  * not run here at all — the extension ran it somewhere else (a container, a remote box) and
  * that is the output the person sees and, for `!`, the model reads. `$excludeFromContext` is
  * true for `!!`.

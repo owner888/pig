@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Pig\Ai\Extension;
 
 use Closure;
-use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Async\AbortSignal;
 
 /**
  * A sign-in an extension brings with it.
  *
  * Upstream's `OAuthAuth`: `name`, `isSubscription`, `login(interaction)`, `refresh(credential)`,
- * `toAuth(credential)`. The three built-in flows are cases of `Utils\Oauth\Provider`; a provider
+ * `toAuth(credential)`. The three built-in flows are cases of `Utils\Oauth\OauthProvider`; a provider
  * registered by an extension implements this, and `CodingAgent\Auth` asks the registry before
  * the enum. The credentials file is keyed by `id()`, and it is pi's file, so an id that pi's
  * version of the same extension writes is the id to use here.
@@ -48,11 +48,11 @@ interface OauthFlow
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
-    ): ?Credentials;
+    ): ?OauthCredentials;
 
     /** A new access token from the stored credentials; the old refresh token may be rotated. */
-    public function refresh(Credentials $credentials): Credentials;
+    public function refresh(OauthCredentials $credentials): OauthCredentials;
 
     /** What goes on a request as the key — the access token, or something built around it. */
-    public function apiKey(Credentials $credentials): string;
+    public function apiKey(OauthCredentials $credentials): string;
 }

@@ -13,7 +13,7 @@ use Throwable;
  *
  * Each `on*()` hands back the closure that removes that listener, as upstream's does.
  */
-abstract class TransportEvents implements Transport
+abstract class TransportEvents implements McpTransport
 {
     public const int DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 

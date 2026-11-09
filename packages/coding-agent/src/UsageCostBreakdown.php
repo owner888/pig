@@ -7,8 +7,8 @@ namespace Pig\CodingAgent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\UsageEntry;
 
 /**
@@ -37,7 +37,7 @@ final class UsageCostBreakdown
             [$key, $usage] = match (true) {
                 $entry instanceof AssistantMessage => ["{$entry->provider}/" . ($entry->responseModel ?? $entry->model), $entry->usage],
                 $entry instanceof UsageEntry => ["{$entry->provider}/{$entry->model}", $entry->usage],
-                $entry instanceof ToolResultMessage, $entry instanceof CompactionSummary, $entry instanceof BranchSummary => ['Tools/summaries', $entry->usage],
+                $entry instanceof ToolResultMessage, $entry instanceof CompactionEntry, $entry instanceof BranchSummaryEntry => ['Tools/summaries', $entry->usage],
                 default => [null, null],
             };
 

@@ -164,9 +164,9 @@ final class ModelResolver
                 $glob = $thinking[0] ?? $pattern;
                 $exact = self::reference($glob, $available, $everyone, thinkingSuffix: 'none', fuzzy: false);
 
-                if ($exact->status === ModelReference::RESOLVED && $exact->model !== null) {
+                if ($exact->status === ModelReferenceResult::RESOLVED && $exact->model !== null) {
                     $matches = [$exact->model];
-                } elseif ($exact->status === ModelReference::AMBIGUOUS) {
+                } elseif ($exact->status === ModelReferenceResult::AMBIGUOUS) {
                     $matches = $exact->candidates;
                     $ambiguous($pattern, $matches);
                 } else {
@@ -187,7 +187,7 @@ final class ModelResolver
 
             $result = self::reference($pattern, $available, $everyone, thinkingSuffix: 'lenient', fuzzy: true);
 
-            if ($result->status === ModelReference::NOT_FOUND) {
+            if ($result->status === ModelReferenceResult::NOT_FOUND) {
                 $warnings[] = "No models match pattern \"{$pattern}\"";
 
                 continue;
@@ -197,7 +197,7 @@ final class ModelResolver
                 $warnings[] = $result->warning;
             }
 
-            if ($result->status === ModelReference::AMBIGUOUS) {
+            if ($result->status === ModelReferenceResult::AMBIGUOUS) {
                 $ambiguous($pattern, $result->candidates);
             }
 
@@ -247,7 +247,7 @@ final class ModelResolver
 
         $result = self::reference($cliModel, $models, $inlineApiKey ? static fn (): bool => false : $hasAuth, $provider, 'strict', true);
 
-        if ($result->status === ModelReference::RESOLVED && $result->model !== null) {
+        if ($result->status === ModelReferenceResult::RESOLVED && $result->model !== null) {
             return [new ModelChoice($result->model, $result->thinking ?? ThinkingLevel::Off, $result->warning, explicitThinking: $result->thinking !== null), null];
         }
 
@@ -255,7 +255,7 @@ final class ModelResolver
         // same id, the one that makes the model beats the ones reselling it (`Models::isResold()`) —
         // `--model gpt-5` is OpenAI's, Copilot's is `github-copilot/gpt-5`. Upstream reports these as
         // ambiguous; pig keeps its resold rule as the last word, so only a tie it cannot break is reported.
-        if ($result->status === ModelReference::AMBIGUOUS) {
+        if ($result->status === ModelReferenceResult::AMBIGUOUS) {
             $direct = array_values(array_filter($result->candidates, static fn (Model $model): bool => !Models::isResold($model->provider)));
 
             if ($direct !== [] && count(array_unique(array_map(static fn (Model $model): string => $model->provider, $direct))) === 1) {
@@ -263,7 +263,7 @@ final class ModelResolver
             }
         }
 
-        if ($result->status === ModelReference::AMBIGUOUS) {
+        if ($result->status === ModelReferenceResult::AMBIGUOUS) {
             $matches = array_map(static fn (Model $model): string => "{$model->provider}/{$model->id}", $result->candidates);
             sort($matches);
             $authHint = match (true) {
@@ -311,12 +311,12 @@ final class ModelResolver
      * @param Closure(string): bool     $usable
      * @param 'none'|'strict'|'lenient' $thinkingSuffix
      */
-    public static function reference(string $text, array $models, Closure $usable, ?string $provider = null, string $thinkingSuffix = 'lenient', bool $fuzzy = true): ModelReference
+    public static function reference(string $text, array $models, Closure $usable, ?string $provider = null, string $thinkingSuffix = 'lenient', bool $fuzzy = true): ModelReferenceResult
     {
         $text = trim($text);
 
         if ($text === '') {
-            return ModelReference::notFound();
+            return ModelReferenceResult::notFound();
         }
 
         $constraint = $provider === null ? null : strtolower($provider);
@@ -325,7 +325,7 @@ final class ModelResolver
             : array_values(array_filter($models, static fn (Model $model): bool => strtolower($model->provider) === $constraint));
         $result = self::resolveText($text, $thinkingSuffix, $fuzzy, $pool, $usable);
 
-        if ($result->status !== ModelReference::NOT_FOUND) {
+        if ($result->status !== ModelReferenceResult::NOT_FOUND) {
             return $result;
         }
 
@@ -354,7 +354,7 @@ final class ModelResolver
             }
         }
 
-        return ModelReference::notFound(new ModelReferenceTarget($anchor->provider, $providerModels, $modelText, $suffix[0] ?? $modelText, $suffix[1] ?? null));
+        return ModelReferenceResult::notFound(new ModelReferenceTarget($anchor->provider, $providerModels, $modelText, $suffix[0] ?? $modelText, $suffix[1] ?? null));
     }
 
     /**
@@ -367,7 +367,7 @@ final class ModelResolver
     {
         $result = self::reference($reference, $models, static fn (): bool => true, thinkingSuffix: 'none', fuzzy: false);
 
-        return $result->status === ModelReference::RESOLVED ? $result->model : null;
+        return $result->status === ModelReferenceResult::RESOLVED ? $result->model : null;
     }
 
     /**
@@ -375,7 +375,7 @@ final class ModelResolver
      * @param list<Model>               $pool
      * @param Closure(string): bool     $usable
      */
-    private static function resolveText(string $text, string $thinkingSuffix, bool $fuzzy, array $pool, Closure $usable): ModelReference
+    private static function resolveText(string $text, string $thinkingSuffix, bool $fuzzy, array $pool, Closure $usable): ModelReferenceResult
     {
         $reference = self::selectReference($text, $pool, $fuzzy, $usable);
 
@@ -392,7 +392,7 @@ final class ModelResolver
         }
 
         if ($thinkingSuffix === 'none') {
-            return ModelReference::notFound();
+            return ModelReferenceResult::notFound();
         }
 
         $thinking = self::splitThinkingSuffix($text);
@@ -401,20 +401,20 @@ final class ModelResolver
             $inner = self::resolveText($thinking[0], $thinkingSuffix, $fuzzy, $pool, $usable);
 
             // "Only use this thinking level if no warning from inner recursion"
-            return $inner->status === ModelReference::NOT_FOUND ? $inner : $inner->with($inner->warning !== null ? null : $thinking[1], $inner->warning);
+            return $inner->status === ModelReferenceResult::NOT_FOUND ? $inner : $inner->with($inner->warning !== null ? null : $thinking[1], $inner->warning);
         }
 
         // "Keep an invalid suffix as part of the id and fail, rather than resolve a different model"
         $colon = strrpos($text, ':');
 
         if ($thinkingSuffix === 'strict' || $colon === false) {
-            return ModelReference::notFound();
+            return ModelReferenceResult::notFound();
         }
 
         $suffix = substr($text, $colon + 1);
         $inner = self::resolveText(substr($text, 0, $colon), $thinkingSuffix, $fuzzy, $pool, $usable);
 
-        return $inner->status === ModelReference::NOT_FOUND
+        return $inner->status === ModelReferenceResult::NOT_FOUND
             ? $inner
             : $inner->with(null, "Invalid thinking level \"{$suffix}\" in pattern \"{$text}\". Using default instead.");
     }
@@ -429,7 +429,7 @@ final class ModelResolver
      * @param list<Model>           $pool
      * @param Closure(string): bool $usable
      */
-    private static function selectReference(string $text, array $pool, bool $fuzzy, Closure $usable): ?ModelReference
+    private static function selectReference(string $text, array $pool, bool $fuzzy, Closure $usable): ?ModelReferenceResult
     {
         $lowerText = strtolower($text);
         $raw = array_values(array_filter($pool, static fn (Model $model): bool => strtolower($model->id) === $lowerText));
@@ -470,24 +470,24 @@ final class ModelResolver
         }
 
         if (count(array_unique(array_map(static fn (Model $model): string => $model->provider, $candidates))) === 1) {
-            return ModelReference::resolved($candidates[0]);
+            return ModelReferenceResult::resolved($candidates[0]);
         }
 
         if ($named !== null && $usable($named->provider)) {
-            return ModelReference::resolved($named);
+            return ModelReferenceResult::resolved($named);
         }
 
         $usableOthers = array_values(array_filter($others, static fn (Model $model): bool => $usable($model->provider)));
 
         if (count($usableOthers) === 1) {
-            return ModelReference::resolved($usableOthers[0]);
+            return ModelReferenceResult::resolved($usableOthers[0]);
         }
 
         if ($usableOthers === [] && $named !== null) {
-            return ModelReference::resolved($named);
+            return ModelReferenceResult::resolved($named);
         }
 
-        return ModelReference::ambiguous($candidates, count($usableOthers));
+        return ModelReferenceResult::ambiguous($candidates, count($usableOthers));
     }
 
     /**
@@ -506,7 +506,7 @@ final class ModelResolver
      * @param list<Model>           $matches
      * @param Closure(string): bool $usable
      */
-    private static function selectFuzzy(array $matches, Closure $usable): ?ModelReference
+    private static function selectFuzzy(array $matches, Closure $usable): ?ModelReferenceResult
     {
         if ($matches === []) {
             return null;
@@ -525,10 +525,10 @@ final class ModelResolver
         $tied = array_values(array_filter($pool, static fn (Model $model): bool => $model->id === $best->id));
 
         if (count(array_unique(array_map(static fn (Model $model): string => $model->provider, $tied))) === 1) {
-            return ModelReference::resolved($best);
+            return ModelReferenceResult::resolved($best);
         }
 
-        return ModelReference::ambiguous($tied, $usableMatches !== [] ? count($tied) : 0);
+        return ModelReferenceResult::ambiguous($tied, $usableMatches !== [] ? count($tied) : 0);
     }
 
     /**

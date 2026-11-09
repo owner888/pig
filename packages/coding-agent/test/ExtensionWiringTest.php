@@ -38,8 +38,8 @@ use Pig\CodingAgent\Extensions\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Session\CompactionResult;
 use Pig\CodingAgent\Extensions\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
@@ -462,7 +462,7 @@ final class ExtensionWiringTest extends TestCase
         $messages = $session->messages();
 
         $this->assertCount(3, $messages);
-        $this->assertInstanceOf(BranchSummary::class, $messages[2]);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $messages[2]);
 
         unlink($store->path);
     }
@@ -477,7 +477,7 @@ final class ExtensionWiringTest extends TestCase
         $reopened = SessionManager::open($store->path)->messages();
         unlink($store->path);
 
-        $this->assertInstanceOf(BranchSummary::class, $reopened[2] ?? null);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $reopened[2] ?? null);
     }
 
     public function testTheSummaryReachesTheModelAsSomethingItReads(): void
@@ -549,7 +549,7 @@ final class ExtensionWiringTest extends TestCase
 
         // The label is an entry of its own, after the summary it names.
         $summaryId = (string) $store->entry((string) $store->leaf())['parent'];
-        $this->assertInstanceOf(BranchSummary::class, $store->entry($summaryId)['message'] ?? null);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $store->entry($summaryId)['message'] ?? null);
         $this->assertSame('from the hook', $store->labelOf($summaryId));
         unlink($store->path);
 

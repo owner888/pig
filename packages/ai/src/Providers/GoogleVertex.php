@@ -20,7 +20,7 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\GaxiosError;
 use Pig\Ai\Utils\GoogleAuth;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
@@ -250,7 +250,7 @@ final class GoogleVertex
             'Content-Type' => 'application/json',
         ];
 
-        foreach (Headers::providerHeadersToRecord($merged) ?? [] as $name => $value) {
+        foreach (ProviderHeaders::providerHeadersToRecord($merged) ?? [] as $name => $value) {
             $sdkHeaders[$name] = $value;
         }
 

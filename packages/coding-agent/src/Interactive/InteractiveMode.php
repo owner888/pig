@@ -36,10 +36,10 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Extension\Provider as ExtensionProvider;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\CodingAgent\Logger;
 use Pig\CodingAgent\ModelRefresh;
-use Pig\CodingAgent\ModelRefreshResult;
+use Pig\CodingAgent\ModelsRefreshResult;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -86,7 +86,7 @@ use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SkillWarning;
 use Pig\CodingAgent\CodingAgent;
@@ -111,9 +111,9 @@ use Pig\CodingAgent\Session\ModelFallbackEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SummarizationRetryEvent;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\MissingSessionCwdError;
 use Pig\CodingAgent\Session\SessionCwd;
 use Pig\CodingAgent\Session\SessionInfo;
@@ -317,7 +317,7 @@ final class InteractiveMode
     /** @var list<Skill> likewise — shown, not discovered here */
     private array $skills = [];
 
-    /** @var list<FileCommand> prompts kept as files, reachable as `/name` */
+    /** @var list<PromptTemplate> prompts kept as files, reachable as `/name` */
     private array $fileCommands = [];
 
     private ?ExtensionRunner $extensionRunner = null;
@@ -789,7 +789,7 @@ final class InteractiveMode
                 continue;
             }
 
-            if ($message instanceof BashExecution) {
+            if ($message instanceof BashExecutionMessage) {
                 $this->replayBash($message);
 
                 continue;
@@ -801,14 +801,14 @@ final class InteractiveMode
                 continue;
             }
 
-            if ($message instanceof CompactionSummary) {
+            if ($message instanceof CompactionEntry) {
                 $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
                 $this->addSummaryCostNotice($message);
 
                 continue;
             }
 
-            if ($message instanceof BranchSummary) {
+            if ($message instanceof BranchSummaryEntry) {
                 $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
                 $this->addSummaryCostNotice($message);
 
@@ -873,7 +873,7 @@ final class InteractiveMode
         }
     }
 
-    private function replayBash(BashExecution $execution): void
+    private function replayBash(BashExecutionMessage $execution): void
     {
         // Upstream's resume path: the component, the whole output, then `setComplete()`.
         $shown = $this->bashExecutionComponent($execution->command, excludeFromContext: $execution->excludeFromContext);
@@ -1301,7 +1301,7 @@ final class InteractiveMode
                 $addLoadedSection('Skills', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $skillNames)));
             }
 
-            $templateNames = array_map(static fn (FileCommand $command): string => "/{$command->name}", $this->fileCommands);
+            $templateNames = array_map(static fn (PromptTemplate $command): string => "/{$command->name}", $this->fileCommands);
             if ($templateNames !== []) {
                 sort($templateNames);
                 $addLoadedSection('Prompts', static fn (): string => Themes::theme()->fg('dim', '  ' . implode(', ', $templateNames)));
@@ -2072,7 +2072,7 @@ final class InteractiveMode
                     self::COMMANDS,
                 ),
                 ...array_map(
-                    static fn (FileCommand $command): SlashCommand => new SlashCommand(
+                    static fn (PromptTemplate $command): SlashCommand => new SlashCommand(
                         $command->name,
                         $command->description,
                         argumentHint: $command->argumentHint,
@@ -4136,7 +4136,7 @@ final class InteractiveMode
 
         $this->skills = array_values($byName);
         $this->fileCommands = [
-            ...array_values(array_filter($this->fileCommands, static fn (FileCommand $c): bool => !str_starts_with($c->source, '(extension'))),
+            ...array_values(array_filter($this->fileCommands, static fn (PromptTemplate $c): bool => !str_starts_with($c->source, '(extension'))),
             ...$resources->commands,
         ];
     }
@@ -4379,7 +4379,7 @@ final class InteractiveMode
 
         $this->refreshModelCatalogs(
             fn (): bool => in_array($slot, $this->overlay->children(), true),
-            function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use (&$status, &$picker, $slot, $statusLine): void {
+            function (?ModelsRefreshResult $result, bool $timedOut, ?Throwable $error) use (&$status, &$picker, $slot, $statusLine): void {
                 if ($error !== null || $result === null) {
                     $status = ['message' => $timedOut ? 'Model refresh timed out; showing cached models.' : 'Could not refresh model catalogs: ' . $error?->getMessage(), 'kind' => 'error'];
                 } elseif ($result->aborted && $timedOut) {
@@ -4477,7 +4477,7 @@ final class InteractiveMode
      * catalogs only.
      *
      * @param Closure(): bool $stillOpen
-     * @param Closure(?ModelRefreshResult, bool, ?Throwable): void $done
+     * @param Closure(?ModelsRefreshResult, bool, ?Throwable): void $done
      */
     private function refreshModelCatalogs(Closure $stillOpen, Closure $done): void
     {
@@ -4628,7 +4628,7 @@ final class InteractiveMode
 
         $this->refreshModelCatalogs(
             fn (): bool => in_array($selector, $this->overlay->children(), true),
-            function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use ($selector, $configured, $apply, $sessionScope, &$available, &$availableIds, &$enabled, &$selectionChanged): void {
+            function (?ModelsRefreshResult $result, bool $timedOut, ?Throwable $error) use ($selector, $configured, $apply, $sessionScope, &$available, &$availableIds, &$enabled, &$selectionChanged): void {
                 $available = $this->auth?->availableModels() ?? Models::all();
                 $availableIds = array_map(ScopedModelsSelector::id(...), $available);
 
@@ -4680,7 +4680,7 @@ final class InteractiveMode
         }
 
         $this->say('Refreshing model catalogs…');
-        $this->refreshModelCatalogs(static fn (): bool => true, function (?ModelRefreshResult $result, bool $timedOut, ?Throwable $error) use ($pattern): void {
+        $this->refreshModelCatalogs(static fn (): bool => true, function (?ModelsRefreshResult $result, bool $timedOut, ?Throwable $error) use ($pattern): void {
             if ($error !== null || $result === null) {
                 $this->sayWarning($timedOut ? 'Model refresh timed out; searching cached models.' : 'Could not refresh model catalogs: ' . $error?->getMessage());
             } elseif ($result->aborted && $timedOut) {
@@ -5433,7 +5433,7 @@ final class InteractiveMode
 
     /**
      * Upstream's `getLoginProviderOptions(authType)`: a row per way into each provider — its account
-     * sign-in (the built-in `Provider` cases and the extensions' `OauthFlow`s) and its API key (the
+     * sign-in (the built-in `OauthProvider` cases and the extensions' `OauthFlow`s) and its API key (the
      * built-in providers' and the extensions'), each with how it is configured now — sorted by name.
      *
      * @param 'oauth'|'api_key'|null $authType
@@ -5445,8 +5445,8 @@ final class InteractiveMode
 
         if ($authType !== 'api_key') {
             foreach (Auth::signIns() as $flow) {
-                $id = $flow instanceof Provider ? $flow->value : $flow->id();
-                $name = $flow instanceof Provider ? BuiltinProviders::name($id) : $flow->label();
+                $id = $flow instanceof OauthProvider ? $flow->value : $flow->id();
+                $name = $flow instanceof OauthProvider ? BuiltinProviders::name($id) : $flow->label();
                 $options[] = new AuthSelectorProvider($id, $name, 'oauth', $this->authStatus($id), $flow->isSubscription(), $flow, $flow->label());
             }
         }
@@ -5625,7 +5625,7 @@ final class InteractiveMode
         }
 
         if ($option->authType === 'oauth') {
-            \assert($option->sign instanceof Provider || $option->sign instanceof OauthFlow);
+            \assert($option->sign instanceof OauthProvider || $option->sign instanceof OauthFlow);
             $this->signIn($option->sign, $onBack);
 
             return;
@@ -5914,7 +5914,7 @@ final class InteractiveMode
 
         if ($providerOptions === null) {
             foreach ($this->loginProviderOptions('oauth') as $option) {
-                if ($option->id === Provider::Radius->value) {
+                if ($option->id === OauthProvider::Radius->value) {
                     $radius = $option;
                 }
             }
@@ -6119,9 +6119,9 @@ final class InteractiveMode
      * inside the loop's own input callback — suspending there suspends the loop that has to
      * deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
      */
-    private function signIn(Provider|OauthFlow $provider, ?Closure $onBack = null): void
+    private function signIn(OauthProvider|OauthFlow $provider, ?Closure $onBack = null): void
     {
-        if ($provider instanceof Provider && !$provider->available()) {
+        if ($provider instanceof OauthProvider && !$provider->available()) {
             $this->sayWarning("{$provider->label()} is not ported yet — pig cannot finish that sign-in.");
 
             return;
@@ -6169,7 +6169,7 @@ final class InteractiveMode
                     function (string $title, array $options) use ($provider): ?string {
                         $labels = array_map(static fn (array $option): string => $option[1], $options);
                         // Upstream's Radius sign-in says what Radius is above its choice.
-                        if ($provider === Provider::Radius) {
+                        if ($provider === OauthProvider::Radius) {
                             $this->say('Radius is a service crafted for Pi by the builders of Pi, Earendil Works');
                         }
 
@@ -6188,8 +6188,8 @@ final class InteractiveMode
                 if ($credentials === null) {
                     $onBack === null ? $this->say('Signing in was cancelled.') : $onBack();
                 } else {
-                    $id = $provider instanceof Provider ? $provider->value : $provider->id();
-                    $name = $provider instanceof Provider ? BuiltinProviders::name($id) : $provider->label();
+                    $id = $provider instanceof OauthProvider ? $provider->value : $provider->id();
+                    $name = $provider instanceof OauthProvider ? BuiltinProviders::name($id) : $provider->label();
                     $this->completeProviderAuthentication($id, "Logged in to {$name}");
                 }
             } catch (Throwable $problem) {
@@ -6324,7 +6324,7 @@ final class InteractiveMode
             return;
         }
 
-        ModelRefresh::inBackground($this->auth, [$providerId], done: function (ModelRefreshResult $result) use ($actionLabel, $providerId): void {
+        ModelRefresh::inBackground($this->auth, [$providerId], done: function (ModelsRefreshResult $result) use ($actionLabel, $providerId): void {
             if ($result->aborted) {
                 $this->sayWarning("{$actionLabel}, but its model catalog refresh timed out; using cached models.");
             } elseif (isset($result->errors[$providerId])) {
@@ -7466,7 +7466,7 @@ final class InteractiveMode
             }, 'app.thinking.save');
         }
 
-        return new SettingsSubmenu(
+        return new SelectSubmenu(
             $list,
             Themes::theme()->fg('accent', 'Thinking'),
             Themes::theme()->fg('muted', $saveDefault === null
@@ -8047,7 +8047,7 @@ final class InteractiveMode
     }
 
     /** Upstream's `addCompactionCostNotice()`: what a summary billed, from the usage on its entry. */
-    private function addSummaryCostNotice(CompactionSummary|BranchSummary $summary): void
+    private function addSummaryCostNotice(CompactionEntry|BranchSummaryEntry $summary): void
     {
         if (!$this->settings->showCacheMissNotices() || $summary->usage === null) {
             return;
@@ -8056,7 +8056,7 @@ final class InteractiveMode
         $usage = $summary->usage;
         $tokens = $usage->input + $usage->output + $usage->cacheRead + $usage->cacheWrite;
         $cost = $usage->cost->total >= 0.01 ? sprintf(' (~$%.2f)', $usage->cost->total) : '';
-        $label = $summary instanceof CompactionSummary ? 'Compaction' : 'Branch summary';
+        $label = $summary instanceof CompactionEntry ? 'Compaction' : 'Branch summary';
         $line = "{$label}: " . FooterComponent::tokens($tokens) . " tokens billed{$cost}";
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('warning', $line), 1, 0));

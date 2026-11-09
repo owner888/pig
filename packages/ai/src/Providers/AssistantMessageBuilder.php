@@ -15,7 +15,7 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\PartialJson;
-use Pig\Ai\Utils\StreamingJson;
+use Pig\Ai\Utils\StreamingJsonParser;
 
 /**
  * Accumulates a response as it streams, handing out an immutable snapshot per event.
@@ -44,7 +44,7 @@ final class AssistantMessageBuilder
      * costs its own length and not the whole of the arguments again. Kept off the blocks, as
      * upstream keeps "stream state … off the content blocks".
      *
-     * @var array<int, StreamingJson>
+     * @var array<int, StreamingJsonParser>
      */
     private array $readers = [];
 
@@ -198,7 +198,7 @@ final class AssistantMessageBuilder
             $reader = $this->readers[$index] ?? null;
 
             if ($reader === null) {
-                $reader = $this->readers[$index] = new StreamingJson();
+                $reader = $this->readers[$index] = new StreamingJsonParser();
                 $reader->append($this->blocks[$index]['json']);
             } else {
                 $reader->append($delta);
@@ -264,7 +264,7 @@ final class AssistantMessageBuilder
     {
         $this->blocks[$index]['json'] = $json;
         unset($this->customInputs[$index]);
-        $reader = $this->readers[$index] = new StreamingJson();
+        $reader = $this->readers[$index] = new StreamingJsonParser();
         $reader->append($json);
         $this->blocks[$index]['arguments'] = $reader->value();
     }

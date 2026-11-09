@@ -8,8 +8,8 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Cost;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Usage;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Session\SessionInfoEntry;
@@ -60,9 +60,9 @@ final class SessionEntriesTest extends TestCase
         // pi's rule for its own field: "undefined/false if pi-generated". It decides whether
         // `Compaction::files()` carries the summary's file lists forward, so reading an absent
         // field as a hook's would drop every file a pi conversation had recorded reading.
-        $this->assertInstanceOf(CompactionSummary::class, $mine);
+        $this->assertInstanceOf(CompactionEntry::class, $mine);
         $this->assertFalse($mine->fromHook);
-        $this->assertInstanceOf(CompactionSummary::class, $theirs);
+        $this->assertInstanceOf(CompactionEntry::class, $theirs);
         $this->assertTrue($theirs->fromHook);
     }
 
@@ -75,9 +75,9 @@ final class SessionEntriesTest extends TestCase
             'fromHook' => true,
         ]);
 
-        $this->assertInstanceOf(BranchSummary::class, $mine);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $mine);
         $this->assertFalse($mine->fromHook);
-        $this->assertInstanceOf(BranchSummary::class, $theirs);
+        $this->assertInstanceOf(BranchSummaryEntry::class, $theirs);
         $this->assertTrue($theirs->fromHook);
     }
 
@@ -91,7 +91,7 @@ final class SessionEntriesTest extends TestCase
 
         // The timestamp is what orders the catch-up flush, so a line that lost its own is a note
         // that comes back in the wrong place in the conversation.
-        $this->assertInstanceOf(CompactionSummary::class, $decoded);
+        $this->assertInstanceOf(CompactionEntry::class, $decoded);
         $this->assertSame(SessionEntries::millis('2026-01-02T21:29:30.123Z'), $decoded->timestamp);
     }
 
@@ -159,14 +159,14 @@ final class SessionEntriesTest extends TestCase
     {
         $usage = new Usage(input: 40_000, output: 500, totalTokens: 40_500, cost: new Cost(0.12, 0.0075, 0.0, 0.0, 0.1275));
 
-        foreach ([new CompactionSummary('s', usage: $usage), new BranchSummary('s', usage: $usage)] as $summary) {
+        foreach ([new CompactionEntry('s', usage: $usage), new BranchSummaryEntry('s', usage: $usage)] as $summary) {
             $line = SessionEntries::encode($summary, 'abcd1234', null);
             $this->assertSame(40_000, $line['usage']['input']);
             $this->assertSame(0.1275, SessionEntries::decode($line)->usage?->cost->total);
         }
 
         // A hook's summary, and every file written before the field, has none.
-        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new CompactionSummary('s'), 'abcd1234', null));
-        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new BranchSummary('s'), 'abcd1234', null));
+        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new CompactionEntry('s'), 'abcd1234', null));
+        $this->assertArrayNotHasKey('usage', SessionEntries::encode(new BranchSummaryEntry('s'), 'abcd1234', null));
     }
 }

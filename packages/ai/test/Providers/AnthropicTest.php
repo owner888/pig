@@ -6,7 +6,7 @@ namespace Pig\Ai\Test\Providers;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -616,7 +616,7 @@ final class AnthropicTest extends TestCase
      */
     public function testAStrictToolGoesOutStrictToAnthropicItself(): void
     {
-        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read a file', [
+        [, $body] = $this->capture($this->model(compat: new AnthropicMessagesCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read a file', [
             'type' => 'object',
             'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number']],
             'required' => ['path'],
@@ -643,7 +643,7 @@ final class AnthropicTest extends TestCase
             'required' => ['path'],
         ], ['type' => 'json_schema', 'strict' => 'prefer']);
 
-        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+        [, $body] = $this->capture($this->model(compat: new AnthropicMessagesCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
 
         $this->assertArrayNotHasKey('strict', $body['tools'][0]);
         $this->assertSame(['path'], $body['tools'][0]['input_schema']['required']);
@@ -703,7 +703,7 @@ final class AnthropicTest extends TestCase
     public function testAModelWhoseCompatSaysAdaptiveThinksAdaptively(): void
     {
         [$head, $body] = $this->capture(
-            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            $this->model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)),
             new Context([new UserMessage('hi')]),
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096, effort: 'medium'),
         );
@@ -753,7 +753,7 @@ final class AnthropicTest extends TestCase
      */
     public function testAnAnthropicModelCarryingACompatBlockDoesNotWarn(): void
     {
-        foreach ([new OpenAiCompat(store: false), new AnthropicCompat()] as $compat) {
+        foreach ([new OpenAiCompat(store: false), new AnthropicMessagesCompat()] as $compat) {
             $this->server = new CannedServer();
             [, $body] = $this->capture(
                 $this->model(compat: $compat),
@@ -774,7 +774,7 @@ final class AnthropicTest extends TestCase
     public function testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise(): void
     {
         [, $body] = $this->capture(
-            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            $this->model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)),
             new Context([new UserMessage('hi')]),
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingDisplay: 'omitted'),
         );
@@ -799,7 +799,7 @@ final class AnthropicTest extends TestCase
     public function testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi(): void
     {
         [, $body] = $this->capture(
-            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            $this->model(compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true)),
             new Context([new UserMessage('hi')]),
             new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: false),
         );
@@ -901,7 +901,7 @@ final class AnthropicTest extends TestCase
     public function testAnExtensionsAnthropicModelThinksAsItsOwnCompatSays(): void
     {
         $plain = new Model('claude-opus-4-7', 'Proxy Opus', Api::AnthropicMessages, 'my-ext', 'http://127.0.0.1:1', 200_000, 64_000, true);
-        $adaptive = new Model('claude-opus-4-8', 'Proxy Opus', Api::AnthropicMessages, 'my-ext', 'http://127.0.0.1:1', 200_000, 64_000, true, compat: new AnthropicCompat(forceAdaptiveThinking: true));
+        $adaptive = new Model('claude-opus-4-8', 'Proxy Opus', Api::AnthropicMessages, 'my-ext', 'http://127.0.0.1:1', 200_000, 64_000, true, compat: new AnthropicMessagesCompat(forceAdaptiveThinking: true));
         \Pig\Ai\Extension\ProviderRegistry::register(new \Pig\Ai\Extension\Provider('my-ext', 'My extension', [$plain, $adaptive]));
 
         try {
@@ -955,7 +955,7 @@ final class AnthropicTest extends TestCase
         // `supportsEagerToolInputStreaming: false` — upstream's generator writes it on three Copilot
         // Claudes. Tools then stream under the old beta, and the field is left off.
         $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
-        $model = $this->model(compat: new AnthropicCompat(supportsEagerToolInputStreaming: false));
+        $model = $this->model(compat: new AnthropicMessagesCompat(supportsEagerToolInputStreaming: false));
         [$head, $body] = $this->capture($model, new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
 
         $this->assertStringContainsString('anthropic-beta: fine-grained-tool-streaming-2025-05-14', $head);
@@ -1731,7 +1731,7 @@ final class AnthropicTest extends TestCase
 
         // A compat saying the endpoint refuses the field there: no breakpoint on any tool.
         [, $body] = $this->capture(
-            $this->model(compat: new AnthropicCompat(supportsCacheControlOnTools: false)),
+            $this->model(compat: new AnthropicMessagesCompat(supportsCacheControlOnTools: false)),
             new Context([new UserMessage('hi')], tools: $tools),
             $this->options(),
         );
@@ -1754,7 +1754,7 @@ final class AnthropicTest extends TestCase
 
         // A compat without long retention keeps the five-minute marker.
         [, $body] = $this->capture(
-            $this->model(compat: new AnthropicCompat(supportsLongCacheRetention: false)),
+            $this->model(compat: new AnthropicMessagesCompat(supportsLongCacheRetention: false)),
             $context,
             new AnthropicOptions(apiKey: 'test-key', cacheRetention: 'long'),
         );
@@ -1789,7 +1789,7 @@ final class AnthropicTest extends TestCase
         [$head] = $this->capture($this->model(provider: 'openrouter'), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
         $this->assertStringContainsString('x-session-id: s-1', $head);
 
-        [$head] = $this->capture($this->model(compat: new AnthropicCompat(sendSessionAffinityHeaders: true)), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
+        [$head] = $this->capture($this->model(compat: new AnthropicMessagesCompat(sendSessionAffinityHeaders: true)), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
         $this->assertStringContainsString('x-session-affinity: s-1', $head);
 
         [$head] = $this->capture($this->model(), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
@@ -1836,7 +1836,7 @@ final class AnthropicTest extends TestCase
         [, $body] = $this->capture($this->model(), $history, $this->options());
         $this->assertSame(['type' => 'text', 'text' => 'pondering'], $body['messages'][1]['content'][0]);
 
-        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(allowEmptySignature: true)), $history, $this->options());
+        [, $body] = $this->capture($this->model(compat: new AnthropicMessagesCompat(allowEmptySignature: true)), $history, $this->options());
         $this->assertSame(['type' => 'thinking', 'thinking' => 'pondering', 'signature' => ''], $body['messages'][1]['content'][0]);
     }
 
@@ -1860,7 +1860,7 @@ final class AnthropicTest extends TestCase
 
     public function testAModelWithFallbacksAsksForThemAndTheirBeta(): void
     {
-        $model = $this->model(compat: new AnthropicCompat(allowedFallbackModels: [
+        $model = $this->model(compat: new AnthropicMessagesCompat(allowedFallbackModels: [
             ['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(5.0, 25.0)],
         ]));
 
@@ -1879,7 +1879,7 @@ final class AnthropicTest extends TestCase
     {
         // Upstream's `usageModel`: the response names the model that answered, and its entry in
         // `allowedFallbackModels` carries the price. The message still names the model asked for.
-        $model = $this->model(compat: new AnthropicCompat(allowedFallbackModels: [
+        $model = $this->model(compat: new AnthropicMessagesCompat(allowedFallbackModels: [
             ['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(input: 5.0, output: 25.0)],
         ]));
 
@@ -2028,7 +2028,7 @@ final class AnthropicTest extends TestCase
         string $baseUrl = 'http://127.0.0.1:1',
         ?Pricing $pricing = null,
         string $id = 'claude-sonnet-4-5',
-        OpenAiCompat|AnthropicCompat|null $compat = null,
+        OpenAiCompat|AnthropicMessagesCompat|null $compat = null,
         string $provider = 'anthropic',
     ): Model {
         return new Model(

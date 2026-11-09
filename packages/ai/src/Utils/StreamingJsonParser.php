@@ -34,7 +34,7 @@ namespace Pig\Ai\Utils;
  *
  * @internal
  */
-final class StreamingJson
+final class StreamingJsonParser
 {
     // Upstream's: "Copy credit per append and per appended character. The floor keeps small
     // documents fresh at every snapshot."

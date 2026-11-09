@@ -20,7 +20,7 @@ use Pig\Ai\ImagesOptions;
  * else the environment's) and put it on `$options->apiKey`, as upstream's `applyAuth()` does before
  * it calls the provider.
  */
-interface ImageGenerationApi
+interface ProviderImages
 {
     /**
      * Upstream: "Never rejects." Every failure should be an `AssistantImages` with `stopReason`

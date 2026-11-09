@@ -163,7 +163,7 @@ final readonly class OpenAiCompat
     public static function resolve(Model $model): self
     {
         $detected = self::detect($model->baseUrl, $model->provider, $model->id);
-        // A model of another API may carry its own compat (`AnthropicCompat`); none of it is ours.
+        // A model of another API may carry its own compat (`AnthropicMessagesCompat`); none of it is ours.
         $explicit = $model->compat instanceof self ? $model->compat : null;
 
         if ($explicit === null) {

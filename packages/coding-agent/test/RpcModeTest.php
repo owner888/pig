@@ -37,7 +37,7 @@ use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\ModelResolver;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Session\AgentSession;
@@ -136,7 +136,7 @@ final class RpcModeTest extends TestCase
 
     /**
      * @param list<string>      $answers
-     * @param list<FileCommand> $fileCommands
+     * @param list<PromptTemplate> $fileCommands
      */
     private function start(
         array $answers = [],
@@ -1009,7 +1009,7 @@ final class RpcModeTest extends TestCase
         $this->start(
             answers: ['reviewed'],
             extensionRunner: new ExtensionRunner([new LoadedExtension('deploy.php', 'deploy.php', $api->name, $api)], $this->cwd),
-            fileCommands: [new FileCommand('review', 'Review', 'Please review $1 closely.', '(user)')],
+            fileCommands: [new PromptTemplate('review', 'Review', 'Please review $1 closely.', '(user)')],
         );
 
         // A hook's command runs, and nothing is asked of the model.

@@ -8,7 +8,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Async\AbortSignal;
 use RuntimeException;
 
@@ -149,7 +149,7 @@ final class OpenRouterUserModels
                 continue;
             }
 
-            $tiers[] = new PricingTier(
+            $tiers[] = new ModelCostTier(
                 $override['min_prompt_tokens'],
                 self::perMillion($override['prompt'] ?? null, $input),
                 self::perMillion($override['completion'] ?? null, $output),

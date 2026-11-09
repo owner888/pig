@@ -1493,7 +1493,7 @@ function radiusRows(?string $file): array
             'cacheWrite' => $model->pricing->cacheWrite,
             ...($model->thinkingLevelMap === [] ? [] : ['thinkingLevelMap' => $model->thinkingLevelMap]),
             ...($model->pricing->tiers === [] ? [] : ['tiers' => array_map(
-                static fn (Pig\Ai\PricingTier $tier): array => [$tier->inputTokensAbove, $tier->input, $tier->output, $tier->cacheRead, $tier->cacheWrite],
+                static fn (Pig\Ai\ModelCostTier $tier): array => [$tier->inputTokensAbove, $tier->input, $tier->output, $tier->cacheRead, $tier->cacheWrite],
                 $model->pricing->tiers,
             )]),
         ];
@@ -2611,7 +2611,7 @@ foreach ($output as $line) {
         $reasoning === '1',
         $images === '1' ? ['text', 'image'] : ['text'],
         new Pig\Ai\Pricing((float) $in, (float) $out, (float) $read, (float) $write, array_map(
-            static fn (array $tier): Pig\Ai\PricingTier => new Pig\Ai\PricingTier((int) $tier[0], (float) $tier[1], (float) $tier[2], (float) $tier[3], (float) $tier[4]),
+            static fn (array $tier): Pig\Ai\ModelCostTier => new Pig\Ai\ModelCostTier((int) $tier[0], (float) $tier[1], (float) $tier[2], (float) $tier[3], (float) $tier[4]),
             (array) json_decode($tiers, true),
         )),
         // `[]` encodes as a list and decodes as one, which is the same empty map.

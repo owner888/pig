@@ -13,7 +13,7 @@ use Pig\Ai\Timestamp;
  *
  * Replaces the messages it summarises, so the conversation carries on from a page of
  * notes rather than from everything that was ever said. An app message like
- * `BashExecution`: it sits in the transcript where the old messages were, and
+ * `BashExecutionMessage`: it sits in the transcript where the old messages were, and
  * `CodingAgent` turns it into a user message on the way to the model.
  *
  * The file lists are separate from the prose because they are the part a model needs
@@ -23,7 +23,7 @@ use Pig\Ai\Timestamp;
  * included: pig used to store a count of replaced messages instead, which said the same
  * thing in a way pi could not read.
  */
-final readonly class CompactionSummary
+final readonly class CompactionEntry
 {
     /**
      * What the model is told before the summary, and after it.
@@ -57,7 +57,7 @@ final readonly class CompactionSummary
      *                       this entry and was missing here. Two things read it: `Compaction::files()`
      *                       does not carry a hook's file lists forward as though pig had found them,
      *                       and **pi reading this file can tell** — a compaction pig wrote for a hook
-     *                       used to be indistinguishable from one it wrote itself. `BranchSummary`
+     *                       used to be indistinguishable from one it wrote itself. `BranchSummaryEntry`
      *                       has had the flag all along, which is what made the omission visible.
      * @param SystemMessage|null $systemMessage upstream's `CompactionEntry.systemMessage`: "Complete
      *                       prompt and tool state at this compaction boundary" — every system

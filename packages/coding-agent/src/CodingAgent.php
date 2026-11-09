@@ -25,9 +25,9 @@ use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Prompt\ContextFile;
@@ -703,7 +703,7 @@ final class CodingAgent
      *        (scope `temporary`) included
      * @param list<string> $skillPaths upstream's `additionalSkillPaths`
      * @param list<string> $promptTemplatePaths upstream's `additionalPromptTemplatePaths`, absolute
-     * @return array{skills: list<Skill>, skillWarnings: list<\Pig\CodingAgent\Prompt\SkillWarning>, fileCommands: list<\Pig\CodingAgent\Prompt\FileCommand>, promptWarnings: list<string>, warnings: list<string>}
+     * @return array{skills: list<Skill>, skillWarnings: list<\Pig\CodingAgent\Prompt\SkillWarning>, fileCommands: list<\Pig\CodingAgent\Prompt\PromptTemplate>, promptWarnings: list<string>, warnings: list<string>}
      *         `warnings` is the skill and prompt-template warnings as `session()` reports them
      */
     public static function resources(
@@ -874,13 +874,13 @@ final class CodingAgent
 
         foreach ($messages as $message) {
             // `!!`: in the session, not in the request — upstream's `convertToLlm()` skips it.
-            if ($message instanceof BashExecution && $message->excludeFromContext) {
+            if ($message instanceof BashExecutionMessage && $message->excludeFromContext) {
                 continue;
             }
 
-            if ($message instanceof BashExecution
-                || $message instanceof CompactionSummary
-                || $message instanceof BranchSummary
+            if ($message instanceof BashExecutionMessage
+                || $message instanceof CompactionEntry
+                || $message instanceof BranchSummaryEntry
             ) {
                 $converted[] = new UserMessage($message->toText(), $message->timestamp);
 

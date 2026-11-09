@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Utils;
 
-/** @internal An open object or array of `StreamingJson`. */
+/** @internal An open object or array of `StreamingJsonParser`. */
 final class StreamingJsonFrame
 {
     public const int KEY = 0;
@@ -26,7 +26,7 @@ final class StreamingJsonFrame
 
     public int $phase = self::KEY;
 
-    /** @param string|int|bool|null $slot where the container goes in its parent; see `StreamingJson::valueSlot()` */
+    /** @param string|int|bool|null $slot where the container goes in its parent; see `StreamingJsonParser::valueSlot()` */
     public function __construct(public readonly bool $isObject, public readonly string|int|bool|null $slot)
     {
         if (!$isObject) {

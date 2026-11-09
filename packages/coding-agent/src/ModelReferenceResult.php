@@ -16,7 +16,7 @@ use Pig\Ai\Model;
  * - `not-found`: nothing matched. `$target` is set when a provider was given or named by a
  *   `provider/` prefix, for building a custom model id.
  */
-final readonly class ModelReference
+final readonly class ModelReferenceResult
 {
     public const string RESOLVED = 'resolved';
     public const string AMBIGUOUS = 'ambiguous';

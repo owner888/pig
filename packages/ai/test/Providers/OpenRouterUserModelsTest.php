@@ -10,7 +10,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\Providers\OpenRouterUserModels;
 use Pig\Async\Async;
 use Pig\Test\CannedServer;
@@ -44,7 +44,7 @@ final class OpenRouterUserModelsTest extends TestCase
             ],
         ]);
 
-        $this->assertEquals([new PricingTier(200000, 2.0, 2.0, 0.0, 0.0)], $cost->tiers, 'a rate the tier does not list keeps the base price');
+        $this->assertEquals([new ModelCostTier(200000, 2.0, 2.0, 0.0, 0.0)], $cost->tiers, 'a rate the tier does not list keeps the base price');
     }
 
     public function testOnlyTheKeysModelsAreKeptWithItsLimitsAndPrices(): void

@@ -23,7 +23,7 @@ use Pig\Ai\Http\HttpClient;
  * pig could not sign in with would still be a name pig has to *read* without choking, and the row
  * is where a half-ported provider says so.
  */
-enum Provider: string
+enum OauthProvider: string
 {
     case Anthropic = 'anthropic';
 
@@ -105,11 +105,11 @@ enum Provider: string
      *        secret) is an extension's `OauthFlow` now and renews itself.
      */
     public function refresh(
-        Credentials $credentials,
+        OauthCredentials $credentials,
         ?HttpClient $http = null,
         ?string $clientId = null,
         ?string $clientSecret = null,
-    ): Credentials {
+    ): OauthCredentials {
         if ($credentials->refresh === '') {
             throw new OauthError("The stored {$this->value} credentials have no refresh token — sign in again.");
         }
@@ -134,7 +134,7 @@ enum Provider: string
      * needs more on the key — Antigravity's carries a project id — is an extension's `OauthFlow`
      * and answers for itself.
      */
-    public function apiKey(Credentials $credentials): string
+    public function apiKey(OauthCredentials $credentials): string
     {
         return match ($this) {
             // Both are the short-lived half. Anthropic's is recognised by its `sk-ant-oat`

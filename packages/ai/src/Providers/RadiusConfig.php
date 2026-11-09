@@ -9,7 +9,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\ProviderError;
 use Pig\Ai\Utils\JsJson;
 use Pig\Async\AbortSignal;
@@ -112,7 +112,7 @@ final class RadiusConfig
             $tiers = [];
 
             foreach (is_array($cost['tiers'] ?? null) ? $cost['tiers'] : [] as $tier) {
-                $tiers[] = new PricingTier(
+                $tiers[] = new ModelCostTier(
                     (int) $tier['inputTokensAbove'],
                     (float) $tier['input'],
                     (float) $tier['output'],

@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
-use Pig\Ai\Providers\AzureOpenAiConfig;
+use Pig\Ai\Providers\AzureEndpointOptions;
 use Pig\Ai\Providers\AzureOpenAiResponsesOptions;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
@@ -129,16 +129,16 @@ final class AzureOpenAiResponsesTest extends TestCase
         $record = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/azure-config.json'), true, flags: JSON_THROW_ON_ERROR);
 
         foreach ($record['baseUrls'] as [$model, $options, $expected]) {
-            $actual = self::attempt(static fn (): string => AzureOpenAiConfig::resolveAzureBaseUrl(self::model($model['baseUrl']), self::options($options)));
+            $actual = self::attempt(static fn (): string => AzureEndpointOptions::resolveAzureBaseUrl(self::model($model['baseUrl']), self::options($options)));
             self::assertSame($expected, $actual, json_encode($options));
         }
 
         foreach ($record['deployments'] as [$id, $options, $expected]) {
-            self::assertSame($expected, AzureOpenAiConfig::resolveDeploymentName(self::model('', $id), self::options($options)), json_encode($options));
+            self::assertSame($expected, AzureEndpointOptions::resolveDeploymentName(self::model('', $id), self::options($options)), json_encode($options));
         }
 
         foreach ($record['configs'] as [$options, $expected]) {
-            self::assertSame($expected, AzureOpenAiConfig::resolveAzureConfig(self::model(''), self::options($options)));
+            self::assertSame($expected, AzureEndpointOptions::resolveAzureConfig(self::model(''), self::options($options)));
         }
     }
 

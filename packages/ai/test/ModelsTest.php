@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Test;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\BedrockCompat;
 use Pig\Ai\Cost;
@@ -13,7 +13,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\Usage;
 use Pig\Scripts\BuiltinCatalog;
 
@@ -242,7 +242,7 @@ final class ModelsTest extends TestCase
             };
             $actual = match (true) {
                 $model->compat instanceof OpenAiCompat => $model->compat->strictMode ?? false,
-                $model->compat instanceof AnthropicCompat => $model->compat->strictTools ?? false,
+                $model->compat instanceof AnthropicMessagesCompat => $model->compat->strictTools ?? false,
                 default => false,
             };
 
@@ -261,7 +261,7 @@ final class ModelsTest extends TestCase
         $adaptive = [];
 
         foreach (Models::all() as $model) {
-            if ($model->compat instanceof AnthropicCompat && $model->compat->forceAdaptiveThinking === true) {
+            if ($model->compat instanceof AnthropicMessagesCompat && $model->compat->forceAdaptiveThinking === true) {
                 $adaptive[] = $model->id;
             }
         }
@@ -471,7 +471,7 @@ final class ModelsTest extends TestCase
         foreach (['openai' => 272_000, Models::OPENAI_CODEX => 500_000] as $provider => $window) {
             $model = Models::find($provider, 'gpt-6.1-terra');
             $this->assertSame([$window, 128_000], [$model?->contextWindow, $model?->maxTokens], $provider);
-            $this->assertEquals(new Pricing(1.0, 5.0, 0.05, 1.25, [new PricingTier(272_000, 2.0, 7.5, 0.1, 2.5)]), $model->pricing, $provider);
+            $this->assertEquals(new Pricing(1.0, 5.0, 0.05, 1.25, [new ModelCostTier(272_000, 2.0, 7.5, 0.1, 2.5)]), $model->pricing, $provider);
             $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
             $this->assertSame([true, true, true], [$model->compat->supportsToolSearch, $model->compat->supportsAdditionalTools, $model->compat->supportsMidConvoSystemMessages], $provider);
         }
@@ -575,7 +575,7 @@ final class ModelsTest extends TestCase
         // Vercel's: every one on Messages, replaying empty signatures.
         foreach (self::of('vercel-ai-gateway') as $model) {
             $this->assertSame(Api::AnthropicMessages, $model->api);
-            $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+            $this->assertInstanceOf(AnthropicMessagesCompat::class, $model->compat);
             $this->assertTrue($model->compat->allowEmptySignature, $model->id);
         }
 
@@ -649,20 +649,20 @@ final class ModelsTest extends TestCase
 
         $kimi = $model('kimi-k2p6', ['supportsToggle' => true]);
         $this->assertSame([], $kimi->thinkingLevelMap);
-        $this->assertInstanceOf(AnthropicCompat::class, $kimi->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $kimi->compat);
         $this->assertNull($kimi->compat->forceAdaptiveThinking);
         $this->assertTrue($kimi->compat->allowEmptySignature);
 
         // "automatically sends native effort for newly cataloged Messages models"
         $new = $model('new-reasoner', ['effortLevelMap' => $effort(['low', 'max']), 'supportsToggle' => true, 'supportsEffort' => true]);
-        $this->assertInstanceOf(AnthropicCompat::class, $new->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $new->compat);
         $this->assertTrue($new->compat->forceAdaptiveThinking);
         $this->assertSame(['off', 'low', 'max'], $new->supportedThinkingLevels());
 
         // "does not infer adaptive thinking from toggle, budget, or missing metadata"
         foreach (['toggle-only' => ['supportsToggle' => true], 'budget-only' => [], 'missing-metadata' => []] as $id => $row) {
             $plain = $model($id, $row);
-            $this->assertInstanceOf(AnthropicCompat::class, $plain->compat);
+            $this->assertInstanceOf(AnthropicMessagesCompat::class, $plain->compat);
             $this->assertNull($plain->compat->forceAdaptiveThinking, $id);
             $this->assertSame([], $plain->thinkingLevelMap, $id);
         }
@@ -688,7 +688,7 @@ final class ModelsTest extends TestCase
             'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']]);
 
         $this->assertSame(['max' => 'max'], $opus->thinkingLevelMap);
-        $this->assertInstanceOf(AnthropicCompat::class, $opus->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $opus->compat);
         $this->assertTrue($opus->compat->forceAdaptiveThinking);
     }
 
@@ -811,19 +811,19 @@ final class ModelsTest extends TestCase
         // `supportsAnthropicMidConvoSystemMessages()` names; only the system-message key for
         // `opencode` and `github-copilot`, which "reject `tool_addition`/`tool_removal` blocks";
         // neither elsewhere, and neither for an id the patterns leave out.
-        $both = AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-8');
+        $both = AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-opus-4-8');
         $this->assertTrue($both?->supportsMidConvoSystemMessages);
         $this->assertTrue($both?->supportsMidConvoToolChanges);
 
-        $copilot = AnthropicCompat::forBuiltIn('github-copilot', 'claude-opus-4.8');
+        $copilot = AnthropicMessagesCompat::forBuiltIn('github-copilot', 'claude-opus-4.8');
         $this->assertTrue($copilot?->supportsMidConvoSystemMessages);
         $this->assertNull($copilot?->supportsMidConvoToolChanges);
 
-        $this->assertNull(AnthropicCompat::forBuiltIn('openrouter', 'anthropic/claude-opus-4.8')?->supportsMidConvoSystemMessages);
-        $this->assertNull(AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-7')?->supportsMidConvoSystemMessages);
-        $this->assertTrue(AnthropicCompat::forBuiltIn('anthropic', 'claude-fable-5-1-20260901')?->supportsMidConvoToolChanges);
-        $this->assertTrue(AnthropicCompat::forBuiltIn('anthropic', 'claude-fable-5')?->supportsMidConvoSystemMessages);
-        $this->assertNull(AnthropicCompat::forBuiltIn('anthropic', 'claude-sonnet-5')?->supportsMidConvoSystemMessages);
+        $this->assertNull(AnthropicMessagesCompat::forBuiltIn('openrouter', 'anthropic/claude-opus-4.8')?->supportsMidConvoSystemMessages);
+        $this->assertNull(AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-opus-4-7')?->supportsMidConvoSystemMessages);
+        $this->assertTrue(AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-fable-5-1-20260901')?->supportsMidConvoToolChanges);
+        $this->assertTrue(AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-fable-5')?->supportsMidConvoSystemMessages);
+        $this->assertNull(AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-sonnet-5')?->supportsMidConvoSystemMessages);
 
         // And the built-in table carries them.
         $this->assertTrue(Models::find(Models::ANTHROPIC, 'claude-opus-4-8')?->compat?->supportsMidConvoToolChanges);
@@ -838,14 +838,14 @@ final class ModelsTest extends TestCase
         $this->assertNotNull($model);
         $this->assertSame([1_000_000, 128_000, true], [$model->contextWindow, $model->maxTokens, $model->reasoning]);
         $this->assertEquals(
-            new Pricing(0.1, 0.5, 0.01, 0.125, [new PricingTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
+            new Pricing(0.1, 0.5, 0.01, 0.125, [new ModelCostTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
             $model->pricing,
         );
         // The compat and the map every 5.5 model gets: adaptive, no temperature, managed effort,
         // strict tools, mid-conversation system messages and tool changes (upstream's generator
         // `supportsAnthropicMidConvoSystemMessages()`, added to pig's compat since), and the 5.5 map
         // with `off` left in: "Haiku 5.5 accepts disabled thinking" (upstream #10753).
-        $this->assertEquals(new AnthropicCompat(
+        $this->assertEquals(new AnthropicMessagesCompat(
             forceAdaptiveThinking: true,
             strictTools: true,
             supportsTemperature: false,
@@ -885,7 +885,7 @@ final class ModelsTest extends TestCase
         // Upstream's `ANTHROPIC_ALLOWED_FALLBACK_MODELS`, priced from the fallbacks' own rows. Opus 5
         // is a managed-effort model, so only managed-effort fallbacks count, and Opus 4.8 is not one.
         $fable = Models::find(Models::ANTHROPIC, 'claude-fable-5');
-        $this->assertInstanceOf(AnthropicCompat::class, $fable?->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $fable?->compat);
         $this->assertSame(
             [['anthropic', 'claude-opus-4-8'], ['anthropic', 'claude-opus-5']],
             array_map(static fn (array $f): array => [$f['provider'], $f['model']], $fable->compat->allowedFallbackModels ?? []),
@@ -893,7 +893,7 @@ final class ModelsTest extends TestCase
         $this->assertEquals(Models::find(Models::ANTHROPIC, 'claude-opus-5')?->pricing, $fable->compat->allowedFallbackModels[1]['cost']);
 
         $opus = Models::find(Models::ANTHROPIC, 'claude-opus-5');
-        $this->assertInstanceOf(AnthropicCompat::class, $opus?->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $opus?->compat);
         $this->assertNull($opus->compat->allowedFallbackModels);
     }
 
@@ -953,7 +953,7 @@ final class ModelsTest extends TestCase
             $this->assertSame(128_000, $model->maxTokens, $id);
             // `withOpenAiLongContextPricing()`: one tier past 272k, input and cache at twice the
             // base and output at one and a half times.
-            $this->assertEquals([new PricingTier(
+            $this->assertEquals([new ModelCostTier(
                 272_000,
                 round($model->pricing->input * 2, 6),
                 round($model->pricing->output * 1.5, 6),
@@ -966,8 +966,8 @@ final class ModelsTest extends TestCase
         // for the GPT-5.6 and GPT-6 rows.
         $pro = Models::find('openai', 'gpt-5.5-pro');
         $this->assertSame(1_050_000, $pro?->contextWindow);
-        $this->assertEquals([new PricingTier(272_000, 60.0, 270.0, 0.0, 0.0)], $pro->pricing->tiers);
-        $this->assertEquals(new Pricing(4.0, 20.0, 0.4, 5.0, [new PricingTier(272_000, 8.0, 30.0, 0.8, 10.0)]), Models::find('openai', 'gpt-5.6-sol')?->pricing);
+        $this->assertEquals([new ModelCostTier(272_000, 60.0, 270.0, 0.0, 0.0)], $pro->pricing->tiers);
+        $this->assertEquals(new Pricing(4.0, 20.0, 0.4, 5.0, [new ModelCostTier(272_000, 8.0, 30.0, 0.8, 10.0)]), Models::find('openai', 'gpt-5.6-sol')?->pricing);
 
         // "models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit); the
         // actual max output is 128000."
@@ -1050,8 +1050,8 @@ final class ModelsTest extends TestCase
         );
 
         // An Anthropic model only when it thinks adaptively.
-        $this->assertTrue($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-opus-4-8', AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-8')));
-        $this->assertFalse($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-haiku-4-5', AnthropicCompat::forBuiltIn('anthropic', 'claude-haiku-4-5')));
+        $this->assertTrue($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-opus-4-8', AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-opus-4-8')));
+        $this->assertFalse($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-haiku-4-5', AnthropicMessagesCompat::forBuiltIn('anthropic', 'claude-haiku-4-5')));
 
         // A completions endpoint only with `thinkingFormat: "openai"` and `supportsReasoningEffort`
         // — Groq has both; xAI rejects `reasoning_effort` and Z.ai thinks in its own format.
@@ -1132,7 +1132,7 @@ final class ModelsTest extends TestCase
         $this->assertNotNull($sonnet);
         $this->assertNotNull($haiku);
         $this->assertNotNull($opus);
-        $this->assertInstanceOf(AnthropicCompat::class, $sonnet->compat);
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $sonnet->compat);
         $this->assertTrue($sonnet->compat->forceAdaptiveThinking);
         $this->assertNull($sonnet->compat->strictTools);
         $this->assertNull($sonnet->compat->supportsTemperature, 'Sonnet 4.6 still takes a temperature');

@@ -29,7 +29,7 @@ use RuntimeException;
  * (`search_tools`, `describe_tool`), an output item. The host answers each `call`/`global` in a
  * fiber of its own, so a script's `parallel([...])` really is concurrent.
  */
-final class Sandbox
+final class CodemodeSandbox
 {
     /** Heap limit for the child; upstream's 256MB for the VM. */
     public const int DEFAULT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;

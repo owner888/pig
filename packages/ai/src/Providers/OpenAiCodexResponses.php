@@ -26,7 +26,7 @@ use Pig\Ai\Cost;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\TextDecoder;
@@ -950,7 +950,7 @@ final class OpenAiCodexResponses
      */
     private static function buildWebSocketHeaders(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, string $requestId): array
     {
-        $built = Headers::build(
+        $built = ProviderHeaders::build(
             ...self::baseCodexHeaderSources($identityHeaders, $initHeaders, $additionalHeaders, $accountId, $token),
             ...[
                 ['accept' => null, 'content-type' => null, 'OpenAI-Beta' => null],
@@ -1556,7 +1556,7 @@ final class OpenAiCodexResponses
      */
     private static function buildSSEHeaders(array $identityHeaders, array $initHeaders, ?array $additionalHeaders, string $accountId, string $token, ?string $sessionId): array
     {
-        $built = Headers::build(
+        $built = ProviderHeaders::build(
             ...self::baseCodexHeaderSources($identityHeaders, $initHeaders, $additionalHeaders, $accountId, $token),
             ...[[
                 'OpenAI-Beta' => 'responses=experimental',

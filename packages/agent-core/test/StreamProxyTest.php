@@ -12,7 +12,7 @@ use Pig\Agent\AgentLoopConfig;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\StreamProxy;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -22,7 +22,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Model;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
-use Pig\Ai\PricingTier;
+use Pig\Ai\ModelCostTier;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -115,7 +115,7 @@ final class StreamProxyTest extends TestCase
         $this->listening = [];
     }
 
-    private static function model(OpenAiCompat|AnthropicCompat|null $compat = null, array $headers = []): Model
+    private static function model(OpenAiCompat|AnthropicMessagesCompat|null $compat = null, array $headers = []): Model
     {
         return new Model(
             'gateway-model',
@@ -326,7 +326,7 @@ final class StreamProxyTest extends TestCase
         // an `anthropic-messages` one, which before carried an `OpenAiCompat` or nothing.
         $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
-        $model = self::model(new AnthropicCompat(forceAdaptiveThinking: true, supportsTemperature: false, supportsMidConvoEffort: true));
+        $model = self::model(new AnthropicMessagesCompat(forceAdaptiveThinking: true, supportsTemperature: false, supportsMidConvoEffort: true));
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
@@ -347,7 +347,7 @@ final class StreamProxyTest extends TestCase
     {
         $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
-        $model = self::model(new AnthropicCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: false));
+        $model = self::model(new AnthropicMessagesCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: false));
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
@@ -465,8 +465,8 @@ final class StreamProxyTest extends TestCase
         // level the model does not have, or name it the way the model does; without `tiers` it
         // prices a long prompt at the short rate.
         $model = new Model('claude-haiku-5-5', 'Claude Haiku 5.5', Api::AnthropicMessages, 'anthropic', 'https://api.anthropic.com', 1_000_000, 128_000, true,
-            pricing: new Pricing(0.1, 0.5, 0.01, 0.125, [new PricingTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
-            compat: new AnthropicCompat(allowedFallbackModels: [['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(5.0, 25.0)]]),
+            pricing: new Pricing(0.1, 0.5, 0.01, 0.125, [new ModelCostTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
+            compat: new AnthropicMessagesCompat(allowedFallbackModels: [['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(5.0, 25.0)]]),
             thinkingLevelMap: ['off' => null, 'xhigh' => 'xhigh']);
         $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
         $proxy = new StreamProxy(rtrim($url, '/'), 't');

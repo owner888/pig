@@ -10,7 +10,7 @@ use Pig\Ai\Timestamp;
 /**
  * Somebody changed how hard the model thinks, here.
  *
- * `ModelChange`'s twin, and in the file for the same reason: it is part of how this
+ * `ModelChangeEntry`'s twin, and in the file for the same reason: it is part of how this
  * conversation was being had, and resuming it should bring it back.
  *
  * The level is kept as it was written rather than as a `ThinkingLevel`, because a file may
@@ -19,7 +19,7 @@ use Pig\Ai\Timestamp;
  *
  * Ported from upstream's `ThinkingLevelChangeEntry`.
  */
-final readonly class ThinkingLevelChange
+final readonly class ThinkingLevelChangeEntry
 {
     public int $timestamp;
 

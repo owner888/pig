@@ -17,7 +17,7 @@ use Pig\Mcp\Transports\McpHttpError;
 use Pig\Mcp\Transports\McpSessionExpiredError;
 use Pig\Mcp\Transports\StdioTransport;
 use Pig\Mcp\Transports\StreamableHttpTransport;
-use Pig\Mcp\Transports\Transport;
+use Pig\Mcp\Transports\McpTransport;
 use RuntimeException;
 use Throwable;
 
@@ -76,7 +76,7 @@ final class ServerConnection
     private ?string $stderrTail = null;
 
     /**
-     * @param Closure(ServerEntry, string): Transport|null $createTransport for tests
+     * @param Closure(ServerEntry, string): McpTransport|null $createTransport for tests
      * @param Closure(self): void|null                    $onTools    the tool list changed
      * @param Closure(self): void|null                    $onChange   the state changed
      * @param McpOauth|null                                $credentials where OAuth tokens live; null means no OAuth
@@ -470,7 +470,7 @@ final class ServerConnection
     }
 
     /** The transport an entry describes, with `${VAR}` and `!command` resolved and `~` expanded. */
-    public static function defaultTransport(ServerEntry $entry, string $cwd, ?\Pig\Mcp\Transports\AuthProvider $auth = null): Transport
+    public static function defaultTransport(ServerEntry $entry, string $cwd, ?\Pig\Mcp\Transports\AuthProvider $auth = null): McpTransport
     {
         $config = $entry->config;
         $name = $entry->name;

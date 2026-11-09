@@ -17,8 +17,8 @@ use Pig\CodingAgent\Interactive\AssistantMessageComponent;
 use Pig\CodingAgent\Interactive\BranchSummaryComponent;
 use Pig\CodingAgent\Interactive\CompactionComponent;
 use Pig\CodingAgent\Interactive\UserMessageComponent;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Container;
@@ -88,7 +88,7 @@ final class MessageComponentsTest extends TestCase
 
     public function testACompactionIsDrawnAsAPiStyleBlock(): void
     {
-        $summary = new CompactionSummary('what changed', tokensBefore: 256653, replaced: 42);
+        $summary = new CompactionEntry('what changed', tokensBefore: 256653, replaced: 42);
         $component = new CompactionComponent($summary);
         $lines = $component->render(self::WIDTH);
         $text = $this->text($lines);
@@ -101,7 +101,7 @@ final class MessageComponentsTest extends TestCase
 
     public function testExpandingACompactionKeepsTheSummaryInsideTheBlock(): void
     {
-        $summary = new CompactionSummary('**important** summary', tokensBefore: 1200, replaced: 3);
+        $summary = new CompactionEntry('**important** summary', tokensBefore: 1200, replaced: 3);
         $component = new CompactionComponent($summary, expanded: true);
         $lines = $component->render(self::WIDTH);
         $text = $this->text($lines);
@@ -114,7 +114,7 @@ final class MessageComponentsTest extends TestCase
 
     public function testABranchSummaryUsesTheSameBlockShape(): void
     {
-        $summary = new BranchSummary('handover notes');
+        $summary = new BranchSummaryEntry('handover notes');
         $lines = (new BranchSummaryComponent($summary))->render(self::WIDTH);
         $text = $this->text($lines);
 
@@ -393,13 +393,13 @@ final class MessageComponentsTest extends TestCase
     public function testAnExpandedCompactionRecoloursOnAThemeChange(): void
     {
         Themes::initTheme('dark');
-        $summary = new CompactionSummary('what **changed** here', tokensBefore: 1200, replaced: 3);
+        $summary = new CompactionEntry('what **changed** here', tokensBefore: 1200, replaced: 3);
         $this->assertRecolours(new CompactionComponent($summary, expanded: true), ['customMessageLabel', 'muted']);
     }
 
     public function testAnExpandedBranchSummaryRecoloursOnAThemeChange(): void
     {
         Themes::initTheme('dark');
-        $this->assertRecolours(new BranchSummaryComponent(new BranchSummary('handover **notes** here'), expanded: true), ['customMessageLabel', 'muted']);
+        $this->assertRecolours(new BranchSummaryComponent(new BranchSummaryEntry('handover **notes** here'), expanded: true), ['customMessageLabel', 'muted']);
     }
 }

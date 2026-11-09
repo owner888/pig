@@ -22,7 +22,7 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\MessageJson;
 use Pig\Ai\Utils\TextDecoder;
@@ -115,7 +115,7 @@ final class PiMessages
             $response = $this->fetch(new Request(
                 'POST',
                 $url,
-                Headers::providerHeadersToRecord(
+                ProviderHeaders::providerHeadersToRecord(
                     ClientIdentity::headers($model, $options?->identity),
                     ['authorization' => "Bearer {$apiKey}", 'accept' => 'text/event-stream', 'content-type' => 'application/json'],
                     $options?->headers,

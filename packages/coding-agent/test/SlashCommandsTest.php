@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
-use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Settings;
@@ -68,7 +68,7 @@ final class SlashCommandsTest extends TestCase
      * What a session loads: `PackageManager::resolveLocalResources()`, then `fromResources()`.
      *
      * @param array<string, mixed> $user the person's settings
-     * @return list<FileCommand>
+     * @return list<PromptTemplate>
      */
     private function load(array $user = [], bool $trusted = true): array
     {
@@ -77,7 +77,7 @@ final class SlashCommandsTest extends TestCase
 
     /**
      * @param array<string, mixed> $user
-     * @return array{0: list<FileCommand>, 1: list<string>}
+     * @return array{0: list<PromptTemplate>, 1: list<string>}
      */
     private function loadWithWarnings(array $user = [], bool $trusted = true): array
     {
@@ -90,10 +90,10 @@ final class SlashCommandsTest extends TestCase
         return SlashCommands::fromResources((new PackageManager($this->cwd, $settings, $this->home))->resolveLocalResources()->prompts);
     }
 
-    /** @param list<FileCommand> $commands @return list<string> */
+    /** @param list<PromptTemplate> $commands @return list<string> */
     private static function names(array $commands): array
     {
-        $names = array_map(static fn (FileCommand $c): string => $c->name, $commands);
+        $names = array_map(static fn (PromptTemplate $c): string => $c->name, $commands);
         sort($names);
 
         return $names;
@@ -256,21 +256,21 @@ final class SlashCommandsTest extends TestCase
     #[\PHPUnit\Framework\Attributes\DataProvider('substitutions')]
     public function testUpstreamsSubstitutions(string $template, string $typed, string $expected): void
     {
-        $commands = [new FileCommand('t', 'd', $template, '(user)')];
+        $commands = [new PromptTemplate('t', 'd', $template, '(user)')];
 
         $this->assertSame($expected, SlashCommands::expand($typed === '' ? '/t' : "/t {$typed}", $commands));
     }
 
     public function testACommandExpandsToItsContent(): void
     {
-        $commands = [new FileCommand('review', 'd', 'Review the code.', '(user)')];
+        $commands = [new PromptTemplate('review', 'd', 'Review the code.', '(user)')];
 
         $this->assertSame('Review the code.', SlashCommands::expand('/review', $commands));
     }
 
     public function testPositionalArgumentsAreFilledIn(): void
     {
-        $commands = [new FileCommand('review', 'd', 'Review $1 for $2.', '(user)')];
+        $commands = [new PromptTemplate('review', 'd', 'Review $1 for $2.', '(user)')];
 
         $this->assertSame(
             'Review src/Foo.php for bugs.',
@@ -280,14 +280,14 @@ final class SlashCommandsTest extends TestCase
 
     public function testAllArgumentsTogetherAreAvailableAsOne(): void
     {
-        $commands = [new FileCommand('ask', 'd', 'Answer this: $@', '(user)')];
+        $commands = [new PromptTemplate('ask', 'd', 'Answer this: $@', '(user)')];
 
         $this->assertSame('Answer this: why is the sky blue', SlashCommands::expand('/ask why is the sky blue', $commands));
     }
 
     public function testAPlaceholderWithNothingBehindItBecomesNothing(): void
     {
-        $commands = [new FileCommand('review', 'd', 'Review $1 for $2.', '(user)')];
+        $commands = [new PromptTemplate('review', 'd', 'Review $1 for $2.', '(user)')];
 
         // A prompt that asks the model about `$2` is worse than one that asks about
         // nothing.
@@ -312,7 +312,7 @@ final class SlashCommandsTest extends TestCase
 
     public function testAnArgumentThatLooksLikeAPlaceholderIsNotSubstitutedAgain(): void
     {
-        $commands = [new FileCommand('echo', 'd', 'Say: $@ and $1', '(user)')];
+        $commands = [new PromptTemplate('echo', 'd', 'Say: $@ and $1', '(user)')];
 
         // `$@` is filled first, so an argument containing `$1` stays what it was.
         $this->assertSame('Say: $1 and $1', SlashCommands::expand('/echo \'$1\'', $commands));
@@ -320,7 +320,7 @@ final class SlashCommandsTest extends TestCase
 
     public function testSomethingThatIsNotACommandIsNull(): void
     {
-        $commands = [new FileCommand('review', 'd', 'x', '(user)')];
+        $commands = [new PromptTemplate('review', 'd', 'x', '(user)')];
 
         $this->assertNull(SlashCommands::expand('/nonsense', $commands));
         $this->assertNull(SlashCommands::expand('just talking', $commands));

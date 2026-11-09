@@ -17,7 +17,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TranscriptContext;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\ProviderHttpError;
 use Pig\Ai\Utils\ProviderRetry;
@@ -299,7 +299,7 @@ final class Google
      * already has it), and the headers the SDK builds — its defaults (`User-Agent` and
      * `x-goog-api-client` both `SdkHeaders::googleApiClient()`, `Content-Type`), `Object.assign`ed
      * with upstream's `httpOptions.headers` (`providerHeadersToRecord({"User-Agent": getPiUserAgent(),
-     * ...model.headers, ...options.headers})`), appended one by one into a `Headers` — so two
+     * ...model.headers, ...options.headers})`), appended one by one into a `ProviderHeaders` — so two
      * spellings of one name are joined with ", " — and `x-goog-api-key` last unless already there.
      * No `Accept`: the SDK sends none for this call.
      *
@@ -315,7 +315,7 @@ final class Google
             }
         }
 
-        $httpHeaders = Headers::providerHeadersToRecord($merged) ?? [];
+        $httpHeaders = ProviderHeaders::providerHeadersToRecord($merged) ?? [];
         $sdkHeaders = [
             'User-Agent' => SdkHeaders::googleApiClient(),
             'x-goog-api-client' => SdkHeaders::googleApiClient(),

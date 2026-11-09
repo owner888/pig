@@ -28,7 +28,7 @@ use Pig\Tui\InputHandler;
  * The title and the hint arrive already painted, because the caller is the one that paints
  * them — this is arrangement, not a second place that knows which theme is on.
  */
-final class SettingsSubmenu extends Container implements InputHandler, CapturesViewportInput
+final class SelectSubmenu extends Container implements InputHandler, CapturesViewportInput
 {
     public function __construct(
         private readonly SelectList $list,

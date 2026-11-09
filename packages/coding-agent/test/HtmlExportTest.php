@@ -19,9 +19,9 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownHtml;
 use Pig\Agent\AgentError;
-use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BashExecutionMessage;
 use Pig\CodingAgent\Session\SessionManager;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 
 /** A conversation as one HTML file, with no JavaScript in it. */
 final class HtmlExportTest extends TestCase
@@ -205,7 +205,7 @@ final class HtmlExportTest extends TestCase
 
     public function testACommandTheirsAndItsOutputBothAppear(): void
     {
-        $html = $this->html([new BashExecution('ls -la', "one\ntwo", 0)]);
+        $html = $this->html([new BashExecutionMessage('ls -la', "one\ntwo", 0)]);
 
         $this->assertStringContainsString('$ ls -la', $html);
         $this->assertStringContainsString('two', $html);
@@ -213,14 +213,14 @@ final class HtmlExportTest extends TestCase
 
     public function testAFailedCommandSaysWhatItExitedWith(): void
     {
-        $html = $this->html([new BashExecution('false', '', 7)]);
+        $html = $this->html([new BashExecutionMessage('false', '', 7)]);
 
         $this->assertStringContainsString('exited 7', $html);
     }
 
     public function testACompactionSaysHowMuchItReplaced(): void
     {
-        $html = $this->html([new CompactionSummary('we talked about things', [], [], 0, replaced: 42)]);
+        $html = $this->html([new CompactionEntry('we talked about things', [], [], 0, replaced: 42)]);
 
         $this->assertStringContainsString('42 earlier messages summarised', $html);
         $this->assertStringContainsString('we talked about things', $html);

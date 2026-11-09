@@ -415,16 +415,16 @@ final class OpenAiCodex
      *
      * @param array{access: string, refresh: string, expires: int} $token
      */
-    private static function credentialsFromToken(array $token): Credentials
+    private static function credentialsFromToken(array $token): OauthCredentials
     {
         $accountId = self::getAccountId($token['access'])
             ?? throw new OauthError('Failed to extract accountId from token');
 
-        return new Credentials($token['refresh'], $token['access'], $token['expires'], accountId: $accountId);
+        return new OauthCredentials($token['refresh'], $token['access'], $token['expires'], accountId: $accountId);
     }
 
     /** Upstream's `loginOpenAICodexDeviceCode()`. */
-    private function loginOpenAICodexDeviceCode(Closure $onAuth, AbortSignal $signal): Credentials
+    private function loginOpenAICodexDeviceCode(Closure $onAuth, AbortSignal $signal): OauthCredentials
     {
         $device = $this->startOpenAICodexDeviceAuth($signal);
         // `notify({type: "device_code", userCode, verificationUri, …})`, which the dialog shows as the
@@ -443,7 +443,7 @@ final class OpenAiCodex
      * @param Closure(string, ?string): void $onAuth
      * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
      */
-    private function loginOpenAICodex(Closure $onAuth, Closure $onPrompt, AbortSignal $signal, ?string $agentName = null): ?Credentials
+    private function loginOpenAICodex(Closure $onAuth, Closure $onPrompt, AbortSignal $signal, ?string $agentName = null): ?OauthCredentials
     {
         ['verifier' => $verifier, 'state' => $state, 'url' => $url] = $this->createAuthorizationFlow($agentName ?? 'pi');
 
@@ -576,7 +576,7 @@ final class OpenAiCodex
     }
 
     /** Upstream's `refreshOpenAICodexToken()`. */
-    public function refresh(string $refreshToken, ?AbortSignal $signal = null): Credentials
+    public function refresh(string $refreshToken, ?AbortSignal $signal = null): OauthCredentials
     {
         return self::credentialsFromToken($this->refreshAccessToken($refreshToken, $signal));
     }
@@ -591,7 +591,7 @@ final class OpenAiCodex
      * @param string|null $agentName upstream's `LoginOptions.agentName` (#10433): "Name this app
      *        introduces itself with during login, e.g. … Codex originator. Defaults to pi's own name."
      */
-    public function login(Closure $onAuth, Closure $onPrompt, ?AbortSignal $signal = null, ?Closure $onSelect = null, ?string $agentName = null): ?Credentials
+    public function login(Closure $onAuth, Closure $onPrompt, ?AbortSignal $signal = null, ?Closure $onSelect = null, ?string $agentName = null): ?OauthCredentials
     {
         $method = self::METHOD_BROWSER;
 

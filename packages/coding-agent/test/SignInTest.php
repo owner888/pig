@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
@@ -104,7 +104,7 @@ final class SignInTest extends TestCase
 
         $listed = $this->said();
 
-        foreach (Provider::cases() as $provider) {
+        foreach (OauthProvider::cases() as $provider) {
             $this->assertStringContainsString($provider->value, $listed, $provider->value);
             $this->assertStringContainsString($provider->label(), $listed, $provider->label());
         }

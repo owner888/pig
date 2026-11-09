@@ -89,7 +89,7 @@ no new protocol at all: it serves everything through the two OpenAI shapes.
 **Decided 2026-10-06.** pi removed Gemini CLI and Antigravity from its core in 0.71 and the
 community rebuilt Antigravity as an extension (`Rahularya01/pi-antigravity`) on pi's
 `registerProvider()`. pig had kept Antigravity built in, spread across `Models`, `Api`, `Stream`,
-`Oauth\Provider`, `Auth`, `AgentSession`, `Doctor`, `HttpServer` and the web front end — 28 source
+`Oauth\OauthProvider`, `Auth`, `AgentSession`, `Doctor`, `HttpServer` and the web front end — 28 source
 files, 95 references — with a 370-line extension that was a thin shell over all of it. Google's
 private protocol (its User-Agent, its envelope, its `v1internal:` endpoints) was pig's largest
 piece of core code with no upstream behind it, and every change Google made meant a core release.
@@ -175,7 +175,7 @@ hook API, and the first two are opposites that are easy to confuse:
 | `sendMessage()` | the conversation | the model, and a person unless `display: false` | context, like any message |
 | `appendEntry()` | the session file only | the next run of the same hook | nothing |
 
-`sendMessage()` makes a `Session\CustomMessage` — an app message like `BashExecution`, turned
+`sendMessage()` makes a `Session\CustomMessage` — an app message like `BashExecutionMessage`, turned
 into a user message by `CodingAgent::toLlm()`. It is what a hook uses to tell the model
 something the model had no way to find out: a build that just failed, a file that changed
 underneath it, a rule about this repository. Its `content` goes to the model **whole** rather
@@ -508,7 +508,7 @@ wasm runtime and will not take one as a dependency:
 | `declare const tools: { read(input: {...}): Promise<string> }` (TypeScript) | `$tools->read(array{path: string} $input): string` (PHPStan shapes) | the notation PHP code already carries in its docblocks |
 | `await Promise.all([...])` | `parallel([...])`, each arm a `Fiber` in the child | no `await`; the arms suspend on their first tool call and the driver sends every call before reading any answer |
 
-**What the isolation is, in one paragraph, because it is the thing to be honest about.** `Sandbox`
+**What the isolation is, in one paragraph, because it is the thing to be honest about.** `CodemodeSandbox`
 starts the child with `-n` (no `php.ini`), `disable_functions` naming every process, file, stream,
 socket, network and host-reading function in core and the usual extensions, `open_basedir` pointing
 at the child script alone, a 256MB `memory_limit`, `allow_url_fopen=0`, and an empty `PATH`.

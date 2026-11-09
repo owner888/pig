@@ -14,9 +14,9 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Utf8;
-use Pig\CodingAgent\Session\BashExecution;
-use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\BashExecutionMessage;
+use Pig\CodingAgent\Session\BranchSummaryEntry;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Themes;
@@ -166,9 +166,9 @@ final class HtmlExport
             $message instanceof UserMessage => self::user($message),
             $message instanceof AssistantMessage => self::assistant($message, $calls),
             $message instanceof ToolResultMessage => self::result($message, $calls),
-            $message instanceof BashExecution => self::bash($message),
-            $message instanceof CompactionSummary => self::compaction($message),
-            $message instanceof BranchSummary => self::branch($message),
+            $message instanceof BashExecutionMessage => self::bash($message),
+            $message instanceof CompactionEntry => self::compaction($message),
+            $message instanceof BranchSummaryEntry => self::branch($message),
             $message instanceof CustomMessage => self::hook($message),
             default => '',
         };
@@ -266,7 +266,7 @@ final class HtmlExport
         );
     }
 
-    private static function bash(BashExecution $execution): string
+    private static function bash(BashExecutionMessage $execution): string
     {
         $status = $execution->cancelled
             ? ' — cancelled'
@@ -282,7 +282,7 @@ final class HtmlExport
             . "</section>\n";
     }
 
-    private static function compaction(CompactionSummary $summary): string
+    private static function compaction(CompactionEntry $summary): string
     {
         return "<section class=\"turn compaction\">\n"
             . '<h2>Compacted — ' . number_format($summary->replaced) . " earlier messages summarised</h2>\n"
@@ -290,7 +290,7 @@ final class HtmlExport
             . "</section>\n";
     }
 
-    private static function branch(BranchSummary $summary): string
+    private static function branch(BranchSummaryEntry $summary): string
     {
         $files = count($summary->readFiles) + count($summary->modifiedFiles);
 

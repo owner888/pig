@@ -12,7 +12,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\Session\CacheStats;
-use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\CompactionEntry;
 use Pig\CodingAgent\Session\UsageEntry;
 
 /** Upstream's `cache-stats.ts`: what counts as a prompt billed again rather than read. */
@@ -56,7 +56,7 @@ final class CacheStatsTest extends TestCase
     {
         $first = self::turn(cacheWrite: 50_000);
         $after = self::turn(input: 52_000);
-        $summary = new CompactionSummary('summary');
+        $summary = new CompactionEntry('summary');
 
         $this->assertNull(CacheStats::detect([$first, $summary, $after], $after));
     }

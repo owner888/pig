@@ -8,7 +8,7 @@ use Closure;
 use InvalidArgumentException;
 use Pig\Ai\AssistantImages;
 use Pig\Ai\Cost;
-use Pig\Ai\Extension\ImageGenerationApi;
+use Pig\Ai\Extension\ProviderImages;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\ImageApi;
@@ -29,7 +29,7 @@ use Throwable;
 /**
  * Image generation via Antigravity's Gemini image models — the provider's `images` implementation
  * (upstream's `ProviderImages`), registered on the `antigravity` provider as its
- * `ImageGenerationApi`, so `Models::generateImages()` (codemode's `$models->generateImages()`) reaches
+ * `ProviderImages`, so `Models::generateImages()` (codemode's `$models->generateImages()`) reaches
  * it like any other image model. The `generate_image` tool and `/antigravity.image` go through
  * `Models::generateImages()` too and then save what came back (`save()`): one request path.
  *
@@ -40,7 +40,7 @@ use Throwable;
  * never silent. A quota wall on every attempt asks `$failover` for the next stored account, as the
  * chat protocol does (`AntigravityApi::send()`).
  */
-final class ImageGenerator implements ImageGenerationApi
+final class ImageGenerator implements ProviderImages
 {
     public const string DEFAULT_MODEL = 'gemini-3.1-flash-image';
 
@@ -107,7 +107,7 @@ final class ImageGenerator implements ImageGenerationApi
     }
 
     /**
-     * `ImageGenerationApi`: the prompt is the context's text, any image in it a reference; the aspect
+     * `ProviderImages`: the prompt is the context's text, any image in it a reference; the aspect
      * ratio is `$options->metadata['aspectRatio']` (default `1:1`); the key is the signed-in account's
      * `{"token", "projectId"}`. Never throws — every failure is an error result.
      */

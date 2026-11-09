@@ -76,13 +76,13 @@ final class ProviderRegistry
     }
 
     /** The image generation `Models::generateImages()` hands an `ImageApi::Extension` model to. */
-    public static function imageApiFor(ImageModel $model): ?ImageGenerationApi
+    public static function imageApiFor(ImageModel $model): ?ProviderImages
     {
         return self::$providers[$model->provider]->imageApi ?? null;
     }
 
     /** The classification `Models::classify()` hands a `ClassifierApi::Extension` model to. */
-    public static function classifierApiFor(ClassifierModel $model): ?ClassificationApi
+    public static function classifierApiFor(ClassifierModel $model): ?ProviderClassifier
     {
         return self::$providers[$model->provider]->classifierApi ?? null;
     }

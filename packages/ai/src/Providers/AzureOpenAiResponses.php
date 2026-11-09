@@ -20,7 +20,7 @@ use Pig\Ai\TranscriptContext;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
-use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderHeaders;
 use Pig\Ai\Utils\ProviderRetry;
 use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\Transcript;
@@ -33,7 +33,7 @@ use Throwable;
  * The conversation and the stream are `OpenAiResponsesShared`'s, as they are `OpenAiResponses`'.
  * What is Azure's own:
  *
- * - **Where it goes** is worked out per request (`AzureOpenAiConfig`): the catalogue's Azure rows
+ * - **Where it goes** is worked out per request (`AzureEndpointOptions`): the catalogue's Azure rows
  *   have no base URL, because every Azure customer has their own resource. Upstream builds an
  *   `AzureOpenAI` client over it, and that client sends `POST <baseURL>/responses?api-version=<v>`
  *   — the Responses API is not one of the SDK's deployment-scoped paths, so no `/deployments/…`.
@@ -76,7 +76,7 @@ final class AzureOpenAiResponses
 
     private function run(AssistantMessageEventStream $stream, Model $model, TranscriptContext $context, ?AzureOpenAiResponsesOptions $options): void
     {
-        $deploymentName = AzureOpenAiConfig::resolveDeploymentName($model, $options);
+        $deploymentName = AzureEndpointOptions::resolveDeploymentName($model, $options);
         $builder = new AssistantMessageBuilder($model);
         $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
@@ -90,7 +90,7 @@ final class AzureOpenAiResponses
 
             // `createClient()` — resolved before anything else, so an endpoint nobody configured is
             // this turn's error rather than a request to nowhere.
-            $config = AzureOpenAiConfig::resolveAzureConfig($model, $options);
+            $config = AzureEndpointOptions::resolveAzureConfig($model, $options);
             $grammar = ConstrainedSampling::createGrammarToolInputProperties(
                 Transcript::getDeclaredTools($context->messages),
                 self::compat($model)?->grammarTools ?? false,
@@ -190,7 +190,7 @@ final class AzureOpenAiResponses
             $headers[(string) $name] = $value;
         }
 
-        $built = Headers::build(
+        $built = ProviderHeaders::build(
             [
                 ...SdkHeaders::stainless('OpenAI/JS ' . SdkHeaders::OPENAI_SDK_VERSION, SdkHeaders::OPENAI_SDK_VERSION, $timeoutMs),
                 'OpenAI-Organization' => StreamOptions::providerEnvValue('OPENAI_ORG_ID', null),

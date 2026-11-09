@@ -28,7 +28,7 @@ use Pig\Ai\StreamOptions;
  * `OpenAiOptions`) reads the environment and the model alone — which is also all upstream's
  * `streamSimple()` arms read, since `buildBaseOptions()` does not carry the four.
  */
-final class AzureOpenAiConfig
+final class AzureEndpointOptions
 {
     /** Upstream's `DEFAULT_AZURE_API_VERSION`. */
     public const string DEFAULT_AZURE_API_VERSION = 'v1';

@@ -379,7 +379,7 @@ impersonated / GDCH credential types, a parallel race of the two metadata hosts.
 Three more APIs, ported the way Vertex and Bedrock were — literally, and checked by an oracle rather
 than by reading:
 
-- **`azure-openai-responses`** — `Providers\AzureOpenAiResponses` over `AzureOpenAiConfig`
+- **`azure-openai-responses`** — `Providers\AzureOpenAiResponses` over `AzureEndpointOptions`
   (`api/azure-openai-config.ts`: the endpoint from `azureBaseUrl` / `AZURE_OPENAI_BASE_URL` /
   `azureResourceName` / `AZURE_OPENAI_RESOURCE_NAME` / the model's `baseUrl`, normalized to
   `/openai/v1` on an Azure host; the deployment from `azureDeploymentName` /

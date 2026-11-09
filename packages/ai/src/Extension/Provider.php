@@ -13,7 +13,7 @@ use Pig\Ai\Model;
  * A provider an extension registers — upstream's `registerProvider(provider: Provider)`.
  *
  * Everything a built-in provider is spread across `Models`, `Api`, `Stream` and
- * `Utils\Oauth\Provider`, in one object: the models it sells, the protocol they speak (or null
+ * `Utils\Oauth\OauthProvider`, in one object: the models it sells, the protocol they speak (or null
  * for one pig already has — `Model::$api` names it), the image generation and classification its
  * image and classifier models use when pig has neither (upstream's `generateImages()` / `classify()`),
  * the sign-in (or null for a key), and which environment variables carry that key. `ProviderRegistry::register()` takes one of these and
@@ -31,9 +31,9 @@ final readonly class Provider
      *        write and is used as written**: upstream's `extensionModelFromDefinition()` spreads the
      *        definition (`{ ...definition, api, provider, baseUrl }`), so its `compat` is whatever
      *        the definition said and nothing is worked out from the id. An `anthropic-messages`
-     *        model that wants adaptive thinking says `new AnthropicCompat(forceAdaptiveThinking:
+     *        model that wants adaptive thinking says `new AnthropicMessagesCompat(forceAdaptiveThinking:
      *        true)`, as a `models.json` entry says `"forceAdaptiveThinking": true`; the id list
-     *        `Models` applies (`AnthropicCompat::isAdaptiveThinkingModel()`) is upstream's
+     *        `Models` applies (`AnthropicMessagesCompat::isAdaptiveThinkingModel()`) is upstream's
      *        generator, for the built-in rows only
      * @param list<string> $envKeys environment variable names that carry this provider's key,
      *        first one set wins — `Stream::envApiKey()`'s table for one more row
@@ -51,10 +51,10 @@ final readonly class Provider
      * @param bool $replacesModels upstream's legacy `registerProvider(name, config)`: these lists
      *        **replace** every row the provider has, built-in ones included, until it is unregistered
      *        (`Models::replaceProvider()`), rather than being added where nothing is already
-     * @param ImageGenerationApi|null $imageApi upstream's provider `generateImages()` — the `images`
+     * @param ProviderImages|null $imageApi upstream's provider `generateImages()` — the `images`
      *        implementation — for the image models in `$images` whose `api` is `ImageApi::Extension`;
      *        an image model on a built-in `ImageApi` keeps going to pig's own
-     * @param ClassificationApi|null $classifierApi upstream's provider `classify()` — the
+     * @param ProviderClassifier|null $classifierApi upstream's provider `classify()` — the
      *        `classifiers` implementation — for the classifier models whose `api` is
      *        `ClassifierApi::Extension`
      */
@@ -71,8 +71,8 @@ final readonly class Provider
         public ?Closure $refreshModels = null,
         public array $images = [],
         public bool $replacesModels = false,
-        public ?ImageGenerationApi $imageApi = null,
-        public ?ClassificationApi $classifierApi = null,
+        public ?ProviderImages $imageApi = null,
+        public ?ProviderClassifier $classifierApi = null,
     ) {
         if ($id === '' || $name === '') {
             throw new \InvalidArgumentException('A provider needs an id and a name.');

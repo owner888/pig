@@ -16,12 +16,12 @@ use Pig\Mcp\Protocol\McpConnectionClosedError;
 use Pig\Mcp\Protocol\McpError;
 use Pig\Mcp\Protocol\McpTimeoutError;
 use Pig\Mcp\Protocol\Protocol;
-use Pig\Mcp\Transports\Transport;
+use Pig\Mcp\Transports\McpTransport;
 use RuntimeException;
 use Throwable;
 
 /**
- * An MCP client over any `Transport` — upstream's `client.ts`.
+ * An MCP client over any `McpTransport` — upstream's `client.ts`.
  *
  * `connect()` runs `initialize` and `notifications/initialized`; after that `request()` is a
  * JSON-RPC call that suspends the fiber until the reply, and the list methods page through
@@ -43,7 +43,7 @@ final class McpClient
     /** @var 'idle'|'connecting'|'connected'|'closed' */
     private string $state = 'idle';
 
-    private ?Transport $transport = null;
+    private ?McpTransport $transport = null;
 
     private int $nextRequestId = 1;
 
@@ -141,7 +141,7 @@ final class McpClient
      *
      * @return array<string, mixed> the `initialize` result
      */
-    public function connect(Transport $transport): array
+    public function connect(McpTransport $transport): array
     {
         if ($this->state !== 'idle') {
             throw new RuntimeException("Cannot connect MCP client in {$this->state} state");
@@ -151,7 +151,7 @@ final class McpClient
         $this->transport = $transport;
         $this->disposers = [
             $transport->onMessage(fn (array $message) => $this->handleMessage($message)),
-            // Transport errors are reported only. Pending requests fail when the transport closes.
+            // McpTransport errors are reported only. Pending requests fail when the transport closes.
             $transport->onError(fn (Throwable $error) => $this->emitError($error)),
             $transport->onClose(fn () => $this->handleTransportClose()),
         ];
@@ -435,7 +435,7 @@ final class McpClient
         $this->requireTransport($allowConnecting)->send($message);
     }
 
-    private function requireTransport(bool $allowConnecting): Transport
+    private function requireTransport(bool $allowConnecting): McpTransport
     {
         if ($this->transport !== null && ($this->state === 'connected' || ($allowConnecting && $this->state === 'connecting'))) {
             return $this->transport;
@@ -535,7 +535,7 @@ final class McpClient
     }
 
     /** A send whose failure is reported rather than thrown: nobody is awaiting a reply to a reply. */
-    private function sendQuietly(Transport $transport, array $message): void
+    private function sendQuietly(McpTransport $transport, array $message): void
     {
         try {
             $transport->send($message);

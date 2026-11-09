@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Session;
 
 use Closure;
-use Pig\Ai\AnthropicCompat;
+use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
@@ -131,7 +131,7 @@ final class CacheWarmer
             return true;
         }
 
-        return $model->compat instanceof AnthropicCompat && $model->compat->forceAdaptiveThinking === true;
+        return $model->compat instanceof AnthropicMessagesCompat && $model->compat->forceAdaptiveThinking === true;
     }
 
     public function status(): CacheWarmingStatus
