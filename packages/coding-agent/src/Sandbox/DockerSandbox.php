@@ -245,7 +245,11 @@ final readonly class DockerSandbox implements Runtime
         }
 
         foreach (self::SYSTEM as $system) {
-            if ($real === '/' || self::within($real, $system)) {
+            // `$real` has its links resolved, so the system folder is compared resolved too: on
+            // macOS `/etc` is a link to `/private/etc`, which is inside nothing in the list as written.
+            $resolved = realpath($system);
+
+            if ($real === '/' || self::within($real, $system) || ($resolved !== false && self::within($real, $resolved))) {
                 throw new \InvalidArgumentException("{$real} is the system's; the container has its own.");
             }
         }

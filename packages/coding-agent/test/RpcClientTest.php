@@ -424,6 +424,11 @@ final class RpcClientTest extends TestCase
 
     // ---- starting and stopping -----------------------------------------------------------------
 
+    private static function hasSetsid(): bool
+    {
+        return trim((string) shell_exec('command -v setsid')) !== '';
+    }
+
     /**
      * An SSH account's child, as the web server starts it: in a directory of pig's own, told the
      * folder it works in there (`--cwd`), and how to reach it (`PIG_SANDBOX_SSH`). The folder is
@@ -452,7 +457,9 @@ final class RpcClientTest extends TestCase
         [$state, $bash, $commands] = Async::run(static function () use ($client): array {
             $client->start();
             $state = $client->getState();
-            $bash = $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"');
+            // Running a command there needs util-linux's `setsid` on that side, which is this
+            // machine in the test, and macOS has none; the rest of the test does not need it.
+            $bash = self::hasSetsid() ? $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"') : null;
             $commands = array_column($client->getCommands(), 'name');
             $client->stop();
 
@@ -463,7 +470,10 @@ final class RpcClientTest extends TestCase
         $this->assertNotContains('kept-out', $commands);
 
         $this->assertSame($there, $state['cwd'] ?? null, json_encode($state));
-        $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
+        if ($bash !== null) {
+            $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
+        }
+
         $asked = (string) file_get_contents($this->root . '/ssh.log');
         $this->assertStringContainsString('AGENTS.override.md', $asked, 'the context files were looked for there');
         $this->assertStringContainsString("'test' '-e' '{$there}'", $asked, 'and the folder');

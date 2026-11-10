@@ -1,0 +1,104 @@
+{
+    "accounts": [
+        {
+            "type": "actions",
+            "actions": [
+                {
+                    "label": "Rotate",
+                    "action": "rotate",
+                    "title": "Switch to the next account"
+                }
+            ]
+        },
+        {
+            "type": "list",
+            "empty": "No Antigravity accounts. Run /login antigravity in the terminal.",
+            "items": [
+                {
+                    "title": "one@example.com",
+                    "detail": "active",
+                    "meta": "token 30m left",
+                    "tone": "muted",
+                    "active": true,
+                    "actions": [
+                        {
+                            "label": "Remove",
+                            "action": "remove",
+                            "args": {
+                                "id": "a1"
+                            },
+                            "tone": "danger",
+                            "title": "Forget this account",
+                            "confirm": "Forget one@example.com? Its tokens are removed from this machine."
+                        }
+                    ]
+                },
+                {
+                    "title": "<two>@example.com",
+                    "detail": null,
+                    "meta": "token expired",
+                    "tone": "error",
+                    "active": false,
+                    "actions": [
+                        {
+                            "label": "Use",
+                            "action": "activate",
+                            "args": {
+                                "id": "a2"
+                            }
+                        },
+                        {
+                            "label": "Remove",
+                            "action": "remove",
+                            "args": {
+                                "id": "a2"
+                            },
+                            "tone": "danger",
+                            "title": "Forget this account",
+                            "confirm": "Forget <two>@example.com? Its tokens are removed from this machine."
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "text",
+            "text": "<b>bad</b>",
+            "tone": "error"
+        },
+        {
+            "type": "heading",
+            "text": "Quota — Active Account"
+        },
+        {
+            "type": "lazy",
+            "section": "usage",
+            "placeholder": "Fetching…"
+        }
+    ],
+    "usage": [
+        {
+            "type": "text",
+            "text": "Pro",
+            "tone": "muted"
+        },
+        {
+            "type": "card",
+            "title": "Claude and GPT models",
+            "blocks": [
+                {
+                    "type": "meter",
+                    "label": "Five Hour Limit Remaining",
+                    "value": 0.15,
+                    "detail": "resets in 1h 30m"
+                },
+                {
+                    "type": "meter",
+                    "label": "Something new",
+                    "value": 0,
+                    "detail": null
+                }
+            ]
+        }
+    ]
+}

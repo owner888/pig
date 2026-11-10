@@ -93,10 +93,6 @@ final class Doctor
             ];
         }
 
-        // One sign-in per extension provider counts for one here; an extension that keeps
-        // several accounts has its own `/doctor` command for them (`/antigravity.doctor`).
-        $antigravityAccounts = $auth->credentials('antigravity') !== null ? 1 : 0;
-
         // 4. Network & Proxy
         $proxy = HttpClient::proxy();
         $proxyEnabled = $proxy !== null;
@@ -144,7 +140,6 @@ final class Doctor
                 'readable' => $authReadable,
                 'valid' => $authValid,
                 'providers' => $providersList,
-                'antigravityAccounts' => $antigravityAccounts,
             ],
             proxy: [
                 'enabled' => $proxyEnabled,
@@ -228,10 +223,6 @@ final class Doctor
                 $star = $p['active'] ? Themes::theme()->fg('accent', '*') : ' ';
                 $lines[] = "  {$tick} {$star} {$p['provider']} [{$p['type']}]: " . Themes::theme()->fg('dim', $p['detail']);
             }
-        }
-
-        if ($report->auth['antigravityAccounts'] > 0) {
-            $lines[] = "    " . Themes::theme()->fg('dim', "Antigravity linked accounts: {$report->auth['antigravityAccounts']} (auto-failover ready)");
         }
 
         $lines[] = '';

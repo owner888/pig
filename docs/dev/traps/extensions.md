@@ -22,6 +22,7 @@ Extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensio
 - [It just stopped: a TypeError in a listener walked into `Agent`'s catch and the whole turn vanished silently](#it-just-stopped-a-typeerror-in-a-listener-walked-into-agents-catch-and-the-whole-turn-vanished-silently)
 - [The Antigravity accounts panel said "no accounts" while the conversation used one](#the-antigravity-accounts-panel-said-no-accounts-while-the-conversation-used-one)
 - [A screenshot went out as 30,000 tokens of base64 because a codemode script returned it](#a-screenshot-went-out-as-30000-tokens-of-base64-because-a-codemode-script-returned-it)
+- [Antigravity and video understanding left pig for packages of their own](#antigravity-and-video-understanding-left-pig-for-packages-of-their-own)
 
 ## A hook's message was the one long thing in the transcript ctrl+o could not fold
 
@@ -523,3 +524,17 @@ closes, so the swap does not need to take them.
 **Rule**: anything that focuses the prompt checks `TerminalUi::hasOpenDialogs()` first.
 
 **Test**: `InteractiveModeTest::testReplacingThePromptLeavesAnOpenDialogAnswerable`.
+
+## Antigravity and video understanding left pig for packages of their own
+
+**What happened**: `extensions/pig-antigravity` and `extensions/pig-gemini-video` became the packages `owner888/pig-antigravity` and `owner888/pig-gemini-video` (`pig install git:github.com/owner888/…`), the way `pig-android-use`, `pig-computer` and `pig-web-search` had. pi did the same with Antigravity in 0.71; pig had kept it bundled. With them went their tests, `scripts/fetch-antigravity-models.php` and the Antigravity CLI's User-Agent (`PigAntigravity\AntigravityCli`), which had been in the core for one afternoon so that two bundled extensions could share it.
+
+**What stayed, and why**: everything Antigravity needed from the core was already a general hook — `registerProvider()` with `Api::Extension` and `ImageApi::Extension`, `Auth::useSecondStore()`, `registerWebPanel()`, `Retry`'s `quota reached` pattern, `GoogleShared`. None of that is Antigravity's and none of it moved. The older entries in these files that say `extensions/pig-antigravity/src/…` are history: the code is in the package, and its `AGENTS.md` has the rules.
+
+**Trap rules**:
+- **The core names no provider a package brings.** `/doctor` had a line counting Antigravity accounts and the web page's provider picker preferred `antigravity`; both went. A package's provider is a row like any other.
+- **`SelfUpdate::MOVED_TO_PACKAGES` gets a line for every bundled extension that leaves.** An older pig copied it into `~/.pig/agent/extensions`; that copy is synced from nowhere afterwards, and beside the installed package it declares the same classes. `pig update` removes it and prints the install line. `BUNDLED_BEFORE_RECORD` is history and keeps its names.
+- **A core rule that was only ever tested through a bundled extension keeps a test when the extension leaves** — deleting a provider is where coverage goes quietly (see the Gemini CLI entry in providers.md). Three were: a script's access to an extension provider's image models (`CodemodeExtensionTest`, now a stand-in provider), the page's `panels.js` drawing a real panel (`WebPanelsTest::testThePageDrawsWhatAPanelDescribes`, on the panel's blocks frozen in `fixtures/web-panels-blocks.json`; the package still runs `fixtures/web-panels.mjs` on its live blocks), and an update installing a bundled extension added since the record (`SelfUpdateTest`, with a core directory of the test's own, which is why `installNewBundled()` takes one).
+- **Two packages that need each other ask, they do not copy.** `pig-gemini-video`'s Antigravity route uses the other package's sign-in, routing and User-Agent through `class_exists()`, and without it has only the Gemini API key. Neither is run through Composer, so neither can require the other.
+- A package's entry file is named after the extension (`extensions/pig-antigravity.php`): pig names an extension by its file, and `disabledExtensions` written while it was bundled still reaches it.
+- Tests: `SelfUpdateTest`, `CodemodeExtensionTest::testAnExtensionProvidersImageModelsAreAvailableToAScriptOnceSignedIn`, `WebPanelsTest::testThePageDrawsWhatAPanelDescribes`, `DoctorTest`; the packages' own suites run against a pig checkout (`PIG_DIR`).

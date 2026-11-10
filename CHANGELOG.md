@@ -45,24 +45,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
-### Added
-
-- Antigravity: an assistant message records the model that actually answered (`responseModel`, from the gateway's `modelVersion`) and the gateway's `responseId`, so a session file shows it when another model served the request (pi-antigravity 0.12.0).
-
 ### Changed
 
-- Antigravity follows pi-antigravity 0.12.0. Requests identify as the Antigravity CLI 1.4.0 — the deployment hides its newest models, Gemini 4 Argon among them, from older versions — and chat, quota, image, search and catalog requests, and `pig-gemini-video`'s Antigravity path, all send the same User-Agent, which pig's core now holds (`Pig\Ai\Providers\AntigravityCli`; `ANTIGRAVITY_USER_AGENT` overrides it) instead of each extension carrying a copy.
-- Antigravity's model list is what the deployment answers and nothing else: the models Google's own picker lists (`agentModelSorts`), with the context window, output limit, image input and thinking the answer states. A model the answer no longer lists is not put back from the built-in table, a model of any family is listed (not only Gemini, Claude and GPT-OSS), and picking a model the current catalog has dropped says to run `/antigravity.refresh`.
-- A stored Antigravity catalog is asked for again when it was filed for another account or project, or by an older version, instead of being reused for four hours; in print and RPC mode the refresh at session start is waited for, so the answer is filed before the process ends.
-- `generate_image` and `/antigravity.image` write only inside the working directory and never through a symbolic link; a path with no extension is a directory, and several images written to one named file are numbered instead of written over each other.
+- Antigravity is no longer bundled with pig: it is the package `pig-antigravity` (MIT), installed with `pig install git:github.com/owner888/pig-antigravity` — same provider, `/login antigravity`, linked accounts with failover, `/antigravity.*` commands, `generate_image` and `google_search` tools and web panel. Sign-ins, the stored model catalog and `disabledExtensions: ["pig-antigravity"]` carry over. `pig update` removes the old bundled copy and prints the install line. The package's first release is in step with pi-antigravity 0.12.0 (the Antigravity CLI 1.4.0 identity that Gemini 4 Argon is shown to, a model list that is the deployment's own answer, and fixes to `google_search`, 429s for models not being served, unreachable endpoints and retries that hung); its own changelog has the details.
+- Video understanding is no longer bundled either: it is the package `pig-gemini-video` (MIT), installed with `pig install git:github.com/owner888/pig-gemini-video` — same `analyze_video` tool, `/gemini-video` command and `geminiVideo.*` settings. Its Antigravity route needs the `pig-antigravity` package; without it, it uses a Gemini API key.
+- `/doctor` no longer has a line of its own for Antigravity: a provider a package brings is a row under the sign-ins like any other, and that package has `/antigravity.doctor`.
+- The web UI's provider picker no longer prefers `antigravity` when no provider is chosen yet; it starts on the first one.
 
 ### Fixed
 
-- `google_search` on the default model failed with HTTP 400: it sent a thinking budget of 0, which the Lite models refuse. A model that refuses a search's arguments is passed over for the next one, and a refused sign-in ends the search at once instead of being tried on every endpoint.
-- An Antigravity 429 that names no limit — how a model that is not being served answers — was reported as rate limiting and retried until the retries ran out; it is reported once as the model being unavailable, without trying the other endpoint or another account.
-- An Antigravity endpoint that could not be reached ended the turn without the other endpoint being tried.
-- An Antigravity turn sent again after its stream died could hang behind the first attempt; every request after a turn's first goes out as a session of its own. The session id pig has is now the one the request carries.
-- A fallback from Gemini 3.8 Flash to an older Flash is only made to a model the current catalog still serves.
+- A session forked into a folder reached through a symbolic link (`--fork`, or "Fork into …" when a session's own folder has gone) recorded the folder the link leads to, and was filed apart from the other sessions of the folder it was started in; it records the folder as it was named, as pi does and as every other session already did.
+- A folder of the server could be given to a Docker account although it was the system's, where the system folder is itself a link — `/etc` on macOS.
 
 ## [2.0.2] - 2026-11-10
 

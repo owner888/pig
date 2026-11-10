@@ -1982,6 +1982,8 @@ lazy match ran on to the next table's closing marker and replaced that table's o
 
 ## Antigravity after pi-antigravity 0.12: the answer is the catalog, and a request sent again is a new session
 
+**The code this entry is about left pig the same day** for the `pig-antigravity` package (see [Antigravity and video understanding left pig for packages of their own](extensions.md#antigravity-and-video-understanding-left-pig-for-packages-of-their-own)); the class names below are that package's, and its `AGENTS.md` carries the rules from here on. The entry stays because the reasons do.
+
 **Symptom**: Gemini 4 Argon never appeared in the model list; a model the deployment had retired stayed selectable and failed when picked; `google_search` on the default Lite model was a 400; a model that was not being served used up the session's retries as "Rate limited … retrying automatically"; a retry after a stream died hung; an image could be written anywhere on disk.
 
 **Root cause**: the extension was a port of pi-antigravity 0.10.0, and 0.11.0/0.12.0 changed what several of its parts mean:
@@ -1994,7 +1996,7 @@ lazy match ran on to the next table's closing marker and replaced that table's o
 - `resolveSavePath()` took any absolute path, and nothing looked at symbolic links.
 
 **Trap rules**:
-- One User-Agent, held by the core and not by an extension: `Pig\Ai\Providers\AntigravityCli::userAgent()` (`ANTIGRAVITY_USER_AGENT`, else the CLI's own, built from `VERSION` and `CHANGELIST`). pig-antigravity, pig-gemini-video's Antigravity path and `scripts/fetch-antigravity-models.php` all ask it and none writes a string of its own — an older version is shown an older catalogue. A new CLI release is those two constants.
+- One User-Agent, held in one class: `PigAntigravity\AntigravityCli::userAgent()` (`ANTIGRAVITY_USER_AGENT`, else the CLI's own, built from `VERSION` and `CHANGELIST`). Every request of pig-antigravity, pig-gemini-video's Antigravity path and the package's `scripts/fetch-antigravity-models.php` ask it and none writes a string of its own — an older version is shown an older catalogue. A new CLI release is those two constants.
 - The discovered catalog is the answer and nothing else: the models `agentModelSorts` lists when it lists any that group, every selectable one otherwise; no fallback model is put back, the fallback rows are templates (cost, and what an entry leaves unsaid) only. Limits and capabilities the answer states win over the templates, the smallest stated limit across a model's variants. An answer with no models, or none somebody can pick, is a failed refresh (thrown, so a forced one says so and an unforced one logs), never an empty catalog and never the fallback filed as the deployment's.
 - A stored catalog is asked for again when its `schemaVersion` is not `Discovery::CATALOG_SCHEMA_VERSION` or its `credentialKey` is not this account's. The key is the sha256 of `JSON.stringify([refresh token, project id])`, bytes as upstream's so pi's store matches; `index.php` passes the **refresh** token — the api key carries the access token, which changes every hour.
 - With a catalog installed, `Routing::resolve()` refuses a model only the generated tables have (upstream's sentence, which names `/antigravity.refresh`), and `Routing::fallback()` goes only to a runtime id that catalog still routes to.

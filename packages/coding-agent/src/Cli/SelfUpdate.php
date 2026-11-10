@@ -324,7 +324,7 @@ final class SelfUpdate
     }
 
     /**
-     * Ensure bundled extensions (antigravity, computer, web-search, etc.) are populated
+     * Ensure bundled extensions (pig-vless and the like) are populated
      * in the user's home directory on initial install if missing.
      */
     public static function ensureBundledExtensions(?string $home = null): int
@@ -380,15 +380,18 @@ final class SelfUpdate
      * The first-run copy (`ensureBundledExtensions()`) happens once, when there is no extensions
      * directory, and after that only `pig update --extensions` installed anything: a bundled
      * extension added in a release reached nobody who already had pig until they knew to ask —
-     * `pig-gemini-video` was the case. So a plain update installs what is new. "New" is kept in a
+     * `pig-gemini-video` was the case, before it became a package. So a plain update installs what is new. "New" is kept in a
      * record rather than read off what is missing, because a missing one may have been deleted on
      * purpose, and an update that put it back every time would be one nobody could say no to.
      *
+     * @param string|null $coreDir where the bundled extensions are; pig's own when null. Injectable
+     *        because "an extension bundled since" is a state of the repository, and at a time when
+     *        none has been added since the record began no test could otherwise reach this.
      * @return list<string> the folders installed
      */
-    public static function installNewBundled(?string $home = null): array
+    public static function installNewBundled(?string $home = null, ?string $coreDir = null): array
     {
-        $coreDir = self::coreExtensionsDir();
+        $coreDir ??= self::coreExtensionsDir();
         $userDir = ($home ?? Config::home()) . '/extensions';
 
         // A machine that has never run pig gets everything on first run instead.
@@ -431,7 +434,9 @@ final class SelfUpdate
      */
     public const array MOVED_TO_PACKAGES = [
         'pig-android-use' => 'git:github.com/owner888/pig-android-use',
+        'pig-antigravity' => 'git:github.com/owner888/pig-antigravity',
         'pig-computer' => 'git:github.com/owner888/pig-computer',
+        'pig-gemini-video' => 'git:github.com/owner888/pig-gemini-video',
         'pig-web-search' => 'git:github.com/owner888/pig-web-search',
     ];
 

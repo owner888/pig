@@ -55,8 +55,10 @@ final class Paths
      * model never asked about.
      *
      * `..` above the root stays at the root, as every other implementation of this has it.
+     *
+     * Public for `SessionManager::forkFrom()`, whose two paths upstream resolves the same way.
      */
-    private static function collapse(string $path): string
+    public static function collapse(string $path): string
     {
         $parts = [];
 

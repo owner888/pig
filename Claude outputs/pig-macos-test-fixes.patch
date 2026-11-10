@@ -1,0 +1,75 @@
+diff --git a/packages/coding-agent/src/Sandbox/DockerSandbox.php b/packages/coding-agent/src/Sandbox/DockerSandbox.php
+index 4522d64..b4cdd2f 100644
+--- a/packages/coding-agent/src/Sandbox/DockerSandbox.php
++++ b/packages/coding-agent/src/Sandbox/DockerSandbox.php
+@@ -245,7 +245,11 @@ final readonly class DockerSandbox implements Runtime
+         }
+ 
+         foreach (self::SYSTEM as $system) {
+-            if ($real === '/' || self::within($real, $system)) {
++            // `$real` has its links resolved, so the system folder is compared resolved too: on
++            // macOS `/etc` is a link to `/private/etc`, which is inside nothing in the list as written.
++            $resolved = realpath($system);
++
++            if ($real === '/' || self::within($real, $system) || ($resolved !== false && self::within($real, $resolved))) {
+                 throw new \InvalidArgumentException("{$real} is the system's; the container has its own.");
+             }
+         }
+diff --git a/packages/coding-agent/test/InteractiveModeTest.php b/packages/coding-agent/test/InteractiveModeTest.php
+index fe58c40..ed1883c 100644
+--- a/packages/coding-agent/test/InteractiveModeTest.php
++++ b/packages/coding-agent/test/InteractiveModeTest.php
+@@ -6284,9 +6284,12 @@ final class InteractiveModeTest extends TestCase
+ 
+         $fork = $this->session->store();
+         $this->assertNotNull($fork);
+-        $this->assertStringContainsString("Forked into new session {$fork->id} in {$this->cwd}", $this->screenText());
++        // `forkFrom()` records the folder with its links resolved, and on macOS the temporary
++        // directory is one (`/var` → `/private/var`).
++        $here = (string) realpath($this->cwd);
++        $this->assertStringContainsString("Forked into new session {$fork->id} in {$here}", $this->screenText());
+         $this->assertStringContainsString('answered in the old folder', $this->screenText());
+-        $this->assertSame($this->cwd, SessionManager::open($fork->path)->cwd, 'its header names this folder, so it is not asked again');
++        $this->assertSame($here, SessionManager::open($fork->path)->cwd, 'its header names this folder, so it is not asked again');
+         $this->assertSame(realpath($source), $fork->parentSession);
+         $this->assertFileDoesNotExist(SessionManager::directory($this->cwd) . '/old.jsonl', 'the copy made to look at it is gone');
+         $this->assertFileExists($source, 'the original is left alone');
+diff --git a/packages/coding-agent/test/RpcClientTest.php b/packages/coding-agent/test/RpcClientTest.php
+index dd69b19..29de670 100644
+--- a/packages/coding-agent/test/RpcClientTest.php
++++ b/packages/coding-agent/test/RpcClientTest.php
+@@ -424,6 +424,11 @@ final class RpcClientTest extends TestCase
+ 
+     // ---- starting and stopping -----------------------------------------------------------------
+ 
++    private static function hasSetsid(): bool
++    {
++        return trim((string) shell_exec('command -v setsid')) !== '';
++    }
++
+     /**
+      * An SSH account's child, as the web server starts it: in a directory of pig's own, told the
+      * folder it works in there (`--cwd`), and how to reach it (`PIG_SANDBOX_SSH`). The folder is
+@@ -452,7 +457,9 @@ final class RpcClientTest extends TestCase
+         [$state, $bash, $commands] = Async::run(static function () use ($client): array {
+             $client->start();
+             $state = $client->getState();
+-            $bash = $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"');
++            // Running a command there needs util-linux's `setsid` on that side, which is this
++            // machine in the test, and macOS has none; the rest of the test does not need it.
++            $bash = self::hasSetsid() ? $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"') : null;
+             $commands = array_column($client->getCommands(), 'name');
+             $client->stop();
+ 
+@@ -463,7 +470,10 @@ final class RpcClientTest extends TestCase
+         $this->assertNotContains('kept-out', $commands);
+ 
+         $this->assertSame($there, $state['cwd'] ?? null, json_encode($state));
+-        $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
++        if ($bash !== null) {
++            $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
++        }
++
+         $asked = (string) file_get_contents($this->root . '/ssh.log');
+         $this->assertStringContainsString('AGENTS.override.md', $asked, 'the context files were looked for there');
+         $this->assertStringContainsString("'test' '-e' '{$there}'", $asked, 'and the folder');

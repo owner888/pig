@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
-// The Antigravity accounts panel's real blocks (`AccountsPanel`), drawn by the page's `panels.js`.
+// A real panel's blocks — pig-antigravity's accounts panel, frozen in `web-panels-blocks.json` for
+// pig's own suite and passed live by that package's — drawn by the page's `panels.js`.
 const root = process.argv[2];
 const fixture = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'));
 const { blocksToHtml, panelForCommand, placementOf } = await import(`${root}/panels.js`);

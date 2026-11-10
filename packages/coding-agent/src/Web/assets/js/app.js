@@ -3292,8 +3292,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       if (currentProvider && providers.includes(currentProvider)) {
         providerSelect.value = currentProvider;
-      } else if (providers.includes("antigravity")) {
-        providerSelect.value = "antigravity";
       } else if (providers.length > 0) {
         providerSelect.value = providers[0];
       }

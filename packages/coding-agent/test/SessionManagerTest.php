@@ -1426,15 +1426,29 @@ final class SessionManagerTest extends TestCase
         $fork = SessionManager::forkFrom($source->path, $here, 'forked-1');
 
         $this->assertSame('forked-1', $fork->id);
-        $this->assertSame(realpath($here), $fork->cwd);
-        $this->assertSame(realpath($source->path), $fork->parentSession);
+        $this->assertSame($here, $fork->cwd);
+        $this->assertSame($source->path, $fork->parentSession);
         $this->assertFileExists($fork->path, 'written at once');
-        $this->assertStringStartsWith(SessionManager::directory(realpath($here)), $fork->path);
+        $this->assertStringStartsWith(SessionManager::directory($here), $fork->path);
 
         $sourceLines = file($source->path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         $forkLines = file($fork->path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         $this->assertSame(array_slice($sourceLines, 1), array_slice($forkLines, 1), 'the entries, line for line');
         $this->assertCount(count($source->messages()), $fork->messages());
+
+        // Upstream's `resolvePath()`, Node's `path.resolve`: made whole and collapsed, and a link
+        // left as it was named — a folder reached through one is filed, and named in the header,
+        // as every other session started there is, not as wherever the link leads.
+        $link = $this->cwd() . '/linked';
+        symlink($here, $link);
+        $linked = SessionManager::forkFrom(dirname($source->path) . '/./' . basename($source->path), "{$link}/../linked/", 'forked-2');
+
+        $this->assertSame($link, $linked->cwd);
+        $this->assertSame($source->path, $linked->parentSession);
+        $this->assertSame($link, json_decode((string) file($linked->path)[0], true)['cwd']);
+        $this->assertStringStartsWith(SessionManager::directory($link), $linked->path);
+        $this->assertNotSame(dirname($fork->path), dirname($linked->path), 'filed under the name it was given, not the folder the link leads to');
+        unlink($link);
 
         $this->expectException(\Pig\Agent\AgentError::class);
         SessionManager::forkFrom($this->cwd() . '/nothing.jsonl', $here);

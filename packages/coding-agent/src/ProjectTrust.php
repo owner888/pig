@@ -63,7 +63,7 @@ final class ProjectTrust
     /**
      * What, exactly, a trust decision would apply to here — relative paths, so the question can
      * say *why* it is being asked. A prompt about a directory with no visible `.pig/` reads as
-     * a mistake until it says `extensions/pig-antigravity/index.php`.
+     * a mistake until it says `extensions/my-tools/index.php`.
      *
      * @return list<string>
      */

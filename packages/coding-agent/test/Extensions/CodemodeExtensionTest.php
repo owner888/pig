@@ -91,7 +91,7 @@ final class CodemodeExtensionTest extends TestCase
             $this->cwd,
             $settings,
             $auth ?? Auth::inMemory($settings),
-            'extensionPaths' => [$repo . '/extensions/pig-codemode/index.php', $repo . '/extensions/pig-mcp/index.php', ...array_map(static fn (string $name): string => "{$repo}/extensions/{$name}/index.php", $extensions)],
+            'extensionPaths' => [$repo . '/extensions/pig-codemode/index.php', $repo . '/extensions/pig-mcp/index.php', ...array_map(static fn (string $name): string => str_contains($name, '/') ? $name : "{$repo}/extensions/{$name}/index.php", $extensions)],
             ...$extra,
         ];
         $started = Async::run(static fn (): StartedSession => CodingAgent::session(...$arguments));
@@ -633,14 +633,52 @@ PHP));
         $this->stop($started);
     }
 
-    public function testAntigravitysImageModelIsAvailableToAScriptOnceSignedIn(): void
+    public function testAnExtensionProvidersImageModelsAreAvailableToAScriptOnceSignedIn(): void
     {
+        // Asked of pig-antigravity's image models while that extension was bundled with pig. The
+        // rule is the core's — a provider an extension registers offers a script its image models
+        // only once there is a credential for it — so it is asked of a stand-in here.
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $extension = $this->home . '/zz-pictures.php';
+        file_put_contents($extension, <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            use Pig\Ai\AssistantImages;
+            use Pig\Ai\Extension\Provider;
+            use Pig\Ai\Extension\ProviderImages;
+            use Pig\Ai\ImageApi;
+            use Pig\Ai\ImageModel;
+            use Pig\Ai\ImagesContext;
+            use Pig\Ai\ImagesOptions;
+            use Pig\CodingAgent\Extensions\ExtensionApi;
+
+            return static function (ExtensionApi $pig): void {
+                $pig->registerProvider(new Provider(
+                    id: 'zz-pictures',
+                    name: 'Zz Pictures',
+                    models: [],
+                    envKeys: ['ZZ_PICTURES_KEY'],
+                    images: [
+                        new ImageModel('zz-draw', 'Zz Draw', ImageApi::Extension, 'zz-pictures', 'https://zz-pictures.invalid'),
+                        new ImageModel('zz-draw-pro', 'Zz Draw Pro', ImageApi::Extension, 'zz-pictures', 'https://zz-pictures.invalid'),
+                    ],
+                    imageApi: new class implements ProviderImages {
+                        #[\Override]
+                        public function generateImages(ImageModel $model, ImagesContext $context, ImagesOptions $options): AssistantImages
+                        {
+                            throw new \LogicException('nothing here draws');
+                        }
+                    },
+                ));
+            };
+            PHP);
         $code = ['code' => <<<'PHP'
-            return array_column($models->getAvailableOfType('image', 'antigravity'), 'id');
+            return array_column($models->getAvailableOfType('image', 'zz-pictures'), 'id');
             PHP];
 
-        $signedOut = $this->start(extensions: ['pig-antigravity']);
+        $signedOut = $this->start(extensions: [$extension]);
         $codemode = $signedOut->customTools->find('codemode');
         $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedOut->extensionRunner->context(), null))->content;
         $this->assertSame([], json_decode($content[count($content) - 1]->text, true), 'not before signing in: ' . $content[count($content) - 1]->text);
@@ -648,12 +686,12 @@ PHP));
         \Pig\Ai\Extension\ProviderRegistry::forget();
 
         $auth = Auth::inMemory(Settings::load($this->cwd, $this->home));
-        $auth->setCredentials('antigravity', new \Pig\Ai\Utils\Oauth\OauthCredentials('refresh', 'ya29.test', (int) (microtime(true) * 1000) + 3_600_000, projectId: 'proj-1'));
-        $signedIn = $this->start(auth: $auth, extensions: ['pig-antigravity']);
+        $auth->setApiKey('zz-pictures', 'a-key');
+        $signedIn = $this->start(auth: $auth, extensions: [$extension]);
         $codemode = $signedIn->customTools->find('codemode');
         $content = Async::run(static fn () => ($codemode->execute)('1', $code, null, $signedIn->extensionRunner->context(), null))->content;
         $value = json_decode($content[count($content) - 1]->text, true);
-        $this->assertSame(['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-3-pro-image-preview'], $value);
+        $this->assertSame(['zz-draw', 'zz-draw-pro'], $value);
         $this->stop($signedIn);
         \Pig\Ai\Extension\ProviderRegistry::forget();
     }

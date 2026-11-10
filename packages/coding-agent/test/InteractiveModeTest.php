@@ -6284,10 +6284,12 @@ final class InteractiveModeTest extends TestCase
 
         $fork = $this->session->store();
         $this->assertNotNull($fork);
+        // The folder and the original as they were named, links and all — on macOS the temporary
+        // directory is behind one (`/var` → `/private/var`), and `forkFrom()` no longer resolves it.
         $this->assertStringContainsString("Forked into new session {$fork->id} in {$this->cwd}", $this->screenText());
         $this->assertStringContainsString('answered in the old folder', $this->screenText());
         $this->assertSame($this->cwd, SessionManager::open($fork->path)->cwd, 'its header names this folder, so it is not asked again');
-        $this->assertSame(realpath($source), $fork->parentSession);
+        $this->assertSame($source, $fork->parentSession);
         $this->assertFileDoesNotExist(SessionManager::directory($this->cwd) . '/old.jsonl', 'the copy made to look at it is gone');
         $this->assertFileExists($source, 'the original is left alone');
     }

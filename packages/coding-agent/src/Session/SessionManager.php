@@ -14,6 +14,8 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Tools\Paths;
 use Pig\Tui\Fuzzy;
 
 /**
@@ -207,6 +209,18 @@ final class SessionManager
     }
 
     /**
+     * Upstream's `resolvePath()` with its defaults: a leading `~` is the home directory, a
+     * `file://` URL its path, a relative path is taken from the working directory, and `.`, `..`
+     * and doubled slashes are collapsed. Links are left as they are.
+     */
+    private static function resolvePath(string $path): string
+    {
+        $normalized = Settings::normalizePath($path);
+
+        return Paths::collapse(str_starts_with($normalized, '/') ? $normalized : rtrim((string) getcwd(), '/') . '/' . $normalized);
+    }
+
+    /**
      * Upstream's `SessionManager.forkFrom()`: a new session in $cwd's directory holding every entry
      * of the file at $sourcePath, under a new header that names $cwd and points back at the source
      * as `parentSession`. Written at once, as upstream writes it — this is what `--fork` and the
@@ -215,12 +229,23 @@ final class SessionManager
      * The entries are copied line for line rather than decoded and re-encoded: they are the same
      * entries, and a round trip through this class could only lose what it does not model.
      *
+     * Both paths are made whole and collapsed, and no more — upstream's `resolvePath()`, which is
+     * Node's `path.resolve`. **Not `realpath()`**, which this used until it was read against
+     * upstream: a folder reached through a link is recorded as it was named, as `create()` and
+     * every other session record it. Resolved, the fork named a different folder from the session
+     * beside it — its header, and the directory it was filed under, which is made from that name.
+     *
      * @param string|null $id the new session's id (`--fork … --session-id <id>`), else a fresh one
      * @throws AgentError when the source is not a session file or the new one cannot be written
      */
     public static function forkFrom(string $sourcePath, string $cwd, ?string $id = null): self
     {
-        $source = realpath($sourcePath) ?: $sourcePath;
+        // A session kept somewhere other than a file — a database's — is named by its store with a
+        // scheme of the store's own (`sql:…`), and that name is not a path to resolve. Two letters
+        // at least, so a Windows drive is still a path.
+        $source = preg_match('~^(?!file:)[a-z][a-z0-9+.-]+:~i', $sourcePath) === 1
+            ? $sourcePath
+            : self::resolvePath($sourcePath);
         $lines = self::lines($source);
 
         if ($lines === null || $lines === []) {
@@ -233,7 +258,7 @@ final class SessionManager
             throw new AgentError("Cannot fork: source session has no header: {$source}");
         }
 
-        $target = realpath($cwd) ?: $cwd;
+        $target = self::resolvePath($cwd);
         $fork = self::create($target, parentSession: $source, id: $id);
 
         $newHeader = [

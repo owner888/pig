@@ -17,8 +17,6 @@
   - **持久化 Web UI 界面与 PTY 工作台（`pig web start -d` / `/web`）**：常驻后台守护进程，单物理长连接多 Tab 并行会话、内置 xterm.js 原生 PTY 终端抽屉、SSH 远程节点工作台与 SFTP 文件浏览器。
   - **CLI 命令行与自动化集成**：单次快速回答模式（`-p`）、JSON 事件行流式模式（`--mode json`）、长生命周期标准双向通信管道（`--mode rpc`）与 MCP server 模式（`--mode mcp`，让别的 agent 把 pig 当工具调用）。
 - **完善的纯 PHP 内置扩展生态**：
-  - `pig-antigravity`：Google Antigravity 免费商用模型支持、多账号轮转管理、429 自动换号无缝续跑、`/antigravity.usage` 额度面板、`generate_image` 生图工具与 `google_search` 搜索增强工具。
-  - `pig-gemini-video`：借 Gemini 让任何模型都能看视频——`analyze_video` 工具和 `/gemini-video` 命令，走 Antigravity 订阅或 Gemini API Key。
   - `pig-vless`：最简 VLESS 入站（仅 TCP，可选 TLS），让手机（Shadowrocket、v2rayNG）通过跑 pig 的这台机器上网。
   - `pig-codemode`：PHP 原生沙盒批量执行代码模式（`open_basedir`、`disable_functions`），成倍降低长上下文消耗。
   - `pig-mcp`：原生 Model Context Protocol 客户端，支持标准 stdio 与可流式 HTTP MCP 服务，支持 OAuth 登录——服务端支持时用 pig 的 Client ID Metadata Document，否则动态注册客户端（`mcp.json` 里的 `oauth.clientRegistration`、`oauth.clientName`）。
@@ -141,7 +139,7 @@ pig
 - **pi 在这些 API 上内置的其余 provider**：各读 pi 的 Key 变量，选模型写作 `<provider>/<id>`（裸 id 指模型厂商自己的 provider）。DeepSeek `DEEPSEEK_API_KEY`、OpenRouter `OPENROUTER_API_KEY`（`openrouter/moonshotai/kimi-k2.6`；有 key 时只列出这个 key 能用的模型，以及它的上下文长度和价格）、Vercel AI Gateway `AI_GATEWAY_API_KEY`、Together `TOGETHER_API_KEY`、Fireworks `FIREWORKS_API_KEY`、Baseten `BASETEN_API_KEY`、Hugging Face `HF_TOKEN`、NVIDIA `NVIDIA_API_KEY`、MiniMax `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`（`minimax-cn`）、Moonshot `MOONSHOT_API_KEY`（`moonshotai`、`moonshotai-cn`）、Kimi For Coding `KIMI_API_KEY`（`kimi-coding`）、Meta `META_API_KEY`、OpenCode Zen 与 Go `OPENCODE_API_KEY`（`opencode`、`opencode-go`）、小米 MiMo `XIAOMI_API_KEY` 及其 Token Plan `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `_AMS_` / `_SGP_`（`xiaomi-token-plan-cn` …）、通义 Token Plan `QWEN_TOKEN_PLAN_API_KEY`（`qwen-token-plan`、`qwen-token-plan-individual`）与 `QWEN_TOKEN_PLAN_CN_API_KEY`（`qwen-token-plan-cn`、`qwen-token-plan-individual-cn`）、智谱国内编程套餐 `ZAI_CODING_CN_API_KEY`（`zai-coding-cn`）、Ant Ling `ANT_LING_API_KEY`。OpenRouter、Kimi、Meta、xAI 的登录没有移植，Key 可用。xAI 的模型（`XAI_API_KEY`）与 pi 一致走它的 Responses API。
 - **Cloudflare Workers AI 与 AI Gateway**：`CLOUDFLARE_API_KEY` 加 `CLOUDFLARE_ACCOUNT_ID`，网关还要 `CLOUDFLARE_GATEWAY_ID`（pi 保存这两个 ID 的登录没有移植）；选模型写作 `cloudflare-workers-ai/@cf/openai/gpt-oss-120b` 或 `cloudflare-ai-gateway/claude-sonnet-4-6`。
 - **分类器与图片模型**（`Pig\Ai\Models::classify()`、`Models::generateImages()`，供基于 `pig/ai` 写的代码调用）：TypeSafe 的 System One `TYPESAFE_API_KEY`（`typesafe/jev-latest`，以及 OpenRouter、Vercel AI Gateway、OpenCode Zen、Workers AI 上的 Jev 与 decision 模型），llama.cpp `llama-server` 上按下一 token 概率读答案的对话模型（`llama-cpp-classify`），以及 OpenRouter 的图片模型。它们不是对话模型，`/model` 不列出。
-- **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot、ChatGPT Plus/Pro（用于 `openai-codex` 模型，如 `openai-codex/gpt-6.1-sol`——浏览器回调到 `localhost:1455`，或在无浏览器的机器上用设备码）、Kimi Code（用于 `kimi-coding` 模型，设备码登录）或 Google Antigravity。Claude 登录与 pi 1.0 一致提供两种方式：浏览器回调到 `localhost:53692`（默认），或在无浏览器的机器上从 Anthropic 页面复制代码粘贴。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
+- **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot、ChatGPT Plus/Pro（用于 `openai-codex` 模型，如 `openai-codex/gpt-6.1-sol`——浏览器回调到 `localhost:1455`，或在无浏览器的机器上用设备码）、Kimi Code（用于 `kimi-coding` 模型，设备码登录）或（安装 `pig-antigravity` 包之后）Google Antigravity。Claude 登录与 pi 1.0 一致提供两种方式：浏览器回调到 `localhost:53692`（默认），或在无浏览器的机器上从 Anthropic 页面复制代码粘贴。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
 - **恢复与续接历史会话**：
   - `pig -c` / `pig --continue`：毫秒级秒开接上当前目录下最新修改的历史会话。
   - `pig -r` / `pig --resume`：唤出历史会话选择器——支持模糊词、`"短语"` 或 `re:<正则>` 搜索；Tab 在本目录与全部项目之间切换，`Ctrl+S` 循环切换树状 / 最近 / 模糊排序，`Ctrl+N` 只看已命名会话，`Ctrl+D` 删除。
@@ -150,7 +148,7 @@ pig
   - `/discard` 是事后决定不保存：确认后退出，并把这次会话的文件移到废纸篓，适合问完不想留在 `/resume` 里的小问题。
   - `pig --incognito` 是隐身会话，类似 Chrome 的隐身窗口：不写会话文件、日志和崩溃记录，较长的工具输出在会话结束时删除；`/incognito` 把当前会话中途转为隐身（已写的文件移到废纸篓），Web UI 有「新建隐身会话」。底栏和输入框边框会标出来。请求仍会发给模型服务商。扩展可以用 `isIncognito()` 判断，生成的文件存到 `artifactsDirectory()`。
 - **模型选择与动态切换**：
-  - `pig --model sonnet`、`pig --model antigravity/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
+  - `pig --model sonnet`、`pig --model google/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high`（同时设置模型与思考强度）
   - 按 `Ctrl+L` 呼出模型选择菜单；按 `Ctrl+P` / `Shift+Ctrl+P` 快捷切换上一/下一模型。
   - `pig --list-models [query]`：查看当前已配置密钥的所有可用模型、上下文上限与定价。
@@ -211,7 +209,7 @@ pig web uninstall             # 移除服务
 - **Claude 风格侧边栏**：顶部是新建会话、搜索（`⌘K`）、定时任务；下方是所有项目的会话，按今天 / 昨天 / 日期分组并标出所在目录；「查看全部」和搜索打开同一个面板，可搜标题和内容。鼠标悬停（或手机触屏点击）即可重命名（`✏️`）或删除（`🗑️`）。
 - **定时任务**：布局和 Claude 应用一样。点侧边栏的「定时任务」看到卡片式的任务列表（可搜索、筛选、排序），「新建任务」→「与 pig 一起创建」（开一个新对话，由 pig 问你做什么、多久一次、什么时间）或「手动设置」：一段提示词，加一个或多个触发方式——每小时、每天、工作日、每周、单次或自定义 cron——再选权限（「自动」会替运行中的确认回答「是」，不停下等批准；「手动」等你确认）、模型，「高级设置」里是工作目录和思考强度。每个任务有自己的会话，任务一保存就出现在侧边栏（带时钟标记），点它打开任务详情页（历史记录、指令、重复频率、权限、「立即运行」和启用开关），每次运行都接着在里面进行，能看到上次运行的结果（到点时你正在这个会话里说话，就跳过这一次）；运行结束后会话旁会出现蓝点，打开后消失；「手动」权限的任务运行中遇到钩子提问会停下等你回答，侧边栏显示提示点。任务只在 Web 服务运行时执行——用 `pig web start -d` 常驻——机器休眠期间错过的运行会在醒来后补跑一次，守护进程停止时正在进行的运行会在它重新启动后从会话记录接着跑（停在中途的工具调用只有只读工具——`read`、`grep`、`find`、`ls`——会重跑；其他的连同已经输出的内容告诉模型「被中断、可能已执行一部分」，不会把命令重跑一遍）。保存在 `~/.pig/agent/scheduled-tasks.json`。也可以直接在对话里说——「每天早上 9 点看看 owner/repo 有什么更新，告诉我本地代码要不要跟」——TUI 和网页都行：`schedule` 工具（`builtin:schedule`）先把任务给你确认（网页里是对话中的一张卡片，「取消」Esc、「安排」⌘/Ctrl+Enter），再交给正在运行的 `pig web` 保存。
 - **手机端深度适配**：专为移动端小屏幕（<768px）优化布局与触控响应（iPadOS visualViewport 动态防键盘顶飞页头）。
-- **扩展 Web 面板与 Antigravity 账号抽屉**：页头直达 🔑 账号管理面板，随时查看各 Google 账号的配额池与重置倒计时；自定义扩展亦可通过 `registerWebPanel()` 注入面板，支持通过 🧩 扩展菜单在页头与侧边栏自由切换。
+- **扩展 Web 面板**：扩展通过 `registerWebPanel()` 往页面里加自己的面板——`pig-antigravity` 包的就是一例：页头直达各 Google 账号、token 到期时间与配额进度条——支持通过 🧩 扩展菜单在页头与侧边栏自由切换。
 
 ### 3. 非交互式命令行与管道集成
 
@@ -263,8 +261,6 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 
 | 扩展组件 | 命名空间 / 路径 | 核心能力说明 |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts`、`generate_image` 生图工具与基于 Google Search Grounding 的 `google_search` 搜索工具（`/antigravity.search`）。 |
-| **`pig-gemini-video`** | `extensions/pig-gemini-video/` | 借 Gemini 理解视频，不管当前用哪个模型：`analyze_video` 工具把本地视频交给 Gemini、返回它的回答，`/gemini-video <路径> [提示词]` 把回答放进对话。两条路，`geminiVideo.via`（`PIG_GEMINI_VIDEO_VIA`）选：`antigravity`——`/login antigravity` 登录的订阅，14MB 以内的视频随请求发送；`gemini`——Gemini API Key（`/login` 配置 Google，或 `GEMINI_API_KEY`），更大的视频走 Files API。默认 `auto`：能走 Antigravity 就走，走不了（没登录、太大、这次失败）再用 Key。`geminiVideo.model`、`geminiVideo.antigravityModel` 选模型（默认 `gemini-3.8-flash`）；`PIG_GEMINI_VIDEO_DEBUG=1` 把失败的回应记到 `~/.pig/agent/logs/gemini-video-debug.log`。pig 自有。 |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | `llama.cpp` provider：模型来自运行中的 `llama-server` router，`/login llama.cpp` 填地址和 key，`/llama` 加载、卸载、下载模型（含 Hugging Face 搜索）。 |
 | **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
 | **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在扩展延后注册的工具（MCP 的 `deferred` 暴露方式）里做 BM25 检索，并加载命中的工具。 |
@@ -356,7 +352,7 @@ Logger::timeEnd('benchmark');
 | **OpenAI（ChatGPT Plus/Pro）** | **浏览器**（默认）：pig 监听 `http://localhost:1455/auth/callback`（设置了 `PIG_OAUTH_CALLBACK_HOST` 时监听该地址），打开 `auth.openai.com`，授权码自动回传；同时保留粘贴框，可粘贴跳转 URL 或授权码。1455 端口被占用时（Codex CLI 也用它），只靠粘贴框完成登录。**设备码**（无头机器）：pig 显示一个代码，你到 `auth.openai.com/codex/device` 输入，pig 轮询直到通过。 | 只用于 `openai-codex` 模型——ChatGPT 的 Codex 后端，账号 id 从令牌里读出。 |
 | **Radius** | **浏览器**（默认）：pig 监听 `http://127.0.0.1:1456/oauth/callback`，打开网关的授权页。**设备码**：在另一台设备上输入代码，pig 轮询直到通过。 | 使用 Radius 网关的公开模型列表；上游登录后还会拉取账号自己的模型列表，pig 暂未实现。 |
 | **Kimi Code（订阅）** | 设备码：pig 显示带着代码的 `kimi.com` 地址，并轮询 `auth.kimi.com` 直到授权通过（`KIMI_CODE_OAUTH_HOST` 可指向别的主机）。 | 用于 `kimi-coding` 模型，可代替 `KIMI_API_KEY`。 |
-| **Antigravity**（扩展） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在 `pig-antigravity` 加载时出现——它是扩展的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
+| **Antigravity**（包） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在装了 `pig-antigravity` 包（`pig install git:github.com/owner888/pig-antigravity`）之后出现——它是那个包的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
 
 令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 删除已保存的登录或 API Key，环境变量和 `models.json` 不受影响。
 

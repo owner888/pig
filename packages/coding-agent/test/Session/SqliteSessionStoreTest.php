@@ -58,6 +58,27 @@ final class SqliteSessionStoreTest extends SessionStoreConformance
         $this->assertSame('sql:2026-01-01T00-00-00-000Z_x.jsonl', $this->store()->locationFor('/project/a', '2026-01-01T00-00-00-000Z_x'));
     }
 
+    public function testAForkOfASessionKeptHereIsFoundByTheStoresOwnNameForIt(): void
+    {
+        // `forkFrom()` resolves a file's path as upstream does, and a session kept here has none:
+        // `sql:…` is the store's name for it, and taking it for a relative path looks for a file
+        // of that name in the working directory.
+        $location = $this->store()->locationFor('/project/a', '2026-01-01T00-00-00-000Z_x');
+        $this->store()->append($location, "{\"type\":\"session\",\"version\":3,\"id\":\"x\",\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"cwd\":\"/project/a\"}\n");
+        \Pig\CodingAgent\Session\SessionManager::useSessionStore($this->store());
+
+        try {
+            $fork = \Pig\CodingAgent\Session\SessionManager::forkFrom($location, '/project/./b/', 'forked-1');
+
+            $this->assertSame($location, $fork->parentSession);
+            $this->assertSame('/project/b', $fork->cwd);
+            $this->assertStringStartsWith(SqlSessionStore::SCHEME, $fork->path);
+            $this->assertTrue($this->store()->exists($fork->path));
+        } finally {
+            \Pig\CodingAgent\Session\SessionManager::useSessionStore(null);
+        }
+    }
+
     public function testASecondStoreOnTheSameDatabaseSeesTheSameSessions(): void
     {
         $location = $this->store()->locationFor('/project/a', '2026-01-01T00-00-00-000Z_x');

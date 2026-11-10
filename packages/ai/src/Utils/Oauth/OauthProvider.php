@@ -17,7 +17,7 @@ use Pig\Ai\Http\HttpClient;
  * sign-in for the `openai-codex` provider (`OpenAiCodex`), upstream's `openaiCodexOAuth`, the Radius
  * gateway's (`Radius`), and Kimi Code's subscription for `kimi-coding` (`KimiCoding`). The two Google
  * ones that used to be cases here went the way upstream's did in 0.71 — the Antigravity flow lives
- * in `extensions/pig-antigravity` now and registers itself as an `Extension\OauthFlow`, which is
+ * in the `pig-antigravity` package now and registers itself as an `Extension\OauthFlow`, which is
  * what `CodingAgent\Auth` asks before this enum. `available()` is still a table rather than
  * `return true`: the credentials file is keyed by these strings and is shared with pi, so a name
  * pig could not sign in with would still be a name pig has to *read* without choking, and the row

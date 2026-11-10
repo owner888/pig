@@ -196,8 +196,9 @@ final class SelfUpdateTest extends TestCase
         $synced = SelfUpdate::ensureBundledExtensions($tempHome);
 
         $this->assertGreaterThan(0, $synced);
-        $this->assertDirectoryExists($tempHome . '/extensions/pig-antigravity');
-        $this->assertFileExists($tempHome . '/extensions/pig-antigravity/index.php');
+        $this->assertDirectoryExists($tempHome . '/extensions/pig-vless');
+        $this->assertFileExists($tempHome . '/extensions/pig-vless/index.php');
+        $this->assertDirectoryDoesNotExist($tempHome . '/extensions/pig-mcp', 'loaded from pig, not copied out');
 
         // Subsequent call does not recopy already existing extensions
         $this->assertSame(0, SelfUpdate::ensureBundledExtensions($tempHome));
@@ -208,25 +209,34 @@ final class SelfUpdateTest extends TestCase
 
     public function testAnUpdateInstallsABundledExtensionAddedSinceAndLeavesARemovedOneRemoved(): void
     {
-        // An install from before the record: it had pig-antigravity and deleted pig-vless.
+        // An install from before the record: it had pig-antigravity and deleted pig-vless. The
+        // pig it updates to bundles those two and one added since — a stand-in, in a core
+        // directory of the test's own: every extension pig has added since the record began has
+        // become a package, so its real directory has nothing "new" in it to install.
         $home = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        $core = sys_get_temp_dir() . '/pig-test-core-' . bin2hex(random_bytes(4));
         mkdir("{$home}/extensions/pig-antigravity", 0o755, true);
 
-        try {
-            $installed = SelfUpdate::installNewBundled($home);
+        foreach (['pig-antigravity', 'pig-vless', 'pig-added-since', 'pig-mcp'] as $bundled) {
+            mkdir("{$core}/{$bundled}", 0o755, true);
+            file_put_contents("{$core}/{$bundled}/index.php", '<?php');
+        }
 
-            $this->assertContains('pig-gemini-video', $installed);
-            $this->assertFileExists("{$home}/extensions/pig-gemini-video/index.php");
+        try {
+            $installed = SelfUpdate::installNewBundled($home, $core);
+
+            $this->assertSame(['pig-added-since'], $installed, 'not the built-in pig-mcp, which is loaded from pig');
+            $this->assertFileExists("{$home}/extensions/pig-added-since/index.php");
             $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-vless");
-            $this->assertNotContains('pig-antigravity', $installed);
 
             // Offered once: the next update installs nothing, and a deleted one stays deleted.
-            SelfUpdate::deleteRecursive("{$home}/extensions/pig-gemini-video");
-            $this->assertSame([], SelfUpdate::installNewBundled($home));
-            $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-gemini-video");
-            $this->assertContains('pig-gemini-video', json_decode((string) file_get_contents("{$home}/extensions/.bundled.json"), true));
+            SelfUpdate::deleteRecursive("{$home}/extensions/pig-added-since");
+            $this->assertSame([], SelfUpdate::installNewBundled($home, $core));
+            $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-added-since");
+            $this->assertContains('pig-added-since', json_decode((string) file_get_contents("{$home}/extensions/.bundled.json"), true));
         } finally {
             SelfUpdate::deleteRecursive($home);
+            SelfUpdate::deleteRecursive($core);
         }
     }
 
@@ -246,8 +256,7 @@ final class SelfUpdateTest extends TestCase
             SelfUpdate::ensureBundledExtensions($home);
             $offered = json_decode((string) file_get_contents("{$home}/extensions/.bundled.json"), true);
 
-            $this->assertContains('pig-gemini-video', $offered);
-            $this->assertContains('pig-antigravity', $offered);
+            $this->assertContains('pig-vless', $offered);
             $this->assertNotContains('pig-mcp', $offered);
             $this->assertSame([], SelfUpdate::installNewBundled($home));
         } finally {
@@ -270,6 +279,8 @@ final class SelfUpdateTest extends TestCase
             }
             $this->assertArrayHasKey('pig-computer', SelfUpdate::MOVED_TO_PACKAGES);
             $this->assertArrayHasKey('pig-web-search', SelfUpdate::MOVED_TO_PACKAGES);
+            $this->assertSame('git:github.com/owner888/pig-antigravity', SelfUpdate::MOVED_TO_PACKAGES['pig-antigravity']);
+            $this->assertSame('git:github.com/owner888/pig-gemini-video', SelfUpdate::MOVED_TO_PACKAGES['pig-gemini-video']);
 
             $this->assertSame(['pig-android-use'], SelfUpdate::removeMovedBundled($home));
             $this->assertDirectoryDoesNotExist("{$home}/extensions/pig-android-use");

@@ -62,7 +62,9 @@ final class DoctorTest extends TestCase
 
         // 3. Auth
         $this->assertArrayHasKey('providers', $report->auth);
-        $this->assertArrayHasKey('antigravityAccounts', $report->auth);
+        // Nothing about one provider in particular: a provider an extension brings is a row in
+        // `providers` like any other, and an extension with more to say has its own command.
+        $this->assertArrayNotHasKey('antigravityAccounts', $report->auth);
 
         // 4. Proxy
         $this->assertArrayHasKey('enabled', $report->proxy);

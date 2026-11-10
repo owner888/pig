@@ -205,4 +205,26 @@ final class WebPanelsTest extends TestCase
         ExtensionApi::forgetWebPanels();
         $this->assertSame([], ExtensionApi::webPanels());
     }
+
+    public function testThePageDrawsWhatAPanelDescribes(): void
+    {
+        // The page's own `panels.js`, under Node, drawing a real panel's blocks: an accounts list
+        // with its buttons and a quota section with its meters. The blocks are the ones
+        // pig-antigravity's accounts panel described when it left pig to become a package, frozen
+        // in `fixtures/web-panels-blocks.json` — that package still runs this script on its live
+        // blocks, and this keeps the page's half tested where the page lives.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $fixtures = dirname(__DIR__) . '/fixtures';
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' ' . escapeshellarg("{$fixtures}/web-panels.mjs")
+            . ' ' . escapeshellarg((string) realpath(dirname(__DIR__, 2) . '/src/Web/assets/js'))
+            . ' ' . escapeshellarg(base64_encode((string) file_get_contents("{$fixtures}/web-panels-blocks.json"))) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $this->assertStringContainsString('Web panels: passed', implode("\n", $out));
+    }
 }

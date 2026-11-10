@@ -35,6 +35,7 @@ The session file, compaction, branches, resuming, the system prompt, retries. Mo
 - [The `cwd` section is the directory alone, with no date or time](#the-cwd-section-is-the-directory-alone-with-no-date-or-time)
 - [Resuming and tree navigation restore the tool set from the transcript; a forced prompt is projected, never recorded](#resuming-and-tree-navigation-restore-the-tool-set-from-the-transcript-a-forced-prompt-is-projected-never-recorded)
 - [A queued message with pictures or a template stayed in the queue after it was sent](#a-queued-message-with-pictures-or-a-template-stayed-in-the-queue-after-it-was-sent)
+- [A fork recorded its folder with links resolved, and nothing else did](#a-fork-recorded-its-folder-with-links-resolved-and-nothing-else-did)
 
 ## `--continue` opened the conversation you were not working on
 
@@ -951,3 +952,15 @@ text. `dequeue()` matched the delivered message's text against the queue, and th
   `UserMessage`) and the delivered message leaves the queue by that; its text is the fallback only
   for a message nothing queued.
 - Tests: `AgentSessionTest::testAQueuedMessageWithPicturesLeavesTheQueueWhenItIsDelivered`.
+
+## A fork recorded its folder with links resolved, and nothing else did
+
+**Symptom**: on macOS, `/import` of a session whose folder had gone, then "Fork into …", said `Forked into new session … in /private/var/…` where the prompt a moment before had said `/var/…`; the test comparing the two failed there and passed on Linux, where the temporary directory is behind no link.
+
+**Root cause**: `SessionManager::forkFrom()` passed both its paths through `realpath()`. Upstream's uses `resolvePath()` — Node's `path.resolve`, which makes a path whole and collapses `.` and `..` and follows nothing. `create()` and every other way a session comes to be record the folder as it was named, and the directory a session is filed under is made from that name (`JsonlSessionStore::directory()`), so in a folder reached through a link a fork was filed apart from the sessions beside it and named a different folder in its header.
+
+**Trap rules**:
+- `forkFrom()` resolves with `SessionManager::resolvePath()` (`Settings::normalizePath()` + `Tools\Paths::collapse()`), never `realpath()`. `namesCwd()` still compares both sides resolved, which is a comparison and records nothing.
+- **The source is a store's location, not always a path**: a database's is `sql:…`, and a location with a scheme of the store's own is left as named. Upstream has only files and no such case; resolving it looks for a file called `sql:…` in the working directory.
+- A test that compares a recorded folder with `$this->cwd` is a test of exactly this on macOS; `realpath()` in the expectation hides it.
+- Tests: `SessionManagerTest::testForkFromCopiesEveryEntryUnderANewHeaderForThisProject` (a folder reached through a link), `SqliteSessionStoreTest::testAForkOfASessionKeptHereIsFoundByTheStoresOwnNameForIt`, `InteractiveModeTest::testImportingASessionWhoseFolderHasGoneCanForkItHereAndLeavesNoOtherCopy`.
