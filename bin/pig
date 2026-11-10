@@ -667,11 +667,17 @@ if ($choosesASession) {
 
             $initStartupTheme();
 
-            if (\Pig\CodingAgent\Cli\StartupSelector::ask(\Pig\CodingAgent\Session\SessionCwd::prompt($cwdIssue), ['Continue', 'Cancel']) !== 'Continue') {
-                exit(0);
-            }
+            // Continue in this directory once, or fork the session here so the choice sticks
+            // without rewriting its history (upstream #11975, as `--session <id>` from another
+            // project forks).
+            $choices = \Pig\CodingAgent\Session\SessionCwd::options($cwdIssue);
+            $picked = \Pig\CodingAgent\Cli\StartupSelector::ask(\Pig\CodingAgent\Session\SessionCwd::prompt($cwdIssue), array_keys($choices));
 
-            $sessionCwdOverride = $cwd;
+            match ($picked === null ? null : $choices[$picked] ?? null) {
+                \Pig\CodingAgent\Session\SessionCwd::CONTINUE => $sessionCwdOverride = $cwd,
+                \Pig\CodingAgent\Session\SessionCwd::FORK => $resumePath = $forkOrExit($resumePath),
+                default => exit(0),
+            };
         } elseif ($openedSession->cwd !== '') {
             $cwd = $openedSession->cwd;
         }

@@ -1705,7 +1705,12 @@ final class AgentSessionTest extends TestCase
         $switch = Async::run(static fn (): SessionSwitch => $session->switchTo($file->path, sys_get_temp_dir()));
         $this->assertTrue($switch->switched);
         $this->assertSame(sys_get_temp_dir(), $session->store()?->cwd);
-        $this->assertSame("cwd from session file does not exist\n{$gone}\n\ncontinue in current cwd\n/x", SessionCwd::prompt(new SessionCwdIssue($file->path, $gone, '/x')));
+        $this->assertSame("Session cwd does not exist: {$gone}", SessionCwd::prompt(new SessionCwdIssue($file->path, $gone, '/x')));
+        $this->assertSame(
+            ['Continue in /x (asks again next time)' => 'continue', 'Fork into /x (new session ID, original kept)' => 'fork', 'Cancel' => null],
+            SessionCwd::options(new SessionCwdIssue($file->path, $gone, '/x')),
+            'upstream #11975',
+        );
 
         unlink($file->path);
     }

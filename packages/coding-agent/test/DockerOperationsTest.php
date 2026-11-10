@@ -181,7 +181,7 @@ final class DockerOperationsTest extends TestCase
         $this->assertSame('', trim((string) shell_exec('pgrep -f ' . escapeshellarg('[p]' . substr($marker, 1)))), 'nothing it started is left');
     }
 
-    public function testGrepRunsRipgrepThereAndReadsTheContextThere(): void
+    public function testGrepRunsRipgrepThereAndTakesTheContextFromIt(): void
     {
         if (trim((string) shell_exec('command -v rg')) === '') {
             self::markTestSkipped('needs rg');
@@ -192,7 +192,8 @@ final class DockerOperationsTest extends TestCase
 
         $this->assertStringContainsString("src/a.php:2: needle here\nsrc/a.php-3- three", $result->content[0]->text);
         $this->assertNotEmpty(array_filter($this->asked(), static fn (string $line): bool => str_contains($line, ' rg --no-config')), 'rg ran through docker exec');
-        $this->assertNotEmpty(array_filter($this->asked(), static fn (string $line): bool => str_contains($line, ' cat -- ')), 'and the context was read there');
+        $this->assertNotEmpty(array_filter($this->asked(), static fn (string $line): bool => str_contains($line, '--context 1')), 'the context is rg\'s');
+        $this->assertSame([], array_filter($this->asked(), static fn (string $line): bool => str_contains($line, ' cat -- ')), 'no matched file is read (upstream #11705)');
     }
 
     public function testToolSetGivesEveryToolTheContainersOperations(): void

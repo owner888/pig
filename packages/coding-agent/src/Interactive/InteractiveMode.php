@@ -3323,7 +3323,16 @@ final class InteractiveMode
                 return;
             }
 
-            if ($this->resume($info, 'Import cancelled')) {
+            // A copy that was not imported — the question answered no, a hook against it, or a
+            // fork made of the original instead — is not left behind (upstream #11975).
+            $forked = false;
+            $imported = $this->resume($info, 'Import cancelled', $source, $forked);
+
+            if ((!$imported || $forked) && !$alreadyStored) {
+                $store->remove($destination);
+            }
+
+            if ($imported && !$forked) {
                 $this->say("Session imported from: {$input}");
             }
         });
@@ -6592,12 +6601,16 @@ final class InteractiveMode
      *
      * @param string $cancelled what is said when the missing-directory question is answered no —
      *        upstream's `Resume cancelled`, or `/import`'s `Import cancelled`
+     * @param string|null $forkFrom what a fork copies, when not `$info`'s file — `/import`'s
+     *        original, so the fork points back at it and not at the copy made to look at it
+     * @param bool $forked set when the session's directory had gone and it was forked here
      * @return bool whether it switched; false when it failed or a hook stopped it, both already said
      */
-    private function resume(SessionInfo $info, string $cancelled = 'Resume cancelled'): bool
+    private function resume(SessionInfo $info, string $cancelled = 'Resume cancelled', ?string $forkFrom = null, bool &$forked = false): bool
     {
         $was = $this->session->model()?->id;
         $inCurrentCwd = false;
+        $fork = null;
 
         // Asking the hooks, opening the file and restoring the model are `switchTo()`'s, so
         // that a host switching session over RPC gets the same three and not two of them. A
@@ -6608,14 +6621,30 @@ final class InteractiveMode
             try {
                 $switch = $this->session->switchTo($info->path, relocate: $this->relocator());
             } catch (MissingSessionCwdError $missing) {
-                if (!$this->ui->confirm('Session cwd not found', SessionCwd::prompt($missing->issue))) {
+                // Continue here once, or fork into here — a new session beside the current one, as
+                // `/new` would be, whose header names this directory (upstream #11975).
+                $choices = SessionCwd::options($missing->issue);
+                $picked = $this->ui->select(SessionCwd::prompt($missing->issue), array_keys($choices));
+                $choice = $picked === null ? null : $choices[$picked] ?? null;
+
+                if ($choice === null) {
                     $this->say($cancelled);
 
                     return false;
                 }
 
-                $switch = $this->session->switchTo($info->path, $missing->issue->fallbackCwd, $this->relocator());
-                $inCurrentCwd = true;
+                if ($choice === SessionCwd::CONTINUE) {
+                    $switch = $this->session->switchTo($info->path, $missing->issue->fallbackCwd, $this->relocator());
+                    $inCurrentCwd = true;
+                } else {
+                    $fork = SessionManager::forkFrom($forkFrom ?? $info->path, $missing->issue->fallbackCwd);
+                    $switch = $this->session->switchTo($fork->path, relocate: $this->relocator());
+
+                    // A hook that stopped the switch leaves no copy behind.
+                    if (!$switch->switched) {
+                        SessionManager::sessionStore()->remove($fork->path);
+                    }
+                }
             }
         } catch (Throwable $error) {
             // The old session is gone once the factory has been called: upstream's
@@ -6651,7 +6680,10 @@ final class InteractiveMode
 
         // Said after the transcript, so it is the last thing on screen rather than the
         // first thing buried above a conversation.
-        $this->say('Resumed ' . $switch->messages . ' messages from ' . $info->when() . ($inCurrentCwd ? ' in current cwd' : ''));
+        $forked = $fork !== null;
+        $this->say($fork !== null
+            ? "Forked into new session {$fork->id} in {$fork->cwd}"
+            : 'Resumed ' . $switch->messages . ' messages from ' . $info->when() . ($inCurrentCwd ? ' in ' . $this->session->cwd() : ''));
 
         $now = $this->session->model()?->id;
 

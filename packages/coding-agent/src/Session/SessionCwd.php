@@ -47,10 +47,33 @@ final class SessionCwd
         return "Stored session working directory does not exist: {$issue->sessionCwd}{$sessionFile}\nCurrent working directory: {$issue->fallbackCwd}";
     }
 
-    /** Upstream's `formatMissingSessionCwdPrompt()`, word for word. */
+    /** Upstream's `formatMissingSessionCwdPrompt()`, word for word (#11975). */
     public static function prompt(SessionCwdIssue $issue): string
     {
-        return "cwd from session file does not exist\n{$issue->sessionCwd}\n\ncontinue in current cwd\n{$issue->fallbackCwd}";
+        return "Session cwd does not exist: {$issue->sessionCwd}";
+    }
+
+    /** What `options()` answers to carry on in the current directory, once, asked again next time. */
+    public const string CONTINUE = 'continue';
+
+    /** What `options()` answers to fork into the current directory: a new session, the original kept. */
+    public const string FORK = 'fork';
+
+    /**
+     * Upstream's `getMissingSessionCwdOptions()` (#11975): each choice's label, naming the current
+     * directory, and what it means — `CONTINUE`, `FORK`, or null to cancel. Fork is what makes the
+     * choice stick without rewriting the session's history: the copy's header names the current
+     * directory.
+     *
+     * @return array<string, ?string> label => choice
+     */
+    public static function options(SessionCwdIssue $issue): array
+    {
+        return [
+            "Continue in {$issue->fallbackCwd} (asks again next time)" => self::CONTINUE,
+            "Fork into {$issue->fallbackCwd} (new session ID, original kept)" => self::FORK,
+            'Cancel' => null,
+        ];
     }
 
     /**

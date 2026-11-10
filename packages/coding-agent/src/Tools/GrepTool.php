@@ -108,49 +108,82 @@ final class GrepTool implements AgentTool, ReplayableTool
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
         $context = max(0, (int) ($arguments['context'] ?? 0));
 
+        // What the model is shown, as rg reports it (upstream #11705): the matches and, with
+        // `context`, the `context` events around them — no matched file is ever opened here, so
+        // memory follows the output and not the size of the files, and a file elsewhere is read
+        // by the `rg` there. Lines past the byte cap are counted but not kept: truncation drops
+        // them anyway.
         $lines = [];
+        $outputBytes = 0;
+        $outputLines = 0;
         $matches = 0;
         $shortened = false;
-        $cache = [];
+        $lastFile = null;
+        // Set at the last allowed match. rg still sends that match's trailing context, kept up to
+        // `$trailingEnd`; the limit notice waits for proof of one more match.
+        $limitHit = false;
+        $trailingEnd = 0;
+        $limitReached = false;
+
+        $push = static function (string $file, int $number, string $text, bool $isMatch) use (&$lines, &$outputBytes, &$outputLines, &$shortened, &$lastFile, $root, $searchingDirectory): void {
+            $lastFile = $file;
+            $name = $searchingDirectory ? Paths::relative($file, $root) : basename($file);
+            // Only the line terminator: a lone CR inside a line is content, as in the read tool.
+            [$text, $wasShortened] = Truncate::line((string) preg_replace('/\r?\n?$/', '', $text));
+            $shortened = $shortened || $wasShortened;
+            $line = $isMatch ? "{$name}:{$number}: {$text}" : "{$name}-{$number}- {$text}";
+
+            if ($outputBytes - 1 <= Truncate::MAX_BYTES) {
+                $lines[] = $line;
+            }
+
+            $outputBytes += strlen($line) + 1;
+            $outputLines++;
+        };
 
         // **`streamAsync()`, not `stream()`.** A tool runs inside the agent's fiber, which the
         // loop is driving, and `stream()` polls with `usleep()` — so an `rg` over a large tree
-        // stopped the loop for its whole run: no keystrokes, no spinner, no escape. Measured on a
-        // half-second command with a 20ms timer armed, the blocking call let the loop tick 0
-        // times against 24 of ~25. Upstream's `grep.ts` is an async `spawn`, so this was the
-        // shape the port was missing — unlike `find.ts`, which is `spawnSync` there too.
+        // stopped the loop for its whole run: no keystrokes, no spinner, no escape. Upstream's
+        // `grep.ts` is an async `spawn`.
         [$command, $directory] = $elsewhere !== null
-            ? $elsewhere->elsewhere($this->command($rg, $arguments, $root, $searchingDirectory), $searchingDirectory ? $root : null)
-            : [$this->command($rg, $arguments, $root, $searchingDirectory), $searchingDirectory ? $root : null];
+            ? $elsewhere->elsewhere($this->command($rg, $arguments, $root, $searchingDirectory, $context), $searchingDirectory ? $root : null)
+            : [$this->command($rg, $arguments, $root, $searchingDirectory, $context), $searchingDirectory ? $root : null];
 
         [$exit, $errors] = Process::streamAsync(
             $command,
-            function (string $line) use (
-                &$lines,
-                &$matches,
-                &$shortened,
-                &$cache,
-                $limit,
-                $context,
-                $root,
-                $searchingDirectory,
-            ): bool {
-                $match = self::parse($line);
+            static function (string $line) use (&$matches, &$lastFile, &$limitHit, &$trailingEnd, &$limitReached, $push, $limit, $context, $root, $searchingDirectory): bool {
+                $event = self::event($line);
 
-                if ($match === null) {
+                if ($event === null) {
                     return true;
                 }
 
-                [$file, $number] = $match;
-                $matches++;
+                [$isMatch, $file, $number, $text] = $event;
                 // A directory search ran inside the root and reports `./…` paths (#11895).
                 $file = $searchingDirectory ? Paths::resolve($file, $root) : $file;
 
-                foreach (self::block($file, $number, $context, $root, $searchingDirectory, $cache, $shortened, $this->reader()) as $out) {
-                    $lines[] = $out;
+                if (!$limitHit) {
+                    $push($file, $number, $text, $isMatch);
+
+                    if ($isMatch && ++$matches >= $limit) {
+                        $limitHit = true;
+                        $trailingEnd = $number + $context;
+                    }
+
+                    return true;
                 }
 
-                return $matches < $limit;
+                $inWindow = $file === $lastFile && $number <= $trailingEnd;
+
+                // A match inside the last match's trailing context is shown as context.
+                if ($inWindow) {
+                    $push($file, $number, $text, false);
+                }
+
+                // Only another match proves that the limit cut results off.
+                $limitReached = $limitReached || $isMatch;
+
+                return !($limitReached && !($inWindow && $number < $trailingEnd));
             },
             self::TIMEOUT,
             // The abort goes to the runner rather than into the callback. A throw from in there
@@ -183,9 +216,11 @@ final class GrepTool implements AgentTool, ReplayableTool
         }
 
         $truncation = Truncate::head(implode("\n", $lines), PHP_INT_MAX);
+        // Totals of everything rg sent, the lines past the cap that were not kept included.
+        $truncation = new Truncation(...[...get_object_vars($truncation), 'totalLines' => $outputLines, 'totalBytes' => max(0, $outputBytes - 1)]);
         $notices = [];
 
-        if ($matches >= $limit) {
+        if ($limitReached) {
             $doubled = $limit * 2;
             $notices[] = "{$limit} match limit reached. Use limit={$doubled} for more, or narrow the pattern";
         }
@@ -210,7 +245,7 @@ final class GrepTool implements AgentTool, ReplayableTool
             [new TextContent($output)],
             $notice === null ? null : array_filter(
                 [
-                    'matchLimitReached' => $matches >= $limit ? $limit : null,
+                    'matchLimitReached' => $limitReached ? $limit : null,
                     'truncation' => $truncation,
                     'linesTruncated' => $shortened ? true : null,
                     'notice' => $notice,
@@ -224,7 +259,7 @@ final class GrepTool implements AgentTool, ReplayableTool
      * @param array<string, mixed> $arguments
      * @return list<string>
      */
-    private function command(string $rg, array $arguments, string $root, bool $searchingDirectory): array
+    private function command(string $rg, array $arguments, string $root, bool $searchingDirectory, int $context): array
     {
         // --no-require-git so .gitignore is honoured outside a repository too; without
         // it a search of any plain directory walks straight into vendor and node_modules.
@@ -246,6 +281,13 @@ final class GrepTool implements AgentTool, ReplayableTool
             $command[] = (string) preg_replace('#^(!?)(?:\./)+#', '$1', (string) $arguments['glob']);
         }
 
+        // rg emits the surrounding lines as `context` events, so no matched file is read here
+        // (upstream #11705). Clamped so a huge `context` stays a number rg takes.
+        if ($context > 0) {
+            $command[] = '--context';
+            $command[] = (string) min($context, PHP_INT_MAX);
+        }
+
         // `--` so a pattern starting with `-` is not read as a flag. A directory search names `.`:
         // rg canonicalizes its working directory, so the absolute path of a symlinked root would
         // no longer lie under the glob's root. rg ignores `--glob` for a file named directly.
@@ -257,106 +299,40 @@ final class GrepTool implements AgentTool, ReplayableTool
     }
 
     /**
-     * One line of `rg --json`, if it is a match.
+     * One line of `rg --json`, if it is a `match` or a `context` event: whether it matched, the
+     * file, the line number and the line.
      *
-     * @return array{0: string, 1: int}|null the file and the line number
+     * @return array{0: bool, 1: string, 2: int, 3: string}|null
      */
-    private static function parse(string $line): ?array
+    private static function event(string $line): ?array
     {
         if (trim($line) === '') {
             return null;
         }
 
         $event = json_decode($line, true);
+        $type = is_array($event) ? ($event['type'] ?? null) : null;
 
-        if (!is_array($event) || ($event['type'] ?? null) !== 'match') {
+        if ($type !== 'match' && $type !== 'context') {
             return null;
         }
 
-        $file = $event['data']['path']['text'] ?? null;
+        $file = self::text($event['data']['path'] ?? null);
         $number = $event['data']['line_number'] ?? null;
 
-        return is_string($file) && is_int($number) ? [$file, $number] : null;
+        return $file !== '' && is_int($number) ? [$type === 'match', $file, $number, self::text($event['data']['lines'] ?? null)] : null;
     }
 
     /**
-     * The matched line, and the context around it.
-     *
-     * The match is marked with `:` and context with `-`, which is what grep does and
-     * what anyone reading the output will already expect.
-     *
-     * @param array<string, list<string>> $cache lines per file, since several matches in
-     *        one file are the common case and re-reading it each time is not free
-     * @return list<string>
+     * Upstream's `decodeRgText()`: a path or line of `rg --json`. Data that is not UTF-8 arrives
+     * base64-encoded in `bytes`.
      */
-    private static function block(
-        string $file,
-        int $number,
-        int $context,
-        string $root,
-        bool $searchingDirectory,
-        array &$cache,
-        bool &$shortened,
-        Closure $read,
-    ): array {
-        $name = $searchingDirectory ? Paths::relative($file, $root) : basename($file);
-        $lines = $cache[$file] ??= $read($file);
-
-        if ($lines === []) {
-            return ["{$name}:{$number}: (unable to read file)"];
+    private static function text(mixed $data): string
+    {
+        if (is_array($data) && is_string($data['text'] ?? null)) {
+            return $data['text'];
         }
 
-        $from = $context > 0 ? max(1, $number - $context) : $number;
-        $to = $context > 0 ? min(count($lines), $number + $context) : $number;
-        $block = [];
-
-        for ($current = $from; $current <= $to; $current++) {
-            [$text, $wasShortened] = Truncate::line(str_replace("\r", '', $lines[$current - 1] ?? ''));
-            $shortened = $shortened || $wasShortened;
-            $separator = $current === $number ? ':' : '-';
-
-            $block[] = "{$name}{$separator}{$current}{$separator} {$text}";
-        }
-
-        return $block;
-    }
-
-    /**
-     * How a matched file's lines are read for its context: from where `rg` found it — the
-     * container's file, through the operations, when it ran there; a link to `/etc` is the
-     * container's `/etc` then, never this machine's.
-     *
-     * @return Closure(string): list<string>
-     */
-    private function reader(): Closure
-    {
-        $operations = $this->operations instanceof RunsElsewhere && $this->operations instanceof ReadOperations ? $this->operations : null;
-
-        return static function (string $file) use ($operations): array {
-            if ($operations === null) {
-                if (!is_file($file) || !is_readable($file)) {
-                    return [];
-                }
-
-                return self::read(file_get_contents($file));
-            }
-
-            try {
-                return self::read($operations->readFile($file));
-            } catch (FileAccessError) {
-                return [];
-            }
-        };
-    }
-
-    /** @return list<string> */
-    private static function read(string|false $contents): array
-    {
-
-        // A file rg could read and this cannot — a race with a build, most likely. The
-        // match is still reported, with a note instead of the line.
-        // Split on LF only, as rg counts lines: a lone CR made one more line here than there and
-        // put every later context line one off (upstream #11398). `block()` drops the CR it leaves.
-        return $contents === false ? [] : explode("\n", str_replace("\r\n", "\n", $contents));
+        return is_array($data) && is_string($data['bytes'] ?? null) ? (string) base64_decode($data['bytes'], true) : '';
     }
 }

@@ -6225,6 +6225,66 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Session imported from: ' . $source, $screen);
     }
 
+    /** A session from a directory that has gone (upstream #11975): written there, the directory then removed. */
+    private function sessionFromAGoneDirectory(): string
+    {
+        $gone = $this->cwd . '/renamed-away';
+        mkdir($gone);
+        $file = SessionManager::create($gone);
+        $file->append(new UserMessage('asked in the old folder'));
+        $file->append(new AssistantMessage([new TextContent('answered in the old folder')], Api::AnthropicMessages, 'anthropic', 'claude-test', new Usage(), StopReason::Stop));
+        $source = $this->cwd . '/old.jsonl';
+        copy($file->path, $source);
+        rmdir($gone);
+
+        return $source;
+    }
+
+    public function testImportingASessionWhoseFolderHasGoneCanForkItHereAndLeavesNoOtherCopy(): void
+    {
+        $source = $this->sessionFromAGoneDirectory();
+        $this->start(store: true);
+        $this->type('/import ' . $source);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+
+        $screen = $this->screenText();
+        $this->assertStringContainsString('Session cwd does not exist: ' . $this->cwd . '/renamed-away', $screen);
+        $this->assertStringContainsString('Continue in ' . $this->cwd . ' (asks again next time)', $screen);
+        $this->assertStringContainsString('Fork into ' . $this->cwd . ' (new session ID, original kept)', $screen);
+
+        $this->type(self::DOWN);
+        $this->type(self::ENTER); // Fork
+        $this->settle();
+
+        $fork = $this->session->store();
+        $this->assertNotNull($fork);
+        $this->assertStringContainsString("Forked into new session {$fork->id} in {$this->cwd}", $this->screenText());
+        $this->assertStringContainsString('answered in the old folder', $this->screenText());
+        $this->assertSame($this->cwd, SessionManager::open($fork->path)->cwd, 'its header names this folder, so it is not asked again');
+        $this->assertSame(realpath($source), $fork->parentSession);
+        $this->assertFileDoesNotExist(SessionManager::directory($this->cwd) . '/old.jsonl', 'the copy made to look at it is gone');
+        $this->assertFileExists($source, 'the original is left alone');
+    }
+
+    public function testCancellingTheGoneFolderQuestionLeavesNoCopy(): void
+    {
+        $source = $this->sessionFromAGoneDirectory();
+        $this->start(store: true);
+        $this->type('/import ' . $source);
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::ENTER); // Yes
+        $this->settle();
+        $this->type(self::ESCAPE);
+        $this->settle();
+
+        $this->assertStringContainsString('Import cancelled', $this->screenText());
+        $this->assertFileDoesNotExist(SessionManager::directory($this->cwd) . '/old.jsonl');
+    }
+
     public function testShareMakesASecretGistAndAnswersTheViewerUrl(): void
     {
         // A `gh` of this test's own, first on PATH: it says it is signed in, and answers

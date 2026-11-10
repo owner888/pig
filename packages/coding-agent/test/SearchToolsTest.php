@@ -461,6 +461,59 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertSame(['a.txt-2- two', 'a.txt:3: NEEDLE', 'a.txt-4- four'], $found);
     }
 
+    /** Upstream #11705: rg merges overlapping context, so a shared line is shown once. */
+    public function testOverlappingContextIsShownOnce(): void
+    {
+        $this->needsRipgrep();
+        $this->file('a.txt', "one\nhit a\ntwo\nhit b\nthree\n");
+
+        $found = $this->lines($this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'hit', 'path' => 'a.txt', 'context' => 1])));
+
+        $this->assertSame(['a.txt-1- one', 'a.txt:2: hit a', 'a.txt-3- two', 'a.txt:4: hit b', 'a.txt-5- three'], $found);
+    }
+
+    /**
+     * Upstream #11705: the last allowed match keeps its trailing context, a match inside it is
+     * shown as context, and only a match past it says the limit was reached.
+     */
+    public function testTheLastMatchKeepsItsContextAndTheLimitWaitsForOneMore(): void
+    {
+        $this->needsRipgrep();
+        $this->file('a.txt', "hit 1\nctx\nhit 2\nctx\nctx\nctx\nhit 3\n");
+
+        $result = $this->execute(new GrepTool($this->cwd), ['pattern' => 'hit', 'path' => 'a.txt', 'context' => 2, 'limit' => 1]);
+
+        $this->assertSame(['a.txt:1: hit 1', 'a.txt-2- ctx', 'a.txt-3- hit 2'], $this->lines($this->textOf($result)));
+        $this->assertSame(1, $result->details['matchLimitReached'] ?? null);
+
+        foreach ([0, 2] as $context) {
+            $exact = $this->execute(new GrepTool($this->cwd), ['pattern' => 'hit', 'path' => 'a.txt', 'context' => $context, 'limit' => 3]);
+            $this->assertArrayNotHasKey('matchLimitReached', $exact->details ?? [], "exactly the limit, context {$context}");
+            $this->assertStringNotContainsString('limit reached', $this->textOf($exact));
+        }
+    }
+
+    /** Upstream #11705: rg decodes the file, so UTF-16 with a BOM reads right with context too. */
+    public function testContextOfAUtf16FileIsDecodedByRipgrep(): void
+    {
+        $this->needsRipgrep();
+        $this->file('wide.txt', "\xFF\xFE" . mb_convert_encoding("before\nneedle\nafter\n", 'UTF-16LE', 'UTF-8'));
+
+        $found = $this->lines($this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'path' => 'wide.txt', 'context' => 1])));
+
+        $this->assertSame(['wide.txt-1- before', 'wide.txt:2: needle', 'wide.txt-3- after'], $found);
+    }
+
+    public function testACrlfLineEndingIsNotPartOfTheLineAndAHugeContextIsTaken(): void
+    {
+        $this->needsRipgrep();
+        $this->file('crlf.txt', "before\r\nneedle\r\nafter\r\n");
+
+        $found = $this->lines($this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'path' => 'crlf.txt', 'context' => 1_000_000_000_000])));
+
+        $this->assertSame(['crlf.txt-1- before', 'crlf.txt:2: needle', 'crlf.txt-3- after'], $found);
+    }
+
     public function testALoneCarriageReturnDoesNotPutContextLinesOneOffFromRipgrep(): void
     {
         $this->needsRipgrep();
@@ -470,8 +523,9 @@ final class SearchToolsTest extends ToolTestCase
             $this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'path' => 'lone-cr.txt', 'context' => 1]),
         ));
 
-        // rg counts lines at LF only; splitting on the CR too showed `progress` as the match.
-        $this->assertSame(['lone-cr.txt-1- beforeprogress', 'lone-cr.txt:2: needle', 'lone-cr.txt-3- after'], $found);
+        // rg counts lines at LF only; splitting on the CR too showed `progress` as the match. The
+        // lone CR is content and stays (upstream #11705), as the read tool keeps it.
+        $this->assertSame(["lone-cr.txt-1- before\rprogress", 'lone-cr.txt:2: needle', 'lone-cr.txt-3- after'], $found);
     }
 
     public function testNoMatchesSaysSo(): void
