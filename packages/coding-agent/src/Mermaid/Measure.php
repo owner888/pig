@@ -8,7 +8,7 @@ use Pig\Tui\Graphemes;
 use Pig\Tui\Width;
 
 /**
- * grok-mermaid's `width.ts`: display width measured in grapheme clusters, the unit both of
+ * lovely-mermaid's `width.ts`: display width measured in grapheme clusters, the unit both of
  * measuring and of painting, so a box is always sized for exactly what gets drawn into it.
  *
  * The clusters are `Graphemes::split()` (PCRE's `\X`, UAX #29) and a cluster's width is
@@ -16,7 +16,7 @@ use Pig\Tui\Width;
  * table from the `unicode-width` crate. Box-drawing and ASCII, which is nearly every diagram,
  * measure the same either way; a diagram is drawn to the width the terminal will give it.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Measure
 {
@@ -26,10 +26,25 @@ final class Measure
         return Graphemes::split($text);
     }
 
-    /** @return list<array{0: string, 1: int}> each cluster with its width */
+    /**
+     * Each cluster with its width. A tab is the three spaces `Width::visible()` counts it as, so it
+     * paints as wide as it measures; upstream measures and paints it as one space.
+     *
+     * @return list<array{0: string, 1: int}>
+     */
     public static function measured(string $text): array
     {
-        return array_map(static fn (string $cluster): array => [$cluster, Width::visible($cluster)], Graphemes::split($text));
+        $out = [];
+
+        foreach (Graphemes::split($text) as $cluster) {
+            if ($cluster === "\t") {
+                array_push($out, [' ', 1], [' ', 1], [' ', 1]);
+            } else {
+                $out[] = [$cluster, Width::visible($cluster)];
+            }
+        }
+
+        return $out;
     }
 
     public static function width(string $text): int

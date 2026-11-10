@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\CodingAgent\Mermaid\Ansi;
 use Pig\CodingAgent\Mermaid\Mermaid;
 use Pig\CodingAgent\Mermaid\MermaidArt;
+use Pig\CodingAgent\Mermaid\Span;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * Upstream's `components/mermaid.ts`: a Markdown transformer that draws each top-level ```mermaid
@@ -132,19 +135,33 @@ final class MermaidTransformer
         return implode("  \n", array_map(self::codeSpan(...), self::themedLines($art)));
     }
 
-    /** @return list<string> each row coloured by its spans' classes, as upstream's `styleSpan()` */
+    /**
+     * Upstream's `themedLines()`: the art through `Ansi::toAnsi()` with the theme's colours per
+     * role, so an author's `classDef` styles still win over them. A link stays only on label text,
+     * and only where the terminal shows links — not round the whole box.
+     *
+     * @return list<string>
+     */
     private static function themedLines(MermaidArt $art): array
     {
         $theme = Themes::theme();
+        $foreground = static fn (string $color): string => substr($theme->getFgAnsi($color), 2, -1);
+        $ansiTheme = [
+            'border' => $foreground('borderMuted'),
+            'text' => $foreground('text'),
+            'edge' => $foreground('accent'),
+            'edgeLabel' => $foreground('text'),
+            'title' => '1;' . $foreground('accent'),
+        ];
+        $linkLabels = TerminalImage::getCapabilities()->hyperlinks;
+        $styled = array_map(static fn (array $row): array => array_map(
+            static fn (Span $span): Span => $span->href === null || ($linkLabels && $span->role === 'text')
+                ? $span
+                : new Span($span->text, $span->role, $span->classes),
+            $row,
+        ), $art->styled);
 
-        return array_map(static fn (array $row): string => implode('', array_map(static fn ($span): string => match ($span->cls) {
-            'border' => $theme->fg('borderMuted', $span->text),
-            'text' => $theme->fg('text', $span->text),
-            'edge' => $theme->fg('accent', $span->text),
-            'edgeLabel' => $theme->fg('muted', $span->text),
-            'title' => $theme->fg('accent', $theme->bold($span->text)),
-            default => $span->text,
-        }, $row)), $art->styled);
+        return Ansi::toAnsi(new MermaidArt($art->plain, $styled, $art->width, $art->classDefs, $art->warnings), $ansiTheme);
     }
 
     /**

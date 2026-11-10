@@ -365,6 +365,38 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('return 2;', $this->text($tool));
     }
 
+    public function testAStreamedWriteIsHighlightedLineByLineAndAsAFileOnceWhole(): void
+    {
+        // Upstream's write cache (#10971): while the content streams, each new line is highlighted
+        // alone and the first fifty together, so a comment opened up there colours its lines
+        // and one opened further down does not yet; the whole call is highlighted as a file.
+        $comment = Themes::theme()->getFgAnsi('syntaxComment');
+        $body = implode("\n", array_map(static fn (int $i): string => "\$v{$i} = {$i};", range(1, 55)));
+        $content = "<?php\n/* top\n";
+        $tool = $this->tool('write', ['path' => 'a.php', 'content' => $content]);
+        $tool->setExpanded(true);
+
+        foreach (["inside top\n*/\n", "{$body}\n/* low\n", "inside low\n", "*/\n"] as $delta) {
+            $content .= $delta;
+            $tool->updateArgs(['path' => 'a.php', 'content' => $content]);
+        }
+
+        $line = function (string $text) use ($tool): string {
+            foreach (explode("\n", $this->raw($tool)) as $row) {
+                if (str_contains(Ansi::strip($row), $text)) {
+                    return $row;
+                }
+            }
+
+            return '';
+        };
+        $this->assertStringContainsString($comment, $line('inside top'));
+        $this->assertStringNotContainsString($comment, $line('inside low'));
+
+        $tool->setArgsComplete();
+        $this->assertStringContainsString($comment, $line('inside low'));
+    }
+
     public function testACutWriteSaysHowManyLinesTheWholeFileHas(): void
     {
         // Upstream's write says `(N more lines, M total)` where every other tool says only

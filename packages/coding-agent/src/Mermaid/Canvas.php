@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `canvas.ts`: a grid of cells. Edges accumulate as direction bits rather than
+ * lovely-mermaid's `canvas.ts`: a grid of cells. Edges accumulate as direction bits rather than
  * glyphs, so crossings and junctions resolve correctly whatever order they are drawn in;
  * `finalizeMask()` turns the bits into characters at the end. `occupied` marks cells a box has
  * claimed, which edge bits must not overwrite.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Each cell has a role, and may carry the author classes (`tag`, space-joined) and the link
+ * (`href`) of the node it belongs to, stamped while `curTag` / `curHref` are set.
+ *
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Canvas
 {
@@ -36,39 +39,55 @@ final class Canvas
     ];
 
     private const array FLIP_V = [
+        '╔' => '╚', '╚' => '╔', '╗' => '╝', '╝' => '╗', '╤' => '╧', '╧' => '╤',
         '┌' => '└', '└' => '┌', '┐' => '┘', '┘' => '┐', '┏' => '┗', '┗' => '┏', '┓' => '┛', '┛' => '┓',
         '╭' => '╰', '╰' => '╭', '╮' => '╯', '╯' => '╮', '┬' => '┴', '┴' => '┬', '┳' => '┻', '┻' => '┳',
         '▼' => '▲', '▲' => '▼', '▽' => '△', '△' => '▽',
     ];
 
     private const array FLIP_H = [
+        '╔' => '╗', '╗' => '╔', '╚' => '╝', '╝' => '╚', '╟' => '╢', '╢' => '╟',
         '┌' => '┐', '┐' => '┌', '└' => '┘', '┘' => '└', '┏' => '┓', '┓' => '┏', '┗' => '┛', '┛' => '┗',
         '╭' => '╮', '╮' => '╭', '╰' => '╯', '╯' => '╰', '├' => '┤', '┤' => '├', '┣' => '┫', '┫' => '┣',
         '▶' => '◄', '◄' => '▶', '▷' => '◁', '◁' => '▷',
     ];
 
-    /** @var list<string> */
+    /** @var array<int, string> */
     public array $ch;
 
-    /** @var list<string> */
-    public array $cls;
+    /** @var array<int, string> */
+    public array $role;
 
-    /** @var list<int> */
+    /** @var array<int, ?string> */
+    public array $tag;
+
+    /** @var array<int, ?string> */
+    public array $href;
+
+    /** @var array<int, int> */
     public array $mask;
 
-    /** @var list<int> */
+    /** @var array<int, int> */
     public array $style;
 
-    /** @var list<int> */
+    /** @var array<int, int> */
     public array $occupied;
 
     public int $curStyle = self::STY_SOLID;
+
+    /** Author classes stamped on cells painted while set, like `curStyle`. */
+    public ?string $curTag = null;
+
+    /** Link target stamped on cells painted while set, like `curTag`. */
+    public ?string $curHref = null;
 
     public function __construct(public readonly int $w, public readonly int $h)
     {
         $n = max(0, $w * $h);
         $this->ch = array_fill(0, $n, ' ');
-        $this->cls = array_fill(0, $n, 'none');
+        $this->role = array_fill(0, $n, 'none');
+        $this->tag = array_fill(0, $n, null);
+        $this->href = array_fill(0, $n, null);
         $this->mask = array_fill(0, $n, 0);
         $this->style = array_fill(0, $n, 0);
         $this->occupied = array_fill(0, $n, 0);
@@ -79,19 +98,29 @@ final class Canvas
         return $y * $this->w + $x;
     }
 
-    public function set(int $x, int $y, string $c, string $cls): void
+    public function set(int $x, int $y, string $c, string $role): void
     {
         if ($x >= $this->w || $y >= $this->h) {
             return;
         }
 
         $i = $this->idx($x, $y);
-        $this->ch[$i] = $c;
-        $this->cls[$i] = $cls;
+        // A literal tab measures one cell here but jumps to the terminal's tab stop there,
+        // desyncing every column after it. Same width, safe glyph.
+        $this->ch[$i] = $c === "\t" ? ' ' : $c;
+        $this->role[$i] = $role;
+
+        if ($this->curTag !== null) {
+            $this->tag[$i] = $this->curTag;
+        }
+
+        if ($this->curHref !== null) {
+            $this->href[$i] = $this->curHref;
+        }
     }
 
-    /** Direction bits on a free cell; a `border` cell keeps its class. */
-    public function addBits(int $x, int $y, int $bits, string $cls = 'edge'): void
+    /** Direction bits on a free cell; a `border` cell keeps its role. */
+    public function addBits(int $x, int $y, int $bits, string $role = 'edge'): void
     {
         if ($x >= $this->w || $y >= $this->h) {
             return;
@@ -99,15 +128,23 @@ final class Canvas
 
         $i = $this->idx($x, $y);
 
-        if ($this->occupied[$i] !== 0) {
+        if (($this->occupied[$i] ?? 0) !== 0) {
             return;
         }
 
-        $this->mask[$i] |= $bits;
-        $this->style[$i] |= $this->curStyle;
+        $this->mask[$i] = ($this->mask[$i] ?? 0) | $bits;
+        $this->style[$i] = ($this->style[$i] ?? 0) | $this->curStyle;
 
-        if ($this->cls[$i] !== 'border') {
-            $this->cls[$i] = $cls;
+        if (($this->role[$i] ?? 'none') !== 'border') {
+            $this->role[$i] = $role;
+        }
+
+        if ($this->curTag !== null) {
+            $this->tag[$i] = $this->curTag;
+        }
+
+        if ($this->curHref !== null) {
+            $this->href[$i] = $this->curHref;
         }
     }
 
@@ -126,7 +163,9 @@ final class Canvas
                 $si = $sub->idx($sx, $sy);
                 $di = $this->idx($x, $y);
                 $this->ch[$di] = $sub->ch[$si];
-                $this->cls[$di] = $sub->cls[$si];
+                $this->role[$di] = $sub->role[$si];
+                $this->tag[$di] = $sub->tag[$si];
+                $this->href[$di] = $sub->href[$si];
                 $this->style[$di] = $sub->style[$si];
                 $this->occupied[$di] = 1;
             }
@@ -141,10 +180,10 @@ final class Canvas
         }
 
         $i = $this->idx($x, $y);
-        $this->mask[$i] |= $bits;
+        $this->mask[$i] = ($this->mask[$i] ?? 0) | $bits;
 
-        if ($this->cls[$i] !== 'border') {
-            $this->cls[$i] = 'edge';
+        if (($this->role[$i] ?? 'none') !== 'border') {
+            $this->role[$i] = 'edge';
         }
     }
 
@@ -191,14 +230,24 @@ final class Canvas
     /** Accumulated direction bits resolved into glyphs, honouring line style. */
     public function finalizeMask(): void
     {
-        foreach ($this->ch as $i => $c) {
-            if ($this->mask[$i] !== 0 && $c === ' ') {
+        $n = $this->w * $this->h;
+
+        for ($i = 0; $i < $n; $i++) {
+            if ($this->mask[$i] === 0) {
+                continue;
+            }
+
+            $c = $this->ch[$i];
+
+            if ($c === ' ') {
                 $glyph = self::maskChar($this->mask[$i]);
                 $this->ch[$i] = match ($this->style[$i]) {
-                    self::STY_DOT => self::dottedChar($glyph),
-                    self::STY_THICK => self::thickChar($glyph),
+                    self::STY_DOT => self::DOTTED[$glyph] ?? $glyph,
+                    self::STY_THICK => self::THICK[$glyph] ?? $glyph,
                     default => $glyph,
                 };
+            } elseif ($c === '═' || $c === '║') {
+                $this->ch[$i] = self::doubleTee($c, $this->mask[$i]);
             }
         }
     }
@@ -210,15 +259,16 @@ final class Canvas
             $y2 = $this->h - 1 - $y;
 
             for ($x = 0; $x < $this->w; $x++) {
-                $i = $this->idx($x, $y);
-                $j = $this->idx($x, $y2);
-                [$this->ch[$i], $this->ch[$j]] = [$this->ch[$j], $this->ch[$i]];
-                [$this->cls[$i], $this->cls[$j]] = [$this->cls[$j], $this->cls[$i]];
+                $this->swap($this->idx($x, $y), $this->idx($x, $y2));
             }
         }
 
-        foreach ($this->ch as $i => $c) {
-            $this->ch[$i] = self::flipGlyphV($c);
+        $n = $this->w * $this->h;
+
+        for ($i = 0; $i < $n; $i++) {
+            if (!self::textRole($this->role[$i])) {
+                $this->ch[$i] = self::FLIP_V[$this->ch[$i]] ?? $this->ch[$i];
+            }
         }
     }
 
@@ -227,28 +277,28 @@ final class Canvas
     {
         for ($y = 0; $y < $this->h; $y++) {
             for ($x = 0; $x < intdiv($this->w, 2); $x++) {
-                $x2 = $this->w - 1 - $x;
-                $i = $this->idx($x, $y);
-                $j = $this->idx($x2, $y);
-                [$this->ch[$i], $this->ch[$j]] = [$this->ch[$j], $this->ch[$i]];
-                [$this->cls[$i], $this->cls[$j]] = [$this->cls[$j], $this->cls[$i]];
+                $this->swap($this->idx($x, $y), $this->idx($this->w - 1 - $x, $y));
             }
         }
 
-        foreach ($this->ch as $i => $c) {
-            $this->ch[$i] = self::flipGlyphH($c);
+        $n = $this->w * $this->h;
+
+        for ($i = 0; $i < $n; $i++) {
+            if (!self::textRole($this->role[$i])) {
+                $this->ch[$i] = self::FLIP_H[$this->ch[$i]] ?? $this->ch[$i];
+            }
         }
 
         for ($y = 0; $y < $this->h; $y++) {
             $x = 0;
 
             while ($x < $this->w) {
-                $cls = $this->cls[$this->idx($x, $y)];
+                $role = $this->role[$this->idx($x, $y)];
 
-                if ($cls === 'text' || $cls === 'edgeLabel') {
+                if ($role === 'text' || $role === 'edgeLabel') {
                     $start = $this->idx($x, $y);
 
-                    while ($x < $this->w && $this->cls[$this->idx($x, $y)] === $cls) {
+                    while ($x < $this->w && $this->role[$this->idx($x, $y)] === $role) {
                         $x++;
                     }
 
@@ -265,8 +315,8 @@ final class Canvas
     }
 
     /**
-     * Each row grouped into runs of one class, wide-glyph continuations dropped, blank rows above
-     * and below the drawing taken off.
+     * Each row grouped into runs of one role, tag and link, wide-glyph continuations dropped,
+     * blank rows above and below the drawing taken off.
      *
      * @return array{plain: list<string>, styled: list<list<Span>>, width: int}
      */
@@ -292,7 +342,9 @@ final class Canvas
             $spans = [];
             $plainRow = '';
             $run = '';
-            $runCls = 'none';
+            $runRole = 'none';
+            $runTag = null;
+            $runHref = null;
 
             for ($x = 0; $x < $last; $x++) {
                 $i = $this->idx($x, $y);
@@ -302,24 +354,26 @@ final class Canvas
                     continue;
                 }
 
-                $cls = $this->cls[$i];
                 $plainRow .= $c;
 
-                if ($cls !== $runCls && $run !== '') {
-                    $spans[] = new Span($run, $runCls);
+                if (($this->role[$i] !== $runRole || $this->tag[$i] !== $runTag || $this->href[$i] !== $runHref) && $run !== '') {
+                    $spans[] = self::span($run, $runRole, $runTag, $runHref);
                     $run = '';
                 }
 
-                $runCls = $cls;
+                $runRole = $this->role[$i];
+                $runTag = $this->tag[$i];
+                $runHref = $this->href[$i];
                 $run .= $c;
             }
 
             if ($run !== '') {
-                $spans[] = new Span($run, $runCls);
+                $spans[] = self::span($run, $runRole, $runTag, $runHref);
             }
 
             $styled[] = $spans;
-            // ASCII spaces only, which is all a blank cell holds.
+            // ASCII spaces only, which is all a blank cell holds: trimming more would eat a
+            // trailing no-break space `styled` keeps.
             $plain[] = rtrim($plainRow, ' ');
         }
 
@@ -343,7 +397,7 @@ final class Canvas
     }
 
     /** `text` painted at `x, y`, a cluster per cell, a wide one claiming a CONT after it. */
-    public static function drawText(Canvas $canvas, string $text, int $x, int $y, string $cls): void
+    public static function drawText(Canvas $canvas, string $text, int $x, int $y, string $role): void
     {
         $cur = $x;
 
@@ -352,10 +406,10 @@ final class Canvas
                 continue;
             }
 
-            $canvas->set($cur, $y, $cluster, $cls);
+            $canvas->set($cur, $y, $cluster, $role);
 
             for ($k = 1; $k < $cw; $k++) {
-                $canvas->set($cur + $k, $y, self::CONT, $cls);
+                $canvas->set($cur + $k, $y, self::CONT, $role);
             }
 
             $cur += $cw;
@@ -363,7 +417,7 @@ final class Canvas
     }
 
     /** `text` painted at `x, y` over whatever edge bits are underneath, which it clears. */
-    public static function drawTextOverEdges(Canvas $canvas, string $text, int $x, int $y, string $cls): void
+    public static function drawTextOverEdges(Canvas $canvas, string $text, int $x, int $y, string $role): void
     {
         $cur = $x;
 
@@ -377,7 +431,7 @@ final class Canvas
                     $canvas->mask[$canvas->idx($cur + $k, $y)] = 0;
                 }
 
-                $canvas->set($cur + $k, $y, $k === 0 ? $cluster : self::CONT, $cls);
+                $canvas->set($cur + $k, $y, $k === 0 ? $cluster : self::CONT, $role);
             }
 
             $cur += $cw;
@@ -402,23 +456,54 @@ final class Canvas
         };
     }
 
-    public static function dottedChar(string $c): string
+    /** An edge teeing into a double-line border: the mixed single/double glyphs. */
+    private static function doubleTee(string $c, int $mask): string
     {
-        return self::DOTTED[$c] ?? $c;
+        if ($c === '═') {
+            if (($mask & self::U) !== 0 && ($mask & self::D) !== 0) {
+                return '╪';
+            }
+
+            if (($mask & self::D) !== 0) {
+                return '╤';
+            }
+
+            if (($mask & self::U) !== 0) {
+                return '╧';
+            }
+        } else {
+            if (($mask & self::L) !== 0 && ($mask & self::R) !== 0) {
+                return '╫';
+            }
+
+            if (($mask & self::R) !== 0) {
+                return '╟';
+            }
+
+            if (($mask & self::L) !== 0) {
+                return '╢';
+            }
+        }
+
+        return $c;
     }
 
-    public static function thickChar(string $c): string
+    /** User-authored cells: flips reorder them but must not remap their glyphs. */
+    private static function textRole(string $role): bool
     {
-        return self::THICK[$c] ?? $c;
+        return $role === 'text' || $role === 'edgeLabel' || $role === 'title';
     }
 
-    public static function flipGlyphV(string $c): string
+    private function swap(int $i, int $j): void
     {
-        return self::FLIP_V[$c] ?? $c;
+        [$this->ch[$i], $this->ch[$j]] = [$this->ch[$j], $this->ch[$i]];
+        [$this->role[$i], $this->role[$j]] = [$this->role[$j], $this->role[$i]];
+        [$this->tag[$i], $this->tag[$j]] = [$this->tag[$j], $this->tag[$i]];
+        [$this->href[$i], $this->href[$j]] = [$this->href[$j], $this->href[$i]];
     }
 
-    public static function flipGlyphH(string $c): string
+    private static function span(string $text, string $role, ?string $tag, ?string $href): Span
     {
-        return self::FLIP_H[$c] ?? $c;
+        return new Span($text, $role, $tag === null ? null : explode(' ', $tag), $href);
     }
 }

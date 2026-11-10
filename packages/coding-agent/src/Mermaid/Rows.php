@@ -6,10 +6,10 @@ namespace Pig\CodingAgent\Mermaid;
 
 /**
  * Rows of classed text runs made into a `Canvas` — the shape of the diagrams pig draws as a
- * listing rather than as boxes and edges (`Pie`, `Timeline`, `Journey`). A run is `[text, cls]`,
- * the classes those of `Span`; a blank row is `[]`.
+ * listing rather than as boxes and edges (`Journey`). A run is `[text, role]`,
+ * the roles those of `Span`; a blank row is `[]`.
  *
- * pig's own, not part of the grok-mermaid port.
+ * pig's own, not part of the lovely-mermaid port.
  */
 final class Rows
 {

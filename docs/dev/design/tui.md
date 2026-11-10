@@ -215,31 +215,41 @@ The empty answer is still a real one and still has a case, against a path that i
 
 ## Mermaid diagrams (`Mermaid\*`, `Interactive\MermaidTransformer`)
 
-Upstream draws a ```mermaid block as Unicode box-drawing art with the npm package `grok-mermaid`;
-`packages/coding-agent/src/Mermaid/` is that package (0.2.3, Apache-2.0 — its `LICENSE` sits beside
-the code) ported file for file: `Parse` is `parse.ts`, `Layout` `layout.ts`, `SequenceLayout`
-`layout-seq.ts`, `Canvas`, `Labels`, `SourceBox`, and `Mermaid::render()` is `render()`. **One
-deliberate difference: widths are pig's** (`Measure` is `Graphemes::split()` + `Width::visible()`),
-not the package's `unicode-width` table, because the rows go through pig's Markdown and onto pig's
-screen, which measure that way. It shows only on tabs, soft hyphens and keycaps.
+Upstream draws a ```mermaid block as Unicode box-drawing art with the npm package `lovely-mermaid`;
+`packages/coding-agent/src/Mermaid/` is that package (0.3.3, Apache-2.0 — its `LICENSE` sits beside
+the code) ported file for file: `Statements` is `statements.ts`, `Registry` `registry.ts`,
+`Diagrams\*` the grammars in `diagrams/*.ts` (one class each, `Diagram` the registry entry),
+`Layout` `layout.ts`, `SequenceLayout` `layout-seq.ts`, `Canvas`, `Labels`, `SourceBox`, `Ansi`
+`ansi.ts`, `ClassStyle` `class-style.ts`, `CssColors` `css-colors.ts`, and `Mermaid::render()` is
+`render()`. A span carries a role, and the author's classes and link of the node it belongs to;
+`MermaidArt` carries the diagram's `classDef`s. **One deliberate difference: widths are pig's**
+(`Measure` is `Graphemes::split()` + `Width::visible()`), not the package's `unicode-width` table,
+because the rows go through pig's Markdown and onto pig's screen, which measure that way. It shows
+only on tabs (three columns, painted as three spaces), soft hyphens and keycaps.
 
-`MermaidTest` replays every block of upstream's hand-written cases as grok-mermaid drew them under
-Node (`test/fixtures/mermaid/cases.json`). The fuzz corpus (4,486 sources) was checked the same
-way while porting: all of it matches with upstream's width table swapped in.
+Upstream has no Node oracle any more: its golden files are the test. `MermaidTest` replays every
+block of them (`test/fixtures/mermaid/cases.json`, rows and warnings), sweeps upstream's fuzz
+corpus (`corpus.json`, the same seeded 4,000 sources) and every prefix of every golden source for
+the span and width invariants, and `RenderTest` ports upstream's unit tests, its ANSI snapshot
+(`ansi.json`) among them. Re-syncing to a new release is re-extracting the golden files and
+porting the diff of `src/`.
 
-**Five kinds are pig's, not the port's:** `Pie`, `Timeline`, `Journey`, `Kanban` and `GitGraph`,
-one class each (parse and layout together) with `Rows` for the listing-shaped ones, since
-grok-mermaid — and the Rust renderer it ports — stop at the five above. They sit in the same
-directory and hang off two lines of the port: `Parse::diagramKind()` names them and
-`Mermaid::draw()` dispatches to them; the port's files are otherwise untouched, so a re-sync against
-grok-mermaid diffs clean. Their drawings have no upstream to match, so `pig-cases.json` pins what
-pig draws (upstream's eight sources of those kinds moved there from `cases.json`, where they were
-asserting the source-box fallback). A new kind goes the same way: a class with `parse()` and
-`layout()`, a kind name in `diagramKind()`, a case in `Mermaid::draw()`, fixtures in `pig-cases.json`.
+**Two kinds are pig's, not the port's:** `Journey` and `Kanban`, one class each (parse and layout
+together) with `Rows` for the listing, registered through `Diagrams\JourneyDiagram` and
+`Diagrams\KanbanDiagram` — the port's files are otherwise untouched. Their drawings have no
+upstream to match, so `pig-cases.json` pins what pig draws. A new kind goes the same way: a class
+with `parse()` and `layout()`, a `Diagram` beside the grammars, an entry in `Registry`, fixtures in
+`pig-cases.json`. pig drew `pie`, `timeline` and `gitGraph` its own way until lovely-mermaid drew
+them; those are upstream's now.
+
+One more difference, in the flowchart grammar: pig takes spaces around a node's `:::` tag
+(`A["x"] ::: hot`), which upstream reads as a broken link — see the trap on spaced style classes.
 
 `MermaidTransformer` is upstream's `components/mermaid.ts`: first among the Markdown transformers
 (`InteractiveMode::markdownTransformers()`), each row a code span joined by hard breaks, the block
 left as written when `markdown.mermaid` is `off`, while streaming under `final`, when it cannot be
 drawn, or when it is wider than the terminal less the padding. **Top level is a fence at column 0**:
 pig's Markdown lexer keeps no raw text, which upstream's `marked` tokens are re-joined from, and a
-column-0 fence is never inside a list, a quote or indented code.
+column-0 fence is never inside a list, a quote or indented code. The rows are coloured by `Ansi::toAnsi()` with
+the theme's colour per role, so a `classDef` the author wrote wins over the theme; a link stays only
+on label text, and only where the terminal shows OSC 8 links.

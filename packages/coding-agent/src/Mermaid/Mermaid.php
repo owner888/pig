@@ -5,20 +5,22 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `render()`: a Mermaid source block as Unicode box-drawing art — `graph` and
- * `flowchart` (subgraphs included), `stateDiagram`, `classDiagram`, `erDiagram` and
- * `sequenceDiagram`, laid out at whatever size they need (`MermaidArt::$width`). pig adds `pie`,
- * `timeline`, `journey`, `kanban` and `gitGraph`, each its own class, which grok-mermaid does not draw.
+ * lovely-mermaid's `render()`: a Mermaid source block as Unicode box-drawing art — `graph` and
+ * `flowchart` (subgraphs included), `stateDiagram` (composite states as frames), `classDiagram`,
+ * `erDiagram`, `sequenceDiagram`, `pie`, `mindmap`, `timeline` and `gitGraph` — laid out at
+ * whatever size it needs (`MermaidArt::$width`). pig adds `journey` and `kanban` (`Journey`,
+ * `Kanban`), which lovely-mermaid does not draw.
  *
- * Null is no art to show: blank input, a syntax error, a kind it does not draw, or one too large
- * to lay out. Rendering is best-effort: a flowchart keeps whatever parsed, and the stricter
- * grammars get one retry without their last line — what keeps a streaming diagram on screen while
- * its last statement is half-typed. What was given up on is in `warnings`.
+ * Null is no art to show: blank input, a kind not drawn here, a source in which not one statement
+ * parsed, or a diagram large enough that laying it out is refused. Rendering is best-effort in
+ * every grammar: a statement either contributes what parsed or is dropped, and a diagram over a
+ * size cap draws its prefix. What was given up on is in `warnings`. A frontmatter `title:` is
+ * centred above the art, in the `title` role.
  *
- * A PHP port of grok-mermaid 0.2.3 by Alexey Zaytsev, itself a TypeScript port of the terminal
- * Mermaid renderer in xai-org/grok-build. Apache-2.0: see LICENSE in this directory. Ported
- * file for file; the changes are PHP's — the shared width measure (`Measure`) and arrays for the
- * sequence items.
+ * A PHP port of lovely-mermaid 0.3.3 by Alexey Zaytsev, which grew out of grok-mermaid, a
+ * TypeScript port of the terminal Mermaid renderer in xai-org/grok-build. Apache-2.0: see LICENSE
+ * in this directory. Ported file for file (`diagrams/*.ts` in `Diagrams\`); the changes are PHP's
+ * — the shared width measure (`Measure`) and arrays for the plain records.
  */
 final class Mermaid
 {
@@ -30,102 +32,36 @@ final class Mermaid
             return null;
         }
 
-        $drawn = self::attempt($src);
+        $drawn = Registry::diagramFor($src)?->render($src);
 
         if ($drawn === null) {
             return null;
         }
 
-        $lines = $drawn['canvas']->toLines();
+        ['plain' => $plain, 'styled' => $styled, 'width' => $width] = $drawn['canvas']->toLines();
+        $title = Statements::frontmatterTitle($src);
 
-        return new MermaidArt($lines['plain'], $lines['styled'], $lines['width'], $drawn['warnings']);
-    }
+        if ($title !== null) {
+            $tw = Measure::width($title);
+            $width = max($width, $tw);
+            $pad = str_repeat(' ', intdiv($width - $tw, 2));
+            array_unshift($plain, $pad . $title, '');
+            array_unshift(
+                $styled,
+                $pad === '' ? [new Span($title, 'title')] : [new Span($pad, 'none'), new Span($title, 'title')],
+                [],
+            );
+        }
 
-    /** grok-mermaid's `diagramKind()`: `flowchart`, `state`, `class`, `er`, `sequence` — or pig's `pie`, `timeline`, `journey`, `kanban`, `git` — or null. */
-    public static function kind(string $src): ?string
-    {
-        return Parse::diagramKind($src);
+        return new MermaidArt($plain, $styled, $width, $drawn['classDefs'], $drawn['warnings']);
     }
 
     /**
-     * Drawn, or drawn again without the last line when the grammar refused it — and that drop
-     * always reported.
-     *
-     * @return array{canvas: Canvas, warnings: list<string>}|null
+     * The kind `src` declares — `flowchart`, `state`, `class`, `er`, `sequence`, `pie`, `mindmap`,
+     * `timeline`, `gitgraph`, or pig's `journey` and `kanban` — or null. Reads the header only.
      */
-    private static function attempt(string $src): ?array
+    public static function kind(string $src): ?string
     {
-        $drawn = self::draw($src);
-
-        if ($drawn !== null) {
-            return $drawn;
-        }
-
-        $body = Labels::trimEnd($src);
-        $cut = strrpos($body, "\n");
-
-        if ($cut === false) {
-            return null;
-        }
-
-        $salvaged = self::draw(substr($body, 0, $cut));
-
-        if ($salvaged === null) {
-            return null;
-        }
-
-        $dropped = Labels::trim(substr($body, $cut + 1));
-
-        return [
-            'canvas' => $salvaged['canvas'],
-            'warnings' => [...$salvaged['warnings'], "dropped, unreadable final line: \"{$dropped}\""],
-        ];
-    }
-
-    /** @return array{canvas: Canvas, warnings: list<string>}|null */
-    private static function draw(string $src): ?array
-    {
-        $plain = static fn (?Canvas $canvas): ?array => $canvas === null ? null : ['canvas' => $canvas, 'warnings' => []];
-
-        switch (Parse::diagramKind($src)) {
-            case 'flowchart':
-                $graph = Parse::parseGraph($src);
-
-                if ($graph === null) {
-                    return null;
-                }
-
-                $canvas = $graph->groups === [] ? Layout::layoutFlowchart($graph) : Layout::layoutGrouped($graph);
-
-                return $canvas === null ? null : ['canvas' => $canvas, 'warnings' => $graph->warnings];
-            case 'state':
-                $state = Parse::parseState($src);
-
-                return $state === null ? null : $plain(Layout::layoutFlowchart($state));
-            case 'class':
-                $class = Parse::parseClass($src);
-
-                return $class === null ? null : $plain(Layout::layoutClass($class['graph'], $class['infos']));
-            case 'er':
-                $er = Parse::parseEr($src);
-
-                return $er === null ? null : $plain(Layout::layoutClass($er['graph'], $er['infos']));
-            case 'sequence':
-                $sequence = Parse::parseSequence($src);
-
-                return $sequence === null ? null : $plain(SequenceLayout::layoutSequence($sequence));
-            case 'pie':
-                return $plain(Pie::parse($src)?->layout());
-            case 'timeline':
-                return $plain(Timeline::parse($src)?->layout());
-            case 'journey':
-                return $plain(Journey::parse($src)?->layout());
-            case 'kanban':
-                return $plain(Kanban::parse($src)?->layout());
-            case 'git':
-                return $plain(GitGraph::parse($src)?->layout());
-            default:
-                return null;
-        }
+        return Registry::diagramKind($src);
     }
 }

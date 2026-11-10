@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `layout-seq.ts`: sequence diagram layout.
+ * lovely-mermaid's `layout-seq.ts`: sequence diagram layout.
  *
  * Participants get one column each, with lifelines running the full height and a box repeated at
  * top and bottom. Column gaps are solved from the widest thing that has to fit between any two
  * columns — a message label, a note, a self-message stub — then items stack down the canvas in
  * source order. Items and note anchors are the arrays `Sequence` documents.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class SequenceLayout
 {
@@ -39,7 +39,7 @@ final class SequenceLayout
     }
 
     /**
-     * grok-mermaid's `noteGeometry()`: where a note box sits, given the lifeline positions.
+     * Where a note box sits, given the lifeline positions.
      *
      * @param list<int> $xs
      * @param array<string, mixed> $anchor
@@ -68,7 +68,7 @@ final class SequenceLayout
         return $text === null ? 0 : Measure::width($text);
     }
 
-    /** grok-mermaid's `layoutSequence()`: a sequence diagram drawn, or null over the cell cap. */
+    /** A sequence diagram drawn, or null over the cell cap. */
     public static function layoutSequence(Sequence $seq): ?Canvas
     {
         $n = count($seq->labels);
@@ -139,6 +139,23 @@ final class SequenceLayout
             $xs[$i] = $xs[$i - 1] + $gaps[$i - 1];
         }
 
+        // A note left of the first participant has no gap to grow; the whole diagram shifts
+        // right instead, so the note box lands beside the lifeline, not on it.
+        $leftPad = 0;
+
+        foreach ($seq->items as $item) {
+            if ($item['kind'] === 'note' && $item['anchor']['kind'] === 'left' && $item['anchor']['at'] === 0) {
+                $w = Measure::width($item['text']) + 2 * self::PAD + 2;
+                $leftPad = max($leftPad, self::sat($w + 1, $xs[0]));
+            }
+        }
+
+        if ($leftPad > 0) {
+            for ($i = 0; $i < $n; $i++) {
+                $xs[$i] += $leftPad;
+            }
+        }
+
         $canvasW = $xs[$n - 1] + self::ceilHalf($boxW[$n - 1]) + 1;
 
         foreach ($seq->items as $item) {
@@ -200,13 +217,42 @@ final class SequenceLayout
             }
         }
 
+        // Activations turn the lifeline into a double line from the activating message's arrow
+        // row to the deactivating one's (to the bottom while still open) — two rails, echoing
+        // mermaid's slim activation rectangle. Setting the glyph directly leaves the mask bits for
+        // `finalizeMask()`, whose double-tee pass resolves message junctions on the run.
+        $startRow = static function (int $k) use ($seq, $rows): int {
+            $item = $seq->items[$k];
+            $labeled = $item['kind'] === 'message' && $item['from'] !== $item['to'] && $item['text'] !== null;
+
+            return $rows[$k] + ($labeled ? 1 : 0);
+        };
+        $endRow = static function (int $k) use ($seq, $rows, $startRow): int {
+            $item = $seq->items[$k];
+
+            // A self-message stub returns two rows below where it left.
+            return $item['kind'] === 'message' && $item['from'] === $item['to'] ? $rows[$k] + 2 : $startRow($k);
+        };
+
+        foreach ($seq->activations as $a) {
+            $y1 = $a['to'] === null ? $bottomTop - 1 : $endRow($a['to']);
+
+            for ($y = $startRow($a['from']); $y <= $y1; $y++) {
+                $i = $canvas->idx($xs[$a['at']], $y);
+
+                if (($canvas->mask[$i] ?? 0) !== 0) {
+                    $canvas->ch[$i] = '║';
+                }
+            }
+        }
+
         $canvas->finalizeMask();
 
         return $canvas;
     }
 
     /**
-     * grok-mermaid's `rowHeight()`: the rows an item takes.
+     * The rows an item takes.
      *
      * @param array<string, mixed> $item
      */
@@ -227,14 +273,14 @@ final class SequenceLayout
         return $item['text'] !== null ? 3 : 2;
     }
 
-    /** grok-mermaid's `box()`: geometry for a box drawn by position and size; ranks are irrelevant here. */
+    /** Geometry for a box drawn by position and size; ranks are irrelevant here. */
     private static function box(int $x, int $y, int $w, int $h): Placed
     {
         return new Placed($x, $y, $w, $h, $x + self::half($w), $y + 1, 0);
     }
 
     /**
-     * grok-mermaid's `drawMessage()`: a message arrow between lifelines, or a self-message stub.
+     * A message arrow between lifelines, or a self-message stub.
      *
      * @param array<string, mixed> $item a `message` item
      * @param list<int> $xs
@@ -286,7 +332,7 @@ final class SequenceLayout
         }
     }
 
-    /** grok-mermaid's `drawDivider()`: a full-width rule labelling a `loop` / `alt` / `opt` block boundary. */
+    /** A full-width rule labelling a `loop` / `alt` / `opt` block boundary. */
     private static function drawDivider(Canvas $canvas, string $text, int $r, int $canvasW): void
     {
         for ($x = 0; $x < $canvasW; $x++) {

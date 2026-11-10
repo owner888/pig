@@ -59,6 +59,9 @@ final class ToolExecutionComponent extends Container
     /** How much of a file to show before it is expanded. */
     private const int FILE_LINES = 10;
 
+    /** Upstream's `WRITE_PARTIAL_FULL_HIGHLIGHT_LINES`. */
+    private const int WRITE_PREFIX_LINES = 50;
+
     /** A listing is scanned, not read, so more of it fits usefully. */
     private const int LIST_LINES = 20;
 
@@ -121,10 +124,22 @@ final class ToolExecutionComponent extends Container
     private ?int $durationMs = null;
 
     /**
-     * Upstream's write row `highlighter`: a streamed call highlights the file on every delta and a
-     * complete one on every update and expand toggle, so the row reuses its last highlighting.
+     * Upstream's write row `highlighter`: a streamed call highlights its first lines on every
+     * delta, which stop changing once the file is longer, and a complete call the whole file on
+     * every update and expand toggle, so the row reuses its last highlighting.
      */
     private ?CodeHighlighter $writeHighlighter = null;
+
+    /**
+     * Upstream's `WriteHighlightCache`: a write call's content highlighted line by line while it
+     * still streams — each new line on its own, the first `WRITE_PREFIX_LINES` together.
+     *
+     * @var array{rawPath: string, lang: string, rawContent: string, normalizedLines: list<string>, highlightedLines: list<string>}|null
+     */
+    private ?array $writeCache = null;
+
+    /** Upstream's `context.argsComplete`: the message holding the call has ended. */
+    private bool $argsComplete = false;
 
     /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
@@ -200,6 +215,15 @@ final class ToolExecutionComponent extends Container
      */
     public function setArgsComplete(): void
     {
+        if (!$this->argsComplete) {
+            $this->argsComplete = true;
+
+            // A streamed write was highlighted line by line; whole, it is highlighted as a file.
+            if ($this->tool === 'write') {
+                $this->draw();
+            }
+        }
+
         if ($this->tool !== 'edit' || $this->cwd === null) {
             return;
         }
@@ -751,7 +775,12 @@ final class ToolExecutionComponent extends Container
             $language = $raw === '' ? null : Highlight::languageFromPath($raw);
             $display = str_replace("\r", '', $content);
             $this->writeHighlighter ??= new CodeHighlighter();
-            $lines = self::trimTrailingEmpty($language === null ? explode("\n", $display) : $this->writeHighlighter->highlight(self::tabs($display), $language));
+            $this->writeCache = $this->argsComplete ? null : $this->updateWriteCache($raw, $content, $language);
+            $lines = self::trimTrailingEmpty(match (true) {
+                $language === null => explode("\n", $display),
+                $this->writeCache !== null => $this->writeCache['highlightedLines'],
+                default => $this->writeHighlighter->highlight(self::tabs($display), $language),
+            });
             $total = count($lines);
             $shown = $this->expanded ? $lines : array_slice($lines, 0, self::FILE_LINES);
             $remaining = $total - count($shown);
@@ -1005,6 +1034,75 @@ final class ToolExecutionComponent extends Container
             is_array($truncation) => $truncation,
             default => null,
         };
+    }
+
+    /**
+     * Upstream's `updateWriteHighlightCacheIncremental()`: the cache brought up to `content`. Content
+     * that only grew highlights the line it grew on and each new one alone, then the first lines
+     * together, through the row's highlighter so unchanged ones are not highlighted again; anything
+     * else — a new path or language, an edit — highlights the whole content afresh.
+     *
+     * @return array{rawPath: string, lang: string, rawContent: string, normalizedLines: list<string>, highlightedLines: list<string>}|null
+     */
+    private function updateWriteCache(string $rawPath, string $content, ?string $language): ?array
+    {
+        if ($language === null) {
+            return null;
+        }
+
+        $cache = $this->writeCache;
+
+        if ($cache === null || $cache['lang'] !== $language || $cache['rawPath'] !== $rawPath || !str_starts_with($content, $cache['rawContent'])) {
+            $normalized = self::tabs(str_replace("\r", '', $content));
+
+            return [
+                'rawPath' => $rawPath,
+                'lang' => $language,
+                'rawContent' => $content,
+                'normalizedLines' => explode("\n", $normalized),
+                'highlightedLines' => Themes::highlightCode($normalized, $language),
+            ];
+        }
+
+        if (strlen($content) === strlen($cache['rawContent'])) {
+            return $cache;
+        }
+
+        $delta = self::tabs(str_replace("\r", '', substr($content, strlen($cache['rawContent']))));
+        $cache['rawContent'] = $content;
+
+        if ($cache['normalizedLines'] === []) {
+            $cache['normalizedLines'][] = '';
+            $cache['highlightedLines'][] = '';
+        }
+
+        $segments = explode("\n", $delta);
+        $last = count($cache['normalizedLines']) - 1;
+        $cache['normalizedLines'][$last] .= $segments[0];
+        $cache['highlightedLines'][$last] = self::highlightLine($cache['normalizedLines'][$last], $language);
+
+        foreach (array_slice($segments, 1) as $segment) {
+            $cache['normalizedLines'][] = $segment;
+            $cache['highlightedLines'][] = self::highlightLine($segment, $language);
+        }
+
+        // Upstream's `refreshWriteHighlightPrefix()`: the first lines highlighted together, so a
+        // construct spanning them (a comment, a string) colours as it will in the whole file.
+        $prefixCount = min(self::WRITE_PREFIX_LINES, count($cache['normalizedLines']));
+        $this->writeHighlighter ??= new CodeHighlighter();
+        $prefix = $this->writeHighlighter->highlight(implode("\n", array_slice($cache['normalizedLines'], 0, $prefixCount)), $language);
+
+        for ($i = 0; $i < $prefixCount; $i++) {
+            $cache['highlightedLines'][$i] = $prefix[$i] ?? self::highlightLine($cache['normalizedLines'][$i], $language);
+        }
+
+        return $cache;
+    }
+
+    /** Upstream's `highlightSingleLine()`. */
+    private static function highlightLine(string $line, string $language): string
+    {
+        return Themes::highlightCode($line, $language)[0] ?? '';
     }
 
     /** @param list<string> $lines */

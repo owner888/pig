@@ -7,13 +7,13 @@ namespace Pig\CodingAgent\Mermaid;
 use Pig\Ai\Utils\JsJson;
 
 /**
- * grok-mermaid's `labels.ts`: label text cleaned of markup and entities, wrapped and fitted.
+ * lovely-mermaid's `labels.ts`: label text cleaned of markup and entities, wrapped and fitted.
  *
  * Strings are walked by code point (`mb_str_split()`), as upstream walks them with `[...s]`.
  * White space is JavaScript's (`\s`, `trim()`), which takes in the no-break and other Unicode
  * spaces that PHP's own functions leave alone.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Labels
 {
@@ -31,6 +31,9 @@ final class Labels
 
     /** JavaScript's `\s`, as a character class. */
     public const string SPACE = '[\t\n\x{0B}\f\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]';
+
+    /** JavaScript's `\S`, as a character class. */
+    public const string NONSPACE = '[^\t\n\x{0B}\f\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]';
 
     private const int ENTITY_LOOKAHEAD = 10;
 
@@ -393,6 +396,24 @@ final class Labels
         }
 
         return $lines;
+    }
+
+    /** Mermaid writes generics as `List~T~`; shown as `List<T>`. */
+    public static function displayGenerics(string $s): string
+    {
+        $out = '';
+        $open = false;
+
+        foreach (mb_str_split($s, 1, 'UTF-8') as $c) {
+            if ($c === '~') {
+                $out .= $open ? '>' : '<';
+                $open = !$open;
+            } else {
+                $out .= $c;
+            }
+        }
+
+        return $out;
     }
 
     /** Truncated to `inner` columns, leaving room for the ellipsis. */

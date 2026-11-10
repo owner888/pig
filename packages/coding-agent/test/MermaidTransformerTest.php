@@ -6,7 +6,10 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Interactive\MermaidTransformer;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Ansi;
+use Pig\Tui\Images\TerminalCapabilities;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * Upstream's Mermaid transformer: a top-level ```mermaid block drawn as code-span rows, and left
@@ -28,6 +31,7 @@ final class MermaidTransformerTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        TerminalImage::resetCapabilitiesCache();
         $this->tearDownGlobalTheme();
     }
 
@@ -83,6 +87,67 @@ final class MermaidTransformerTest extends TestCase
             Ansi::strip(MermaidTransformer::transform($broken, false, 80)),
         );
         $this->assertStringStartsWith('` ┌', Ansi::strip(MermaidTransformer::transform($broken, true, 80)), 'drawn while it streams');
+    }
+
+    public function testLaterParseWarningsAreSummarised(): void
+    {
+        $markdown = "```mermaid\nflowchart LR\n  A --> B\n  broken !\n  other ?\n```";
+        $out = Ansi::strip(MermaidTransformer::transform($markdown, false, 80));
+
+        $this->assertStringContainsString($markdown, $out);
+        $this->assertStringContainsString('dropped, expected a link: "!"', $out);
+        $this->assertStringContainsString('(+1 more)', $out);
+        $this->assertStringNotContainsString('dropped, expected a link: "?"', $out);
+        $this->assertStringContainsString('│ broken │', Ansi::strip(MermaidTransformer::transform($markdown, true, 80)));
+    }
+
+    public function testTheKindsLovelyMermaidAddedAreDrawn(): void
+    {
+        $out = Ansi::strip(MermaidTransformer::transform("```mermaid\npie\n  title Pets\n  \"Dogs\" : 4\n```", false, 80));
+
+        $this->assertStringContainsString('Pets', $out);
+        $this->assertStringContainsString('Dogs', $out);
+        $this->assertStringContainsString('████████████████████', $out);
+        $this->assertStringNotContainsString('```mermaid', $out);
+    }
+
+    public function testRolesTakeTheThemesColours(): void
+    {
+        $theme = Themes::theme();
+        $out = MermaidTransformer::transform("```mermaid\nflowchart LR\n  A --> B\n```", false, 80);
+
+        $this->assertStringContainsString("\x1b[" . substr($theme->getFgAnsi('borderMuted'), 2, -1) . 'm┌', $out);
+        $this->assertStringContainsString("\x1b[" . substr($theme->getFgAnsi('accent'), 2, -1) . 'm', $out);
+    }
+
+    public function testAuthorClassStylesWinOverTheTheme(): void
+    {
+        $out = MermaidTransformer::transform(
+            "```mermaid\nflowchart LR\n  A[Hot]:::highlight --> B[Plain]\n  classDef highlight fill:#f96,stroke:#333,color:#000,font-weight:bold\n```",
+            false,
+            80,
+        );
+
+        $this->assertStringContainsString("\x1b[1;38;2;51;51;51;48;2;255;153;102m", $out);
+        $this->assertStringContainsString("\x1b[1;38;2;0;0;0;48;2;255;153;102m", $out);
+        $this->assertStringNotContainsString('```mermaid', $out);
+    }
+
+    public function testOnlyLabelsAreLinkedAndOnlyWhereTheTerminalShowsLinks(): void
+    {
+        $markdown = "```mermaid\nflowchart TD\n  A[Docs] --> B[Done]\n  click A \"https://example.com/docs\"\n```";
+        $open = "\x1b]8;;https://example.com/docs\x1b\\";
+
+        TerminalImage::setCapabilities(new TerminalCapabilities(null, true, true));
+        $linked = MermaidTransformer::transform($markdown, false, 80);
+        $this->assertSame(1, substr_count($linked, $open));
+        $this->assertStringNotContainsString('```mermaid', $linked);
+
+        TerminalImage::setCapabilities(new TerminalCapabilities(null, true, false));
+        $unlinked = MermaidTransformer::transform($markdown, false, 80);
+        $this->assertStringNotContainsString("\x1b]8;;", $unlinked);
+        $this->assertStringNotContainsString('https://example.com/docs', $unlinked);
+        $this->assertStringNotContainsString('```mermaid', $unlinked);
     }
 
     public function testAnUnclosedFenceRunsToTheEndAsItStreams(): void

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `layout.ts`: graph layout — rank, order, place, route, draw.
+ * lovely-mermaid's `layout.ts`: graph layout — rank, order, place, route, draw.
  *
  * Follows the Sugiyama outline: assign ranks along the flow axis, reorder within ranks to cut
  * crossings, then relax positions on the cross axis so chains stay straight. Edges between
@@ -15,48 +15,62 @@ namespace Pig\CodingAgent\Mermaid;
  *
  * A node's `NodeExtra` is an array: `['kind' => 'plain']`, `['kind' => 'frame', 'sub' => Canvas]`
  * or `['kind' => 'compartments', 'sections' => list<list<string>>]`. A span competing for a track
- * (`Span5`) is `[start, end, from, to, edgeIndex]`. `NodeSizes` and `RoutePlan` are arrays keyed
- * by upstream's field names.
+ * (`TrackSpan`) is an array keyed `start`, `end`, `from`, `to`, `edge` and maybe `labeled`.
+ * `NodeSizes` and `RoutePlan` are arrays keyed by upstream's field names, a lane label an array
+ * keyed `text`, `y`, `lo` and `hi`.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Layout
 {
     /** Cells of padding between a box border and its text. */
-    private const int PAD = 1;
+    public const int PAD = 1;
 
     /** Minimum horizontal / vertical space between boxes. */
     private const int GAP_X = 3;
     private const int GAP_Y = 2;
 
     /** Refuse to allocate a canvas larger than this many cells. */
-    private const int MAX_CANVAS_CELLS = 1 << 21;
+    public const int MAX_CANVAS_CELLS = 1 << 21;
 
     /** Saturating subtraction; Rust's `usize` arithmetic never goes negative. */
-    private static function sat(int $a, int $b): int
+    public static function sat(int $a, int $b): int
     {
         return max(0, $a - $b);
     }
 
-    private static function half(int $n): int
+    public static function half(int $n): int
     {
         return (int) floor($n / 2);
     }
 
     /** JS `Math.round()`: nearest integer, ties toward +∞ (PHP's `round()` ties away from zero). */
-    private static function jsRound(int|float $x): int
+    public static function jsRound(int|float $x): int
     {
         $f = floor($x);
 
         return (int) ($x - $f >= 0.5 ? $f + 1 : $f);
     }
 
+    /**
+     * Everything an edge says, joined — the fallback for routes that have no per-end placement
+     * (lanes, self-loops). Forward routes place `cardFrom` / `cardTo` at their own ends instead.
+     */
+    private static function edgeText(Edge $edge): ?string
+    {
+        $joined = implode(' ', array_filter(
+            [$edge->cardFrom ?? '', $edge->label ?? '', $edge->cardTo ?? ''],
+            static fn (string $part): bool => $part !== '',
+        ));
+
+        return $joined === '' ? null : $joined;
+    }
+
     // ------------------------------------------------------------------ ranking
 
     /**
-     * grok-mermaid's `computeRanks()`: longest-path ranking over the graph's DAG. Back edges
-     * (those closing a cycle) are excluded by a DFS colouring pass, so `A --> B --> C --> A`
-     * still ranks 0, 1, 2 rather than diverging.
+     * Longest-path ranking over the graph's DAG. Back edges (those closing a cycle) are excluded
+     * by a DFS colouring pass, so `A --> B --> C --> A` still ranks 0, 1, 2 rather than diverging.
      *
      * @return list<int>
      */
@@ -100,12 +114,11 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `dfsDag()`: iterative DFS recording postorder and skipping edges back into
-     * the stack.
+     * Iterative DFS recording postorder and skipping edges back into the stack.
      *
-     * @param list<list<int>> $children
-     * @param list<int> $color
-     * @param list<list<int>> $dag
+     * @param array<int, list<int>> $children
+     * @param array<int, int> $color
+     * @param array<int, list<int>> $dag
      * @param list<int> $order
      */
     private static function dfsDag(int $start, array $children, array &$color, array &$dag, array &$order): void
@@ -140,9 +153,9 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `orderRanks()`: nodes reordered within each rank to cut edge crossings
-     * (barycenter sweeps) — alternate down/up passes sort each rank by the mean position of its
-     * neighbours, keeping whichever ordering crossed least. `byRank` is rewritten in place.
+     * Nodes reordered within each rank to cut edge crossings (barycenter sweeps): alternate
+     * down/up passes sort each rank by the mean position of its neighbours, keeping whichever
+     * ordering crossed least. `byRank` is rewritten in place.
      *
      * @param list<list<int>> $byRank
      * @param list<Edge> $edges
@@ -206,7 +219,7 @@ final class Layout
 
     /**
      * @param list<int> $row
-     * @param list<int> $pos
+     * @param array<int, int> $pos
      */
     private static function reindex(array $row, array &$pos): void
     {
@@ -216,12 +229,12 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `sortByBarycenter()`: a row stably sorted by its nodes' mean neighbour
-     * position, a node without neighbours keeping its own.
+     * A row stably sorted by its nodes' mean neighbour position, a node without neighbours keeping
+     * its own.
      *
      * @param list<int> $row
-     * @param list<list<int>> $neigh
-     * @param list<int> $pos
+     * @param array<int, list<int>> $neigh
+     * @param array<int, int> $pos
      */
     private static function sortByBarycenter(array &$row, array $neigh, array $pos): void
     {
@@ -237,11 +250,11 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `countCrossings()`: pairs of adjacent-rank edges out of one rank that cross.
+     * Pairs of adjacent-rank edges out of one rank that cross.
      *
      * @param list<Edge> $edges
      * @param list<int> $ranks
-     * @param list<int> $pos
+     * @param array<int, int> $pos
      */
     public static function countCrossings(array $edges, array $ranks, array $pos): int
     {
@@ -272,9 +285,9 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `assignPositions()`: a cross-axis centre for every node so nodes line up
-     * under their neighbours — each drifts toward the average of its neighbours while ranks keep
-     * their order and boxes keep `sep` between them.
+     * A cross-axis centre for every node so nodes line up under their neighbours — each drifts
+     * toward the average of its neighbours while ranks keep their order and boxes keep `sep`
+     * between them.
      *
      * @param list<list<int>> $byRank
      * @param list<int> $size
@@ -338,11 +351,11 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `relaxRank()`: one rank pulled toward its neighbours' mean positions.
+     * One rank pulled toward its neighbours' mean positions.
      *
      * @param list<int> $nodes
-     * @param list<list<int>> $neigh
-     * @param list<int|float> $pos
+     * @param array<int, list<int>> $neigh
+     * @param array<int, int|float> $pos
      * @param list<int> $size
      */
     private static function relaxRank(array $nodes, array $neigh, array &$pos, array $size, int $sep): void
@@ -389,37 +402,40 @@ final class Layout
     // ------------------------------------------------------------------- tracks
 
     /**
-     * grok-mermaid's `assignTracks()`: spans packed into as few parallel tracks as possible. Two
-     * spans share a track when they are two cells apart, or when they share an endpoint — edges
-     * fanning out of one node deliberately reuse a single row so a merge draws one arrowhead
-     * rather than a stack of them.
+     * Spans packed into as few parallel tracks as possible. Two spans share a track when they are
+     * two cells apart, or when they share an endpoint — edges fanning out of one node reuse a
+     * single row so a merge draws one arrowhead rather than a stack of them. A labelled lane
+     * refuses that sharing: its label would appear to cover every edge merged onto the row.
      *
-     * @param list<array{0: int, 1: int, 2: int, 3: int, 4: int}> $spans
+     * Lanes pack shortest first (`shortestFirst`): a span inside another takes the inner track,
+     * so exits and entries at rows the inner lane never reaches cross nothing.
+     *
+     * @param list<array{start: int, end: int, from: int, to: int, edge: int, labeled?: bool}> $spans
      * @return array{assigned: list<array{0: int, 1: int}>, count: int}
      */
-    public static function assignTracks(array $spans): array
+    public static function assignTracks(array $spans, bool $shortestFirst = false): array
     {
         $sorted = $spans;
-        usort($sorted, static function (array $a, array $b): int {
-            for ($i = 0; $i < 5; $i++) {
-                if ($a[$i] !== $b[$i]) {
-                    return $a[$i] <=> $b[$i];
-                }
-            }
-
-            return 0;
-        });
+        usort($sorted, static fn (array $a, array $b): int => ($shortestFirst ? ($a['end'] - $a['start']) <=> ($b['end'] - $b['start']) : 0)
+            ?: $a['start'] <=> $b['start']
+            ?: $a['end'] <=> $b['end']
+            ?: $a['from'] <=> $b['from']
+            ?: $a['to'] <=> $b['to']
+            ?: $a['edge'] <=> $b['edge']);
         $tracks = [];
         $assigned = [];
 
-        foreach ($sorted as [$s, $e, $f, $t, $idx]) {
+        foreach ($sorted as $span) {
             $slot = -1;
+            $labeled = $span['labeled'] ?? false;
 
             foreach ($tracks as $k => $members) {
                 $fits = true;
 
-                foreach ($members as [$s2, $e2, $f2, $t2]) {
-                    if (!($e2 + 2 <= $s || $e + 2 <= $s2 || $f2 === $f || $t2 === $t)) {
+                foreach ($members as $m) {
+                    $shares = ($m['from'] === $span['from'] || $m['to'] === $span['to']) && !($m['labeled'] ?? false) && !$labeled;
+
+                    if (!($m['end'] + 2 <= $span['start'] || $span['end'] + 2 <= $m['start'] || $shares)) {
                         $fits = false;
 
                         break;
@@ -438,22 +454,35 @@ final class Layout
                 $slot = count($tracks) - 1;
             }
 
-            $tracks[$slot][] = [$s, $e, $f, $t];
-            $assigned[] = [$idx, $slot];
+            $tracks[$slot][] = $span;
+            $assigned[] = [$span['edge'], $slot];
         }
 
         return ['assigned' => $assigned, 'count' => count($tracks)];
     }
 
     /**
-     * grok-mermaid's `busSpans()`: edges from rank `r` to `r + 1` that must jog sideways, so
-     * need a bus row.
+     * An edge between adjacent ranks running against the direction. Top-down, these route locally
+     * through the band their forward siblings use — the short return arrow mermaid draws — rather
+     * than around the diagram. Left-to-right boxes are three rows tall, leaving no room to offset
+     * the return off the centre row, so LR and RL keep the lane.
+     *
+     * @param list<int> $ranks
+     */
+    public static function isAdjacentBack(array $ranks, Edge $e): bool
+    {
+        return $e->from !== $e->to && $ranks[$e->from] === $ranks[$e->to] + 1;
+    }
+
+    /**
+     * Edges crossing the band between rank `r` and `r + 1` that must jog sideways, so need a bus
+     * row. `withBack` admits adjacent back edges.
      *
      * @param list<int> $ranks
      * @param list<int> $centers
-     * @return list<array{0: int, 1: int, 2: int, 3: int, 4: int}>
+     * @return list<array{start: int, end: int, from: int, to: int, edge: int}>
      */
-    private static function busSpans(Graph $graph, array $ranks, array $centers, int $r, bool $exact): array
+    private static function busSpans(Graph $graph, array $ranks, array $centers, int $r, bool $exact, bool $withBack): array
     {
         $out = [];
 
@@ -461,14 +490,18 @@ final class Layout
             $jogs = $exact
                 ? $centers[$e->from] !== $centers[$e->to]
                 : abs($centers[$e->from] - $centers[$e->to]) > 1;
+            $lo = min($ranks[$e->from], $ranks[$e->to]);
+            $adjacent = $withBack
+                ? abs($ranks[$e->from] - $ranks[$e->to]) === 1
+                : $ranks[$e->to] === $ranks[$e->from] + 1;
 
-            if ($e->from !== $e->to && $ranks[$e->from] === $r && $ranks[$e->to] === $r + 1 && $jogs) {
+            if ($e->from !== $e->to && $adjacent && $lo === $r && $jogs) {
                 $out[] = [
-                    min($centers[$e->from], $centers[$e->to]),
-                    max($centers[$e->from], $centers[$e->to]),
-                    $e->from,
-                    $e->to,
-                    $i,
+                    'start' => min($centers[$e->from], $centers[$e->to]),
+                    'end' => max($centers[$e->from], $centers[$e->to]),
+                    'from' => $e->from,
+                    'to' => $e->to,
+                    'edge' => $i,
                 ];
             }
         }
@@ -477,12 +510,11 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `laneSpans()`: edges skipping a rank or running backwards; these go around
-     * in a lane.
+     * Edges skipping a rank or running backwards; these go around in a lane.
      *
      * @param list<int> $ranks
      * @param list<Placed> $placed
-     * @return list<array{0: int, 1: int, 2: int, 3: int, 4: int}>
+     * @return list<array{start: int, end: int, from: int, to: int, edge: int, labeled: bool}>
      */
     private static function laneSpans(Graph $graph, array $ranks, array $placed, bool $vertical): array
     {
@@ -493,11 +525,15 @@ final class Layout
                 continue;
             }
 
+            if ($vertical && self::isAdjacentBack($ranks, $e)) {
+                continue;
+            }
+
             $pf = $placed[$e->from];
             $pt = $placed[$e->to];
             $a = $vertical ? min($pf->cy, $pt->cy) : min($pf->cx, $pt->cx);
             $b = $vertical ? max($pf->cy, $pt->cy) : max($pf->cx, $pt->cx);
-            $out[] = [$a, $b, $e->from, $e->to, $i];
+            $out[] = ['start' => $a, 'end' => $b, 'from' => $e->from, 'to' => $e->to, 'edge' => $i, 'labeled' => self::edgeText($e) !== null];
         }
 
         return $out;
@@ -506,46 +542,280 @@ final class Layout
     // ----------------------------------------------------------------- placement
 
     /**
-     * grok-mermaid's `placeTd()`: top-down placement, filling `placed` and returning the route
-     * plan (`canvasW`, `canvasH`, `bandEnd`, `edgeBus`, `laneBase`, `edgeLane`).
+     * Top-down placement, filling `placed` and returning the route plan.
      *
      * @param list<int> $ranks
      * @param list<list<int>> $byRank
      * @param array{boxW: list<int>, boxH: list<int>, layW: list<int>, layH: list<int>, extraH: list<int>, selfLabelW: list<int>} $sizes
      * @param list<Placed> $placed
-     * @return array{canvasW: int, canvasH: int, bandEnd: list<int>, edgeBus: list<int>, laneBase: int, edgeLane: list<int>}
+     * @return array<string, mixed>
      */
     private static function placeTd(array $ranks, int $maxRank, array $byRank, array $sizes, Graph $graph, array &$placed): array
     {
         $centers = self::assignPositions($byRank, $sizes['layW'], self::GAP_X, $graph->edges, $ranks);
+        $edgeCount = count($graph->edges);
+        $nodeCount = count($graph->nodes);
 
-        $edgeBus = array_fill(0, count($graph->edges), 0);
+        // Top-entry geometry, derivable before placement. A node's entries — the merged forward
+        // cluster plus each skip — spread evenly across the box top (two entries land at about
+        // 1/3 and 2/3). A forward arrival aligned with its source stays at centre so chains keep
+        // no kinks, and the skips spread over the right half instead. A label that does not fit
+        // before the next entry renders left of its arrow. A skip whose entry column crosses no
+        // box on any intermediate rank drops straight instead of taking a lane.
+        $boxL = static fn (int $j): int => self::sat($centers[$j], self::half($sizes['boxW'][$j]));
+        $boxR = static fn (int $j): int => $boxL($j) + $sizes['boxW'][$j] - 1;
+        $isSkip = static fn (Edge $e): bool => $e->from !== $e->to && $ranks[$e->to] - $ranks[$e->from] > 1;
+        $edgeEntryX = array_fill(0, $edgeCount, -1);
+        $edgeStraight = array_fill(0, $edgeCount, false);
+        $fwdEntryX = array_fill(0, $nodeCount, -1);
+        $edgeLabelLeft = array_fill(0, $edgeCount, false);
+        $labelW = static function (Edge $e): int {
+            $parts = array_values(array_filter([$e->label, $e->cardTo], static fn (?string $p): bool => $p !== null));
+
+            return $parts === [] ? -1 : max(array_map(static fn (string $p): int => min(Measure::width($p), Labels::MAX_LABEL), $parts));
+        };
+        $skipsInto = array_fill(0, $nodeCount, []);
+        $fwdsInto = array_fill(0, $nodeCount, []);
+
+        foreach ($graph->edges as $i => $e) {
+            if ($e->from === $e->to) {
+                continue;
+            }
+
+            if ($isSkip($e)) {
+                $skipsInto[$e->to][] = $i;
+            } elseif ($ranks[$e->to] === $ranks[$e->from] + 1) {
+                $fwdsInto[$e->to][] = $i;
+            }
+        }
+
+        for ($t = 0; $t < $nodeCount; $t++) {
+            $skips = $skipsInto[$t];
+
+            if ($skips === []) {
+                continue;
+            }
+
+            $fwds = $fwdsInto[$t];
+            $cx = $centers[$t];
+            $left = $boxL($t);
+            $right = $boxR($t);
+            $hasFwd = $fwds !== [];
+            $aligned = false;
+
+            foreach ($fwds as $i) {
+                if (abs($centers[$graph->edges[$i]->from] - $cx) <= 1) {
+                    $aligned = true;
+                }
+            }
+
+            $spreadL = $hasFwd && $aligned ? $cx : $left;
+            $slots = $hasFwd && $aligned ? count($skips) : ($hasFwd ? 1 : 0) + count($skips);
+            $slot = static fn (int $i): int => $spreadL + self::jsRound((($right - $spreadL) * ($i + 1)) / ($slots + 1));
+
+            // Ordered entries: the forward cluster (if any), then each skip.
+            $items = [];
+
+            if ($hasFwd) {
+                $items[] = [
+                    'slot' => $aligned ? $cx : $slot(0),
+                    'w' => max(array_map(static fn (int $i): int => $labelW($graph->edges[$i]), $fwds)),
+                    'skip' => null,
+                ];
+            }
+
+            foreach ($skips as $j => $si) {
+                $items[] = [
+                    'slot' => $slot($hasFwd && $aligned ? $j : $j + ($hasFwd ? 1 : 0)),
+                    'w' => $labelW($graph->edges[$si]),
+                    'skip' => $si,
+                ];
+            }
+
+            // Walk left to right with a cursor over the free head-row cells: each entry lands at
+            // its slot (or past the previous label), its own label going right when the next slot
+            // leaves room, else left when the cells behind the cursor allow. Overflow falls back
+            // to the earlier rule.
+            $cols = [];
+            $lefts = [];
+            $cursor = $left;
+            $fits = true;
+
+            foreach ($items as $i => $item) {
+                $x = max($item['slot'], $cursor);
+
+                if ($x > $right - 1) {
+                    $fits = false;
+
+                    break;
+                }
+
+                $next = $items[$i + 1]['slot'] ?? PHP_INT_MAX;
+                $w = $item['w'];
+
+                if ($w >= 0 && $x + $w + 2 > $next && $x - $cursor >= $w) {
+                    $lefts[] = true;
+                    $cursor = $x + 2;
+                } else {
+                    $lefts[] = false;
+                    $cursor = $w >= 0 ? $x + $w + 2 : $x + 2;
+                }
+
+                $cols[] = $x;
+            }
+
+            if ($fits) {
+                foreach ($items as $i => $item) {
+                    if ($item['skip'] === null) {
+                        $fwdEntryX[$t] = $cols[$i];
+
+                        if ($lefts[$i]) {
+                            foreach ($fwds as $fi) {
+                                $edgeLabelLeft[$fi] = true;
+                            }
+                        }
+                    } else {
+                        $edgeEntryX[$item['skip']] = $cols[$i];
+                        $edgeLabelLeft[$item['skip']] = $lefts[$i];
+                    }
+                }
+
+                continue;
+            }
+
+            // The earlier rule: forward stays centred; a skip lands past the arrival labels, or
+            // left of centre with its own label flipped left.
+            $reach = $hasFwd
+                ? max($cx, ...array_map(static fn (int $i): int => $cx + 1 + $labelW($graph->edges[$i]), $fwds))
+                : -1;
+
+            foreach ($skips as $si) {
+                $clear = $reach === -1 ? $cx + 2 : $reach + 2;
+                $capped = min($clear, $right - 1);
+
+                if ($capped > max($cx, $reach)) {
+                    $edgeEntryX[$si] = $capped;
+                } else {
+                    $edgeEntryX[$si] = max($left + 1, $cx - 2);
+                    $edgeLabelLeft[$si] = true;
+                }
+            }
+        }
+
+        foreach ($graph->edges as $i => $e) {
+            if (!$isSkip($e)) {
+                continue;
+            }
+
+            $entryX = $edgeEntryX[$i];
+            $straight = true;
+
+            for ($j = 0; $j < $nodeCount; $j++) {
+                if (!($ranks[$j] <= $ranks[$e->from] || $ranks[$j] >= $ranks[$e->to] || $entryX < $boxL($j) || $entryX > $boxR($j))) {
+                    $straight = false;
+
+                    break;
+                }
+            }
+
+            $edgeStraight[$i] = $straight;
+        }
+
+        $edgeBus = array_fill(0, $edgeCount, 0);
         $busTracks = array_fill(0, $maxRank + 1, 0);
 
         for ($r = 0; $r < $maxRank; $r++) {
-            $spans = self::busSpans($graph, $ranks, $centers, $r, false);
+            $spans = self::busSpans($graph, $ranks, $centers, $r, false, true);
+
+            // Skip departures ride the bus tracks of their own band: endpoint sharing folds them
+            // onto their siblings' row, so a node's forward fan and its skips split from one `┴`.
+            foreach ($graph->edges as $i => $e) {
+                if (!$isSkip($e) || $ranks[$e->from] !== $r) {
+                    continue;
+                }
+
+                $endX = $edgeStraight[$i] ? $edgeEntryX[$i] : 1 << 29;
+                $spans[] = [
+                    'start' => min($centers[$e->from], $endX),
+                    'end' => max($centers[$e->from], $endX),
+                    'from' => $e->from,
+                    'to' => $e->to,
+                    'edge' => $i,
+                ];
+            }
 
             if ($spans === []) {
                 continue;
             }
 
-            ['assigned' => $assigned, 'count' => $count] = self::assignTracks($spans);
+            // Back-edge arrowheads sit on the first band row, back buses right under it, forward
+            // buses below those: with the attach columns offset right of centre, a reciprocal
+            // pair then runs as two parallel staircases — no crossings.
+            $back = array_values(array_filter($spans, static fn (array $s): bool => self::isAdjacentBack($ranks, $graph->edges[$s['edge']])));
+            $fwd = array_values(array_filter($spans, static fn (array $s): bool => !self::isAdjacentBack($ranks, $graph->edges[$s['edge']])));
+            $base = 0;
 
-            foreach ($assigned as [$idx, $slot]) {
-                $edgeBus[$idx] = $slot;
+            foreach ($graph->edges as $e) {
+                if (self::isAdjacentBack($ranks, $e) && $ranks[$e->to] === $r) {
+                    $base = 1;
+
+                    break;
+                }
             }
 
-            $busTracks[$r] = $count;
+            $b = self::assignTracks($back);
+
+            foreach ($b['assigned'] as [$idx, $slot]) {
+                $edgeBus[$idx] = $base + $slot;
+            }
+
+            $f = self::assignTracks($fwd);
+
+            foreach ($f['assigned'] as [$idx, $slot]) {
+                $edgeBus[$idx] = $base + $b['count'] + $slot;
+            }
+
+            $busTracks[$r] = $base + $b['count'] + $f['count'];
+        }
+
+        // A laned skip re-enters along a reserved approach row above the target's rank, over the
+        // arrival heads and their labels; straight drops need none.
+        $entersInto = array_fill(0, $maxRank + 1, false);
+
+        foreach ($graph->edges as $i => $e) {
+            if ($isSkip($e) && !$edgeStraight[$i]) {
+                $entersInto[$ranks[$e->to]] = true;
+            }
+        }
+
+        for ($r = 0; $r < $maxRank; $r++) {
+            if ($entersInto[$r + 1]) {
+                $busTracks[$r]++;
+            }
         }
 
         $rankH = array_map(
             static fn (array $row): int => $row === [] ? 3 : max(array_map(static fn (int $i): int => $sizes['boxH'][$i] + $sizes['extraH'][$i], $row)),
             $byRank,
         );
+
+        // Per-end cardinalities want a row each around the verb: source card, label,
+        // arrow-and-target card.
+        $hasCards = false;
+
+        foreach ($graph->edges as $e) {
+            if ($e->cardFrom !== null || $e->cardTo !== null) {
+                $hasCards = true;
+
+                break;
+            }
+        }
+
+        $gapY = $hasCards ? max(self::GAP_Y, 3) : self::GAP_Y;
         $rankY = array_fill(0, $maxRank + 1, 0);
 
         for ($r = 1; $r <= $maxRank; $r++) {
-            $rankY[$r] = $rankY[$r - 1] + $rankH[$r - 1] + max(self::GAP_Y, $busTracks[$r - 1] + 1);
+            $rankY[$r] = $rankY[$r - 1] + $rankH[$r - 1] + max($gapY, $busTracks[$r - 1] + 1);
         }
 
         $canvasH = $rankY[$maxRank] + $rankH[$maxRank];
@@ -553,6 +823,15 @@ final class Layout
 
         for ($r = 0; $r <= $maxRank; $r++) {
             $bandEnd[] = $rankY[$r] + $rankH[$r];
+        }
+
+        // Approach rows sit just above each band's arrival-head row.
+        $skipApproach = array_fill(0, $maxRank + 1, -1);
+
+        for ($r = 0; $r < $maxRank; $r++) {
+            if ($entersInto[$r + 1]) {
+                $skipApproach[$r + 1] = $rankY[$r + 1] - 2;
+            }
         }
 
         $diagramW = 1;
@@ -576,23 +855,42 @@ final class Layout
         $contentW = $diagramW;
 
         foreach ($graph->edges as $e) {
-            if ($e->from === $e->to || $e->label === null) {
+            if ($e->from === $e->to) {
                 continue;
             }
 
-            $lw = min(Measure::width($e->label), Labels::MAX_LABEL);
-            $contentW = $ranks[$e->to] === $ranks[$e->from] + 1
-                ? max($contentW, $placed[$e->to]->cx + 2 + $lw)
-                : max($contentW, $diagramW + $lw + 1);
+            if ($ranks[$e->to] === $ranks[$e->from] + 1) {
+                foreach ([$e->label, $e->cardTo] as $part) {
+                    if ($part !== null) {
+                        $contentW = max($contentW, $placed[$e->to]->cx + 2 + min(Measure::width($part), Labels::MAX_LABEL));
+                    }
+                }
+
+                if ($e->cardFrom !== null) {
+                    $contentW = max($contentW, $placed[$e->from]->cx + 2 + Measure::width($e->cardFrom));
+                }
+            } elseif (self::isAdjacentBack($ranks, $e)) {
+                $text = self::edgeText($e);
+
+                if ($text !== null) {
+                    $contentW = max($contentW, $placed[$e->to]->cx + 2 + min(Measure::width($text), Labels::MAX_LABEL));
+                }
+            } else {
+                $text = self::edgeText($e);
+
+                if ($text !== null) {
+                    $contentW = max($contentW, $diagramW + min(Measure::width($text), Labels::MAX_LABEL) + 1);
+                }
+            }
         }
 
-        $edgeLane = array_fill(0, count($graph->edges), 0);
-        $lanes = self::laneSpans($graph, $ranks, $placed, true);
+        $edgeLane = array_fill(0, $edgeCount, 0);
+        $lanes = array_values(array_filter(self::laneSpans($graph, $ranks, $placed, true), static fn (array $s): bool => !$edgeStraight[$s['edge']]));
         $canvasW = $contentW;
         $laneBase = 0;
 
         if ($lanes !== []) {
-            ['assigned' => $assigned, 'count' => $count] = self::assignTracks($lanes);
+            ['assigned' => $assigned, 'count' => $count] = self::assignTracks($lanes, true);
 
             foreach ($assigned as [$idx, $slot]) {
                 $edgeLane[$idx] = $slot;
@@ -602,46 +900,123 @@ final class Layout
             $laneBase = $contentW + 1;
         }
 
-        return ['canvasW' => $canvasW, 'canvasH' => $canvasH, 'bandEnd' => $bandEnd, 'edgeBus' => $edgeBus, 'laneBase' => $laneBase, 'edgeLane' => $edgeLane];
+        return [
+            'canvasW' => $canvasW,
+            'canvasH' => $canvasH,
+            'bandEnd' => $bandEnd,
+            'rankStart' => $rankY,
+            'edgeBus' => $edgeBus,
+            'laneBase' => $laneBase,
+            'edgeLane' => $edgeLane,
+            'skipApproach' => $skipApproach,
+            'edgeEntryX' => $edgeEntryX,
+            'edgeStraight' => $edgeStraight,
+            'fwdEntryX' => $fwdEntryX,
+            'edgeLabelLeft' => $edgeLabelLeft,
+        ];
     }
 
     /**
-     * grok-mermaid's `placeLr()`: left-to-right placement, filling `placed` and returning the
-     * route plan.
+     * Left-to-right placement, filling `placed` and returning the route plan.
      *
      * @param list<int> $ranks
      * @param list<list<int>> $byRank
      * @param array{boxW: list<int>, boxH: list<int>, layW: list<int>, layH: list<int>, extraH: list<int>, selfLabelW: list<int>} $sizes
      * @param list<Placed> $placed
-     * @return array{canvasW: int, canvasH: int, bandEnd: list<int>, edgeBus: list<int>, laneBase: int, edgeLane: list<int>}
+     * @return array<string, mixed>
      */
     private static function placeLr(array $ranks, int $maxRank, array $byRank, array $sizes, Graph $graph, array &$placed): array
     {
-        $colW = array_map(
-            static fn (array $row): int => $row === [] ? 0 : max(array_map(static fn (int $i): int => $sizes['boxW'][$i], $row)),
-            $byRank,
-        );
-
-        // Left-to-right edge labels sit in the gap between columns, so the gap has to be wide
-        // enough for the widest of them.
-        $labelWidths = [];
-
-        foreach ($graph->edges as $e) {
-            if (($e->from === $e->to || $ranks[$e->to] === $ranks[$e->from] + 1) && $e->label !== null) {
-                $labelWidths[] = min(Measure::width($e->label), Labels::MAX_LABEL);
-            }
-        }
-
-        $maxLabel = $labelWidths === [] ? 0 : max($labelWidths);
-        $baseGap = max(self::GAP_X + 1, $maxLabel + 3);
+        $edgeCount = count($graph->edges);
+        $nodeCount = count($graph->nodes);
+        $colW = array_map(static fn (array $row): int => $row === [] ? 0 : max(array_map(static fn (int $i): int => $sizes['boxW'][$i], $row)), $byRank);
 
         $centers = self::assignPositions($byRank, $sizes['layH'], 1, $graph->edges, $ranks);
 
-        $edgeBus = array_fill(0, count($graph->edges), 0);
+        // A skip whose target entry row crosses no box on any intermediate rank runs straight
+        // through the diagram into the target's left side, exiting through the source's
+        // right-side fan; the bottom lane is the fallback.
+        $isSkip = static fn (Edge $e): bool => $e->from !== $e->to && $ranks[$e->to] - $ranks[$e->from] > 1;
+
+        // A back-edge target's bottom-entry `▲` stub sits one row below its box; a straight run
+        // through that cell would appear to carry the arrival.
+        $stubRows = [];
+
+        foreach ($graph->edges as $e) {
+            if ($e->from === $e->to || $ranks[$e->to] >= $ranks[$e->from]) {
+                continue;
+            }
+
+            $t = $e->to;
+            $stubRows[self::sat($centers[$t], self::half($sizes['boxH'][$t] + $sizes['extraH'][$t])) + $sizes['boxH'][$t]] = true;
+        }
+
+        $edgeStraight = array_fill(0, $edgeCount, false);
+
+        foreach ($graph->edges as $i => $e) {
+            if (!$isSkip($e)) {
+                continue;
+            }
+
+            $row = $centers[$e->to];
+            $straight = !isset($stubRows[$row]);
+
+            for ($j = 0; $straight && $j < $nodeCount; $j++) {
+                if (!($ranks[$j] <= $ranks[$e->from] || $ranks[$j] >= $ranks[$e->to] || abs($centers[$j] - $row) > self::half($sizes['boxH'][$j] + $sizes['extraH'][$j]))) {
+                    $straight = false;
+                }
+            }
+
+            $edgeStraight[$i] = $straight;
+        }
+
+        // Left-to-right edge labels sit in the gap after their source's column, so each gap sizes
+        // to the widest label leaving through it. Straight skips label there too; a self-loop's
+        // label hangs beside its own box (`selfLabelW`).
+        $bandLabel = array_fill(0, $maxRank + 1, 0);
+
+        foreach ($graph->edges as $i => $e) {
+            if ($e->from === $e->to) {
+                continue;
+            }
+
+            if ($ranks[$e->to] !== $ranks[$e->from] + 1 && !$edgeStraight[$i]) {
+                continue;
+            }
+
+            $verb = $e->label === null ? 0 : min(Measure::width($e->label), Labels::MAX_LABEL);
+            $cards = 0;
+
+            foreach ([$e->cardFrom, $e->cardTo] as $card) {
+                if ($card !== null) {
+                    $cards += Measure::width($card) + 1;
+                }
+            }
+
+            $bandLabel[$ranks[$e->from]] = max($bandLabel[$ranks[$e->from]], $verb + $cards);
+        }
+
+        $edgeBus = array_fill(0, $edgeCount, 0);
         $busTracks = array_fill(0, $maxRank + 1, 0);
 
         for ($r = 0; $r < $maxRank; $r++) {
-            $spans = self::busSpans($graph, $ranks, $centers, $r, true);
+            $spans = self::busSpans($graph, $ranks, $centers, $r, true, false);
+
+            // Straight-skip departures ride their own band's bus tracks: endpoint sharing folds
+            // them onto their siblings' column — one fan origin.
+            foreach ($graph->edges as $i => $e) {
+                if (!$isSkip($e) || !$edgeStraight[$i] || $ranks[$e->from] !== $r) {
+                    continue;
+                }
+
+                $spans[] = [
+                    'start' => min($centers[$e->from], $centers[$e->to]),
+                    'end' => max($centers[$e->from], $centers[$e->to]),
+                    'from' => $e->from,
+                    'to' => $e->to,
+                    'edge' => $i,
+                ];
+            }
 
             if ($spans === []) {
                 continue;
@@ -659,7 +1034,8 @@ final class Layout
         $rankX = array_fill(0, $maxRank + 1, 0);
 
         for ($r = 1; $r <= $maxRank; $r++) {
-            $rankX[$r] = $rankX[$r - 1] + $colW[$r - 1] + max($baseGap, $busTracks[$r - 1] + 1);
+            $gap = max(self::GAP_X + 1, $bandLabel[$r - 1] + 3, $busTracks[$r - 1] + 1);
+            $rankX[$r] = $rankX[$r - 1] + $colW[$r - 1] + $gap;
         }
 
         $selfTails = [];
@@ -692,13 +1068,13 @@ final class Layout
             }
         }
 
-        $edgeLane = array_fill(0, count($graph->edges), 0);
-        $lanes = self::laneSpans($graph, $ranks, $placed, false);
+        $edgeLane = array_fill(0, $edgeCount, 0);
+        $lanes = array_values(array_filter(self::laneSpans($graph, $ranks, $placed, false), static fn (array $s): bool => !$edgeStraight[$s['edge']]));
         $canvasH = $diagramH;
         $laneBase = 0;
 
         if ($lanes !== []) {
-            ['assigned' => $assigned, 'count' => $count] = self::assignTracks($lanes);
+            ['assigned' => $assigned, 'count' => $count] = self::assignTracks($lanes, true);
 
             foreach ($assigned as [$idx, $slot]) {
                 $edgeLane[$idx] = $slot;
@@ -708,14 +1084,27 @@ final class Layout
             $laneBase = $diagramH + 1;
         }
 
-        return ['canvasW' => $canvasW, 'canvasH' => $canvasH, 'bandEnd' => $bandEnd, 'edgeBus' => $edgeBus, 'laneBase' => $laneBase, 'edgeLane' => $edgeLane];
+        return [
+            'canvasW' => $canvasW,
+            'canvasH' => $canvasH,
+            'bandEnd' => $bandEnd,
+            'rankStart' => $rankX,
+            'edgeBus' => $edgeBus,
+            'laneBase' => $laneBase,
+            'edgeLane' => $edgeLane,
+            'skipApproach' => array_fill(0, $maxRank + 1, -1),
+            'edgeEntryX' => array_fill(0, $edgeCount, -1),
+            'edgeStraight' => $edgeStraight,
+            'fwdEntryX' => array_fill(0, $nodeCount, -1),
+            'edgeLabelLeft' => array_fill(0, $edgeCount, false),
+        ];
     }
 
     // -------------------------------------------------------------------- canvas
 
     /**
-     * grok-mermaid's `layoutCanvas()`: a graph ranked, placed, drawn and routed onto a fresh
-     * canvas. Null when the graph is empty or over the cell cap.
+     * A graph ranked, placed, drawn and routed onto a fresh canvas. Null when the graph is empty
+     * or over the cell cap.
      *
      * @param list<array<string, mixed>> $extras one `NodeExtra` per node
      */
@@ -725,6 +1114,30 @@ final class Layout
 
         if ($n === 0) {
             return null;
+        }
+
+        // Parallel edges ride the same cells, so all labels after the first would be lost — they
+        // are joined onto the first instead, before sizing so the joined label gets its room.
+        $firstOf = [];
+
+        foreach ($graph->edges as $i => $e) {
+            if ($e->from === $e->to) {
+                continue;
+            }
+
+            $key = "{$e->from}>{$e->to}";
+
+            if (!array_key_exists($key, $firstOf)) {
+                $firstOf[$key] = $i;
+
+                continue;
+            }
+
+            if ($e->label !== null) {
+                $first = $graph->edges[$firstOf[$key]];
+                $first->label = $first->label === null ? $e->label : "{$first->label} / {$e->label}";
+                $e->label = null;
+            }
         }
 
         $ranks = self::computeRanks($graph);
@@ -737,6 +1150,29 @@ final class Layout
         }
 
         self::orderRanks($byRank, $graph->edges, $ranks);
+
+        // Lane edges exit through the rank's trailing side toward the lane strip; their endpoints
+        // go last within the rank, or whatever the ordering put beyond them would sit in that
+        // corridor and be cut through.
+        $vertical = $graph->dir === 'down' || $graph->dir === 'up';
+        $inLane = array_fill(0, $n, false);
+
+        foreach ($graph->edges as $e) {
+            if ($vertical && self::isAdjacentBack($ranks, $e)) {
+                continue;
+            }
+
+            if ($e->from !== $e->to && $ranks[$e->to] !== $ranks[$e->from] + 1) {
+                $inLane[$e->from] = true;
+                $inLane[$e->to] = true;
+            }
+        }
+
+        foreach ($byRank as &$row) {
+            usort($row, static fn (int $a, int $b): int => (int) $inLane[$a] <=> (int) $inLane[$b]);
+        }
+
+        unset($row);
 
         $wrapped = array_map(static fn (Node $node): array => Labels::wrapLabel($node->label, Labels::WRAP_WIDTH, Labels::MAX_LINES), $graph->nodes);
         $widest = static fn (array $lines): int => max(1, $lines === [] ? 1 : max(array_map(Measure::width(...), $lines)));
@@ -768,9 +1204,10 @@ final class Layout
             }
 
             $extraH[$e->from] = 2;
+            $text = self::edgeText($e);
 
-            if ($e->label !== null) {
-                $selfLabelW[$e->from] = max($selfLabelW[$e->from], min(Measure::width($e->label), Labels::MAX_LABEL));
+            if ($text !== null) {
+                $selfLabelW[$e->from] = max($selfLabelW[$e->from], min(Measure::width($text), Labels::MAX_LABEL));
             }
         }
 
@@ -799,7 +1236,6 @@ final class Layout
             $placed[] = new Placed(0, 0, 0, 0, 0, 0, 0);
         }
 
-        $vertical = $graph->dir === 'down' || $graph->dir === 'up';
         $plan = $vertical
             ? self::placeTd($ranks, $maxRank, $byRank, $sizes, $graph, $placed)
             : self::placeLr($ranks, $maxRank, $byRank, $sizes, $graph, $placed);
@@ -809,18 +1245,29 @@ final class Layout
         }
 
         $canvas = new Canvas($plan['canvasW'], $plan['canvasH']);
+        // `BT` mirrors the finished canvas; multi-row content draws upside down so the flip
+        // restores reading order.
+        $mirrored = $graph->dir === 'up';
 
         for ($idx = 0; $idx < $n; $idx++) {
             $extra = $extras[$idx];
+            $node = $graph->nodes[$idx];
+            $canvas->curTag = $node->classes === null ? null : implode(' ', $node->classes);
+            $canvas->curHref = $node->href;
 
             if ($extra['kind'] === 'frame') {
-                self::drawFrame($canvas, $placed[$idx], $graph->nodes[$idx]->label, $extra['sub']);
+                self::drawFrame($canvas, $placed[$idx], $node->label, $extra['sub'], $mirrored);
             } elseif ($extra['kind'] === 'compartments') {
-                self::drawClassBox($canvas, $placed[$idx], $extra['sections']);
+                self::drawClassBox($canvas, $placed[$idx], $extra['sections'], $mirrored);
             } else {
-                self::drawBox($canvas, $placed[$idx], $wrapped[$idx], $graph->nodes[$idx]->shape);
+                self::drawBox($canvas, $placed[$idx], $wrapped[$idx], $node->shape, $mirrored);
             }
         }
+
+        $canvas->curTag = null;
+        $canvas->curHref = null;
+
+        $laneLabels = [];
 
         foreach ($graph->edges as $i => $edge) {
             $canvas->curStyle = $edge->line === 'dotted' ? Canvas::STY_DOT : ($edge->line === 'thick' ? Canvas::STY_THICK : Canvas::STY_SOLID);
@@ -834,28 +1281,49 @@ final class Layout
             $from = $placed[$edge->from];
             $to = $placed[$edge->to];
             $adjacent = $to->rank === $from->rank + 1;
-            $bus = $plan['bandEnd'][$from->rank] + $plan['edgeBus'][$i];
+            $adjacentBack = $from->rank === $to->rank + 1;
+            // A back edge crosses the band below its target's rank.
+            $bus = $plan['bandEnd'][($adjacentBack ? $to : $from)->rank] + $plan['edgeBus'][$i];
             $lane = $plan['laneBase'] + $plan['edgeLane'][$i];
 
             if ($vertical) {
                 if ($adjacent) {
-                    self::routeForward($canvas, $from, $to, $edge, $bus);
+                    self::routeForward($canvas, $from, $to, $edge, $bus, $plan['fwdEntryX'][$edge->to], $plan['edgeLabelLeft'][$i]);
+                } elseif ($adjacentBack) {
+                    self::routeBackAdjacent($canvas, $from, $to, $edge, $bus);
+                } elseif ($to->rank > $from->rank) {
+                    self::routeSkip(
+                        $canvas,
+                        $from,
+                        $to,
+                        $edge,
+                        $lane,
+                        $plan['edgeEntryX'][$i],
+                        $bus,
+                        $plan['skipApproach'][$to->rank],
+                        $plan['edgeStraight'][$i],
+                        $plan['edgeLabelLeft'][$i],
+                    );
                 } else {
                     self::routeBack($canvas, $from, $to, $edge, $lane);
                 }
             } elseif ($adjacent) {
                 self::routeForwardLr($canvas, $from, $to, $edge, $bus);
+            } elseif ($to->rank > $from->rank && $plan['edgeStraight'][$i]) {
+                self::routeSkipLr($canvas, $from, $to, $edge, $bus);
             } else {
-                self::routeBackLr($canvas, $from, $to, $edge, $lane);
+                self::routeBackLr($canvas, $from, $to, $edge, $lane, $laneLabels);
             }
         }
+
+        self::placeLaneLabels($canvas, $laneLabels);
 
         $canvas->finalizeMask();
 
         return $canvas;
     }
 
-    /** grok-mermaid's `orient()`: the direction flip a finished canvas needs for `BT` / `RL`. */
+    /** The direction flip a finished canvas needs for `BT` / `RL`. */
     public static function orient(Canvas $canvas, Graph $graph): Canvas
     {
         if ($graph->dir === 'up') {
@@ -867,7 +1335,7 @@ final class Layout
         return $canvas;
     }
 
-    /** grok-mermaid's `layoutFlowchart()`: flowchart and state diagrams — plain boxes, no extra content. */
+    /** Flowchart and state diagrams: plain boxes, no extra content. */
     public static function layoutFlowchart(Graph $graph): ?Canvas
     {
         $extras = array_map(static fn (): array => ['kind' => 'plain'], $graph->nodes);
@@ -876,54 +1344,13 @@ final class Layout
         return $canvas === null ? null : self::orient($canvas, $graph);
     }
 
-    /**
-     * grok-mermaid's `layoutClass()`: class and ER diagrams — boxes divided into title /
-     * attribute / method rows.
-     *
-     * @param list<ClassInfo> $infos parallel to `graph->nodes`
-     */
-    public static function layoutClass(Graph $graph, array $infos): ?Canvas
+    /** Class and ER diagrams: boxes divided into title / attribute / method rows. */
+    public static function layoutClass(Graph $graph): ?Canvas
     {
-        $extras = [];
-
-        foreach ($graph->nodes as $i => $node) {
-            $title = [];
-
-            if ($infos[$i]->annotation !== null) {
-                $title[] = "«{$infos[$i]->annotation}»";
-            }
-
-            $title[] = self::displayGenerics($node->label);
-            $extras[] = ['kind' => 'compartments', 'sections' => [$title, $infos[$i]->attrs, $infos[$i]->methods]];
-        }
-
+        $extras = array_map(static fn (Node $node): array => ['kind' => 'compartments', 'sections' => $node->sections ?? [[$node->label]]], $graph->nodes);
         $canvas = self::layoutCanvas($graph, $extras);
 
         return $canvas === null ? null : self::orient($canvas, $graph);
-    }
-
-    /**
-     * grok-mermaid's `displayGenerics()`: `~` pairs shown as `<` and `>`. Walked by byte, which
-     * is safe for `~`: no UTF-8 multibyte sequence contains 0x7E.
-     */
-    private static function displayGenerics(string $s): string
-    {
-        $out = '';
-        $open = false;
-        $len = strlen($s);
-
-        for ($i = 0; $i < $len; $i++) {
-            $c = $s[$i];
-
-            if ($c === '~') {
-                $out .= $open ? '>' : '<';
-                $open = !$open;
-            } else {
-                $out .= $c;
-            }
-        }
-
-        return $out;
     }
 
     // -------------------------------------------------------------------- groups
@@ -945,10 +1372,9 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `layoutGrouped()`: a flowchart that uses `subgraph`. Each subgraph becomes a
-     * framed box holding its own independently laid-out canvas. An edge is drawn in the innermost
-     * scope containing both endpoints; one crossing a subgraph boundary attaches to the frame
-     * instead of the node.
+     * A flowchart that uses `subgraph`. Each subgraph becomes a framed box holding its own
+     * independently laid-out canvas. An edge is drawn in the innermost scope containing both
+     * endpoints; one crossing a subgraph boundary attaches to the frame instead of the node.
      */
     public static function layoutGrouped(Graph $graph): ?Canvas
     {
@@ -956,8 +1382,10 @@ final class Layout
         $proxy = [];
 
         foreach ($graph->groups as $gi => $g) {
-            if (array_key_exists($g->id, $graph->index)) {
-                $proxy[$graph->index[$g->id]] = $gi;
+            $ni = $graph->find($g->id);
+
+            if ($ni !== null) {
+                $proxy[$ni] = $gi;
             }
         }
 
@@ -1012,22 +1440,36 @@ final class Layout
             $directNodes[self::scopeKey($g)][] = $ni;
         }
 
-        // Drop empty subgraphs, but keep any that an edge attaches to.
+        // Drop empty subgraphs, but keep any that an edge attaches to. Walked by the actual child
+        // relation: state `--` regions reparent earlier groups under later ones, so index order
+        // says nothing about depth.
+        $childGroups = array_fill(0, count($graph->groups), []);
+
+        foreach ($graph->groups as $gi => $g) {
+            if ($g->parent !== null) {
+                $childGroups[$g->parent][] = $gi;
+            }
+        }
+
         $keep = array_fill(0, count($graph->groups), false);
+        $visit = static function (int $gi) use (&$visit, &$keep, $referenced, $directNodes, $childGroups): bool {
+            $kept = $referenced[$gi] || ($directNodes[$gi] ?? []) !== [];
 
-        for ($gi = count($graph->groups) - 1; $gi >= 0; $gi--) {
-            $hasNodes = ($directNodes[$gi] ?? []) !== [];
-            $hasChildren = false;
-
-            foreach ($graph->groups as $c => $g) {
-                if ($g->parent === $gi && $keep[$c]) {
-                    $hasChildren = true;
-
-                    break;
+            foreach ($childGroups[$gi] as $c) {
+                if ($visit($c)) {
+                    $kept = true;
                 }
             }
 
-            $keep[$gi] = $hasNodes || $hasChildren || $referenced[$gi];
+            $keep[$gi] = $kept;
+
+            return $kept;
+        };
+
+        foreach ($graph->groups as $gi => $g) {
+            if ($g->parent === null) {
+                $visit($gi);
+            }
         }
 
         $canvas = self::buildScope($graph, null, $scopeEdges, $directNodes, $keep);
@@ -1036,8 +1478,8 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `buildScope()`: one scope's nodes and kept child subgraphs laid out as a
-     * graph of their own, each child framed around its recursively built canvas.
+     * One scope's nodes and kept child subgraphs laid out as a graph of their own, each child
+     * framed around its recursively built canvas.
      *
      * @param array<int, list<array{0: string, 1: string, 2: int}>> $scopeEdges
      * @param array<int, list<int>> $directNodes
@@ -1066,7 +1508,8 @@ final class Layout
             $i = (int) substr($item, 1);
 
             if (str_starts_with($item, 'n')) {
-                $nodes[] = new Node($graph->nodes[$i]->label, $graph->nodes[$i]->shape);
+                $source = $graph->nodes[$i];
+                $nodes[] = new Node($source->label, $source->shape, null, $source->classes, $source->href);
                 $extras[] = ['kind' => 'plain'];
             } else {
                 $sub = self::buildScope($graph, $i, $scopeEdges, $directNodes, $keep);
@@ -1102,12 +1545,12 @@ final class Layout
     // ------------------------------------------------------------------- drawing
 
     /**
-     * grok-mermaid's `drawBox()`: a box outline (rounded for `round` and `diamond`) with its
-     * lines centred inside.
+     * A box outline with its lines centred inside: rounded for `round`, double-lined for
+     * `diamond`. `mirrored` draws the lines bottom up, for a canvas `BT` will flip.
      *
      * @param list<string> $lines
      */
-    public static function drawBox(Canvas $canvas, Placed $p, array $lines, string $shape): void
+    public static function drawBox(Canvas $canvas, Placed $p, array $lines, string $shape, bool $mirrored = false): void
     {
         $x = $p->x;
         $y = $p->y;
@@ -1116,33 +1559,62 @@ final class Layout
         $right = $x + $w - 1;
         $bottom = $y + $h - 1;
 
-        $rounded = $shape === 'round' || $shape === 'diamond';
-        $canvas->set($x, $y, $rounded ? '╭' : '┌', 'border');
-        $canvas->set($right, $y, $rounded ? '╮' : '┐', 'border');
-        $canvas->set($x, $bottom, $rounded ? '╰' : '└', 'border');
-        $canvas->set($right, $bottom, $rounded ? '╯' : '┘', 'border');
+        // A diamond is a double-line box — the terminal's nod to `A{...}`.
+        [$tl, $tr, $bl, $br] = match ($shape) {
+            'diamond' => ['╔', '╗', '╚', '╝'],
+            'round' => ['╭', '╮', '╰', '╯'],
+            default => ['┌', '┐', '└', '┘'],
+        };
+        $canvas->set($x, $y, $tl, 'border');
+        $canvas->set($right, $y, $tr, 'border');
+        $canvas->set($x, $bottom, $bl, 'border');
+        $canvas->set($right, $bottom, $br, 'border');
 
-        // The perimeter is drawn as bits so edges can tee into it, but it is the box outline,
-        // so it claims `border` rather than `edge`.
-        for ($cx = $x + 1; $cx < $right; $cx++) {
-            $canvas->addBits($cx, $y, Canvas::L | Canvas::R, 'border');
-            $canvas->addBits($cx, $bottom, Canvas::L | Canvas::R, 'border');
-        }
+        if ($shape === 'diamond') {
+            // Double lines have no direction bits; edges tee into them through the mixed
+            // junctions (`╤` `╧` `╟` `╢`) that `finalizeMask()` resolves.
+            for ($cx = $x + 1; $cx < $right; $cx++) {
+                $canvas->set($cx, $y, '═', 'border');
+                $canvas->set($cx, $bottom, '═', 'border');
+            }
 
-        for ($cy = $y + 1; $cy < $bottom; $cy++) {
-            $canvas->addBits($x, $cy, Canvas::U | Canvas::D, 'border');
-            $canvas->addBits($right, $cy, Canvas::U | Canvas::D, 'border');
+            for ($cy = $y + 1; $cy < $bottom; $cy++) {
+                $canvas->set($x, $cy, '║', 'border');
+                $canvas->set($right, $cy, '║', 'border');
+            }
+        } else {
+            // The perimeter is drawn as bits so edges can tee into it, but it is the box
+            // outline, so it claims `border` rather than `edge`.
+            for ($cx = $x + 1; $cx < $right; $cx++) {
+                $canvas->addBits($cx, $y, Canvas::L | Canvas::R, 'border');
+                $canvas->addBits($cx, $bottom, Canvas::L | Canvas::R, 'border');
+            }
+
+            for ($cy = $y + 1; $cy < $bottom; $cy++) {
+                $canvas->addBits($x, $cy, Canvas::U | Canvas::D, 'border');
+                $canvas->addBits($right, $cy, Canvas::U | Canvas::D, 'border');
+            }
         }
 
         for ($cy = $y; $cy <= $bottom; $cy++) {
             for ($cx = $x; $cx <= $right; $cx++) {
-                $canvas->occupied[$canvas->idx($cx, $cy)] = 1;
+                $i = $canvas->idx($cx, $cy);
+                $canvas->occupied[$i] = 1;
+
+                if ($canvas->curTag !== null) {
+                    $canvas->tag[$i] = $canvas->curTag;
+                }
+
+                if ($canvas->curHref !== null) {
+                    $canvas->href[$i] = $canvas->curHref;
+                }
             }
         }
 
         $inner = max(1, self::sat($w, 2 * self::PAD + 2));
+        $ordered = $mirrored ? array_reverse($lines) : $lines;
 
-        foreach ($lines as $li => $line) {
+        foreach ($ordered as $li => $line) {
             $text = Labels::fitLabel($line, $inner);
             $textX = $x + 1 + self::PAD + self::half(self::sat($inner, Measure::width($text)));
             Canvas::drawText($canvas, $text, $textX, $y + 1 + $li, 'text');
@@ -1150,24 +1622,38 @@ final class Layout
     }
 
     /**
-     * grok-mermaid's `drawClassBox()`: a class or ER box, sections separated by horizontal
-     * rules, title centred.
+     * A class or ER box: sections separated by horizontal rules, title centred.
      *
      * @param list<list<string>> $sections
      */
-    private static function drawClassBox(Canvas $canvas, Placed $p, array $sections): void
+    private static function drawClassBox(Canvas $canvas, Placed $p, array $sections, bool $mirrored = false): void
     {
         self::drawBox($canvas, $p, [], 'rect');
         $inner = max(1, self::sat($p->w, 2 * self::PAD + 2));
-        $row = $p->y + 1;
-        $first = true;
+        $rows = [];
 
         foreach ($sections as $si => $section) {
             if ($section === []) {
                 continue;
             }
 
-            if (!$first) {
+            if ($rows !== []) {
+                $rows[] = null;
+            }
+
+            foreach ($section as $line) {
+                $rows[] = ['text' => Labels::fitLabel($line, $inner), 'center' => $si === 0];
+            }
+        }
+
+        if ($mirrored) {
+            $rows = array_reverse($rows);
+        }
+
+        foreach ($rows as $ri => $r) {
+            $row = $p->y + 1 + $ri;
+
+            if ($r === null) {
                 $canvas->set($p->x, $row, '├', 'border');
 
                 for ($x = $p->x + 1; $x < $p->x + $p->w - 1; $x++) {
@@ -1175,32 +1661,31 @@ final class Layout
                 }
 
                 $canvas->set($p->x + $p->w - 1, $row, '┤', 'border');
-                $row++;
-            }
-
-            $first = false;
-
-            foreach ($section as $line) {
-                $text = Labels::fitLabel($line, $inner);
-                $tx = $si === 0 ? $p->x + 1 + self::PAD + self::half(self::sat($inner, Measure::width($text))) : $p->x + 1 + self::PAD;
-                Canvas::drawTextOverEdges($canvas, $text, $tx, $row, 'text');
-                $row++;
+            } else {
+                $tx = $r['center'] ? $p->x + 1 + self::PAD + self::half(self::sat($inner, Measure::width($r['text']))) : $p->x + 1 + self::PAD;
+                Canvas::drawTextOverEdges($canvas, $r['text'], $tx, $row, 'text');
             }
         }
     }
 
-    /** grok-mermaid's `drawFrame()`: a subgraph frame — a titled box with a finished sub-canvas centred inside. */
-    private static function drawFrame(Canvas $canvas, Placed $p, string $title, Canvas $sub): void
+    /** A subgraph frame: a titled box with a finished sub-canvas centred inside. */
+    private static function drawFrame(Canvas $canvas, Placed $p, string $title, Canvas $sub, bool $mirrored = false): void
     {
         self::drawBox($canvas, $p, [], 'rect');
-        $t = Labels::fitLabel($title, self::sat($p->w, 4));
-        Canvas::drawTextOverEdges($canvas, " {$t} ", $p->x + 1, $p->y, 'text');
+
+        // An unlabelled frame (a state `--` region) keeps its border unbroken.
+        if ($title !== '') {
+            $t = Labels::fitLabel($title, self::sat($p->w, 4));
+            // Mirrored: the bottom border becomes the top after the flip.
+            Canvas::drawTextOverEdges($canvas, " {$t} ", $p->x + 1, $mirrored ? $p->y + $p->h - 1 : $p->y, 'text');
+        }
+
         $canvas->blit($sub, $p->x + 1 + self::half($p->w - 2 - $sub->w), $p->y + 1 + self::half($p->h - 2 - $sub->h));
     }
 
     // ------------------------------------------------------------------- routing
 
-    /** grok-mermaid's `headGlyph()`: the glyph for an edge head, given the plain arrow for its direction. */
+    /** The glyph for an edge head, given the plain arrow for its direction. */
     private static function headGlyph(string $head, string $arrow): string
     {
         return match ($head) {
@@ -1213,10 +1698,14 @@ final class Layout
         };
     }
 
-    /** grok-mermaid's `routeForward()`: adjacent ranks, top-down — drop, jog along the bus row, drop into the head. */
-    private static function routeForward(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $bus): void
+    /**
+     * Adjacent ranks, top-down: drop, jog along the bus row, drop into the head. `entryX` overrides
+     * the centre entry column when the target's top is shared with skip entries; `labelLeft`
+     * renders the label left of the arrowhead.
+     */
+    private static function routeForward(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $bus, int $entryX = -1, bool $labelLeft = false): void
     {
-        $tx = $to->cx;
+        $tx = $entryX === -1 ? $to->cx : $entryX;
         // A jog of one column reads as a kink; snap straight instead.
         $bx = abs($from->cx - $tx) <= 1 ? $tx : $from->cx;
         $by = $from->y + $from->h - 1;
@@ -1242,12 +1731,82 @@ final class Layout
             $canvas->set($bx, $by, self::headGlyph($edge->headFrom, '▲'), 'edge');
         }
 
+        if ($edge->cardFrom === null && $edge->cardTo === null) {
+            if ($edge->label !== null) {
+                $start = $labelLeft ? self::sat($tx, min(Measure::width($edge->label), Labels::MAX_LABEL)) : $tx + 1;
+                self::placeLabel($canvas, $edge->label, $headRow, $start);
+            }
+
+            return;
+        }
+
+        // Cardinalities sit at their own ends; the verb takes the row above the head, falling
+        // back beside the target card when the gap has no spare row.
+        $srcRow = $by + 1;
+
+        if ($edge->cardFrom !== null) {
+            self::placeLabel($canvas, $edge->cardFrom, $srcRow, $bx + 1);
+        }
+
+        if ($edge->cardTo !== null) {
+            self::placeLabel($canvas, $edge->cardTo, $headRow, $tx + 1);
+        }
+
         if ($edge->label !== null) {
-            self::placeLabel($canvas, $edge->label, $headRow, $tx + 1);
+            $midRow = $headRow - 1;
+
+            if ($midRow > $srcRow) {
+                $lineX = $midRow > $bus ? $tx : $bx;
+                self::placeLabel($canvas, $edge->label, $midRow, $lineX + 1);
+            } else {
+                self::placeLabel($canvas, $edge->label, $headRow, $tx + 1 + ($edge->cardTo === null ? 0 : Measure::width($edge->cardTo) + 1));
+            }
         }
     }
 
-    /** grok-mermaid's `routeSelf()`: a self-edge, a stub loop hanging below the box. */
+    /**
+     * Adjacent ranks, top-down, against the flow: up out of the source's top, jog along the band,
+     * arrow into the target's bottom — the short local return mermaid draws, not a trip around
+     * the diagram.
+     */
+    private static function routeBackAdjacent(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $bus): void
+    {
+        // Attach right of centre so the return does not merge with the forward exits and
+        // arrivals that own the centre column.
+        $tx = min($to->x + $to->w - 2, $to->cx + 2);
+        $bx0 = min($from->x + $from->w - 2, $from->cx + 2);
+        $bx = abs($bx0 - $tx) <= 1 ? $tx : $bx0;
+        $fy = $from->y;
+        $headRow = $to->y + $to->h;
+
+        $canvas->junction($bx, $fy, Canvas::U);
+
+        if ($bx === $tx) {
+            $canvas->segV($bx, $headRow, $fy);
+        } else {
+            $canvas->segV($bx, $bus, $fy);
+            $canvas->segH($bus, $bx, $tx);
+            $canvas->segV($tx, $headRow, $bus);
+        }
+
+        if ($edge->headTo === 'none') {
+            $canvas->addBits($tx, $headRow, Canvas::D);
+        } else {
+            $canvas->set($tx, $headRow, self::headGlyph($edge->headTo, '▲'), 'edge');
+        }
+
+        if ($edge->headFrom !== 'none') {
+            $canvas->set($bx, $fy, self::headGlyph($edge->headFrom, '▼'), 'edge');
+        }
+
+        $text = self::edgeText($edge);
+
+        if ($text !== null) {
+            self::placeLabel($canvas, $text, $headRow, $tx + 1);
+        }
+    }
+
+    /** A self-edge: a stub loop hanging below the box. */
     private static function routeSelf(Canvas $canvas, Placed $p, Edge $edge): void
     {
         $bottom = $p->y + $p->h - 1;
@@ -1258,9 +1817,11 @@ final class Layout
             return;
         }
 
-        [$v, $h, $bl, $br] = $edge->line === 'dotted'
-            ? ['╎', '╌', '╰', '╯']
-            : ($edge->line === 'thick' ? ['┃', '━', '┗', '┛'] : ['│', '─', '╰', '╯']);
+        [$v, $h, $bl, $br] = match ($edge->line) {
+            'dotted' => ['╎', '╌', '╰', '╯'],
+            'thick' => ['┃', '━', '┗', '┛'],
+            default => ['│', '─', '╰', '╯'],
+        };
 
         $canvas->junction($exitX, $bottom, Canvas::D);
         $canvas->set($exitX, $bottom + 1, $v, 'edge');
@@ -1272,22 +1833,74 @@ final class Layout
 
         $canvas->set($retX, $bottom + 2, $br, 'edge');
         $canvas->set($retX, $bottom + 1, self::headGlyph($edge->headTo, '▲'), 'edge');
+        $text = self::edgeText($edge);
 
-        if ($edge->label !== null) {
-            self::placeLabel($canvas, $edge->label, $bottom + 1, $p->x + $p->w + 1);
+        if ($text !== null) {
+            self::placeLabel($canvas, $text, $bottom + 1, $p->x + $p->w + 1);
         }
     }
 
-    /** grok-mermaid's `routeBack()`: skip or back edge, top-down — out the right side, up a lane, back in. */
+    /**
+     * Forward skip edge, top-down: out the source's bottom onto its band's bus row (endpoint
+     * sharing folds it onto its siblings' row — one `┴` origin split), then either straight down an
+     * unobstructed column into the target's top, or around: down the lane and in along the
+     * reserved approach row above the target's rank, over the arrival heads and labels.
+     */
+    private static function routeSkip(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $laneX, int $entryX, int $busY, int $approachY, bool $straight, bool $labelLeft): void
+    {
+        $bx = $from->cx;
+        $bottom = $from->y + $from->h - 1;
+
+        $canvas->junction($bx, $bottom, Canvas::D);
+        $canvas->segV($bx, $bottom, $busY);
+
+        if ($straight) {
+            $canvas->segH($busY, $bx, $entryX);
+            $canvas->segV($entryX, $busY, $to->y - 1);
+        } else {
+            $canvas->segH($busY, $bx, $laneX);
+            $canvas->segV($laneX, $busY, $approachY);
+            $canvas->segH($approachY, $entryX, $laneX);
+            $canvas->segV($entryX, $approachY, $to->y - 1);
+        }
+
+        if ($edge->headTo === 'none') {
+            $canvas->addBits($entryX, $to->y - 1, Canvas::D);
+        } else {
+            $canvas->set($entryX, $to->y - 1, self::headGlyph($edge->headTo, '▼'), 'edge');
+        }
+
+        if ($edge->headFrom !== 'none') {
+            $canvas->set($bx, $bottom, self::headGlyph($edge->headFrom, '▲'), 'edge');
+        }
+
+        $text = self::edgeText($edge);
+
+        if ($text !== null) {
+            $start = $labelLeft ? self::sat($entryX, min(Measure::width($text), Labels::MAX_LABEL)) : $entryX + 1;
+            self::placeLabel($canvas, $text, $to->y - 1, $start);
+        }
+    }
+
+    /**
+     * Multi-rank back edge, top-down: out the right side, up a lane, back in through the target's
+     * right side — side entry keeps returns recognisable at a glance.
+     */
     private static function routeBack(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $laneX): void
     {
         $sx = $from->x + $from->w - 1;
         $sy = $from->cy;
-        $tx = $to->x + $to->w - 1;
-        $tyc = $to->cy;
+        $backText = self::edgeText($edge);
 
         $canvas->junction($sx, $sy, Canvas::R);
         $canvas->segH($sy, $sx, $laneX);
+
+        if ($edge->headFrom !== 'none') {
+            $canvas->set($sx, $sy, self::headGlyph($edge->headFrom, '◄'), 'edge');
+        }
+
+        $tx = $to->x + $to->w - 1;
+        $tyc = $to->cy;
         $canvas->segV($laneX, $sy, $tyc);
         $canvas->segH($tyc, $tx + 1, $laneX);
 
@@ -1297,16 +1910,12 @@ final class Layout
             $canvas->set($tx + 1, $tyc, self::headGlyph($edge->headTo, '◄'), 'edge');
         }
 
-        if ($edge->headFrom !== 'none') {
-            $canvas->set($sx, $sy, self::headGlyph($edge->headFrom, '◄'), 'edge');
-        }
-
-        if ($edge->label !== null) {
-            self::placeLabel($canvas, $edge->label, self::sat($tyc, 1), self::sat($laneX, Measure::width($edge->label) + 1));
+        if ($backText !== null) {
+            self::placeLabel($canvas, $backText, self::sat($tyc, 1), self::sat($laneX, Measure::width($backText) + 1));
         }
     }
 
-    /** grok-mermaid's `routeForwardLr()`: adjacent ranks, left-to-right — out the right side, jog on the bus column. */
+    /** Adjacent ranks, left-to-right: out the right side, jog on the bus column. */
     private static function routeForwardLr(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $bus): void
     {
         $rx = $from->x + $from->w - 1;
@@ -1334,13 +1943,68 @@ final class Layout
             $canvas->set($rx, $ry, self::headGlyph($edge->headFrom, '◄'), 'edge');
         }
 
+        // The verb keeps its usual spot above the line; cardinalities hug their own ends on the
+        // rows above the departure and arrival cells.
         if ($edge->label !== null) {
             self::placeLabel($canvas, $edge->label, self::sat($ly, 1), $bus + 1);
         }
+
+        if ($edge->cardFrom !== null) {
+            self::placeLabel($canvas, $edge->cardFrom, self::sat($ry, 1), $rx + 1);
+        }
+
+        if ($edge->cardTo !== null) {
+            self::placeLabel($canvas, $edge->cardTo, self::sat($ly, 1), self::sat($headCol, Measure::width($edge->cardTo)));
+        }
     }
 
-    /** grok-mermaid's `routeBackLr()`: skip or back edge, left-to-right — down out the bottom, along a lane, back up. */
-    private static function routeBackLr(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $laneY): void
+    /**
+     * Straight forward skip, left-to-right: out the source's right-side fan, jog on its own band's
+     * bus column, then straight along the target's entry row into its left side — merging with
+     * the forward arrivals' head. Only used when that row crosses no intermediate box.
+     */
+    private static function routeSkipLr(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $bus): void
+    {
+        $ry = $from->cy;
+        $ty = $to->cy;
+        $rx = $from->x + $from->w - 1;
+        $headCol = $to->x - 1;
+
+        $canvas->junction($rx, $ry, Canvas::R);
+        $canvas->segH($ry, $rx, $bus);
+
+        if ($ry !== $ty) {
+            $canvas->segV($bus, $ry, $ty);
+        }
+
+        $canvas->segH($ty, $bus, $headCol);
+
+        if ($edge->headTo === 'none') {
+            $canvas->addBits($headCol, $ty, Canvas::R);
+        } else {
+            $canvas->set($headCol, $ty, self::headGlyph($edge->headTo, '▶'), 'edge');
+        }
+
+        if ($edge->headFrom !== 'none') {
+            $canvas->set($rx, $ry, self::headGlyph($edge->headFrom, '◄'), 'edge');
+        }
+
+        // Label after the bus jog, where forward labels sit — the gap before the target belongs
+        // to the arrivals that end there.
+        $text = self::edgeText($edge);
+
+        if ($text !== null) {
+            self::placeLabel($canvas, $text, self::sat($ty, 1), $bus + 1);
+        }
+    }
+
+    /**
+     * Skip or back edge, left-to-right: down out the bottom, along a lane, back up. The label is
+     * collected into `laneLabels`, placed once every edge has landed.
+     *
+     * @param list<array{text: string, y: int, lo: int, hi: int}> $laneLabels
+     */
+    private static function routeBackLr(Canvas $canvas, Placed $from, Placed $to, Edge $edge, int $laneY, array &$laneLabels): void
     {
         $sx = $from->cx;
         $sy = $from->y + $from->h - 1;
@@ -1362,12 +2026,78 @@ final class Layout
             $canvas->set($sx, $sy, self::headGlyph($edge->headFrom, '▲'), 'edge');
         }
 
-        if ($edge->label !== null) {
-            self::placeLabel($canvas, $edge->label, self::sat($laneY, 1), self::half($sx + $tx));
+        // The label interrupts its own lane row — the row above belongs to the neighbouring lane
+        // once several stack. Deferred until all edges landed, so it can dodge the verticals
+        // that cross this row.
+        $backText = self::edgeText($edge);
+
+        if ($backText !== null) {
+            $laneLabels[] = [
+                'text' => ' ' . Labels::fitLabel($backText, Labels::MAX_LABEL) . ' ',
+                'y' => $laneY,
+                'lo' => min($sx, $tx),
+                'hi' => max($sx, $tx),
+            ];
         }
     }
 
-    /** grok-mermaid's `placeLabel()`: an edge label written, stopping at the first cell already occupied. */
+    /**
+     * Each lane label written onto its own row, centred on the run but slid to the nearest
+     * stretch free of crossing verticals, arrowheads and earlier labels — clearing a crossing
+     * line under a label would sever it.
+     *
+     * @param list<array{text: string, y: int, lo: int, hi: int}> $labels
+     */
+    private static function placeLaneLabels(Canvas $canvas, array $labels): void
+    {
+        foreach ($labels as ['text' => $text, 'y' => $y, 'lo' => $lo, 'hi' => $hi]) {
+            $tw = Measure::width($text);
+            $lastStart = $hi - 1 - $tw;
+
+            if ($lastStart < $lo + 1 || $y >= $canvas->h) {
+                continue;
+            }
+
+            $clear = static function (int $start) use ($canvas, $tw, $y): bool {
+                for ($x = $start; $x < $start + $tw; $x++) {
+                    $i = $canvas->idx($x, $y);
+
+                    if (!isset($canvas->ch[$i]) || $canvas->occupied[$i] === 1 || ($canvas->mask[$i] & (Canvas::U | Canvas::D)) !== 0 || $canvas->ch[$i] !== ' ') {
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+            $mid = min(max(self::half($lo + $hi) - self::half($tw), $lo + 1), $lastStart);
+            $at = $mid;
+
+            for ($d = 0; ; $d++) {
+                $left = $mid - $d;
+                $right = $mid + $d;
+
+                if ($left < $lo + 1 && $right > $lastStart) {
+                    break;
+                }
+
+                if ($left >= $lo + 1 && $clear($left)) {
+                    $at = $left;
+
+                    break;
+                }
+
+                if ($right <= $lastStart && $clear($right)) {
+                    $at = $right;
+
+                    break;
+                }
+            }
+
+            Canvas::drawTextOverEdges($canvas, $text, $at, $y, 'edgeLabel');
+        }
+    }
+
+    /** An edge label written from `startX`, stopping at the first cell already taken. */
     private static function placeLabel(Canvas $canvas, string $label, int $row, int $startX): void
     {
         if ($row >= $canvas->h) {
@@ -1391,7 +2121,8 @@ final class Layout
             for ($k = 0; $k < $cw; $k++) {
                 $i = $canvas->idx($x + $k, $row);
 
-                if ($canvas->ch[$i] !== ' ' || $canvas->mask[$i] !== 0 || $canvas->occupied[$i] !== 0) {
+                // A cell off the grid is taken, as upstream's `undefined` reads.
+                if (!isset($canvas->ch[$i]) || $canvas->ch[$i] !== ' ' || $canvas->mask[$i] !== 0 || $canvas->occupied[$i] !== 0) {
                     $blocked = true;
                 }
             }

@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `graph.ts`: the model flowchart, state, class and ER sources all parse into.
- * A direction is `down`, `up`, `right` or `left`.
+ * lovely-mermaid's `graph.ts`: the model flowchart, state, class and ER sources all parse into;
+ * only sequence diagrams have their own. A direction is `down`, `up`, `right` or `left`.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Graph
 {
-    /** Caps that keep layout bounded; exceeding one drops the diagram. */
+    /** Caps that keep layout bounded. */
     public const int MAX_NODES = 128;
     public const int MAX_EDGES = 512;
     public const int MAX_GROUPS = 24;
@@ -27,7 +27,7 @@ final class Graph
     /** @var list<Edge> */
     public array $edges = [];
 
-    /** @var array<string, int> */
+    /** @var array<array-key, int> keyed by id — an integer-looking id becomes an integer key */
     public array $index = [];
 
     /** @var list<Group> */
@@ -38,11 +38,17 @@ final class Graph
 
     public ?int $curGroup = null;
 
-    /** Set when a cap was hit; the caller abandons the parse. */
-    public bool $overCap = false;
+    /**
+     * The cap that was hit, or null. The parser stops reading statements and the prefix is drawn,
+     * with a warning: a streamed diagram that outgrows a cap never shrinks back under it.
+     */
+    public ?string $truncated = null;
 
-    /** @var list<string> text the flowchart grammar could not read and dropped */
+    /** @var list<string> source the grammar could not read and dropped */
     public array $warnings = [];
+
+    /** @var array<string, array<string, string>> parsed `classDef` declarations */
+    public array $classDefs = [];
 
     public function __construct(public string $dir = 'down')
     {
@@ -59,16 +65,25 @@ final class Graph
         };
     }
 
+    public function has(string $id): bool
+    {
+        return array_key_exists($id, $this->index);
+    }
+
+    public function find(string $id): ?int
+    {
+        return $this->index[$id] ?? null;
+    }
+
     /**
      * Index of `id`, creating the node if new. A later declaration carrying a label overwrites
-     * the placeholder an edge created. Null once `MAX_NODES` is reached, which aborts the parse.
+     * the placeholder an edge created. Null once `MAX_NODES` is reached, which truncates the parse.
      */
     public function nodeIndex(string $id, ?string $label, string $shape): ?int
     {
-        // An array key that looks like an integer becomes one; the id is compared as a string.
-        if (array_key_exists($id, $this->index)) {
-            $existing = $this->index[$id];
+        $existing = $this->find($id);
 
+        if ($existing !== null) {
             if ($label !== null) {
                 $this->nodes[$existing]->label = $label;
                 $this->nodes[$existing]->shape = $shape;
@@ -78,7 +93,7 @@ final class Graph
         }
 
         if (count($this->nodes) >= self::MAX_NODES) {
-            $this->overCap = true;
+            $this->truncated ??= 'node cap (' . self::MAX_NODES . ') reached';
 
             return null;
         }
@@ -93,8 +108,9 @@ final class Graph
     /** A node's label set without disturbing its shape, creating it if new. */
     public function nodeLabel(string $id, string $label): ?int
     {
-        if (array_key_exists($id, $this->index)) {
-            $existing = $this->index[$id];
+        $existing = $this->find($id);
+
+        if ($existing !== null) {
             $this->nodes[$existing]->label = $label;
 
             return $existing;
@@ -103,11 +119,72 @@ final class Graph
         return $this->nodeIndex($id, $label, 'round');
     }
 
-    /** An edge appended, or `overCap` flagged when `MAX_EDGES` is reached. */
+    /** An author class name attached to a node, a repeat ignored. */
+    public function addClass(int $idx, string $name): void
+    {
+        $node = $this->nodes[$idx];
+        $node->classes ??= [];
+
+        if (!in_array($name, $node->classes, true)) {
+            $node->classes[] = $name;
+        }
+    }
+
+    /**
+     * Collected `[ids, names]` class assignments applied — after the statement walk, so a `class
+     * A,B name` (or a `:::` tag) may come before the nodes it names. Unknown ids are ignored.
+     *
+     * @param list<array{0: list<string>, 1: list<string>}> $assignments
+     */
+    public function applyClasses(array $assignments): void
+    {
+        foreach ($assignments as [$ids, $names]) {
+            foreach ($ids as $id) {
+                $idx = $this->find(Labels::trim($id));
+
+                if ($idx === null) {
+                    continue;
+                }
+
+                foreach ($names as $name) {
+                    if (Labels::trim($name) !== '') {
+                        $this->addClass($idx, Labels::trim($name));
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * `[id, url]` link targets applied, the last per id winning, unknown ids ignored. Deferred like
+     * `applyClasses()`, for the same reason.
+     *
+     * @param list<array{0: string, 1: string}> $hrefs
+     */
+    public function applyHrefs(array $hrefs): void
+    {
+        foreach ($hrefs as [$id, $url]) {
+            $idx = $this->find(Labels::trim($id));
+
+            if ($idx !== null) {
+                $this->nodes[$idx]->href = $url;
+            }
+        }
+    }
+
+    /** An unreadable statement recorded; skipped once truncated, which is not the statement's fault. */
+    public function drop(string $st): void
+    {
+        if ($this->truncated === null) {
+            $this->warnings[] = "dropped, unreadable statement: \"{$st}\"";
+        }
+    }
+
+    /** An edge appended, or `truncated` set when `MAX_EDGES` is reached. */
     public function pushEdge(Edge $edge): bool
     {
         if (count($this->edges) >= self::MAX_EDGES) {
-            $this->overCap = true;
+            $this->truncated ??= 'edge cap (' . self::MAX_EDGES . ') reached';
 
             return false;
         }

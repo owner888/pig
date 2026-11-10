@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `Placed`: a box's position and size on the canvas, its centre, and its rank.
+ * lovely-mermaid's `Placed`: a box's position and size on the canvas, its centre, and its rank.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class Placed
 {

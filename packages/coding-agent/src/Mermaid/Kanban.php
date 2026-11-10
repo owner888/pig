@@ -21,7 +21,7 @@ namespace Pig\CodingAgent\Mermaid;
  * columns, anything deeper is a card in the column above. A node is `id[Label]`, `[Label]` or a
  * bare `id`, optionally followed by `@{ ticket: X, assigned: Y, priority: Z }`.
  *
- * pig's own, not part of the grok-mermaid port: grok-mermaid draws no kanban.
+ * pig's own, not part of the lovely-mermaid port: lovely-mermaid draws no kanban (`Diagrams\KanbanDiagram` registers it).
  */
 final class Kanban
 {
@@ -37,7 +37,14 @@ final class Kanban
 
     public static function parse(string $src): ?self
     {
+        // A frontmatter block and blank lines before the header are skipped, as for every kind.
         $lines = Labels::srcLines($src);
+        $lines = array_slice($lines, Statements::frontmatterEnd($lines));
+
+        while ($lines !== [] && Labels::trim($lines[0]) === '') {
+            array_shift($lines);
+        }
+
         $header = Labels::trim($lines[0] ?? '');
 
         if (Labels::asciiLower($header) !== 'kanban') {

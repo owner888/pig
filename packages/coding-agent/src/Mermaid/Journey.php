@@ -19,7 +19,7 @@ namespace Pig\CodingAgent\Mermaid;
  * A task is `name: score: actor, actor`, the actors optional; `title X` and `section X` as in
  * Mermaid. A score outside 0..5 is shown as Mermaid draws it, at the nearest end of the scale.
  *
- * pig's own, not part of the grok-mermaid port: grok-mermaid draws no journey.
+ * pig's own, not part of the lovely-mermaid port: lovely-mermaid draws no journey (`Diagrams\JourneyDiagram` registers it).
  */
 final class Journey
 {
@@ -32,7 +32,7 @@ final class Journey
 
     public static function parse(string $src): ?self
     {
-        $statements = Parse::statementsOf($src);
+        $statements = Statements::statementsOf($src);
 
         if (Labels::asciiLower($statements[0] ?? '') !== 'journey') {
             return null;

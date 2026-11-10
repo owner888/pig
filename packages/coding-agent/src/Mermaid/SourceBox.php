@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Mermaid;
 
 /**
- * grok-mermaid's `sourceBox()`: the raw source in a titled frame, hard-wrapped to `maxWidth` —
+ * lovely-mermaid's `sourceBox()`: the raw source in a titled frame, hard-wrapped to `maxWidth` —
  * what to show when `Mermaid::render()` has nothing, or something too wide. The body wraps to
  * `max(8, maxWidth - 4)` and the ` mermaid: <kind> ` title is never cut, so a long first token
  * sets a floor.
  *
- * Ported from grok-mermaid 0.2.3 (Apache-2.0, see LICENSE in this directory).
+ * Ported from lovely-mermaid 0.3.3 (Apache-2.0, see LICENSE in this directory).
  */
 final class SourceBox
 {
@@ -24,7 +24,7 @@ final class SourceBox
         $started = false;
 
         foreach (Labels::srcLines($src) as $line) {
-            $line = Labels::trimEnd($line);
+            $line = Labels::trimEnd(self::expandTabs($line));
 
             if (!$started && $line === '') {
                 continue;
@@ -34,7 +34,12 @@ final class SourceBox
             array_push($body, ...self::chunkLine($line, $limit));
         }
 
-        $contentW = max(Measure::width($title), 0, ...array_map(Measure::width(...), $body));
+        $contentW = Measure::width($title);
+
+        foreach ($body as $line) {
+            $contentW = max($contentW, Measure::width($line));
+        }
+
         $inner = $contentW + 2;
         $rule = str_repeat('─', max(0, $inner - Measure::width($title)));
         $plain = ["╭{$title}{$rule}╮"];
@@ -51,6 +56,35 @@ final class SourceBox
         $styled[] = [new Span($bottom, 'border')];
 
         return new MermaidArt($plain, $styled, $inner + 2);
+    }
+
+    /**
+     * Tabs expanded to 4-column stops: a literal tab measures one column here but whatever the
+     * terminal's tab stops say there, so the frame would misalign.
+     */
+    private static function expandTabs(string $line): string
+    {
+        if (!str_contains($line, "\t")) {
+            return $line;
+        }
+
+        $out = '';
+        $col = 0;
+
+        foreach (Measure::clusters($line) as $c) {
+            $cw = Measure::width($c);
+
+            if ($c === "\t") {
+                $pad = 4 - $col % 4;
+                $out .= str_repeat(' ', $pad);
+                $col += $pad;
+            } else {
+                $out .= $c;
+                $col += $cw;
+            }
+        }
+
+        return $out;
     }
 
     /** @return list<string> the line hard-broken at `limit` columns, never through a wide glyph */

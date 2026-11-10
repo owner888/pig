@@ -75,6 +75,7 @@ Rendering, widths, keys, the editor, themes, fullscreen. Moved out of `AGENTS.md
 - [A title is written inside an OSC, so a BEL in a session name ended it](#a-title-is-written-inside-an-osc-so-a-bel-in-a-session-name-ended-it)
 - [A streamed answer was laid out whole on every delta](#a-streamed-answer-was-laid-out-whole-on-every-delta)
 - [PageUp/PageDown scrolled the fullscreen transcript under an open list](#pageuppagedown-scrolled-the-fullscreen-transcript-under-an-open-list)
+- [A tab in a Mermaid label measured three columns and painted one](#a-tab-in-a-mermaid-label-measured-three-columns-and-painted-one)
 
 ## A run of emoji measured as one: PCRE2 10.42's `\X` joins adjacent pictographs
 
@@ -2285,9 +2286,14 @@ survives a resize. `setText()` keeps the blocks; `invalidate()` (a theme change)
 holds them in a `WeakRef`; here they are held, and the lines are the strings `$cachedLines` already
 holds. Measured: 43ms → 7ms per delta (`MarkdownTest`'s streaming case checks the output against a
 fresh render prefix by prefix). Write and codemode rows keep their highlighting in a `CodeHighlighter`.
+A write whose arguments still stream also keeps upstream's line-by-line cache
+(`ToolExecutionComponent::updateWriteCache()`): only the line that grew and the new ones are
+highlighted, plus the first fifty together through the highlighter. Without it the row highlighted
+the whole file on every delta, since the content — the highlighter's key — changes each time.
 
 **Tests**: `MarkdownTest::testACodeBlockIsHighlightedOnceAcrossStreamedTextAndResizesAndAgainAfterInvalidate`,
-`testReusedBlocksDrawWhatAFreshRenderDraws`, `CodeHighlighterTest`.
+`testReusedBlocksDrawWhatAFreshRenderDraws`, `CodeHighlighterTest`,
+`ToolExecutionTest::testAStreamedWriteIsHighlightedLineByLineAndAsAFileOnceWhole`.
 
 ## PageUp/PageDown scrolled the fullscreen transcript under an open list
 
@@ -2305,3 +2311,20 @@ upstream's optional property. A wrapper that is focused in a list's place (`Cust
 **Tests**: `TuiAltScreenTest::testDefersViewportKeysToAFocusedListInsteadOfScrollingTheTranscript`,
 `ComponentsTest::testPageKeysMoveTheSelectionAVisiblePageAndStopAtTheEnds`,
 `EditorTest::testPageKeysPageTheCommandListWhileItIsOpen`, `CustomEditorPageKeysTest`.
+
+## A tab in a Mermaid label measured three columns and painted one
+
+**Symptom**: after the lovely-mermaid port, `stateDiagram-v2` with `A --> B: a\tb` reported a width
+two columns wider than its widest row, and the label's row came out short.
+
+**Cause**: lovely-mermaid's canvas paints a tab as one space, "same width, safe glyph" — true for
+upstream, whose width table counts a tab as one column. pig measures with `Width::visible()`, which
+counts it as three, so the box was sized for three cells, the tab painted in the first and the other
+two left as wide-glyph continuations, which `toLines()` drops.
+
+**Rule**: `Measure::measured()` yields a tab as three one-column spaces, so whatever measures a label
+paints exactly that; the source box expands tabs to 4-column stops itself, from the raw clusters.
+Any new code that measures and paints Mermaid text goes through `Measure`, never `Width` directly.
+
+**Tests**: `MermaidTest::testEveryCorpusSourceRendersUnderTheInvariants`,
+`RenderTest::testALabelTabPaintsAsSpaces`.
