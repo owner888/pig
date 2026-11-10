@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.4] - 2026-11-10
+
+### Fixed
+
+- `bin/pig` lost its executable bit in 2.0.3, so a git checkout updated to it answered `permission denied` when `pig` was run. It is executable again, and a test now fails when git records a command listed under `bin` in `composer.json` as anything but executable.
+
 ## [2.0.3] - 2026-11-10
 
 ### Changed
