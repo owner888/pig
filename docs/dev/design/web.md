@@ -160,10 +160,11 @@ the panel from the prompt (`/accounts`) and join the `/` list.
 `/api/panels` (`Web\WebPanels`) answers from the same fiber as `registerHttpRoute()`: the list, a
 panel or section (`GET /api/panels/<id>?locale=&section=`), an action (`POST` `{action, args,
 locale}`). Panels live in the shell process, like routes, and `/reload` forgets them
-(`forgetWebPanels()`). The Antigravity accounts panel is the first (`extensions/pig-antigravity/src/
-AccountsPanel.php`, its strings with it); the page has no accounts code, buttons or strings left.
-Regression tests: `WebPanelsTest`, `AntigravityPanelTest` (the real blocks through `panels.js`
-under Node) and `WebModeTest::testAnExtensionsPanelIsServedFromAFiberInThePagesLanguage`.
+(`forgetWebPanels()`). The Antigravity accounts panel is the first (`src/AccountsPanel.php`
+in the `owner888/pig-antigravity` package, its strings with it); the page has no accounts code,
+buttons or strings left. Regression tests: `WebPanelsTest` (the panel's blocks, kept as a fixture,
+through `panels.js` under Node), `AntigravityPanelTest` in the package, and
+`WebModeTest::testAnExtensionsPanelIsServedFromAFiberInThePagesLanguage`.
 
 ## The folder a new conversation starts in
 

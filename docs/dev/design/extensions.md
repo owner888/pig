@@ -95,9 +95,11 @@ private protocol (its User-Agent, its envelope, its `v1internal:` endpoints) was
 piece of core code with no upstream behind it, and every change Google made meant a core release.
 
 The developer's call was to do pi's move in one step: **nothing about Antigravity is in
-`packages/` any more.** `extensions/pig-antigravity/src/` holds the protocol (`AntigravityApi`),
+`packages/` any more.** The extension's `src/` holds the protocol (`AntigravityApi`),
 the sign-in (`AntigravityOauth`), the routing, the model table, the accounts store, the catalogue,
-quota and image generation; `index.php` registers the provider and wires the rest through hooks.
+quota and image generation; its entry file registers the provider and wires the rest through hooks.
+It has since left this repository for a package of its own, `owner888/pig-antigravity` (entry
+file `extensions/pig-antigravity.php`), on the same hooks.
 Install the extension and `--model antigravity/gemini-3.8-flash` works; remove it and the name
 means nothing. The tracking target is `Rahularya01/pi-antigravity`, not pi.
 
@@ -330,7 +332,8 @@ returns a callable. It unifies what used to be split between hooks and custom to
 is handed an `ExtensionApi` (which inherits `ExtensionApi`) and can register commands, tools, event
 handlers and message renderers all from a single file or directory.
 
-`extensions/pig-antigravity/index.php` is the first ported full extension, bringing Antigravity's
+`pig-antigravity` (now the package `owner888/pig-antigravity`) is the first ported full extension,
+bringing Antigravity's
 quota monitoring (`/antigravity.usage`, `/antigravity.models`), account management
 (`/antigravity.accounts`), doctor diagnostics (`/antigravity.doctor`), model catalog refresh
 (`/antigravity.refresh`), image command (`/antigravity.image`), and the `generate_image` agent tool.
