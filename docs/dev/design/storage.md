@@ -388,7 +388,7 @@ These apply under B or C. They go in a later phase, but they shape the interface
    - `renameTable()` on SQLite renames the table's indexes and trigger too. They follow the table
      but keep their names, which the new table would then ask for and, with `IF NOT EXISTS`,
      quietly go without.
-   - `addColumn($table, $column, $type)` (2.1) gives a released table a new column, nullable, when
+   - `addColumn($table, $column, $type)` (2.0.1) gives a released table a new column, nullable, when
      it does not have it yet: `createTable()` alone makes a table only when there is none. On
      SQLite the `updated_at` trigger names every column, so it is made again with the new one.
 

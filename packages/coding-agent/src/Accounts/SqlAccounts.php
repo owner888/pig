@@ -13,7 +13,7 @@ use Pig\CodingAgent\Database\Database;
  *
  * - `users`: id, name, `password_hash`, admin, `runtime` (`User::RUNTIMES`: where the account's
  *   tools run), `options` (JSON, null for none: `folders`, `User::$folders`; `ssh`, `User::$ssh`; a column added in
- *   2.1, which `addColumn()` gives a 2.0 table). Removing one marks it deleted; a new account may
+ *   2.0.1, which `addColumn()` gives a 2.0.0 table). Removing one marks it deleted; a new account may
  *   take the name again. Names are unique among the accounts that are there, checked in a
  *   transaction rather than by an index, since the deleted keep theirs.
  * - `login_sessions`: by the SHA-256 of the cookie's token, whose, and until when. Logging out

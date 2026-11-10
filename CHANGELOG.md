@@ -43,7 +43,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.1] - 2026-11-10
 
 ### New Features
 
@@ -54,6 +54,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Starting a conversation or a terminal for a Docker account no longer holds up the rest of the server while its container starts.
 - The Antigravity extension's panel is called "Antigravity" rather than "Accounts", now that `pig web` has accounts of its own.
+- The built-in model catalogue is regenerated from models.dev: Claude Fable 5.2 (Anthropic, Bedrock, OpenCode, OpenRouter, Vercel AI Gateway), Kimi K3.1 on Bedrock, Meta's Muse Ember, and OpenRouter's and Vercel AI Gateway's current lists and prices; OpenCode's and OpenRouter's Crouton Alpha preview is gone.
 
 ### Fixed
 
