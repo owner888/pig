@@ -89,6 +89,13 @@ final class GeminiVideoExtensionTest extends TestCase
         $this->assertSame('gemini-3.8-flash', $result['model']);
         $this->assertStringContainsString('video/mp4 1024 bytes; prompt=what?', $result['text']);
         $this->assertStringNotContainsString('hmm', $result['text'], 'thinking is left out');
+
+        // The CLI's User-Agent comes from pig's core, the one the Antigravity extension sends: a
+        // copy kept here had stayed three releases behind, on a version the deployment shows an
+        // older catalogue to.
+        $sent = array_values(array_filter($this->server->requests, static fn (array $request): bool => str_contains($request['path'], 'v1internal')));
+        $this->assertNotSame([], $sent);
+        $this->assertSame(\Pig\Ai\Providers\AntigravityCli::userAgent(), $sent[0]['headers']['user-agent']);
     }
 
     public function testAutoUsesTheKeyForAVideoTooLargeToSendInline(): void

@@ -7,6 +7,7 @@ namespace Pig\Extensions\GeminiVideo;
 use Closure;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Providers\AntigravityCli;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Config;
@@ -61,9 +62,6 @@ final class GeminiVideo
         'flv' => 'video/x-flv',
         'wmv' => 'video/x-ms-wmv',
     ];
-
-    /** What the Antigravity endpoint is told the client is — the string pig-antigravity sends. */
-    private const string ANTIGRAVITY_USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
 
     /** Analysing a long video takes minutes; the client's default read timeout would cut it off. */
     private const float HTTP_TIMEOUT = 600.0;
@@ -410,7 +408,9 @@ final class GeminiVideo
         $headers = [
             'authorization' => "Bearer {$credentials['token']}",
             'content-type' => 'application/json',
-            'user-agent' => self::ANTIGRAVITY_USER_AGENT,
+            // What the Antigravity endpoint is told the client is: the CLI's, from pig's core, so
+            // it is the string the Antigravity extension sends and moves with it.
+            'user-agent' => AntigravityCli::userAgent(),
         ];
         $http = new HttpClient(timeout: self::HTTP_TIMEOUT);
         $lastError = 'No endpoint answered';

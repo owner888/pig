@@ -6,6 +6,7 @@ namespace PigAntigravity;
 
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Providers\AntigravityCli;
 use RuntimeException;
 use Throwable;
 
@@ -258,7 +259,7 @@ final class QuotaClient
                 'Authorization' => "Bearer {$token}",
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
-                'User-Agent' => Discovery::userAgent(),
+                'User-Agent' => AntigravityCli::userAgent(),
             ];
 
             try {

@@ -42,6 +42,7 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Proxy;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Providers\AntigravityCli;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
@@ -50,12 +51,6 @@ use Pig\Tui\Style;
 
 /** Where the catalogue answers. Same host as `Providers\Antigravity::ENDPOINT`. */
 const ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
-
-/**
- * The CLI's own, which is what this deployment checks for — and gates the catalogue on: an older
- * version is not shown the newest models. Keep it the same string as `Discovery::DEFAULT_USER_AGENT`.
- */
-const USER_AGENT = 'antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)';
 
 $options = getopt('', ['raw', 'endpoint:', 'from:']) ?: [];
 $endpoint = isset($options['endpoint']) && is_string($options['endpoint'])
@@ -129,7 +124,8 @@ $body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endp
         [
             'authorization' => "Bearer {$token}",
             'content-type' => 'application/json',
-            'user-agent' => USER_AGENT,
+            // The CLI's own, which this deployment checks for and gates the catalogue on.
+            'user-agent' => AntigravityCli::userAgent(),
         ],
         json_encode(['project' => $project], JSON_UNESCAPED_SLASHES) ?: '{}',
     ));

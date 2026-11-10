@@ -11,6 +11,7 @@ use Pig\Ai\Cost;
 use Pig\Ai\Extension\ProviderImages;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Providers\AntigravityCli;
 use Pig\Ai\ImageApi;
 use Pig\Ai\ImageContent;
 use Pig\Ai\ImageModel;
@@ -224,7 +225,7 @@ final class ImageGenerator implements ProviderImages
                     $headers = [
                         'Authorization' => "Bearer {$token}",
                         'Content-Type' => 'application/json',
-                        'User-Agent' => Discovery::userAgent(),
+                        'User-Agent' => AntigravityCli::userAgent(),
                     ];
 
                     try {

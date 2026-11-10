@@ -7,6 +7,7 @@ namespace PigAntigravity;
 use Closure;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Providers\AntigravityCli;
 use Pig\Ai\Timestamp;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Logger;
@@ -56,12 +57,6 @@ final class Discovery
 
     /** "Metadata lookups (project/model discovery) must be fast" — `DISCOVERY_TIMEOUT_MS`, in seconds. */
     private const float DISCOVERY_TIMEOUT = 8.0;
-
-    /**
-     * pi-antigravity's `DEFAULT_USER_AGENT`. "Catalog visibility is gated on this version. 1.2.4
-     * hides Gemini 4 Argon; 1.4.0 is aligned with the current official agy CLI release."
-     */
-    public const string DEFAULT_USER_AGENT = 'antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)';
 
     private const array ALLOWED_API_HOST_SUFFIXES = ['.googleapis.com', '.sandbox.googleapis.com'];
 
@@ -236,18 +231,10 @@ final class Discovery
         return [
             'Authorization' => "Bearer {$token}",
             'Content-Type' => 'application/json',
-            'User-Agent' => self::userAgent(),
+            // The Antigravity CLI's, which pig's core holds (`AntigravityCli`): "Catalog visibility
+            // is gated on this version", so no request here writes one of its own.
+            'User-Agent' => AntigravityCli::userAgent(),
         ];
-    }
-
-    /**
-     * The one User-Agent every request of this extension carries — `ANTIGRAVITY_USER_AGENT` when
-     * it is set, `defaultUserAgent()` otherwise. One place, because the deployment reads the
-     * version in it: a request left on an older string is served an older catalogue's models.
-     */
-    public static function userAgent(): string
-    {
-        return self::env('USER_AGENT') ?? self::DEFAULT_USER_AGENT;
     }
 
     /**

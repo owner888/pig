@@ -7,6 +7,7 @@ namespace PigAntigravity;
 
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Extension\StreamApi;
+use Pig\Ai\Providers\AntigravityCli;
 use Pig\Ai\Providers\AssistantMessageBuilder;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\GoogleShared;
@@ -551,8 +552,8 @@ final class AntigravityApi implements StreamApi
                 'content-type' => 'application/json',
                 'authorization' => "Bearer {$token}",
                 // The CLI's own, which this deployment checks: a version and a platform that have
-                // nothing to do with the machine running pig. `Discovery::userAgent()` holds it.
-                'user-agent' => Discovery::userAgent(),
+                // nothing to do with the machine running pig. pig's core holds it (`AntigravityCli`).
+                'user-agent' => AntigravityCli::userAgent(),
                 ...$model->headers,
             ],
             $body,
