@@ -111,11 +111,11 @@ final class FindTool implements AgentTool, ReplayableTool
             return $this->result($found, $limit);
         }
 
-        $fd = $elsewhere !== null ? 'fd' : ExternalTool::fd();
-
         if ($elsewhere !== null ? !$this->operations->exists($root) : !is_dir($root)) {
             throw new AgentError("No such directory: {$given}");
         }
+
+        $fd = $elsewhere !== null ? 'fd' : ExternalTool::fd();
 
         $command = [
             $fd,

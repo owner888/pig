@@ -93,9 +93,6 @@ final class GrepTool implements AgentTool, ReplayableTool
     ): AgentToolResult {
         $signal?->throwIfAborted();
 
-        // Files somewhere else (`RunsElsewhere`, an account's container) are searched by the `rg` there.
-        $elsewhere = $this->operations instanceof RunsElsewhere ? $this->operations : null;
-        $rg = $elsewhere !== null ? 'rg' : ExternalTool::ripgrep();
         $given = (string) ($arguments['path'] ?? '.');
         $root = Paths::resolve($given, $this->cwd);
 
@@ -104,6 +101,10 @@ final class GrepTool implements AgentTool, ReplayableTool
         } catch (FileAccessError) {
             throw new AgentError("No such file or directory: {$given}");
         }
+
+        // Files somewhere else (`RunsElsewhere`, an account's container) are searched by the `rg` there.
+        $elsewhere = $this->operations instanceof RunsElsewhere ? $this->operations : null;
+        $rg = $elsewhere !== null ? 'rg' : ExternalTool::ripgrep();
 
         $limit = max(1, (int) ($arguments['limit'] ?? self::DEFAULT_LIMIT));
         $context = max(0, (int) ($arguments['context'] ?? 0));

@@ -15,6 +15,7 @@ use Pig\CodingAgent\Tools\BashTool;
 use Pig\CodingAgent\Tools\CommandStopped;
 use Pig\CodingAgent\Tools\EditOperations;
 use Pig\CodingAgent\Tools\EditTool;
+use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\CodingAgent\Tools\FileAccessError;
 use Pig\CodingAgent\Tools\FileStat;
 use Pig\CodingAgent\Tools\FindOperations;
@@ -218,7 +219,21 @@ final class ToolOperationsTest extends TestCase
             }
         };
 
-        $this->assertThrows(AgentError::class, static fn () => (new GrepTool(self::CWD, $ops))->execute('1', ['pattern' => 'x']), 'No such file or directory: .');
+        // No ripgrep on the PATH or in pig's bin directory, as on a fresh CI runner:
+        // `isDirectory()` is asked before `ExternalTool::ripgrep()` looks for or fetches `rg`.
+        $path = getenv('PATH');
+        $home = getenv('PIG_CODING_AGENT_DIR');
+        putenv('PATH=/nonexistent');
+        putenv('PIG_CODING_AGENT_DIR=' . self::CWD);
+        ExternalTool::forget();
+
+        try {
+            $this->assertThrows(AgentError::class, static fn () => (new GrepTool(self::CWD, $ops))->execute('1', ['pattern' => 'x']), 'No such file or directory: .');
+        } finally {
+            putenv($path === false ? 'PATH' : 'PATH=' . $path);
+            putenv($home === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $home);
+            ExternalTool::forget();
+        }
     }
 
     public function testAFailureKeepsItsReasonAfterTheToolsOwnSentence(): void
