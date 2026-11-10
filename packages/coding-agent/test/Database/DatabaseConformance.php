@@ -158,6 +158,22 @@ abstract class DatabaseConformance extends TestCase
         $this->assertFalse($this->db()->tableExists('things_old'));
     }
 
+    public function testAColumnAddedLaterIsNullForTheRowsThereAndMovesUpdatedAt(): void
+    {
+        $table = $this->things();
+        $this->db()->query("INSERT INTO {$table} (k, n) VALUES ('a', 1)");
+        $this->db()->addColumn('things', 'extra', '?text');
+        $this->db()->addColumn('things', 'extra', '?text');
+
+        $this->assertSame(['k', 'v', 'n', 'created_at', 'updated_at', 'deleted_at', 'extra'], $this->db()->columns('things'));
+        $this->assertNull($this->row($table)['extra']);
+
+        $before = $this->row($table)['updated_at'];
+        self::later();
+        $this->db()->query("UPDATE {$table} SET extra = 'x' WHERE k = 'a'");
+        $this->assertNotSame($before, $this->row($table)['updated_at'], 'a change to the new column is a change');
+    }
+
     public function testAtAndTimestampAreEachOthersInverse(): void
     {
         $this->assertSame('2023-11-14 22:13:20.456', $this->db()->at(1_700_000_000_456));

@@ -12,7 +12,8 @@ use Pig\CodingAgent\Database\Database;
  * log in to. Two tables, with the timestamps every table has (`Database`):
  *
  * - `users`: id, name, `password_hash`, admin, `runtime` (`User::RUNTIMES`: where the account's
- *   tools run). Removing one marks it deleted; a new account may
+ *   tools run), `options` (JSON, null for none: `folders`, `User::$folders`; `ssh`, `User::$ssh`; a column added in
+ *   2.1, which `addColumn()` gives a 2.0 table). Removing one marks it deleted; a new account may
  *   take the name again. Names are unique among the accounts that are there, checked in a
  *   transaction rather than by an index, since the deleted keep theirs.
  * - `login_sessions`: by the SHA-256 of the cookie's token, whose, and until when. Logging out
@@ -47,13 +48,29 @@ final class SqlAccounts implements Accounts
                 'user_id' => 'string',
                 'expires_at' => 'bigint',
             ], ['token_hash'], ['user_id' => ['user_id']]);
+            $db->addColumn('users', 'options', '?text');
         });
     }
 
     /** @param array<string, mixed> $row */
     private static function user(array $row): User
     {
-        return new User((string) $row['id'], (string) $row['name'], (bool) (int) $row['admin'], (string) $row['runtime']);
+        $options = self::options($row);
+        $folders = $options['folders'] ?? [];
+        $ssh = $options['ssh'] ?? null;
+
+        return new User((string) $row['id'], (string) $row['name'], (bool) (int) $row['admin'], (string) $row['runtime'], User::folders(is_array($folders) ? $folders : []), User::ssh(is_array($ssh) ? $ssh : null));
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function options(array $row): array
+    {
+        $options = is_string($row['options'] ?? null) ? json_decode($row['options'], true) : null;
+
+        return is_array($options) ? $options : [];
     }
 
     #[\Override]
@@ -122,6 +139,39 @@ final class SqlAccounts implements Accounts
         });
     }
 
+    #[\Override]
+    public function setFolders(string $name, array $folders): bool
+    {
+        return $this->setOption($name, 'folders', User::folders($folders));
+    }
+
+    #[\Override]
+    public function setSsh(string $name, ?array $ssh): bool
+    {
+        return $this->setOption($name, 'ssh', User::ssh($ssh));
+    }
+
+    /** Set one of `$name`'s options, the others kept; null takes it away. False when there is no such account. */
+    private function setOption(string $name, string $key, mixed $value): bool
+    {
+        return $this->db->transaction(function () use ($name, $key, $value): bool {
+            $row = $this->find($name, lock: true);
+
+            if ($row === null) {
+                return false;
+            }
+
+            $options = [$key => $value] + self::options($row);
+            $options = array_filter($options, static fn (mixed $v): bool => $v !== null);
+            $this->db->query(
+                "UPDATE {$this->users} SET options = ? WHERE id = ?",
+                [$options === [] ? null : json_encode($options, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $row['id']],
+            );
+
+            return true;
+        });
+    }
+
     /** @throws InvalidArgumentException when `$name` is the only admin there is */
     private function keepAnAdmin(string $name): void
     {
@@ -138,7 +188,7 @@ final class SqlAccounts implements Accounts
     private function find(string $name, bool $lock = false): ?array
     {
         $row = $this->db->query(
-            "SELECT id, name, password_hash, admin, runtime FROM {$this->users} WHERE name = ? AND deleted_at IS NULL" . ($lock ? $this->db->forUpdate() : ''),
+            "SELECT id, name, password_hash, admin, runtime, options FROM {$this->users} WHERE name = ? AND deleted_at IS NULL" . ($lock ? $this->db->forUpdate() : ''),
             [$name],
         )->fetch();
 
@@ -200,7 +250,7 @@ final class SqlAccounts implements Accounts
     public function sessionUser(string $key, int $now): ?User
     {
         $row = $this->db->query(
-            "SELECT u.id, u.name, u.admin, u.runtime FROM {$this->sessions} s JOIN {$this->users} u ON u.id = s.user_id
+            "SELECT u.id, u.name, u.admin, u.runtime, u.options FROM {$this->sessions} s JOIN {$this->users} u ON u.id = s.user_id
              WHERE s.token_hash = ? AND s.expires_at > ? AND s.deleted_at IS NULL AND u.deleted_at IS NULL",
             [$key, $now],
         )->fetch();
@@ -219,7 +269,7 @@ final class SqlAccounts implements Accounts
     {
         return array_map(
             self::user(...),
-            $this->db->query("SELECT id, name, admin, runtime FROM {$this->users} WHERE deleted_at IS NULL ORDER BY name")->fetchAll(),
+            $this->db->query("SELECT id, name, admin, runtime, options FROM {$this->users} WHERE deleted_at IS NULL ORDER BY name")->fetchAll(),
         );
     }
 

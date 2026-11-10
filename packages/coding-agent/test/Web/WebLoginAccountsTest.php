@@ -73,7 +73,7 @@ class WebLoginAccountsTest extends TestCase
         return (string) $token;
     }
 
-    public function testTheFirstAccountIsMadeWithTheSetupCodeAndIsAnAdmin(): void
+    public function testTheFirstAccountIsMadeInThePageAndIsAnAdmin(): void
     {
         $login = $this->login();
         $this->assertTrue($login->several());
@@ -85,7 +85,7 @@ class WebLoginAccountsTest extends TestCase
         $this->assertNull($error);
         $user = $login->user(self::with($token));
         $this->assertNotNull($user);
-        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host'], $user->toArray());
+        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], $user->toArray());
         $this->assertFileDoesNotExist("{$this->home}/web-login.json", 'nothing in the file with accounts');
         $this->assertSame('already_set', $login->setUp('bob', 'correct horse', '1.2.3.4')[0], 'nobody makes another this way');
     }
@@ -100,7 +100,7 @@ class WebLoginAccountsTest extends TestCase
 
         [$error, $token] = $this->login()->logIn('bob', 'battery staple', '1.2.3.4');
         $this->assertNull($error);
-        $this->assertSame(['name' => 'bob', 'admin' => false, 'runtime' => 'host'], $this->login()->user(self::with($token))?->toArray());
+        $this->assertSame(['name' => 'bob', 'admin' => false, 'runtime' => 'host', 'folders' => [], 'ssh' => null], $this->login()->user(self::with($token))?->toArray());
 
         $this->now += WebLogin::SESSION_SECONDS + 1;
         $this->assertNull($this->login()->user(self::with($token)), 'runs out');
@@ -128,7 +128,7 @@ class WebLoginAccountsTest extends TestCase
     {
         $this->login()->setPassword('correct horse', 'ada');
 
-        $this->assertSame([['name' => 'ada', 'admin' => true, 'runtime' => 'host']], array_map(static fn ($u) => $u->toArray(), $this->login()->accounts()->users()));
+        $this->assertSame([['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null]], array_map(static fn ($u) => $u->toArray(), $this->login()->accounts()->users()));
     }
 
     public function testRemovingAnAccountEndsItsSessionsFreesItsNameAndKeepsAnAdmin(): void
@@ -173,7 +173,7 @@ class WebLoginAccountsTest extends TestCase
         $this->assertTrue($accounts->update('bob', admin: true));
         $this->assertTrue($accounts->update('bob', runtime: 'host'));
         $this->assertSame(
-            [['name' => 'ada', 'admin' => true, 'runtime' => 'host'], ['name' => 'bob', 'admin' => true, 'runtime' => 'host']],
+            [['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], ['name' => 'bob', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null]],
             array_map(static fn ($u) => $u->toArray(), $accounts->users()),
         );
         $this->assertFalse($accounts->update('carol', admin: true), 'no such account');
@@ -190,13 +190,69 @@ class WebLoginAccountsTest extends TestCase
         $accounts->add('carol', 'long enough', false, 'vm');
     }
 
+    public function testADockerAccountKeepsTheFoldersItIsGiven(): void
+    {
+        $this->setUpAda();
+        $accounts = $this->login()->accounts();
+        $accounts->add('bob', 'battery staple', false, 'docker');
+
+        $this->assertTrue($accounts->setFolders('bob', [
+            ['path' => '/srv/site/', 'readonly' => false],
+            ['path' => '/data/docs', 'readonly' => true],
+            ['path' => '/srv/site', 'readonly' => true],
+        ]));
+        $this->assertFalse($accounts->setFolders('carol', []), 'no such account');
+
+        $folders = [['path' => '/data/docs', 'readonly' => true], ['path' => '/srv/site', 'readonly' => true]];
+        $this->assertSame($folders, $accounts->users()[1]->folders, 'once each, by path, the last said');
+        $this->assertSame($folders, $accounts->verify('bob', 'battery staple')?->folders);
+        $this->assertTrue($accounts->update('bob', admin: true));
+        $this->assertSame($folders, $accounts->users()[1]->folders, 'kept through other changes');
+
+        $this->assertTrue($accounts->setFolders('bob', []));
+        $this->assertSame([], $accounts->users()[1]->folders);
+    }
+
+    public function testAnSshAccountKeepsWhereItConnectsBesideItsFolders(): void
+    {
+        $this->setUpAda();
+        $accounts = $this->login()->accounts();
+        $accounts->add('bob', 'battery staple', false, 'ssh');
+        $accounts->setFolders('bob', [['path' => '/srv', 'readonly' => false]]);
+
+        $this->assertTrue($accounts->setSsh('bob', ['host' => 'box', 'port' => '2200', 'user' => 'bob', 'key' => '/k', 'workspace' => '/home/bob/']));
+        $bob = $accounts->users()[1];
+        $this->assertSame(['ssh', ['host' => 'box', 'port' => 2200, 'user' => 'bob', 'key' => '/k', 'workspace' => '/home/bob']], [$bob->runtime, $bob->ssh]);
+        $this->assertSame([['path' => '/srv', 'readonly' => false]], $bob->folders, 'the other options kept');
+
+        $this->assertTrue($accounts->setSsh('bob', null));
+        $this->assertNull($accounts->users()[1]->ssh);
+        $this->assertSame([['path' => '/srv', 'readonly' => false]], $accounts->users()[1]->folders);
+        $this->assertFalse($accounts->setSsh('carol', null));
+    }
+
+    public function testAUsersTableFrom20GetsItsOptionsColumn(): void
+    {
+        $db = $this->database();
+        $db->createTable('users', ['id' => 'string', 'name' => 'string', 'password_hash' => 'string', 'admin' => 'boolean', 'runtime' => 'string'], ['id'], ['name' => ['name']]);
+        $users = $db->table('users');
+        $db->query("INSERT INTO {$users} (id, name, password_hash, admin, runtime) VALUES ('a1', 'ada', ?, 1, 'host')", [password_hash('correct horse', PASSWORD_DEFAULT)]);
+
+        $accounts = $this->login()->accounts();
+
+        $this->assertContains('options', $db->columns('users'));
+        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], $accounts->verify('ada', 'correct horse')?->toArray());
+        $this->assertTrue($accounts->setFolders('ada', [['path' => '/srv', 'readonly' => false]]));
+        $this->assertSame([['path' => '/srv', 'readonly' => false]], $accounts->users()[0]->folders);
+    }
+
     public function testFilesHaveOneAccountNamedAsTheyAre(): void
     {
         $login = WebLogin::at($this->home, fn (): int => $this->now);
         $this->assertFalse($login->several());
 
         [, $token] = $login->setUp('kim', 'correct horse', '1.2.3.4');
-        $this->assertSame(['name' => 'kim', 'admin' => true, 'runtime' => 'host'], $login->user(self::with($token))?->toArray());
+        $this->assertSame(['name' => 'kim', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], $login->user(self::with($token))?->toArray());
 
         $this->expectExceptionMessage('one account');
         $login->accounts()->add('lee', 'long enough', false);

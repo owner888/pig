@@ -234,6 +234,22 @@ abstract class PdoDatabase implements Database
         return [...$definitions, ...$this->timestampDefinitions()];
     }
 
+    #[\Override]
+    public function addColumn(string $name, string $column, string $type): void
+    {
+        if (in_array($column, $this->columns($name), true)) {
+            return;
+        }
+
+        $this->query('ALTER TABLE ' . $this->quote($this->table($name)) . ' ADD COLUMN ' . $this->quote($column) . ' ' . $this->type(ltrim($type, '?')) . ' NULL');
+        $this->columnAdded($name);
+    }
+
+    /** What else a new column of `$name` needs: SQLite's `updated_at` trigger names every column. */
+    protected function columnAdded(string $name): void
+    {
+    }
+
     /** The SQL type for one of `createTable()`'s. */
     abstract protected function type(string $type): string;
 

@@ -1314,7 +1314,9 @@ final class RpcMode
     {
         $args = isset($command['args']) ? trim((string) $command['args']) : '';
         $cmd = ['git', 'diff', ...($args === '' ? [] : (preg_split('/\s+/', $args, -1, PREG_SPLIT_NO_EMPTY) ?: []))];
-        [$code, $stdout, $stderr] = \Pig\Tui\Process::run($cmd, cwd: $this->session->cwd());
+        // Where the tools run: an account's folder may be another machine's, and a `.git/config` of
+        // the account's must not run on the host (`ToolSet::run()`).
+        [$code, $stdout, $stderr] = \Pig\CodingAgent\Tools\ToolSet::run($cmd, $this->session->cwd());
 
         if ($code !== 0) {
             throw new \RuntimeException('git diff failed: ' . ($stderr !== '' ? trim($stderr) : 'not a git repository'));

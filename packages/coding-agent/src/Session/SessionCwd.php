@@ -21,11 +21,22 @@ final class SessionCwd
      */
     public static function missingIssue(SessionManager $session, string $fallbackCwd): ?SessionCwdIssue
     {
-        if ($session->cwd === '' || is_dir($session->cwd)) {
+        if ($session->cwd === '' || self::exists($session->cwd)) {
             return null;
         }
 
         return new SessionCwdIssue($session->path, $session->cwd, $fallbackCwd);
+    }
+
+    /**
+     * Whether `$cwd` is a directory where the tools work: here, or where a Docker or SSH account's
+     * run (`Tools\ToolSet::operations()`), whose folders need not be this machine's.
+     */
+    private static function exists(string $cwd): bool
+    {
+        $elsewhere = \Pig\CodingAgent\Tools\ToolSet::operations();
+
+        return $elsewhere === null ? is_dir($cwd) : $elsewhere->exists($cwd) && $elsewhere->isDirectory($cwd);
     }
 
     /** Upstream's `formatMissingSessionCwdError()`, word for word. */

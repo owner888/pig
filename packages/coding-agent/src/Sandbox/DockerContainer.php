@@ -17,8 +17,10 @@ use Pig\Agent\AgentError;
  * `$docker` is the `docker` command — a path, or a name on `PATH`. Tests give a stand-in that runs
  * the command here instead, which is the whole of what is assumed about it.
  */
-final readonly class DockerContainer
+final readonly class DockerContainer implements Shell
 {
+    use RunsToTheEnd;
+
     public function __construct(
         public string $name,
         public string $docker = 'docker',
@@ -28,15 +30,7 @@ final readonly class DockerContainer
         }
     }
 
-    /**
-     * The command that runs `$inside` in the container: in `$cwd` there when given, with `$env` set
-     * there (the host's own environment never goes in), reading standard input when `$stdin`, on a
-     * terminal when `$tty` (the web terminal's shell).
-     *
-     * @param list<string> $inside
-     * @param array<string, string> $env
-     * @return list<string>
-     */
+    #[\Override]
     public function exec(array $inside, ?string $cwd = null, array $env = [], bool $stdin = false, bool $tty = false): array
     {
         $argv = [$this->docker, 'exec'];
@@ -62,74 +56,9 @@ final readonly class DockerContainer
         return [...$argv, $this->name, ...$inside];
     }
 
-    /**
-     * Run `$inside` in the container to the end, `$input` on its standard input: its exit code,
-     * what it wrote, and what it said on standard error. Synchronous, as a local file read is:
-     * these are short (a `cat`, a `stat`, a `mkdir`).
-     *
-     * @param list<string> $inside
-     * @return array{0: int, 1: string, 2: string}
-     */
-    public function run(array $inside, ?string $input = null, ?string $cwd = null): array
+    #[\Override]
+    public function environment(): array
     {
-        $process = proc_open(
-            $this->exec($inside, $cwd, stdin: $input !== null),
-            [0 => $input !== null ? ['pipe', 'r'] : ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-        );
-
-        if (!is_resource($process)) {
-            throw new AgentError("Could not run {$this->docker}");
-        }
-
-        $out = ['', '', ''];
-        $writing = $input ?? '';
-        $open = [1 => $pipes[1], 2 => $pipes[2]];
-
-        if ($input !== null) {
-            stream_set_blocking($pipes[0], false);
-        }
-
-        foreach ($open as $pipe) {
-            stream_set_blocking($pipe, false);
-        }
-
-        // Both ways at once: a large file written in while the command's error output fills its
-        // pipe would otherwise wait on each other.
-        while ($open !== [] || ($input !== null && isset($pipes[0]))) {
-            $read = array_values($open);
-            $write = $input !== null && isset($pipes[0]) ? [$pipes[0]] : [];
-            $except = null;
-
-            if (stream_select($read, $write, $except, 30) === false) {
-                break;
-            }
-
-            if ($write !== []) {
-                $sent = fwrite($pipes[0], $writing);
-                $writing = $sent === false ? '' : substr($writing, $sent);
-
-                if ($writing === '') {
-                    fclose($pipes[0]);
-                    unset($pipes[0]);
-                }
-            }
-
-            foreach ($read as $pipe) {
-                $fd = array_search($pipe, $open, true);
-                $chunk = fread($pipe, 65536);
-
-                if ($chunk === false || ($chunk === '' && feof($pipe))) {
-                    fclose($pipe);
-                    unset($open[$fd]);
-
-                    continue;
-                }
-
-                $out[$fd] .= $chunk;
-            }
-        }
-
-        return [proc_close($process), $out[1], $out[2]];
+        return ['PIG_SANDBOX_CONTAINER' => $this->name, 'PIG_SANDBOX_DOCKER' => $this->docker];
     }
 }

@@ -42,6 +42,22 @@ interface Accounts
      */
     public function update(string $name, ?bool $admin = null, ?string $runtime = null): bool;
 
+    /**
+     * Give the account `$name` exactly these folders of this machine (`User::$folders`), checked by
+     * the caller (`Sandbox\DockerSandbox::checkFolder()`). False when there is no such account.
+     *
+     * @param list<array{path: string, readonly: bool}> $folders
+     */
+    public function setFolders(string $name, array $folders): bool;
+
+    /**
+     * Where the SSH account `$name` connects (`User::$ssh`), checked by the caller
+     * (`Sandbox\SshSandbox::checkConfig()`); null forgets it. False when there is no such account.
+     *
+     * @param array{host: string, port: int, user: string, key: string, workspace: string}|null $ssh
+     */
+    public function setSsh(string $name, ?array $ssh): bool;
+
     /** The account `$name` and `$password` open, or null. */
     public function verify(string $name, string $password): ?User;
 

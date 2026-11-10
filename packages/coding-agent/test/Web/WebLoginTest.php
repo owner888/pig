@@ -52,7 +52,7 @@ final class WebLoginTest extends TestCase
 
         [$error, $token] = $login->setUp('ada', 'long enough', '1.2.3.4');
         $this->assertNull($error);
-        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host'], $login->user(self::with($token))?->toArray());
+        $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], $login->user(self::with($token))?->toArray());
         $this->assertSame('0600', substr(sprintf('%o', fileperms("{$this->home}/web-login.json")), -4));
 
         $this->assertSame('already_set', $login->setUp('bob', 'another one', '1.2.3.4')[0], 'nobody takes it after');

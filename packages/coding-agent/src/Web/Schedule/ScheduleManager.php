@@ -112,6 +112,8 @@ final class ScheduleManager
      * @param (Closure(?string): array<string, string>)|null $environmentFor what a run's child is
      *        started with for the task's owner (an account id, null for nobody's): a Docker account's
      *        container. Throws to refuse the run, with the reason
+     * @param (Closure(?string): bool)|null $elsewhere whether the owner's tasks work in folders of
+     *        another machine (an SSH account's), which are then not looked for here
      */
     public function __construct(
         private readonly SessionPool $pool,
@@ -122,6 +124,7 @@ final class ScheduleManager
         private readonly ?string $url = null,
         ?ScheduleStore $store = null,
         private readonly ?Closure $environmentFor = null,
+        private readonly ?Closure $elsewhere = null,
     ) {
         $dir = $dataDir ?? Config::home();
         $this->store = $store ?? new FileScheduleStore($dir . '/scheduled-tasks.json');
@@ -408,13 +411,14 @@ final class ScheduleManager
             throw new InvalidArgumentException("There is no task '{$id}'.");
         }
 
+        $owner = $existing !== null ? $existing->owner : ($who !== null && $who->id !== '' ? $who->id : null);
         $task = ScheduledTask::fromArray([
             ...$data,
             'createdAt' => $existing?->createdAt ?? ($this->now)(),
             'anchorAt' => ($this->now)(),
             'sessionFile' => null,
-            'owner' => $existing !== null ? $existing->owner : ($who !== null && $who->id !== '' ? $who->id : null),
-        ]);
+            'owner' => $owner,
+        ], !$this->isElsewhere($owner));
         $this->refuseAPast($task);
 
         // The task keeps its conversation; one moved to another folder starts a new one there,
@@ -725,6 +729,12 @@ final class ScheduleManager
         return $store instanceof SqlSessionStore ? SessionManager::withSessionStore($store->withOwner($task->owner), $make) : $make();
     }
 
+    /** Whether `$owner`'s tasks work in folders of another machine (`$elsewhere`). */
+    private function isElsewhere(?string $owner): bool
+    {
+        return $owner !== null && $this->elsewhere !== null && ($this->elsewhere)($owner);
+    }
+
     /**
      * What the child of a run of `$owner`'s task is started with (`$environmentFor`).
      *
@@ -917,7 +927,7 @@ final class ScheduleManager
 
         foreach ($entries as $entry) {
             try {
-                $task = ScheduledTask::fromArray($entry);
+                $task = ScheduledTask::fromArray($entry, !$this->isElsewhere(is_string($entry['owner'] ?? null) ? $entry['owner'] : null));
                 $this->tasks[$task->id] = $task;
             } catch (InvalidArgumentException $e) {
                 $this->broken[] = $entry;

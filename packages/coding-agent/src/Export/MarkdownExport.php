@@ -18,7 +18,6 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\Compaction;
 use Pig\CodingAgent\Session\SessionManager;
-use Pig\Tui\Process;
 use Throwable;
 
 /**
@@ -171,7 +170,7 @@ final class MarkdownExport
         }
 
         // Git diff summary if available
-        [$diffCode, $diffOut] = Process::run(['git', 'diff', '--stat', 'HEAD'], cwd: $cwd);
+        [$diffCode, $diffOut] = \Pig\CodingAgent\Tools\ToolSet::run(['git', 'diff', '--stat', 'HEAD'], $cwd);
         if ($diffCode === 0 && trim($diffOut) !== '') {
             $contextText .= "\n\nGit Diff Stat:\n" . trim($diffOut);
         }

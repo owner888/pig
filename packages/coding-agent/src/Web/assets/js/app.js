@@ -2562,7 +2562,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         return;
       }
 
-      const runtimeOptions = (chosen) => ["docker", "host"]
+      const runtimeOptions = (chosen) => ["docker", "ssh", "host"]
         .map((r) => `<option value="${r}"${r === chosen ? " selected" : ""}>${escapeHtml(t(`runtime_${r}`))}</option>`).join("");
 
       openModal({
@@ -2637,6 +2637,26 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               }));
               row.appendChild(reset);
 
+              // Where an SSH account connects (`SshSandbox`): host, port, user, a key on this
+              // server, and the folder there its conversations start in.
+              if (a.runtime === "ssh") {
+                const connection = document.createElement("button");
+                connection.className = "mini-btn";
+                connection.textContent = a.ssh ? `${t("account_ssh")} · ${a.ssh.user}@${a.ssh.host}` : `${t("account_ssh")} · ${t("account_ssh_unset")}`;
+                connection.addEventListener("click", () => openSshModal(a));
+                row.insertBefore(connection, reset);
+              }
+
+              // Folders of this machine a Docker account may work in too, mounted in its container
+              // at the same path (`DockerSandbox`). Changed here, saved together.
+              if (a.runtime === "docker") {
+                const folders = document.createElement("button");
+                folders.className = "mini-btn";
+                folders.textContent = (a.folders || []).length ? `${t("account_folders")} · ${a.folders.length}` : t("account_folders");
+                folders.addEventListener("click", () => openFoldersModal(a));
+                row.insertBefore(folders, reset);
+              }
+
               const remove = document.createElement("button");
               remove.className = "mini-btn danger";
               remove.textContent = t("delete");
@@ -2655,6 +2675,153 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               row.appendChild(remove);
               list.appendChild(row);
             }
+          };
+
+          const openSshModal = (a) => {
+            const now = a.ssh || { host: "", port: 22, user: "", key: "", workspace: "" };
+            const field = (id, label, value, placeholder) => `
+              <label style="display:flex; flex-direction:column; gap:4px; font-size:var(--text-sm); color:var(--color-dim);">${escapeHtml(label)}
+                <input class="modal-input" id="${id}" autocomplete="off" autocapitalize="off" spellcheck="false" value="${escapeHtml(String(value ?? ""))}" placeholder="${escapeHtml(placeholder)}">
+              </label>`;
+            openModal({
+              title: `${t("account_ssh")} · ${a.name}`,
+              width: "520px",
+              bodyHtml: `
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("account_ssh_hint"))}</div>
+                  <div style="display:flex; gap:8px;">
+                    <div style="flex:1;">${field("account-ssh-host", t("account_ssh_host"), now.host, "10.0.0.5")}</div>
+                    <div style="width:90px;">${field("account-ssh-port", t("account_ssh_port"), now.port, "22")}</div>
+                  </div>
+                  ${field("account-ssh-user", t("account_ssh_user"), now.user, "bob")}
+                  ${field("account-ssh-key", t("account_ssh_key"), now.key, "/home/pig/.ssh/id_ed25519")}
+                  ${field("account-ssh-workspace", t("account_ssh_workspace"), now.workspace, "/home/bob/work")}
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <button class="mini-btn" id="account-ssh-test">${escapeHtml(t("account_ssh_test"))}</button>
+                    <span id="account-ssh-result" style="font-size:var(--text-sm);"></span>
+                  </div>
+                  <div id="account-ssh-error" style="color:var(--color-error); font-size:var(--text-sm);" hidden></div>
+                </div>
+              `,
+              confirmText: t("save"),
+              cancelText: t("cancel"),
+              onOpen: (inner) => {
+                const value = (id) => inner.querySelector(`#account-ssh-${id}`).value.trim();
+                const result = inner.querySelector("#account-ssh-result");
+                const error = inner.querySelector("#account-ssh-error");
+                inner._save = async () => {
+                  error.hidden = true;
+                  try {
+                    await call("/api/accounts/ssh", {
+                      name: a.name,
+                      ssh: { host: value("host"), port: value("port") || "22", user: value("user"), key: value("key"), workspace: value("workspace") },
+                    });
+                  } catch (err) {
+                    error.hidden = false;
+                    error.textContent = err.message;
+                    return false;
+                  }
+                  return true;
+                };
+                // Saved first, then tried: what is tested is what the account will use.
+                inner.querySelector("#account-ssh-test").addEventListener("click", async () => {
+                  result.style.color = "var(--color-dim)";
+                  result.textContent = t("account_ssh_testing");
+                  if (!(await inner._save())) {
+                    result.textContent = "";
+                    return;
+                  }
+                  render();
+                  try {
+                    const res = await apiFetch("/api/accounts/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: a.name }) });
+                    const data = await res.json();
+                    result.style.color = data.reachable ? "var(--color-success)" : "var(--color-error)";
+                    result.textContent = data.reachable ? t("account_ssh_ok") : (data.error || `HTTP ${res.status}`);
+                  } catch (err) {
+                    result.style.color = "var(--color-error)";
+                    result.textContent = err.message;
+                  }
+                });
+                inner.querySelector("#account-ssh-host").focus();
+              },
+              onConfirm: async (inner) => {
+                if (!(await inner._save())) return false;
+                say("");
+                render();
+                return true;
+              },
+            });
+          };
+
+          const openFoldersModal = (a) => {
+            let kept = (a.folders || []).map((f) => ({ ...f }));
+            openModal({
+              title: `${t("account_folders")} · ${a.name}`,
+              width: "560px",
+              bodyHtml: `
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("account_folders_hint"))}</div>
+                  <div id="account-folder-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+                  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <input class="modal-input" id="account-folder-path" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/srv/projects/site" style="flex:1; min-width:200px;">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:var(--text-sm);"><input type="checkbox" id="account-folder-readonly"> ${escapeHtml(t("account_folder_readonly"))}</label>
+                    <button class="mini-btn" id="account-folder-add">${escapeHtml(t("account_folder_add"))}</button>
+                  </div>
+                  <div id="account-folder-error" style="color:var(--color-error); font-size:var(--text-sm);" hidden></div>
+                </div>
+              `,
+              confirmText: t("save"),
+              cancelText: t("cancel"),
+              onOpen: (inner) => {
+                const listEl = inner.querySelector("#account-folder-list");
+                const path = inner.querySelector("#account-folder-path");
+                const draw = () => {
+                  listEl.innerHTML = kept.length ? "" : `<div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("account_folders_none"))}</div>`;
+                  kept.forEach((f, i) => {
+                    const item = document.createElement("div");
+                    item.style.cssText = "display:flex; align-items:center; gap:8px; font-size:var(--text-base);";
+                    item.innerHTML = `
+                      <span style="flex:1; min-width:0; overflow-wrap:anywhere; font-family:var(--font-mono);">${escapeHtml(f.path)}</span>
+                      <label style="display:flex; align-items:center; gap:4px; font-size:var(--text-sm);"><input type="checkbox"${f.readonly ? " checked" : ""}> ${escapeHtml(t("account_folder_readonly"))}</label>
+                      <button class="mini-btn danger">${escapeHtml(t("delete"))}</button>
+                    `;
+                    item.querySelector("input").addEventListener("change", (e) => { f.readonly = e.target.checked; });
+                    item.querySelector("button").addEventListener("click", () => { kept.splice(i, 1); draw(); });
+                    listEl.appendChild(item);
+                  });
+                };
+                const add = () => {
+                  const value = path.value.trim();
+                  if (!value) return;
+                  kept = [...kept.filter((f) => f.path !== value), { path: value, readonly: inner.querySelector("#account-folder-readonly").checked }];
+                  path.value = "";
+                  draw();
+                  path.focus();
+                };
+                inner.querySelector("#account-folder-add").addEventListener("click", add);
+                path.addEventListener("keydown", (e) => {
+                  if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); add(); }
+                });
+                draw();
+                path.focus();
+              },
+              onConfirm: async (inner) => {
+                // What is still typed and not added is added: nobody means to lose it.
+                const typed = inner.querySelector("#account-folder-path").value.trim();
+                const folders = typed ? [...kept, { path: typed, readonly: inner.querySelector("#account-folder-readonly").checked }] : kept;
+                try {
+                  await call("/api/accounts/folders", { name: a.name, folders });
+                } catch (err) {
+                  const e = inner.querySelector("#account-folder-error");
+                  e.hidden = false;
+                  e.textContent = err.message;
+                  return false;
+                }
+                say("");
+                render();
+                return true;
+              },
+            });
           };
 
           modalEl._accounts = { say, render };

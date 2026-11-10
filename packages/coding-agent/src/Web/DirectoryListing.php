@@ -24,16 +24,7 @@ final class DirectoryListing
      */
     public static function list(string $path, string $base, string $home, bool $hidden = false): array
     {
-        $path = trim($path);
-        $wanted = match (true) {
-            $path === '' => $base,
-            $path === '~' => $home,
-            str_starts_with($path, '~/') => $home . substr($path, 1),
-            str_starts_with($path, '/') => $path,
-            default => rtrim($base, '/') . '/' . $path,
-        };
-
-        $real = realpath($wanted);
+        $real = realpath(self::wanted($path, $base, $home));
         if ($real === false || !is_dir($real)) {
             return ['ok' => false, 'error' => "Not a directory: {$path}"];
         }
@@ -52,15 +43,34 @@ final class DirectoryListing
             return ['ok' => false, 'error' => "Cannot read {$real}"];
         }
 
-        $dirs = [];
-        foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..' || (!$hidden && str_starts_with($entry, '.'))) {
-                continue;
-            }
-            if (is_dir("{$real}/{$entry}")) {
-                $dirs[] = $entry;
-            }
-        }
+        return self::of($real, $home, array_values(array_filter($entries, static fn (string $entry): bool => is_dir("{$real}/{$entry}"))), $hidden);
+    }
+
+    /** The directory `$path` names, as typed (`list()`), before it is resolved. */
+    public static function wanted(string $path, string $base, string $home): string
+    {
+        $path = trim($path);
+
+        return match (true) {
+            $path === '' => $base,
+            $path === '~' => $home,
+            str_starts_with($path, '~/') => $home . substr($path, 1),
+            str_starts_with($path, '/') => $path,
+            default => rtrim($base, '/') . '/' . $path,
+        };
+    }
+
+    /**
+     * The answer for the directory `$real` (resolved), whose subdirectories are `$dirs`: in order,
+     * the hidden ones left out unless asked for, cut at `LIMIT`. Also what another machine's
+     * listing is answered with (`Sandbox\SshSandbox`).
+     *
+     * @param list<string> $dirs
+     * @return array{ok: true, path: string, parent: ?string, home: string, dirs: list<string>, truncated: bool}
+     */
+    public static function of(string $real, string $home, array $dirs, bool $hidden): array
+    {
+        $dirs = array_filter($dirs, static fn (string $entry): bool => $entry !== '.' && $entry !== '..' && ($hidden || !str_starts_with($entry, '.')));
         natcasesort($dirs);
         $dirs = array_values($dirs);
 

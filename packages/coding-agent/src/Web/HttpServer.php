@@ -19,6 +19,8 @@ use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Rpc\RpcUi;
 use Pig\CodingAgent\Accounts\User;
 use Pig\CodingAgent\Sandbox\DockerSandbox;
+use Pig\CodingAgent\Sandbox\Runtime;
+use Pig\CodingAgent\Sandbox\SshSandbox;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\SqlSessionStore;
 use Pig\CodingAgent\Web\Node\NodeManager;
@@ -98,6 +100,9 @@ final class HttpServer
 
     /** Where Docker accounts work (`Settings::sandbox()`), read when first needed. */
     private ?DockerSandbox $sandbox = null;
+
+    /** Where SSH accounts connect from (`Settings::sshSandbox()`), read when first needed. */
+    private ?SshSandbox $ssh = null;
 
     private ?PtyManager $ptyManager = null;
 
@@ -189,17 +194,22 @@ final class HttpServer
                     $owner = $store->ownerOf($sessionArg);
                 }
 
+                // A Docker or SSH account's child is started in a directory of this machine
+                // (`Runtime::here()`), told the folder it works in there.
+                $here = $environment['PIG_SANDBOX_HERE'] ?? null;
+                unset($environment['PIG_SANDBOX_HERE']);
+
                 return new RpcClient(
-                    cwd: $cwd,
+                    cwd: $here ?? $cwd,
                     arguments: [
                         ...match (true) {
                             $incognito => ['--incognito'],
                             $sessionArg !== null => ['--session', $sessionArg],
                             default => [],
                         },
-                        // A Docker account's child loads nothing of the project's own `.pig/`: it
-                        // would run here, on the host, outside the container.
-                        ...(isset($environment['PIG_SANDBOX_CONTAINER']) ? ['--no-approve'] : []),
+                        // Such a child loads nothing of the project's own `.pig/`: it would run
+                        // here, on the host, outside the container or the other machine.
+                        ...($here !== null ? ['--no-approve', '--cwd', $cwd] : []),
                     ],
                     // The page's theme, which `RpcMode` makes the child's before `session_start`.
                     environment: array_filter([...$environment, 'PIG_WEB_THEME' => $theme, 'PIG_SESSION_OWNER' => $owner ?? ''], static fn (?string $v): bool => $v !== null),
@@ -218,6 +228,7 @@ final class HttpServer
                 ? new Schedule\SqlScheduleStore($sessions->database(), \Pig\CodingAgent\Config::home() . '/scheduled-tasks.json')
                 : null,
             environmentFor: $this->environmentOf(...),
+            elsewhere: $this->isElsewhere(...),
         );
     }
 
@@ -889,9 +900,17 @@ final class HttpServer
         // 8. Folders / Workspaces list (matching pi-web /api/folders)
         if ($path === '/api/folders') {
             // A Docker account's own directory is where its new conversations start.
+            // The folders the admin has given it are listed beside it, to start one in too. An SSH
+            // account's are another machine's, and are not looked for here.
             $folderUser = $this->userOf($req);
-            $currentCwd = ($sandbox = $this->sandboxOf($folderUser)) !== null ? $sandbox->workspace($folderUser) : $this->cwd;
-            $workspaces = $this->asUser($this->userOf($req), fn (): array => $this->listAllWorkspaces($currentCwd));
+            $runtime = $this->sandboxOf($folderUser);
+            try {
+                $roots = $runtime?->roots($folderUser) ?? [$this->cwd];
+            } catch (\Pig\Agent\AgentError) {
+                $roots = [''];
+            }
+            $currentCwd = $roots[0];
+            $workspaces = $this->asUser($folderUser, fn (): array => $this->listAllWorkspaces($currentCwd, array_slice($roots, 1), here: !$runtime instanceof SshSandbox));
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
@@ -905,26 +924,24 @@ final class HttpServer
 
         // 8b. A directory's subdirectories, for the working-directory picker of a new conversation
         if ($path === '/api/dirs') {
-            // A Docker account picks a directory inside its own, and nowhere else on the host.
+            // A Docker account picks a directory inside its own or a folder given to it, and nowhere
+            // else on the host; an SSH account's are listed there (`Runtime::dirs()`).
             $user = $this->userOf($req);
-            $sandbox = $this->sandboxOf($user);
+            $runtime = $this->sandboxOf($user);
             $asked = (string) ($req['query']['path'] ?? '');
-            if ($sandbox !== null) {
-                $workspace = $sandbox->workspace($user);
-                if (!is_dir($workspace)) {
-                    mkdir($workspace, 0o700, true);
-                }
-                $asked = $asked !== '' && $sandbox->contains($user, $asked) ? $asked : $workspace;
+            $hidden = ($req['query']['hidden'] ?? '') === '1';
+
+            if ($runtime !== null) {
+                Async::spawn(static function () use ($conn, $runtime, $user, $asked, $hidden): void {
+                    $conn->sendResponse(200, ['Content-Type' => 'application/json'], (string) json_encode($runtime->dirs($user, $asked, $hidden)));
+                });
+
+                return;
             }
 
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
-            ], (string) json_encode(DirectoryListing::list(
-                $asked,
-                $sandbox !== null ? $sandbox->workspace($user) : $this->cwd,
-                $sandbox !== null ? $sandbox->workspace($user) : (getenv('HOME') ?: '/'),
-                ($req['query']['hidden'] ?? '') === '1',
-            )));
+            ], (string) json_encode(DirectoryListing::list($asked, $this->cwd, getenv('HOME') ?: '/', $hidden)));
 
             return;
         }
@@ -1062,11 +1079,10 @@ final class HttpServer
         if ($path === '/api/file') {
             $filePath = $req['query']['path'] ?? '';
 
-            // A Docker account's files are read in its container, as its tools read them: a link
-            // it made to the host's `/etc` is the container's `/etc` there.
+            // A Docker or SSH account's files are read where its tools read them: a link it made to
+            // the host's `/etc` is the container's `/etc` there.
             $user = $this->userOf($req);
-            if (($sandbox = $this->sandboxOf($user)) !== null) {
-                [$exit, $bytes] = $sandbox->container($user)->run(['cat', '--', (string) $filePath]);
+            if (($runtime = $this->sandboxOf($user)) !== null) {
                 $mime = match (strtolower(pathinfo((string) $filePath, PATHINFO_EXTENSION))) {
                     'png' => 'image/png',
                     'jpg', 'jpeg' => 'image/jpeg',
@@ -1074,9 +1090,17 @@ final class HttpServer
                     'webp' => 'image/webp',
                     default => 'application/octet-stream',
                 };
-                $exit === 0
-                    ? $conn->sendResponse(200, ['Content-Type' => $mime, 'Cache-Control' => 'max-age=86400'], $bytes)
-                    : $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'File not found');
+                Async::spawn(static function () use ($conn, $runtime, $user, $filePath, $mime): void {
+                    try {
+                        [$exit, $bytes] = \Pig\Tui\Process::runAsync($runtime->shell($user)->exec(['cat', '--', (string) $filePath]), 60.0);
+                    } catch (\Pig\Agent\AgentError) {
+                        $exit = 1;
+                        $bytes = '';
+                    }
+                    $exit === 0
+                        ? $conn->sendResponse(200, ['Content-Type' => $mime, 'Cache-Control' => 'max-age=86400'], $bytes)
+                        : $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'File not found');
+                });
 
                 return;
             }
@@ -1127,14 +1151,18 @@ final class HttpServer
                 $safeName = 'file';
             }
 
-            // A Docker account's file goes into its own directory, written from inside its
-            // container: the agent reads it there, and a link it made cannot point the write at
+            // A Docker or SSH account's file goes into its own directory, written from where its
+            // tools run: the agent reads it there, and a link it made cannot point the write at
             // the host.
             $user = $this->userOf($req);
-            if (($sandbox = $this->sandboxOf($user)) !== null) {
-                $target = $sandbox->workspace($user) . "/.pig-uploads/{$id}/{$safeName}";
+            if (($runtime = $this->sandboxOf($user)) !== null) {
                 $redirect = ($query['append'] ?? '') === '1' ? '>>' : '>';
-                [$exit, , $errors] = $sandbox->ensure($user)->run(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat ' . $redirect . ' "$1"', 'sh', $target], $req['body']);
+                try {
+                    $target = $runtime->workspace($user) . "/.pig-uploads/{$id}/{$safeName}";
+                    [$exit, , $errors] = $runtime->ensure($user)->run(['sh', '-c', 'mkdir -p "$(dirname "$1")" && cat ' . $redirect . ' "$1"', 'sh', $target], $req['body']);
+                } catch (\Pig\Agent\AgentError $e) {
+                    [$exit, $errors, $target] = [1, $e->getMessage(), ''];
+                }
                 $exit === 0
                     ? $conn->sendResponse(200, $json, (string) json_encode(['ok' => true, 'path' => $target]))
                     : $conn->sendResponse(500, $json, (string) json_encode(['ok' => false, 'error' => 'Could not write uploaded file: ' . trim($errors)]));
@@ -1209,13 +1237,18 @@ final class HttpServer
         // 10.5 Web Terminal info & command execution
         if ($path === '/api/terminal/info') {
             $user = $this->userOf($req);
-            if (($sandbox = $this->sandboxOf($user)) !== null) {
+            if (($runtime = $this->sandboxOf($user)) !== null) {
+                try {
+                    $workspace = $runtime->workspace($user);
+                } catch (\Pig\Agent\AgentError) {
+                    $workspace = '/';
+                }
                 $conn->sendResponse(200, ['Content-Type' => 'application/json'], (string) json_encode([
                     'success' => true,
-                    'user' => $user->name,
-                    'hostname' => 'pig-sandbox',
-                    'cwd' => (string) ($req['query']['cwd'] ?? '') ?: $sandbox->workspace($user),
-                    'home' => $sandbox->workspace($user),
+                    'user' => $runtime instanceof SshSandbox ? (string) ($user->ssh['user'] ?? $user->name) : $user->name,
+                    'hostname' => $runtime instanceof SshSandbox ? (string) ($user->ssh['host'] ?? 'ssh') : 'pig-sandbox',
+                    'cwd' => (string) ($req['query']['cwd'] ?? '') ?: $workspace,
+                    'home' => $workspace,
                 ]));
 
                 return;
@@ -1245,7 +1278,7 @@ final class HttpServer
                 'Content-Type' => 'application/json',
             ];
 
-            // Completion reads the host's files and commands: a Docker account gets none.
+            // Completion reads the host's files and commands: a Docker or SSH account gets none.
             if ($this->sandboxOf($this->userOf($req)) !== null) {
                 $conn->sendResponse(200, $headers, (string) json_encode(['success' => true, 'prefix' => '', 'completions' => [], 'commonPrefix' => '']));
 
@@ -1286,12 +1319,14 @@ final class HttpServer
                 return;
             }
 
-            // A Docker account's command runs in its container — `cd` too, which is asked there.
+            // A Docker or SSH account's command runs where its tools do — `cd` too, which is asked
+            // there.
             $user = $this->userOf($req);
             if (($sandbox = $this->sandboxOf($user)) !== null) {
-                $cwd = $targetCwd !== '' ? $targetCwd : $sandbox->workspace($user);
-                Async::spawn(function () use ($conn, $headers, $command, $cwd, $sandbox, $user): void {
+                Async::spawn(function () use ($conn, $headers, $command, $targetCwd, $sandbox, $user): void {
+                    $cwd = $targetCwd;
                     try {
+                        $cwd = $targetCwd !== '' ? $targetCwd : $sandbox->workspace($user);
                         $container = $sandbox->ensure($user);
                         $cd = preg_match('/^cd(?:\s+(.*))?$/', $command, $m) === 1;
                         $inside = $cd ? ['bash', '-c', 't=$1; case $t in "~"*) t=$HOME${t#"~"};; esac; cd -- "${t:-$HOME}" && pwd', 'bash', trim($m[1] ?? '')] : ['bash', '-c', $command];
@@ -1389,7 +1424,8 @@ final class HttpServer
         $type = (string) ($data['type'] ?? '');
 
         if ($type === 'start_session') {
-            $rawCwd = is_string($data['cwd'] ?? null) && trim($data['cwd']) !== '' ? $data['cwd'] : $this->cwd;
+            $asked = is_string($data['cwd'] ?? null) && trim($data['cwd']) !== '' ? $data['cwd'] : '';
+            $rawCwd = $asked !== '' ? $asked : $this->cwd;
             $cwd = is_dir($rawCwd) ? $rawCwd : $this->cwd;
             $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
             $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : 'default';
@@ -1408,7 +1444,8 @@ final class HttpServer
             // tab and nothing else, not a server that falls over.
             // Somebody else's conversation is answered as one that is not there.
             $user = $this->wsUsers[$connectionId] ?? new User('', '', true);
-            if ($file !== null && !$incognito && !$this->mayOpen($user, $cwd, $file)) {
+            $runtime = $this->sandboxOf($user);
+            if ($file !== null && !$incognito && !$this->mayOpen($user, $runtime !== null && $asked !== '' ? $asked : $cwd, $file)) {
                 $conn->send(array_filter([
                     'type' => 'error',
                     'tabId' => $tabId !== 'default' ? $tabId : null,
@@ -1418,46 +1455,48 @@ final class HttpServer
                 return;
             }
 
-            try {
-                // A Docker account works in its own directory, its tools in its own container,
-                // which is started here if it is not running.
-                $environment = [];
-                $sandbox = $this->sandboxOf($user);
-                if ($sandbox !== null) {
-                    $container = $sandbox->ensure($user);
-                    $cwd = $sandbox->contains($user, $cwd) ? $cwd : $sandbox->workspace($user);
-                    $environment = ['PIG_SANDBOX_CONTAINER' => $container->name, 'PIG_SANDBOX_DOCKER' => $container->docker];
-                }
-
-                $clientTag = ($pageId ?? $this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id, $environment);
-            } catch (Throwable $e) {
+            $clientTag = ($pageId ?? $this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
+            $failed = static function (Throwable $e) use ($conn, $tabId): void {
                 $conn->send(array_filter([
                     'type' => 'error',
                     'tabId' => $tabId !== 'default' ? $tabId : null,
                     'message' => 'Could not start the session: ' . $e->getMessage(),
                 ], static fn (mixed $v): bool => $v !== null));
+            };
+
+            // A Docker or SSH account works where its tools run: its container started if it is
+            // not running, its connection made — on the loop, since that can take a while (an
+            // unreachable machine, `ConnectTimeout`) and nobody else's page should wait on it.
+            if ($runtime !== null) {
+                Async::spawn(function () use ($conn, $connectionId, $runtime, $user, $asked, $file, $clientTag, $tabId, $theme, $incognito, $failed): void {
+                    try {
+                        $shell = $runtime->ensure($user);
+                        $where = $asked !== '' && $runtime->contains($user, $asked) ? $asked : $runtime->workspace($user);
+                        $managed = $this->pool->bind($connectionId, $where, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id, [
+                            ...$shell->environment(),
+                            'PIG_SANDBOX_HERE' => $runtime->here($user, $where),
+                        ]);
+                    } catch (Throwable $e) {
+                        $failed($e);
+
+                        return;
+                    }
+
+                    $this->sessionBound($conn, $managed, $tabId);
+                });
 
                 return;
             }
 
-            $conn->send(array_filter([
-                'type' => 'session_bound',
-                'tabId' => $tabId !== 'default' ? $tabId : null,
-                'cwd' => $managed->cwd,
-                'sessionFile' => $managed->sessionFile,
-                'shared' => count($managed->clients) > 1,
-                'incognito' => $managed->incognito ? true : null,
-            ], static fn (mixed $v): bool => $v !== null));
+            try {
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id);
+            } catch (Throwable $e) {
+                $failed($e);
 
-            // What the extensions put on screen before this tab was here — widgets, statuses, the
-            // title — is drawn again, and a question asked before it — a scheduled run nobody was
-            // watching, or a reload — is asked again, or the turn stays parked on something nobody
-            // can see. The page takes the same id arriving twice as one question.
-            foreach ([...$managed->toldUi, ...$managed->pendingUi] as $request) {
-                $line = ['type' => 'rpc_event', 'event' => $request];
-                $conn->send($tabId === 'default' ? $line : [...$line, 'tabId' => $tabId]);
+                return;
             }
+
+            $this->sessionBound($conn, $managed, $tabId);
 
             return;
         }
@@ -1496,44 +1535,63 @@ final class HttpServer
                         ? $data['command']
                         : null;
 
-                    try {
-                        // A Docker account's terminal is a shell in its container, never one here.
-                        $sandbox = $this->sandboxOf($user);
-                        if ($sandbox !== null) {
-                            $container = $sandbox->ensure($user);
-                            $cwd = $sandbox->contains($user, $cwd) ? $cwd : $sandbox->workspace($user);
-                            $command = 'exec ' . implode(' ', array_map('escapeshellarg', $container->exec(
+                    $open = function (string $cwd, ?string $command) use ($conn, $pty, $id, $cols, $rows, $user, $mine): void {
+                        try {
+                            $this->terminalOwners[$id] = $user->id;
+                            $proc = $pty->create($id, $cwd, $cols, $rows, $command);
+                        } catch (Throwable $e) {
+                            $conn->send([
+                                'type' => 'terminal_exit',
+                                'terminalId' => $id,
+                                'exitCode' => 1,
+                                'error' => $e->getMessage(),
+                            ]);
+                            return;
+                        }
+
+                        $conn->send([
+                            'type' => 'terminal_list',
+                            'terminals' => $mine(),
+                        ]);
+
+                        if ($proc->scrollback() !== '') {
+                            $conn->send([
+                                'type' => 'terminal_output',
+                                'terminalId' => $id,
+                                'data' => $proc->scrollback(),
+                            ]);
+                        }
+                    };
+
+                    // A Docker or SSH account's terminal is a shell where its tools run, never one
+                    // here: started from a directory of this machine (`Runtime::here()`), once its
+                    // container is up or its connection made, on the loop.
+                    $runtime = $this->sandboxOf($user);
+                    if ($runtime === null) {
+                        $open($cwd, $command);
+
+                        return;
+                    }
+
+                    Async::spawn(function () use ($conn, $runtime, $user, $id, $cwd, $command, $open): void {
+                        try {
+                            $shell = $runtime->ensure($user);
+                            $cwd = $runtime->contains($user, $cwd) ? $cwd : $runtime->workspace($user);
+                            $command = 'exec ' . implode(' ', array_map('escapeshellarg', $shell->exec(
                                 $command === null ? ['bash', '-l'] : ['bash', '-lc', $command],
                                 $cwd,
                                 ['TERM' => 'xterm-256color'],
                                 tty: true,
                             )));
+                            $here = $runtime->here($user, $cwd);
+                        } catch (Throwable $e) {
+                            $conn->send(['type' => 'terminal_exit', 'terminalId' => $id, 'exitCode' => 1, 'error' => $e->getMessage()]);
+
+                            return;
                         }
 
-                        $this->terminalOwners[$id] = $user->id;
-                        $proc = $pty->create($id, $cwd, $cols, $rows, $command);
-                    } catch (Throwable $e) {
-                        $conn->send([
-                            'type' => 'terminal_exit',
-                            'terminalId' => $id,
-                            'exitCode' => 1,
-                            'error' => $e->getMessage(),
-                        ]);
-                        return;
-                    }
-
-                    $conn->send([
-                        'type' => 'terminal_list',
-                        'terminals' => $mine(),
-                    ]);
-
-                    if ($proc->scrollback() !== '') {
-                        $conn->send([
-                            'type' => 'terminal_output',
-                            'terminalId' => $id,
-                            'data' => $proc->scrollback(),
-                        ]);
-                    }
+                        $open($here, $command);
+                    });
                 })(),
                 'terminal_input' => (function () use ($pty, $data): void {
                     $tid = (string) ($data['terminalId'] ?? '');
@@ -2087,12 +2145,16 @@ final class HttpServer
         $id = is_string($data['id'] ?? null) ? $data['id'] : '';
 
         try {
-            // A Docker account's task works in its own directory, as its conversations do.
+            // A Docker account's task works in its own directory or a folder given to it, as its
+            // conversations do; an SSH account's in a folder there, looked for there.
             $sandbox = $this->sandboxOf($user);
             if ($path === '/api/scheduled/save' && $sandbox !== null) {
-                $cwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : '';
+                $cwd = is_string($data['cwd'] ?? null) ? rtrim($data['cwd'], '/') ?: '/' : '';
                 if ($cwd === '' || !$sandbox->contains($user, $cwd)) {
-                    throw new \InvalidArgumentException('A task works in a folder inside your own: ' . $sandbox->workspace($user));
+                    throw new \InvalidArgumentException('A task works in your own folder (' . $sandbox->workspace($user) . ') or one given to you.');
+                }
+                if ($sandbox instanceof SshSandbox && \Pig\Tui\Process::runAsync($sandbox->shell($user)->exec(['test', '-d', $cwd]), 30.0)[0] !== 0) {
+                    throw new \InvalidArgumentException("The folder '{$cwd}' does not exist there.");
                 }
             }
 
@@ -2227,8 +2289,15 @@ final class HttpServer
         ], $models));
     }
 
-    /** The first thing said in this conversation, as a tab label when nobody named it. */
-    private function listAllWorkspaces(string $currentCwd): array
+    /**
+     * The projects with conversations, the one new ones start in (`$currentCwd`) first, then by how
+     * many; and the folders `$given` a Docker account, with none yet. Those two are looked for
+     * on this machine unless `$here` is false (an SSH account's).
+     *
+     * @param list<string> $given
+     * @return list<array{path: string, name: string, sessionCount: int, isCurrent: bool}>
+     */
+    private function listAllWorkspaces(string $currentCwd, array $given = [], bool $here = true): array
     {
         $workspaces = [];
 
@@ -2245,13 +2314,19 @@ final class HttpServer
             }
         }
 
-        if (!isset($workspaces[$currentCwd]) && is_dir($currentCwd)) {
+        if ($currentCwd !== '' && !isset($workspaces[$currentCwd]) && (!$here || is_dir($currentCwd))) {
             $workspaces[$currentCwd] = [
                 'path' => $currentCwd,
                 'name' => basename($currentCwd) ?: $currentCwd,
                 'sessionCount' => 0,
                 'isCurrent' => true,
             ];
+        }
+
+        foreach ($given as $folder) {
+            if (!isset($workspaces[$folder]) && (!$here || is_dir($folder))) {
+                $workspaces[$folder] = ['path' => $folder, 'name' => basename($folder) ?: $folder, 'sessionCount' => 0, 'isCurrent' => false];
+            }
         }
 
         $list = array_values($workspaces);
@@ -2271,9 +2346,12 @@ final class HttpServer
 
     /**
      * The accounts, for the page that manages them — an admin's only (`Middlewares\AdminMiddleware`
-     * has seen to that): the list (`GET /api/accounts`), and adding, removing, changing and setting a
-     * password (`POST /api/accounts/{add,remove,update,password}`). Each change answers the list as it
-     * is now. Only with accounts: with the one password there is nothing to manage here.
+     * has seen to that): the list (`GET /api/accounts`), and adding, removing, changing, setting a
+     * password, giving a Docker account folders of this machine and saying where an SSH account
+     * connects (`POST /api/accounts/{add,remove,update,password,folders,ssh}`). Each change answers
+     * the list as it is now. `POST /api/accounts/check` starts an account's container or makes its
+     * connection, and answers whether it could. Only with accounts: with the one password there is
+     * nothing to manage here.
      *
      * Removing an account or setting its password ends its login sessions, and with them the pages
      * it has open, as logging out does. What its conversations hold stays, theirs.
@@ -2314,7 +2392,30 @@ final class HttpServer
         $data = is_array($data) ? $data : [];
         $name = is_string($data['name'] ?? null) ? trim($data['name']) : '';
         $password = is_string($data['password'] ?? null) ? $data['password'] : '';
-        $id = (array_values(array_filter($accounts->users(), static fn (User $u): bool => $u->name === $name))[0] ?? null)?->id;
+        $account = array_values(array_filter($accounts->users(), static fn (User $u): bool => $u->name === $name))[0] ?? null;
+        $id = $account?->id;
+
+        // Whether the account's tools can be reached where they run: on the loop, as a connection
+        // that does not answer takes its `ConnectTimeout`.
+        if ($path === '/api/accounts/check') {
+            $runtime = $account !== null ? $this->sandboxOf($account) : null;
+            if ($account === null || $runtime === null) {
+                return $answer($account === null ? 404 : 200, $account === null
+                    ? ['ok' => false, 'error' => "There is no account named {$name}."]
+                    : ['ok' => true, 'reachable' => true, 'where' => 'host']);
+            }
+
+            Async::spawn(static function () use ($answer, $runtime, $account): void {
+                try {
+                    $runtime->ensure($account);
+                    $answer(200, ['ok' => true, 'reachable' => true, 'where' => $account->runtime]);
+                } catch (\Throwable $e) {
+                    $answer(200, ['ok' => true, 'reachable' => false, 'where' => $account->runtime, 'error' => $e->getMessage()]);
+                }
+            });
+
+            return true;
+        }
 
         try {
             $done = match ($path) {
@@ -2336,6 +2437,38 @@ final class HttpServer
                     is_bool($data['admin'] ?? null) ? $data['admin'] : null,
                     is_string($data['runtime'] ?? null) ? $data['runtime'] : null,
                 ),
+                // Each checked (`DockerSandbox::checkFolder()`) and kept as its real path. The
+                // container is made again with them the next time it is needed.
+                '/api/accounts/folders' => (function () use ($accounts, $account, $name, $data): bool {
+                    if ($account === null) {
+                        return false;
+                    }
+                    if ($account->runtime !== User::DOCKER) {
+                        throw new \InvalidArgumentException("{$name} works on this machine, with every folder its OS user may open; folders are given to Docker accounts.");
+                    }
+
+                    $sandbox = $this->sandbox ??= \Pig\CodingAgent\Settings::sandbox();
+                    $folders = [];
+                    foreach (is_array($data['folders'] ?? null) ? $data['folders'] : [] as $folder) {
+                        $path = is_array($folder) && is_string($folder['path'] ?? null) ? $folder['path'] : '';
+                        $folders[] = ['path' => $sandbox->checkFolder($path), 'readonly' => ($folder['readonly'] ?? false) === true];
+                    }
+
+                    return $accounts->setFolders($name, $folders);
+                })(),
+                // Checked (`SshSandbox::checkConfig()`); whether it connects is `check`'s to say.
+                '/api/accounts/ssh' => (function () use ($accounts, $account, $data): bool {
+                    if ($account === null) {
+                        return false;
+                    }
+
+                    $ssh = User::ssh(is_array($data['ssh'] ?? null) ? $data['ssh'] : null);
+                    if ($ssh !== null) {
+                        ($this->ssh ??= \Pig\CodingAgent\Settings::sshSandbox())->checkConfig($ssh);
+                    }
+
+                    return $accounts->setSsh($account->name, $ssh);
+                })(),
                 '/api/accounts/password' => (function () use ($name, $password): bool {
                     $this->login->setPassword($password, $name);
 
@@ -2366,6 +2499,28 @@ final class HttpServer
         return $answer(200, ['ok' => true, 'accounts' => $list()]);
     }
 
+    /** `session_bound` for the tab, then what the child put on screen and asked before it was there. */
+    private function sessionBound(Connection $conn, ManagedSession $managed, string $tabId): void
+    {
+        $conn->send(array_filter([
+            'type' => 'session_bound',
+            'tabId' => $tabId !== 'default' ? $tabId : null,
+            'cwd' => $managed->cwd,
+            'sessionFile' => $managed->sessionFile,
+            'shared' => count($managed->clients) > 1,
+            'incognito' => $managed->incognito ? true : null,
+        ], static fn (mixed $v): bool => $v !== null));
+
+        // What the extensions put on screen before this tab was here — widgets, statuses, the
+        // title — is drawn again, and a question asked before it — a scheduled run nobody was
+        // watching, or a reload — is asked again, or the turn stays parked on something nobody
+        // can see. The page takes the same id arriving twice as one question.
+        foreach ([...$managed->toldUi, ...$managed->pendingUi] as $request) {
+            $line = ['type' => 'rpc_event', 'event' => $request];
+            $conn->send($tabId === 'default' ? $line : [...$line, 'tabId' => $tabId]);
+        }
+    }
+
     /** Close the pages `$userId` has open: their login sessions have just ended. */
     private function closeSocketsOf(string $userId): void
     {
@@ -2377,16 +2532,36 @@ final class HttpServer
     }
 
     /**
-     * Where `$user`'s tools run, when that is a container of theirs (`User::DOCKER`, with accounts):
-     * the sandbox to start it in and confine them to. Null for this machine.
+     * Where `$user`'s tools run, when that is not here (with accounts): a container of theirs
+     * (`User::DOCKER`) or an OS user over SSH (`User::SSH`). Null for this machine.
      */
-    private function sandboxOf(User $user): ?DockerSandbox
+    private function sandboxOf(User $user): ?Runtime
     {
-        if ($user->runtime !== User::DOCKER || !$this->login->several()) {
+        if (!$this->login->several()) {
             return null;
         }
 
-        return $this->sandbox ??= \Pig\CodingAgent\Settings::sandbox();
+        return match ($user->runtime) {
+            User::DOCKER => $this->sandbox ??= \Pig\CodingAgent\Settings::sandbox(),
+            User::SSH => $this->ssh ??= \Pig\CodingAgent\Settings::sshSandbox(),
+            default => null,
+        };
+    }
+
+    /** Whether the account `$owner`'s folders are another machine's (`ScheduleManager::$elsewhere`). */
+    private function isElsewhere(string $owner): bool
+    {
+        if (!$this->login->enabled() || !$this->login->several()) {
+            return false;
+        }
+
+        foreach ($this->login->accounts()->users() as $account) {
+            if ($account->id === $owner) {
+                return $account->runtime === User::SSH;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2436,14 +2611,14 @@ final class HttpServer
 
         foreach ($this->login->accounts()->users() as $account) {
             if ($account->id === $owner) {
-                $sandbox = $this->sandboxOf($account);
-                if ($sandbox === null) {
+                $runtime = $this->sandboxOf($account);
+                if ($runtime === null) {
                     return [];
                 }
 
-                $container = $sandbox->ensure($account);
+                $shell = $runtime->ensure($account);
 
-                return ['PIG_SANDBOX_CONTAINER' => $container->name, 'PIG_SANDBOX_DOCKER' => $container->docker];
+                return [...$shell->environment(), 'PIG_SANDBOX_HERE' => $runtime->here($account, $runtime->workspace($account))];
             }
         }
 

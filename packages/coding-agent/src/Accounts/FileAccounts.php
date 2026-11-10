@@ -117,6 +117,18 @@ final class FileAccounts implements Accounts
     }
 
     #[\Override]
+    public function setFolders(string $name, array $folders): bool
+    {
+        throw new LogicException('With sessions kept in files there is one account, on this machine, with every folder already.');
+    }
+
+    #[\Override]
+    public function setSsh(string $name, ?array $ssh): bool
+    {
+        throw new LogicException('With sessions kept in files there is one account, on this machine.');
+    }
+
+    #[\Override]
     public function remove(string $name): bool
     {
         throw new LogicException('With sessions kept in files there is one account, which stays.');

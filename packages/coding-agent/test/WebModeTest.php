@@ -1009,7 +1009,7 @@ final class WebModeTest extends TestCase
                 $seen = $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
                 $this->assertSame('error', end($seen)['type'] ?? null, 'nor open it');
                 fclose($ws);
-                $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host'], json_decode($http->send(new Request('GET', "{$url}/api/login/state", $ada))->body->all(), true)['user']);
+                $this->assertSame(['name' => 'ada', 'admin' => true, 'runtime' => 'host', 'folders' => [], 'ssh' => null], json_decode($http->send(new Request('GET', "{$url}/api/login/state", $ada))->body->all(), true)['user']);
 
                 $server->stop();
             });
@@ -1057,7 +1057,7 @@ final class WebModeTest extends TestCase
             // A response's body is read once: the list is taken from it a single time.
             $added = json_decode($post('/api/accounts/add', ['name' => 'carol', 'password' => 'long enough'], $ada)->body->all(), true)['accounts'];
             $this->assertSame(['ada', 'bob', 'carol'], array_column($added, 'name'));
-            $this->assertSame(['name' => 'carol', 'admin' => false, 'runtime' => 'docker'], $added[2], 'Docker unless said');
+            $this->assertSame(['name' => 'carol', 'admin' => false, 'runtime' => 'docker', 'folders' => [], 'ssh' => null], $added[2], 'Docker unless said');
             $this->assertSame(400, $post('/api/accounts/add', ['name' => 'carol', 'password' => 'long enough'], $ada)->status, 'one carol');
             $this->assertSame(400, $post('/api/accounts/add', ['name' => 'dan', 'password' => 'short'], $ada)->status);
             $this->assertSame(400, $post('/api/accounts/update', ['name' => 'ada', 'admin' => false], $ada)->status, 'the last admin');
@@ -1168,6 +1168,123 @@ final class WebModeTest extends TestCase
                 $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
                 fclose($ws);
                 $this->assertSame([$this->cwd, []], end($spawned));
+
+                // Ada gives bob a folder of this machine: his to list and start in, mounted in a
+                // container made again for it; nothing of pig's own, and nothing to a host account.
+                mkdir($this->cwd . '/shared/app', 0o777, true);
+                $shared = (string) realpath($this->cwd . '/shared');
+                $given = json_decode($post('/api/accounts/folders', (string) json_encode(['name' => 'bob', 'folders' => [['path' => $shared . '/', 'readonly' => true]]]), $adas)->body->all(), true);
+                $this->assertSame([['path' => $shared, 'readonly' => true]], $given['accounts'][1]['folders'] ?? null, json_encode($given));
+                $this->assertSame(400, $post('/api/accounts/folders', (string) json_encode(['name' => 'bob', 'folders' => [['path' => $this->home]]]), $adas)->status);
+                $this->assertSame(400, $post('/api/accounts/folders', (string) json_encode(['name' => 'ada', 'folders' => [['path' => $shared]]]), $adas)->status);
+                $this->assertSame(403, $post('/api/accounts/folders', (string) json_encode(['name' => 'bob', 'folders' => [['path' => '/srv']]]), $bobs)->status, 'an admin\'s to give');
+
+                $bobs = $as('bob', 'battery staple');
+                $folders = json_decode($http->send(new Request('GET', "{$url}/api/folders", $bobs))->body->all(), true);
+                $this->assertContains($shared, array_column($folders['workspaces'] ?? [], 'path'));
+                $dirs = json_decode($http->send(new Request('GET', "{$url}/api/dirs?path=" . rawurlencode($shared), $bobs))->body->all(), true);
+                $this->assertSame([$shared, null, ['app']], [$dirs['path'] ?? null, array_key_exists('parent', $dirs) ? $dirs['parent'] : 'no', $dirs['dirs'] ?? null], 'no way up out of it');
+
+                $ws = $this->wsOpen($port, $bobs);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $shared . '/app']);
+                $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                fclose($ws);
+                $this->assertSame($shared . '/app', end($spawned)[0]);
+                $runs = array_values(array_filter(file($this->cwd . '/docker.log') ?: [], static fn (string $l): bool => str_starts_with($l, 'run -d --name pig-' . $bob->id)));
+                $this->assertCount(2, $runs, 'made again with the folder');
+                $this->assertStringContainsString("-v {$shared}:{$shared}:ro", $runs[1]);
+
+                $server->stop();
+            });
+        } finally {
+            \Pig\CodingAgent\Session\SessionManager::useSessionStore(null);
+        }
+    }
+
+    public function testAnSshAccountWorksAsAUserReachedOverSsh(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true) || PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('needs pdo_sqlite, and bash for the stand-in for ssh');
+        }
+
+        $ssh = SshOperationsTest::fakeSsh($this->cwd);
+        file_put_contents($this->home . '/settings.json', json_encode(['sandbox' => ['ssh' => $ssh]]));
+        $remote = $this->cwd . '/there/bob';
+
+        $port = 28203;
+        $store = \Pig\CodingAgent\Session\SqlSessionStore::open('sqlite:' . $this->cwd . '/pig.db');
+        $login = WebLogin::at($this->cwd . '/login-home', database: $store->database());
+        $login->accounts()->add('ada', 'correct horse', true);
+        $bob = $login->accounts()->add('bob', 'battery staple', false, 'ssh');
+        $spawned = [];
+
+        \Pig\CodingAgent\Session\SessionManager::useSessionStore($store);
+
+        try {
+            $server = new HttpServer(
+                $this->cwd,
+                $port,
+                auth: Auth::inMemory(),
+                spawn: function (string $cwd, ?string $file, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []) use (&$spawned): RpcClient {
+                    $spawned[] = [$cwd, $environment];
+
+                    return new RpcClient(cwd: $environment['PIG_SANDBOX_HERE'] ?? $cwd, binary: self::FAKE, timeout: 5.0);
+                },
+                idleTtl: 0.2,
+                login: $login,
+            );
+
+            Async::run(function () use ($server, $port, $remote, $bob, &$spawned): void {
+                $server->start();
+                $http = new HttpClient();
+                $url = "http://127.0.0.1:{$port}";
+                $post = fn (string $path, array $body, array $headers = []): \Pig\Ai\Http\Response => $http->send(new Request('POST', $url . $path, ['Content-Type' => 'application/json', ...$headers], (string) json_encode($body)));
+                $as = function (string $name, string $password) use ($post): array {
+                    $in = $post('/api/login', ['name' => $name, 'password' => $password]);
+                    $this->assertSame(200, $in->status, $name);
+
+                    return ['Cookie' => (string) strtok((string) $in->header('set-cookie'), ';')];
+                };
+                $json = static fn (\Pig\Ai\Http\Response $r): array => json_decode($r->body->all(), true) ?? [];
+                $adas = $as('ada', 'correct horse');
+
+                // Ada says where bob connects: checked as it is saved, reached when asked.
+                $this->assertSame(400, $post('/api/accounts/ssh', ['name' => 'bob', 'ssh' => ['host' => 'box', 'user' => 'bob', 'key' => '/no/key', 'workspace' => $remote]], $adas)->status);
+                $this->assertSame(400, $post('/api/accounts/ssh', ['name' => 'bob', 'ssh' => ['host' => 'box', 'user' => 'bob', 'workspace' => 'bob']], $adas)->status);
+                $saved = $json($post('/api/accounts/ssh', ['name' => 'bob', 'ssh' => ['host' => 'unreachable', 'port' => 22, 'user' => 'bob', 'workspace' => $remote]], $adas));
+                $this->assertSame('unreachable', $saved['accounts'][1]['ssh']['host'] ?? null);
+                $down = $json($post('/api/accounts/check', ['name' => 'bob'], $adas));
+                $this->assertSame([true, false], [$down['ok'] ?? null, $down['reachable'] ?? null]);
+                $this->assertStringContainsString('Connection refused', (string) ($down['error'] ?? ''));
+                $post('/api/accounts/ssh', ['name' => 'bob', 'ssh' => ['host' => 'box', 'port' => 22, 'user' => 'bob', 'workspace' => $remote]], $adas);
+                $this->assertTrue($json($post('/api/accounts/check', ['name' => 'bob'], $adas))['reachable'] ?? null);
+                $this->assertDirectoryExists($remote, 'its workspace made there');
+
+                // Bob starts in his workspace there, browses there, and his conversation's child is
+                // started in a directory of pig's own, told how to reach it.
+                $bobs = $as('bob', 'battery staple');
+                $this->assertSame(403, $post('/api/accounts/ssh', ['name' => 'bob', 'ssh' => null], $bobs)->status);
+                $this->assertSame($remote, $json($http->send(new Request('GET', "{$url}/api/folders", $bobs)))['currentCwd'] ?? null);
+                mkdir($remote . '/app');
+                $dirs = $json($http->send(new Request('GET', "{$url}/api/dirs?path=" . rawurlencode($remote), $bobs)));
+                $this->assertSame(['app'], $dirs['dirs'] ?? null, json_encode($dirs));
+
+                $ws = $this->wsOpen($port, $bobs);
+                $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $remote . '/app']);
+                $seen = $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+                fclose($ws);
+                $this->assertSame('session_bound', end($seen)['type'] ?? null, json_encode($seen));
+                [$cwd, $environment] = end($spawned);
+                $this->assertSame($remote . '/app', $cwd);
+                $this->assertSame('box', json_decode($environment['PIG_SANDBOX_SSH'] ?? '', true)['host'] ?? null);
+                $this->assertSame($this->home . '/ssh/here/bob-' . substr($bob->id, 0, 8), $environment['PIG_SANDBOX_HERE'] ?? null);
+
+                // His terminal's commands, and a task's folder, are his there too.
+                $ran = $json($post('/api/terminal/exec', ['command' => 'pwd', 'cwd' => $remote . '/app'], $bobs));
+                $this->assertSame($remote . "/app\n", $ran['stdout'] ?? null, json_encode($ran));
+                [$status] = [$post('/api/scheduled/save', ['name' => 'Brief', 'prompt' => 'hi', 'cwd' => $remote . '/nowhere', 'schedule' => 'manual', 'timezone' => 'UTC'], $bobs)->status];
+                $this->assertSame(400, $status);
+                $this->assertNotEmpty(file($this->cwd . '/ssh.log'));
 
                 $server->stop();
             });

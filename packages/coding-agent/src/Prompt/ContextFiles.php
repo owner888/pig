@@ -75,6 +75,15 @@ final class ContextFiles
             $seen[$global->path] = true;
         }
 
+        // A Docker or SSH account's folder is read where its tools run: the same path here is
+        // another machine's, or the host's behind a link the account made.
+        $elsewhere = \Pig\CodingAgent\Tools\ToolSet::operations();
+        if ($elsewhere !== null) {
+            [$there, $complaints] = self::elsewhere($elsewhere, $cwd);
+
+            return [[...$files, ...$there], [...$warnings, ...$complaints]];
+        }
+
         $ancestors = [];
         $directory = rtrim($cwd, '/');
         $shadowed = self::shadowedContextFile($directory === '' ? '/' : $directory);
@@ -183,6 +192,39 @@ final class ContextFiles
                 return null;
             }
         }
+    }
+
+    /**
+     * The walk up from `$cwd`, where `$operations` run: one command that names each directory's
+     * file (the first of upstream's names that is there and readable, as `inDirectory()`), then
+     * each read. Outermost first. A linked worktree's shadowing is not looked for there.
+     *
+     * @return array{0: list<ContextFile>, 1: list<string>}
+     */
+    private static function elsewhere(\Pig\CodingAgent\Tools\RemoteOperations $operations, string $cwd): array
+    {
+        $script = 'd=$1; while :; do for n in ' . implode(' ', self::NAMES) . '; do f="${d%/}/$n";'
+            . ' if [ -f "$f" ]; then if [ -r "$f" ]; then printf "%s\0" "$f"; break; else printf "!%s\0" "$f"; fi; fi; done;'
+            . ' [ "$d" = / ] && break; d=$(dirname -- "$d"); done';
+        [$exit, $out] = $operations->run(['sh', '-c', $script, 'sh', $cwd]);
+        $files = [];
+        $warnings = [];
+
+        foreach ($exit === 0 ? array_filter(explode("\0", $out), static fn (string $path): bool => $path !== '') : [] as $path) {
+            if (str_starts_with($path, '!')) {
+                $warnings[] = substr($path, 1) . ' could not be read';
+
+                continue;
+            }
+
+            try {
+                array_unshift($files, new ContextFile($path, $operations->readFile($path)));
+            } catch (\Throwable) {
+                $warnings[] = "{$path} could not be read";
+            }
+        }
+
+        return [$files, $warnings];
     }
 
     /**

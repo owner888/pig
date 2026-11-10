@@ -377,7 +377,16 @@ if (isset($options['help'])) {
 
 $cwd = $options['cwd'] ?? $startCwd;
 
-if (!is_dir($cwd)) {
+// A Docker or SSH account's child (`Sandbox\Shells`): `--cwd` is that side's, and is checked
+// there once the tools are (below), not here, where an SSH account's folders need not exist.
+try {
+    $elsewhere = Pig\CodingAgent\Sandbox\Shells::fromEnvironment();
+} catch (Pig\Agent\AgentError $error) {
+    fwrite(STDERR, "pig: {$error->getMessage()}\n");
+    exit(1);
+}
+
+if ($elsewhere === null && !is_dir($cwd)) {
     fwrite(STDERR, Style::red("No such directory: {$cwd}\n"));
 
     exit(1);
@@ -504,14 +513,19 @@ try {
             ->withOwner((string) getenv('PIG_SESSION_OWNER')));
     }
 
-    // Started by the web shell for a Docker account: every tool, and `!command`, runs in its
-    // container, and nothing of the project's own `.pig/` is loaded — `--no-approve` comes with
-    // it (docs/dev/design/storage.md, phase 4 step 3b).
-    if ((string) getenv('PIG_SANDBOX_CONTAINER') !== '') {
-        Pig\CodingAgent\Tools\ToolSet::useOperations(new Pig\CodingAgent\Tools\DockerOperations(new Pig\CodingAgent\Sandbox\DockerContainer(
-            (string) getenv('PIG_SANDBOX_CONTAINER'),
-            (string) getenv('PIG_SANDBOX_DOCKER') ?: 'docker',
-        )));
+    // Started by the web shell for a Docker or SSH account: every tool, and `!command`, runs in
+    // its container or over its connection, and nothing of the project's own `.pig/` is loaded —
+    // `--no-approve` comes with it (docs/dev/design/storage.md, phase 4 steps 3b and 6). The
+    // folder it works in is that side's, and is checked there.
+    if ($elsewhere !== null) {
+        $operations = new Pig\CodingAgent\Tools\RemoteOperations($elsewhere);
+        Pig\CodingAgent\Tools\ToolSet::useOperations($operations);
+
+        if (!$operations->exists($cwd) || !$operations->isDirectory($cwd)) {
+            fwrite(STDERR, Style::red("No such directory: {$cwd}\n"));
+
+            exit(1);
+        }
     }
 } catch (Pig\Agent\AgentError|CodingAgentError $error) {
     fwrite(STDERR, "pig: {$error->getMessage()}\n");

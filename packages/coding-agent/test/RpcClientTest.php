@@ -381,7 +381,7 @@ final class RpcClientTest extends TestCase
      * @param array<string, string> $environment on top of the four below — a provider key, for the
      *                                           cases about which models this machine can talk to
      */
-    private function client(array $arguments = [], bool $withExtensions = false, array $environment = []): RpcClient
+    private function client(array $arguments = [], bool $withExtensions = false, array $environment = [], ?string $cwd = null): RpcClient
     {
         $binary = RpcClient::defaultBinary();
 
@@ -396,7 +396,7 @@ final class RpcClientTest extends TestCase
         }
 
         return $this->client = new RpcClient(
-            cwd: $this->cwd,
+            cwd: $cwd ?? $this->cwd,
             // Extensions off by default: every case but two is about the protocol, and an extension
             // folder on the machine running the tests is not this file's business.
             arguments: [...($withExtensions ? [] : ['--no-extensions']), ...$arguments],
@@ -423,6 +423,51 @@ final class RpcClientTest extends TestCase
     }
 
     // ---- starting and stopping -----------------------------------------------------------------
+
+    /**
+     * An SSH account's child, as the web server starts it: in a directory of pig's own, told the
+     * folder it works in there (`--cwd`), and how to reach it (`PIG_SANDBOX_SSH`). The folder is
+     * looked for there, `AGENTS.md` read there, and `!command` run there — through a stand-in
+     * `ssh` that runs it here (`SshOperationsTest::fakeSsh()`).
+     */
+    public function testAnSshAccountsChildWorksInAFolderThere(): void
+    {
+        $ssh = SshOperationsTest::fakeSsh($this->root);
+        $there = $this->root . '/there/app';
+        mkdir($there, 0o755, true);
+        file_put_contents($this->root . '/there/AGENTS.md', 'the remote rules');
+        mkdir($here = $this->root . '/here');
+        $target = new \Pig\CodingAgent\Sandbox\SshTarget('box', 22, 'bob', '', $this->home . '/.pig', $ssh);
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in', '--no-approve', '--cwd', $there], environment: $target->environment(), cwd: $here);
+
+        [$state, $bash] = Async::run(static function () use ($client): array {
+            $client->start();
+            $state = $client->getState();
+            $bash = $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"');
+            $client->stop();
+
+            return [$state, $bash];
+        });
+
+        $this->assertSame($there, $state['cwd'] ?? null, json_encode($state));
+        $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
+        $asked = (string) file_get_contents($this->root . '/ssh.log');
+        $this->assertStringContainsString('AGENTS.override.md', $asked, 'the context files were looked for there');
+        $this->assertStringContainsString("'test' '-e' '{$there}'", $asked, 'and the folder');
+
+        $gone = $this->client(['--model', 'stand-in', '--no-approve', '--cwd', $this->root . '/nowhere'], environment: $target->environment(), cwd: $here);
+        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static function () use ($gone): void {
+            $gone->start();
+
+            try {
+                $gone->getState();
+            } finally {
+                $gone->stop();
+            }
+        }));
+        $this->assertStringContainsString("No such directory: {$this->root}/nowhere", $error->getMessage());
+    }
 
     public function testItStartsAnswersAndStops(): void
     {

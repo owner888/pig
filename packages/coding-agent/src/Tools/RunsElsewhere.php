@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Tools;
 
 /**
  * Operations whose files are not this machine's, so `grep`'s `rg` and `find`'s `fd` have to run
- * where the files are: `DockerOperations`, in the account's container. pig's, not upstream's —
+ * where the files are: `RemoteOperations`, in the account's container or over SSH. pig's, not upstream's —
  * upstream's `grep` takes only `isDirectory()` from its operations and runs `rg` here, and its
  * `find` swaps `fd` for `glob()`; neither reaches files only another machine has.
  */

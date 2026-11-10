@@ -12,6 +12,7 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
+use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
 use Pig\Tui\Process;
 use Pig\Tui\Style;
@@ -111,10 +112,10 @@ final class Doctor
 
         $gitBranch = null;
         $gitDirty = false;
-        [$branchCode, $branchOut] = Process::run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd: $cwd);
+        [$branchCode, $branchOut] = ToolSet::run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], $cwd);
         if ($branchCode === 0) {
             $gitBranch = trim($branchOut);
-            [$statusCode, $statusOut] = Process::run(['git', 'status', '--porcelain'], cwd: $cwd);
+            [$statusCode, $statusOut] = ToolSet::run(['git', 'status', '--porcelain'], $cwd);
             $gitDirty = $statusCode === 0 && trim($statusOut) !== '';
         }
 

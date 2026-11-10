@@ -388,6 +388,9 @@ These apply under B or C. They go in a later phase, but they shape the interface
    - `renameTable()` on SQLite renames the table's indexes and trigger too. They follow the table
      but keep their names, which the new table would then ask for and, with `IF NOT EXISTS`,
      quietly go without.
+   - `addColumn($table, $column, $type)` (2.1) gives a released table a new column, nullable, when
+     it does not have it yet: `createTable()` alone makes a table only when there is none. On
+     SQLite the `updated_at` trigger names every column, so it is made again with the new one.
 
    `SqlSessionStore` now runs on it:
    - `sessions.modified_at` is gone: `modifiedAt()` is `updated_at`.
@@ -533,7 +536,7 @@ These apply under B or C. They go in a later phase, but they shape the interface
      files. A new conversation's directory is chosen inside it (step 4, folded in here).
    - **The agent stays on the host.** The `pig --mode rpc` child, the model calls, the stored
      sessions and the keys are all on the host, out of the container's reach.
-     - Only the tools go in, as the phase 2 `*Operations` (`DockerOperations` for read, write,
+     - Only the tools go in, as the phase 2 `*Operations` (`DockerOperations`, since step 6 `RemoteOperations`, for read, write,
        edit, ls, find, grep and bash).
      - The model is told the paths its commands run at, which are the host's as well.
    - **What else has to go with it, or the container is no boundary:**
@@ -553,7 +556,7 @@ These apply under B or C. They go in a later phase, but they shape the interface
      - **Settings and image.** `Settings::sandbox()` reads `sandbox: {image, workspaces, docker}`,
        which is global, as `storage` is. The image is `pig-sandbox` by default, from
        `docker/sandbox/Dockerfile`, built by the admin and never pulled by pig.
-     - **The tools.** `Tools\DockerOperations` implements all seven operations with one
+     - **The tools.** `Tools\DockerOperations` (since step 6 `RemoteOperations`) implements all seven operations with one
        `docker exec` each (`Sandbox\DockerContainer`):
        - the files through `cat`, `test`, `mkdir -p` and `find -print0`;
        - `rg` and `fd` run there as well. `Tools\RunsElsewhere` is pig's own interface for that:
@@ -593,6 +596,35 @@ These apply under B or C. They go in a later phase, but they shape the interface
      things. It shares the host's kernel, so it is not one against somebody set on breaking out.
      That would be gVisor or a VM, behind the same `*Operations`.
 
+   **Step 3c, built 2026-11-09: folders of the host given to a Docker account.** Without them a
+   Docker account has only its own empty directory, and code already on the server cannot be
+   worked on. Uploading a whole folder through the page, or keeping one in step with the
+   browser's machine as the Claude app does, was considered and left out (the developer's call):
+   the admin gives folders that are on the server.
+   - **Stored** in `users.options`, a JSON column (`{"folders": [{"path", "readonly"}]}`), added
+     with `Database::addColumn()` to a 2.0 table. `User::$folders`; `Accounts::setFolders()`
+     (`FileAccounts` has nothing to give: its one account is on the host).
+   - **Given** by the admin: `POST /api/accounts/folders {name, folders}`, a Docker account only,
+     each folder checked by `DockerSandbox::checkFolder()`: a whole path to an existing
+     directory, kept as its real path, that neither holds nor is inside pig's home or the
+     accounts' directories, and is none of the system's (`/etc`, `/usr`, …), which the
+     container needs its own of. In the page: ⋯ → Accounts → Folders on a Docker account's row.
+   - **Mounted** at the same path as the account's directory, `:ro` when read-only, so paths are
+     still never translated. The container is labelled with a hash of its mounts
+     (`dev.pigagent.mounts`); `ensure()` makes it again (`docker rm -f`, `run`) when the label
+     differs. What was running in it stops, and what was installed outside `HOME` goes, as with
+     a new image. A 2.0 container, without the label, is kept while the account has no folders.
+   - **Reached** as the account's directory is: `DockerSandbox::contains()` and `roots()` take
+     both, so `start_session`, `/api/dirs` (with no way up out of a root), `/api/file` and a
+     scheduled task's folder accept them, and `/api/folders` lists them to start in. Uploads
+     still go to the account's own directory. Files written in a folder are owned by the
+     server's uid, as with the directory.
+   - **Tests:** `DockerOperationsTest` (mounts, made again once, a 2.0 container kept, `contains()`,
+     `checkFolder()`), `WebLoginAccountsTest` (kept, once each, a 2.0 table given the column),
+     `DatabaseConformance` (`addColumn()`, the trigger with it), and `WebModeTest`'s Docker test
+     (the API, the listing, the picker, a conversation in a given folder, the container made
+     again).
+
 
    **Step 5 built (2026-11-09): each account's scheduled tasks.**
    - **Whose a task is.** `ScheduledTask::$owner` is the account that made the task. A change
@@ -629,6 +661,70 @@ These apply under B or C. They go in a later phase, but they shape the interface
      - a run's child is started as its owner, with its environment;
      - with a database the tasks are there, taken over from the file once, with the
        conversation the owner's and a delete soft.
+
+   **Step 6, decided 2026-11-09 and built 2026-11-10: SSH accounts.** A third place an account's
+   tools run, beside the host and a container: an OS user reached over SSH.
+   - **Both uses, one runtime** (the developer's call): another OS user on this server
+     (`127.0.0.1`), whose own permissions then keep the accounts apart without Docker, or another
+     machine (a GPU box, a build machine). That user's permissions are the boundary; pig confines
+     nothing further, so any absolute path there is the account's.
+   - **Set on the account** (`User::$ssh` in `users.options`, `Accounts::setSsh()`): host, port,
+     user, a private key's path on the server ('' for the server user's own `~/.ssh` and agent),
+     and the workspace there, by its whole path. `POST /api/accounts/ssh` checks them
+     (`SshSandbox::checkConfig()`); `POST /api/accounts/check` connects (and, for a Docker
+     account, starts its container) and says what `ssh` said. In the page: ⋯ → Accounts →
+     Connection, with "Save and test".
+   - **How it connects** (`Sandbox\SshTarget`): `BatchMode=yes` (a key, never a prompt);
+     `StrictHostKeyChecking=accept-new` against pig's own `known_hosts` beside `settings.json`;
+     one shared connection per target (`ControlMaster=auto`, `ControlPersist=600`, sockets under
+     `ssh/`), since every file the agent reads is an `ssh`. The remote command is one line for the
+     login shell, each word single-quoted: `cd -- '<cwd>' && exec env 'K=V' '<argv>'…`. The
+     `ssh` command is `sandbox.ssh`.
+   - **What was generalised:**
+     - `Sandbox\Shell` (`exec()`, `run()`, `environment()`) is what `DockerContainer` and
+       `SshTarget` are; `Sandbox\Runtime` (`ensure()`, `shell()`, `workspace()`, `roots()`,
+       `contains()`, `here()`, `dirs()`) is what `DockerSandbox` and `SshSandbox` are.
+       `HttpServer::sandboxOf()` answers a `Runtime`.
+     - `Tools\DockerOperations` became `Tools\RemoteOperations` over a `Shell`. Its run files
+       are `${TMPDIR:-/tmp}/.pig-runs-<uid>`, since several accounts may be users of one machine,
+       and the command is a word of what `Shell::exec()` runs (`ssh` sends one line; a word added
+       after it would join that line unquoted). `PIG_SANDBOX_*` stays out of what goes in.
+     - `bin/pig` reads `PIG_SANDBOX_CONTAINER` / `PIG_SANDBOX_SSH` (`Sandbox\Shells`).
+   - **Paths are that machine's, and need not exist here.** So:
+     - The child is started in a directory of pig's own (`Runtime::here()`:
+       `ssh/here/<name>-<id>` for SSH; the folder itself for Docker), with `--cwd` the folder
+       there; `HttpServer`'s spawn passes `--no-approve --cwd` whenever `PIG_SANDBOX_HERE` is set.
+       `bin/pig` checks `--cwd` where the tools run, not with `is_dir()`.
+     - `SessionCwd` (a resumed conversation's folder) and `ContextFiles` (`AGENTS.md`, one
+       command for the walk up, then each read) ask where the tools run.
+     - `ToolSet::run()` runs what pig runs in a project besides the tools — `git` for `/diff`
+       and its untracked list, the doctor's branch, the PR description's diff — where the tools
+       run. This also closed a hole for Docker accounts: those ran on the host, in the account's
+       directory, where a `.git/config` of the account's (`core.fsmonitor`) would have run as the
+       server's user.
+     - `/api/dirs` lists there (`Runtime::dirs()`, `DirectoryListing::wanted()` / `of()`
+       shared), `/api/folders` does not look for the workspace here, `/api/file` and the
+       terminal's commands go through the shell, and the page's terminal is `ssh -t`, its pty
+       started in `here()`.
+     - A scheduled task's folder is looked for there when it is saved, and not here when it is
+       saved or read back (`ScheduledTask::fromArray(..., here: false)`,
+       `ScheduleManager::$elsewhere`); the `schedule` tool in such a child does the same.
+   - **Nothing an unreachable machine can freeze:** `start_session`, the terminal, `/api/dirs`,
+     `/api/file` and `check` reach the runtime on the loop (`Async::spawn`, `Process::runAsync`),
+     so a connection waiting out `ConnectTimeout` holds only its own page. (Before, a Docker
+     account's `start_session` ran `docker inspect` on the loop's own turn.)
+   - **That side needs** a POSIX login shell, bash, coreutils, util-linux's `setsid` (stopping a
+     command), and `rg` and `fd` for grep and find.
+   - **Tests:** `SshOperationsTest` uses a stand-in `ssh` (`fakeSsh()`) that runs the line with
+     bash here in an environment of its own, and refuses a host named `unreachable`: the command
+     line and its quoting, options that must not reach `ssh`, the environment round trip, the
+     tools, `bash` and stopping it, `AGENTS.md` there, `ToolSet::run()`, the sandbox's check,
+     workspace, `here()` and listing, and what an account may be given.
+     `RpcClientTest::testAnSshAccountsChildWorksInAFolderThere` runs a real `bin/pig` child over
+     it. `WebModeTest::testAnSshAccountWorksAsAUserReachedOverSsh` covers the API, the check
+     (refused, then made), the folder list, the picker, the conversation's child and
+     environment, the terminal's command and a task's folder. `ScheduleManagerTest` covers a task
+     in a folder there, across a restart.
 
 5. **Several instances**, when a second one is actually wanted: session leases, and the pool and the
    scheduler routing by them.

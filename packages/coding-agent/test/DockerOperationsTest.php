@@ -12,7 +12,7 @@ use Pig\CodingAgent\Sandbox\DockerContainer;
 use Pig\CodingAgent\Sandbox\DockerSandbox;
 use Pig\CodingAgent\Accounts\User;
 use Pig\CodingAgent\Tools\CommandStopped;
-use Pig\CodingAgent\Tools\DockerOperations;
+use Pig\CodingAgent\Tools\RemoteOperations;
 use Pig\CodingAgent\Tools\FileAccessError;
 use Pig\CodingAgent\Tools\GrepTool;
 use Pig\CodingAgent\Tools\ReadTool;
@@ -44,8 +44,11 @@ final class DockerOperationsTest extends TestCase
             #!/bin/bash
             echo "$*" >> "$(dirname "$0")/docker.log"
             case "$1" in
-              inspect) [ -f "$(dirname "$0")/docker.running" ] && echo true && exit 0; exit 1;;
-              run|start) touch "$(dirname "$0")/docker.running"; echo id; exit 0;;
+              inspect) [ -f "$(dirname "$0")/docker.running" ] && echo "true $(cat "$(dirname "$0")/docker.running")" && exit 0; exit 1;;
+              run) label=; for a in "$@"; do case "$a" in dev.pigagent.mounts=*) label=${a#*=};; esac; done
+                echo -n "$label" > "$(dirname "$0")/docker.running"; echo id; exit 0;;
+              start) exit 0;;
+              rm) rm -f "$(dirname "$0")/docker.running"; exit 0;;
               exec) shift; cwd=
                 while [ $# -gt 0 ]; do case "$1" in -i|-t) shift;; -w) cwd=$2; shift 2;; -e) export "$2"; shift 2;; *) break;; esac; done
                 shift; [ -n "$cwd" ] && cd "$cwd"; exec "$@";;
@@ -62,9 +65,9 @@ final class DockerOperationsTest extends TestCase
         shell_exec('rm -rf ' . escapeshellarg($this->dir));
     }
 
-    private function operations(): DockerOperations
+    private function operations(): RemoteOperations
     {
-        return new DockerOperations(new DockerContainer('pig-test', $this->docker));
+        return new RemoteOperations(new DockerContainer('pig-test', $this->docker));
     }
 
     /** @return list<string> what docker was asked, one line each */
@@ -225,6 +228,61 @@ final class DockerOperationsTest extends TestCase
         $this->assertTrue($sandbox->contains($bob, "{$workspace}/app"));
         $this->assertFalse($sandbox->contains($bob, "{$workspace}/etc"), 'a link out of it is out of it');
         $this->assertFalse($sandbox->contains($bob, $this->dir));
+    }
+
+    public function testGivenFoldersAreMountedAtTheirPathAndAChangeMakesTheContainerAgain(): void
+    {
+        mkdir("{$this->dir}/projects/site/src", 0o777, true);
+        mkdir("{$this->dir}/docs", 0o777, true);
+        $sandbox = new DockerSandbox('pig-sandbox', "{$this->dir}/workspaces", $this->docker, "{$this->dir}/home");
+        $bob = new User('0123456789abcdef', 'bob', false, User::DOCKER);
+        $given = new User('0123456789abcdef', 'bob', false, User::DOCKER, [
+            ['path' => "{$this->dir}/projects/site", 'readonly' => false],
+            ['path' => "{$this->dir}/docs", 'readonly' => true],
+        ]);
+        $runs = fn (): array => array_values(array_filter($this->asked(), static fn (string $line): bool => str_starts_with($line, 'run ')));
+
+        Async::run(static fn (): DockerContainer => $sandbox->ensure($bob));
+        Async::run(static fn (): DockerContainer => $sandbox->ensure($given));
+        Async::run(static fn (): DockerContainer => $sandbox->ensure($given));
+
+        $this->assertCount(2, $runs(), 'made again once for the folders, then found');
+        $this->assertContains('rm -f pig-0123456789abcdef', $this->asked());
+        $this->assertStringContainsString("-v {$this->dir}/projects/site:{$this->dir}/projects/site -v {$this->dir}/docs:{$this->dir}/docs:ro", $runs()[1]);
+
+        $this->assertTrue($sandbox->contains($given, "{$this->dir}/projects/site/src"));
+        $this->assertFalse($sandbox->contains($bob, "{$this->dir}/projects/site/src"), 'only once given');
+        $this->assertFalse($sandbox->contains($given, "{$this->dir}/projects"));
+        $this->assertSame(["{$this->dir}/workspaces/bob-01234567", "{$this->dir}/projects/site", "{$this->dir}/docs"], $sandbox->roots($given));
+    }
+
+    public function testAContainerFromBeforeFoldersIsKeptWhileItHasNone(): void
+    {
+        $sandbox = new DockerSandbox('pig-sandbox', "{$this->dir}/workspaces", $this->docker);
+        touch("{$this->dir}/docker.running");
+
+        Async::run(static fn (): DockerContainer => $sandbox->ensure(new User('0123456789abcdef', 'bob', false, User::DOCKER)));
+
+        $this->assertSame(['inspect -f {{.State.Running}} {{index .Config.Labels "dev.pigagent.mounts"}} pig-0123456789abcdef'], $this->asked());
+    }
+
+    public function testOnlyAFolderOfItsOwnMayBeGiven(): void
+    {
+        mkdir("{$this->dir}/home/workspaces", 0o777, true);
+        mkdir("{$this->dir}/code", 0o777, true);
+        $sandbox = new DockerSandbox('pig-sandbox', "{$this->dir}/home/workspaces", $this->docker, "{$this->dir}/home");
+
+        $this->assertSame(realpath("{$this->dir}/code"), $sandbox->checkFolder("{$this->dir}/code/"));
+
+        foreach (['code' => 'whole path', "{$this->dir}/nothing" => 'no folder', "{$this->dir}/home/workspaces/x" => 'no folder',
+            "{$this->dir}/home" => "pig's own", $this->dir => "pig's own", '/' => "pig's own", '/etc' => "system's", '/usr/local' => "system's"] as $path => $why) {
+            try {
+                $sandbox->checkFolder($path);
+                $this->fail("{$path} was given");
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString($why, $e->getMessage(), $path);
+            }
+        }
     }
 
     private static function needsSetsid(): void

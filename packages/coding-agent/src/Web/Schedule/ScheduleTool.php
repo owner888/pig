@@ -168,7 +168,9 @@ final class ScheduleTool
         }
 
         // Checked here before anybody is asked, so the dialog never shows a task that cannot be saved.
-        $task = ScheduledTask::fromArray($data);
+        // A folder where the tools run elsewhere (an SSH account's) is the server's to check.
+        $here = \Pig\CodingAgent\Tools\ToolSet::operations() === null;
+        $task = ScheduledTask::fromArray($data, $here);
 
         $title = $update ? "Change scheduled task '{$task->name}'?" : 'Create a scheduled task?';
         if (!$ctx->ui->confirm($title, self::summary($task))) {
@@ -177,7 +179,7 @@ final class ScheduleTool
 
         $saved = $client->save($data);
 
-        return self::text(($update ? 'Saved' : 'Created') . " scheduled task {$saved['id']}; its runs carry on in its own conversation, in the sidebar under its name.\n" . self::summary(ScheduledTask::fromArray($saved)));
+        return self::text(($update ? 'Saved' : 'Created') . " scheduled task {$saved['id']}; its runs carry on in its own conversation, in the sidebar under its name.\n" . self::summary(ScheduledTask::fromArray($saved, $here)));
     }
 
     /** @param array<string, mixed> $task */

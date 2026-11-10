@@ -186,7 +186,22 @@ final class Settings
             $text('image', 'pig-sandbox'),
             str_starts_with($workspaces, '/') ? $workspaces : $home . '/' . $workspaces,
             $text('docker', 'docker'),
+            $home,
         );
+    }
+
+    /**
+     * Where SSH accounts connect from (docs/dev/design/storage.md, phase 4 step 6): pig's home, for
+     * its own `known_hosts` and shared connections, and the `ssh` command (`sandbox.ssh`, `ssh` by
+     * default). Global, as `sandbox` is.
+     */
+    public static function sshSandbox(?string $home = null): \Pig\CodingAgent\Sandbox\SshSandbox
+    {
+        $home ??= Config::home();
+        $value = self::read($home . '/' . self::FILE)[0]['sandbox'] ?? [];
+        $ssh = is_array($value) && is_string($value['ssh'] ?? null) && trim($value['ssh']) !== '' ? trim($value['ssh']) : 'ssh';
+
+        return new \Pig\CodingAgent\Sandbox\SshSandbox($home, $ssh);
     }
 
     /**

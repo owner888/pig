@@ -75,8 +75,11 @@ final class ScheduleManagerTest extends TestCase
         Loop::reset();
     }
 
-    /** @param (Closure(?string): array<string, string>)|null $environmentFor */
-    private function manager(?string $url = null, ?ScheduleStore $store = null, ?Closure $environmentFor = null): ScheduleManager
+    /**
+     * @param (Closure(?string): array<string, string>)|null $environmentFor
+     * @param (Closure(?string): bool)|null $elsewhere
+     */
+    private function manager(?string $url = null, ?ScheduleStore $store = null, ?Closure $environmentFor = null, ?Closure $elsewhere = null): ScheduleManager
     {
         $manager = null;
         $pool = new SessionPool(
@@ -107,6 +110,7 @@ final class ScheduleManagerTest extends TestCase
             $url,
             $store,
             $environmentFor,
+            $elsewhere,
         );
 
         $this->pools[] = $pool;
@@ -739,6 +743,27 @@ final class ScheduleManagerTest extends TestCase
     }
 
     // ---- accounts ------------------------------------------------------------------------------
+
+    public function testAnSshAccountsTaskIsInAFolderThereThatIsNotLookedForHere(): void
+    {
+        $bob = new User('bob-id', 'bob', false, User::SSH);
+        $elsewhere = static fn (?string $owner): bool => $owner === 'bob-id';
+        $manager = $this->manager(elsewhere: $elsewhere);
+        $manager->start();
+
+        $manager->save($this->task(['cwd' => '/home/bob/app']), $bob);
+        try {
+            $manager->save($this->task(['cwd' => '/home/bob/app']));
+            $this->fail('the server\'s own task is in a folder here');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('does not exist', $e->getMessage());
+        }
+        $manager->stop();
+
+        $again = $this->manager(elsewhere: $elsewhere);
+        $again->start();
+        self::assertSame(['/home/bob/app'], array_column($again->list($bob), 'cwd'), 'and it still reads after a restart');
+    }
 
     public function testEachAccountSeesAndChangesOnlyItsOwnTasks(): void
     {

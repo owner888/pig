@@ -7,37 +7,45 @@ namespace Pig\CodingAgent\Tools;
 use Closure;
 use Pig\Agent\AgentError;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\Sandbox\DockerContainer;
+use Pig\CodingAgent\Sandbox\Shell;
 use Pig\Tui\Images\ImageType;
 
 /**
- * Every built-in tool's operations, in an account's container (docs/dev/design/storage.md, phase
- * 4 step 3b): a Docker account's `pig --mode rpc` child is given these, and nothing it reads,
- * writes, lists, searches or runs touches the host.
+ * Every built-in tool's operations, somewhere other than this process (`Sandbox\Shell`): an
+ * account's container, or an OS user over SSH (docs/dev/design/storage.md, phase 4 steps 3b and
+ * 6). Such an account's `pig --mode rpc` child is given these, and nothing it reads, writes, lists,
+ * searches or runs touches the host.
  *
- * Each file operation is one `docker exec` of a coreutils command — `cat`, `test`, `stat`,
- * `mkdir -p`, `find -print0` — so a symbolic link the account made pointing at `/etc` is followed in the
- * container, where it names the container's `/etc`. `rg` and `fd` run there too
- * (`RunsElsewhere`), and `bash` is `bash -c` there in its own session, so stopping it reaches
- * everything it started (`stop()`). The image needs bash, coreutils, findutils, util-linux's
- * `setsid`, `rg` and `fd`.
+ * Each file operation is one command there of coreutils — `cat`, `test`, `stat`, `mkdir -p`,
+ * `find -print0` — so a symbolic link the account made pointing at `/etc` is followed there, where
+ * it names that side's `/etc`. `rg` and `fd` run there too (`RunsElsewhere`), and `bash` is
+ * `bash -c` there in its own session, so stopping it reaches everything it started (`stop()`).
+ * That side needs bash, coreutils, findutils, util-linux's `setsid`, `rg` and `fd`.
  *
- * Of the session's environment only pig's own `PIG_*` variables go in: the host's `PATH`, `HOME`
- * and above all its keys stay out.
+ * Of the session's environment only pig's own `PIG_*` variables go in, not `PIG_SANDBOX_*`: the
+ * host's `PATH`, `HOME` and above all its keys stay out.
  */
-final class DockerOperations implements ReadOperations, WriteOperations, EditOperations, LsOperations, FindOperations, GrepOperations, BashOperations, RunsElsewhere
+final class RemoteOperations implements ReadOperations, WriteOperations, EditOperations, LsOperations, FindOperations, GrepOperations, BashOperations, RunsElsewhere
 {
-    /** Where a running command's process group is written, so it can be stopped from outside. */
-    private const string RUNS = '/tmp/.pig-runs';
+    /**
+     * Where a running command's process group is written, so it can be stopped from outside: a
+     * directory of the user's own there, since several accounts may be users of one machine.
+     */
+    private const string RUNS = '"${TMPDIR:-/tmp}/.pig-runs-$(id -u)"';
 
-    public function __construct(public readonly DockerContainer $container)
+    public function __construct(public readonly Shell $shell)
     {
     }
 
-    /** @param list<string> $inside */
-    private function run(array $inside, ?string $input = null): array
+    /**
+     * Run `$inside` there to the end (`Shell::run()`).
+     *
+     * @param list<string> $inside
+     * @return array{0: int, 1: string, 2: string}
+     */
+    public function run(array $inside, ?string $input = null, ?string $cwd = null): array
     {
-        return $this->container->run($inside, $input);
+        return $this->shell->run($inside, $input, $cwd);
     }
 
     /** What a failed command said, as the reason a file could not be had. */
@@ -86,7 +94,7 @@ final class DockerOperations implements ReadOperations, WriteOperations, EditOpe
     #[\Override]
     public function createReadStream(string $absolutePath, ?AbortSignal $signal = null): iterable
     {
-        $process = proc_open($this->container->exec(['cat', '--', $absolutePath]), [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $process = proc_open($this->shell->exec(['cat', '--', $absolutePath]), [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 
         if (!is_resource($process)) {
             throw new AgentError("Could not read {$absolutePath}");
@@ -186,17 +194,17 @@ final class DockerOperations implements ReadOperations, WriteOperations, EditOpe
         return $this->run(['test', '-d', $absolutePath])[0] === 0;
     }
 
-    /** Not asked: `FindTool` runs `fd` in the container instead (`elsewhere()`). */
+    /** Not asked: `FindTool` runs `fd` there instead (`elsewhere()`). */
     #[\Override]
     public function glob(string $pattern, string $cwd, array $ignore, int $limit): array
     {
-        throw new \LogicException('DockerOperations runs fd in the container; glob() is not used.');
+        throw new \LogicException('RemoteOperations runs fd there; glob() is not used.');
     }
 
     #[\Override]
     public function elsewhere(array $argv, ?string $cwd): array
     {
-        return [$this->container->exec($argv, $cwd), null];
+        return [$this->shell->exec($argv, $cwd), null];
     }
 
     // ---- bash -------------------------------------------------------------------------------
@@ -205,19 +213,25 @@ final class DockerOperations implements ReadOperations, WriteOperations, EditOpe
     public function exec(string $command, string $cwd, Closure $onData, ?AbortSignal $signal = null, ?float $timeout = null, ?array $env = null): ?int
     {
         $run = bin2hex(random_bytes(8));
-        $inside = array_filter($env ?? [], static fn (string $key): bool => str_starts_with($key, 'PIG_'), ARRAY_FILTER_USE_KEY);
+        // pig's own variables but how this side reaches that one (`PIG_SANDBOX_*`: the key's path,
+        // pig's home), which is the server's business.
+        $inside = array_filter($env ?? [], static fn (string $key): bool => str_starts_with($key, 'PIG_') && !str_starts_with($key, 'PIG_SANDBOX_'), ARRAY_FILTER_USE_KEY);
 
         // `setsid -w` makes the command the leader of a process group of its own, and the inner
-        // bash writes that group's id down: stopping the `docker exec` here does not stop what
-        // runs there, so `stop()` signals the group from a second `docker exec`. `-w` waits, and
-        // hands the command's code back. The command itself is the outer bash's `$0`.
-        $file = self::RUNS . "/{$run}";
-        $wrapper = 'mkdir -p ' . self::RUNS . " && exec setsid -w bash -c 'echo \$\$ > {$file}; exec bash -c \"\$0\"' \"\$0\"";
-        $argv = $this->container->exec(['bash', '-c', $wrapper], $cwd, $inside);
+        // bash writes that group's id down: stopping the `docker exec` or `ssh` here does not stop
+        // what runs there, so `stop()` signals the group from a second one. `-w` waits, and hands
+        // the command's code back. The command itself is the outer bash's `$0`; where the group
+        // is written goes in as `PIG_RUN_FILE`, and is gone before the command starts.
+        $wrapper = 'd=' . self::RUNS . "; mkdir -p \"\$d\" && PIG_RUN_FILE=\"\$d/{$run}\" exec setsid -w bash -c 'echo \$\$ > \"\$PIG_RUN_FILE\"; unset PIG_RUN_FILE; exec bash -c \"\$0\"' \"\$0\"";
+        // The command is a word of what runs there, as every other is: `ssh` sends one line, and a
+        // word added after it here would join that line unquoted. `LocalShellRun` adds the last
+        // word itself.
+        $argv = $this->shell->exec(['bash', '-c', $wrapper, $command], $cwd, $inside);
+        $last = (string) array_pop($argv);
 
         $state = new LocalShellRun($onData);
-        // The host's environment for `docker` itself (its `DOCKER_HOST`, its `PATH`); none of it goes in.
-        $state->start($command, '/', new ShellConfig($argv[0], array_slice($argv, 1)), null);
+        // The host's environment for `docker` or `ssh` itself (its `DOCKER_HOST`, its agent); none of it goes in.
+        $state->start($last, '/', new ShellConfig($argv[0], array_slice($argv, 1)), null);
         $exit = $state->wait($signal, $timeout);
 
         if ($state->aborted || $state->timedOut) {
@@ -226,12 +240,12 @@ final class DockerOperations implements ReadOperations, WriteOperations, EditOpe
             throw new CommandStopped($state->timedOut, $exit);
         }
 
-        $this->run(['rm', '-f', self::RUNS . "/{$run}"]);
+        $this->run(['sh', '-c', 'rm -f ' . self::RUNS . '/"$1"', 'sh', $run]);
 
         return $exit;
     }
 
-    /** Stop the command `$run` and everything it started, in the container. */
+    /** Stop the command `$run` and everything it started, there. */
     private function stop(string $run): void
     {
         $this->run(['sh', '-c', 'f=' . self::RUNS . '/$1; test -f "$f" || exit 0; g=$(cat "$f"); kill -TERM -- -"$g" 2>/dev/null; sleep 1; kill -KILL -- -"$g" 2>/dev/null; rm -f "$f"', 'sh', $run]);

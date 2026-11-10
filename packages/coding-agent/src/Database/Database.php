@@ -82,6 +82,13 @@ interface Database
      */
     public function createTable(string $name, array $columns, array $primaryKey, array $indexes = []): void;
 
+    /**
+     * Add `$column` to `$name` when it is not there yet: a table that has been released growing a
+     * column, which `createTable()` (only when there is no table) would not give it. `$type` is one
+     * of `createTable()`'s, and a column added to rows already there allows null (`?` or not).
+     */
+    public function addColumn(string $name, string $column, string $type): void;
+
     public function tableExists(string $name): bool;
 
     /**

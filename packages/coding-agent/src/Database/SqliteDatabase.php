@@ -93,15 +93,35 @@ final class SqliteDatabase extends PdoDatabase
             $this->query('CREATE INDEX IF NOT EXISTS ' . $this->quote("{$table}_{$index}") . ' ON ' . $this->quote($table) . ' (' . $this->quoteAll($on) . ')');
         }
 
-        // Every column but `updated_at` itself: one changed, and `updated_at` did not, is MySQL's
-        // ON UPDATE.
+        $this->trigger($name, ifNotExists: true);
+    }
+
+    /**
+     * `updated_at`'s trigger on `$name`: after an update in which a column other than `updated_at`
+     * changed, and `updated_at` itself did not, it is set — MySQL's ON UPDATE. Every column is named
+     * in it, so a column added later (`addColumn()`) makes it again.
+     */
+    private function trigger(string $name, bool $ifNotExists): void
+    {
+        $table = $this->table($name);
         $changed = implode(' OR ', array_map(
             fn (string $column): string => 'NEW.' . $this->quote($column) . ' IS NOT OLD.' . $this->quote($column),
-            [...array_keys($columns), 'created_at', 'deleted_at'],
+            array_values(array_filter($this->columns($name), static fn (string $column): bool => $column !== 'updated_at')),
         ));
+
+        if (!$ifNotExists) {
+            $this->query('DROP TRIGGER IF EXISTS ' . $this->quote("{$table}_updated_at"));
+        }
+
         $this->query('CREATE TRIGGER IF NOT EXISTS ' . $this->quote("{$table}_updated_at") . ' AFTER UPDATE ON ' . $this->quote($table)
             . ' FOR EACH ROW WHEN NEW."updated_at" IS OLD."updated_at" AND (' . $changed . ')'
             . ' BEGIN UPDATE ' . $this->quote($table) . ' SET "updated_at" = ' . self::NOW . ' WHERE rowid = NEW.rowid; END');
+    }
+
+    #[\Override]
+    protected function columnAdded(string $name): void
+    {
+        $this->trigger($name, ifNotExists: false);
     }
 
     #[\Override]

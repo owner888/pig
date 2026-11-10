@@ -86,9 +86,11 @@ final class ScheduledTask
 
     /**
      * @param array<string, mixed> $data
+     * @param bool $here whether the task's folder is this machine's, to be looked for here: not an
+     *     SSH account's, which is another machine's (and is looked for there, by whoever saves it)
      * @throws InvalidArgumentException naming the field that is wrong
      */
-    public static function fromArray(array $data): self
+    public static function fromArray(array $data, bool $here = true): self
     {
         $name = trim(self::string($data, 'name'));
         $prompt = trim(self::string($data, 'prompt'));
@@ -103,7 +105,7 @@ final class ScheduledTask
             throw new InvalidArgumentException('A scheduled task needs a prompt.');
         }
 
-        if (!is_dir($cwd)) {
+        if ($here && !is_dir($cwd)) {
             throw new InvalidArgumentException("The folder '{$cwd}' does not exist.");
         }
 

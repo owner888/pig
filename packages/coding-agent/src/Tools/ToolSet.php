@@ -18,19 +18,40 @@ final class ToolSet
 {
     /**
      * The operations every built-in tool is made with, when not this machine's: a Docker account's
-     * container (`DockerOperations`, docs/dev/design/storage.md phase 4), set once by `bin/pig`
-     * for the whole run. Null for this machine, as upstream's tools default to.
+     * container or an SSH account's machine (`RemoteOperations`, docs/dev/design/storage.md phase
+     * 4), set once by `bin/pig` for the whole run. Null for this machine, as upstream's tools
+     * default to.
      */
-    private static ?DockerOperations $operations = null;
+    private static ?RemoteOperations $operations = null;
 
-    public static function useOperations(?DockerOperations $operations): void
+    public static function useOperations(?RemoteOperations $operations): void
     {
         self::$operations = $operations;
     }
 
-    public static function operations(): ?DockerOperations
+    public static function operations(): ?RemoteOperations
     {
         return self::$operations;
+    }
+
+    /**
+     * Run `$command` in `$cwd` where the tools run (`operations()`), or here: what pig runs in a
+     * project besides the tools — `git` for `/diff`, the doctor, a PR description. Run here for an
+     * account whose files are elsewhere, it would read the wrong ones; for a Docker account's
+     * directory, a `.git/config` of the account's (`core.fsmonitor`) would run on the host.
+     *
+     * @param list<string> $command
+     * @return array{0: int, 1: string, 2: string}
+     */
+    public static function run(array $command, string $cwd, float $timeout = 30.0): array
+    {
+        if (self::$operations !== null) {
+            return self::$operations->run($command, cwd: $cwd);
+        }
+
+        [$exit, $out, $errors] = \Pig\Tui\Process::run($command, $timeout, $cwd);
+
+        return [$exit, $out, $errors];
     }
 
     /**

@@ -43,6 +43,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- **SSH accounts** — besides the host and Docker, an account can work as a system user reached over SSH: another user on the same server, or another machine. The admin sets the host, port, user, a private key on the server and the workspace there (⋯ → Accounts → Connection, with "Save and test"). The account's tools, `!commands`, `/diff`, `AGENTS.md`, folder picker, file previews, uploads, scheduled tasks and web terminal all work there, as that user; its conversations, the models and the API keys stay on the server. pig keeps its own `known_hosts` (a host key is learnt the first time and must not change after) and shares one connection per machine. `sandbox.ssh` in `settings.json` names another `ssh` command.
+- **Folders of the server for a Docker account** — the admin gives a Docker account folders that are on the server (⋯ → Accounts → Folders), each read-write or read-only. They are mounted in its container at the same path, listed in its folder picker beside its own directory, and it can start conversations, run commands and schedule tasks in them. pig's home, the accounts' directories and the system's folders cannot be given. The container is made again with them the next time it is needed.
+
+### Changed
+
+- Starting a conversation or a terminal for a Docker account no longer holds up the rest of the server while its container starts.
+- The Antigravity extension's panel is called "Antigravity" rather than "Accounts", now that `pig web` has accounts of its own.
+
+### Fixed
+
+- For a Docker account, `/diff`, its list of untracked files, the doctor's git status and the PR description's diff ran `git` on the host in the account's directory, where a `.git/config` of the account's could run a command as the server's user; they now run in the account's container.
+
 ## [2.0.0] - 2026-11-10
 
 ### New Features

@@ -74,7 +74,7 @@ space left on device`), so nothing the errno said is lost.
 `Tools\LocalShellOperations` is `createLocalShellOperations()`.
 
 `Tools\RunsElsewhere` is pig's own, for operations whose files are on another machine (an
-account's Docker container, `Tools\DockerOperations`). Upstream's `grep` takes only `isDirectory()`
+account's Docker container or an SSH account's machine, `Tools\RemoteOperations`). Upstream's `grep` takes only `isDirectory()`
 from its operations and runs `rg` here, and its `find` swaps `fd` for `glob()`; neither reaches files
 that only the other machine has. With operations that run elsewhere, `GrepTool` and `FindTool` run
 the same `rg` / `fd` command there, and `grep` reads its context lines through the operations.

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
-use Pig\Tui\Process;
+use Pig\CodingAgent\Tools\ToolSet;
 
 /**
  * The files `git diff` cannot show. `/diff` runs `git diff`, and `git diff` compares tracked files
@@ -18,7 +18,7 @@ final class GitUntracked
     /** @return list<string> paths as `git status --porcelain` prints them, in its order */
     public static function files(string $cwd): array
     {
-        [$code, $out] = Process::run(['git', 'status', '--porcelain', '--untracked-files=all'], cwd: $cwd);
+        [$code, $out] = ToolSet::run(['git', 'status', '--porcelain', '--untracked-files=all'], $cwd);
 
         if ($code !== 0) {
             return [];
