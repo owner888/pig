@@ -205,7 +205,8 @@ kept, as none was for `~/.pig` → `~/.pig/agent`.
   `PIG_TUI_ESC_TIMEOUT` (ms a lone ESC waits; 100 over SSH, else 10), `PIG_SKIP_VERSION_CHECK`,
   `PIG_SHARE_VIEWER_URL`, `PIG_CLIPBOARD_OSC52=1` (a copy also goes to the terminal as OSC 52, for
   a remote client without SSH markers). `--offline` sets `PIG_OFFLINE=1` and `PIG_SKIP_VERSION_CHECK=1` for the run.
-- **New, pig's own**: `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
+- **New, pig's own**: `PIG_SHARE_SERVER`, where `/share` keeps a session (default
+  `https://pigagent.dev`; see "Sharing on pigagent.dev"). `PIG_STALL_LOG=1` logs every moment the event loop is held for 0.3s or more
   (`Loop::watchStalls()`) to `~/.pig/agent/logs` — how long, which callback, where the coroutine it
   resumed had suspended (each coroutine's own suspension, kept per fiber: the last suspension of any
   coroutine named whatever else was waiting) and where it suspended next, which brackets the slow
@@ -489,3 +490,54 @@ version it cannot read marks the current one as seen and shows nothing. The deve
   the release can carry entries the beta did not have; upstream treats the two as the same version.
 - **A setting that is no version shows everything once**, rather than nothing: a typo in
   `settings.json` costs one long changelog instead of silently hiding every entry after it.
+
+## No pi services
+
+pig talks to the providers a person chooses and to nothing of pi's. The developer's rule: no
+request goes to a server Earendil runs. So upstream's **Radius** — the `radius.pi.dev` gateway with
+its sign-in, its model catalogue, the `pi-messages` wire protocol it speaks and its `/share`
+artifacts — is not ported, and the upstream commits that add to it are skipped (`upstream.md`):
+
+- No `radius` provider: no `Models::RADIUS` rows, no `RADIUS_API_KEY`, no `pi-messages` API
+  (`Api`, `Stream`, a `models.json` model's `"api"`), no `"oauth": "radius"` on a `models.json`
+  provider, no catalogue refresh from the gateway.
+- No sign-in: `/login` offers an account or an API key, not upstream's third "Sign in with Radius",
+  and `pig auth login` lists no Radius row. An `auth.json` pi wrote with a `radius` entry is left
+  as it is and not used.
+- No preferred partner shimmer for Radius: `PreferredProviders::IDS` is `['openrouter']`.
+- `/share` does not upload to Radius: `sessionShareDestination` is `auto` or `gist`, and a
+  `"radius"` pi wrote there shares as `auto` does (next entry).
+
+pigagent.dev is the developer's own server, so it is not a pi service.
+
+## Sharing on pigagent.dev
+
+Upstream's `/share` uploads the session to Radius when signed in, else makes a secret GitHub gist of
+the HTML export. pig's default road is its own: the export kept on pigagent.dev, which the developer
+runs, with privacy designed in rather than promised.
+
+- **End to end encrypted.** `SessionShare::seal()` gzips the page and seals it with AES-256-GCM
+  under a fresh 32-byte key; the body sent is `iv ‖ ciphertext ‖ tag`. The key goes only in the
+  link's fragment, `https://pigagent.dev/s/<id>#<key>`, which browsers do not send to the server;
+  the viewer page decrypts with WebCrypto. The server, its logs and its backups hold ciphertext.
+  Whoever has the link reads the session, as with a secret gist — but GitHub can read a gist.
+- **Expiry.** The person picks 30 (default), 7 or 1 days; the server deletes the share then. There
+  is no "forever".
+- **Taken down sooner.** The upload answers a delete token, kept with the link in `shares.json`
+  (`ShareRecords`, mode `0600`, beside `auth.json`); `/unshare` lists this machine's live shares and
+  deletes one. A share made elsewhere cannot be deleted from here: the token never left that machine.
+- **Credentials are looked for first.** `SecretScan` searches the page for every value in
+  `auth.json` (`Auth::storedSecrets()`), every environment variable named like a credential
+  (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_ACCESS_KEY`), and the providers' key
+  shapes, and lists what it found, masked, to redact, send as it is, or cancel. It runs for the
+  gist road too, which upstream does not do. It cannot know every secret: the list is a check, not
+  a guarantee.
+- **`auto` means pigagent.dev; `gist` is chosen.** The developer's call: the encrypted road is the
+  safer one, so it is the default; `sessionShareDestination: "gist"` keeps upstream's gist road for
+  someone who wants the page on GitHub. `PIG_SHARE_VIEWER_URL` is still the gist viewer;
+  `PIG_SHARE_SERVER` points the encrypted road at another copy of the share API.
+
+The server side is pigagent.dev's `POST /api/shares?days=N` (an `application/octet-stream` body; a
+size cap; answers `{id, deleteToken, expiresAt}`), `GET /api/shares/<id>` (the ciphertext, until it
+expires) and `DELETE /api/shares/<id>` with `Authorization: Bearer <deleteToken>`. It keeps a hash
+of the token, not the token.

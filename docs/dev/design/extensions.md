@@ -77,8 +77,9 @@ because Code Assist has its own endpoint and wraps a Gemini request inside a Clo
 envelope. The claim was wrong and is recorded as wrong; checking it took one grep of
 `models.generated.ts` for the `api` field. (Since then `mistral-conversations`, `google-vertex` and
 `bedrock-converse-stream` have joined them — the last two in "Vertex AI and Amazon Bedrock: two more
-SDKs, emulated rather than wrapped", below — and `azure-openai-responses`, `openai-codex-responses` and
-`pi-messages`, in "Azure OpenAI, ChatGPT's Codex backend and `pi-messages`".)
+SDKs, emulated rather than wrapped", below — and `azure-openai-responses` and `openai-codex-responses`,
+in "Azure OpenAI and ChatGPT's Codex backend". Upstream's `pi-messages` is not ported: pig uses no pi
+service.)
 
 `Providers\GoogleGeminiCli` is 250 lines against upstream's 603, because upstream re-implements
 the chunk walk and this shares it — see `GoogleShared`. **GitHub Copilot is done** too, and needed

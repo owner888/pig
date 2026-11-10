@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
-use Pig\Ai\Models;
 
 /**
  * Upstream's `preferred-providers.ts` (683a7a86): the preferred partner providers, and the order
@@ -13,8 +12,8 @@ use Pig\Ai\Models;
  */
 final class PreferredProviders
 {
-    /** Upstream's `PREFERRED_PROVIDER_IDS`, most preferred first. */
-    public const array IDS = [Models::RADIUS, 'openrouter'];
+    /** Upstream's `PREFERRED_PROVIDER_IDS`, most preferred first, without Radius: pig has none. */
+    public const array IDS = ['openrouter'];
 
     /** Upstream's `isPreferredProvider()`. */
     public static function isPreferred(string $providerId): bool

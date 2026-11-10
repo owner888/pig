@@ -20,7 +20,6 @@ use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
 use Pig\Ai\Utils\Oauth\KimiCoding;
-use Pig\Ai\Utils\Oauth\Radius;
 use Pig\Ai\Utils\Oauth\OauthProvider;
 use Pig\Async\AbortSignal;
 use Throwable;
@@ -169,6 +168,34 @@ final class Auth
     public function providers(): array
     {
         return array_keys($this->data);
+    }
+
+    /**
+     * Every credential value stored, of either kind — an API key, an OAuth access or refresh token,
+     * whatever else an extension's flow keeps — for `/share` to look for before a session leaves the
+     * machine. A key written as `$NAME` or `!command` is a reference, not the key, and is left out.
+     *
+     * @return list<string>
+     */
+    public function storedSecrets(): array
+    {
+        $secrets = [];
+        $walk = static function (mixed $value, string $field) use (&$walk, &$secrets): void {
+            if (is_array($value)) {
+                foreach ($value as $key => $inner) {
+                    $walk($inner, (string) $key);
+                }
+            } elseif (is_string($value) && !in_array($field, ['type', 'enterpriseUrl', 'projectId', 'email', 'accountId'], true)
+                && !str_starts_with($value, '$') && !str_starts_with($value, '!') && preg_match('/\s/', $value) !== 1) {
+                $secrets[] = $value;
+            }
+        };
+
+        foreach ($this->data as $entry) {
+            $walk($entry, '');
+        }
+
+        return array_values(array_unique($secrets));
     }
 
     public function has(string $provider): bool
@@ -638,7 +665,6 @@ final class Auth
                 OauthProvider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
                 OauthProvider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
                 OauthProvider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
-                OauthProvider::Radius => (new Radius())->login($onAuth, $onProgress, $signal, $onSelect),
                 OauthProvider::KimiCoding => (new KimiCoding())->login($onAuth, $signal),
             };
             $id = $provider->value;

@@ -27,8 +27,8 @@ final readonly class AssistantMessage
      * @param string|null            $responseId the provider's id for this response — Anthropic's
      *        message id, a completions chunk id, a responses API response id, Gemini's `responseId`
      * @param string|null            $responseModel the model the provider says answered, when it says
-     *        (an alias resolved, a router's pick); it may be the `model` that was asked for —
-     *        pi-messages reports it every time (upstream #11265)
+     *        (an alias resolved, a router's pick); it may be the `model` that was asked for
+     *        (upstream #11265)
      * @param bool|null              $endTurn whether the model said it was done with its turn.
      *        Upstream sets it only from the Codex responses API (`response.end_turn` on its terminal
      *        event), and so does `Providers\OpenAiCodexResponses`

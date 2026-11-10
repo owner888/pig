@@ -9,7 +9,7 @@ Each provider API, the model registry, thinking levels, usage, overflow. Moved o
 - [An `Agent` nobody configured has a model, and it is the free one](#an-agent-nobody-configured-has-a-model-and-it-is-the-free-one)
 - [The upstream dependencies that no package can replace: the provider SDKs](#the-upstream-dependencies-that-no-package-can-replace-the-provider-sdks)
 - [Vertex AI and Amazon Bedrock: two more SDKs, emulated rather than wrapped](#vertex-ai-and-amazon-bedrock-two-more-sdks-emulated-rather-than-wrapped)
-- [Azure OpenAI, ChatGPT's Codex backend and `pi-messages`](#azure-openai-chatgpts-codex-backend-and-pi-messages)
+- [Azure OpenAI and ChatGPT's Codex backend](#azure-openai-and-chatgpts-codex-backend)
 - [Provider attribution (`ProviderAttribution`)](#provider-attribution-providerattribution)
 
 ## A quota wall moves the turn to a `fallbackModels` entry
@@ -374,9 +374,9 @@ What is knowingly not there: HTTP/2 (pig speaks HTTP/1.1; upstream forces it too
 MFA, IMDS static stability, Vertex's project-id discovery and the external-account /
 impersonated / GDCH credential types, a parallel race of the two metadata hosts.
 
-## Azure OpenAI, ChatGPT's Codex backend and `pi-messages`
+## Azure OpenAI and ChatGPT's Codex backend
 
-Three more APIs, ported the way Vertex and Bedrock were — literally, and checked by an oracle rather
+Two more APIs, ported the way Vertex and Bedrock were — literally, and checked by an oracle rather
 than by reading:
 
 - **`azure-openai-responses`** — `Providers\AzureOpenAiResponses` over `AzureEndpointOptions`
@@ -400,31 +400,25 @@ than by reading:
   timer would hold a `-p` run open for five minutes. `AgentSession` closes the session's connection
   on `dispose()` and on `writeTo()` (upstream's `cleanupSessionResources()`).
   `OpenAiCodexWebSocketTest` runs it against `test/WebSocketServer.php`, which speaks both.
-- **`pi-messages`** — `Providers\PiMessages` and `PiMessagesEventConverter`, pi's own wire protocol,
-  which the Radius gateway speaks; `Providers\RadiusConfig` is `radius-config.ts`' catalogue half.
 
 The rows: `BuiltinCatalog::AZURE_MODELS` is upstream's clone of the `openai` Responses rows (before the
 metadata, so no strict mode, tool search or models.dev efforts, no tiers, Azure's 1,050,000 windows)
-plus DeepSeek V4 Pro on Chat Completions; `OPENAI_CODEX_MODELS` is upstream's hand-kept `codexModels`;
-`RADIUS_MODELS` is the gateway's public `/v1/config`. All three were written from upstream's
-published catalogue (`@earendil-works/pi-ai` 1.1.0) because neither models.dev nor the gateway was
-reachable, and `scripts/generate-models.php` has the rules that write them (`azureRows()`,
-`codexRows()`, `radiusRows()` / `--radius-from`). All three are in `RESOLD`.
+plus DeepSeek V4 Pro on Chat Completions; `OPENAI_CODEX_MODELS` is upstream's hand-kept `codexModels`.
+Both were written from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0) because
+models.dev was not reachable, and `scripts/generate-models.php` has the rules that write them
+(`azureRows()`, `codexRows()`). Both are in `RESOLD`.
 
-The records: `packages/ai/test/fixtures/{azure,codex,pi-messages}/`, `codex-oauth/` and
-`radius-config.json` are upstream run under Node against the same canned servers;
-`AzureOpenAiResponsesTest`, `OpenAiCodexResponsesTest`, `PiMessagesTest`, `OpenAiCodexOauthTest` and
-`RadiusConfigTest` replay them. `AzureOpenAiCompletionsTest` is upstream's
+The records: `packages/ai/test/fixtures/{azure,codex}/` and `codex-oauth/` are upstream run under
+Node against the same canned servers; `AzureOpenAiResponsesTest`, `OpenAiCodexResponsesTest` and
+`OpenAiCodexOauthTest` replay them. `AzureOpenAiCompletionsTest` is upstream's
 `azure-openai-completions.test.ts` against `Models`' own DeepSeek row.
 
 What is knowingly not there:
 
 - **zstd** on the Codex SSE body: PHP has no zstd without an extension; upstream sends it plain where
   `node:zlib` has none, and so does pig.
-- **Radius beyond the default gateway**: a `models.json` provider with `oauth: "radius"`, a custom
-  gateway, and importing the catalogue an older upstream cached on the credential. Sign-in and the
-  account's catalogue from `radius.pi.dev` are there (`Utils\Oauth\Radius`, `ModelRefresh::radius()`).
-  The bug-report upload to the gateway is not ported.
+- **Upstream's third API, `pi-messages`**, and everything else of its Radius gateway: pig uses no
+  pi service (`decisions.md`, "No pi services").
 - **TypeSafe** has no chat models — only the `typesafe-system-one` classifier API, which is
   `Models::classify()` (see the trap on classifiers and image models).
 

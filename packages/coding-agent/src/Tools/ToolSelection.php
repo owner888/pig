@@ -8,7 +8,7 @@ namespace Pig\CodingAgent\Tools;
  * What `--tools` and `--exclude-tools` said, with `*` in it.
  *
  * Upstream's `createToolNameMatcher()` in `core/mcp-servers.ts`: each entry is an exact name or
- * a pattern where `*` matches any characters, so `--tools read,codemode,'mcp__radius__*'` is
+ * a pattern where `*` matches any characters, so `--tools read,codemode,'mcp__github__*'` is
  * three entries of two kinds. Nothing else is special — no `?`, no `[…]` — because a tool name
  * has no business containing either, and a pattern language wider than its input is a second
  * thing to document.

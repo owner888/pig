@@ -109,7 +109,6 @@ final class ModelsTest extends TestCase
                     Api::BedrockConverseStream,
                     Api::AzureOpenAiResponses,
                     Api::OpenAiCodexResponses,
-                    Api::PiMessages,
                 ],
                 $model->id . ' speaks ' . $model->api->value,
             );
@@ -293,7 +292,6 @@ final class ModelsTest extends TestCase
                 'amazon-bedrock',
                 'azure',
                 'openai-codex',
-                'radius',
                 'ant-ling',
                 'baseten',
                 'cloudflare-ai-gateway',
@@ -484,32 +482,6 @@ final class ModelsTest extends TestCase
         $this->assertTrue(Models::find('openai', 'gpt-6.1-terra')?->compat?->supportsMidConvoEffort);
         // "does not enable cache warming from the documented TTL alone".
         $this->assertNull(Models::find('openai', 'gpt-6.1-terra')?->promptCache);
-    }
-
-    public function testRadiusRowsAreUpstreamsCatalogueRows(): void
-    {
-        // Pinned from upstream's published catalogue (`radius.json`, pi-ai 1.1.0): the gateway's own
-        // models, with the gateway's own level maps. The count is the gateway's to change, so only
-        // the rows are pinned.
-        $this->assertNotEmpty(self::of(Models::RADIUS));
-
-        $balanced = Models::find(Models::RADIUS, 'balanced');
-        $this->assertNotNull($balanced);
-        $this->assertSame(Api::PiMessages, $balanced->api);
-        $this->assertSame('https://radius.pi.dev/v1', $balanced->baseUrl);
-        $this->assertSame(['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], $balanced->thinkingLevelMap);
-        $this->assertSame(['images' => ['resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $balanced->inputLimits);
-        $this->assertSame('radius', Models::get('balanced')?->provider);
-
-        // The gateway no longer serves GPT-5.4; GPT-6 Sol stands in, tier and level map as it sends them.
-        $gpt = Models::find(Models::RADIUS, 'gpt-6-sol');
-        $this->assertNotNull($gpt);
-        $this->assertCount(1, $gpt->pricing->tiers);
-        $this->assertSame(['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], $gpt->thinkingLevelMap);
-
-        // A bare id the gateway shares with its maker is still the maker's.
-        $this->assertSame('openai', Models::get('gpt-6-sol')?->provider);
-        $this->assertSame('anthropic', Models::get('claude-opus-4-8')?->provider);
     }
 
     public function testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows(): void

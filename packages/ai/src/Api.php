@@ -26,8 +26,6 @@ enum Api: string
     case AzureOpenAiResponses = 'azure-openai-responses';
     /** The Responses API on ChatGPT's Codex backend (`Providers\OpenAiCodexResponses`), upstream's `openai-codex-responses`. */
     case OpenAiCodexResponses = 'openai-codex-responses';
-    /** pi's own message protocol, which the Radius gateway speaks (`Providers\PiMessages`), upstream's `pi-messages`. */
-    case PiMessages = 'pi-messages';
 
     /**
      * A protocol an extension brought: `Stream::start()` finds the implementation through

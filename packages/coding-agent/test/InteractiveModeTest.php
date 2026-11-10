@@ -597,7 +597,6 @@ final class InteractiveModeTest extends TestCase
         );
     }
 
-    /** Run the loop until it has nothing left to do, so a spawned prompt can finish. */
     /**
      * Run what the loop has to do now and soon — callbacks, I/O, a render a few milliseconds off —
      * and stop at what is far off. A working loader's next frame is always 80ms away, so waiting
@@ -4463,20 +4462,22 @@ final class InteractiveModeTest extends TestCase
         $this->type('/login');
         $this->type(self::ENTER);
 
-        // Upstream's `showLoginAuthTypeSelector()`: the two kinds, and Radius with its status.
+        // Upstream's `showLoginAuthTypeSelector()`: the two kinds. Its third, Radius, is pi's own
+        // service, which pig does not use (`docs/dev/decisions.md`, "No pi services").
         $screen = $this->screen();
         $this->assertStringContainsString('Select authentication method:', $screen);
         $this->assertStringContainsString('Sign in with an account', $screen);
         $this->assertStringContainsString('Sign in with an API key', $screen);
-        $this->assertStringContainsString('Sign in with Radius • not configured', $screen);
+        $this->assertStringNotContainsString('Radius', $screen);
 
         $this->type(self::ENTER);
 
-        // The account sign-ins: `Auth::signIns()`, by upstream's provider names — the preferred
-        // partner Radius first, marked, then the rest alphabetically (upstream 683a7a86).
+        // The account sign-ins: `Auth::signIns()`, by upstream's provider names, alphabetically —
+        // none of them a preferred partner (upstream 683a7a86's was Radius).
         $screen = $this->screen();
         $this->assertStringContainsString('Select provider to configure:', $screen);
-        $this->assertMatchesRegularExpression('/Radius ✦ • not configured.*Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex • not configured/s', $screen);
+        $this->assertMatchesRegularExpression('/Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex • not configured/s', $screen);
+        $this->assertStringNotContainsString('✦', $screen);
         $this->assertStringNotContainsString('Antigravity', $screen);
 
         // Escape goes back to the kinds, as upstream's does.
@@ -6326,7 +6327,7 @@ final class InteractiveModeTest extends TestCase
         putenv('PIG_SHARE_VIEWER_URL=https://viewer.test/s/');
 
         try {
-            $this->start(['the answer'], store: true);
+            $this->start(['the answer'], store: true, settings: Settings::inMemory(['sessionShareDestination' => 'gist']));
             $this->type('hello');
             $this->type(self::ENTER);
             $this->settle();
@@ -6343,15 +6344,162 @@ final class InteractiveModeTest extends TestCase
         }
     }
 
-    public function testShareToRadiusWithoutASignInSaysHowToGetOne(): void
+    public function testShareKeepsTheSessionEncryptedOnPigagentDevForTheDaysPicked(): void
     {
-        // Upstream's `sessionShareDestination: "radius"`: no gist to fall back on.
-        $this->start(['the answer'], store: true, settings: Settings::inMemory(['sessionShareDestination' => 'radius']));
-        $this->type('/share');
+        // pig's own road, the default: the expiry asked, the page sealed here, the link carrying the
+        // key and the share written down for `/unshare`.
+        $this->start(['the answer'], store: true);
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+        // From here the loop watches the server's socket, which `settle()` would block on.
+        [$server, $base] = $this->shareServer('{"id":"0123456789abcdef01234567","deleteToken":"del-tok","expiresAt":1900000000}');
+
+        try {
+            $this->type('/share');
+            $this->type(self::ENTER);
+            $this->untilSaid('How long should pigagent.dev keep it?');
+            $this->type(self::DOWN); // 7 days
+            $this->type(self::ENTER);
+            $this->untilSaid('Share URL:');
+
+            $this->assertStringContainsString('POST /api/shares?days=7 ', $server->receivedHead());
+            $this->assertMatchesRegularExpression('#Share URL: ' . preg_quote($base, '#') . '/s/0123456789abcdef01234567\#[A-Za-z0-9_-]{43} #', $this->screenText());
+            $this->assertStringContainsString('until ' . date('Y-m-d H:i', 1_900_000_000), $this->screenText());
+            $this->assertStringContainsString('the answer', $this->uploadedPage($server), 'what went up is the export, and only the key opens it');
+
+            $records = (new \Pig\CodingAgent\Export\ShareRecords(\Pig\CodingAgent\Config::home() . '/shares.json'))->active(0);
+            $this->assertSame(['0123456789abcdef01234567', 'del-tok', 'hello'], [$records[0]['id'], $records[0]['deleteToken'], $records[0]['title']]);
+        } finally {
+            $this->stopShareServer($server);
+        }
+    }
+
+    public function testShareListsWhatLooksLikeACredentialAndRedactsItWhenAsked(): void
+    {
+        $key = 'sk-proj-' . str_repeat('k', 32);
+        $this->start(["your key is {$key}"], store: true);
+        $this->type('what is my key');
+        $this->type(self::ENTER);
+        $this->settle();
+        [$server] = $this->shareServer('{"id":"0123456789abcdef01234567","deleteToken":"del-tok","expiresAt":1900000000}');
+
+        try {
+            $this->type('/share');
+            $this->type(self::ENTER);
+            $this->untilSaid('This session contains what looks like credentials:');
+            $this->assertStringContainsString('OpenAI-style key sk-pro…kkkk (once)', $this->screenText());
+            $this->assertSame(1, substr_count($this->screenText(), $key), 'the transcript has it; the list does not show the whole');
+            $this->type(self::ENTER); // Redact and share
+            $this->untilSaid('How long should pigagent.dev keep it?');
+            $this->type(self::ENTER); // 30 days
+            $this->untilSaid('Share URL:');
+
+            $this->assertStringContainsString('POST /api/shares?days=30 ', $server->receivedHead());
+            $page = $this->uploadedPage($server);
+            $this->assertStringNotContainsString($key, $page);
+            $this->assertStringContainsString('your key is [redacted]', $page);
+        } finally {
+            $this->stopShareServer($server);
+        }
+    }
+
+    public function testCancellingAtTheCredentialsSendsNothing(): void
+    {
+        $this->start(['your key is sk-proj-' . str_repeat('k', 32)], store: true);
+        $this->type('what is my key');
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertStringContainsString("Radius authentication is not configured. Run '/login radius' first.", $this->screenText());
+        $this->type('/share');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->type(self::ENTER); // Cancel
+        $this->settle();
+
+        $this->assertStringContainsString('Share cancelled', $this->screenText());
+    }
+
+    public function testUnshareDeletesAShareFromThisMachineAndForgetsIt(): void
+    {
+        $records = new \Pig\CodingAgent\Export\ShareRecords(\Pig\CodingAgent\Config::home() . '/shares.json');
+        $records->add(['id' => 'aaaabbbbccccdddd', 'url' => 'https://pigagent.dev/s/aaaabbbbccccdddd#k', 'deleteToken' => 'del-tok', 'expiresAt' => time() + 3600, 'title' => 'fix the build']);
+        $this->start();
+        [$server] = $this->shareServer(null);
+
+        try {
+            $this->type('/unshare');
+            $this->type(self::ENTER);
+            $this->untilSaid('Delete which share?');
+            $this->assertStringContainsString('fix the build (until ' . date('Y-m-d', time() + 3600) . ')', $this->screenText());
+            $this->type(self::ENTER);
+            $this->untilSaid('Deleted');
+
+            $this->assertStringContainsString('DELETE /api/shares/aaaabbbbccccdddd ', $server->receivedHead());
+            $this->assertStringContainsStringIgnoringCase('authorization: Bearer del-tok', $server->receivedHead());
+            $this->assertStringContainsString('Deleted https://pigagent.dev/s/aaaabbbbccccdddd#k', $this->screenText());
+            $this->assertSame([], $records->active());
+        } finally {
+            $this->stopShareServer($server);
+        }
+    }
+
+    public function testUnshareWithNothingSharedSaysSo(): void
+    {
+        $this->start();
+        $this->type('/unshare');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('No shares from this machine are on pigagent.dev.', $this->screenText());
+    }
+
+    /**
+     * A pigagent.dev of this test's own, answering `$json` (or 204 with nothing), with the network
+     * let on and `PIG_SHARE_SERVER` pointing at it: the server and its base URL.
+     *
+     * @return array{0: \Pig\Test\CannedServer, 1: string}
+     */
+    private function shareServer(?string $json): array
+    {
+        $server = new \Pig\Test\CannedServer();
+        $reply = $json === null
+            ? "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            : "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " . strlen($json) . "\r\n\r\n{$json}";
+        $base = rtrim($server->start([$reply]), '/');
+        putenv('PIG_OFFLINE');
+        putenv("PIG_SHARE_SERVER={$base}");
+
+        return [$server, $base];
+    }
+
+    private function stopShareServer(\Pig\Test\CannedServer $server): void
+    {
+        putenv('PIG_SHARE_SERVER');
+        putenv('PIG_OFFLINE=1');
+        $server->stop();
+    }
+
+    /** What the server was sent, opened with the key in the link on the screen. */
+    private function uploadedPage(\Pig\Test\CannedServer $server): string
+    {
+        preg_match('/#([A-Za-z0-9_-]{43})/', $this->screenText(), $key);
+        $received = $server->received();
+
+        return \Pig\CodingAgent\Export\SessionShare::open(substr($received, (int) strpos($received, "\r\n\r\n") + 4), $key[1]);
+    }
+
+    /** Turn the loop, never blocking on it, until `$text` is on the screen or a few seconds have gone. */
+    private function untilSaid(string $text): void
+    {
+        $deadline = microtime(true) + 5.0;
+
+        while (!str_contains($this->screenText(), $text) && microtime(true) < $deadline) {
+            Loop::get()->delay(0.005, static fn () => null);
+            Loop::get()->tick();
+        }
     }
 
     public function testShareWithoutGhSaysWhereToGetIt(): void
@@ -6360,7 +6508,7 @@ final class InteractiveModeTest extends TestCase
         putenv('PATH=' . $this->cwd);
 
         try {
-            $this->start(['the answer'], store: true);
+            $this->start(['the answer'], store: true, settings: Settings::inMemory(['sessionShareDestination' => 'gist']));
             $this->type('/share');
             $this->type(self::ENTER);
             $this->settle();

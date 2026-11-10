@@ -39,10 +39,14 @@ Upstream changes that are Windows-only, which pig does not run on natively (WSL 
 minimatch on Windows, for any fd version). And 244e5f5d, which restores `GrepOperations.readFile` as
 a deprecated, ignored hook: pig's `GrepOperations` never had one.
 
-`pig auth login` (upstream 9b9cb30a) has no Radius step: upstream points the global `mcp.json`'s Radius
-server at the login (`planRadiusMcpServer()`), and changes `pig mcp login`'s hint for a server using a
-provider's credentials to name `pig auth login`. pig's MCP servers have no `auth: {provider}`, so
-there is nothing to point and no such server to hint about.
+Upstream's Radius — the `radius.pi.dev` gateway's sign-in, catalogue, `pi-messages` protocol and
+`/share` artifacts — was ported and then removed: pig uses no pi service (`decisions.md`, "No pi
+services"). A future upstream commit that only touches Radius is skipped, and one that touches it
+along the way is ported without its Radius part. So `pig auth login` (upstream 9b9cb30a) has no
+Radius step: upstream points the global `mcp.json`'s Radius server at the login
+(`planRadiusMcpServer()`), and changes `pig mcp login`'s hint for a server using a provider's
+credentials to name `pig auth login`. pig's MCP servers have no `auth: {provider}`, so there is
+nothing to point and no such server to hint about.
 
 Cache warming's policy is `Pig\Ai\CacheWarming` (upstream's `cache-warming.ts`), moved out of
 `Session\CacheWarmer` as upstream moved it into `pi-ai` for its p2 app (#11857), with upstream's

@@ -98,6 +98,24 @@ final class AuthTest extends TestCase
 
     // ---- reading -------------------------------------------------------------------------
 
+    public function testStoredSecretsAreTheValuesNotTheReferencesOrTheLabels(): void
+    {
+        // What `/share` looks for: keys and tokens, at any depth an extension keeps them; not a
+        // `$NAME` or `!command` reference, not the entry's type or an account's address.
+        $auth = $this->given((string) json_encode([
+            'anthropic' => ['type' => 'oauth', 'access' => 'sk-ant-oat-access-0001', 'refresh' => 'sk-ant-ort-refresh-0001', 'expires' => 1],
+            'openai' => ['type' => 'api_key', 'key' => 'sk-proj-key-0001'],
+            'groq' => ['type' => 'api_key', 'key' => '$GROQ_API_KEY'],
+            'zai' => ['type' => 'api_key', 'key' => '!pass show zai'],
+            'house' => ['type' => 'oauth', 'access' => 'house-token-0001', 'email' => 'me@example.test', 'extra' => ['nested' => 'house-nested-0001']],
+        ]));
+
+        $this->assertSame(
+            ['sk-ant-oat-access-0001', 'sk-ant-ort-refresh-0001', 'sk-proj-key-0001', 'house-token-0001', 'house-nested-0001'],
+            $auth->storedSecrets(),
+        );
+    }
+
     public function testNoFileIsNoCredentialsAndNoComplaint(): void
     {
         $auth = $this->auth();

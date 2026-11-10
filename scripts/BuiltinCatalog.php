@@ -1076,59 +1076,6 @@ final class BuiltinCatalog
     ];
 
     /**
-     * The Radius gateway's (`Providers\PiMessages`): "its unauthenticated public catalog;
-     * authenticated clients overlay it at runtime" — the generator reads `https://radius.pi.dev/v1/config`
-     * (upstream's `fetchRadiusModels()`), and each row is the gateway's model as it sent it, its own
-     * `thinkingLevelMap` included. The runtime overlay (`radiusProvider().refreshModels()`, which asks
-     * the gateway again with the account's key) is not ported: pig has no models store for it to
-     * publish into.
-     *
-     * The rows were written from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0), as the
-     * gateway was not reachable to regenerate.
-     *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, thinkingLevelMap?: array<string, string|null>, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
-     */
-    private const array RADIUS_MODELS = [
-        // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'balanced' => ['Balanced', 1_048_576, 262_144, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'cheap' => ['Cheap', 1_000_000, 131_072, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-fable-5-2' => ['Claude Fable 5.2', 1_000_000, 128_000, true, true, 8.0, 40.0, 0.2, 10.0, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-haiku-4-5' => ['Claude Haiku 4.5', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
-        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
-        'claude-opus-4-5' => ['Claude Opus 4.5', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-sonnet-4-5' => ['Claude Sonnet 4.5', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_000_000, 131_072, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gemini-4-argon' => ['Gemini 4 Argon', 1_048_576, 32_768, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'glm-5.3' => ['GLM-5.3', 1_048_576, 128_000, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'glm-5.3-flash' => ['GLM-5.3 Flash', 1_048_575, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'gpt-5.6-luna' => ['GPT 5.6 Luna', 272_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]]],
-        'gpt-5.6-sol' => ['GPT 5.6 Sol', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
-        'gpt-5.6-terra' => ['GPT 5.6 Terra', 272_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
-        'gpt-6-astra' => ['GPT 6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
-        'gpt-6-luna' => ['GPT 6 Luna', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
-        'gpt-6-sol' => ['GPT 6 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'gpt-6.1-sol' => ['GPT 6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
-        'gpt-6.1-terra' => ['GPT 6.1 Terra', 272_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 2.0, 7.5, 0.1, 2.5]]],
-        'grok-4.7' => ['Grok 4.7', 500_000, 450_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
-        'kimi-k3' => ['Kimi K3', 1_048_576, 262_144, true, true, 3.0, 15.0, 0.3, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'kimi-k3.1-pro' => ['Kimi K3.1 Pro', 1_048_576, 131_072, true, true, 2.0, 10.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'minimax-m3' => ['MiniMax M3', 524_288, 131_072, true, true, 0.3, 1.2, 0.06, 0.0],
-        'minimax-m3.1-flash' => ['MiniMax M3.1 Flash', 1_000_000, 524_288, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-        'mistral-large-4' => ['Mistral Large 4', 1_048_576, 262_144, true, true, 0.7, 2.1, 0.07, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'precise' => ['Precise', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
-        'recursive/flint' => ['Flint (free, trains on data)', 262_144, 65_536, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => null]],
-        // <<< generated
-    ];
-
-    /**
      * The rest of upstream's built-in providers that speak an API pig already speaks
      * (`openai-completions`, `anthropic-messages`, `openai-responses`, `google-generative-ai`), in
      * the order `providers/all.ts`' `builtinProviders()` lists them: provider => its table, and its
@@ -4005,25 +3952,6 @@ final class BuiltinCatalog
                 compat: self::codexCompat($id),
                 thinkingLevelMap: self::thinkingLevelMap(Models::OPENAI_CODEX, Api::OpenAiCodexResponses, $id),
                 inputLimits: Models::inputLimits(Models::OPENAI_CODEX, $input, $window),
-            );
-        }
-
-        foreach (self::RADIUS_MODELS as $id => $row) {
-            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
-            $input = $images ? ['text', 'image'] : ['text'];
-            $models[Models::RADIUS . '/' . $id] = new Model(
-                $id,
-                $name,
-                Api::PiMessages,
-                Models::RADIUS,
-                Models::RADIUS_BASE_URL,
-                $window,
-                $maxTokens,
-                $reasoning,
-                $input,
-                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
-                thinkingLevelMap: self::thinkingLevelMap(Models::RADIUS, Api::PiMessages, $id, $row['thinkingLevelMap'] ?? []),
-                inputLimits: Models::inputLimits(Models::RADIUS, $input, $window),
             );
         }
 

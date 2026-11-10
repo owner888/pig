@@ -135,7 +135,7 @@ pig
 
 - **配置 API Key**：启动时通过环境变量传入 `ANTHROPIC_API_KEY=sk-... pig`（`ANTHROPIC_AUTH_TOKEN` 以 Bearer 令牌发送），或用 `--api-key <key>` 配合 `--model` 为当前运行单独设置而不写入磁盘。
 - **Google Vertex AI 与 Amazon Bedrock**：与 pi 一致，云平台自己的凭据在场时无需 Key。Vertex 读 `GOOGLE_CLOUD_API_KEY`，或 Application Default Credentials（`gcloud auth application-default login`、`GOOGLE_APPLICATION_CREDENTIALS` 指向的服务账号文件、或元数据服务器），并需 `GOOGLE_CLOUD_PROJECT` 与 `GOOGLE_CLOUD_LOCATION`。Bedrock 读 `AWS_BEARER_TOKEN_BEDROCK`，或 AWS SDK 的凭据链——`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`、`AWS_PROFILE` 与 `~/.aws`（assume role、`credential_process`、SSO）、web identity、ECS/EKS 与 EC2 角色——区域取 `AWS_REGION` 或 profile。选模型写作 `google-vertex/gemini-2.5-pro` 或 `amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`。
-- **Azure OpenAI 与 Radius**：与 pi 一致。Azure 读 `AZURE_OPENAI_API_KEY`，端点取 `AZURE_OPENAI_BASE_URL` 或 `AZURE_OPENAI_RESOURCE_NAME`（`https://<name>.openai.azure.com/openai/v1`），API 版本取 `AZURE_OPENAI_API_VERSION`（默认 `v1`），部署名与模型不同时写在 `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`（`gpt-5.4=prod,o3=reasoning`）；选模型写作 `azure/gpt-5.4`。Radius 网关读 `RADIUS_API_KEY`，模型如 `radius/balanced`。
+- **Azure OpenAI**：与 pi 一致。Azure 读 `AZURE_OPENAI_API_KEY`，端点取 `AZURE_OPENAI_BASE_URL` 或 `AZURE_OPENAI_RESOURCE_NAME`（`https://<name>.openai.azure.com/openai/v1`），API 版本取 `AZURE_OPENAI_API_VERSION`（默认 `v1`），部署名与模型不同时写在 `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`（`gpt-5.4=prod,o3=reasoning`）；选模型写作 `azure/gpt-5.4`。pi 的 Radius 网关没有移植：pig 不使用 pi 的任何服务。
 - **pi 在这些 API 上内置的其余 provider**：各读 pi 的 Key 变量，选模型写作 `<provider>/<id>`（裸 id 指模型厂商自己的 provider）。DeepSeek `DEEPSEEK_API_KEY`、OpenRouter `OPENROUTER_API_KEY`（`openrouter/moonshotai/kimi-k2.6`；有 key 时只列出这个 key 能用的模型，以及它的上下文长度和价格）、Vercel AI Gateway `AI_GATEWAY_API_KEY`、Together `TOGETHER_API_KEY`、Fireworks `FIREWORKS_API_KEY`、Baseten `BASETEN_API_KEY`、Hugging Face `HF_TOKEN`、NVIDIA `NVIDIA_API_KEY`、MiniMax `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`（`minimax-cn`）、Moonshot `MOONSHOT_API_KEY`（`moonshotai`、`moonshotai-cn`）、Kimi For Coding `KIMI_API_KEY`（`kimi-coding`）、Meta `META_API_KEY`、OpenCode Zen 与 Go `OPENCODE_API_KEY`（`opencode`、`opencode-go`）、小米 MiMo `XIAOMI_API_KEY` 及其 Token Plan `XIAOMI_TOKEN_PLAN_CN_API_KEY` / `_AMS_` / `_SGP_`（`xiaomi-token-plan-cn` …）、通义 Token Plan `QWEN_TOKEN_PLAN_API_KEY`（`qwen-token-plan`、`qwen-token-plan-individual`）与 `QWEN_TOKEN_PLAN_CN_API_KEY`（`qwen-token-plan-cn`、`qwen-token-plan-individual-cn`）、智谱国内编程套餐 `ZAI_CODING_CN_API_KEY`（`zai-coding-cn`）、Ant Ling `ANT_LING_API_KEY`。OpenRouter、Kimi、Meta、xAI 的登录没有移植，Key 可用。xAI 的模型（`XAI_API_KEY`）与 pi 一致走它的 Responses API。
 - **Cloudflare Workers AI 与 AI Gateway**：`CLOUDFLARE_API_KEY` 加 `CLOUDFLARE_ACCOUNT_ID`，网关还要 `CLOUDFLARE_GATEWAY_ID`（pi 保存这两个 ID 的登录没有移植）；选模型写作 `cloudflare-workers-ai/@cf/openai/gpt-oss-120b` 或 `cloudflare-ai-gateway/claude-sonnet-4-6`。
 - **分类器与图片模型**（`Pig\Ai\Models::classify()`、`Models::generateImages()`，供基于 `pig/ai` 写的代码调用）：TypeSafe 的 System One `TYPESAFE_API_KEY`（`typesafe/jev-latest`，以及 OpenRouter、Vercel AI Gateway、OpenCode Zen、Workers AI 上的 Jev 与 decision 模型），llama.cpp `llama-server` 上按下一 token 概率读答案的对话模型（`llama-cpp-classify`），以及 OpenRouter 的图片模型。它们不是对话模型，`/model` 不列出。
@@ -170,7 +170,7 @@ pig
   - `/compact`：手动触发会话上下文智能压缩摘要。
   - `/continue`：接着跑一次因 pig 停掉（崩溃、被杀、机器休眠）而中断的运行。打开一个中途停掉的会话时，会话下方会提示这一点，你不说就什么都不执行；停在中途的工具调用只有只读工具会重跑，其他的连同已经输出的内容告诉模型「被中断」。Web 界面显示同样的提示和一个「继续」按钮。
   - `/export [file.html|file.jsonl]`：将当前会话导出为离线单文件 HTML（自带语法高亮与折叠），或把当前分支导出为会话文件。
-  - `/import <file.jsonl>`：把会话文件复制进当前项目并恢复它。`/share`：已登录 Radius（`/login radius`）时上传到 Radius，否则把 HTML 导出上传为 GitHub 私密 gist（需要 `gh`）；`sessionShareDestination`（`auto`、`gist`、`radius`，`/settings` 里也有这一项）指定去处。
+  - `/import <file.jsonl>`：把会话文件复制进当前项目并恢复它。`/share`：分享 HTML 导出。先列出其中看起来像密钥或令牌的内容，可选打码、照原样或取消。默认存到 pigagent.dev，保留 30、7 或 1 天，在本机加密，密钥只在链接里（`https://pigagent.dev/s/<id>#<key>`），服务器读不到内容；`/unshare` 可在到期前删除自己的分享。`sessionShareDestination: "gist"`（`/settings` 里也有这一项）改为上传 GitHub 私密 gist（需要 `gh`）。
   - `/scoped-models`：选择 `Ctrl+P` 循环的模型范围，并可保存为 `enabledModels`。
   - `/reload`：不重启进程，热重载所有扩展、Skills、提示模板、主题、快捷键、工具与项目上下文文件（`CLAUDE.md` / `AGENTS.md`）。声明了 PHP 类的扩展在重载后仍运行启动时加载的那个版本（PHP 无法卸载类）；文件已改动时重载会明确提示，重启 `pig` 即可生效。
   - `/doctor`：运行全面系统诊断，排查 PHP 扩展、网络端点、权限与外部工具依赖。
@@ -341,7 +341,7 @@ Logger::timeEnd('benchmark');
 
 ### 登录
 
-`/login` 先问用哪种方式，与 pi 一致：**Sign in with an account**（账号）、**Sign in with an API key**（API Key）或 **Sign in with Radius**。API Key 列表包含所有内置提供商（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter、Groq、Moonshot、Z.AI……）和扩展注册的提供商，可搜索，每一行标出是否已配置及来源（`✓ env: OPENAI_API_KEY`、`✓ configured`）；Key 保存在 `auth.json`。自定义 OpenAI 兼容网关可直接通过 `/login <name>` 或 `+ Add custom provider...` 快速接入，向导会交互式提示录入 Base URL 和 API Key，并自动请求端点拉取模型写入配置。`/login <provider>` 直接进入该提供商。尚未选择模型时，登录后自动切到该提供商的默认模型。Amazon Bedrock、Google Vertex AI 和 Cloudflare 两个提供商只从环境变量配置。
+`/login` 先问用哪种方式，与 pi 一致：**Sign in with an account**（账号）或 **Sign in with an API key**（API Key）（pi 的第三种 Radius 没有移植）。API Key 列表包含所有内置提供商（Anthropic、OpenAI、Gemini、DeepSeek、OpenRouter、Groq、Moonshot、Z.AI……）和扩展注册的提供商，可搜索，每一行标出是否已配置及来源（`✓ env: OPENAI_API_KEY`、`✓ configured`）；Key 保存在 `auth.json`。自定义 OpenAI 兼容网关可直接通过 `/login <name>` 或 `+ Add custom provider...` 快速接入，向导会交互式提示录入 Base URL 和 API Key，并自动请求端点拉取模型写入配置。`/login <provider>` 直接进入该提供商。尚未选择模型时，登录后自动切到该提供商的默认模型。Amazon Bedrock、Google Vertex AI 和 Cloudflare 两个提供商只从环境变量配置。
 
 账号登录——`/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`——流程均与 pi 一致：
 
@@ -350,7 +350,6 @@ Logger::timeEnd('benchmark');
 | **Anthropic（Claude Pro/Max）** | **浏览器**（默认）：pig 监听 `http://localhost:53692/callback`，打开 `claude.ai`，授权码自动回传。同时保留一个粘贴框——浏览器在另一台机器上时，把最终跳转的 URL 粘贴进去即可。**复制代码**（无头机器）：浏览器停在 Anthropic 自己的页面上，显示 `code#state`，复制粘贴。 | 令牌以 Claude Code 的身份发出——`claude-cli` User-Agent、两个 beta 头、工具名按 `Read`/`Bash`/`Edit`/`Write` 拼写——因为 Anthropic 就是把它签发给 Claude Code 的。53692 端口已在 Anthropic 注册，不可更改。 |
 | **GitHub Copilot** | 设备码：pig 显示一个代码，你到 `github.com/login/device` 输入，pig 轮询直到通过。Enterprise 提示处留空即 `github.com`。 | 登录后自动为账号开通 Claude 与 Grok 系列模型。 |
 | **OpenAI（ChatGPT Plus/Pro）** | **浏览器**（默认）：pig 监听 `http://localhost:1455/auth/callback`（设置了 `PIG_OAUTH_CALLBACK_HOST` 时监听该地址），打开 `auth.openai.com`，授权码自动回传；同时保留粘贴框，可粘贴跳转 URL 或授权码。1455 端口被占用时（Codex CLI 也用它），只靠粘贴框完成登录。**设备码**（无头机器）：pig 显示一个代码，你到 `auth.openai.com/codex/device` 输入，pig 轮询直到通过。 | 只用于 `openai-codex` 模型——ChatGPT 的 Codex 后端，账号 id 从令牌里读出。 |
-| **Radius** | **浏览器**（默认）：pig 监听 `http://127.0.0.1:1456/oauth/callback`，打开网关的授权页。**设备码**：在另一台设备上输入代码，pig 轮询直到通过。 | 使用 Radius 网关的公开模型列表；上游登录后还会拉取账号自己的模型列表，pig 暂未实现。 |
 | **Kimi Code（订阅）** | 设备码：pig 显示带着代码的 `kimi.com` 地址，并轮询 `auth.kimi.com` 直到授权通过（`KIMI_CODE_OAUTH_HOST` 可指向别的主机）。 | 用于 `kimi-coding` 模型，可代替 `KIMI_API_KEY`。 |
 | **Antigravity**（包） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在装了 `pig-antigravity` 包（`pig install git:github.com/owner888/pig-antigravity`）之后出现——它是那个包的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
 

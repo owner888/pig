@@ -223,8 +223,8 @@ The bootstrap of `bin/pig -c` (`CodingAgent::session()`) runs before `Async::run
 
 **Symptom**: Kimi's check accepted `https://auth.kimi.com/x\x07\x1b]0;pwned\x07` and handed it on as
 it came; `/login` put it inside an OSC 8 link, where the BEL ended the link and the rest ran as the
-terminal's own escape sequence. Copilot's and Radius's `verification_uri` and Radius's
-`authorizationEndpoint` had no scheme check at all, so a `file:` URL went to `open`/`xdg-open`.
+terminal's own escape sequence. Copilot's `verification_uri` had no scheme check at all, so a
+`file:` URL went to `open`/`xdg-open`.
 
 **Cause**: `parse_url()` checks a scheme and a host and nothing else; upstream's check is
 `new URL(value).href`, which also *normalizes* — percent-encodes every control in the path, query
@@ -237,5 +237,5 @@ a trusted URL. `openInBrowser()` itself stays open to anything, because a fullsc
 `file://` hyperlink goes through it. Upstream 89c921d.
 
 **Code**: `packages/ai/src/Utils/Oauth/TrustedUrl.php`, `GithubCopilot::start()`,
-`Radius::loadDiscovery()` / `loginWithDeviceCode()`, `KimiCoding::startDeviceAuthorization()`,
+`KimiCoding::startDeviceAuthorization()`,
 `InteractiveMode::signIn()` / `link()`.

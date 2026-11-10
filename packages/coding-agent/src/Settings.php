@@ -948,18 +948,20 @@ final class Settings
         $this->set('enableInstallTelemetry', $enabled);
     }
 
-    /** Upstream's `SessionShareDestination` values, in the order `/settings` offers them. */
-    public const array SESSION_SHARE_DESTINATIONS = ['auto', 'gist', 'radius'];
+    /**
+     * Where `/share` can upload, in the order `/settings` offers them: upstream's `SessionShareDestination`
+     * without `radius` (pig uses no pi service).
+     */
+    public const array SESSION_SHARE_DESTINATIONS = ['auto', 'gist'];
 
     /**
-     * Upstream's `getSessionShareDestination()`: where `/share` uploads — "`auto` uses Radius when
-     * authenticated and otherwise creates a GitHub gist", the default.
+     * Upstream's `getSessionShareDestination()`, pig's meaning: `auto`, the default, keeps the share
+     * on pigagent.dev, encrypted; `gist` makes a secret GitHub gist. Upstream's `radius`, from a file
+     * pi wrote, is `auto`.
      */
     public function sessionShareDestination(): string
     {
-        $value = $this->get('sessionShareDestination');
-
-        return $value === 'gist' || $value === 'radius' ? $value : 'auto';
+        return $this->get('sessionShareDestination') === 'gist' ? 'gist' : 'auto';
     }
 
     public function setSessionShareDestination(string $destination): void

@@ -16,10 +16,10 @@ use Pig\Async\Async;
 use Pig\Test\CannedServer;
 
 /**
- * The replay half of the Azure, Codex and pi-messages tests: a scenario served the way upstream was
+ * The replay half of the Azure and Codex tests: a scenario served the way upstream was
  * served it, and pig's requests, events and final message read back in the record's shape.
  *
- * Each `fixtures/{azure,codex,pi-messages}/<case>.json` is `{scenario, upstream}`: the scenario
+ * Each `fixtures/{azure,codex}/<case>.json` is `{scenario, upstream}`: the scenario
  * upstream's `src` (at the developer's reference commit, with its lockfile's `openai` SDK) was run
  * through under `node --experimental-strip-types`, against a canned local server, and what it sent
  * and emitted. A mismatch is pig's bug unless the test says why not.

@@ -38,7 +38,6 @@ final class ModelResolver
         'openai' => 'gpt-6.1-sol',
         'azure' => 'gpt-6.1-sol',
         'openai-codex' => 'gpt-6.1-sol',
-        'radius' => 'balanced',
         'nvidia' => 'nvidia/nemotron-3.5-super-vl-120b-a12b',
         'deepseek' => 'deepseek-v4-pro',
         'google' => 'gemini-4-argon',

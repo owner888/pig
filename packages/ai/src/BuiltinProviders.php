@@ -62,7 +62,6 @@ final class BuiltinProviders
         'qwen-token-plan-cn' => ['Qwen Token Plan CN', 'Qwen Token Plan CN API key'],
         'qwen-token-plan-individual' => ['Qwen Token Plan Individual', 'Qwen Token Plan Individual API key'],
         'qwen-token-plan-individual-cn' => ['Qwen Token Plan Individual CN', 'Qwen Token Plan Individual CN API key'],
-        'radius' => ['Radius', 'Radius API key'],
         'together' => ['Together', 'Together API key'],
         'typesafe' => ['TypeSafe', 'TypeSafe API key'],
         'vercel-ai-gateway' => ['Vercel AI Gateway', 'Vercel AI Gateway API key'],

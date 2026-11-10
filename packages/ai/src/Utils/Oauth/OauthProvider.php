@@ -14,8 +14,9 @@ use Pig\Ai\Http\HttpClient;
  * because PHP has no module-level functions and both were a `switch` on the provider anyway.
  *
  * **The built-in sign-ins**: Anthropic and GitHub Copilot, matching pi 1.0's, and OpenAI's ChatGPT
- * sign-in for the `openai-codex` provider (`OpenAiCodex`), upstream's `openaiCodexOAuth`, the Radius
- * gateway's (`Radius`), and Kimi Code's subscription for `kimi-coding` (`KimiCoding`). The two Google
+ * sign-in for the `openai-codex` provider (`OpenAiCodex`), upstream's `openaiCodexOAuth`, and Kimi
+ * Code's subscription for `kimi-coding` (`KimiCoding`). Upstream's Radius sign-in is not here: pig
+ * uses no pi service (`docs/dev/decisions.md`, "No pi services"). The two Google
  * ones that used to be cases here went the way upstream's did in 0.71 — the Antigravity flow lives
  * in the `pig-antigravity` package now and registers itself as an `Extension\OauthFlow`, which is
  * what `CodingAgent\Auth` asks before this enum. `available()` is still a table rather than
@@ -32,9 +33,6 @@ enum OauthProvider: string
     /** ChatGPT Plus/Pro for the `openai-codex` provider — upstream's `openaiCodexOAuth`. */
     case OpenAiCodex = 'openai-codex';
 
-    /** The Radius gateway's sign-in — upstream's `createRadiusOAuth()` (`Radius`). */
-    case Radius = 'radius';
-
     /** Kimi Code (subscription) for the `kimi-coding` provider — upstream's `kimiCodingOAuth` (`KimiCoding`). */
     case KimiCoding = 'kimi-coding';
 
@@ -45,7 +43,6 @@ enum OauthProvider: string
             self::Anthropic => 'Anthropic (Claude Pro/Max)',
             self::GithubCopilot => 'GitHub Copilot',
             self::OpenAiCodex => 'OpenAI (ChatGPT Plus/Pro)',
-            self::Radius => 'Radius',
             self::KimiCoding => 'Kimi Code (subscription)',
         };
     }
@@ -80,8 +77,6 @@ enum OauthProvider: string
             self::Anthropic => true,
             self::GithubCopilot => true,
             self::OpenAiCodex => true,
-            // Upstream's Radius `lazyOAuth({ name, load })` sets no `isSubscription`: an account.
-            self::Radius => false,
             self::KimiCoding => true,
         };
     }
@@ -92,7 +87,6 @@ enum OauthProvider: string
             self::Anthropic => true,
             self::GithubCopilot => true,
             self::OpenAiCodex => true,
-            self::Radius => true,
             self::KimiCoding => true,
         };
     }
@@ -123,7 +117,6 @@ enum OauthProvider: string
             self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
                 ->refresh($credentials->refresh, $credentials->enterpriseUrl),
             self::OpenAiCodex => (new OpenAiCodex($http ?? new HttpClient()))->refresh($credentials->refresh),
-            self::Radius => (new Radius($http ?? new HttpClient()))->refresh($credentials->refresh),
             self::KimiCoding => (new KimiCoding($http))->refresh($credentials->refresh),
         };
     }
@@ -141,7 +134,7 @@ enum OauthProvider: string
             // prefix and Copilot's by the provider name, and both go out as bearer tokens.
             // Kimi Code's `toAuth()` is `Authorization: Bearer <access>`, which is how a Chat
             // Completions request sends its key.
-            self::Anthropic, self::GithubCopilot, self::OpenAiCodex, self::Radius, self::KimiCoding => $credentials->access,
+            self::Anthropic, self::GithubCopilot, self::OpenAiCodex, self::KimiCoding => $credentials->access,
         };
     }
 }

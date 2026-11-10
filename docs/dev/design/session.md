@@ -526,11 +526,18 @@ Four upstream commands that arrived together; each is upstream's flow on pig's p
   conversation. Quoted paths work. `/export md` and `/export pr` are pig's own and stay.
 - **`/import <path>`** asks, copies the file into this project's session directory (`-1`, `-2` on a
   name clash) and resumes it — in its own directory, see "A session carries on in its own directory".
-- **`/share`** (`Export\SessionShare`) takes upstream's second road unless Radius is chosen: `gh auth status`, the HTML export
-  to a temp file, `gh gist create --public=false`, and a link on `PIG_SHARE_VIEWER_URL` (default
-  `https://pigagent.dev/session/`, the site's viewer page: it fetches the gist from GitHub's API in
-  the browser and draws the HTML export in a sandboxed frame). Upstream's first road, uploading to Radius, is
-  `sessionShareDestination` (`auto` uses it when signed in to Radius). A secret gist is unlisted, not private; the link is the access.
+- **`/share`** (`Export\SessionShare`) renders the HTML export, lists what in it looks like a
+  credential (`Export\SecretScan`: redact, send as it is, or cancel), then takes one of two roads by
+  `sessionShareDestination`. **`auto`**, the default, is pig's own: the page sealed here
+  (AES-256-GCM, gzipped first), uploaded to pigagent.dev for the 30, 7 or 1 days picked, and linked as
+  `https://pigagent.dev/s/<id>#<key>` — the key only in the fragment, so the server holds ciphertext;
+  the site's `/s/` page decrypts it in the browser and draws it in a sandboxed frame. The share's
+  delete token goes in `shares.json` (`Export\ShareRecords`), which **`/unshare`** reads to take one
+  down early. **`gist`** is upstream's second road: `gh auth status` first, the page to a temp file,
+  `gh gist create --public=false`, and a link on `PIG_SHARE_VIEWER_URL` (default
+  `https://pigagent.dev/session/`, which fetches the gist in the browser). A secret gist is unlisted,
+  not private, and GitHub reads it. Upstream's first road, a Radius artifact, is not here — see
+  "No pi services" and "Sharing on pigagent.dev" in `decisions.md`.
 
 ## Where compaction cuts, and the split turn
 

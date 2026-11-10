@@ -47,11 +47,6 @@ final class Models
 
     public const string OPENAI_CODEX = 'openai-codex';
 
-    public const string RADIUS = 'radius';
-
-    /** The `baseUrl` of the Radius gateway's `/v1/config` (`getRadiusModelsFromConfig()` gives it to every row). */
-    public const string RADIUS_BASE_URL = 'https://radius.pi.dev/v1';
-
     /**
      * Providers that answer with somebody else's models, under somebody else's ids.
      *
@@ -66,10 +61,9 @@ final class Models
      * is `google-vertex/gemini-2.5-flash`. Bedrock is not — its ids carry their vendor
      * (`anthropic.claude-…`) and collide with nobody's.
      *
-     * **Azure, ChatGPT's Codex backend and the Radius gateway too**: Azure's table is a clone of
-     * OpenAI's, Codex serves OpenAI's models and Radius OpenAI's and Anthropic's, all under the ids their
-     * makers use — so `gpt-5.4` stays OpenAI's and `azure/gpt-5.4` is Azure's. An id only one of them
-     * has (Radius's `balanced`) is still found, as a resold id always is.
+     * **Azure and ChatGPT's Codex backend too**: Azure's table is a clone of OpenAI's and Codex serves
+     * OpenAI's models, both under the ids their makers use — so `gpt-5.4` stays OpenAI's and
+     * `azure/gpt-5.4` is Azure's. An id only one of them has is still found, as a resold id always is.
      *
      * **And every provider of `CATALOGUE_PROVIDERS` that serves another maker's models**: the gateways
      * (OpenRouter, Vercel's AI Gateway, OpenCode Zen and Go), the hosts (Together, Fireworks, Baseten,
@@ -86,7 +80,6 @@ final class Models
         self::GOOGLE_VERTEX,
         self::AZURE,
         self::OPENAI_CODEX,
-        self::RADIUS,
         'baseten',
         'cloudflare-ai-gateway',
         'cloudflare-workers-ai',

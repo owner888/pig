@@ -872,12 +872,13 @@ final class SettingsTest extends TestCase
         $this->assertFalse($settings->imageAutoResize());
     }
 
-    public function testTheShareDestinationIsAutoUnlessGistOrRadius(): void
+    public function testTheShareDestinationIsAutoUnlessGist(): void
     {
-        // Upstream's `getSessionShareDestination()`.
+        // Upstream's `getSessionShareDestination()`, without its `radius`: a settings file pi wrote
+        // with it shares the way `auto` does, on pigagent.dev.
         $this->assertSame('auto', Settings::inMemory()->sessionShareDestination());
         $this->assertSame('gist', Settings::inMemory(['sessionShareDestination' => 'gist'])->sessionShareDestination());
-        $this->assertSame('radius', Settings::inMemory(['sessionShareDestination' => 'radius'])->sessionShareDestination());
+        $this->assertSame('auto', Settings::inMemory(['sessionShareDestination' => 'radius'])->sessionShareDestination());
         $this->assertSame('auto', Settings::inMemory(['sessionShareDestination' => 'dropbox'])->sessionShareDestination());
     }
 }

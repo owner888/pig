@@ -26,8 +26,6 @@ use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
 use Pig\Ai\Providers\OpenCodeHeaders;
-use Pig\Ai\Providers\PiMessages;
-use Pig\Ai\Providers\PiMessagesOptions;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\Transcript;
 
@@ -201,7 +199,6 @@ final class Stream
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($model, $options, $apiKey, $requestAuth)),
             Api::AzureOpenAiResponses => (new AzureOpenAiResponses())->stream($model, $context, self::azure($options, $apiKey)),
             Api::OpenAiCodexResponses => (new OpenAiCodexResponses())->stream($model, $context, self::codex($options, $apiKey)),
-            Api::PiMessages => (new PiMessages())->stream($model, $context, self::piMessages($options, $apiKey)),
             Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($model, $options, (string) $apiKey)),
             Api::GoogleVertex => (new GoogleVertex())->stream($model, $context, self::vertex($options, $apiKey)),
             Api::BedrockConverseStream => (new Bedrock())->stream($model, $context, self::bedrock($options, $apiKey)),
@@ -300,7 +297,6 @@ final class Stream
             'cerebras' => ['CEREBRAS_API_KEY'],
             'xai' => ['XAI_API_KEY'],
             'typesafe' => ['TYPESAFE_API_KEY'],
-            'radius' => ['RADIUS_API_KEY'],
             'openrouter' => ['OPENROUTER_API_KEY'],
             'zai' => ['ZAI_API_KEY'],
             'mistral' => ['MISTRAL_API_KEY'],
@@ -482,15 +478,6 @@ final class Stream
             Api::OpenAiCodexResponses => new OpenAiCodexResponsesOptions(
                 ...$base,
                 reasoningEffort: self::clampedReasoning($model, $options?->reasoning)?->value,
-                toolChoice: $options?->toolChoice,
-            ),
-            // Upstream's `streamSimple()` in `pi-messages.ts`: `{...options, reasoning, toolChoice,
-            // debug}` — the caller's own options rather than `buildBaseOptions()`, so the level as it
-            // was asked for (the backend clamps it) and `maxTokens` as given, neither defaulted to the
-            // model's ceiling nor cut to the context.
-            Api::PiMessages => new PiMessagesOptions(
-                ...[...$base, 'maxTokens' => $options?->maxTokens],
-                reasoning: $options?->reasoning?->value,
                 toolChoice: $options?->toolChoice,
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $base),
@@ -989,22 +976,5 @@ final class Stream
         }
 
         return new OpenAiCodexResponsesOptions(...$base);
-    }
-
-    /** The key is resolved late; a caller's own pi-messages options are otherwise kept whole. */
-    private static function piMessages(?StreamOptions $options, ?string $apiKey): PiMessagesOptions
-    {
-        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
-
-        if ($options instanceof PiMessagesOptions) {
-            return new PiMessagesOptions(
-                ...$base,
-                reasoning: $options->reasoning,
-                toolChoice: $options->toolChoice,
-                debug: $options->debug,
-            );
-        }
-
-        return new PiMessagesOptions(...$base);
     }
 }

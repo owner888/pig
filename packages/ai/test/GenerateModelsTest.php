@@ -26,9 +26,6 @@ final class GenerateModelsTest extends TestCase
 {
     private string $fixture;
 
-    /** The Radius gateway's `/v1/config`, saved — see `radiusConfig()`. */
-    private string $radiusFixture;
-
     /** OpenRouter's, Vercel AI Gateway's and NVIDIA NIM's model lists, saved — see `openRouterModels()` and the two after it. */
     private string $openRouterFixture;
 
@@ -54,15 +51,6 @@ final class GenerateModelsTest extends TestCase
 
         $this->fixture = $path;
         file_put_contents($this->fixture, (string) json_encode(self::catalogue()));
-
-        $radius = tempnam(sys_get_temp_dir(), 'radius-config-');
-
-        if ($radius === false) {
-            self::fail('could not make a temporary file');
-        }
-
-        $this->radiusFixture = $radius;
-        file_put_contents($this->radiusFixture, (string) json_encode(self::radiusConfig()));
 
         foreach ([
             'openRouterFixture' => self::openRouterModels(),
@@ -90,7 +78,7 @@ final class GenerateModelsTest extends TestCase
             unlink($this->fixture);
         }
 
-        foreach ([$this->radiusFixture, $this->openRouterFixture, $this->vercelFixture, $this->nvidiaFixture, $this->decisionsFixture, $this->openRouterImagesFixture, $this->openRouterDecisionsFixture] as $file) {
+        foreach ([$this->openRouterFixture, $this->vercelFixture, $this->nvidiaFixture, $this->decisionsFixture, $this->openRouterImagesFixture, $this->openRouterDecisionsFixture] as $file) {
             if (is_file($file)) {
                 unlink($file);
             }
@@ -694,33 +682,6 @@ final class GenerateModelsTest extends TestCase
         self::assertStringNotContainsString("'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 128_000,", $output);
     }
 
-    public function testRadiusRowsAreTheGatewaysCatalogueAsItSentThem(): void
-    {
-        // Upstream's `fetchRadiusModels()`: `getRadiusModelsFromConfig()` over the sanitised config —
-        // the gateway's own level map and tiers kept, an entry that is not a gateway model dropped.
-        $output = $this->generated();
-
-        self::assertStringContainsString(
-            "'balanced' => ['Balanced', 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, "
-            . "'thinkingLevelMap' => ['off' => null, 'low' => 'low', 'high' => 'high'], 'tiers' => [[272_000, 6.0, 22.5, 0.6, 0.0]]],",
-            $output,
-        );
-        self::assertStringContainsString("'glm-x' => ['GLM X', 200_000, 32_768, false, false, 1.0, 2.0, 0.0, 0.0],", $output);
-        self::assertStringNotContainsString("'no-name' => [", $output);
-    }
-
-    public function testARadiusConfigThatCannotBeReadLeavesItsTableAlone(): void
-    {
-        // Upstream's non-strict run: "Failed to fetch Radius models", and no rows — which here, as for
-        // every other provider, leaves the table as it is rather than emptying it.
-        file_put_contents($this->radiusFixture, '{"models": []}');
-
-        $output = $this->generated();
-
-        self::assertStringContainsString('Failed to fetch Radius models: Invalid Radius config in', $output);
-        self::assertStringContainsString('nothing to write for radius, so its table is left as it is', $output);
-    }
-
     /** The one rendered row for $id, which the dry run prints once per table. */
     private static function rowOf(string $output, string $id): string
     {
@@ -822,11 +783,10 @@ final class GenerateModelsTest extends TestCase
     {
         exec(
             sprintf(
-                '%s %s --from %s --radius-from %s --openrouter-from %s --vercel-from %s --nvidia-from %s --decisions-from %s --openrouter-images-from %s --openrouter-decisions-from %s --dry-run 2>&1',
+                '%s %s --from %s --openrouter-from %s --vercel-from %s --nvidia-from %s --decisions-from %s --openrouter-images-from %s --openrouter-decisions-from %s --dry-run 2>&1',
                 escapeshellarg(PHP_BINARY),
                 escapeshellarg(self::script()),
                 escapeshellarg($this->fixture),
-                escapeshellarg($this->radiusFixture),
                 escapeshellarg($this->openRouterFixture),
                 escapeshellarg($this->vercelFixture),
                 escapeshellarg($this->nvidiaFixture),
@@ -848,35 +808,6 @@ final class GenerateModelsTest extends TestCase
     private static function script(): string
     {
         return __DIR__ . '/../../../scripts/generate-models.php';
-    }
-
-    /**
-     * A Radius `/v1/config` of the shapes that decide something: a model with its own map and tiers,
-     * a plain one, and one with no name, which `isRadiusGatewayModel()` refuses.
-     *
-     * @return array<string, mixed>
-     */
-    private static function radiusConfig(): array
-    {
-        return [
-            'baseUrl' => 'https://radius.pi.dev/v1',
-            'models' => [
-                [
-                    'id' => 'balanced', 'name' => 'Balanced', 'reasoning' => true, 'input' => ['text', 'image'],
-                    'thinkingLevelMap' => ['off' => null, 'low' => 'low', 'high' => 'high'],
-                    'cost' => ['input' => 3, 'output' => 15, 'cacheRead' => 0.3, 'cacheWrite' => 0, 'tiers' => [
-                        ['inputTokensAbove' => 272_000, 'input' => 6, 'output' => 22.5, 'cacheRead' => 0.6, 'cacheWrite' => 0],
-                    ]],
-                    'contextWindow' => 1_048_576, 'maxTokens' => 131_072, 'lab' => 'Moonshot AI',
-                ],
-                [
-                    'id' => 'glm-x', 'name' => 'GLM X', 'reasoning' => false, 'input' => ['text'],
-                    'cost' => ['input' => 1, 'output' => 2, 'cacheRead' => 0, 'cacheWrite' => 0],
-                    'contextWindow' => 200_000, 'maxTokens' => 32_768,
-                ],
-                ['id' => 'no-name', 'reasoning' => true, 'input' => ['text'], 'cost' => [], 'contextWindow' => 1, 'maxTokens' => 1],
-            ],
-        ];
     }
 
     /**

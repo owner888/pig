@@ -32,13 +32,13 @@ final class PreferredProvidersTest extends TestCase
     public function testPreferredPartnersComeFirstInTheirOrderThenTheRestByName(): void
     {
         $providers = array_map(static fn (array $p): object => (object) ['id' => $p[0], 'name' => $p[1]], [
-            ['zai', 'Z.AI'], ['openrouter', 'OpenRouter'], ['anthropic', 'Anthropic'], ['radius', 'Radius'], ['google', 'Google'],
+            ['zai', 'Z.AI'], ['openrouter', 'OpenRouter'], ['anthropic', 'Anthropic'], ['google', 'Google'],
         ]);
 
         usort($providers, PreferredProviders::compare(...));
 
-        $this->assertSame(['radius', 'openrouter'], PreferredProviders::IDS);
-        $this->assertSame(['radius', 'openrouter', 'anthropic', 'google', 'zai'], array_column($providers, 'id'));
+        $this->assertSame(['openrouter'], PreferredProviders::IDS);
+        $this->assertSame(['openrouter', 'anthropic', 'google', 'zai'], array_column($providers, 'id'));
         $this->assertTrue(PreferredProviders::isPreferred('openrouter'));
         $this->assertFalse(PreferredProviders::isPreferred('anthropic'));
     }
@@ -48,7 +48,7 @@ final class PreferredProvidersTest extends TestCase
         $theme = Themes::theme();
         $selector = new OAuthSelectorComponent(
             'login',
-            [new AuthSelectorProvider('radius', 'Radius', 'oauth', null), new AuthSelectorProvider('openrouter', 'OpenRouter', 'api_key', null), new AuthSelectorProvider('zai', 'Z.AI', 'api_key', null)],
+            [new AuthSelectorProvider('openrouter', 'OpenRouter', 'api_key', null), new AuthSelectorProvider('zai', 'Z.AI', 'api_key', null)],
             static fn () => null,
             static fn () => null,
             tui: new TuiMainScreen(new FakeTerminal()),
@@ -56,17 +56,16 @@ final class PreferredProvidersTest extends TestCase
 
         try {
             $output = implode("\n", $selector->render(120));
-            $this->assertStringContainsString('→ Radius ✦', Ansi::strip($output));
+            $this->assertStringContainsString('→ OpenRouter ✦', Ansi::strip($output));
             $this->assertStringContainsString('Z.AI', Ansi::strip($output));
             $this->assertStringNotContainsString('Z.AI ✦', Ansi::strip($output));
-            $this->assertStringNotContainsString($theme->fg('accent', 'Radius'), $output, 'the shimmer, not the accent');
-            $this->assertStringContainsString($theme->fg('text', 'OpenRouter'), $output);
+            $this->assertStringNotContainsString($theme->fg('accent', 'OpenRouter'), $output, 'the glow, not the accent');
 
             $selector->handleInput("\x1b[B");
             $moved = implode("\n", $selector->render(120));
-            $this->assertStringContainsString($theme->fg('text', 'Radius'), $moved);
-            $this->assertStringNotContainsString($theme->fg('accent', 'OpenRouter'), $moved);
-            $this->assertStringContainsString('→ OpenRouter ✦', Ansi::strip($moved));
+            $this->assertStringContainsString($theme->fg('text', 'OpenRouter'), $moved);
+            $this->assertStringContainsString('→ Z.AI', Ansi::strip($moved));
+            $this->assertStringContainsString($theme->fg('accent', 'Z.AI'), $moved);
         } finally {
             $selector->dispose();
         }

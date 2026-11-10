@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- **Private sharing on pigagent.dev** — `/share` keeps the session's HTML export on pigagent.dev for 30, 7 or 1 days, encrypted on your machine (AES-256-GCM) with the key only in the link, `https://pigagent.dev/s/<id>#<key>`: the server holds ciphertext and the page decrypts in the browser. Before anything is sent, `/share` lists what in the session looks like a key or token — the values in `auth.json`, credential-named environment variables, the providers' key shapes — to redact, send as it is, or cancel. This is the default (`sessionShareDestination: "auto"`); `"gist"` keeps the secret GitHub gist.
+
+### Added
+
+- `/unshare` deletes one of this machine's shares from pigagent.dev before it expires. Shares are listed in `shares.json` in the agent directory, with the token that deletes them (mode `0600`).
+- `PIG_SHARE_SERVER` points `/share` at another server with pigagent.dev's share API.
+
+### Changed
+
+- Removed Radius, pi's gateway: the `radius` provider and its models, `RADIUS_API_KEY`, the `pi-messages` API, "Sign in with Radius" in `/login` and `pig auth login`, `"oauth": "radius"` in `models.json`, and `sessionShareDestination: "radius"` (read as `auto`). pig sends nothing to pi's servers. A `radius` entry pi wrote in `auth.json` is left alone.
+
 ## [2.0.4] - 2026-11-10
 
 ### Fixed

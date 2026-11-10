@@ -68,13 +68,9 @@
         {
           "type": "string",
           "const": "gist"
-        },
-        {
-          "type": "string",
-          "const": "radius"
         }
       ],
-      "description": "Destination used by /share. \"auto\" uses Radius when authenticated and otherwise creates a GitHub gist.",
+      "description": "Destination used by /share. \"auto\" keeps the session on pigagent.dev, encrypted with the key only in the link; \"gist\" creates a secret GitHub gist.",
       "default": "auto"
     },
     "steeringMode": {

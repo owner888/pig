@@ -34,8 +34,7 @@ use Throwable;
  * sign-in asks for one anyway, since that is its only way in. Then the provider's catalog is fetched.
  *
  * The providers are the built-in ones and `models.json`'s — no extensions, as upstream loads none
- * here. Upstream's Radius step (pointing the global `mcp.json`'s Radius server at the login) is not
- * here: pig's MCP servers have no `auth: {provider}` to point.
+ * here.
  */
 final class AuthLogin
 {

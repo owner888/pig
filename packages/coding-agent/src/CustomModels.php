@@ -74,7 +74,6 @@ final readonly class CustomModels
         'bedrock-converse-stream' => Api::BedrockConverseStream,
         'azure-openai-responses' => Api::AzureOpenAiResponses,
         'openai-codex-responses' => Api::OpenAiCodexResponses,
-        'pi-messages' => Api::PiMessages,
     ];
 
     /** The `Api` an upstream api name is, or null for one pig has no provider for. */
@@ -336,7 +335,7 @@ final readonly class CustomModels
 
         // Upstream's `applyModelsJson()` refusal: a provider entry that changes nothing is a mistake.
         if ($entries === [] && $baseUrl === null && !isset($config['headers']) && !isset($config['compat'])
-            && $overrides === [] && $key === null && !isset($config['oauth']) && !isset($config['authHeader'])) {
+            && $overrides === [] && $key === null && !isset($config['authHeader'])) {
             return [null, null, ["{$where}: must specify \"baseUrl\", \"headers\", \"compat\", \"modelOverrides\", or \"models\""]];
         }
 

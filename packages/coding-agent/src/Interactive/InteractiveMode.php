@@ -62,7 +62,9 @@ use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\JsonlExport;
+use Pig\CodingAgent\Export\SecretScan;
 use Pig\CodingAgent\Export\SessionShare;
+use Pig\CodingAgent\Export\ShareRecords;
 use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
@@ -2578,7 +2580,8 @@ final class InteractiveMode
         ['copycode', 'Pick a code block from the last answer and copy it (/cc for short)'],
         ['export', 'Export session (HTML default, or specify path: .html/.jsonl; /export md|pr for Markdown or a PR description)'],
         ['import', 'Import and resume a session from a JSONL file'],
-        ['share', 'Share session as a secret GitHub gist'],
+        ['share', 'Share session: encrypted on pigagent.dev, or as a secret GitHub gist'],
+        ['unshare', 'Delete a session shared on pigagent.dev before it expires'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['continue', 'Carry on a run that stopped when pig did'],
@@ -2684,6 +2687,7 @@ final class InteractiveMode
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'import' => $this->importSession(trim(substr($text, strlen($name) + 1))),
             'share' => $this->shareSession(),
+            'unshare' => $this->unshare(),
             'resume' => $this->showSessions(),
             'continue' => $this->continueStoppedRun(),
             'tree' => $this->showTree(),
@@ -3342,16 +3346,19 @@ final class InteractiveMode
     }
 
     /**
-     * `/share` — upstream's `shareSession()`: "Share the current session through Radius, falling
-     * back to a private gist", as `sessionShareDestination` says (`auto`, the default, tries
-     * Radius first when it is signed in; `gist` goes straight to the gist; `radius` only uploads
-     * there).
+     * `/share` — upstream's `shareSession()`, with pig's own road first. The HTML export is made
+     * here and searched for credentials (`SecretScan`); what turns up is listed, to black out, send
+     * as it is, or stop. Then, as `sessionShareDestination` says:
      *
-     * The Radius road posts the branch's JSONL export, with the trailing entry a viewer reads
-     * (`SessionShare::trailingEntries()`), and answers the artifact's URL. The gist road needs `gh`
-     * installed and signed in: the HTML export goes into a temporary directory, `gh gist create
-     * --public=false` uploads it, and the answer is the viewer URL (`PIG_SHARE_VIEWER_URL`,
-     * `#<gist id>`) and the gist's own. Escape stops either upload, under the spinner `/compact` uses.
+     * - `auto` (the default): kept on pigagent.dev for 1, 7 or 30 days, encrypted here first, the key
+     *   only in the link (`SessionShare`). The share is written down in `shares.json`, so `/unshare`
+     *   can take it down sooner.
+     * - `gist`: upstream's gist road — `gh` installed and signed in, the page uploaded as a secret
+     *   gist, answered with the viewer URL (`PIG_SHARE_VIEWER_URL`, `#<gist id>`) and the gist's own.
+     *   GitHub holds that page as it is.
+     *
+     * Upstream's Radius road is not here: pig uses no pi service. Escape stops either upload, under
+     * the spinner `/compact` uses.
      */
     private function shareSession(): void
     {
@@ -3364,57 +3371,102 @@ final class InteractiveMode
         }
 
         Async::spawn(function () use ($store): void {
+            // Upstream's order: `gh` is asked about before anything is exported.
+            $gist = $this->settings->sessionShareDestination() === 'gist';
+            $gh = $gist ? $this->signedInGh() : null;
+
+            if ($gist && $gh === null) {
+                return;
+            }
+
+            $messages = $store->messages();
+
+            if ($messages === []) {
+                $this->sayError('Nothing to share yet — say something first.');
+
+                return;
+            }
+
             try {
-                $jsonl = $store->serializeBranch(fn (?string $parent, string $timestamp): array => SessionShare::trailingEntries($this->session, $parent, $timestamp));
+                $html = HtmlExport::render($messages, $store->cwd);
             } catch (Throwable $error) {
                 $this->sayError('Failed to export session: ' . $error->getMessage());
 
                 return;
             }
 
-            $destination = $this->settings->sessionShareDestination();
+            $html = $this->screenForSecrets($html, $gist ? 'a secret GitHub gist, which GitHub can read' : 'pigagent.dev, encrypted');
 
-            if ($destination !== 'gist') {
-                if ($this->shareViaRadius($jsonl)) {
-                    return;
-                }
+            if ($html === null) {
+                $this->say('Share cancelled');
 
-                if ($destination === 'radius') {
-                    $this->sayError("Radius authentication is not configured. Run '/login radius' first.");
-
-                    return;
-                }
+                return;
             }
 
-            $this->shareViaGist($store);
+            if ($gh !== null) {
+                $this->shareViaGist($gh, $html);
+            } else {
+                $this->shareOnPigagent($html, HtmlExport::opening($messages));
+            }
         });
     }
 
     /**
-     * Upstream's `tryShareViaRadius()`: false when there is no Radius sign-in to upload with, so
-     * the caller can fall back; true once an upload was tried, whatever came of it.
+     * The page as it will be shared, once the person has seen what in it looks like a credential:
+     * blacked out, sent as it is, or null for not shared at all. A page with nothing found is sent
+     * without asking.
      */
-    private function shareViaRadius(string $jsonl): bool
+    private function screenForSecrets(string $html, string $where): ?string
     {
-        try {
-            $token = $this->auth?->hasKeyFor('radius') === true ? $this->auth->apiKey('radius') : null;
-        } catch (Throwable) {
-            $token = null;
+        $hits = SecretScan::find($html, SecretScan::knownSecrets($this->auth?->storedSecrets() ?? []));
+
+        if ($hits === []) {
+            return $html;
         }
 
-        if ($token === null || $token === '') {
-            return false;
+        $listed = implode("\n", array_map(static fn (array $hit): string => '  ' . SecretScan::describe($hit), array_slice($hits, 0, 8)))
+            . (count($hits) > 8 ? "\n  … and " . (count($hits) - 8) . ' more' : '');
+        $choice = $this->ui->select(
+            "This session contains what looks like credentials:\n{$listed}\n\nIt is about to go to {$where}.",
+            ['Redact and share', 'Share as it is', 'Cancel'],
+        );
+
+        return match ($choice) {
+            'Redact and share' => SecretScan::redact($html, $hits),
+            'Share as it is' => $html,
+            default => null,
+        };
+    }
+
+    /** pig's road: the page sealed here, kept on pigagent.dev for as long as the person picks. */
+    private function shareOnPigagent(string $html, string $title): void
+    {
+        if (!\Pig\CodingAgent\ModelRefresh::networkEnabled()) {
+            $this->sayError('Sharing needs the network, and PIG_OFFLINE is set.');
+
+            return;
         }
 
+        $labels = array_map(static fn (int $days): string => $days === 1 ? 'Keep for 1 day' : "Keep for {$days} days", SessionShare::EXPIRY_DAYS);
+        $picked = $this->ui->select('How long should pigagent.dev keep it? Whoever has the link can read it until then.', [...$labels, 'Cancel']);
+        $index = array_search($picked, $labels, true);
+
+        if ($index === false) {
+            $this->say('Share cancelled');
+
+            return;
+        }
+
+        $sealed = SessionShare::seal($html);
         $controller = new AbortController();
         $this->compaction = $controller;
-        $this->showLoader('Uploading to Radius...');
+        $this->showLoader('Uploading to pigagent.dev...');
 
         try {
-            $url = SessionShare::uploadToRadius($jsonl, $token, signal: $controller->signal);
+            $share = SessionShare::upload($sealed['body'], SessionShare::EXPIRY_DAYS[$index], signal: $controller->signal);
             $failure = null;
         } catch (Throwable $error) {
-            $url = null;
+            $share = null;
             $failure = $error->getMessage();
         } finally {
             $this->compaction = null;
@@ -3423,26 +3475,84 @@ final class InteractiveMode
 
         if ($controller->signal->aborted()) {
             $this->say('Share cancelled');
-        } elseif ($url !== null) {
-            $this->say("Share URL: {$url}");
-        } else {
+        } elseif ($share === null) {
             $this->sayError((string) $failure);
+        } else {
+            $url = SessionShare::url($share['id'], $sealed['key']);
+
+            try {
+                $this->shareRecords()->add([...$share, 'url' => $url, 'title' => $title]);
+                $note = '/unshare takes it down sooner.';
+            } catch (Throwable $error) {
+                $note = "It could not be written down ({$error->getMessage()}), so /unshare will not find it.";
+            }
+
+            $this->say("Share URL: {$url}\nAnyone with the link can read it until " . date('Y-m-d H:i', $share['expiresAt']) . ". {$note}");
         }
 
         $this->tui->requestRender();
-
-        return true;
     }
 
-    /** Upstream's gist road: `gh` signed in, the HTML export as a secret gist. */
-    private function shareViaGist(SessionManager $store): void
+    /**
+     * `/unshare` — pig's own: one of this machine's shares on pigagent.dev deleted before it expires.
+     * Only shares made from here are listed; the delete token never left this machine.
+     */
+    private function unshare(): void
+    {
+        Async::spawn(function (): void {
+            try {
+                $records = $this->shareRecords();
+                $shares = $records->active();
+            } catch (Throwable $error) {
+                $this->sayError($error->getMessage());
+
+                return;
+            }
+
+            if ($shares === []) {
+                $this->say('No shares from this machine are on pigagent.dev.');
+
+                return;
+            }
+
+            $labels = array_map(
+                static fn (array $share): string => ($share['title'] !== '' ? $share['title'] : $share['id']) . ' (until ' . date('Y-m-d', $share['expiresAt']) . ')',
+                $shares,
+            );
+            $index = array_search($this->ui->select('Delete which share?', $labels), $labels, true);
+
+            if ($index === false) {
+                return;
+            }
+
+            $share = $shares[$index];
+
+            try {
+                SessionShare::delete($share['id'], $share['deleteToken']);
+                $records->remove($share['id']);
+                $this->say("Deleted {$share['url']}");
+            } catch (Throwable $error) {
+                $this->sayError($error->getMessage());
+            }
+
+            $this->tui->requestRender();
+        });
+    }
+
+    private function shareRecords(): ShareRecords
+    {
+        return new ShareRecords(Config::home() . '/shares.json');
+    }
+
+    /** Upstream's gist road's first checks: the path to `gh`, installed and signed in, or null once it has said why not. */
+    private function signedInGh(): ?string
     {
         $gh = SessionList::onPath('gh');
 
         if ($gh === null) {
             $this->sayError('GitHub CLI (gh) is not installed. Install it from https://cli.github.com/');
 
-            return;
+            return null;
         }
 
         [$authCode] = Process::runAsync([$gh, 'auth', 'status'], 30.0);
@@ -3450,9 +3560,15 @@ final class InteractiveMode
         if ($authCode !== 0) {
             $this->sayError("GitHub CLI is not logged in. Run 'gh auth login' first.");
 
-            return;
+            return null;
         }
 
+        return $gh;
+    }
+
+    /** Upstream's gist road: the HTML export as a secret gist. */
+    private function shareViaGist(string $gh, string $page): void
+    {
         $directory = sys_get_temp_dir() . '/pig-share-' . bin2hex(random_bytes(6));
 
         if (!mkdir($directory, 0o700)) {
@@ -3464,10 +3580,8 @@ final class InteractiveMode
         $html = "{$directory}/session.html";
 
         try {
-            try {
-                HtmlExport::write($store, $html);
-            } catch (Throwable $error) {
-                $this->sayError('Failed to export session: ' . $error->getMessage());
+            if (file_put_contents($html, $page) === false) {
+                $this->sayError("Failed to export session: could not write {$html}");
 
                 return;
             }
@@ -5969,27 +6083,16 @@ final class InteractiveMode
     }
 
     /**
-     * Upstream's `showLoginAuthTypeSelector()`: "Sign in with an account", "Sign in with an API key",
-     * and — at the top level only — "Sign in with Radius" with its status. For one provider's rows it
-     * is that provider's ways in, and with only one of them it starts that one.
+     * Upstream's `showLoginAuthTypeSelector()`: "Sign in with an account" and "Sign in with an API
+     * key" — without upstream's "Sign in with Radius", as pig uses no pi service. For one provider's
+     * rows it is that provider's ways in, and with only one of them it starts that one.
      *
      * @param list<AuthSelectorProvider>|null $providerOptions
      */
     private function showLoginAuthTypeSelector(?array $providerOptions = null): void
     {
-        $radius = null;
-
-        if ($providerOptions === null) {
-            foreach ($this->loginProviderOptions('oauth') as $option) {
-                if ($option->id === OauthProvider::Radius->value) {
-                    $radius = $option;
-                }
-            }
-        }
-
         $accountLabel = 'Sign in with an account';
         $apiKeyLabel = 'Sign in with an API key';
-        $radiusLabel = $radius === null ? null : "Sign in with {$radius->name}" . OAuthSelectorComponent::statusLabel($radius);
         $types = $providerOptions === null
             ? ['oauth' => true, 'api_key' => true]
             : array_fill_keys(array_map(static fn (AuthSelectorProvider $p): string => $p->authType, $providerOptions), true);
@@ -6001,10 +6104,6 @@ final class InteractiveMode
 
         if (isset($types['api_key'])) {
             $labels[] = $apiKeyLabel;
-        }
-
-        if ($radiusLabel !== null) {
-            $labels[] = $radiusLabel;
         }
 
         if ($labels === []) {
@@ -6024,13 +6123,7 @@ final class InteractiveMode
             : 'Select authentication method:';
         $back = fn () => $this->showLoginAuthTypeSelector($providerOptions);
 
-        $this->showListPicker($title, $labels, function (string $picked) use ($radius, $radiusLabel, $accountLabel, $providerOptions, $back): void {
-            if ($radius !== null && $picked === $radiusLabel) {
-                $this->startProviderLogin($radius, $back);
-
-                return;
-            }
-
+        $this->showListPicker($title, $labels, function (string $picked) use ($accountLabel, $providerOptions, $back): void {
             $authType = $picked === $accountLabel ? 'oauth' : 'api_key';
 
             if ($providerOptions !== null) {
@@ -6243,13 +6336,8 @@ final class InteractiveMode
                     $controller->signal,
                     // A choice between named ways in — Anthropic's browser-or-copy-code. The
                     // labels are what the list shows; the id is what comes back.
-                    function (string $title, array $options) use ($provider): ?string {
+                    function (string $title, array $options): ?string {
                         $labels = array_map(static fn (array $option): string => $option[1], $options);
-                        // Upstream's Radius sign-in says what Radius is above its choice.
-                        if ($provider === OauthProvider::Radius) {
-                            $this->say('Radius is a service crafted for Pi by the builders of Pi, Earendil Works');
-                        }
-
                         $picked = $this->ui->select($title, $labels);
 
                         foreach ($options as [$id, $label]) {
@@ -6321,7 +6409,7 @@ final class InteractiveMode
 
     /**
      * Upstream's `completeProviderAuthentication()`: with no model chosen yet, the provider's default
-     * one (`ModelResolver::DEFAULT_MODEL_PER_PROVIDER`, Radius's first when it has no `balanced`) or
+     * one (`ModelResolver::DEFAULT_MODEL_PER_PROVIDER`) or
      * why not; where the credential went; llama.cpp's guidance (upstream's
      * `llamaCppPostLoginGuidance()`); and the provider's catalog refreshed.
      */
@@ -6353,9 +6441,6 @@ final class InteractiveMode
                         $selected = $model;
                     }
                 }
-
-                // Radius catalogs vary by account; prefer balanced, then use catalog order.
-                $selected ??= $providerId === 'radius' ? $providerModels[0] : null;
 
                 if ($selected === null) {
                     $selectionError = "{$actionLabel}, but its default model \"{$defaultId}\" is not available. Use /model to select a model.";
@@ -7268,7 +7353,7 @@ final class InteractiveMode
             'shareDestination',
             'Session share destination',
             $this->settings->sessionShareDestination(),
-            'Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)',
+            'Where /share uploads (auto: pigagent.dev, encrypted with the key only in the link; gist: a secret GitHub gist)',
             values: Settings::SESSION_SHARE_DESTINATIONS,
         );
         $rows[] = new SettingItem(

@@ -138,8 +138,13 @@ final class HtmlExport
             . "</body>\n</html>\n";
     }
 
-    /** @param list<mixed> $messages */
-    private static function opening(array $messages): string
+    /**
+     * The page's heading, and a shared page's title in `ShareRecords`: the first thing said, cut
+     * to 80 characters.
+     *
+     * @param list<mixed> $messages
+     */
+    public static function opening(array $messages): string
     {
         foreach ($messages as $message) {
             if ($message instanceof UserMessage) {

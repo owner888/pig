@@ -7,7 +7,7 @@ declare(strict_types=1);
  * Rewrite the built-in catalogue's rows (`scripts/BuiltinCatalog.php`) from models.dev, and the
  * catalogue `Ai\Models` reads (`packages/ai/data/models/*.json`) from them.
  *
- * `php scripts/generate-models.php [--from <file>] [--radius-from <file>] [--openrouter-from <file>]
+ * `php scripts/generate-models.php [--from <file>] [--openrouter-from <file>]
  *  [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>]
  *  [--openrouter-images-from <file>] [--openrouter-decisions-from <file>] [--dry-run]`
  *
@@ -58,9 +58,8 @@ declare(strict_types=1);
  * snapshot somebody else fetched is the only way to reproduce a table, and a generator whose
  * input cannot be pinned is a generator whose output cannot be explained.
  *
- * `--radius-from` reads a saved Radius `/v1/config` answer instead of asking the gateway, and
- * `--openrouter-from`, `--vercel-from` and `--nvidia-from` saved answers of OpenRouter's, Vercel AI
- * Gateway's and NVIDIA NIM's model lists, for the same reason.
+ * `--openrouter-from`, `--vercel-from` and `--nvidia-from` read saved answers of OpenRouter's,
+ * Vercel AI Gateway's and NVIDIA NIM's model lists, for the same reason.
  *
  * `--dry-run` writes nothing and prints the rows it would have written, which is the shape worth
  * reading before overwriting a table and is also the only way the rendering is checkable without
@@ -86,7 +85,6 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Providers\Cloudflare;
-use Pig\Ai\Providers\RadiusConfig;
 use Pig\Async\Async;
 
 const MODELS_DEV = 'https://models.dev/api.json';
@@ -1445,77 +1443,6 @@ function codexRows(): array
 }
 
 /**
- * Upstream's `fetchRadiusModels()`: the gateway's unauthenticated catalogue
- * (`loadRadiusGatewayConfig(DEFAULT_RADIUS_GATEWAY)`, `getRadiusModelsFromConfig("radius", config)`),
- * or the saved answer `--radius-from` names. A failure is printed and gives no rows, as upstream's
- * non-strict run does — and an empty answer leaves the table as it is, as for every other provider.
- * The rows are the models as the gateway sent them; the gateway's `baseUrl` is `Models`'
- * `RADIUS_BASE_URL`, and one that is not is refused rather than written under the old one.
- *
- * @return array<string, array<string, mixed>>
- */
-function radiusRows(?string $file): array
-{
-    try {
-        if ($file !== null) {
-            if (!is_readable($file)) {
-                fail("cannot read {$file}");
-            }
-
-            $text = (string) file_get_contents($file);
-            $config = RadiusConfig::getRadiusModelsFromConfig(
-                'radius',
-                RadiusConfig::sanitizeRadiusGatewayConfig(json_decode($text, false, flags: JSON_THROW_ON_ERROR))
-                    ?? throw new RuntimeException("Invalid Radius config in {$file}"),
-            );
-        } else {
-            printf("Fetching models from Radius API...\n");
-            $config = Async::run(static fn (): array => RadiusConfig::getRadiusModelsFromConfig(
-                'radius',
-                RadiusConfig::loadRadiusGatewayConfig(RadiusConfig::DEFAULT_RADIUS_GATEWAY),
-            ));
-        }
-
-        if ($config === []) {
-            throw new RuntimeException('Radius API returned no models');
-        }
-    } catch (Throwable $error) {
-        printf("  ! Failed to fetch Radius models: %s\n", $error->getMessage());
-
-        return [];
-    }
-
-    $rows = [];
-
-    foreach ($config as $model) {
-        if ($model->baseUrl !== Models::RADIUS_BASE_URL) {
-            fail("the Radius gateway serves {$model->id} at {$model->baseUrl}, and Models::RADIUS_BASE_URL says " . Models::RADIUS_BASE_URL . ' — change it there first');
-        }
-
-        $rows[$model->id] = [
-            'name' => $model->name,
-            'reasoning' => $model->reasoning,
-            'images' => in_array('image', $model->input, true),
-            'context' => $model->contextWindow,
-            'output' => $model->maxTokens,
-            'input' => $model->pricing->input,
-            'out' => $model->pricing->output,
-            'cacheRead' => $model->pricing->cacheRead,
-            'cacheWrite' => $model->pricing->cacheWrite,
-            ...($model->thinkingLevelMap === [] ? [] : ['thinkingLevelMap' => $model->thinkingLevelMap]),
-            ...($model->pricing->tiers === [] ? [] : ['tiers' => array_map(
-                static fn (Pig\Ai\ModelCostTier $tier): array => [$tier->inputTokensAbove, $tier->input, $tier->output, $tier->cacheRead, $tier->cacheWrite],
-                $model->pricing->tiers,
-            )]),
-        ];
-    }
-
-    ksort($rows);
-
-    return $rows;
-}
-
-/**
  * A JSON document from a saved file, or fetched — the way `catalogue()` reads models.dev's.
  *
  * @return array<mixed>
@@ -2408,7 +2335,6 @@ function report(array $before, array $after): void
 // ---- the run -------------------------------------------------------------------------------
 
 $from = null;
-$radiusFrom = null;
 $openRouterFrom = null;
 $vercelFrom = null;
 $nvidiaFrom = null;
@@ -2422,8 +2348,6 @@ for ($i = 1; $i < $argc; $i++) {
         $dryRun = true;
     } elseif ($argv[$i] === '--from' && isset($argv[$i + 1])) {
         $from = $argv[++$i];
-    } elseif ($argv[$i] === '--radius-from' && isset($argv[$i + 1])) {
-        $radiusFrom = $argv[++$i];
     } elseif ($argv[$i] === '--openrouter-from' && isset($argv[$i + 1])) {
         $openRouterFrom = $argv[++$i];
     } elseif ($argv[$i] === '--vercel-from' && isset($argv[$i + 1])) {
@@ -2437,7 +2361,7 @@ for ($i = 1; $i < $argc; $i++) {
     } elseif ($argv[$i] === '--openrouter-decisions-from' && isset($argv[$i + 1])) {
         $openRouterDecisionsFrom = $argv[++$i];
     } else {
-        fail("unknown argument {$argv[$i]} — usage: generate-models.php [--from <file>] [--radius-from <file>] [--openrouter-from <file>] [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>] [--openrouter-images-from <file>] [--openrouter-decisions-from <file>] [--dry-run]");
+        fail("unknown argument {$argv[$i]} — usage: generate-models.php [--from <file>] [--openrouter-from <file>] [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>] [--openrouter-images-from <file>] [--openrouter-decisions-from <file>] [--dry-run]");
     }
 }
 
@@ -2497,13 +2421,12 @@ if ($copilot !== []) {
 }
 
 // Derived and hand-listed tables, after the catalogue's: Azure is a clone of what was just written
-// for `openai`, Codex, DeepSeek and Ant Ling are upstream's explicit lists, Radius, OpenRouter and
-// Vercel's AI Gateway are their own catalogues.
+// for `openai`, Codex, DeepSeek and Ant Ling are upstream's explicit lists, OpenRouter and Vercel's
+// AI Gateway are their own catalogues.
 $openRouter = openRouterRows($openRouterFrom);
 $derived = [
     'azure' => ['AZURE_MODELS', $openaiRows === [] ? [] : azureRows($openaiRows)],
     'openai-codex' => ['OPENAI_CODEX_MODELS', codexRows()],
-    'radius' => ['RADIUS_MODELS', radiusRows($radiusFrom)],
     'deepseek' => ['DEEPSEEK_MODELS', DEEPSEEK_ROWS],
     'ant-ling' => ['ANT_LING_MODELS', ANT_LING_ROWS],
     // The hand-added aliases only beside a listing that arrived: an empty one leaves the table alone.
