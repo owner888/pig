@@ -100,8 +100,10 @@ final class FindTool implements AgentTool, ReplayableTool
                 throw new AgentError("No such directory: {$given}");
             }
 
-            // At most `$limit`, as `--max-results` gives `fd`; the notice then says the limit was reached.
-            $globbed = array_slice($this->operations->glob($pattern, $root, ['**/node_modules/**', '**/.git/**'], $limit), 0, $limit);
+            $signal?->throwIfAborted();
+
+            // One result past the limit tells "exactly N matches" apart from "more than N" (upstream #7121).
+            $globbed = $this->operations->glob($pattern, $root, ['**/node_modules/**', '**/.git/**'], $limit + 1);
             $found = $this->relative(implode("\n", $globbed), $root);
 
             $signal?->throwIfAborted();
@@ -123,49 +125,70 @@ final class FindTool implements AgentTool, ReplayableTool
             // Hidden files are searched, but .gitignore still applies: a dotfile is
             // often exactly what is being looked for, and node_modules never is.
             '--hidden',
-            // Without this, fd only reads .gitignore inside a git repository, and an
-            // agent gets pointed at plenty of directories that are not one.
-            '--no-require-git',
-            '--max-results', (string) $limit,
+            // fd only reads .gitignore inside a git repository, and an agent gets pointed at plenty
+            // of directories that are not one — so `--no-require-git` there. Inside one, fd's own
+            // git-aware behaviour, so a parent's .gitignore stops at a nested repository (upstream
+            // #5960). Looked for where the files are.
+            ...($this->insideGitRepo($root, $elsewhere) ? [] : ['--no-require-git']),
+            // One result past the limit tells "exactly N matches" apart from "more than N" (upstream #7121).
+            '--max-results', (string) ($limit + 1),
+            '--',
             self::pattern($pattern),
             $root,
         ];
 
-        // **`runAsync()`, not `run()`, and this is a deliberate divergence.** A tool runs inside
-        // the agent's fiber, which the loop is driving, and `run()` polls with `usleep()` — so an
-        // `fd` over a large tree stopped the whole loop for as long as it took: no keystrokes, no
-        // spinner, no escape. Measured with a 20ms timer armed and a command that takes half a
-        // second: `run()` let the loop tick **0** times and `runAsync()` let it tick 24 of ~25.
-        //
-        // Upstream's `find.ts` is `spawnSync(fdPath, …)`, so it freezes its own event loop here
-        // too — this is not a rule pig failed to port, it is one upstream does not have. Its
-        // `grep.ts` is async `spawn`, and `bash.ts` is too, which is what makes `find` the odd
-        // one out in *both* trees. pig's `bash` was never affected, because `Tools\LocalShellRun` is on the
-        // loop with an `onReadable` per pipe.
-        //
-        // With no fiber to suspend — a test calling the tool directly — `runAsync()` is `run()`,
-        // so nothing outside a session changes.
+        // `runAsync()`, not `run()`, as upstream's `find.ts` is an async `spawn`: a tool runs
+        // inside the agent's fiber, which the loop is driving, and `run()` polls with `usleep()` —
+        // an `fd` over a large tree would stop the whole loop for as long as it took. The signal
+        // stops it, as upstream's `child.kill()` on abort. With no fiber to suspend — a test
+        // calling the tool directly — `runAsync()` is `run()`.
         if ($elsewhere !== null) {
             [$command] = $elsewhere->elsewhere($command, null);
         }
 
-        [$exit, $output, $errors] = Process::runAsync($command, self::TIMEOUT);
+        // An abort during the `.git` lookup has nothing to stop yet: fd is not started at all
+        // (upstream #11974). Once it runs, the signal stops it.
+        $signal?->throwIfAborted();
+        [$exit, $output, $errors] = Process::runAsync($command, self::TIMEOUT, signal: $signal);
+        $signal?->throwIfAborted();
+        $found = $this->relative($output, $root);
 
-        // fd exits 0 when it found nothing, so a non-zero code is a real failure — most
-        // often a pattern it would not accept. Reporting that as "no files found" sends
-        // the model off looking for why its search came up empty.
-        if ($exit !== 0) {
+        // fd exits 0 when it found nothing, so a non-zero code with nothing found is a real
+        // failure — most often a pattern it would not accept. Reporting that as "no files found"
+        // sends the model off looking for why its search came up empty. With results, upstream
+        // answers them.
+        if ($exit !== 0 && $found === []) {
             $said = trim($errors);
 
             throw new AgentError($said === '' ? "fd exited with code {$exit}" : $said);
         }
 
-        return $this->result($this->relative($output, $root), $limit);
+        return $this->result($found, $limit);
     }
 
     /**
-     * The files found, as the model reads them: the list, cut to the byte budget, with a line
-     * saying which limit was reached.
+     * Whether `$root` is inside a git repository: a `.git` in it or any directory above it, looked
+     * for where the files are (upstream's walk up with `pathExists()`).
+     */
+    private function insideGitRepo(string $root, ?RunsElsewhere $elsewhere): bool
+    {
+        for ($current = $root; ; $current = dirname($current)) {
+            $git = rtrim($current, '/') . '/.git';
+
+            if ($elsewhere !== null && $this->operations !== null ? $this->operations->exists($git) : file_exists($git)) {
+                return true;
+            }
+
+            if (dirname($current) === $current) {
+                return false;
+            }
+        }
+    }
+
+    /**
+     * The files found, as the model reads them: the list, cut to the limit and the byte budget,
+     * with a line saying which limit was reached. `$found` holds one past the limit when there
+     * were more.
      *
      * @param list<string> $found relative to the search root
      */
@@ -175,11 +198,13 @@ final class FindTool implements AgentTool, ReplayableTool
             return new AgentToolResult([new TextContent('No files found matching pattern')]);
         }
 
+        $reached = count($found) > $limit;
+        $found = array_slice($found, 0, $limit);
         // No line limit: --max-results already caps how many there are.
         $truncation = Truncate::head(implode("\n", $found), PHP_INT_MAX);
         $notices = [];
 
-        if (count($found) >= $limit) {
+        if ($reached) {
             $doubled = $limit * 2;
             $notices[] = "{$limit} result limit reached. Use limit={$doubled} for more, or narrow the pattern";
         }
@@ -199,7 +224,7 @@ final class FindTool implements AgentTool, ReplayableTool
             [new TextContent($output)],
             $notice === null ? null : array_filter(
                 [
-                    'resultLimitReached' => count($found) >= $limit ? $limit : null,
+                    'resultLimitReached' => $reached ? $limit : null,
                     'truncation' => $truncation,
                     'notice' => $notice,
                 ],

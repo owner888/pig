@@ -173,6 +173,7 @@ final class BuiltinCatalog
      */
     private const array ANTHROPIC_ALLOWED_FALLBACK_MODELS = [
         'claude-fable-5' => ['claude-opus-4-8', 'claude-opus-5'],
+        'claude-fable-5-2' => ['claude-opus-4-8', 'claude-opus-5'],
         'claude-opus-5' => ['claude-opus-4-8'],
     ];
 

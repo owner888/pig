@@ -672,7 +672,7 @@ final class SettingsTest extends TestCase
         $this->assertSame('auto', Settings::inMemory(['fullscreenScrollbar' => 'sometimes'])->fullscreenScrollbar());
     }
 
-    public function testCacheWarmingIsAGlobalSettingThatDefaultsToStreaming(): void
+    public function testCacheWarmingIsAGlobalSettingThatDefaultsToIdle(): void
     {
         $home = sys_get_temp_dir() . '/pig-cw-' . bin2hex(random_bytes(4));
         $cwd = $home . '/project';
@@ -683,8 +683,8 @@ final class SettingsTest extends TestCase
         // Upstream reads it from the global settings only: a repository does not get to spend
         // somebody's money keeping a cache warm, nor to stop them doing it.
         $this->assertSame('idle', Settings::load($cwd, $home)->cacheWarmingMode());
-        $this->assertSame('streaming', Settings::inMemory()->cacheWarmingMode());
-        $this->assertSame('streaming', Settings::inMemory(['cacheWarming' => 'always'])->cacheWarmingMode());
+        $this->assertSame('idle', Settings::inMemory()->cacheWarmingMode(), 'upstream 7bcc15c9');
+        $this->assertSame('idle', Settings::inMemory(['cacheWarming' => 'always'])->cacheWarmingMode());
 
         $settings = Settings::inMemory();
         $settings->setCacheWarmingMode('off');

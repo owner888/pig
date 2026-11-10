@@ -34,6 +34,11 @@ each side from its own tokens), #11514 (reordering the same active tools — `To
 registration order), #11853 (extension overlays left behind on `/reload` — `ExtensionUi::custom()`
 has no overlay mode) and #11775 (CR-only SSE lines — `SseParser` already splits on them).
 
+Upstream changes that are Windows-only, which pig does not run on natively (WSL is pig on Linux):
+#11964 (native exit codes from Windows PowerShell 5.1) and #11972 (`find` path patterns matched with
+minimatch on Windows, for any fd version). And 244e5f5d, which restores `GrepOperations.readFile` as
+a deprecated, ignored hook: pig's `GrepOperations` never had one.
+
 `pig auth login` (upstream 9b9cb30a) has no Radius step: upstream points the global `mcp.json`'s Radius
 server at the login (`planRadiusMcpServer()`), and changes `pig mcp login`'s hint for a server using a
 provider's credentials to name `pig auth login`. pig's MCP servers have no `auth: {provider}`, so

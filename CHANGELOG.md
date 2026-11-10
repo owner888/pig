@@ -45,12 +45,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Added
+
+- Claude Fable 5.2 (and Mythos 5.2) uses per-message effort and mid-conversation system messages as 5.1 does, on Anthropic and through OpenRouter, and a request its safety classifiers refuse is answered by Claude Opus 5 through server-side fallback (upstream 0d1793c2).
+
 ### Changed
 
+- `cacheWarming` now defaults to `"idle"` instead of `"streaming"`: eligible prompt caches are also kept warm for up to 30 minutes between agent runs, only when a refresh is expected to pay for itself. Set `"cacheWarming": "streaming"` in the global settings for the previous behavior (upstream 7bcc15c9).
+- `/login` and `/logout` list the preferred partners Radius and OpenRouter first, then the other providers alphabetically. Partners are marked `✦`; the selected Radius row shimmers in the Radius logo colors and the selected OpenRouter row glows in OpenRouter's color (upstream 683a7a86).
+- `pig update --models` refreshes every provider's model catalog into `~/.pig/agent/models-store.json`, as `pi update --models` does, instead of running the generator of a git checkout (which did nothing for a Composer install and rewrote tracked files in a checkout). A provider whose login has gone stale is a warning naming `pig auth login <provider>`, and the other catalogs still refresh; the command fails only for other errors (upstream 6382d870).
 - A Docker or SSH account's conversations load only the extensions the admin lets such accounts have: `sandbox.extensions` in `settings.json`, by name as `disabledExtensions`, by default `pig-schedule` and `pig-tool-search`. An extension runs on the server as its user, so its own tools, commands or MCP servers (`pig-mcp`), or a sandboxed PHP script (`pig-codemode`), could otherwise reach what the container or the other machine keeps the account away from. Add `pig-antigravity`, say, to let those accounts use the Antigravity models.
 
 ### Fixed
 
+- `find` with exactly as many matches as its `limit` no longer says the limit was reached: it asks `fd` for one more (upstream #7121).
+- `find` inside a git repository uses `fd`'s git-aware ignores, so the repository's `.gitignore` stops at a nested repository instead of hiding its files (upstream #5960).
+- `find` can be stopped: an abort stops `fd`, and one during its setup no longer starts it (upstream #11974). A pattern starting with `-` is no longer read as an `fd` option, and results `fd` found before exiting non-zero are shown.
 - With several accounts, the extensions' panels (the Antigravity sign-ins) and their own endpoints were open to every account; they are the admin's now, as the API keys are.
 
 ## [2.0.1] - 2026-11-10

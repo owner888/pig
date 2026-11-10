@@ -585,22 +585,6 @@ final class SelfUpdate
         rmdir($dir);
     }
 
-    public function refreshModels(): int
-    {
-        $generator = self::repoRoot() . '/scripts/generate-models.php';
-        if (is_file($generator)) {
-            echo Style::dim("Refreshing model catalogs...\n");
-            $code = $this->execute([PHP_BINARY, $generator]);
-            if ($code === 0) {
-                echo Style::green("✔ Model catalogs refreshed.\n");
-            }
-
-            return $code;
-        }
-
-        return 0;
-    }
-
     /**
      * Run a command and pass through I/O, or use injected test runner.
      *

@@ -1059,7 +1059,7 @@ final class AgentSession
             static fn (Model $model, TranscriptContext $context, SimpleStreamOptions $options): mixed => $inner !== null
                 ? $inner($model, $context, $options)
                 : Stream::simple($model, $context, $options),
-            fn (): string => $this->settings?->cacheWarmingMode() ?? 'streaming',
+            fn (): string => $this->settings?->cacheWarmingMode() ?? 'idle',
             fn (CacheWarmingDecisionEvent $event): string => $this->extensionRunner?->emitCacheWarmingDecision($event) ?? $event->action,
             fn (): int => $this->lastPromptTokens(),
             function (string $kind, string $provider, string $model, Usage $usage, ?string $note): ?UsageEntry {

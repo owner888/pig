@@ -265,6 +265,38 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertSame(4, $result->details['resultLimitReached']);
     }
 
+    /** Upstream #7121: exactly as many as the limit is not "more than the limit". */
+    public function testFindWithExactlyTheLimitSaysNothingWasLeftOut(): void
+    {
+        $this->needsFd();
+
+        for ($index = 0; $index < 4; $index++) {
+            $this->file("f{$index}.php");
+        }
+
+        $result = $this->execute(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 4]);
+
+        $this->assertCount(4, $this->lines($this->textOf($result)));
+        $this->assertNull($result->details);
+        $this->assertCount(3, $this->lines(strstr($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 3])), "\n\n[", true) ?: ''), 'one past the limit is cut');
+    }
+
+    /** Upstream #5960: inside a repository, its .gitignore stops at a nested repository. */
+    public function testFindInsideARepositoryLetsANestedOneKeepItsOwnFiles(): void
+    {
+        $this->needsFd();
+
+        $this->file('.git/HEAD', "ref: refs/heads/main\n");
+        $this->file('.gitignore', "*.log\n");
+        $this->file('sub/.git/HEAD', "ref: refs/heads/main\n");
+        $this->file('sub/a.log');
+        $this->file('b.log');
+
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.log'])));
+
+        $this->assertSame(['sub/a.log'], $found, 'the outer *.log rule is the outer repository\'s alone');
+    }
+
     public function testFindOnAMissingDirectoryIsAnError(): void
     {
         $this->needsFd();

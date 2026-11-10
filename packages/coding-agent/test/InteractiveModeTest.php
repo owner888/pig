@@ -1377,7 +1377,7 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('0 messages', $this->screen());
         // The terminal turns the warmer on, so `/session` has something to say about it.
-        $this->assertStringContainsString('Cache warming: streaming · Inactive (waiting for first request)', $this->screenText());
+        $this->assertStringContainsString('Cache warming: idle · Inactive (waiting for first request)', $this->screenText());
     }
 
     public function testExitStopsTheWholeThing(): void
@@ -4449,10 +4449,11 @@ final class InteractiveModeTest extends TestCase
 
         $this->type(self::ENTER);
 
-        // The account sign-ins: `Auth::signIns()`, by upstream's provider names, sorted.
+        // The account sign-ins: `Auth::signIns()`, by upstream's provider names — the preferred
+        // partner Radius first, marked, then the rest alphabetically (upstream 683a7a86).
         $screen = $this->screen();
         $this->assertStringContainsString('Select provider to configure:', $screen);
-        $this->assertMatchesRegularExpression('/Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex • not configured.*Radius/s', $screen);
+        $this->assertMatchesRegularExpression('/Radius ✦ • not configured.*Anthropic • not configured.*GitHub Copilot • not configured.*OpenAI Codex • not configured/s', $screen);
         $this->assertStringNotContainsString('Antigravity', $screen);
 
         // Escape goes back to the kinds, as upstream's does.
@@ -4781,7 +4782,8 @@ final class InteractiveModeTest extends TestCase
         $this->type('/login');
         $this->type(self::ENTER);
         $this->type(self::ENTER); // an account
-        $this->type(self::ENTER); // Anthropic, the first row
+        $this->type('anthropic');
+        $this->type(self::ENTER); // Anthropic
         $this->settle();
 
         // pi 1.0: the browser is the default and copying the code is for a headless machine.
@@ -4841,6 +4843,7 @@ final class InteractiveModeTest extends TestCase
             $this->type('/login');
             $this->type(self::ENTER);
             $this->type(self::ENTER); // an account
+            $this->type('anthropic');
             $this->type(self::ENTER); // Anthropic
             $this->settle();
             $this->type(self::DOWN);
@@ -4859,6 +4862,7 @@ final class InteractiveModeTest extends TestCase
             $this->type('/login');
             $this->type(self::ENTER);
             $this->type(self::ENTER);
+            $this->type('anthropic');
             $this->type(self::ENTER);
             $this->settle();
             $this->type(self::DOWN);

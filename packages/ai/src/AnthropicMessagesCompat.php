@@ -175,7 +175,7 @@ final readonly class AnthropicMessagesCompat
 
         return preg_match('/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/', $id) === 1
             || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $id) === 1
-            || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/', $id) === 1;
+            || preg_match('/^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$/', $id) === 1;
     }
 
     /**
@@ -186,7 +186,7 @@ final readonly class AnthropicMessagesCompat
     {
         return preg_match('/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/', $modelId) === 1
             || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $modelId) === 1
-            || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/', $modelId) === 1;
+            || preg_match('/^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$/', $modelId) === 1;
     }
 
     /**

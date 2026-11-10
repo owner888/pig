@@ -75,6 +75,38 @@ final class ModelRefreshTest extends TestCase
         $this->assertArrayHasKey('other', $store, "another provider's entry is kept");
     }
 
+    /** `pig update --models` (upstream 6382d870): a stale login is a warning, any other failure the command's. */
+    public function testUpdateModelsWarnsAboutAStaleLoginAndFailsOnlyForAnythingElse(): void
+    {
+        $previous = getenv('PIG_MODEL_CATALOG_URL');
+        putenv('PIG_MODEL_CATALOG_URL=off');
+        $refreshed = [];
+        $failing = static fn (string $id, \Throwable $error): Provider => new Provider($id, $id, [], refreshModels: static function (RefreshModelsContext $context) use ($error): void {
+            if ($context->allowNetwork) {
+                throw $error;
+            }
+        });
+        ProviderRegistry::register($failing('zzr-stale', new \Pig\Ai\Utils\Oauth\OauthError('OAuth refresh failed for zzr-stale: invalid_grant')));
+        ProviderRegistry::register(new Provider('zzr-ok', 'OK', [], refreshModels: static function (RefreshModelsContext $context) use (&$refreshed): void {
+            $refreshed[] = $context->allowNetwork;
+        }));
+        $auth = Auth::discover("{$this->home}/auth.json");
+        $auth->setApiKey('zzr-stale', 'sk-stale');
+        $auth->setApiKey('zzr-ok', 'sk-ok');
+
+        try {
+            $this->expectOutputRegex('/Model catalogs refreshed/');
+            $this->assertSame(0, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth), 'a stale login is a warning');
+            $this->assertSame([false, true], $refreshed, 'and the other catalogs still refresh');
+
+            ProviderRegistry::register($failing('zzr-down', new RuntimeException('connection refused')));
+            $auth->setApiKey('zzr-down', 'sk-down');
+            $this->assertSame(1, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth), 'anything else fails the command');
+        } finally {
+            putenv($previous === false ? 'PIG_MODEL_CATALOG_URL' : "PIG_MODEL_CATALOG_URL={$previous}");
+        }
+    }
+
     public function testWithoutACredentialOnlyTheStoredPhaseRunsAndAFailureIsThatProvidersAlone(): void
     {
         $phases = [];

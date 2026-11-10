@@ -1185,8 +1185,9 @@ final class Settings
     public const array CACHE_WARMING_MODES = ['off', 'streaming', 'idle'];
 
     /**
-     * Upstream's `getCacheWarmingMode()`: `off`, `streaming` (the default — keep the provider's
-     * prompt cache warm while a run is still going) or `idle` (between runs too, while it pays).
+     * Upstream's `getCacheWarmingMode()`: `off`, `streaming` (keep the provider's prompt cache warm
+     * while a run is still going) or `idle` (the default, upstream 7bcc15c9 — between runs too, for
+     * up to 30 minutes, while a refresh pays for itself).
      * **Global only**, as upstream's is: read from the person's file and never the project's,
      * because it spends the person's money on a timer.
      */
@@ -1194,7 +1195,7 @@ final class Settings
     {
         $mode = $this->global['cacheWarming'] ?? null;
 
-        return is_string($mode) && in_array($mode, self::CACHE_WARMING_MODES, true) ? $mode : 'streaming';
+        return is_string($mode) && in_array($mode, self::CACHE_WARMING_MODES, true) ? $mode : 'idle';
     }
 
     public function setCacheWarmingMode(string $mode): void

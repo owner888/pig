@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\CodingAgent\PreferredProviders;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\CapturesViewportInput;
 use Pig\Tui\Components\Input;
@@ -23,7 +24,8 @@ use Pig\Tui\Style;
  * (`components/oauth-selector.ts`): a title, a search field, eight rows at a time with each one's
  * kind (`[subscription]`, `[account]`, `[API key]`, when the list mixes them) and status, and the
  * position when it scrolls. Up and down move, Enter picks, Escape cancels, anything else is typed
- * into the search.
+ * into the search. The preferred partners (`PreferredProviders`) are marked `✦`, and with a `$tui`
+ * the selected one's name has its animated brand style (`ProviderBrand`, upstream 683a7a86).
  */
 final class OAuthSelectorComponent extends Container implements Focusable, InputHandler, CapturesViewportInput
 {
@@ -42,6 +44,11 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
 
     private readonly bool $showAuthTypeLabels;
 
+    private readonly float $animationStart;
+
+    /** @var (Closure(): void)|null */
+    private ?Closure $stopAnimation = null;
+
     /**
      * @param 'login'|'logout' $mode
      * @param list<AuthSelectorProvider> $providers
@@ -54,7 +61,9 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
         private readonly Closure $onSelect,
         private readonly Closure $onCancel,
         string $initialSearchInput = '',
+        ?\Pig\Tui\TUI $tui = null,
     ) {
+        $this->animationStart = microtime(true);
         $this->filtered = $providers;
         $this->showAuthTypeLabels = count(array_unique(array_map(static fn (AuthSelectorProvider $p): string => $p->authType, $providers))) > 1;
         $border = static fn (string $text): string => Themes::theme()->fg('border', $text);
@@ -79,6 +88,25 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
         $this->addChild(new Rule($border));
 
         $this->filter($initialSearchInput);
+
+        if ($tui !== null) {
+            $this->stopAnimation = ProviderBrand::startAnimation($tui, fn (): bool => $this->selectedBrandStyle() !== null);
+        }
+    }
+
+    /** Upstream's `dispose()`: stops the brand animation. */
+    public function dispose(): void
+    {
+        ($this->stopAnimation)?->__invoke();
+        $this->stopAnimation = null;
+    }
+
+    /** @return (Closure(string, float): string)|null */
+    private function selectedBrandStyle(): ?Closure
+    {
+        $provider = $this->filtered[$this->selected] ?? null;
+
+        return $provider === null ? null : ProviderBrand::styleOf($provider->id);
     }
 
     /** Upstream's `formatAuthSelectorProviderType()`. */
@@ -194,10 +222,13 @@ final class OAuthSelectorComponent extends Container implements Focusable, Input
             $type = $this->showAuthTypeLabels
                 ? $theme->fg('muted', ' [' . self::typeLabel($provider->authType, $provider->subscription) . ']')
                 : '';
+            // U+2726 is single-width in every terminal, unlike star emoji or ambiguous-width symbols such as U+2605.
+            $partner = PreferredProviders::isPreferred($provider->id) ? $theme->fg('muted', ' ✦') : '';
+            $brand = $this->stopAnimation !== null ? ProviderBrand::styleOf($provider->id) : null;
             $line = $i === $this->selected
-                ? $theme->fg('accent', '→ ') . $theme->fg('accent', $provider->name)
+                ? $theme->fg('accent', '→ ') . ($brand !== null ? $brand($provider->name, (microtime(true) - $this->animationStart) * 1000) : $theme->fg('accent', $provider->name))
                 : '  ' . $theme->fg('text', $provider->name);
-            $this->list->addChild(new TruncatedText($line . $type . self::statusLabel($provider), 1, 0));
+            $this->list->addChild(new TruncatedText($line . $partner . $type . self::statusLabel($provider), 1, 0));
         }
 
         if ($start > 0 || $end < $count) {

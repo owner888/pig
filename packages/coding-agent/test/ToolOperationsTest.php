@@ -204,7 +204,8 @@ final class ToolOperationsTest extends TestCase
         $tool = new FindTool(self::CWD, $ops);
 
         $this->assertSame("src/a.php\nb.php", self::text($tool->execute('1', ['pattern' => '*.php'])));
-        $this->assertSame(['*.php', self::CWD, ['**/node_modules/**', '**/.git/**'], 1000], $ops->asked);
+        $this->assertSame(['*.php', self::CWD, ['**/node_modules/**', '**/.git/**'], 1001], $ops->asked, 'one past the limit (upstream #7121)');
+        $this->assertStringContainsString('1 result limit reached', self::text($tool->execute('3', ['pattern' => '*.php', 'limit' => 1])));
         $this->assertThrows(AgentError::class, static fn () => $tool->execute('2', ['pattern' => '*', 'path' => 'gone']), 'No such directory: gone');
     }
 

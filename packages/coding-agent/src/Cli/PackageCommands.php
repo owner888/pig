@@ -41,6 +41,60 @@ final class PackageCommands
         'config' => 'pig config [-l] [--approve|--no-approve]',
     ];
 
+    /**
+     * Upstream's `refreshModelCatalogs()`: every provider's catalog asked again, forced, within 15
+     * seconds (`ModelRefresh::refresh()`), into the person's own store. A provider whose login has
+     * gone stale (`OauthError`, upstream's `ModelsError` code `oauth`) is a warning naming `pig auth
+     * login <provider>`, and the others still refresh (upstream 6382d870); any other failure is
+     * the command's.
+     */
+    public static function refreshModelCatalogs(?\Pig\CodingAgent\Auth $auth = null): int
+    {
+        if ($auth === null) {
+            $auth = \Pig\CodingAgent\Auth::discover();
+            \Pig\CodingAgent\CustomModels::discover()->install($auth);
+        }
+
+        try {
+            $result = Async::run(static function () use ($auth): \Pig\CodingAgent\ModelsRefreshResult {
+                $controller = new \Pig\Async\AbortController();
+                $timer = Loop::get()->delay(\Pig\CodingAgent\ModelRefresh::TIMEOUT_MS / 1000, static fn () => $controller->abort('timeout'));
+
+                try {
+                    return \Pig\CodingAgent\ModelRefresh::refresh($auth, signal: $controller->signal, force: true);
+                } finally {
+                    Loop::get()->cancel($timer);
+                }
+            });
+
+            if ($result->aborted) {
+                throw new \RuntimeException('Model catalog refresh timed out.');
+            }
+
+            $failures = [];
+            foreach ($result->errors as $provider => $error) {
+                // A stale login only affects that provider's catalog; the others are still worth refreshing.
+                if ($error instanceof \Pig\Ai\Utils\Oauth\OauthError) {
+                    fwrite(STDERR, Style::yellow("Warning: skipped model catalog for {$provider}: {$error->getMessage()}\nLog in again with `pig auth login {$provider}` to refresh it.") . "\n");
+                } else {
+                    $failures[] = "{$provider}: {$error->getMessage()}";
+                }
+            }
+
+            if ($failures !== []) {
+                throw new \RuntimeException('Could not refresh model catalogs: ' . implode('; ', $failures));
+            }
+        } catch (\Throwable $error) {
+            fwrite(STDERR, Style::red("Error: {$error->getMessage()}") . "\n");
+
+            return 1;
+        }
+
+        echo Style::green('Model catalogs refreshed') . "\n";
+
+        return 0;
+    }
+
     /** @param list<string> $argv the words after `pig`, the command first */
     public static function main(array $argv, string $cwd, ?string $home = null, ?SelfUpdate $selfUpdate = null): int
     {
@@ -84,7 +138,7 @@ final class PackageCommands
         $target = $options['updateTarget'];
 
         if ($command === 'update' && $target['type'] === 'models') {
-            return (new SelfUpdate())->refreshModels();
+            return self::refreshModelCatalogs();
         }
 
         // Trust: `--approve` / `--no-approve` for this command, else what was saved. `update` reads

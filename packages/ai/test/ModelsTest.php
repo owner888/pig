@@ -1200,10 +1200,25 @@ final class ModelsTest extends TestCase
      * such a model would be sent an off it does not have. Every other Claude keeps `off` — Sonnet 4.6
      * and Sonnet 5 included, which models.dev's efforts used to take it from here.
      */
+    /** Upstream 0d1793c2: Fable 5.2 is gated as 5.1, and keeps only fallbacks that take per-message effort. */
+    public function testFable52IsGatedLikeFable51(): void
+    {
+        $direct = Models::find(Models::ANTHROPIC, 'claude-fable-5-2');
+        $this->assertNotNull($direct);
+        $compat = $direct->compat;
+        $this->assertInstanceOf(AnthropicMessagesCompat::class, $compat);
+        $this->assertTrue($compat->supportsMidConvoEffort);
+        $this->assertTrue($compat->supportsMidConvoSystemMessages);
+        $this->assertFalse($direct->hasThinkingLevel('off'));
+        // Opus 4.8 cannot take per-message effort, so it is dropped from Fable 5.2's fallbacks.
+        $this->assertSame(['claude-opus-5'], array_column($compat->allowedFallbackModels ?? [], 'model'));
+        $this->assertTrue(AnthropicMessagesCompat::forBuiltIn('openrouter', 'anthropic/claude-fable-5.2')?->supportsMidConvoEffort);
+    }
+
     public function testTheClaudeModelsThatCannotStopThinkingSaySo(): void
     {
         foreach ([
-            [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'],
+            [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'], [Models::ANTHROPIC, 'claude-fable-5-2'],
             [Models::ANTHROPIC, 'claude-opus-5-5'], [Models::ANTHROPIC, 'claude-sonnet-5-5'],
             [Models::COPILOT, 'claude-fable-5'], [Models::COPILOT, 'claude-fable-5.1'],
             [Models::COPILOT, 'claude-opus-5.5'],

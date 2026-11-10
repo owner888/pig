@@ -74,9 +74,9 @@ final class CacheWarmingSessionTest extends TestCase
         $this->assertSame([], array_filter($reopened->messages(), static fn (mixed $m): bool => $m instanceof UsageEntry), 'not part of the conversation');
     }
 
-    public function testByDefaultItStopsWhenThePromptSettles(): void
+    public function testStreamingStopsWhenThePromptSettles(): void
     {
-        $session = $this->session(SessionManager::create(sys_get_temp_dir()), Settings::inMemory());
+        $session = $this->session(SessionManager::create(sys_get_temp_dir()), Settings::inMemory(['cacheWarming' => 'streaming']));
         $session->enableCacheWarming();
 
         Async::run(function () use ($session): void {

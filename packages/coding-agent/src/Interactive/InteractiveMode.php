@@ -5567,7 +5567,9 @@ final class InteractiveMode
                 return 1;
             }
 
-            return strcasecmp($a->name, $b->name);
+            // Upstream's `compareProviders()`: the preferred partners first. Stable, so a provider's
+            // account row stays above its API key row.
+            return \Pig\CodingAgent\PreferredProviders::compare($a, $b);
         });
 
         return $options;
@@ -6055,14 +6057,17 @@ final class InteractiveMode
             return;
         }
 
+        $selector = null;
         $selector = new OAuthSelectorComponent(
             'login',
             $options,
-            function (AuthSelectorProvider $option) use ($authType, $initialSearchInput): void {
+            function (AuthSelectorProvider $option) use ($authType, $initialSearchInput, &$selector): void {
+                $selector?->dispose();
                 $this->closePicker();
                 $this->startProviderLogin($option, fn () => $this->showLoginProviderSelector($authType, $initialSearchInput));
             },
-            function () use ($authType): void {
+            function () use ($authType, &$selector): void {
+                $selector?->dispose();
                 $this->closePicker();
 
                 if ($authType !== null) {
@@ -6070,6 +6075,7 @@ final class InteractiveMode
                 }
             },
             $initialSearchInput,
+            $this->tui,
         );
 
         $this->showOverlay($selector);
@@ -6101,7 +6107,7 @@ final class InteractiveMode
             $options[] = new AuthSelectorProvider($id, $name, $kind, ['type' => $kind, 'source' => 'stored credential'], $flow?->isSubscription() ?? false);
         }
 
-        usort($options, static fn (AuthSelectorProvider $a, AuthSelectorProvider $b): int => strcasecmp($a->name, $b->name));
+        usort($options, \Pig\CodingAgent\PreferredProviders::compare(...));
 
         if ($options === []) {
             $this->say('No stored credentials to remove. /logout only removes credentials saved by /login; environment variables and models.json config are unchanged.');
@@ -6109,10 +6115,12 @@ final class InteractiveMode
             return;
         }
 
+        $selector = null;
         $selector = new OAuthSelectorComponent(
             'logout',
             $options,
-            function (AuthSelectorProvider $option): void {
+            function (AuthSelectorProvider $option) use (&$selector): void {
+                $selector?->dispose();
                 $this->closePicker();
 
                 try {
@@ -6125,7 +6133,11 @@ final class InteractiveMode
                     $this->sayError("Logout failed: {$problem->getMessage()}");
                 }
             },
-            $this->closePicker(...),
+            function () use (&$selector): void {
+                $selector?->dispose();
+                $this->closePicker();
+            },
+            tui: $this->tui,
         );
 
         $this->showOverlay($selector);

@@ -493,7 +493,8 @@
         "contextWindow": 1000000,
         "maxTokens": 128000,
         "compat": {
-            "forceAdaptiveThinking": true
+            "forceAdaptiveThinking": true,
+            "supportsMidConvoEffort": true
         },
         "inputLimits": {
             "images": {
