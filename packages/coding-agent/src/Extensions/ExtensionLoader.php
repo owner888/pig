@@ -50,6 +50,10 @@ final class ExtensionLoader
      *        discovered, configured, bundled, from the project or from a package
      * @param list<string> $builtins upstream's built-in extensions this run loads
      *        (`Settings::builtinExtensions()`), after everything else, as upstream ranks them
+     * @param list<string>|null $only when given, the names (as `$disabled`'s) that may load at
+     *        all, from wherever they come: a Docker or SSH account's child loads only what the admin
+     *        let such accounts have (`Settings::sandboxExtensions()`), since an extension runs in
+     *        this process, on the server, as its user
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -64,6 +68,7 @@ final class ExtensionLoader
         ?Closure $packageExtensions = null,
         bool $discover = true,
         array $builtins = [],
+        ?array $only = null,
     ): array {
         // Upstream's resource loader resets the `extensions` timings at every load, so a `/reload`
         // under `PIG_TIMING=1` is measured on its own.
@@ -83,7 +88,7 @@ final class ExtensionLoader
         $seen = [];
         $events = new EventBus();
 
-        $loadAll = static function (array $paths) use (&$extensions, &$errors, &$seen, $events, $cwd, $auth, $disabled): void {
+        $loadAll = static function (array $paths) use (&$extensions, &$errors, &$seen, $events, $cwd, $auth, $disabled, $only): void {
             foreach ($paths as $path) {
                 $real = realpath($path) ?: $path;
 
@@ -106,7 +111,7 @@ final class ExtensionLoader
                 // `~/.pig/agent/extensions` and one in the project. Not loaded at all, rather than
                 // loaded and told to do nothing — an extension that connects servers in a fiber
                 // has no "do nothing" to be told.
-                if (in_array(self::nameOf($path), $disabled, true)) {
+                if (in_array(self::nameOf($path), $disabled, true) || ($only !== null && !in_array(self::nameOf($path), $only, true))) {
                     continue;
                 }
 

@@ -972,6 +972,8 @@ if ((!isset($options['no-extensions']) || $cliExtensionPaths !== []) && $mode !=
         discover: !isset($options['no-extensions']),
         // Upstream's built-ins, last; none under `--no-extensions`, and `--no-mcp` leaves `mcp` out.
         builtins: isset($options['no-extensions']) ? [] : $settings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
+        // A Docker or SSH account's child: only what the admin let such accounts have.
+        only: $elsewhere !== null ? \Pig\CodingAgent\Settings::sandboxExtensions() : null,
     );
 }
 
@@ -1199,7 +1201,7 @@ $assemble = static function (
 // `CodingAgent::session()` builds. What the previous runtime's extensions registered process-wide
 // goes first, as `/reload` clears it, and `models.json` is applied again over what loads.
 $trustByCwd = [$cwd => $projectTrusted];
-$createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?Closure $askTrust) use (&$trustByCwd, $trustOverride, $assemble, $auth, $options, $cliExtensionPaths, $temporaryResources): Pig\CodingAgent\StartedSession {
+$createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?Closure $askTrust) use (&$trustByCwd, $trustOverride, $assemble, $auth, $options, $cliExtensionPaths, $temporaryResources, $elsewhere): Pig\CodingAgent\StartedSession {
     $trusted = $trustByCwd[$runtimeCwd] ??= ProjectTrust::resolve(
         $runtimeCwd,
         $askTrust,
@@ -1242,6 +1244,7 @@ $createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?C
             packageExtensions: static fn (bool $trusted): array => $packages->enabled('extensions'),
             discover: !isset($options['no-extensions']),
             builtins: isset($options['no-extensions']) ? [] : $runtimeSettings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
+            only: $elsewhere !== null ? \Pig\CodingAgent\Settings::sandboxExtensions() : null,
         );
 
     CustomModels::discover()->install($auth);

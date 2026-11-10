@@ -167,6 +167,28 @@ final class Settings
     }
 
     /**
+     * The extensions a Docker or SSH account's conversation loads (`sandbox.extensions`, global
+     * only): by name, as `disabledExtensions`, from wherever they come. An extension runs in the
+     * child, on the server, as its user — its tools, its commands, its MCP servers — so what the
+     * container or the other machine keeps such an account out of, an extension could let it back
+     * into. By default only the built-ins that work on pig's own things: `pig-schedule` (the
+     * account's own tasks) and `pig-tool-search`.
+     *
+     * @return list<string>
+     */
+    public static function sandboxExtensions(?string $home = null): array
+    {
+        $home ??= Config::home();
+        $value = self::read($home . '/' . self::FILE)[0]['sandbox'] ?? [];
+        $names = is_array($value) ? ($value['extensions'] ?? null) : null;
+
+        return is_array($names) ? array_values(array_filter($names, is_string(...))) : self::SANDBOX_EXTENSIONS;
+    }
+
+    /** `sandboxExtensions()` when the settings name none. */
+    public const array SANDBOX_EXTENSIONS = ['pig-schedule', 'pig-tool-search'];
+
+    /**
      * Where the Docker accounts of `pig web` work (`Sandbox\DockerSandbox`, docs/dev/design/storage.md
      * phase 4): global only, as `storage` is, since it is the server's. `{"image": …, "workspaces":
      * …, "docker": …}`, each optional: the image every account's container is made from

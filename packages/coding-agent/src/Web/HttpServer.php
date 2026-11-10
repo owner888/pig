@@ -1632,6 +1632,13 @@ final class HttpServer
                 return;
             }
 
+            // The server's extensions' panels are the admin's (`AdminMiddleware`).
+            if ($this->login->several() && !($this->wsUsers[$connectionId] ?? null)?->admin) {
+                $conn->send(['type' => 'panel_result', 'requestId' => $requestId, 'ok' => false, 'error' => 'Only an admin may do that.']);
+
+                return;
+            }
+
             $ui = new RpcUi(static function (array $line) use ($conn, $requestId): void {
                 $conn->send(['type' => 'panel_ui', 'requestId' => $requestId, 'request' => $line]);
             });

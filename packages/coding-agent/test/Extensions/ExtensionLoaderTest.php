@@ -290,6 +290,33 @@ PHP;
         $this->assertSame(['named'], array_map(static fn (object $e): string => $e->name, $loaded));
     }
 
+    public function testOnlyTheNamedOnesLoadForAnAccountWhoseToolsRunElsewhere(): void
+    {
+        // A Docker or SSH account's child (`Settings::sandboxExtensions()`): by name, from the
+        // person's folder, the settings, a package and the built-ins alike.
+        $extension = <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+return function (ExtensionApi $pig): void {};
+PHP;
+        file_put_contents($this->homeDir . '/extensions/allowed.php', $extension);
+        file_put_contents($this->homeDir . '/extensions/kept-out.php', $extension);
+        file_put_contents($this->tempDir . '/configured.php', $extension);
+        file_put_contents($this->tempDir . '/packaged.php', $extension);
+
+        [$loaded] = ExtensionLoader::load(
+            $this->cwd,
+            configured: [$this->tempDir . '/configured.php'],
+            home: $this->homeDir,
+            packageExtensions: fn (): array => [$this->tempDir . '/packaged.php'],
+            only: ['allowed', 'packaged'],
+        );
+
+        $names = array_map(static fn (object $e): string => $e->name, $loaded);
+        sort($names);
+        $this->assertSame(['allowed', 'packaged'], $names);
+    }
+
     public function testAFolderExtensionsClassesAreSeenInItsSiblingFilesToo(): void
     {
         // The entry `require_once`s a class file beside it, as every bundled extension does. The

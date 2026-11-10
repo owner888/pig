@@ -1201,6 +1201,55 @@ final class WebModeTest extends TestCase
         }
     }
 
+    public function testTheServersExtensionsPanelsAndEndpointsAreTheAdmins(): void
+    {
+        if (!in_array('sqlite', \PDO::getAvailableDrivers(), true)) {
+            self::markTestSkipped('needs pdo_sqlite');
+        }
+
+        $port = 28204;
+        $store = \Pig\CodingAgent\Session\SqlSessionStore::open('sqlite:' . $this->cwd . '/pig.db');
+        $login = WebLogin::at($this->cwd . '/login-home', database: $store->database());
+        $login->accounts()->add('ada', 'correct horse', true);
+        $login->accounts()->add('bob', 'battery staple', false, 'host');
+        $api = new ExtensionApi($this->cwd, 'probe.php', 'probe');
+        $api->registerHttpRoute('/api/probe', static fn (string $path, array $req): array => ['status' => 200, 'body' => ['ok' => true]]);
+        $api->registerWebPanel('probe.panel', 'Probe', static fn (array $context): array => [], static fn (string $action): ?string => 'done');
+
+        try {
+            $server = new HttpServer($this->cwd, $port, auth: Auth::inMemory(), login: $login);
+
+            Async::run(function () use ($server, $port): void {
+                $server->start();
+                $http = new HttpClient();
+                $url = "http://127.0.0.1:{$port}";
+                $as = function (string $name, string $password) use ($http, $url): array {
+                    $in = $http->send(new Request('POST', "{$url}/api/login", ['Content-Type' => 'application/json'], (string) json_encode(['name' => $name, 'password' => $password])));
+
+                    return ['Cookie' => (string) strtok((string) $in->header('set-cookie'), ';')];
+                };
+                $adas = $as('ada', 'correct horse');
+                $bobs = $as('bob', 'battery staple');
+
+                foreach (['/api/probe', '/api/panels', '/api/panels/probe.panel'] as $path) {
+                    $this->assertSame(200, $http->send(new Request('GET', $url . $path, $adas))->status, "ada {$path}");
+                    $this->assertSame(403, $http->send(new Request('GET', $url . $path, $bobs))->status, "bob {$path}");
+                }
+
+                $ws = $this->wsOpen($port, $bobs);
+                $this->wsSend($ws, ['type' => 'panel_action', 'requestId' => 'r1', 'panel' => 'probe.panel', 'action' => 'go', 'args' => []]);
+                $result = $this->wsCollect($ws, static fn (array $m): bool => ($m['type'] ?? '') === 'panel_result');
+                fclose($ws);
+                $this->assertSame([false, 'Only an admin may do that.'], [end($result)['ok'] ?? null, end($result)['error'] ?? null]);
+
+                $server->stop();
+            });
+        } finally {
+            ExtensionApi::forgetHttpRoutes();
+            ExtensionApi::forgetWebPanels();
+        }
+    }
+
     public function testAnSshAccountWorksAsAUserReachedOverSsh(): void
     {
         if (!in_array('sqlite', \PDO::getAvailableDrivers(), true) || PHP_OS_FAMILY === 'Windows') {

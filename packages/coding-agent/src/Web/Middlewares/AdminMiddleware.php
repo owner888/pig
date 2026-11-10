@@ -11,15 +11,17 @@ use Pig\CodingAgent\Web\WebLogin;
 
 /**
  * With accounts, what is the server's rather than anybody's own is the admin's
- * (docs/dev/design/storage.md, phase 4): the accounts themselves, and the API keys everybody's
- * requests are billed to. Anybody else gets a 403. With sessions in files there is one account,
- * the admin, and everything is let through. The SSH nodes are a WebSocket request, checked where
- * `HttpServer` answers it.
+ * (docs/dev/design/storage.md, phase 4): the accounts themselves, the API keys everybody's
+ * requests are billed to, and what the server's extensions put in the page — their panels (the
+ * Antigravity sign-ins) and their own endpoints (`ExtensionApi::registerHttpRoute()`), which run
+ * in the server, as its user, with its credentials. Anybody else gets a 403. With sessions in
+ * files there is one account, the admin, and everything is let through. The SSH nodes and a
+ * panel's actions are WebSocket requests, checked where `HttpServer` answers them.
  */
 final class AdminMiddleware implements Middleware
 {
     /** What only an admin may ask for, by path prefix. */
-    public const array ADMIN = ['/api/accounts', '/api/keys'];
+    public const array ADMIN = ['/api/accounts', '/api/keys', '/api/panels'];
 
     public function __construct(private readonly WebLogin $login)
     {
@@ -48,6 +50,6 @@ final class AdminMiddleware implements Middleware
             }
         }
 
-        return false;
+        return str_starts_with($path, '/api/') && \Pig\CodingAgent\Extensions\ExtensionApi::httpRouteFor($path) !== null;
     }
 }

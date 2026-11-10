@@ -156,6 +156,7 @@ final class ConfigSchemasTest extends TestCase
             'warnings.anthropicExtraUsage' => $settings->warnAnthropicExtraUsage(),
             'codemode.mode' => 'on',
             'codemode.inlineBudget' => $codemode,
+            'sandbox.extensions' => Settings::sandboxExtensions(sys_get_temp_dir() . '/pig-no-home-' . getmypid()),
             'cacheWarming' => $settings->cacheWarmingMode(),
             'tuiMode' => $settings->tuiMode(),
             'fullscreenExitOutput' => $settings->fullscreenExitOutput(),

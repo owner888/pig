@@ -681,7 +681,8 @@
         "image": { "type": "string", "description": "The image every account's container is made from; pig-sandbox when not given (docker build -t pig-sandbox docker/sandbox). Never pulled by pig." },
         "workspaces": { "type": "string", "description": "The directory the accounts' directories go in; workspaces beside settings.json when not given, and a relative path is from there." },
         "docker": { "type": "string", "description": "The docker command; docker when not given." },
-        "ssh": { "type": "string", "description": "The ssh command SSH accounts connect with; ssh when not given. Their host keys are kept in known_hosts beside settings.json, and their shared connections under ssh/." }
+        "ssh": { "type": "string", "description": "The ssh command SSH accounts connect with; ssh when not given. Their host keys are kept in known_hosts beside settings.json, and their shared connections under ssh/." },
+        "extensions": { "type": "array", "items": { "type": "string" }, "default": ["pig-schedule", "pig-tool-search"], "description": "The extensions a Docker or SSH account's conversations load, by name as disabledExtensions (pig-mcp, pig-antigravity…), from wherever they come; every other one is not loaded for them. An extension runs on the server, as its user, so one with its own tools, commands or MCP servers could reach what the container or the other machine keeps the account away from." }
       },
       "additionalProperties": false
     },

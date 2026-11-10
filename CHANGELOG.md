@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- A Docker or SSH account's conversations load only the extensions the admin lets such accounts have: `sandbox.extensions` in `settings.json`, by name as `disabledExtensions`, by default `pig-schedule` and `pig-tool-search`. An extension runs on the server as its user, so its own tools, commands or MCP servers (`pig-mcp`), or a sandboxed PHP script (`pig-codemode`), could otherwise reach what the container or the other machine keeps the account away from. Add `pig-antigravity`, say, to let those accounts use the Antigravity models.
+
+### Fixed
+
+- With several accounts, the extensions' panels (the Antigravity sign-ins) and their own endpoints were open to every account; they are the admin's now, as the API keys are.
+
 ## [2.0.1] - 2026-11-10
 
 ### New Features

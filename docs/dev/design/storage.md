@@ -715,6 +715,22 @@ These apply under B or C. They go in a later phase, but they shape the interface
      account's `start_session` ran `docker inspect` on the loop's own turn.)
    - **That side needs** a POSIX login shell, bash, coreutils, util-linux's `setsid` (stopping a
      command), and `rg` and `fd` for grep and find.
+   - **The server's extensions** (after 2.0.1). An extension is `require`d into the child, on the
+     server, as its user, whatever account the conversation is: its tools and commands run there,
+     `pig-mcp` starts its servers there, `pig-codemode` runs the model's PHP in a hardened child
+     there (`disable_functions`, `open_basedir`: a mitigation, not a boundary), and `pig-llama`'s
+     `/llama` manages the server's models. So a Docker or SSH account's child loads only the
+     names in `sandbox.extensions` (`Settings::sandboxExtensions()`, `ExtensionLoader::load(only:)`,
+     from every source: the home folder, `extensions`, packages, built-ins), by default
+     `pig-schedule` and `pig-tool-search`, which touch nothing but pig's own. Considered and left
+     out: a per-account list (more to set for little gain while one admin sets it for all), and
+     a flag an extension declares about itself (its author's word, not the admin's).
+   - **The panels and endpoints the server's extensions add to the page** — the Antigravity
+     sign-ins, `registerHttpRoute()` — run in the web server, as its user, with its credentials.
+     They were open to every signed-in account; with accounts they are the admin's
+     (`AdminMiddleware`: `/api/panels`, and any path an extension's route answers; `panel_action`
+     is refused in `HttpServer`). Tests: `ExtensionLoaderTest` (`only`), `RpcClientTest`'s SSH
+     child (one let in, one kept out), `WebModeTest::testTheServersExtensionsPanelsAndEndpointsAreTheAdmins`.
    - **Tests:** `SshOperationsTest` uses a stand-in `ssh` (`fakeSsh()`) that runs the line with
      bash here in an environment of its own, and refuses a host named `unreachable`: the command
      line and its quoting, options that must not reach `ssh`, the environment round trip, the

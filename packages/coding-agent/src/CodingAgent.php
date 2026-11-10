@@ -304,6 +304,8 @@ final class CodingAgent
                 projectTrusted: $projectTrusted,
                 disabled: array_values(array_unique([...$disabledExtensions, ...$settings->disabledExtensions()])),
                 packageExtensions: static fn (): array => $packageResources?->enabled('extensions') ?? [],
+                // A Docker or SSH account's: only what the admin let such accounts have.
+                only: \Pig\CodingAgent\Tools\ToolSet::operations() !== null ? Settings::sandboxExtensions() : null,
             ),
         };
 

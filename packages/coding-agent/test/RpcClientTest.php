@@ -438,17 +438,27 @@ final class RpcClientTest extends TestCase
         file_put_contents($this->root . '/there/AGENTS.md', 'the remote rules');
         mkdir($here = $this->root . '/here');
         $target = new \Pig\CodingAgent\Sandbox\SshTarget('box', 22, 'bob', '', $this->home . '/.pig', $ssh);
+        // Of the server's extensions, only what the admin let such accounts have loads.
+        @mkdir($this->home . '/.pig/extensions', 0o755, true);
+        foreach (['kept-out', 'let-in'] as $name) {
+            file_put_contents($this->home . "/.pig/extensions/{$name}.php", "<?php return function (Pig\\CodingAgent\\Extensions\\ExtensionApi \$pig): void { \$pig->registerCommand('{$name}', static fn () => null); };");
+        }
+        file_put_contents($this->home . '/.pig/settings.json', (string) json_encode(['sandbox' => ['extensions' => ['let-in']]]));
         $this->serveOneTurn('unused');
-        $client = $this->client(['--model', 'stand-in', '--no-approve', '--cwd', $there], environment: $target->environment(), cwd: $here);
+        $client = $this->client(['--model', 'stand-in', '--no-approve', '--cwd', $there], withExtensions: true, environment: $target->environment(), cwd: $here);
 
-        [$state, $bash] = Async::run(static function () use ($client): array {
+        [$state, $bash, $commands] = Async::run(static function () use ($client): array {
             $client->start();
             $state = $client->getState();
             $bash = $client->bash('pwd; echo "[$PIG_SANDBOX_SSH]"');
+            $commands = array_column($client->getCommands(), 'name');
             $client->stop();
 
-            return [$state, $bash];
+            return [$state, $bash, $commands];
         });
+
+        $this->assertContains('let-in', $commands);
+        $this->assertNotContains('kept-out', $commands);
 
         $this->assertSame($there, $state['cwd'] ?? null, json_encode($state));
         $this->assertSame("{$there}\n[]", trim((string) ($bash['output'] ?? '')), 'run there, without the connection in its environment');
