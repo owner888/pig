@@ -83,8 +83,8 @@ final readonly class DockerSandbox implements Runtime
     public function dirs(User $user, string $path, bool $hidden): array
     {
         $workspace = $this->workspace($user);
-        if (!is_dir($workspace)) {
-            @mkdir($workspace, 0o700, true);
+        if (!is_dir($workspace) && !mkdir($workspace, 0o700, true) && !is_dir($workspace)) {
+            throw new AgentError("Could not create {$workspace}");
         }
 
         $path = trim($path);

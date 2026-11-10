@@ -45,6 +45,9 @@ final class MarkdownTransform
             try {
                 $transformed = $transformer($markdown, $context);
             } catch (Throwable) {
+                // Not re-thrown, on purpose: upstream's documented contract ("If a transformer throws,
+                // Pi keeps the Markdown produced so far and continues with the next transformer").
+                // The hook is display-only, and a throw here would take the transcript down with it.
                 continue;
             }
 

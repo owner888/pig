@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Sandbox;
 
 use InvalidArgumentException;
+use Pig\Agent\AgentError;
 
 /**
  * Where an SSH account's tools run: an OS user on a machine reached over SSH — another user on
@@ -67,8 +68,8 @@ final readonly class SshTarget implements Shell
     {
         $sockets = rtrim($this->home, '/') . '/ssh';
 
-        if (!is_dir($sockets)) {
-            @mkdir($sockets, 0o700, true);
+        if (!is_dir($sockets) && !mkdir($sockets, 0o700, true) && !is_dir($sockets)) {
+            throw new AgentError("Could not create {$sockets}");
         }
 
         return [

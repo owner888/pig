@@ -413,6 +413,17 @@ final class EditorTest extends TestCase
         $this->assertSame($pasted, $submitted);
     }
 
+    public function testTheExpandedTextHasThePasteWhereItsMarkerIs(): void
+    {
+        $pasted = implode("\n", array_fill(0, 20, 'line'));
+        $this->type('before ');
+        $this->type("\x1b[200~{$pasted}\x1b[201~");
+        $this->type(' after $1');
+
+        $this->assertSame('before [paste #1 +20 lines] after $1', $this->editor->text());
+        $this->assertSame("before {$pasted} after \$1", $this->editor->expandedText());
+    }
+
     public function testAPastedDollarSignSurvivesTheMarkerSubstitution(): void
     {
         $pasted = implode("\n", array_fill(0, 20, 'cost is $1 and \\0'));

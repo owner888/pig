@@ -86,6 +86,26 @@ final class Lexer
                 continue;
             }
 
+            // Upstream #11755: an HTML comment is hidden. A block of nothing but comments leaves no
+            // line, and one blank line less where it sat between two or at the start or the end,
+            // so it leaves no gap of its own; HTML around a comment is still shown, as text.
+            $comment = self::htmlComment($lines, $index);
+
+            if ($comment !== null) {
+                [$text, $consumed] = $comment;
+                $index += $consumed;
+
+                if ($text !== '') {
+                    $tokens[] = [self::plainParagraph($text), implode("\n", array_slice($lines, $index - $consumed, $consumed))];
+                } elseif ($index < $count && trim($lines[$index]) === '' && ($tokens === [] || end($tokens)[0] instanceof Blank)) {
+                    $index++;
+                } elseif ($index >= $count && $tokens !== [] && end($tokens)[0] instanceof Blank) {
+                    array_pop($tokens);
+                }
+
+                continue;
+            }
+
             $token = self::latexBlock($lines, $index)
                 ?? self::fence($lines, $index)
                 ?? self::heading($lines, $index)
@@ -454,6 +474,54 @@ final class Lexer
     }
 
     /**
+     * Upstream's `HTML_COMMENT_REGEX`: an unclosed comment runs to the end of what holds it, as in
+     * CommonMark, so a comment still streaming in stays hidden.
+     */
+    public const string HTML_COMMENT = '/<!--[\s\S]*?(?:-->|$)/';
+
+    /**
+     * An HTML block that starts with a comment — CommonMark's type 2, from `<!--` to the line that
+     * holds `-->` (or the end) — and its text with the comments taken out, trimmed. Null when the
+     * line opens no such block.
+     *
+     * @param list<string> $lines
+     * @return array{0: string, 1: int}|null
+     */
+    private static function htmlComment(array $lines, int $index): ?array
+    {
+        if (preg_match('/^ {0,3}<!--/', $lines[$index]) !== 1) {
+            return null;
+        }
+
+        $cursor = $index;
+        $count = count($lines);
+
+        while ($cursor < $count - 1 && !str_contains(substr($lines[$cursor], $cursor === $index ? (int) strpos($lines[$cursor], '<!--') + 4 : 0), '-->')) {
+            $cursor++;
+        }
+
+        $raw = implode("\n", array_slice($lines, $index, $cursor - $index + 1));
+
+        return [trim((string) preg_replace(self::HTML_COMMENT, '', $raw)), $cursor - $index + 1];
+    }
+
+    /** Text shown as it is, line by line — upstream renders what is left of an HTML block as plain text. */
+    private static function plainParagraph(string $text): Paragraph
+    {
+        $children = [];
+
+        foreach (explode("\n", $text) as $at => $line) {
+            if ($at > 0) {
+                $children[] = new LineBreak();
+            }
+
+            $children[] = new Text($line);
+        }
+
+        return new Paragraph($children);
+    }
+
+    /**
      * Whether a line inside a paragraph is really the start of something else.
      *
      * @param list<string> $lines
@@ -469,6 +537,7 @@ final class Lexer
         }
 
         return preg_match('/^ {0,3}(`{3,}|~{3,})/', $line) === 1
+            || preg_match('/^ {0,3}<!--/', $line) === 1
             || preg_match('/^ {0,3}#{1,6}(\s|$)/', $line) === 1
             || preg_match('/^ {0,3}>/', $line) === 1
             || preg_match('/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/', $line) === 1

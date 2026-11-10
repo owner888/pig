@@ -3373,6 +3373,29 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
+    public function testRestoringTheQueueKeepsWhatWasPastedNotItsMarker(): void
+    {
+        // Upstream #10146: the half-typed text went back as `[paste #1 +20 lines]`, and once the
+        // editor's text was replaced the paste the marker stood for was gone.
+        $this->start([...array_fill(0, 2, 'done')]);
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('steer this');
+        $this->type(self::ENTER);
+        $pasted = implode("\n", array_fill(0, 20, 'line'));
+        $this->type("\x1b[200~{$pasted}\x1b[201~");
+        $this->type(self::ALT_UP);
+
+        $this->assertSame("steer this\n\n{$pasted}", $this->editorText());
+
+        $held();
+        $this->settle();
+    }
+
     public function testAltUpWithNothingQueuedSaysSo(): void
     {
         $this->start();

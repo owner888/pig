@@ -436,6 +436,74 @@ final class ExtensionWiringTest extends TestCase
 
     // ---- the branch that was left behind -----------------------------------------------
 
+    public function testAPromptWhileTheTreeIsBeingNavigatedIsRefused(): void
+    {
+        // Upstream #9154: a `session_before_tree` hook was still running when a prompt arrived; the
+        // prompt went to the branch being left and the navigation then moved away from it.
+        $gate = new \Pig\Async\Deferred();
+        [$session, $store, $target] = $this->savedConversation(['session_before_tree' => static function () use ($gate) {
+            $gate->future->await();
+
+            return null;
+        }]);
+        $refused = null;
+        $busy = null;
+
+        $jump = Async::run(static function () use ($session, $target, $gate, &$refused, &$busy) {
+            $navigation = Async::spawn(static fn () => $session->goTo($target));
+            Async::delay(0.01);
+            $busy = $session->isCompacting();
+
+            try {
+                $session->prompt('meanwhile');
+            } catch (\Pig\Agent\AgentError $error) {
+                $refused = $error->getMessage();
+            }
+
+            $gate->complete(null);
+
+            return $navigation->await();
+        });
+
+        $this->assertTrue($busy, 'the navigation counts as a summary in progress, as upstream\'s');
+        $this->assertSame('Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.', $refused);
+        $this->assertTrue($jump->moved);
+        $this->assertFalse($session->isCompacting());
+
+        unlink($store->path);
+    }
+
+    public function testTheTreeIsNotNavigatedWhileAPromptIsBeingPrepared(): void
+    {
+        // The other half: an `input` handler being waited on holds the conversation for its prompt.
+        $gate = new \Pig\Async\Deferred();
+        [$session, $store, $target] = $this->savedConversation(['input' => static function () use ($gate) {
+            $gate->future->await();
+
+            return null;
+        }], ['third']);
+        $refused = null;
+
+        Async::run(static function () use ($session, $target, $gate, &$refused): void {
+            $prompt = Async::spawn(static fn () => $session->prompt('three'));
+            Async::delay(0.01);
+
+            try {
+                $session->goTo($target);
+            } catch (\Pig\Agent\AgentError $error) {
+                $refused = $error->getMessage();
+            }
+
+            $gate->complete(null);
+            $prompt->await();
+        });
+
+        $this->assertSame('Agent is working. Let it finish, or press esc, then go back.', $refused);
+        $this->assertSame('three', $session->messages()[array_key_last($session->messages()) - 1]->content[0]->text ?? null);
+
+        unlink($store->path);
+    }
+
     public function testNoSummaryIsWrittenUnlessOneIsAskedFor(): void
     {
         [$session, $store, $target] = $this->savedConversation([]);

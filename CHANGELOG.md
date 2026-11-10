@@ -88,6 +88,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Alacritty is recognised by `TERM` or `ALACRITTY_WINDOW_ID` too, for hyperlinks (upstream #11777).
 - An MCP token refresh no longer registers an OAuth client or prepares a browser sign-in when it cannot refresh, which could spoil a sign-in in progress; a pasted redirect URL must be on the sign-in's own redirect URI, and a code is exchanged only by the sign-in that asked for it.
 - `tool_search` and the codemode `resolves to` summary follow local `$ref`s into `$defs`, so a word only in an MCP server's nested model is found and its fields are named (upstream #11850).
+- Text pasted into the prompt survived a restore only as its `[paste #1 +20 lines]` marker: taking the queue back into the editor, opening the external editor, switching to an extension's editor, a follow-up, or an extension reading the editor's text now get what was pasted (upstream #10146).
+- A prompt and a tree navigation could overlap: a navigation is refused while a prompt's `input` handlers run, and a prompt is refused while a navigation's hooks or branch summary run, which `isCompacting()` now counts as upstream's does (upstream #9155).
+- HTML comments in Markdown are hidden — a comment-only block leaves no line and no extra gap, an inline one leaves no double space, and one still streaming in stays hidden — in messages, What's New, `/changelog` and Extension Updates (upstream #11755).
 
 ## [2.0.1] - 2026-11-10
 

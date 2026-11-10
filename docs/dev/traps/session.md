@@ -34,6 +34,7 @@ The session file, compaction, branches, resuming, the system prompt, retries. Mo
 - [Summary requests do not hard-code `ReasoningEffort::High`](#summary-requests-do-not-hard-code-reasoningefforthigh)
 - [The `cwd` section is the directory alone, with no date or time](#the-cwd-section-is-the-directory-alone-with-no-date-or-time)
 - [Resuming and tree navigation restore the tool set from the transcript; a forced prompt is projected, never recorded](#resuming-and-tree-navigation-restore-the-tool-set-from-the-transcript-a-forced-prompt-is-projected-never-recorded)
+- [A queued message with pictures or a template stayed in the queue after it was sent](#a-queued-message-with-pictures-or-a-template-stayed-in-the-queue-after-it-was-sent)
 
 ## `--continue` opened the conversation you were not working on
 
@@ -935,3 +936,18 @@ Profiling found four (then five) heavy hitters:
 **Trap rules**:
 - `BranchSummarization::generateBranchSummary()` takes `?ThinkingLevel $thinkingLevel` (null and `Off` mean no reasoning); `AgentSession::generateBranchSummary()` passes `directModel()->thinkingLevel`, never the unrouted session level.
 - Tests: `SystemMessageTranscriptTest::testABranchSummaryAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasonsAndHasNoOutputCap`.
+
+## A queued message with pictures or a template stayed in the queue after it was sent
+
+**Symptom**: steering with a picture attached, or queueing `/review foo.php`, delivered the message, but
+`Steering: …` stayed above the prompt for the rest of the session and Alt+Up handed it back again.
+
+**Root cause**: the queue lists the line as typed (so Escape hands back what was typed), while the
+queued `UserMessage` carries what it became — a template's body, an image's resize hints after the
+text. `dequeue()` matched the delivered message's text against the queue, and the two never matched.
+
+**Trap rules**:
+- What was typed is kept per message (`AgentSession::$queuedAs`, a `WeakMap` from the queued
+  `UserMessage`) and the delivered message leaves the queue by that; its text is the fallback only
+  for a message nothing queued.
+- Tests: `AgentSessionTest::testAQueuedMessageWithPicturesLeavesTheQueueWhenItIsDelivered`.

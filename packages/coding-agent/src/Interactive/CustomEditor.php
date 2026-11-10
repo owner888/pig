@@ -197,6 +197,12 @@ class CustomEditor implements Component, Focusable, InputHandler, MouseHandler, 
         return $this->editor->text();
     }
 
+    /** The text with the paste markers replaced by what was pasted (`Editor::expandedText()`). */
+    public function expandedText(): string
+    {
+        return $this->editor->expandedText();
+    }
+
     public function setText(string $text): void
     {
         $this->editor->setText($text);

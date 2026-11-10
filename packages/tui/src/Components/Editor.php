@@ -270,6 +270,33 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler, 
         return implode("\n", $this->lines);
     }
 
+    /**
+     * The text with each paste marker replaced by what was pasted — upstream's `getExpandedText()`:
+     * what to hand on when the text leaves the editor other than by Enter (the external editor, a
+     * restored queue, an extension asking for it), where a `[paste #1 +40 lines]` would be all that
+     * arrived (upstream #10146).
+     */
+    public function expandedText(): string
+    {
+        return $this->expandPasteMarkers($this->text());
+    }
+
+    /** Upstream's `expandPasteMarkers()`. */
+    private function expandPasteMarkers(string $text): string
+    {
+        foreach ($this->pastes as $id => $content) {
+            // Replaced through a callback, not a replacement string: pasted text is
+            // arbitrary, and a `$1` in it would otherwise be read as a backreference.
+            $text = preg_replace_callback(
+                '/\[paste #' . $id . '( (\+\d+ lines|\d+ chars))?\]/',
+                static fn (): string => $content,
+                $text,
+            ) ?? $text;
+        }
+
+        return $text;
+    }
+
     /** @return non-empty-list<string> */
     public function lines(): array
     {
@@ -1493,19 +1520,9 @@ final class Editor implements Component, Focusable, InputHandler, MouseHandler, 
             return;
         }
 
-        $text = trim($this->text());
-
         // The markers stood in for the text while it was being edited; what gets sent is
         // the text itself.
-        foreach ($this->pastes as $id => $content) {
-            // Replaced through a callback, not a replacement string: pasted text is
-            // arbitrary, and a `$1` in it would otherwise be read as a backreference.
-            $text = preg_replace_callback(
-                '/\[paste #' . $id . '( (\+\d+ lines|\d+ chars))?\]/',
-                static fn (): string => $content,
-                $text,
-            ) ?? $text;
-        }
+        $text = $this->expandPasteMarkers(trim($this->text()));
 
         $this->lines = [''];
         $this->cursorLine = 0;

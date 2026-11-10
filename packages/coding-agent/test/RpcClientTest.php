@@ -439,7 +439,9 @@ final class RpcClientTest extends TestCase
         mkdir($here = $this->root . '/here');
         $target = new \Pig\CodingAgent\Sandbox\SshTarget('box', 22, 'bob', '', $this->home . '/.pig', $ssh);
         // Of the server's extensions, only what the admin let such accounts have loads.
-        @mkdir($this->home . '/.pig/extensions', 0o755, true);
+        if (!is_dir($this->home . '/.pig/extensions')) {
+            mkdir($this->home . '/.pig/extensions', 0o755, true);
+        }
         foreach (['kept-out', 'let-in'] as $name) {
             file_put_contents($this->home . "/.pig/extensions/{$name}.php", "<?php return function (Pig\\CodingAgent\\Extensions\\ExtensionApi \$pig): void { \$pig->registerCommand('{$name}', static fn () => null); };");
         }

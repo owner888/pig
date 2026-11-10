@@ -93,7 +93,7 @@ final class PackageCommandsTest extends TestCase
         } finally {
             putenv('PIG_OFFLINE');
             unlink("{$home}/settings.json");
-            @rmdir($home);
+            rmdir($home);
         }
 
         $this->assertSame(0, $code);

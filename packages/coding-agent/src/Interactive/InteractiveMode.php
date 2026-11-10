@@ -1780,7 +1780,7 @@ final class InteractiveMode
         }
 
         $queued = $this->session->clearQueue();
-        $text = implode("\n\n", array_filter([...$queued, $this->editor->text()], static fn (string $t): bool => trim($t) !== ''));
+        $text = implode("\n\n", array_filter([...$queued, $this->editor->expandedText()], static fn (string $t): bool => trim($t) !== ''));
 
         $this->editor->setText($text);
         $this->showQueue();
@@ -1847,7 +1847,7 @@ final class InteractiveMode
     private function editPromptExternally(): void
     {
         // Upstream's `showStatus(result.message)`: a failure used to be redrawn over at once.
-        $edited = $this->externalEditor($this->editor->text(), fn (string $message) => $this->say($message));
+        $edited = $this->externalEditor($this->editor->expandedText(), fn (string $message) => $this->say($message));
 
         if ($edited === null) {
             return;
@@ -2184,7 +2184,7 @@ final class InteractiveMode
     private function setCustomEditorComponent(?Closure $factory): void
     {
         $this->editorFactory = $factory;
-        $text = $this->editor->text();
+        $text = $this->editor->expandedText();
         $editor = $factory === null ? $this->defaultEditor : $factory($this->tui, Themes::getEditorTheme(), $this->keybindings);
 
         if (!$editor instanceof CustomEditor) {
@@ -2299,7 +2299,7 @@ final class InteractiveMode
     {
         $this->closeCommandHud();
         $this->commandPressedMs = 0;
-        $text = trim($this->editor->text());
+        $text = trim($this->editor->expandedText());
 
         if ($text === '') {
             return;
@@ -2339,7 +2339,7 @@ final class InteractiveMode
             return;
         }
 
-        $text = implode("\n\n", array_filter([...$queued, $this->editor->text()], static fn (string $t): bool => trim($t) !== ''));
+        $text = implode("\n\n", array_filter([...$queued, $this->editor->expandedText()], static fn (string $t): bool => trim($t) !== ''));
         $this->editor->setText($text);
 
         $count = count($queued);

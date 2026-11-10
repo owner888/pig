@@ -103,7 +103,7 @@ final readonly class SshSandbox implements Runtime
     {
         $here = rtrim($this->home, '/') . '/ssh/here/' . $user->name . '-' . substr($user->id, 0, 8);
 
-        if (!is_dir($here) && !@mkdir($here, 0o700, true) && !is_dir($here)) {
+        if (!is_dir($here) && !mkdir($here, 0o700, true) && !is_dir($here)) {
             throw new AgentError("Could not create {$here}");
         }
 

@@ -219,12 +219,16 @@ final class CatalogueProvidersTest extends TestCase
 
     public function testTheIndividualTokenPlanIsExactlyItsDocumentedTextModels(): void
     {
-        $ids = array_map(static fn (Model $model): string => $model->id, self::of('qwen-token-plan-individual'));
-        sort($ids);
+        // On both endpoints (upstream #7989): the China one serves the same Individual catalog.
+        foreach (['qwen-token-plan-individual' => 'ap-southeast-1', 'qwen-token-plan-individual-cn' => 'cn-beijing'] as $provider => $region) {
+            $ids = array_map(static fn (Model $model): string => $model->id, self::of($provider));
+            sort($ids);
 
-        $this->assertSame(['deepseek-v4-flash-0731', 'deepseek-v4-pro', 'deepseek-v4-pro-0813', 'glm-5.2', 'qwen3.6-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.8-flash', 'qwen3.8-max'], $ids);
+            $this->assertSame(['deepseek-v4-flash-0731', 'deepseek-v4-pro', 'deepseek-v4-pro-0813', 'glm-5.2', 'qwen3.6-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.8-flash', 'qwen3.8-max'], $ids, $provider);
+            $this->assertStringContainsString($region, self::of($provider)[0]->baseUrl, $provider);
+        }
 
-        foreach (['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual'] as $provider) {
+        foreach (['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual', 'qwen-token-plan-individual-cn'] as $provider) {
             $this->assertNull(Models::find($provider, 'qwen3.8-max-preview'), $provider);
             $this->assertNull(Models::find($provider, 'qwen-image-2.0'), $provider);
         }
@@ -368,6 +372,8 @@ final class CatalogueProvidersTest extends TestCase
             // "reuses the international Token Plan environment variable"
             'qwen-token-plan-individual' => 'QWEN_TOKEN_PLAN_API_KEY',
             'qwen-token-plan-cn' => 'QWEN_TOKEN_PLAN_CN_API_KEY',
+            // Upstream #7989: the Individual plan on the China endpoint, with the China key.
+            'qwen-token-plan-individual-cn' => 'QWEN_TOKEN_PLAN_CN_API_KEY',
             'xiaomi' => 'XIAOMI_API_KEY',
             'xiaomi-token-plan-cn' => 'XIAOMI_TOKEN_PLAN_CN_API_KEY',
             'xiaomi-token-plan-ams' => 'XIAOMI_TOKEN_PLAN_AMS_API_KEY',

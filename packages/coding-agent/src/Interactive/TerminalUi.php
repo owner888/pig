@@ -379,7 +379,7 @@ final class TerminalUi implements ExtensionUi
     #[\Override]
     public function getEditorText(): string
     {
-        return $this->prompt()->text();
+        return $this->prompt()->expandedText();
     }
 
     #[\Override]

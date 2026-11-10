@@ -38,6 +38,21 @@ final class Inline
         while ($pos < $length) {
             $char = $text[$pos];
 
+            // Upstream #11755: an inline HTML comment is hidden, closed or running to the end; when
+            // the text before it ended in a space (or there was none), the space after it goes
+            // too, so `See <!-- c --> the docs.` reads `See the docs.`.
+            if ($char === '<' && substr_compare($text, '<!--', $pos, 4) === 0) {
+                $end = strpos($text, '-->', $pos + 4);
+                $before = $buffer !== '' ? $buffer : ($tokens === [] ? null : (end($tokens) instanceof Text ? end($tokens)->text : 'x'));
+                $pos = $end === false ? $length : $end + 3;
+
+                if ($before === null || preg_match('/[ \t]$/', $before) === 1) {
+                    $pos += strspn($text, " \t", $pos);
+                }
+
+                continue;
+            }
+
             // Math first, before an escape can eat the `\` of `\(`: `marked` tries upstream's
             // `latex` extension ahead of its own tokenizers.
             if ($char === '$' || ($char === '\\' && ($text[$pos + 1] ?? '') !== '' && str_contains('([', $text[$pos + 1]))) {

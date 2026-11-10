@@ -885,4 +885,44 @@ final class MarkdownTest extends TestCase
             $this->assertSame((new Markdown($prefix, 1))->render($width), $streamed->render($width), json_encode($prefix));
         }
     }
+
+    // ---- HTML comments (upstream #11755) --------------------------------------------------
+
+    public function testCommentsAreHiddenWithoutExtraSpacing(): void
+    {
+        $this->assertSame(
+            $this->rows("## [1.0.0]\n\nFixed a bug.\n\nSee the docs.", 60),
+            $this->rows("## [1.0.0]\n\n<!-- release-notes:start -->\nFixed a bug.\n\nSee <!-- todo: link --> the docs.", 60),
+        );
+    }
+
+    public function testACommentOnlyBlockTakesOneBlankLineWithIt(): void
+    {
+        $this->assertSame(
+            $this->rows("## [1.0.0]\n\n- item\n\n## [0.9.0]", 60),
+            $this->rows("<!-- start -->\n\n## [1.0.0]\n\n<!-- a -->\n\n- item\n\n<!-- b -->\n\n## [0.9.0]\n\n<!-- end -->", 60),
+        );
+    }
+
+    public function testMultiLineAndUnclosedCommentsAreHidden(): void
+    {
+        $this->assertSame($this->rows('text', 60), $this->rows("<!--\nmulti\nline\n-->\ntext", 60));
+        $this->assertSame($this->rows('text', 60), $this->rows("text\n\n<!-- streaming", 60));
+    }
+
+    public function testCommentsInQuotesAndListItemsAreHidden(): void
+    {
+        $this->assertSame(
+            $this->rows("> q\n>\n> r\n\n- a\n\n  b\n- item", 60),
+            $this->rows("> q\n>\n> <!-- c -->\n>\n> r\n\n- a\n\n  <!-- c -->\n\n  b\n- <!-- c --> item", 60),
+        );
+    }
+
+    public function testOtherHtmlAndTheTextAfterACommentStay(): void
+    {
+        $this->assertSame(['with <tag> markers'], $this->rows('with <tag> markers', 60));
+        $this->assertSame(['trailing text'], $this->rows('<!-- c --> trailing text', 60));
+        // A comment inside a code span is code.
+        $this->assertSame(['a <!-- c --> b'], $this->rows('a `<!-- c -->` b', 60));
+    }
 }

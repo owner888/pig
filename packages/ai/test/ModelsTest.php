@@ -314,6 +314,7 @@ final class ModelsTest extends TestCase
                 'qwen-token-plan',
                 'qwen-token-plan-cn',
                 'qwen-token-plan-individual',
+                'qwen-token-plan-individual-cn',
                 'together',
                 'vercel-ai-gateway',
                 'xiaomi',
@@ -522,7 +523,7 @@ final class ModelsTest extends TestCase
             'ant-ling', 'baseten', 'cloudflare-ai-gateway', 'cloudflare-workers-ai', 'deepseek', 'fireworks', 'huggingface',
             'kimi-coding', 'meta', 'minimax', 'minimax-cn', 'moonshotai', 'moonshotai-cn', 'nvidia', 'opencode',
             'opencode-go', 'openrouter', 'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual',
-            'together', 'vercel-ai-gateway', 'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn',
+            'qwen-token-plan-individual-cn', 'together', 'vercel-ai-gateway', 'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn',
             'xiaomi-token-plan-sgp', 'zai-coding-cn',
         ] as $provider) {
             $this->assertNotEmpty(self::of($provider), $provider);

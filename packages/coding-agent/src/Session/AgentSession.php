@@ -1342,6 +1342,19 @@ final class AgentSession
 
     private bool $shutdownRequested = false;
 
+    /**
+     * Prompts between their first await and the start of their run — upstream's
+     * `_promptPreflightCount` (#9154): the `input` handlers and the template expansion of one, while
+     * which the tree must not be navigated, or the prompt lands on the branch that was left.
+     */
+    private int $promptPreflight = 0;
+
+    /**
+     * A tree navigation's `session_before_tree` hooks and branch summary, while they run — upstream's
+     * `_branchSummaryAbortController`. Counted by `isCompacting()`, as upstream's is.
+     */
+    private ?AbortController $branchSummary = null;
+
     /** @param 'tui'|'print'|'json'|'rpc'|'mcp' $mode */
     public function setMode(string $mode): void
     {
@@ -1406,7 +1419,7 @@ final class AgentSession
     /** Nothing running and nothing about to: no turn, no retry, no summary. Upstream's `isIdle`. */
     public function isIdle(): bool
     {
-        return !$this->isStreaming() && $this->compacting === null;
+        return !$this->isStreaming() && !$this->isCompacting();
     }
 
     /**
@@ -2452,9 +2465,27 @@ final class AgentSession
             throw new AgentError('No model selected.');
         }
 
-        // Before the stored prompt is expanded, as upstream has it: an `input` handler sees
-        // `/review foo.php`, which is what was typed, and not forty lines of template.
-        $input = $this->runInputHandlers($text, $images, $source, null);
+        if ($this->branchSummary !== null) {
+            throw new AgentError('Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.');
+        }
+
+        // Upstream #9154: the prompt holds the conversation from here until its run starts, so a
+        // tree navigation cannot begin while an `input` handler is being waited on. `startRun()`
+        // marks the run active before it gives the loop back, so there is no gap after.
+        $this->promptPreflight++;
+
+        try {
+            // Before the stored prompt is expanded, as upstream has it: an `input` handler sees
+            // `/review foo.php`, which is what was typed, and not forty lines of template.
+            $input = $this->runInputHandlers($text, $images, $source, null);
+
+            if ($input !== null) {
+                [$text, $images] = $input;
+                $text = $this->expandFileCommand($text);
+            }
+        } finally {
+            $this->promptPreflight--;
+        }
 
         if ($input === null) {
             if ($preflightResult !== null) {
@@ -2463,9 +2494,6 @@ final class AgentSession
 
             return;
         }
-
-        [$text, $images] = $input;
-        $text = $this->expandFileCommand($text);
 
         // Returns when the prompt has settled — after its retries, its summary and whatever was
         // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
@@ -3540,8 +3568,12 @@ final class AgentSession
             throw new AgentError('This session is not being saved, so there is nowhere to go back to.');
         }
 
-        if ($this->isStreaming()) {
+        if ($this->isStreaming() || $this->promptPreflight > 0) {
             throw new AgentError('Agent is working. Let it finish, or press esc, then go back.');
+        }
+
+        if ($this->isCompacting()) {
+            throw new AgentError('Wait for the current compaction or tree navigation to finish before navigating the session tree.');
         }
 
         $oldLeaf = $this->store->leaf();
@@ -3568,8 +3600,10 @@ final class AgentSession
         $collected = BranchSummarization::collectEntriesForBranchSummary($this->store, $oldLeaf, $entryId);
 
         // One controller, with the caller's signal forwarded into it, so the hook and the
-        // summariser have one `aborted()` to ask — as `compactNow()` does.
+        // summariser have one `aborted()` to ask — as `compactNow()` does. Held as the session's
+        // branch summary until the new place is installed, so a prompt meanwhile is refused.
         $controller = new AbortController();
+        $this->branchSummary = $controller;
 
         if ($signal?->aborted() === true) {
             $controller->abort('Cancelled');
@@ -3631,45 +3665,54 @@ final class AgentSession
                     return new TreeJump(moved: false, aborted: true, cancelled: true);
                 }
             }
+
+            $this->store->goTo($target);
+
+            // After the move, so it lands on the branch being joined — which is the whole point: it
+            // is context for carrying on here, not a note on the branch it describes. Upstream's
+            // `branchWithSummary()`; an empty summary is not written, as upstream's `if (summaryText)`.
+            if ($summary !== null && $summary->summary !== '') {
+                $this->store->append($summary);
+            } else {
+                $summary = null;
+            }
+
+            // The label goes on the summary when there is one, and on the point gone to otherwise —
+            // upstream's two `appendLabelChange()` calls.
+            if ($label !== null && $label !== '') {
+                $labelled = $summary !== null ? $this->store->leaf() : $entryId;
+
+                if ($labelled !== null) {
+                    $this->store->appendLabel($labelled, $label);
+                }
+            }
+
+            // Upstream's `navigateTree()`: the branch's loadout, whatever the tools came from at startup.
+            $this->agent->replaceMessages($this->store->messages());
+            $this->restoreToolsFromTranscript();
+
+            // The new place is installed; `session_tree` handlers may prompt or navigate again.
+            $this->branchSummary = null;
+            $this->extensionRunner?->emit(new SessionTreeEvent(
+                $this->store->leaf(),
+                $oldLeaf,
+                $summary,
+                $summary !== null ? $fromExtension : null,
+            ));
+
+            return new TreeJump(moved: true, summary: $summary, editorText: $editorText);
         } finally {
             if ($listener !== null) {
                 $signal?->removeListener($listener);
             }
-        }
 
-        $this->store->goTo($target);
-
-        // After the move, so it lands on the branch being joined — which is the whole point: it
-        // is context for carrying on here, not a note on the branch it describes. Upstream's
-        // `branchWithSummary()`; an empty summary is not written, as upstream's `if (summaryText)`.
-        if ($summary !== null && $summary->summary !== '') {
-            $this->store->append($summary);
-        } else {
-            $summary = null;
-        }
-
-        // The label goes on the summary when there is one, and on the point gone to otherwise —
-        // upstream's two `appendLabelChange()` calls.
-        if ($label !== null && $label !== '') {
-            $labelled = $summary !== null ? $this->store->leaf() : $entryId;
-
-            if ($labelled !== null) {
-                $this->store->appendLabel($labelled, $label);
+            // A navigation a `session_tree` handler started owns the slot now; it is not cleared.
+            if ($this->branchSummary === $controller) {
+                $this->branchSummary = null;
             }
+
+            $this->resolveIdleWaitIfIdle();
         }
-
-        // Upstream's `navigateTree()`: the branch's loadout, whatever the tools came from at startup.
-        $this->agent->replaceMessages($this->store->messages());
-        $this->restoreToolsFromTranscript();
-
-        $this->extensionRunner?->emit(new SessionTreeEvent(
-            $this->store->leaf(),
-            $oldLeaf,
-            $summary,
-            $summary !== null ? $fromExtension : null,
-        ));
-
-        return new TreeJump(moved: true, summary: $summary, editorText: $editorText);
     }
 
     /**
@@ -4962,10 +5005,16 @@ final class AgentSession
     /** Set when the last compaction's content came from a `session_before_compact` handler. */
     private bool $compactionFromExtension = false;
 
-    /** Whether a summariser is running right now, from either door. */
+    /** Whether a summariser is running right now — a compaction from either door, or a tree navigation's branch summary, as upstream's `isCompacting`. */
     public function isCompacting(): bool
     {
-        return $this->compacting !== null;
+        return $this->compacting !== null || $this->branchSummary !== null;
+    }
+
+    /** Stop a tree navigation's hooks and branch summary. Does nothing when none is running. Upstream's `abortBranchSummary()`. */
+    public function abortBranchSummary(): void
+    {
+        $this->branchSummary?->abort('Cancelled');
     }
 
     /**

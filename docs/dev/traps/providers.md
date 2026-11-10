@@ -97,6 +97,7 @@ Each provider API, the model registry, thinking levels, usage, overflow. Moved o
 - [xAI went over Chat Completions](#xai-went-over-chat-completions)
 - [Cloudflare, classifiers and image models](#cloudflare-classifiers-and-image-models)
 - [A tool with no parameters sent `properties: []`, and an integer enum, both refused on the Antigravity path](#a-tool-with-no-parameters-sent-properties--and-an-integer-enum-both-refused-on-the-antigravity-path)
+- [A new provider's empty generated block swallowed the next table](#a-new-providers-empty-generated-block-swallowed-the-next-table)
 
 ## DeepSeek accepted the field and ignored it, so every request to it was unbounded
 
@@ -1961,3 +1962,18 @@ with one of those messages and only when a `prefer` tool went out strict, rebuil
 every turn paid one rejected request per turn (upstream #11626).
 
 **Test**: `BedrockStrictToolFallbackTest`.
+
+## A new provider's empty generated block swallowed the next table
+
+**Symptom**: adding `qwen-token-plan-individual-cn` with an empty `>>> generated` / `<<< generated`
+pair in `BuiltinCatalog.php`, `generate-models.php` failed on the *next* provider: `could not find the
+generated block for TOGETHER_MODELS`.
+
+**Root cause**: `splice()` wanted a newline before the closing marker. An empty block has none, so the
+lazy match ran on to the next table's closing marker and replaced that table's opening one.
+
+**Trap rules**:
+- The newline before `<<< generated` is optional in `splice()`, and the rows are written with their
+  own trailing newline, so a block that starts empty is filled and a full one is written as before.
+- A provider is added with an empty block; the next `generate-models.php` run fills it, in a commit of
+  its own.
