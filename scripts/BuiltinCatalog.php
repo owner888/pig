@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-10T08:54:35Z';
+    public const string GENERATED_AT = '2026-11-10T10:35:22Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -2194,7 +2194,7 @@ final class BuiltinCatalog
         'z-ai/glm-5' => ['Z.ai: GLM 5', Api::OpenAiCompletions, 202_752, 131_072, true, false, 0.6, 1.9, 0.119, 0.0],
         'z-ai/glm-5-turbo' => ['Z.ai: GLM 5 Turbo', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
         'z-ai/glm-5.1' => ['Z.ai: GLM 5.1', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
-        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.006, 6.8, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.009, 6.8, 0.008, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.2:batch' => ['Z.ai: GLM 5.2 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.527, 1.075, 0.178, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0699, 1.4, 0.0689, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],

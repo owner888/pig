@@ -15024,9 +15024,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.006,
+            "input": 0.009,
             "output": 6.8,
-            "cacheRead": 0.005,
+            "cacheRead": 0.008,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
