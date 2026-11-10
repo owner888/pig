@@ -22,7 +22,7 @@ use Pig\Ai\Tool;
  */
 final class ClaudeCode
 {
-    public const string VERSION = '2.1.280';
+    public const string VERSION = '2.1.322';
 
     public const string IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 
