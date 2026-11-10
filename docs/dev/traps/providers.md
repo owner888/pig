@@ -98,6 +98,7 @@ Each provider API, the model registry, thinking levels, usage, overflow. Moved o
 - [Cloudflare, classifiers and image models](#cloudflare-classifiers-and-image-models)
 - [A tool with no parameters sent `properties: []`, and an integer enum, both refused on the Antigravity path](#a-tool-with-no-parameters-sent-properties--and-an-integer-enum-both-refused-on-the-antigravity-path)
 - [A new provider's empty generated block swallowed the next table](#a-new-providers-empty-generated-block-swallowed-the-next-table)
+- [Antigravity after pi-antigravity 0.12: the answer is the catalog, and a request sent again is a new session](#antigravity-after-pi-antigravity-012-the-answer-is-the-catalog-and-a-request-sent-again-is-a-new-session)
 
 ## DeepSeek accepted the field and ignored it, so every request to it was unbounded
 
@@ -1805,6 +1806,7 @@ class. See "A provider an extension brings" above.
 - When to refresh: pi's model registry does it on opening `/model`, after login and on `pi update --models`; pig has that layer now (`ModelRefresh`, for providers with `Provider::$refreshModels`), but this extension does not register one, so it refreshes unforced in the background at session_start and after `/login antigravity`, and `/antigravity.refresh` forces. The offline switch is `PIG_OFFLINE`.
 - An unforced refresh failure goes to pig's log (`Logger::warning`), not thrown.
 - Tests: `AntigravityDiscoveryTest` (11), `AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst`, `AntigravityCatalogTest`.
+- What a discovered catalog *contains*, when a stored one is asked for again, and what an empty answer is, changed with pi-antigravity 0.11/0.12 — the entry at the end of this file has those rules; the ones above still hold.
 
 ## Azure, Codex and Radius rows are derived rules of upstream's generator, and Codex credentials carry `accountId`
 
@@ -1977,3 +1979,32 @@ lazy match ran on to the next table's closing marker and replaced that table's o
   own trailing newline, so a block that starts empty is filled and a full one is written as before.
 - A provider is added with an empty block; the next `generate-models.php` run fills it, in a commit of
   its own.
+
+## Antigravity after pi-antigravity 0.12: the answer is the catalog, and a request sent again is a new session
+
+**Symptom**: Gemini 4 Argon never appeared in the model list; a model the deployment had retired stayed selectable and failed when picked; `google_search` on the default Lite model was a 400; a model that was not being served used up the session's retries as "Rate limited … retrying automatically"; a retry after a stream died hung; an image could be written anywhere on disk.
+
+**Root cause**: the extension was a port of pi-antigravity 0.10.0, and 0.11.0/0.12.0 changed what several of its parts mean:
+- the deployment gates the catalogue on the client version in the User-Agent, and four classes each had their own copy of an old one (`1.1.23` on chat, quota and images, `1.2.4` on discovery, plain `antigravity` on search);
+- `buildAntigravityCatalog()` put every fallback model the answer did not list back in, kept a table of aliases, and accepted only `gemini-`/`claude-`/`gpt-oss-` ids;
+- a stored catalog was reused for four hours whoever it had been asked for;
+- search sent `thinkingBudget: 0`, which the Lite models and Gemini 4 refuse;
+- every 429 that was not a quota wall was worded as throttling, and the session retries on the digits `429` alone;
+- the deployment queues a session's requests, so the same turn sent again waits behind a stream that may still be generating there;
+- `resolveSavePath()` took any absolute path, and nothing looked at symbolic links.
+
+**Trap rules**:
+- One User-Agent: `Discovery::userAgent()` (`ANTIGRAVITY_USER_AGENT`, else `Discovery::DEFAULT_USER_AGENT`). No request of this extension writes its own, and `scripts/fetch-antigravity-models.php` carries the same string — an older version is shown an older catalogue.
+- The discovered catalog is the answer and nothing else: the models `agentModelSorts` lists when it lists any that group, every selectable one otherwise; no fallback model is put back, the fallback rows are templates (cost, and what an entry leaves unsaid) only. Limits and capabilities the answer states win over the templates, the smallest stated limit across a model's variants. An answer with no models, or none somebody can pick, is a failed refresh (thrown, so a forced one says so and an unforced one logs), never an empty catalog and never the fallback filed as the deployment's.
+- A stored catalog is asked for again when its `schemaVersion` is not `Discovery::CATALOG_SCHEMA_VERSION` or its `credentialKey` is not this account's. The key is the sha256 of `JSON.stringify([refresh token, project id])`, bytes as upstream's so pi's store matches; `index.php` passes the **refresh** token — the api key carries the access token, which changes every hour.
+- With a catalog installed, `Routing::resolve()` refuses a model only the generated tables have (upstream's sentence, which names `/antigravity.refresh`), and `Routing::fallback()` goes only to a runtime id that catalog still routes to.
+- Search thinking is three-valued (`?bool`): asked for is 4096, unsaid on a non-Lite model is 2048, unsaid on a Lite one or `false` is no `thinkingConfig` — and `generationConfig` is an object even when empty (`stdClass`). A 400 about the arguments moves on to the next fallback model; a refusal of the account is thrown outside any `catch`, so it is not taken for an endpoint failure.
+- A 429 is one of three things, and `AntigravityApi::send()` treats each differently: a quota wall (stop, fail over to the next account, "Quota reached."), rate limiting (the next endpoint, "Rate limited … retrying automatically"), anything else (a model not being served: stop, no failover, "This model is unavailable right now …" under `request-failed`, with no `429` in the message for the session to retry on).
+- **Where pig is narrower than upstream on purpose**: `publicErrorStatus()` hides the status for a 429 only. Upstream hides it for every refusal whose sentence does not say "retrying automatically", which takes the number off a 502 and a 503 too — and their sentences match nothing in `Retry`'s pattern, so they would stop being retried.
+- An endpoint that fails before it answers is passed over for the next one; only when none answered is that failure the turn's, in the transport's own words (which `Retry` reads).
+- Every request after the first for a turn — counted per `<session id>:<turns answered>` in `AntigravityApi::$turnRequestNonces` — has its session id, trajectory and agent id made from `<session id>:r<n>`. `translate()` passes `sessionId` through for this; without one the conversation's seed stands in for upstream's `anonymous`, which in `pig web` would be one counter for every session. A test that sends the same turn twice is testing a retry: call `AntigravityApi::forgetRequestNonces()` in `setUp`.
+- `modelVersion` and `responseId` go on the message as `responseModel` / `responseId`.
+- An image is written only inside the working directory (`ImageGenerator::resolveSavePath()`, lexical) and never through a symbolic link (`writeImage()`, on disk): PHP has no `O_NOFOLLOW`, so a new file is opened `x` and an existing one is checked against `lstat()` after opening.
+- The stream timeouts upstream added (180 s for the head, 300 s of silence) are not ported: `HttpClient`'s idle timeout (`httpIdleTimeoutMs`, 300 s) already covers both, and its error says "timed out".
+- Not ported: per-claim search citations with source enrichment (0.11.0) and deferred tool exposure (0.12.0).
+- Tests: `AntigravityDiscoveryTest`, `AntigravityApiTest::testATurnSentAgainGoesOutAsADifferentSessionAndTrajectory`, `testA429ThatNamesNoLimitIsAModelNotBeingServedAndIsNeitherWalkedNorRetried`, `testAnEndpointThatCannotBeReachedIsPassedOverForTheNextOne`, `testTheModelThatActuallyAnsweredIsOnTheMessage`, `AntigravitySearchTest::testAModelThatRefusesTheArgumentsIsPassedOverAndARefusalOfTheAccountIsNot`, `AntigravityImagesTest::testAnImageIsNeverWrittenThroughASymbolicLink`, `AntigravityExtensionTest::testImageGeneratorResolvesSavePaths`.

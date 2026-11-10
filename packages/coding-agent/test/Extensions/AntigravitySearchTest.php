@@ -28,7 +28,7 @@ final class AntigravitySearchTest extends TestCase
         $this->assertSame('php 8.4 property hooks', $parsed['query']);
 
         $plain = GoogleSearch::parseSearchArgs('laravel 12 releases');
-        $this->assertFalse($plain['thinking']);
+        $this->assertNull($plain['thinking'], 'unsaid, which is not the same as off');
         $this->assertSame([], $plain['urls']);
         $this->assertSame('laravel 12 releases', $plain['query']);
     }
@@ -53,16 +53,61 @@ final class AntigravitySearchTest extends TestCase
         $this->assertInstanceOf(\stdClass::class, $tools[0]['googleSearch']);
         $this->assertInstanceOf(\stdClass::class, $tools[1]['urlContext']);
 
-        $this->assertSame(4096, $req['request']['generationConfig']['thinkingConfig']['thinkingBudget']);
-        $this->assertFalse($req['request']['generationConfig']['thinkingConfig']['includeThoughts']);
+        $this->assertSame(4096, $req['request']['generationConfig']->thinkingConfig['thinkingBudget']);
+        $this->assertFalse($req['request']['generationConfig']->thinkingConfig['includeThoughts']);
 
         $promptText = $req['request']['contents'][0]['parts'][0]['text'];
         $this->assertStringContainsString('focus on event loop integration', $promptText);
         $this->assertStringContainsString('https://www.php.net/fiber', $promptText);
 
-        $fastReq = GoogleSearch::buildSearchRequest('quick search', null, [], false, 'gemini-3-flash', 'p2');
-        $this->assertSame(0, $fastReq['request']['generationConfig']['thinkingConfig']['thinkingBudget']);
+        // Nobody said: a small budget on a model that is not a Lite one, and no config at all on a
+        // Lite one — never the 0 the Lite models answer with a 400.
+        $fastReq = GoogleSearch::buildSearchRequest('quick search', null, [], null, 'gemini-3-flash', 'p2');
+        $this->assertSame(2048, $fastReq['request']['generationConfig']->thinkingConfig['thinkingBudget']);
         $this->assertCount(1, $fastReq['request']['tools']);
+
+        foreach ([[null, GoogleSearch::DEFAULT_SEARCH_MODEL], [false, GoogleSearch::DEFAULT_SEARCH_MODEL], [false, 'gemini-3-flash']] as [$thinking, $model]) {
+            $unset = GoogleSearch::buildSearchRequest('quick search', null, [], $thinking, $model, 'p2');
+            $this->assertStringContainsString('"generationConfig":{}', (string) json_encode($unset), 'an object, and nothing in it');
+        }
+    }
+
+    public function testAModelThatRefusesTheArgumentsIsPassedOverAndARefusalOfTheAccountIsNot(): void
+    {
+        $refusal = static function (int $status, string $message): string {
+            $body = (string) json_encode(['error' => ['message' => $message]]);
+
+            return "HTTP/1.1 {$status} Refused\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body;
+        };
+        $answer = (string) json_encode(['response' => ['candidates' => [['content' => ['parts' => [['text' => 'found it']]]]]]]);
+        $http = new HttpClient(5.0);
+
+        // pi-antigravity 0.11: a 400 about the arguments is that model's; the next fallback is asked.
+        $server = new CannedServer();
+        $url = $server->startSequence([
+            [$refusal(400, 'Request contains an invalid argument.')],
+            ["HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " . strlen($answer) . "\r\n\r\n" . $answer],
+        ]);
+        $result = \Pig\Async\Async::run(static fn (): string => GoogleSearch::executeSearch($http, 't', 'p', 'q', endpoints: [$url]));
+
+        $this->assertStringContainsString('found it', $result);
+        $this->assertSame(2, $server->connections());
+        $this->assertStringContainsString('"model":"' . GoogleSearch::SEARCH_MODEL_FALLBACKS[0] . '"', $server->received());
+        $this->assertStringContainsString('"model":"' . GoogleSearch::SEARCH_MODEL_FALLBACKS[1] . '"', $server->received());
+        $this->assertStringContainsStringIgnoringCase('user-agent: antigravity/cli/1.4.0 ', $server->receivedHead());
+
+        // A refusal of the account fails at once: neither the other endpoint nor another model.
+        $denied = new CannedServer();
+        $deniedUrl = $denied->startSequence([[$refusal(401, 'nope')], [$refusal(401, 'nope')]]);
+
+        try {
+            \Pig\Async\Async::run(static fn (): string => GoogleSearch::executeSearch($http, 't', 'p', 'q', endpoints: [$deniedUrl, $deniedUrl]));
+            $this->fail('a 401 should end the search');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Antigravity authentication failed. Next: run /login antigravity, then retry.', $error->getMessage());
+        }
+
+        $this->assertSame(1, $denied->connections());
     }
 
     public function testParseSearchResponseExtractsTextQueriesSourcesAndSupports(): void

@@ -36,6 +36,8 @@ use Pig\CodingAgent\Config;
  *     pi-antigravity
  *       catalog { models[], routing } the three tables, minus the enums
  *       checkedAt                     when it was last asked for
+ *       schemaVersion                 2 since pi-antigravity 0.11; an older section has none
+ *       credentialKey                 a hash of the account and project it was asked with
  *       modelEnums { runtime => enum }
  * ```
  *
@@ -69,6 +71,9 @@ final readonly class Catalog
      * @param array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>}|null $catalog
      *        the tables in the extension's own shape, as read — what `Discovery` keeps as the current
      *        catalog once this is installed
+     * @param int $schemaVersion the section's `schemaVersion`; 0 when it has none
+     * @param string|null $credentialKey the section's `credentialKey`: which account and project
+     *        the answer was for. `Discovery::refresh()` asks again when either is not its own.
      */
     private function __construct(
         public array $models,
@@ -77,6 +82,8 @@ final readonly class Catalog
         public array $problems,
         public int $checkedAt = 0,
         public ?array $catalog = null,
+        public int $schemaVersion = 0,
+        public ?string $credentialKey = null,
     ) {
     }
 
@@ -121,7 +128,7 @@ final readonly class Catalog
             if ($found->models !== []) {
                 // The earlier files' own problems are kept: they were there and unreadable, which
                 // is worth saying even when a later one answered.
-                return new self($found->models, $found->routing, $found->enums, [...$problems, ...$found->problems], $found->checkedAt, $found->catalog);
+                return new self($found->models, $found->routing, $found->enums, [...$problems, ...$found->problems], $found->checkedAt, $found->catalog, $found->schemaVersion, $found->credentialKey);
             }
 
             $problems = [...$problems, ...$found->problems];
@@ -164,8 +171,12 @@ final readonly class Catalog
         $extension = $decoded[self::PROVIDER][self::EXTENSION] ?? null;
         $enums = [];
         $checkedAt = 0;
+        $schemaVersion = 0;
+        $credentialKey = null;
 
         if (is_array($extension)) {
+            $schemaVersion = is_int($extension['schemaVersion'] ?? null) ? $extension['schemaVersion'] : 0;
+            $credentialKey = is_string($extension['credentialKey'] ?? null) ? $extension['credentialKey'] : null;
             $catalogue = $extension['catalog'] ?? null;
             $enums = is_array($extension['modelEnums'] ?? null) ? $extension['modelEnums'] : [];
             // pi-antigravity's `hydrateAntigravityCatalog()`: "typeof persisted.checkedAt === "number"
@@ -185,7 +196,9 @@ final readonly class Catalog
             return new self([], [], [], ["{$path} has an Antigravity section with no \"models\" and \"routing\" in it"]);
         }
 
-        return self::tables($path, $catalogue['models'], $catalogue['routing'], $enums, $checkedAt);
+        $read = self::tables($path, $catalogue['models'], $catalogue['routing'], $enums, $checkedAt);
+
+        return new self($read->models, $read->routing, $read->enums, $read->problems, $read->checkedAt, $read->catalog, $schemaVersion, $credentialKey);
     }
 
     /**

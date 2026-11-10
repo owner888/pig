@@ -41,6 +41,9 @@ final class Discovery
 
     public const string PERSIST_KEY = 'pi-antigravity';
 
+    /** pi-antigravity's `CATALOG_SCHEMA_VERSION`: a section filed under another one is asked for again. */
+    public const int CATALOG_SCHEMA_VERSION = 2;
+
     /** pi-antigravity's `ANTIGRAVITY_API`, which its stored models carry. */
     public const string API = 'antigravity-api';
 
@@ -54,8 +57,11 @@ final class Discovery
     /** "Metadata lookups (project/model discovery) must be fast" — `DISCOVERY_TIMEOUT_MS`, in seconds. */
     private const float DISCOVERY_TIMEOUT = 8.0;
 
-    /** pi-antigravity's `DEFAULT_USER_AGENT`. */
-    private const string DEFAULT_USER_AGENT = 'antigravity/cli/1.2.4 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)';
+    /**
+     * pi-antigravity's `DEFAULT_USER_AGENT`. "Catalog visibility is gated on this version. 1.2.4
+     * hides Gemini 4 Argon; 1.4.0 is aligned with the current official agy CLI release."
+     */
+    public const string DEFAULT_USER_AGENT = 'antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)';
 
     private const array ALLOWED_API_HOST_SUFFIXES = ['.googleapis.com', '.sandbox.googleapis.com'];
 
@@ -230,8 +236,18 @@ final class Discovery
         return [
             'Authorization' => "Bearer {$token}",
             'Content-Type' => 'application/json',
-            'User-Agent' => self::env('USER_AGENT') ?? self::DEFAULT_USER_AGENT,
+            'User-Agent' => self::userAgent(),
         ];
+    }
+
+    /**
+     * The one User-Agent every request of this extension carries — `ANTIGRAVITY_USER_AGENT` when
+     * it is set, `defaultUserAgent()` otherwise. One place, because the deployment reads the
+     * version in it: a request left on an older string is served an older catalogue's models.
+     */
+    public static function userAgent(): string
+    {
+        return self::env('USER_AGENT') ?? self::DEFAULT_USER_AGENT;
     }
 
     /**
@@ -272,7 +288,7 @@ final class Discovery
      * combinator for that (see docs/dev/decisions.md on `Future`), and the merge is in endpoint order either way.
      *
      * @param list<string>|null $endpoints the hosts to ask; `endpointCandidates()` when null
-     * @return array{endpoint: string, status: int, data: array{models: array<string, mixed>, defaultAgentModelId?: string, defaultAgentModel?: string}}
+     * @return array{endpoint: string, status: int, data: array{models: array<string, mixed>, defaultAgentModelId?: string, defaultAgentModel?: string, agentModelSorts?: list<mixed>}}
      */
     public static function fetchAvailableModelsCatalog(string $token, string $projectId, ?AbortSignal $signal = null, ?HttpClient $http = null, ?array $endpoints = null): array
     {
@@ -288,44 +304,49 @@ final class Discovery
     }
 
     /**
-     * `mergeAvailableModelsResults()`.
+     * `mergeAvailableModelsResults()`. An answer counts only when its `models` is an object with
+     * something in it and every entry an object: a 200 that says nothing is not "no models", it
+     * is an endpoint that did not answer the question.
      *
      * @param list<array{endpoint: string, status: int, data: mixed}|null> $results
      * @param Throwable|null $lastError what the last endpoint that failed threw, kept as the cause
-     * @return array{endpoint: string, status: int, data: array{models: array<string, mixed>, defaultAgentModelId?: string, defaultAgentModel?: string}}
+     * @return array{endpoint: string, status: int, data: array{models: array<string, mixed>, defaultAgentModelId?: string, defaultAgentModel?: string, agentModelSorts?: list<mixed>}}
      */
     public static function mergeAvailableModelsResults(array $results, ?Throwable $lastError = null): array
     {
         $mergedModels = [];
         $defaultAgentModelId = null;
         $defaultAgentModel = null;
+        $agentModelSorts = null;
         $lastEndpoint = '';
         $lastStatus = 0;
 
         foreach ($results as $result) {
-            if ($result === null) {
+            $data = $result['data'] ?? null;
+
+            if ($result === null || !is_array($data) || !self::isModelsMap($data['models'] ?? null)) {
                 continue;
             }
 
             $lastEndpoint = $result['endpoint'];
             $lastStatus = $result['status'];
-            $data = $result['data'];
+            $mergedModels = array_replace($mergedModels, $data['models']);
 
-            if (is_array($data) && is_array($data['models'] ?? null) && !array_is_list($data['models'])) {
-                $mergedModels = array_replace($mergedModels, $data['models']);
-            }
-
-            if (is_array($data) && is_string($data['defaultAgentModelId'] ?? null)) {
+            if (is_string($data['defaultAgentModelId'] ?? null)) {
                 $defaultAgentModelId = $data['defaultAgentModelId'];
             }
 
-            if (is_array($data) && is_string($data['defaultAgentModel'] ?? null)) {
+            if (is_string($data['defaultAgentModel'] ?? null)) {
                 $defaultAgentModel = $data['defaultAgentModel'];
+            }
+
+            if (is_array($data['agentModelSorts'] ?? null) && array_is_list($data['agentModelSorts'])) {
+                $agentModelSorts = $data['agentModelSorts'];
             }
         }
 
         if ($lastEndpoint === '') {
-            throw new RuntimeException('/v1internal:fetchAvailableModels failed: no endpoint available', 0, $lastError);
+            throw new RuntimeException('/v1internal:fetchAvailableModels failed: no endpoint returned a valid non-empty catalog', 0, $lastError);
         }
 
         return [
@@ -335,14 +356,46 @@ final class Discovery
                 'models' => $mergedModels,
                 ...($defaultAgentModelId !== null ? ['defaultAgentModelId' => $defaultAgentModelId] : []),
                 ...($defaultAgentModel !== null ? ['defaultAgentModel' => $defaultAgentModel] : []),
+                ...($agentModelSorts !== null ? ['agentModelSorts' => $agentModelSorts] : []),
             ],
         ];
     }
 
+    /** A non-empty object whose every value is an object — as `json_decode` hands objects over. */
+    private static function isModelsMap(mixed $models): bool
+    {
+        if (!is_array($models) || $models === [] || array_is_list($models)) {
+            return false;
+        }
+
+        foreach ($models as $info) {
+            if (!is_array($info) || ($info !== [] && array_is_list($info))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Which account and project a catalog was asked with: the sha256 of
+     * `JSON.stringify([refresh token, project id])`, as upstream writes it — the bytes matter,
+     * because a catalog pi filed for the same account is one pig reads too. The key itself stands
+     * in for the refresh token when there is none (an API key credential); it carries the access
+     * token, so that reading changes every hour, which is why `index.php` passes the refresh token.
+     */
+    public static function credentialKey(string $apiKey, ?string $refreshToken = null): string
+    {
+        $source = $refreshToken !== null && $refreshToken !== '' ? $refreshToken : $apiKey;
+
+        return hash('sha256', json_encode([$source, self::parseApiKey($apiKey)['projectId']], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+    }
+
     /**
      * `discoverAntigravityModels()`: the grouped catalog, and the enums the deployment named for
-     * its runtime ids (`registerDiscoveredModelEnums()`). An empty answer is an empty catalog.
+     * its runtime ids (`registerDiscoveredModelEnums()`).
      *
+     * @throws RuntimeException when the answer has no models in it, or none somebody can pick
      * @param list<string>|null $endpoints
      * @return array{catalog: array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>}, enums: array<string, string>}
      */
@@ -353,7 +406,7 @@ final class Discovery
         $models = $available['data']['models'];
 
         if ($models === []) {
-            return ['catalog' => ['models' => [], 'routing' => []], 'enums' => []];
+            throw new RuntimeException('Antigravity returned an empty or unrecognized model catalog');
         }
 
         $enums = [];
@@ -364,12 +417,14 @@ final class Discovery
             }
         }
 
-        return ['catalog' => Grouping::buildAntigravityCatalog($models, self::fallbackCatalog()), 'enums' => $enums];
+        return ['catalog' => Grouping::buildAntigravityCatalog($models, self::fallbackCatalog(), $available['data']['agentModelSorts'] ?? null), 'enums' => $enums];
     }
 
     /**
      * `refreshAntigravityModels(context)`: the stored catalog first, then the network when it is
-     * allowed, there is a key, and the last answer is older than the interval (or `$force`).
+     * allowed, there is a key, and the last answer is older than the interval (or `$force`) — or
+     * is not this account's: "A different account/project or pre-upgrade cache must not suppress a
+     * fresh discovery. Keep hydration above so offline startup still has usable models."
      *
      * "Keep last-known-good models; a failed refresh must not wipe the catalog. Forced/manual
      * refreshes must still report the failure to their caller." A refresh nobody forced that fails
@@ -377,6 +432,8 @@ final class Discovery
      *
      * @param Closure(array<string, mixed>): void $publish files the provider's store entry
      * @param list<string>|null $endpoints
+     * @param string|null $refreshToken the signed-in account's refresh token, which is what tells
+     *        one account's catalog from another's (`credentialKey()`)
      * @return list<array<string, mixed>> the models now current
      */
     public static function refresh(
@@ -388,6 +445,7 @@ final class Discovery
         Closure $publish,
         ?HttpClient $http = null,
         ?array $endpoints = null,
+        ?string $refreshToken = null,
     ): array {
         $checkedAt = self::hydrate($stored);
         $current = self::current();
@@ -400,9 +458,11 @@ final class Discovery
             return $current['models'];
         }
 
+        $credentialKey = self::credentialKey($apiKey, $refreshToken);
+        $sameSource = $stored->schemaVersion === self::CATALOG_SCHEMA_VERSION && $stored->credentialKey === $credentialKey;
         $now = Timestamp::nowMs();
 
-        if (!$force && $checkedAt > 0 && $now >= $checkedAt && $now - $checkedAt < self::catalogRefreshIntervalMs()) {
+        if (!$force && $sameSource && $checkedAt > 0 && $now >= $checkedAt && $now - $checkedAt < self::catalogRefreshIntervalMs()) {
             return $current['models'];
         }
 
@@ -425,6 +485,8 @@ final class Discovery
                         'catalog' => $next,
                         'checkedAt' => $refreshedAt,
                         'modelEnums' => $enums,
+                        'schemaVersion' => self::CATALOG_SCHEMA_VERSION,
+                        'credentialKey' => $credentialKey,
                     ],
                 ]);
 

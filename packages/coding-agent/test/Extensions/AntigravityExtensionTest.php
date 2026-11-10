@@ -156,6 +156,22 @@ final class AntigravityExtensionTest extends TestCase
         $customDir = ImageGenerator::resolveSavePath($cwd, 'assets/', 'image/webp');
         $this->assertStringStartsWith('/Users/dev/project/assets/image-', $customDir);
         $this->assertStringEndsWith('.webp', $customDir);
+
+        // pi-antigravity's `resolveImageSavePath()`: no extension is a directory; one of several
+        // images written to a named file is numbered before the extension, not written over.
+        $this->assertStringStartsWith('/Users/dev/project/shots/image-', ImageGenerator::resolveSavePath($cwd, 'shots', 'image/png'));
+        $this->assertSame('/Users/dev/project/art/cat-2.png', ImageGenerator::resolveSavePath($cwd, './art/x/../cat.png', 'image/png', 1));
+        $this->assertSame('/Users/dev/project/in.png', ImageGenerator::resolveSavePath($cwd, '/Users/dev/project/in.png', 'image/png'));
+
+        // And nowhere but the working directory.
+        foreach (['/etc/cron.d/x.png', '../other/x.png', 'a/../../x.png', '.', '/Users/dev/project-2/x.png'] as $outside) {
+            try {
+                ImageGenerator::resolveSavePath($cwd, $outside, 'image/png');
+                $this->fail("{$outside} is outside the working directory");
+            } catch (\RuntimeException $error) {
+                $this->assertSame('Image save path must be inside the working directory.', $error->getMessage());
+            }
+        }
     }
 
     // ---- Antigravity extension loading & capabilities -----------------------------------

@@ -179,7 +179,7 @@ return function (ExtensionApi $pig): void {
      *
      * @return list<array<string, mixed>> the models now current
      */
-    $refreshCatalog = static function (bool $force, ?string $apiKey = null, ?AbortSignal $signal = null) use ($auth): array {
+    $refreshCatalog = static function (bool $force, ?string $apiKey = null, ?AbortSignal $signal = null, ?string $refreshToken = null) use ($auth): array {
         if ($auth->path() === null) {
             return Discovery::current()['models'];
         }
@@ -192,6 +192,8 @@ return function (ExtensionApi $pig): void {
             $force,
             $signal,
             static fn (array $entry) => Discovery::persist(Catalog::storePath(), $entry),
+            // Which account the stored catalog has to be for; the key alone changes every hour.
+            refreshToken: $refreshToken ?? $auth->credentials(Models::PROVIDER)?->refresh,
         );
     };
 
@@ -199,7 +201,7 @@ return function (ExtensionApi $pig): void {
     $refreshInBackground = static function (?OauthCredentials $signedIn = null) use ($refreshCatalog): void {
         Async::spawn(static function () use ($refreshCatalog, $signedIn): void {
             try {
-                $refreshCatalog(false, $signedIn === null ? null : AntigravityOauth::keyFor($signedIn));
+                $refreshCatalog(false, $signedIn === null ? null : AntigravityOauth::keyFor($signedIn), null, $signedIn?->refresh);
             } catch (Throwable $error) {
                 Logger::warning('Antigravity model catalog refresh failed: ' . AntigravityApi::redactSecrets($error->getMessage()));
             }
@@ -234,8 +236,22 @@ return function (ExtensionApi $pig): void {
         }
     }
 
-    $pig->on('session_start', static function () use ($refreshInBackground): void {
-        $refreshInBackground();
+    // In the background where somebody is at the screen, so startup does not wait for it; waited
+    // for in print and RPC mode, which would otherwise be gone before the answer was filed —
+    // "so the next headless process hydrates Gemini 4 from the persisted store".
+    $pig->on('session_start', static function (mixed $event, ExtensionContext $ctx) use ($refreshInBackground, $refreshCatalog): void {
+        if ($ctx->hasUi) {
+            $refreshInBackground();
+
+            return;
+        }
+
+        try {
+            $refreshCatalog(false);
+        } catch (Throwable $error) {
+            // "Last-known-good catalog stays in place. Forced refreshes still report via the command."
+            Logger::warning('Antigravity model catalog refresh failed: ' . AntigravityApi::redactSecrets($error->getMessage()));
+        }
     });
 
     // ---- the second place the credentials live ------------------------------------------
@@ -719,7 +735,8 @@ return function (ExtensionApi $pig): void {
                 $query = (string) ($params['query'] ?? '');
                 $instruction = isset($params['instruction']) && is_string($params['instruction']) ? $params['instruction'] : null;
                 $urls = isset($params['urls']) && is_array($params['urls']) ? array_values(array_filter($params['urls'], 'is_string')) : [];
-                $thinking = ($params['thinking'] ?? false) === true;
+                // Unsaid is not "off": see `GoogleSearch::buildSearchRequest()`.
+                $thinking = is_bool($params['thinking'] ?? null) ? $params['thinking'] : null;
 
                 $output = GoogleSearch::executeSearch($http, $token, $projectId, $query, $instruction, $urls, $thinking, $signal);
 

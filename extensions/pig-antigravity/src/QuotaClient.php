@@ -27,8 +27,6 @@ final class QuotaClient
         'https://daily-cloudcode-pa.sandbox.googleapis.com',
     ];
 
-    private const string USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
-
     public function __construct(
         private readonly ?HttpClient $http = null,
         private readonly ?string $endpoint = null,
@@ -260,7 +258,7 @@ final class QuotaClient
                 'Authorization' => "Bearer {$token}",
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
-                'User-Agent' => self::USER_AGENT,
+                'User-Agent' => Discovery::userAgent(),
             ];
 
             try {

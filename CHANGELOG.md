@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Antigravity: an assistant message records the model that actually answered (`responseModel`, from the gateway's `modelVersion`) and the gateway's `responseId`, so a session file shows it when another model served the request (pi-antigravity 0.12.0).
+
+### Changed
+
+- Antigravity follows pi-antigravity 0.12.0. Requests identify as the Antigravity CLI 1.4.0 — the deployment hides its newest models, Gemini 4 Argon among them, from older versions — and chat, quota, image, search and catalog requests all send the same User-Agent (`ANTIGRAVITY_USER_AGENT` overrides it).
+- Antigravity's model list is what the deployment answers and nothing else: the models Google's own picker lists (`agentModelSorts`), with the context window, output limit, image input and thinking the answer states. A model the answer no longer lists is not put back from the built-in table, a model of any family is listed (not only Gemini, Claude and GPT-OSS), and picking a model the current catalog has dropped says to run `/antigravity.refresh`.
+- A stored Antigravity catalog is asked for again when it was filed for another account or project, or by an older version, instead of being reused for four hours; in print and RPC mode the refresh at session start is waited for, so the answer is filed before the process ends.
+- `generate_image` and `/antigravity.image` write only inside the working directory and never through a symbolic link; a path with no extension is a directory, and several images written to one named file are numbered instead of written over each other.
+
+### Fixed
+
+- `google_search` on the default model failed with HTTP 400: it sent a thinking budget of 0, which the Lite models refuse. A model that refuses a search's arguments is passed over for the next one, and a refused sign-in ends the search at once instead of being tried on every endpoint.
+- An Antigravity 429 that names no limit — how a model that is not being served answers — was reported as rate limiting and retried until the retries ran out; it is reported once as the model being unavailable, without trying the other endpoint or another account.
+- An Antigravity endpoint that could not be reached ended the turn without the other endpoint being tried.
+- An Antigravity turn sent again after its stream died could hang behind the first attempt; every request after a turn's first goes out as a session of its own. The session id pig has is now the one the request carries.
+- A fallback from Gemini 3.8 Flash to an older Flash is only made to a model the current catalog still serves.
+
 ## [2.0.2] - 2026-11-10
 
 ### New Features

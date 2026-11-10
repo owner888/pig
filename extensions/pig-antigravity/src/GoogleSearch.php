@@ -33,12 +33,15 @@ final class GoogleSearch
      *   --thinking: enable deep reasoning for search planning
      *   --url <url>: target URL for context analysis (repeatable)
      *
-     * @return array{query: string, urls: list<string>, thinking: bool}
+     * `thinking` is true with the flag and **null** without it — unsaid, which is not "off":
+     * `buildSearchRequest()` reads the two differently.
+     *
+     * @return array{query: string, urls: list<string>, thinking: bool|null}
      */
     public static function parseSearchArgs(string $args): array
     {
         $tokens = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
-        $out = ['query' => '', 'urls' => [], 'thinking' => false];
+        $out = ['query' => '', 'urls' => [], 'thinking' => null];
         $rest = [];
 
         for ($i = 0; $i < count($tokens); $i++) {
@@ -65,14 +68,20 @@ final class GoogleSearch
     /**
      * Builds the Antigravity wire request payload for Gemini Google Search Grounding.
      *
+     * "Lite models and Gemini 4 reject an explicit zero budget. Leave that config unset unless the
+     * caller opted into planning, or this is a non-Lite fallback." So: asked for, 4096; unsaid on
+     * a model that is not a Lite one, 2048; unsaid on a Lite one, or refused outright, nothing —
+     * and never 0, which is a 400.
+     *
      * @param list<string> $urls
+     * @param bool|null $thinking true to plan, false not to, null when nobody said
      * @return array<string, mixed>
      */
     public static function buildSearchRequest(
         string $query,
         ?string $instruction,
         array $urls,
-        bool $thinking,
+        ?bool $thinking,
         string $model,
         string $projectId,
     ): array {
@@ -96,7 +105,15 @@ final class GoogleSearch
             $tools[] = ['urlContext' => new \stdClass()];
         }
 
-        $thinkingBudget = $thinking ? 4096 : 0;
+        // An object either way: an empty PHP array would go out as `[]`.
+        $generationConfig = new \stdClass();
+
+        if ($thinking === true || ($thinking === null && !str_contains($model, 'lite'))) {
+            $generationConfig->thinkingConfig = [
+                'thinkingBudget' => $thinking === true ? 4096 : 2048,
+                'includeThoughts' => false,
+            ];
+        }
 
         return [
             'project' => $projectId,
@@ -113,12 +130,7 @@ final class GoogleSearch
                     ],
                 ],
                 'tools' => $tools,
-                'generationConfig' => [
-                    'thinkingConfig' => [
-                        'thinkingBudget' => $thinkingBudget,
-                        'includeThoughts' => false,
-                    ],
-                ],
+                'generationConfig' => $generationConfig,
             ],
             'requestType' => 'agent',
             'userAgent' => 'antigravity',
@@ -346,7 +358,7 @@ final class GoogleSearch
         string $query,
         ?string $instruction = null,
         array $urls = [],
-        bool $thinking = false,
+        ?bool $thinking = null,
         ?AbortSignal $signal = null,
         ?array $endpoints = null,
     ): string {
@@ -361,11 +373,8 @@ final class GoogleSearch
             'https://cloudcode-pa.googleapis.com',
         ];
 
-        $headers = [
-            'Authorization' => "Bearer {$token}",
-            'Content-Type' => 'application/json',
-            'User-Agent' => 'antigravity',
-        ];
+        // `antigravityHeaders(creds.token)`, the CLI's User-Agent included.
+        $headers = Discovery::headers($token);
 
         $lastError = 'No endpoint available';
 
@@ -381,40 +390,47 @@ final class GoogleSearch
                 try {
                     $url = rtrim($endpoint, '/') . '/v1internal:generateContent';
                     $response = $http->send(new Request('POST', $url, $headers, $json), $signal);
-
-                    if (!$response->isSuccessful()) {
-                        $errText = $response->body->all();
-                        $lastError = AntigravityApi::friendlyAntigravityError($response->status, $errText);
-
-                        if ($response->status === 404 || in_array($response->status, [429, 500, 502, 503, 504], true)) {
-                            continue;
-                        }
-
-                        throw new RuntimeException($lastError);
-                    }
-
-                    $data = json_decode($response->body->all(), true);
-                    if (!is_array($data)) {
-                        $lastError = 'Invalid JSON response from Antigravity Search';
-                        continue;
-                    }
-
-                    $cand = $data['response']['candidates'][0] ?? $data['candidates'][0] ?? null;
-                    $candText = $cand['content']['parts'][0]['text'] ?? null;
-                    if (is_string($candText) && str_contains($candText, 'is no longer available. Please switch')) {
-                        $lastError = "Model {$model} deprecated";
-                        break;
-                    }
-
-                    $parsed = self::parseSearchResponse($data);
-
-                    return self::formatSearchResult($parsed);
+                    $text = $response->body->all();
                 } catch (Throwable $e) {
+                    // An endpoint that could not be asked: the next one, unless it was us who stopped.
                     if ($signal?->aborted() ?? false) {
                         throw $e;
                     }
                     $lastError = $e->getMessage();
+
+                    continue;
                 }
+
+                if (!$response->isSuccessful()) {
+                    $lastError = AntigravityApi::friendlyAntigravityError($response->status, $text);
+                    // "Retry next endpoint, or the next fallback model, for model-specific 400s":
+                    // a model that will not take this request's arguments is not every model.
+                    $modelRejected = $response->status === 400 && preg_match('/invalid argument|thinking/i', $text) === 1;
+
+                    if ($response->status === 404 || $modelRejected || in_array($response->status, [429, 500, 502, 503, 504], true)) {
+                        continue;
+                    }
+
+                    // "Fail fast on non-retryable client errors (e.g. 401 Unauthorized, 403
+                    // Forbidden)" — thrown out here, where no `catch` takes it for an endpoint
+                    // failure and asks the next endpoint the same refused question.
+                    throw new RuntimeException($lastError);
+                }
+
+                $data = json_decode($text, true);
+                if (!is_array($data)) {
+                    $lastError = 'Invalid JSON response from Antigravity Search';
+                    continue;
+                }
+
+                $cand = $data['response']['candidates'][0] ?? $data['candidates'][0] ?? null;
+                $candText = $cand['content']['parts'][0]['text'] ?? null;
+                if (is_string($candText) && str_contains($candText, 'is no longer available. Please switch')) {
+                    $lastError = "Model {$model} deprecated";
+                    break;
+                }
+
+                return self::formatSearchResult(self::parseSearchResponse($data));
             }
         }
 

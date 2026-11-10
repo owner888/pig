@@ -67,8 +67,6 @@ final class ImageGenerator implements ProviderImages
 
     public const string DEFAULT_IMAGE_DIR = '.pig/generated-images';
 
-    private const string USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
-
     private const string SYSTEM_INSTRUCTION =
         'You are an AI image generator. Generate images based on user descriptions. Focus on creating high-quality, visually appealing images that match the user\'s request.';
 
@@ -226,7 +224,7 @@ final class ImageGenerator implements ProviderImages
                     $headers = [
                         'Authorization' => "Bearer {$token}",
                         'Content-Type' => 'application/json',
-                        'User-Agent' => self::USER_AGENT,
+                        'User-Agent' => Discovery::userAgent(),
                     ];
 
                     try {
@@ -407,7 +405,8 @@ final class ImageGenerator implements ProviderImages
     /**
      * Write a result's images to disk — what the `generate_image` tool and `/antigravity.image` do with
      * `Models::generateImages()`'s answer: under `DEFAULT_IMAGE_DIR` unless a file or directory is asked
-     * for, numbered when there are several.
+     * for, numbered when there are several. Always inside `$cwd`, and never through a symbolic link
+     * (`writeImage()`).
      *
      * @return list<string> the paths written
      * @throws RuntimeException when an image cannot be written
@@ -415,7 +414,6 @@ final class ImageGenerator implements ProviderImages
     public static function save(AssistantImages $result, ?string $targetPath, string $cwd): array
     {
         $images = array_values(array_filter($result->output, static fn (mixed $block): bool => $block instanceof ImageContent));
-        $root = realpath($cwd) ?: $cwd;
         $saved = [];
 
         foreach ($images as $index => $image) {
@@ -425,24 +423,25 @@ final class ImageGenerator implements ProviderImages
                 throw new RuntimeException("Image " . ($index + 1) . ' of the answer is not valid base64.');
             }
 
-            $file = self::resolveSavePath($root, $targetPath, $image->mimeType, count($images) > 1 ? $index : null);
-            $dir = dirname($file);
-
-            if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
-                throw new RuntimeException("Cannot create {$dir} for the image.");
-            }
-
-            if (file_put_contents($file, $data) === false) {
-                throw new RuntimeException("Cannot write the image to {$file}.");
-            }
-
+            $file = self::resolveSavePath($cwd, $targetPath, $image->mimeType, count($images) > 1 ? $index : null);
+            self::writeImage($file, $data, $cwd);
             $saved[] = $file;
         }
 
         return $saved;
     }
 
-    public static function resolveSavePath(string $root, ?string $requested, string $mimeType, ?int $index = null): string
+    /**
+     * pi-antigravity's `resolveImageSavePath()`: where an image goes. A path with no extension is a
+     * directory to put a named image in; one of several images written to a named file has its
+     * number put before the extension, so they do not overwrite each other; and anything that
+     * would land outside the working directory — an absolute path elsewhere, a `..` — is refused.
+     *
+     * Lexical, as upstream's `resolve()`/`relative()` are: nothing on disk is looked at here.
+     *
+     * @throws RuntimeException when the path is not inside $cwd
+     */
+    public static function resolveSavePath(string $cwd, ?string $requested, string $mimeType, ?int $index = null): string
     {
         $ext = match (true) {
             str_contains($mimeType, 'jpeg') || str_contains($mimeType, 'jpg') => 'jpg',
@@ -454,18 +453,176 @@ final class ImageGenerator implements ProviderImages
         $stamp = date('Y-m-d\TH-i-s');
         $suffix = $index !== null ? '-' . ($index + 1) : '';
         $defaultFilename = "image-{$stamp}{$suffix}.{$ext}";
+        $root = self::resolvePath($cwd, '');
+        $trimmed = $requested !== null ? trim($requested) : '';
+        $target = $trimmed !== ''
+            ? self::resolvePath($root, $trimmed)
+            : self::resolvePath($root, self::DEFAULT_IMAGE_DIR . '/' . $defaultFilename);
 
-        if ($requested === null || trim($requested) === '') {
-            return rtrim($root, '/') . '/' . self::DEFAULT_IMAGE_DIR . '/' . $defaultFilename;
+        if (self::relativeInside($root, $target) === null) {
+            throw new RuntimeException('Image save path must be inside the working directory.');
         }
 
-        $trimmed = trim($requested);
-        $path = str_starts_with($trimmed, '/') ? $trimmed : rtrim($root, '/') . '/' . $trimmed;
+        $currentExt = self::extname($target);
 
-        if (is_dir($path) || str_ends_with($trimmed, '/')) {
-            return rtrim($path, '/') . '/' . $defaultFilename;
+        if ($currentExt === '') {
+            return "{$target}/{$defaultFilename}";
         }
 
-        return $path;
+        if ($index === null) {
+            return $target;
+        }
+
+        return substr($target, 0, -strlen($currentExt)) . $suffix . $currentExt;
+    }
+
+    /**
+     * pi-antigravity's `writeImage()`: the bytes into $filePath, which has to be inside $cwd as the
+     * disk has it — every directory on the way made one at a time and refused if it is a symbolic
+     * link, the file itself refused if it is one. A link inside the working directory is how a path
+     * that reads as inside it writes outside it.
+     *
+     * Node opens with `O_NOFOLLOW`, which PHP's `fopen()` cannot ask for. A file that is not there
+     * is created with `x` (exclusive, which does not follow a link either); one that is there is
+     * opened and then checked to be the very file `lstat()` saw, before anything is written.
+     *
+     * @throws RuntimeException when the path leaves $cwd, crosses a link, or cannot be written
+     */
+    public static function writeImage(string $filePath, string $data, string $cwd): void
+    {
+        $root = realpath($cwd);
+
+        if ($root === false) {
+            throw new RuntimeException("The working directory {$cwd} does not exist.");
+        }
+
+        $lexicalRoot = self::resolvePath($cwd, '');
+        $rel = self::relativeInside($lexicalRoot, self::resolvePath($lexicalRoot, $filePath));
+
+        if ($rel === null) {
+            throw new RuntimeException('Image path must stay inside the working directory');
+        }
+
+        $components = explode('/', $rel);
+        $name = array_pop($components);
+        $parent = $root;
+
+        foreach ($components as $component) {
+            $parent .= "/{$component}";
+
+            if (!file_exists($parent) && !is_link($parent)) {
+                self::quietly(static fn (): bool => mkdir($parent), "Cannot create {$parent} for the image");
+            }
+
+            if (is_link($parent) || !is_dir($parent)) {
+                throw new RuntimeException('Image path must not traverse symlinks');
+            }
+        }
+
+        $target = "{$parent}/{$name}";
+
+        if (is_link($target)) {
+            throw new RuntimeException('Image path must not follow symlinks');
+        }
+
+        $existed = file_exists($target);
+        $handle = self::quietly(static fn () => fopen($target, $existed ? 'r+b' : 'xb'), "Cannot write the image to {$target}");
+
+        try {
+            if ($existed) {
+                $opened = fstat($handle);
+                $named = lstat($target);
+
+                if (is_link($target) || $opened === false || $named === false || $opened['ino'] !== $named['ino'] || $opened['dev'] !== $named['dev']) {
+                    throw new RuntimeException('Image path must not follow symlinks');
+                }
+
+                ftruncate($handle, 0);
+            } else {
+                // `0o600`, as upstream opens it: a generated image is the person's own.
+                chmod($target, 0o600);
+            }
+
+            if (fwrite($handle, $data) !== strlen($data)) {
+                throw new RuntimeException("Cannot write the image to {$target}.");
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /**
+     * Run a file function that warns and returns false, and throw its warning instead — the
+     * warning is where the reason is.
+     *
+     * @template T
+     * @param \Closure(): (T|false) $call
+     * @return T
+     */
+    private static function quietly(\Closure $call, string $what): mixed
+    {
+        $warning = '';
+        set_error_handler(static function (int $no, string $message) use (&$warning): bool {
+            $warning = $message;
+
+            return true;
+        });
+
+        try {
+            $result = $call();
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($result === false) {
+            throw new RuntimeException($what . ($warning !== '' ? ": {$warning}" : '.'));
+        }
+
+        return $result;
+    }
+
+    /** Node's `path.resolve(base, path)` for `/` paths: absolute wins, `.` and `..` are worked out. */
+    private static function resolvePath(string $base, string $path): string
+    {
+        $joined = str_starts_with($path, '/') ? $path : "{$base}/{$path}";
+
+        if (!str_starts_with($joined, '/')) {
+            $joined = (getcwd() ?: '') . "/{$joined}";
+        }
+
+        $parts = [];
+
+        foreach (explode('/', $joined) as $part) {
+            if ($part === '' || $part === '.') {
+                continue;
+            }
+
+            if ($part === '..') {
+                array_pop($parts);
+
+                continue;
+            }
+
+            $parts[] = $part;
+        }
+
+        return '/' . implode('/', $parts);
+    }
+
+    /** $target relative to $root when it is strictly inside it, null otherwise — both already resolved. */
+    private static function relativeInside(string $root, string $target): ?string
+    {
+        $prefix = rtrim($root, '/') . '/';
+
+        return str_starts_with($target, $prefix) && strlen($target) > strlen($prefix) ? substr($target, strlen($prefix)) : null;
+    }
+
+    /** Node's `path.extname()`: from the last dot of the last segment, unless that dot leads it. */
+    private static function extname(string $path): string
+    {
+        $base = basename($path);
+        $dot = strrpos($base, '.');
+
+        return $dot === false || $dot === 0 ? '' : substr($base, $dot);
     }
 }

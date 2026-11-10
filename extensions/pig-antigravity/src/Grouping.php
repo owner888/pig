@@ -44,19 +44,21 @@ final class Grouping
         ['/\(\s*low\s*\)/i', 'low'],
     ];
 
-    /** "Known backend aliases whose runtime IDs do not share a thinking suffix with the public family." */
-    private const array RUNTIME_ALIASES = [
-        'gemini-3-flash-agent' => ['publicId' => 'gemini-3.5-flash', 'level' => 'high'],
-        'gemini-pro-agent' => ['publicId' => 'gemini-3.1-pro', 'level' => 'high'],
-    ];
-
     private const array PI_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
     private const array ZERO_COST = ['input' => 0, 'output' => 0, 'cacheRead' => 0, 'cacheWrite' => 0];
 
-    public static function isSelectableRuntimeModelId(string $id): bool
+    /**
+     * Whether a runtime id is one somebody can pick: any well-formed id, whatever family it is
+     * from, that is not a placeholder enum, an internal chat or tab model, an image model (by id
+     * or by display name) or one the backend marks internal.
+     *
+     * @param array<string, mixed>|null $info the runtime model's entry in `fetchAvailableModels`
+     */
+    public static function isSelectableRuntimeModelId(string $id, ?array $info = null): bool
     {
-        if (preg_match('/^(gemini-|claude-|gpt-oss-)/i', $id) !== 1 || preg_match('/\s/', $id) === 1 || preg_match('/^MODEL_/i', $id) === 1) {
+        // `\z`, not `$`: JavaScript's `$` does not match before a trailing newline, PCRE's does.
+        if (preg_match('/^[a-z0-9][a-z0-9_.-]*\z/i', $id) !== 1 || preg_match('/^MODEL_/i', $id) === 1) {
             return false;
         }
 
@@ -64,7 +66,11 @@ final class Grouping
             return false;
         }
 
-        if (preg_match('/image/i', $id) === 1) {
+        if (preg_match('/image/i', $id) === 1 || preg_match('/image/i', self::modelDisplayName($info) ?? '') === 1) {
+            return false;
+        }
+
+        if (($info['isInternal'] ?? null) === true || ($info['apiProvider'] ?? null) === 'API_PROVIDER_INTERNAL') {
             return false;
         }
 
@@ -88,25 +94,102 @@ final class Grouping
     }
 
     /**
+     * The runtime ids Google's own picker shows: every `modelIds` entry of every group of
+     * `agentModelSorts`. Null when the answer has none, which means "do not filter".
+     *
+     * @return array<string, true>|null
+     */
+    public static function extractRecommendedModelIds(mixed $agentModelSorts): ?array
+    {
+        if (!is_array($agentModelSorts) || !array_is_list($agentModelSorts) || $agentModelSorts === []) {
+            return null;
+        }
+
+        $ids = [];
+
+        foreach ($agentModelSorts as $sort) {
+            if (!self::isRecord($sort)) {
+                continue;
+            }
+
+            $groups = is_array($sort['groups'] ?? null) && array_is_list($sort['groups']) ? $sort['groups'] : [];
+
+            foreach ($groups as $group) {
+                if (!self::isRecord($group) || !is_array($group['modelIds'] ?? null) || !array_is_list($group['modelIds'])) {
+                    continue;
+                }
+
+                foreach ($group['modelIds'] as $id) {
+                    if (is_string($id) && $id !== '') {
+                        $ids[$id] = true;
+                    }
+                }
+            }
+        }
+
+        return $ids !== [] ? $ids : null;
+    }
+
+    /**
+     * The catalog the deployment advertises, and only that: a model the answer does not list is
+     * not put back from `$fallback`, whose rows are now templates (cost, and the limits and
+     * capabilities an entry leaves unsaid) and nothing else.
+     *
      * @param array<string, mixed>                                                                     $rawModels `fetchAvailableModels`' `models`, runtime id => info
      * @param array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>} $fallback
+     * @param mixed                                                                                    $agentModelSorts `fetchAvailableModels`' `agentModelSorts`; the models in it are the only ones kept, unless that leaves none
      * @return array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>}
+     * @throws \RuntimeException when nothing in the answer is a chat model somebody can pick
      */
-    public static function buildAntigravityCatalog(array $rawModels, array $fallback): array
+    public static function buildAntigravityCatalog(array $rawModels, array $fallback, mixed $agentModelSorts = null): array
     {
-        /** @var array<string, array{publicId: string, variants: array<string, string>, unsuffixed?: string, displayNames: list<string>, supportsThinking?: bool, supportsImages?: bool}> $groups */
+        $recommendedIds = self::extractRecommendedModelIds($agentModelSorts);
+        $groups = self::collectGroups($rawModels, $recommendedIds);
+
+        if ($groups === [] && $recommendedIds !== null) {
+            $groups = self::collectGroups($rawModels, null);
+        }
+
+        if ($groups === []) {
+            throw new \RuntimeException('Antigravity catalog contains no supported chat models');
+        }
+
+        $models = [];
+        $routing = [];
+
+        foreach ($groups as $group) {
+            [$model, $route] = self::synthesizeModel($group, $fallback['models']);
+            $models[] = $model;
+            $routing[$group['publicId']] = $route;
+        }
+
+        usort($models, self::comparePublicModels(...));
+
+        return ['models' => $models, 'routing' => $routing];
+    }
+
+    /**
+     * @param array<string, mixed>     $rawModels
+     * @param array<string, true>|null $filterIds
+     * @return array<string, array{publicId: string, variants: array<string, string>, unsuffixed?: string, displayNames: list<string>, supportsThinking?: bool, supportsImages?: bool, contextWindow?: int, maxOutputTokens?: int}>
+     */
+    private static function collectGroups(array $rawModels, ?array $filterIds): array
+    {
         $groups = [];
 
         foreach ($rawModels as $runtimeId => $info) {
             $runtimeId = (string) $runtimeId;
+            $info = is_array($info) ? $info : null;
 
-            if (!self::isSelectableRuntimeModelId($runtimeId)) {
+            if (!self::isSelectableRuntimeModelId($runtimeId, $info)) {
                 continue;
             }
 
-            $info = is_array($info) ? $info : null;
-
             if ($info !== null && self::truthy($info['isInternal'] ?? null)) {
+                continue;
+            }
+
+            if ($filterIds !== null && !isset($filterIds[$runtimeId])) {
                 continue;
             }
 
@@ -124,13 +207,12 @@ final class Grouping
                 continue;
             }
 
-            $alias = self::RUNTIME_ALIASES[$runtimeId] ?? null;
-            $suffix = $alias !== null ? null : self::parseThinkingSuffix($runtimeId);
-            $publicId = $alias['publicId'] ?? $suffix['baseId'] ?? $runtimeId;
+            $suffix = self::parseThinkingSuffix($runtimeId);
+            $publicId = $suffix['baseId'] ?? $runtimeId;
             self::ensureGroup($groups, $publicId);
             self::absorbMetadata($groups[$publicId], $info, $displayName);
 
-            $level = $alias['level'] ?? self::levelFromDisplayName($displayName) ?? $suffix['level'] ?? null;
+            $level = self::levelFromDisplayName($displayName) ?? $suffix['level'] ?? null;
 
             if ($level !== null) {
                 $groups[$publicId]['variants'][$level] = $runtimeId;
@@ -141,47 +223,17 @@ final class Grouping
 
         self::mergeAgentSingletons($groups);
 
-        if ($groups === []) {
-            return $fallback;
+        return $groups;
+    }
+
+    /** `Number.isSafeInteger(value) && value > 0`: a limit the answer actually states. */
+    private static function positiveTokenLimit(mixed $value): ?int
+    {
+        if (is_float($value) && floor($value) === $value && abs($value) <= 9007199254740991.0) {
+            $value = (int) $value;
         }
 
-        $models = [];
-        $routing = [];
-
-        foreach ($groups as $group) {
-            $fallbackModel = self::findModel($fallback['models'], static fn (array $model): bool => $model['id'] === $group['publicId']);
-            $fallbackRouting = $fallback['routing'][$group['publicId']] ?? null;
-
-            if ($fallbackModel !== null && $fallbackRouting !== null) {
-                $models[] = $fallbackModel;
-                $routing[$group['publicId']] = $fallbackRouting;
-
-                continue;
-            }
-
-            [$model, $route] = self::synthesizeModel($group, $fallback['models']);
-            $models[] = $model;
-            $routing[$group['publicId']] = $route;
-        }
-
-        foreach ($fallback['models'] as $fallbackModel) {
-            if (isset($routing[$fallbackModel['id']])) {
-                continue;
-            }
-
-            $fallbackRouting = $fallback['routing'][$fallbackModel['id']] ?? null;
-
-            if ($fallbackRouting === null) {
-                continue;
-            }
-
-            $models[] = $fallbackModel;
-            $routing[$fallbackModel['id']] = $fallbackRouting;
-        }
-
-        usort($models, self::comparePublicModels(...));
-
-        return ['models' => $models, 'routing' => $routing];
+        return is_int($value) && $value > 0 ? $value : null;
     }
 
     public static function humanizePublicId(string $id): string
@@ -240,18 +292,30 @@ final class Grouping
             $group['displayNames'][] = $displayName;
         }
 
+        // "A public model can route to any variant. Advertise the smallest supplied limit so every
+        // route remains within the server's advertised capabilities."
+        $contextWindow = self::positiveTokenLimit($info['maxTokens'] ?? null);
+        $maxOutputTokens = self::positiveTokenLimit($info['maxOutputTokens'] ?? null);
+
+        if ($contextWindow !== null) {
+            $group['contextWindow'] = min($group['contextWindow'] ?? $contextWindow, $contextWindow);
+        }
+
+        if ($maxOutputTokens !== null) {
+            $group['maxOutputTokens'] = min($group['maxOutputTokens'] ?? $maxOutputTokens, $maxOutputTokens);
+        }
+
         if (($info['supportsThinking'] ?? null) === true) {
             $group['supportsThinking'] = true;
         } elseif (($info['supportsThinking'] ?? null) === false && ($group['supportsThinking'] ?? null) !== true) {
             $group['supportsThinking'] = false;
         }
 
-        if (($info['supportsImages'] ?? null) === true) {
-            $group['supportsImages'] = true;
-        }
-
-        if (($info['supportsImages'] ?? null) === false && !array_key_exists('supportsImages', $group)) {
+        // One variant that cannot take a picture is enough: the public model may route to it.
+        if (($info['supportsImages'] ?? null) === false) {
             $group['supportsImages'] = false;
+        } elseif (($info['supportsImages'] ?? null) === true && !array_key_exists('supportsImages', $group)) {
+            $group['supportsImages'] = true;
         }
     }
 
@@ -261,10 +325,17 @@ final class Grouping
         foreach (array_keys($groups) as $publicId) {
             $group = $groups[$publicId] ?? null;
 
-            if ($group === null || !str_ends_with($publicId, '-agent') || $group['variants'] !== []) {
+            if ($group === null || !str_ends_with($publicId, '-agent') || ($group['supportsThinking'] ?? null) === false) {
                 continue;
             }
 
+            $runtimeIds = [...(isset($group['unsuffixed']) ? [$group['unsuffixed']] : []), ...array_values($group['variants'])];
+
+            if (count($runtimeIds) !== 1) {
+                continue;
+            }
+
+            $runtimeId = $runtimeIds[0];
             $family = self::displayFamily($group['displayNames'][0] ?? null);
 
             if ($family === null || $family === '') {
@@ -281,15 +352,28 @@ final class Grouping
                 }
             }
 
-            if ($target === null || !isset($group['unsuffixed'])) {
+            if ($target === null) {
                 continue;
             }
 
-            $level = self::levelFromDisplayName($group['displayNames'][0] ?? null) ?? 'high';
-            $groups[$target]['variants'][$level] = $group['unsuffixed'];
+            // The level the `-agent` id was filed under, or the one its display name states. No
+            // level, or one the family already has a runtime for, and the singleton stays apart.
+            $level = array_search($runtimeId, $group['variants'], true);
+            $level = $level !== false ? (string) $level : self::levelFromDisplayName($group['displayNames'][0] ?? null);
+
+            if ($level === null || ($groups[$target]['variants'][$level] ?? '') !== '') {
+                continue;
+            }
+
+            $groups[$target]['variants'][$level] = $runtimeId;
             self::absorbMetadata(
                 $groups[$target],
-                array_key_exists('supportsThinking', $group) ? ['supportsThinking' => $group['supportsThinking']] : [],
+                [
+                    'supportsThinking' => $group['supportsThinking'] ?? null,
+                    'supportsImages' => $group['supportsImages'] ?? null,
+                    'maxTokens' => $group['contextWindow'] ?? null,
+                    'maxOutputTokens' => $group['maxOutputTokens'] ?? null,
+                ],
                 $group['displayNames'][0] ?? null,
             );
             unset($groups[$publicId]);
@@ -363,9 +447,11 @@ final class Grouping
         $advertisedLevels = self::advertisedThinkingLevels($group);
         $routing = self::routingFromVariants($group['publicId'], $group['variants'], $group['unsuffixed'] ?? null);
         $supportsImages = $group['supportsImages'] ?? ($template !== null ? in_array('image', $template['input'], true) : true);
-        $reasoning = $advertisedLevels !== []
-            || ($group['supportsThinking'] ?? null) === true
-            || (!array_key_exists('supportsThinking', $group) && ($template['reasoning'] ?? false) === true);
+        $reasoning = ($group['supportsThinking'] ?? null) === false
+            ? false
+            : $advertisedLevels !== []
+                || ($group['supportsThinking'] ?? null) === true
+                || (!array_key_exists('supportsThinking', $group) && ($template['reasoning'] ?? false) === true);
 
         $model = [
             'id' => $group['publicId'],
@@ -380,8 +466,8 @@ final class Grouping
 
         $model['input'] = $supportsImages ? ['text', 'image'] : ['text'];
         $model['cost'] = $template['cost'] ?? self::ZERO_COST;
-        $model['contextWindow'] = $template['contextWindow'] ?? 128000;
-        $model['maxTokens'] = $template['maxTokens'] ?? 8192;
+        $model['contextWindow'] = $group['contextWindow'] ?? $template['contextWindow'] ?? 128000;
+        $model['maxTokens'] = $group['maxOutputTokens'] ?? $template['maxTokens'] ?? 8192;
 
         return [$model, $routing];
     }
@@ -392,18 +478,18 @@ final class Grouping
      */
     private static function advertisedThinkingLevels(array $group): array
     {
-        $levels = array_fill_keys(array_keys($group['variants']), true);
+        // "An explicit denial overrides levels inferred from display names or suffixes."
+        if (($group['supportsThinking'] ?? null) === false) {
+            return [];
+        }
+
+        $levels = array_fill_keys(array_map(strval(...), array_keys($group['variants'])), true);
 
         if ($levels !== []) {
             return $levels;
         }
 
-        // "Explicit false from the catalog must not grow a fake High control."
-        if (($group['supportsThinking'] ?? null) === false) {
-            return $levels;
-        }
-
-        if (($group['supportsThinking'] ?? null) === true || isset($group['unsuffixed'])) {
+        if (($group['supportsThinking'] ?? null) === true) {
             $levels['high'] = true;
         }
 
@@ -451,10 +537,6 @@ final class Grouping
 
         foreach (self::PI_LEVELS as $level) {
             $map[$level] = isset($levels[$level]) ? $level : null;
-        }
-
-        if ($levels === []) {
-            $map['high'] = 'high';
         }
 
         return $map;
@@ -598,6 +680,12 @@ final class Grouping
         }
 
         return null;
+    }
+
+    /** `isRecord()`: an object, which `json_decode` hands over as an array that is not a list (or is empty). */
+    private static function isRecord(mixed $value): bool
+    {
+        return is_array($value) && ($value === [] || !array_is_list($value));
     }
 
     /** JavaScript's truthiness, for `info?.isInternal`. */

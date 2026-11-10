@@ -64,20 +64,21 @@ final class AntigravityApi implements StreamApi
     public const string FALLBACK_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 
     /**
-     * The CLI's own, which this deployment checks.
-     *
-     * A version and a platform that have nothing to do with the machine running pig — the point
-     * is to be talking to Antigravity, and every field here is the reference implementation's
-     * literal string.
-     */
-    private const string USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
-
-    /**
      * The statuses after which the next endpoint is tried — pi-antigravity's `endpointCandidates()`
      * loop: `if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break` — except a
      * 429 that is a quota wall, which every endpoint would answer the same way.
      */
     private const array FALL_BACK_ON = [403, 404, 429, 500, 502, 503, 504];
+
+    /**
+     * pi-antigravity's `turnRequestNonces`: how many requests have gone out for each turn, by
+     * `<session>:<turns answered so far>`. 0 is the first request ever sent for that turn; anything
+     * above is one sent again — the session's retry, the empty-response loop, the other host, the
+     * next account. Process-wide, as upstream's module-level map is, and capped the same way.
+     *
+     * @var array<string, int>
+     */
+    private static array $turnRequestNonces = [];
 
     /**
      * @param string|null $fallback where to try when the primary refuses us, or null to work it
@@ -116,6 +117,9 @@ final class AntigravityApi implements StreamApi
             $apiKey,
             thinkingEnabled: $options?->reasoning !== null,
             thinkingLevel: $options?->reasoning?->value,
+            // `opts.sessionId`: what the envelope's session id is made from, and what tells one
+            // session's turns from another's when a request is sent again (`nextRequestNonce()`).
+            sessionId: $options?->sessionId,
         );
     }
 
@@ -242,6 +246,17 @@ final class AntigravityApi implements StreamApi
                 // `chunk.response || chunk`.
                 $responseData = is_array($data['response'] ?? null) ? $data['response'] : $data;
 
+                // "Record the model the gateway actually served (may differ from the requested
+                // runtime model)." Each chunk that names one, the last winning, as upstream's
+                // plain assignments do.
+                if (is_string($responseData['modelVersion'] ?? null) && $responseData['modelVersion'] !== '') {
+                    $builder->setResponseModel($responseData['modelVersion']);
+                }
+
+                if (is_string($responseData['responseId'] ?? null) && $responseData['responseId'] !== '') {
+                    $builder->setResponseId($responseData['responseId']);
+                }
+
                 if (isset($responseData['candidates'][0]['finishReason'])) {
                     $sawFinishReason = true;
                 }
@@ -302,11 +317,20 @@ final class AntigravityApi implements StreamApi
      * The runtime model `Routing` resolves, then `Routing::fallback()`'s (pi-antigravity's
      * `getFallbackRuntimeModel()`) when that one is answered 404. For each, every endpoint in turn
      * while the answer is one of `FALL_BACK_ON`, stopping at a success, at any other status, or at
-     * a 429 that is a quota wall (`isQuotaWall()`). A quota wall then asks `$failover` for an
+     * a 429 that is not short throttling: a quota wall (`isQuotaWall()`), or the generic resource
+     * exhaustion a model that is not being served answers with — "a dead model, not a reason to
+     * walk every endpoint". An endpoint that fails before it answers (cannot connect, no response
+     * head in time) is passed over for the next one too, and only when none answered is that
+     * failure the turn's. A quota wall then asks `$failover` for an
      * account not yet tried and starts over with it, its own project in the envelope; with none
      * left, the turn fails with the wall's own sentence ("Quota reached. …"), which the session
      * does not retry. Any other refusal is `Antigravity API error (<status>, <diagnostics>):
      * <friendlyAntigravityError()>`.
+     *
+     * Every request after the first for a turn goes out under a fresh session and trajectory
+     * (`retrySessionSeed()`): "a crashed stream can keep generating server-side while the backend
+     * serializes later same-session requests behind it — the literal retry then hangs almost
+     * deterministically even though a fresh request succeeds."
      *
      * Not ported: pi-antigravity's dynamic model discovery (`fetchAvailableRuntimeModel()`), for a
      * model its tables do not know or a 404 on every candidate — pig's catalogue is the tables.
@@ -334,6 +358,14 @@ final class AntigravityApi implements StreamApi
             $candidates[] = $fallback;
         }
 
+        // "Turn identity mirrors buildRequest's requestIndex (count of successful assistant
+        // messages): it stays constant across retries of one turn and changes the moment any turn
+        // succeeds." Without a session id the conversation's own seed stands in for upstream's
+        // `anonymous`, which in a process serving several sessions at once would be one counter
+        // for all of them.
+        $sessionId = $options?->sessionId;
+        $turnKey = ($sessionId !== null && trim($sessionId) !== '' ? $sessionId : 'anonymous:' . self::seed($context)) . ':' . self::turnsAnswered($context);
+
         while (true) {
             $last = null;
             $lastText = '';
@@ -341,11 +373,29 @@ final class AntigravityApi implements StreamApi
             $runtime = $initial;
 
             foreach ($candidates as $index => $runtime) {
-                $body = $this->encode($this->body($model, $context, $options, $project, $runtime));
+                $last = null;
+                $lastEndpointError = null;
 
                 foreach ($hosts as $host) {
                     $lastHost = $host;
-                    $last = $this->http->send($this->request($host, $token, $model, $body), $signal);
+                    $nonce = self::nextRequestNonce($turnKey);
+                    $body = $this->encode($this->body($model, $context, $options, $project, $runtime, $nonce === 0 ? null : self::retrySessionSeed($sessionId, $nonce)));
+
+                    try {
+                        $last = $this->http->send($this->request($host, $token, $model, $body), $signal);
+                    } catch (Throwable $error) {
+                        // "Caller cancellation is not an endpoint failure — propagate it. A transport
+                        // failure or our own header deadline abort means this endpoint may be wedged;
+                        // ENDPOINT_FALLBACKS exist for that, so fall through instead of dying
+                        // without trying them."
+                        if ($signal?->aborted() ?? false) {
+                            throw $error;
+                        }
+
+                        $lastEndpointError = $error;
+
+                        continue;
+                    }
 
                     if ($last->isSuccessful()) {
                         return $last;
@@ -353,13 +403,20 @@ final class AntigravityApi implements StreamApi
 
                     $lastText = $last->body->all();
 
-                    if ($last->status === 429 && self::isQuotaWall($lastText)) {
+                    if ($last->status === 429 && (self::isQuotaWall($lastText) || !self::isRetryableRateLimit($lastText))) {
                         break;
                     }
 
                     if (!in_array($last->status, self::FALL_BACK_ON, true)) {
                         break;
                     }
+                }
+
+                // "Every endpoint threw before sending headers: rethrow the original transport error
+                // so its message (which pi classifies for auto-retry) survives instead of being
+                // masked by the generic failure path below."
+                if ($last === null && $lastEndpointError !== null) {
+                    throw $lastEndpointError;
                 }
 
                 // "if (response?.status === 404) { if (candIdx + 1 < runtimeCandidates.length) continue; }"
@@ -391,18 +448,85 @@ final class AntigravityApi implements StreamApi
             }
 
             throw new ProviderError(
-                "Antigravity API error ({$last->status}, " . self::formatRequestDiagnostics($lastHost, $project, $runtime) . "): {$friendly}",
+                'Antigravity API error (' . self::publicErrorStatus($last->status, $friendly) . ', ' . self::formatRequestDiagnostics($lastHost, $project, $runtime) . "): {$friendly}",
             );
         }
     }
 
     /**
+     * pi-antigravity's `publicErrorStatus()`, for the 429 it was written for: "Keep the numeric
+     * status out of non-retryable errors. Pi treats the digits 429 as a retryable provider error
+     * even when the friendly text says the model is unavailable." (`Retry`'s pattern is upstream's,
+     * so pig does too.)
+     *
+     * **Narrower than upstream on purpose.** Upstream hides the status of every refusal whose
+     * sentence does not say "retrying automatically", which takes the digits off a 502 and a 503
+     * as well — and their sentences ("bad gateway", "temporarily unavailable", "no capacity")
+     * match nothing in the retry pattern, so those would stop being retried. Nothing upstream says
+     * that was meant; here the other statuses keep their number.
+     */
+    private static function publicErrorStatus(int $status, string $friendly): string
+    {
+        return $status === 429 && preg_match('/retrying automatically/i', $friendly) !== 1 ? 'request-failed' : (string) $status;
+    }
+
+    /** `nextRequestNonce()`: how many requests went out for this turn before this one. */
+    private static function nextRequestNonce(string $turnKey): int
+    {
+        $nonce = self::$turnRequestNonces[$turnKey] ?? 0;
+        // Set, not moved to the end: a JavaScript `Map` keeps a key where it was first put.
+        self::$turnRequestNonces[$turnKey] = $nonce + 1;
+
+        if (count(self::$turnRequestNonces) > 64) {
+            unset(self::$turnRequestNonces[array_key_first(self::$turnRequestNonces)]);
+        }
+
+        return $nonce;
+    }
+
+    /** Forget every turn's count. For tests, which send the same first message again and again. */
+    public static function forgetRequestNonces(): void
+    {
+        self::$turnRequestNonces = [];
+    }
+
+    /**
+     * `retrySessionSeed()`: what a request sent again is identified by — the session's id with the
+     * count on it, or something random when there is no session id to hang it on.
+     */
+    private static function retrySessionSeed(?string $sessionId, int $nonce): string
+    {
+        return $sessionId !== null && trim($sessionId) !== '' ? "{$sessionId}:r{$nonce}" : 'retry:' . bin2hex(random_bytes(16));
+    }
+
+    /** Assistant turns that were answered — not the ones that failed or were aborted, which a retry leaves behind. */
+    private static function turnsAnswered(TranscriptContext $context): int
+    {
+        return count(array_filter(
+            $context->messages,
+            static fn (mixed $message): bool => $message instanceof AssistantMessage
+                && $message->stopReason !== StopReason::Error
+                && $message->stopReason !== StopReason::Aborted,
+        ));
+    }
+
+    /** "Short throttles. Pi retries these; persistent model unavailability must not match." */
+    private static function isRetryableRateLimit(string $text): bool
+    {
+        return preg_match('/rate.?limit|too many requests/i', $text) === 1;
+    }
+
+    /**
      * pi-antigravity's `formatRequestDiagnostics()`. `matched` and `available` come from its
-     * dynamic model discovery, which pig has not got, so they are its own values for "never ran".
+     * dynamic per-request model lookup, which pig has not got, so they are what upstream's
+     * `recordStaticRouteDiagnostics()` records for a request that skipped it: the runtime model
+     * the tables gave, and the models the catalogue in use has.
      */
     private static function formatRequestDiagnostics(string $endpoint, string $project, string $runtime): string
     {
-        return "endpoint={$endpoint}, project={$project}, runtimeModel={$runtime}, matched=none, available=unknown";
+        $available = implode(',', Routing::models());
+
+        return "endpoint={$endpoint}, project={$project}, runtimeModel={$runtime}, matched=static:{$runtime}, available=" . ($available !== '' ? $available : 'static-catalog');
     }
 
     /**
@@ -426,7 +550,9 @@ final class AntigravityApi implements StreamApi
                 'accept' => 'text/event-stream',
                 'content-type' => 'application/json',
                 'authorization' => "Bearer {$token}",
-                'user-agent' => self::USER_AGENT,
+                // The CLI's own, which this deployment checks: a version and a platform that have
+                // nothing to do with the machine running pig. `Discovery::userAgent()` holds it.
+                'user-agent' => Discovery::userAgent(),
                 ...$model->headers,
             ],
             $body,
@@ -442,7 +568,7 @@ final class AntigravityApi implements StreamApi
      *
      * @return array<string, mixed>
      */
-    private function body(Model $model, TranscriptContext $context, ?GoogleOptions $options, string $project, ?string $runtime = null): array
+    private function body(Model $model, TranscriptContext $context, ?GoogleOptions $options, string $project, ?string $runtime = null, ?string $retrySeed = null): array
     {
         // Both, so that the two cannot contradict each other: `thinkingEnabled: false` with a
         // level set means off, which is the reading every other provider here gives it.
@@ -499,11 +625,13 @@ final class AntigravityApi implements StreamApi
             $inner['generationConfig'] = $config;
         }
 
-        $seed = self::seed($context);
+        // A request sent again is a different conversation as far as the deployment can tell:
+        // the session, the trajectory and the agent id all come from `$retrySeed`.
+        $seed = $retrySeed ?? self::seed($context);
         $trajectory = md5("antigravity:traj:{$seed}");
         $steps = count($inner['contents']);
 
-        $sessionSeed = $options?->sessionId ?? $seed;
+        $sessionSeed = $retrySeed ?? $options?->sessionId ?? $seed;
         $inner['sessionId'] = self::toInt64SessionId($sessionSeed);
         $inner['labels'] = [
             'last_step_index' => (string) max(0, $steps - 1),
@@ -729,7 +857,14 @@ final class AntigravityApi implements StreamApi
                 return 'Quota reached.' . ($wait !== '' ? " Please wait {$wait}." : '') . ' Next: switch models or retry later.';
             }
 
-            return 'Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.';
+            if (self::isRetryableRateLimit($msg)) {
+                return 'Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.';
+            }
+
+            // "A generic RESOURCE_EXHAUSTED body, with no reset hint, is how unavailable models
+            // such as gemini-3.1-pro fail. Do not include 429/ResourceExhausted: those tokens make
+            // Pi burn its automatic retry budget and look like an account quota wall."
+            return 'This model is unavailable right now (' . ($msg !== '' ? $msg : 'resource exhausted') . '). Next: switch to gemini-3.8-flash or another Flash model. This is not necessarily an account quota wall.';
         }
 
         if ($status === 500) {

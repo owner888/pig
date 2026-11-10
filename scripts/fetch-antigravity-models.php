@@ -51,8 +51,11 @@ use Pig\Tui\Style;
 /** Where the catalogue answers. Same host as `Providers\Antigravity::ENDPOINT`. */
 const ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
 
-/** The CLI's own, which is what this deployment checks for. */
-const USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
+/**
+ * The CLI's own, which is what this deployment checks for — and gates the catalogue on: an older
+ * version is not shown the newest models. Keep it the same string as `Discovery::DEFAULT_USER_AGENT`.
+ */
+const USER_AGENT = 'antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)';
 
 $options = getopt('', ['raw', 'endpoint:', 'from:']) ?: [];
 $endpoint = isset($options['endpoint']) && is_string($options['endpoint'])

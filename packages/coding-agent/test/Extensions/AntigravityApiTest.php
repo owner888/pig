@@ -38,6 +38,8 @@ final class AntigravityApiTest extends TestCase
     {
         self::registerAntigravity();
         Loop::reset();
+        // Which request is a turn's first is counted per process; every test starts the count over.
+        Antigravity::forgetRequestNonces();
         $this->server = new CannedServer();
     }
 
@@ -182,16 +184,66 @@ final class AntigravityApiTest extends TestCase
     {
         // What the deployment caches against, so it has to be derived from the conversation and
         // not from the clock. Two turns of one conversation, two requests, one trajectory.
-        $context = new Context([new UserMessage('the opening line')]);
+        $opening = new UserMessage('the opening line');
 
-        $this->send('gemini-3-flash', 'low', $context);
-        $first = $this->server->receivedJson()['request']['labels']['trajectory_id'];
+        $this->send('gemini-3-flash', 'low', new Context([$opening]));
+        $first = $this->server->receivedJson()['request'];
 
         $this->server = new CannedServer();
-        $this->send('gemini-3-flash', 'low', $context);
-        $second = $this->server->receivedJson()['request']['labels']['trajectory_id'];
+        $this->send('gemini-3-flash', 'low', new Context([$opening, self::answered('ok'), new UserMessage('and then?')]));
+        $second = $this->server->receivedJson()['request'];
 
-        $this->assertSame($first, $second);
+        $this->assertSame($first['labels']['trajectory_id'], $second['labels']['trajectory_id']);
+        $this->assertSame($first['sessionId'], $second['sessionId']);
+    }
+
+    public function testATurnSentAgainGoesOutAsADifferentSessionAndTrajectory(): void
+    {
+        // pi-antigravity 0.12: the deployment queues a session's requests behind one another, and
+        // a stream that died may still be generating there — so the same turn asked for again
+        // would wait behind it. Every request after a turn's first has an identity of its own.
+        $context = new Context([new UserMessage('the opening line'), self::answered('ok'), new UserMessage('and then?')]);
+        $identity = function (?string $sessionId) use ($context): array {
+            $this->server = new CannedServer();
+            $url = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]], 'finishReason' => 'STOP']]]]]);
+            $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', 'low', $context, sessionId: $sessionId);
+            $body = $this->server->receivedJson();
+
+            return [$body['request']['sessionId'], $body['request']['labels']['trajectory_id'], explode('/', $body['requestId'])[1]];
+        };
+
+        // With a session id: the id itself first, then the id with the count on it.
+        $first = $identity('sess-1');
+        $again = $identity('sess-1');
+        $third = $identity('sess-1');
+        $this->assertSame(Antigravity::toInt64SessionId('sess-1'), $first[0]);
+        $this->assertSame(Antigravity::toInt64SessionId('sess-1:r1'), $again[0]);
+        $this->assertSame(Antigravity::toInt64SessionId('sess-1:r2'), $third[0]);
+        $this->assertSame(md5('antigravity:traj:sess-1:r1'), $again[1]);
+        $this->assertNotSame($first[1], $again[1]);
+        $this->assertNotSame($first[2], $again[2], 'the agent id in the request id is the retry\'s too');
+
+        // Another session at the same point of the same conversation is not a retry of this one.
+        $this->assertSame(Antigravity::toInt64SessionId('sess-2'), $identity('sess-2')[0]);
+
+        // Without one: counted by the conversation, and identified by something random.
+        $bare = $identity(null);
+        $bareAgain = $identity(null);
+        $this->assertSame($first[1], $bare[1], 'the trajectory is the conversation\'s either way');
+        $this->assertNotSame($bare[0], $bareAgain[0]);
+        $this->assertNotSame($bare[1], $bareAgain[1]);
+        $this->assertNotSame($bareAgain, $identity(null));
+
+        // A turn that failed is not a turn answered: the request after it is still the same turn's.
+        Antigravity::forgetRequestNonces();
+        $failed = new AssistantMessage([], Api::Extension, 'antigravity', 'gemini-3-flash', new \Pig\Ai\Usage(), StopReason::Error, 'boom');
+        $this->server = new CannedServer();
+        $this->send('gemini-3-flash', 'low', new Context([new UserMessage('q')]));
+        $firstTry = $this->server->receivedJson()['request']['labels']['trajectory_id'];
+        $this->server = new CannedServer();
+        $this->send('gemini-3-flash', 'low', new Context([new UserMessage('q'), $failed, new UserMessage('q, again')]));
+        $this->assertNotSame($firstTry, $this->server->receivedJson()['request']['labels']['trajectory_id']);
+        $this->assertSame(md5('antigravity:traj:q'), $firstTry);
     }
 
     public function testADifferentConversationGetsADifferentTrajectoryId(): void
@@ -220,13 +272,13 @@ final class AntigravityApiTest extends TestCase
     {
         // A first message that is only a picture has nothing to key on. It must not fall back to
         // something random, or every turn of that conversation is a different trajectory.
-        $context = new Context([new UserMessage([])]);
+        $picture = new UserMessage([]);
 
-        $this->send('gemini-3-flash', 'low', $context);
+        $this->send('gemini-3-flash', 'low', new Context([$picture]));
         $first = $this->server->receivedJson()['request']['labels']['trajectory_id'];
 
         $this->server = new CannedServer();
-        $this->send('gemini-3-flash', 'low', $context);
+        $this->send('gemini-3-flash', 'low', new Context([$picture, self::answered('a cat'), new UserMessage('what colour?')]));
 
         $this->assertSame($first, $this->server->receivedJson()['request']['labels']['trajectory_id']);
     }
@@ -281,13 +333,13 @@ final class AntigravityApiTest extends TestCase
 
     public function testATransient429IsTriedOnTheOtherHostAndThenReadsAsThrottling(): void
     {
-        // `[403, 404, 429, 500, 502, 503, 504]` move on to the next endpoint; generic
-        // RESOURCE_EXHAUSTED is throttling, worded so that the session's backoff engages.
+        // `[403, 404, 429, 500, 502, 503, 504]` move on to the next endpoint; a 429 that says it
+        // is rate limiting is throttling, worded so that the session's backoff engages.
         $first = new CannedServer();
-        $url = $first->start([self::refusal(429, 'RESOURCE_EXHAUSTED: slow down')]);
+        $url = $first->start([self::refusal(429, 'Rate limit exceeded: slow down')]);
 
         $second = new CannedServer();
-        $secondUrl = $second->start([self::refusal(429, 'RESOURCE_EXHAUSTED: slow down')]);
+        $secondUrl = $second->start([self::refusal(429, 'Too many requests')]);
 
         $message = $this->drain(new Antigravity(fallback: $secondUrl), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
 
@@ -297,6 +349,83 @@ final class AntigravityApiTest extends TestCase
         $this->assertStringEndsWith('): Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.', (string) $message);
         $this->assertTrue(\Pig\Ai\Utils\Retry::isRetryableAssistantError(new \Pig\Ai\AssistantMessage([], \Pig\Ai\Api::Extension, 'antigravity', 'm', new \Pig\Ai\Usage(), \Pig\Ai\StopReason::Error, (string) $message)), 'still throttling to the session');
         $this->assertNotSame('', $second->receivedHead(), 'the second host was asked');
+    }
+
+    public function testA429ThatNamesNoLimitIsAModelNotBeingServedAndIsNeitherWalkedNorRetried(): void
+    {
+        // pi-antigravity 0.11: "A generic RESOURCE_EXHAUSTED body, with no reset hint, is how
+        // unavailable models fail." Every endpoint would say the same, the session's backoff would
+        // spend itself on it, and it is not this account's quota either.
+        $first = new CannedServer();
+        $url = $first->start([self::refusal(429, 'Resource has been exhausted (e.g. check quota).')]);
+
+        $second = new CannedServer();
+        $secondUrl = $second->start([self::refusal(200, 'unused')]);
+        $asked = 0;
+        $failover = static function () use (&$asked): ?string {
+            $asked++;
+
+            return null;
+        };
+
+        $message = (string) $this->drain(new Antigravity(fallback: $secondUrl, failover: $failover), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+
+        // No status in it: the digits alone are what the session's retry pattern reads.
+        $this->assertSame(
+            'Antigravity API error (request-failed, endpoint=' . rtrim($url, '/') . ', project=proj-1, runtimeModel=gemini-3-flash, matched=static:gemini-3-flash, available=' . implode(',', \PigAntigravity\Routing::models()) . '): '
+            . 'This model is unavailable right now (Resource has been exhausted (e.g. check quota).). Next: switch to gemini-3.8-flash or another Flash model. This is not necessarily an account quota wall.',
+            $message,
+        );
+        $this->assertFalse(\Pig\Ai\Utils\Retry::isRetryableAssistantError(new AssistantMessage([], Api::Extension, 'antigravity', 'm', new \Pig\Ai\Usage(), StopReason::Error, $message)));
+        $this->assertSame('', $second->receivedHead(), 'the second host was never asked');
+        $this->assertSame(0, $asked, 'and no other account either: it is not a quota wall');
+
+        // The statuses the session does retry keep their number — where pig is narrower than upstream.
+        $busy = new CannedServer();
+        $busyUrl = $busy->start([self::refusal(503, 'The service is currently unavailable.')]);
+        $busyMessage = (string) $this->drain(new Antigravity(fallback: rtrim($busyUrl, '/')), $this->model($busyUrl), 'gemini-3-flash', 'low', new Context([new UserMessage('busy')]));
+        $this->assertStringStartsWith('Antigravity API error (503, endpoint=', $busyMessage);
+        $this->assertTrue(\Pig\Ai\Utils\Retry::isRetryableAssistantError(new AssistantMessage([], Api::Extension, 'antigravity', 'm', new \Pig\Ai\Usage(), StopReason::Error, $busyMessage)));
+    }
+
+    public function testTheModelThatActuallyAnsweredIsOnTheMessage(): void
+    {
+        // pi-antigravity 0.12: the gateway may serve another model than the runtime one asked for,
+        // and says which in `modelVersion`; the session file should show it.
+        $url = $this->serve([
+            ['response' => ['modelVersion' => 'gemini-3-flash-001', 'responseId' => 'resp-1', 'candidates' => [['content' => ['parts' => [['text' => 'o']]]]]]],
+            ['response' => ['modelVersion' => 'gemini-3-flash-002', 'candidates' => [['content' => ['parts' => [['text' => 'k']]], 'finishReason' => 'STOP']]]],
+        ]);
+
+        $message = Async::run(function () use ($url): AssistantMessage {
+            $stream = (new Antigravity())->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new GoogleOptions(apiKey: self::key()));
+
+            foreach ($stream as $ignored) {
+                // Drained for its result.
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame('gemini-3-flash', $message->model, 'the model that was asked for');
+        $this->assertSame('gemini-3-flash-002', $message->responseModel);
+        $this->assertSame('resp-1', $message->responseId);
+    }
+
+    public function testAnEndpointThatCannotBeReachedIsPassedOverForTheNextOne(): void
+    {
+        // pi-antigravity 0.12: a transport failure used to end the turn without the other
+        // endpoint ever being asked. Port 1 refuses the connection.
+        $answering = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]], 'finishReason' => 'STOP']]]]]);
+
+        $this->assertNull($this->drain(new Antigravity(fallback: $answering), $this->model('http://127.0.0.1:1'), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')])));
+        $this->assertSame('gemini-3-flash', $this->server->receivedJson()['model']);
+
+        // When none can be: the transport's own words, which are what the session retries on —
+        // not "No endpoint to try".
+        $message = (string) $this->drain(new Antigravity(fallback: 'http://127.0.0.1:1'), $this->model('http://127.0.0.1:1'), 'gemini-3-flash', 'low', new Context([new UserMessage('again')]));
+        $this->assertStringContainsStringIgnoringCase('connect', $message);
+        $this->assertTrue(\Pig\Ai\Utils\Retry::isRetryableAssistantError(new AssistantMessage([], Api::Extension, 'antigravity', 'm', new \Pig\Ai\Usage(), StopReason::Error, $message)), $message);
     }
 
     public function testAQuotaWallFailsOverToTheNextAccountAndSendsAgain(): void
@@ -366,10 +495,19 @@ final class AntigravityApiTest extends TestCase
         // is tried again on 3.7's, under its own enum. Today's catalogue serves neither 3.7 nor
         // 3.6, so a catalogue that still names them is installed for the chain to have somewhere
         // to go — which is also how it would come back if the deployment named them again.
-        \PigAntigravity\Routing::useTables(
-            ['gemini-3.8-flash' => ['default' => 'gemini-3.8-flash-low', 'off' => 'gemini-3.8-flash-low', 'levels' => ['medium' => 'gemini-3.8-flash-medium']]],
-            ['gemini-3.7-flash-medium' => 'MODEL_TEST_37_MEDIUM', 'gemini-3.7-flash-low' => 'MODEL_TEST_37_LOW', 'gemini-3.6-flash-low' => 'MODEL_TEST_36_LOW'],
-        );
+        $enums = ['gemini-3.7-flash-medium' => 'MODEL_TEST_37_MEDIUM', 'gemini-3.7-flash-low' => 'MODEL_TEST_37_LOW', 'gemini-3.6-flash-low' => 'MODEL_TEST_36_LOW'];
+        $newest = ['gemini-3.8-flash' => ['default' => 'gemini-3.8-flash-low', 'off' => 'gemini-3.8-flash-low', 'levels' => ['medium' => 'gemini-3.8-flash-medium']]];
+
+        // An enum is not enough: with a catalogue installed, the older runtime has to be one that
+        // catalogue still routes to ("never downgrade into a retired Flash generation").
+        \PigAntigravity\Routing::useTables($newest, $enums);
+        $this->assertNull(\PigAntigravity\Routing::fallback('gemini-3.8-flash-medium', 'medium'));
+
+        \PigAntigravity\Routing::useTables([
+            ...$newest,
+            'gemini-3.7-flash' => ['default' => 'gemini-3.7-flash-low', 'off' => 'gemini-3.7-flash-low', 'levels' => ['medium' => 'gemini-3.7-flash-medium']],
+            'gemini-3.6-flash' => ['default' => 'gemini-3.6-flash-low', 'levels' => []],
+        ], $enums);
 
         $url = $this->server->startSequence([
             [self::refusal(404, 'Requested entity was not found.')],
@@ -571,8 +709,9 @@ final class AntigravityApiTest extends TestCase
         ?string $level,
         Context $context,
         ?string $key = null,
+        ?string $sessionId = null,
     ): ?string {
-        return Async::run(function () use ($provider, $model, $id, $level, $context, $key): ?string {
+        return Async::run(function () use ($provider, $model, $id, $level, $context, $key, $sessionId): ?string {
             $stream = $provider->stream(
                 new Model(
                     $id,
@@ -592,6 +731,7 @@ final class AntigravityApiTest extends TestCase
                     apiKey: $key ?? self::key(),
                     thinkingEnabled: $level !== null,
                     thinkingLevel: $level,
+                    sessionId: $sessionId,
                 ),
             );
 
@@ -601,6 +741,12 @@ final class AntigravityApiTest extends TestCase
 
             return $stream->result()->await()->errorMessage;
         });
+    }
+
+    /** A turn the model answered, for a context that is past its first turn. */
+    private static function answered(string $text): AssistantMessage
+    {
+        return new AssistantMessage([new \Pig\Ai\TextContent($text)], Api::Extension, 'antigravity', 'gemini-3-flash', new \Pig\Ai\Usage(), StopReason::Stop);
     }
 
     private function model(string $baseUrl): Model

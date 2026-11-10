@@ -243,4 +243,59 @@ final class AntigravityImagesTest extends TestCase
             rmdir($dir);
         }
     }
+
+    public function testAnImageIsNeverWrittenThroughASymbolicLink(): void
+    {
+        // pi-antigravity 0.12: a link inside the working directory is how a path that reads as
+        // inside it writes outside it.
+        $dir = sys_get_temp_dir() . '/pig-ag-img-' . bin2hex(random_bytes(4));
+        $outside = sys_get_temp_dir() . '/pig-ag-out-' . bin2hex(random_bytes(4));
+        mkdir($dir);
+        mkdir($outside);
+        file_put_contents("{$outside}/secret", 'unchanged');
+        symlink($outside, "{$dir}/escape");
+        symlink("{$outside}/secret", "{$dir}/link.png");
+        symlink("{$outside}/not-there.png", "{$dir}/dangling.png");
+        file_put_contents("{$dir}/kept.png", 'a longer file than the image');
+        chmod("{$dir}/kept.png", 0o644);
+        $result = new AssistantImages(ImageApi::Extension, 'antigravity', 'm', [new ImageContent(base64_encode('png'), 'image/png')], StopReason::Stop, 0);
+
+        try {
+            foreach ([
+                'escape/secret.png' => 'Image path must not traverse symlinks',
+                'link.png' => 'Image path must not follow symlinks',
+                'dangling.png' => 'Image path must not follow symlinks',
+            ] as $path => $message) {
+                try {
+                    ImageGenerator::save($result, $path, $dir);
+                    $this->fail("{$path} goes through a link");
+                } catch (\RuntimeException $error) {
+                    $this->assertSame($message, $error->getMessage());
+                }
+            }
+
+            $this->assertSame('unchanged', file_get_contents("{$outside}/secret"));
+            $this->assertSame(['secret'], array_values(array_diff(scandir($outside) ?: [], ['.', '..'])), 'nothing was made outside');
+
+            // An ordinary file is written over whole and keeps its mode; a new one is the person's own.
+            $this->assertSame(["{$dir}/kept.png"], ImageGenerator::save($result, 'kept.png', $dir));
+            $this->assertSame('png', file_get_contents("{$dir}/kept.png"));
+            $this->assertSame(0o644, fileperms("{$dir}/kept.png") & 0o777);
+            ImageGenerator::save($result, 'deep/er/new.png', $dir);
+            $this->assertSame('png', file_get_contents("{$dir}/deep/er/new.png"));
+            $this->assertSame(0o600, fileperms("{$dir}/deep/er/new.png") & 0o777);
+        } finally {
+            foreach (["{$dir}/deep/er/new.png", "{$dir}/kept.png", "{$dir}/link.png", "{$dir}/dangling.png", "{$dir}/escape", "{$outside}/secret"] as $file) {
+                if (is_file($file) || is_link($file)) {
+                    unlink($file);
+                }
+            }
+
+            foreach (["{$dir}/deep/er", "{$dir}/deep", $dir, $outside] as $directory) {
+                if (is_dir($directory)) {
+                    rmdir($directory);
+                }
+            }
+        }
+    }
 }

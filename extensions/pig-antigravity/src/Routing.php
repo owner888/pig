@@ -238,6 +238,13 @@ final class Routing
      */
     public static function resolve(string $model, ?string $level): array
     {
+        // "A selected model can outlive a catalog refresh (for example in a resumed session). Do
+        // not resurrect a retired route from the bootstrap catalog." — and say it in upstream's
+        // words, which name the way out.
+        if (self::$routing !== null && !isset(self::$routing[$model]) && isset(self::ROUTING[$model])) {
+            throw new ProviderError("Antigravity model {$model} is absent from the current catalog. Next: run /antigravity.refresh and select an available model.");
+        }
+
         $entry = self::routing()[$model]
             ?? throw new ProviderError("Antigravity has no model '{$model}'. Regenerate the routing tables with scripts/fetch-antigravity-models.php.");
 
@@ -261,6 +268,10 @@ final class Routing
      * `gemini-3.6-flash-low`, the tiered one to what 3.6 Flash resolves to at this level), and
      * nothing else falls back.
      *
+     * With a catalog installed, only to a runtime id that catalog still routes to: "Compatibility
+     * fallbacks are only valid while the backend still advertises their runtime ID. Never downgrade
+     * into a retired Flash generation."
+     *
      * Null as well for a fallback these tables have no enum for: pi-antigravity sends whatever id it
      * computed, and pig's envelope cannot carry a runtime model it has no enum to name. **Which is
      * every case today**: the deployment stopped serving 3.7 and 3.6 Flash, the regenerated tables
@@ -279,7 +290,23 @@ final class Routing
             default => null,
         };
 
-        return $candidate !== null && isset(self::enums()[$candidate]) ? $candidate : null;
+        if ($candidate === null || !isset(self::enums()[$candidate])) {
+            return null;
+        }
+
+        return self::$routing === null || self::advertises($candidate) ? $candidate : null;
+    }
+
+    /** Whether the installed catalog routes any model, at any level, to $runtime. */
+    private static function advertises(string $runtime): bool
+    {
+        foreach (self::$routing ?? [] as $entry) {
+            if (in_array($runtime, [$entry['off'] ?? null, $entry['default'], ...array_values($entry['levels'])], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** The enum a runtime model id goes out as. */
@@ -328,7 +355,9 @@ final class Routing
             };
         }
 
-        if (str_starts_with($runtime, 'gemini-')) {
+        // "Gemini 4 Argon rejects thinkingBudget 0 and any budget under 1000." The numbers are the
+        // other Gemini models'; what the branch adds is an id that says `argon` without `gemini-`.
+        if (str_contains($runtime, 'argon') || str_starts_with($runtime, 'gemini-')) {
             return match ($level) {
                 'high', 'xhigh' => -1,
                 'medium' => 4_000,
