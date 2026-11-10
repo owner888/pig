@@ -560,6 +560,49 @@ final class OauthTest extends TestCase
         $this->assertTrue(Loop::get()->isIdle(), 'closing cancels the timers and watchers');
     }
 
+    public function testAnExtraPathTakesTheCallbackButOnlyTheOneTheSignInWaitsOn(): void
+    {
+        // Upstream's `extraPaths`: a server-specific document's redirect URI is served too, and a
+        // response that comes back on the other path is refused, as it may be another server's.
+        Async::run(function (): void {
+            $server = OauthCallbackServer::listen(timeout: 5.0, extraPaths: ['/callback/abc']);
+            $base = $server->redirectUrl;
+
+            $waiter = Async::spawn(static fn () => $server->waitForCallback('s1', '/callback/abc'));
+            $this->assertStringContainsString('200 OK', $this->browse($base . '/abc?code=c1&state=s1'));
+            $this->assertSame('c1', $waiter->await()['code']);
+
+            $waiter = Async::spawn(static fn () => $server->waitForCallback('s2', '/callback/abc'));
+            $this->assertStringContainsString('400', $this->browse($base . '?code=c2&state=s2'));
+
+            try {
+                $waiter->await();
+                $this->fail('the wrong path');
+            } catch (\RuntimeException $error) {
+                $this->assertSame('The authorization response arrived on another redirect URI', $error->getMessage());
+            }
+
+            $this->assertStringContainsString('404', $this->browse($base . '/other?code=c&state=s'));
+            $server->close();
+        });
+    }
+
+    public function testTheClientIdOfADocumentIsItsUrlAndNothingIsRegistered(): void
+    {
+        $document = \Pig\Mcp\Oauth\McpClientMetadataDocuments::document(
+            'https://mcp.example.com/mcp',
+            'http://127.0.0.1:5000/callback',
+            ['client_id_metadata_document_supported' => true, 'token_endpoint_auth_methods_supported' => ['none']],
+            'https://pigagent.dev/oauth',
+        );
+        // The callback ID is upstream's: the same 12 characters pi computes for this URL.
+        $this->assertSame(['url' => 'https://pigagent.dev/oauth/epMNJ6P1xGQ9/client.json', 'redirectUrl' => 'http://127.0.0.1:5000/callback/epMNJ6P1xGQ9'], $document);
+
+        // Public clients only, and no document for a server that does not take them.
+        $this->assertNull(\Pig\Mcp\Oauth\McpClientMetadataDocuments::document('https://mcp.example.com/mcp', 'http://127.0.0.1:5000/callback', ['client_id_metadata_document_supported' => true, 'token_endpoint_auth_methods_supported' => ['client_secret_post']], 'https://pigagent.dev/oauth'));
+        $this->assertNull(\Pig\Mcp\Oauth\McpClientMetadataDocuments::document('https://mcp.example.com/mcp', 'http://127.0.0.1:5000/callback', null, 'https://pigagent.dev/oauth'));
+    }
+
     public function testClosingTheCallbackServerFailsWhoeverWasWaiting(): void
     {
         Async::run(function (): void {

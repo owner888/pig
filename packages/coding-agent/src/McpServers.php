@@ -173,6 +173,29 @@ final class McpServers
             return 'oauth.scope must be a string';
         }
 
+        if (array_key_exists('clientName', $value) && (!is_string($value['clientName']) || trim($value['clientName']) === '')) {
+            return 'oauth.clientName must be a non-empty string';
+        }
+
+        // Upstream's: `auto` (the default) identifies as pig's Client ID Metadata Document where the
+        // authorization server takes one and registers a client elsewhere; `dcr` always registers;
+        // `cimd` always uses the document, which lists only the default callback.
+        $registration = $value['clientRegistration'] ?? null;
+
+        if ($registration !== null && $registration !== 'auto' && $registration !== 'dcr') {
+            if ($registration !== 'cimd') {
+                return 'oauth.clientRegistration must be "auto", "dcr", or "cimd"';
+            }
+
+            if (array_key_exists('clientId', $value) || array_key_exists('clientName', $value)) {
+                return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
+            }
+
+            if (!self::isClientMetadataDocumentCallback(is_string($value['callbackUrl'] ?? null) ? $value['callbackUrl'] : null)) {
+                return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback';
+            }
+        }
+
         // The authorization server's metadata document, for a server that advertises the wrong
         // one or none. https only, as the flow would refuse it anyway: a document fetched in the
         // clear is a token endpoint somebody else chose.
@@ -185,6 +208,22 @@ final class McpServers
         }
 
         return null;
+    }
+
+    /**
+     * Whether pig's Client ID Metadata Documents (`https://pigagent.dev/oauth/…`) list a redirect URI
+     * for the loopback `callbackUrl` — upstream's `isClientMetadataDocumentCallback()`: they list
+     * `/callback` on localhost and 127.0.0.1, on any port. Without `callbackUrl`, pig uses such a URI.
+     */
+    public static function isClientMetadataDocumentCallback(?string $callbackUrl): bool
+    {
+        if ($callbackUrl === null) {
+            return true;
+        }
+
+        $parts = parse_url($callbackUrl) ?: [];
+
+        return ($parts['host'] ?? null) !== '[::1]' && ($parts['path'] ?? '') === '/callback';
     }
 
     /** Whether a redirect URI can be served by pig's loopback callback server. */

@@ -56,6 +56,10 @@ final class McpCli
                                   OAuth client secret (may be ${NAME} or !command)
           --oauth-callback-port <port>
                                   Fixed OAuth callback port
+          --oauth-client-name <name>
+                                  Client name sent when registering with the OAuth server
+          --oauth-client-registration <mode>
+                                  auto (default), cimd, or dcr
           --oauth-auth-server-metadata-url <url>
                                   Authorization server metadata document, for a server
                                   that advertises the wrong one or none
@@ -331,6 +335,7 @@ final class McpCli
             'local' => 'flag', 'url' => 'value', 'env' => 'list', 'cwd' => 'value', 'header' => 'list',
             'bearer-token-env-var' => 'value', 'oauth-client-id' => 'value', 'oauth-client-secret' => 'value',
             'oauth-callback-port' => 'value', 'oauth-auth-server-metadata-url' => 'value', 'exposure' => 'value',
+            'oauth-client-name' => 'value', 'oauth-client-registration' => 'value',
         ], 2);
 
         if ($parsed === null) {
@@ -348,7 +353,7 @@ final class McpCli
             return 1;
         }
 
-        $httpOnly = ['header', 'bearer-token-env-var', 'oauth-client-id', 'oauth-client-secret', 'oauth-callback-port', 'oauth-auth-server-metadata-url'];
+        $httpOnly = ['header', 'bearer-token-env-var', 'oauth-client-id', 'oauth-client-secret', 'oauth-callback-port', 'oauth-auth-server-metadata-url', 'oauth-client-name', 'oauth-client-registration'];
         $stdioOnly = ['env', 'cwd'];
 
         foreach ($url === null ? $httpOnly : $stdioOnly as $option) {
@@ -375,6 +380,8 @@ final class McpCli
                 ...(isset($values['oauth-client-secret']) ? ['clientSecret' => $values['oauth-client-secret']] : []),
                 ...(isset($values['oauth-callback-port']) ? ['callbackPort' => (int) $values['oauth-callback-port']] : []),
                 ...(isset($values['oauth-auth-server-metadata-url']) ? ['authServerMetadataUrl' => $values['oauth-auth-server-metadata-url']] : []),
+                ...(isset($values['oauth-client-name']) ? ['clientName' => $values['oauth-client-name']] : []),
+                ...(isset($values['oauth-client-registration']) ? ['clientRegistration' => $values['oauth-client-registration']] : []),
             ];
             $config = ['url' => $url, ...($headers !== [] ? ['headers' => $headers] : []), ...($oauth !== [] ? ['oauth' => $oauth] : [])];
         } else {

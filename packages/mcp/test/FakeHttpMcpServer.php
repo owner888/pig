@@ -64,6 +64,9 @@ final class FakeHttpMcpServer
     /** Whether the server metadata promises an `iss` on every authorization response (RFC 9207). */
     public bool $issSupported = false;
 
+    /** Whether the server metadata says it takes Client ID Metadata Documents as `client_id`. */
+    public bool $clientMetadataDocuments = false;
+
     private int $issued = 0;
 
     /** Hand out an authorization code for the given PKCE challenge, as the browser flow would. */
@@ -329,6 +332,7 @@ final class FakeHttpMcpServer
                 'code_challenge_methods_supported' => ['S256'],
                 'token_endpoint_auth_methods_supported' => ['none'],
                 ...($this->issSupported ? ['authorization_response_iss_parameter_supported' => true] : []),
+                ...($this->clientMetadataDocuments ? ['client_id_metadata_document_supported' => true] : []),
             ]));
 
             return true;

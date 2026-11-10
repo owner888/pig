@@ -12,7 +12,9 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\FileLock;
+use Pig\CodingAgent\McpServers;
 use Pig\CodingAgent\FileLockBusyError;
+use Pig\Mcp\Oauth\McpClientMetadataDocuments;
 use Pig\Mcp\Oauth\Discovery;
 use Pig\Mcp\Oauth\Flow;
 use Pig\Mcp\Oauth\McpOauthAuthorizationRequiredError;
@@ -30,8 +32,10 @@ use RuntimeException;
  * Connections never start a browser flow on their own. They send the stored access token and,
  * after a 401, try the stored refresh token; when that is not possible they fail with
  * `McpOauthAuthorizationRequiredError`, the connection goes `needs-auth`, and the person signs
- * in through `/mcp login` or `pig mcp login`, which runs the authorization code flow (PKCE,
- * dynamic client registration) against a loopback callback.
+ * in through `/mcp login` or `pig mcp login`, which runs the authorization code flow with PKCE
+ * against a loopback callback. pig identifies itself with its Client ID Metadata Document on
+ * pigagent.dev where the authorization server takes one, and registers a client dynamically
+ * elsewhere (`oauth.clientRegistration`, upstream's).
  *
  * Credentials live in `<agent-dir>/mcp-auth.json`, keyed by server URL, `0600`.
  *
@@ -45,6 +49,13 @@ final class McpOauth
     public const string CALLBACK_HOST = '127.0.0.1';
 
     public const string CALLBACK_PATH = '/callback';
+
+    /**
+     * pig's Client ID Metadata Documents — upstream's on pi.dev, served by pigagent.dev:
+     * `client.json`, and `<callback ID>/client.json` for an authorization server that sends no `iss`.
+     * They list `/callback` (and `/callback/<callback ID>`) on 127.0.0.1 and localhost, any port.
+     */
+    public const string CLIENT_METADATA_DOCUMENTS_URL = 'https://pigagent.dev/oauth';
 
     /** Access tokens this close to expiry are refreshed before they are sent. */
     private const int REFRESH_SKEW_MS = 30_000;
@@ -292,17 +303,7 @@ final class McpOauth
                             throw new McpOauthAuthorizationRequiredError();
                         }
 
-                        $settings = ($this->settings)();
-                        $redirectUrl = McpOauth::callbackSettings($settings)['fixedRedirectUrl']
-                            ?? ($state['clientInformation']['redirect_uris'][0] ?? null)
-                            ?? 'http://' . McpOauth::CALLBACK_HOST . McpOauth::CALLBACK_PATH;
-                        $provider = McpOauth::provider($this->serverUrl, $this->store, $settings, $redirectUrl, static fn () => null);
-
-                        $result = Flow::authorize($provider, [
-                            'serverUrl' => $this->serverUrl,
-                            'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
-                            'scope' => $challenge['scope'] ?? null,
-                        ], $this->fetch);
+                        $result = McpOauth::refreshStoredTokens($this->serverUrl, $this->store, ($this->settings)(), $state, $challenge, null, $this->fetch);
 
                         if ($result === Flow::REDIRECT) {
                             throw new McpOauthAuthorizationRequiredError();
@@ -372,7 +373,7 @@ final class McpOauth
      * Where the browser is sent back to, from the server's `oauth` settings.
      *
      * @param array<string, mixed> $settings
-     * @return array{host: string, redirectHost: string, port: ?int, path: string, fixedRedirectUrl: ?string}
+     * @return array{url: string, host: string, redirectHost: string, port: ?int, path: string, fixedRedirectUrl: ?string}
      */
     public static function callbackSettings(array $settings): array
     {
@@ -392,6 +393,8 @@ final class McpOauth
         }
 
         return [
+            // The redirect URI as configured, without the port unless one is configured.
+            'url' => $callbackUrl,
             // `localhost` is served on 127.0.0.1; browsers fall back to it when ::1 refuses.
             'host' => $address === 'localhost' ? self::CALLBACK_HOST : $address,
             'redirectHost' => $address,
@@ -401,7 +404,19 @@ final class McpOauth
         ];
     }
 
+    /** pig's documents, listing what `McpServers::isClientMetadataDocumentCallback()` says they list. */
+    public static function clientMetadataDocuments(): McpClientMetadataDocuments
+    {
+        return new McpClientMetadataDocuments(
+            self::CLIENT_METADATA_DOCUMENTS_URL,
+            static fn (string $redirectUrl): bool => McpServers::isClientMetadataDocumentCallback($redirectUrl),
+        );
+    }
+
     /**
+     * The OAuth client for one server — upstream's `createOAuthClientProvider()`: a pre-registered
+     * `clientId`, pig's Client ID Metadata Document, or a client registered as `clientName` (`pig`).
+     *
      * @param array<string, mixed> $settings the server's `oauth` block
      * @param Closure(string): void $onRedirect
      */
@@ -410,12 +425,74 @@ final class McpOauth
         return new McpOauthProvider(
             $serverUrl,
             $redirectUrl,
-            ['client_name' => 'pig'],
+            ['client_name' => isset($settings['clientName']) ? (string) $settings['clientName'] : 'pig'],
             $onRedirect,
             isset($settings['clientId']) ? (string) $settings['clientId'] : null,
             isset($settings['clientSecret']) ? (string) $settings['clientSecret'] : null,
             $store,
+            McpClientMetadataDocuments::chooser($settings, self::clientMetadataDocuments(), $serverUrl, $redirectUrl),
         );
+    }
+
+    /**
+     * Refresh the stored tokens of `$state` with the stored client, or the document it signed in
+     * with, or answer `REDIRECT` — upstream's `refreshStoredTokens()`. Never registers a client or
+     * prepares an authorization request, so a sign-in in progress stays usable. Called under the
+     * server's refresh lock.
+     *
+     * Refreshing redirects nobody; the redirect URI only decides whether tokens without a stored
+     * client can be refreshed as the document, so any one the documents list does: the sign-in's,
+     * the configured one, the stored client's, else the default.
+     *
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $state
+     * @param array{resourceMetadataUrl: ?string, scope: ?string, error: ?string, errorDescription: ?string}|null $challenge
+     * @param Closure(Request): Response|null $fetch
+     */
+    public static function refreshStoredTokens(string $serverUrl, OauthStateStore $store, array $settings, array $state, ?array $challenge, ?string $redirectUrl, ?Closure $fetch): string
+    {
+        $documents = self::clientMetadataDocuments();
+        $candidates = array_filter([
+            $redirectUrl,
+            self::callbackSettings($settings)['fixedRedirectUrl'],
+            McpClientMetadataDocuments::registeredRedirectUrls($state['clientInformation'] ?? null)[0] ?? null,
+        ], static fn (?string $url): bool => $url !== null && $documents->listsRedirectUrl($url));
+
+        $provider = self::provider($serverUrl, $store, $settings, array_values($candidates)[0] ?? 'http://' . self::CALLBACK_HOST . self::CALLBACK_PATH, static fn () => null);
+
+        return Flow::authorize($provider, [
+            'serverUrl' => $serverUrl,
+            'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
+            'authorizationServerMetadataUrl' => isset($settings['authServerMetadataUrl']) ? (string) $settings['authServerMetadataUrl'] : null,
+            'refreshOnly' => true,
+        ], $fetch);
+    }
+
+    /**
+     * The stored state for a browser step — upstream's `stateForSignIn()`: without the last
+     * sign-in's `state`, and without a client that cannot use `$redirectUrl`, along with its
+     * tokens. `cimd` replaces a registered client; `auto` keeps it. A document is not stored, so
+     * tokens without a stored client belong to the document.
+     *
+     * @param array<string, mixed> $stored
+     * @param array<string, mixed> $settings
+     * @return array<string, mixed>
+     */
+    private static function stateForSignIn(array $stored, array $settings, string $redirectUrl): array
+    {
+        $next = $stored;
+        unset($next['oauthState']);
+
+        $keepClient = isset($settings['clientId']) || (isset($stored['clientInformation'])
+            ? ($settings['clientRegistration'] ?? null) !== 'cimd'
+                && in_array($redirectUrl, McpClientMetadataDocuments::registeredRedirectUrls($stored['clientInformation']), true)
+            : McpClientMetadataDocuments::offered($settings, self::clientMetadataDocuments(), $redirectUrl));
+
+        if (!$keepClient) {
+            unset($next['clientInformation'], $next['tokens'], $next['tokensExpireAt']);
+        }
+
+        return $next;
     }
 
     /**
@@ -449,32 +526,18 @@ final class McpOauth
         $callbackOptions = self::callbackSettings($settings);
 
         // Reuse the port of the registered redirect URI so the registered client stays valid.
-        $registered = $stored['clientInformation']['redirect_uris'][0] ?? null;
+        $registered = McpClientMetadataDocuments::registeredRedirectUrls($stored['clientInformation'] ?? null)[0] ?? null;
         $preferredPort = $callbackOptions['port']
-            ?? (is_string($registered) ? ((int) parse_url($registered, PHP_URL_PORT) ?: null) : null);
+            ?? ($registered !== null ? ((int) parse_url($registered, PHP_URL_PORT) ?: null) : null);
 
-        $callback = self::listenForCallback($callbackOptions, $preferredPort, $callbackOptions['port'] !== null, $timeout);
+        // The redirect URI of a server-specific document is served as well, upstream's `extraPaths`.
+        $extraPaths = McpClientMetadataDocuments::offered($settings, self::clientMetadataDocuments(), $callbackOptions['url'])
+            ? [McpClientMetadataDocuments::serverSpecificPath($callbackOptions['path'], $serverUrl)]
+            : [];
+        $callback = self::listenForCallback($callbackOptions, $preferredPort, $callbackOptions['port'] !== null, $timeout, $extraPaths);
         $redirectUrl = $callbackOptions['fixedRedirectUrl'] ?? $callback->redirectUrl;
 
         try {
-            if ($stored !== null) {
-                $next = $stored;
-                // Every sign-in gets a fresh `state` parameter.
-                unset($next['oauthState']);
-
-                // A registered client cannot use another redirect URI, and its tokens belong to it.
-                if (!isset($settings['clientId']) && !in_array($redirectUrl, $stored['clientInformation']['redirect_uris'] ?? [], true)) {
-                    unset($next['clientInformation'], $next['tokens'], $next['tokensExpireAt']);
-                }
-
-                $store->save($next);
-            }
-
-            $authorizationUrl = null;
-            $provider = self::provider($serverUrl, $store, $settings, $redirectUrl, static function (string $url) use (&$authorizationUrl): void {
-                $authorizationUrl = $url;
-            });
-
             $flow = [
                 'serverUrl' => $serverUrl,
                 'signal' => $signal,
@@ -493,26 +556,66 @@ final class McpOauth
             // Under the server's refresh lock, as upstream's `refreshBeforeSignIn()`: two pigs
             // refreshing one rotating token at once would lose the grant. Another process holding
             // it for the whole wait means the person signs in instead — upstream's `REDIRECT`.
-            try {
-                $refreshed = ($this->refreshLock($name, $serverUrl))(
-                    fn (): string => ($signal?->aborted() ?? false) ? Flow::REDIRECT : Flow::authorize($provider, [...$flow, 'skipRefresh' => $stepUp], $fetch),
-                );
-            } catch (McpRefreshLockBusyError) {
-                $refreshed = Flow::REDIRECT;
+            if (!$stepUp) {
+                try {
+                    $refreshed = ($this->refreshLock($name, $serverUrl))(function () use ($store, $settings, $serverUrl, $challenge, $redirectUrl, $fetch, $signal): string {
+                        $state = $store->load();
+
+                        // `cimd` is to replace a registered client, whose tokens are not refreshed.
+                        if (($signal?->aborted() ?? false)
+                            || !is_string($state['tokens']['refresh_token'] ?? null)
+                            || (($settings['clientRegistration'] ?? null) === 'cimd' && isset($state['clientInformation']) && !isset($settings['clientId']))
+                        ) {
+                            return Flow::REDIRECT;
+                        }
+
+                        return self::refreshStoredTokens($serverUrl, $store, $settings, $state, $challenge, $redirectUrl, $fetch);
+                    });
+                } catch (McpRefreshLockBusyError) {
+                    $refreshed = Flow::REDIRECT;
+                }
+
+                if ($refreshed === Flow::AUTHORIZED) {
+                    return;
+                }
             }
 
-            if ($refreshed === Flow::AUTHORIZED) {
-                return;
+            // The browser step — upstream's `startBrowserStep()`.
+            $stored = $store->load();
+
+            if ($stored !== null) {
+                $store->save(self::stateForSignIn($stored, $settings, $redirectUrl));
             }
+
+            $authorizationUrl = null;
+            $provider = self::provider($serverUrl, $store, $settings, $redirectUrl, static function (string $url) use (&$authorizationUrl): void {
+                $authorizationUrl = $url;
+            });
+            Flow::authorize($provider, [...$flow, 'skipRefresh' => true], $fetch);
 
             if ($authorizationUrl === null) {
                 throw new RuntimeException('OAuth flow did not produce an authorization URL');
             }
 
+            // The flow picks the redirect URI, which may be specific to the MCP server.
+            parse_str((string) parse_url($authorizationUrl, PHP_URL_QUERY), $query);
+            $authorizationRedirectUrl = is_string($query['redirect_uri'] ?? null) ? $query['redirect_uri'] : $redirectUrl;
             $state = $provider->state();
             ($prompt['showAuthorizationUrl'])($authorizationUrl);
-            ['code' => $code, 'iss' => $iss] = self::waitForAuthorizationResponse($callback, $state, $prompt['promptForRedirectUrl'], $signal);
-            Flow::authorize($provider, [...$flow, 'authorizationCode' => $code, 'iss' => $iss], $fetch);
+            ['code' => $code, 'iss' => $iss] = self::waitForAuthorizationResponse($callback, $state, $authorizationRedirectUrl, $prompt['promptForRedirectUrl'], $signal);
+
+            // The stored PKCE verifier belongs to the latest sign-in; exchanging with it would fail
+            // with `invalid_grant`, which discards the stored tokens.
+            if (($store->load()['oauthState'] ?? null) !== $state) {
+                throw new RuntimeException('Another sign-in to this MCP server started since; sign in again');
+            }
+
+            Flow::authorize(self::provider($serverUrl, $store, $settings, $redirectUrl, static fn () => null), [
+                ...$flow,
+                'authorizationCode' => $code,
+                'authorizationRedirectUrl' => $authorizationRedirectUrl,
+                'iss' => $iss,
+            ], $fetch);
         } catch (\Throwable $error) {
             // "Aborted requests fail with the signal's reason; report them as the cancellation they are."
             if ($signal?->aborted() ?? false) {
@@ -525,17 +628,21 @@ final class McpOauth
         }
     }
 
-    /** Listen on `$port`, or on a free port when it is taken and not `$required`. */
-    private static function listenForCallback(array $settings, ?int $port, bool $required, float $timeout): OauthCallbackServer
+    /**
+     * Listen on `$port`, or on a free port when it is taken and not `$required`.
+     *
+     * @param list<string> $extraPaths
+     */
+    private static function listenForCallback(array $settings, ?int $port, bool $required, float $timeout, array $extraPaths = []): OauthCallbackServer
     {
         try {
-            return OauthCallbackServer::listen($settings['host'], $settings['redirectHost'], $port ?? 0, $settings['path'], $timeout);
+            return OauthCallbackServer::listen($settings['host'], $settings['redirectHost'], $port ?? 0, $settings['path'], $timeout, $extraPaths);
         } catch (RuntimeException $error) {
             if ($required || $port === null) {
                 throw $error;
             }
 
-            return OauthCallbackServer::listen($settings['host'], $settings['redirectHost'], 0, $settings['path'], $timeout);
+            return OauthCallbackServer::listen($settings['host'], $settings['redirectHost'], 0, $settings['path'], $timeout, $extraPaths);
         }
     }
 
@@ -543,10 +650,13 @@ final class McpOauth
      * Wait for the browser callback or a pasted redirect URL, whichever comes first. Aborting
      * `$signal` aborts the prompt, which then cancels the sign-in.
      *
+     * The response has to come back on `$redirectUrl`, the authorization request's: a server-specific
+     * redirect URI is what tells two authorization servers apart.
+     *
      * @param Closure(AbortSignal): ?string $promptForRedirectUrl
      * @return array{code: string, iss: ?string} the code, and the `iss` the response carried (RFC 9207)
      */
-    private static function waitForAuthorizationResponse(OauthCallbackServer $callback, string $state, Closure $promptForRedirectUrl, ?AbortSignal $signal = null): array
+    private static function waitForAuthorizationResponse(OauthCallbackServer $callback, string $state, string $redirectUrl, Closure $promptForRedirectUrl, ?AbortSignal $signal = null): array
     {
         $controller = new AbortController();
         $answer = new Deferred();
@@ -570,19 +680,19 @@ final class McpOauth
             }
         };
 
-        Async::spawn(static fn () => $settle(static function () use ($callback, $state): array {
-            $response = $callback->waitForCallback($state);
+        Async::spawn(static fn () => $settle(static function () use ($callback, $state, $redirectUrl): array {
+            $response = $callback->waitForCallback($state, (string) parse_url($redirectUrl, PHP_URL_PATH));
 
             return ['code' => $response['code'], 'iss' => $response['iss'] ?? null];
         }));
-        Async::spawn(static fn () => $settle(static function () use ($promptForRedirectUrl, $controller, $state): array {
+        Async::spawn(static fn () => $settle(static function () use ($promptForRedirectUrl, $controller, $state, $redirectUrl): array {
             $input = $promptForRedirectUrl($controller->signal);
 
             if ($input === null || trim($input) === '') {
                 throw new McpSignInCancelledError();
             }
 
-            return self::responseFromRedirectUrl($input, $state);
+            return self::responseFromRedirectUrl($input, $state, $redirectUrl);
         }));
 
         try {
@@ -598,12 +708,20 @@ final class McpOauth
     }
 
     /** @return array{code: string, iss: ?string} */
-    private static function responseFromRedirectUrl(string $input, string $state): array
+    private static function responseFromRedirectUrl(string $input, string $state, string $redirectUrl): array
     {
         $parts = parse_url(trim($input));
 
         if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
             throw new RuntimeException('Expected the full redirect URL from the browser address bar');
+        }
+
+        // A server-specific redirect URI tells authorization servers apart, so it must match exactly.
+        $expected = parse_url($redirectUrl) ?: [];
+        $origin = static fn (array $url): string => strtolower(($url['scheme'] ?? '') . '://' . ($url['host'] ?? '') . ':' . ($url['port'] ?? ''));
+
+        if ($origin($parts) !== $origin($expected) || ($parts['path'] ?? '/') !== ($expected['path'] ?? '/')) {
+            throw new RuntimeException("The redirect URL does not match this sign-in's redirect URI");
         }
 
         parse_str($parts['query'] ?? '', $query);

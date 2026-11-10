@@ -12,8 +12,9 @@ use Pig\Async\AbortSignal;
 use RuntimeException;
 
 /**
- * The authorization code flow with PKCE and dynamic client registration — upstream's
- * `oauth/flow.ts`, which is the MCP TypeScript SDK's `auth()` with Zod and the SDK taken out.
+ * The authorization code flow with PKCE, the client a Client ID Metadata Document or registered
+ * dynamically — upstream's `oauth/flow.ts`, which is the MCP TypeScript SDK's `auth()` with Zod
+ * and the SDK taken out.
  *
  * `authorize()` answers `AUTHORIZED` (there are tokens now: refreshed, or exchanged from a code)
  * or `REDIRECT` (the provider was handed an authorization URL and the caller has to get a code
@@ -32,7 +33,12 @@ final class Flow
      * Requests have no time limit of their own; combine with a timeout as needed." An aborted refresh
      * does not fall back to a new authorization.
      *
-     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, authorizationServerMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, iss?: ?string, skipRefresh?: bool, skipIssuerValidation?: bool, signal?: ?AbortSignal} $options
+     * `refreshOnly` is upstream's: refresh the stored tokens or answer `REDIRECT`, never registering a
+     * client or preparing an authorization request — a refresh must not spoil a sign-in in progress.
+     * `authorizationRedirectUrl` is the redirect URI the authorization request used; a code exchange
+     * that would use another fails, rather than sending the code where the server will refuse it.
+     *
+     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, authorizationServerMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, authorizationRedirectUrl?: ?string, iss?: ?string, skipRefresh?: bool, refreshOnly?: bool, skipIssuerValidation?: bool, signal?: ?AbortSignal} $options
      * @param Closure(Request, ?AbortSignal=): Response|null $fetch
      */
     public static function authorize(McpOauthProvider $provider, array $options, ?Closure $fetch = null): string
@@ -93,11 +99,35 @@ final class Flow
             ?: ($provider->clientMetadata['scope'] ?? null)
             ?: null;
 
-        $client = $provider->clientInformation();
+        $refreshOnly = (bool) ($options['refreshOnly'] ?? false);
+        $stored = $provider->clientInformation();
+        $document = $stored === null && $provider->clientMetadataDocument !== null ? ($provider->clientMetadataDocument)($metadata) : null;
+
+        if ($document !== null) {
+            $parts = parse_url($document['url']);
+
+            if (($parts['scheme'] ?? null) !== 'https' || ($parts['path'] ?? '/') === '/') {
+                throw new RuntimeException('Invalid OAuth client metadata URL');
+            }
+        }
+
+        // The document's redirect URI may differ from the provider's, by a server-specific path.
+        $redirectUrl = $document['redirectUrl'] ?? $provider->redirectUrl;
+
+        // Checked first: another redirect URI also explains a client that is missing for the exchange.
+        if (isset($options['authorizationCode'], $options['authorizationRedirectUrl']) && $redirectUrl !== $options['authorizationRedirectUrl']) {
+            throw new RuntimeException("The code exchange would use the redirect URI {$redirectUrl}, but the authorization request used {$options['authorizationRedirectUrl']}");
+        }
+
+        $client = $stored ?? ($document !== null ? ['client_id' => $document['url']] : null);
 
         if ($client === null) {
+            if ($refreshOnly) {
+                return self::REDIRECT;
+            }
+
             if (isset($options['authorizationCode'])) {
-                throw new RuntimeException('OAuth client information is missing during code exchange');
+                throw new RuntimeException('OAuth client information is missing during code exchange: the authorization request\'s client was removed, or the client settings changed');
             }
 
             $client = self::registerClient($discovered['authorizationServerUrl'], $metadata, $provider->clientMetadata, $scope, $fetch);
@@ -125,7 +155,7 @@ final class Flow
                 'grant_type' => 'authorization_code',
                 'code' => (string) $options['authorizationCode'],
                 'code_verifier' => $provider->codeVerifier(),
-                'redirect_uri' => $provider->redirectUrl,
+                'redirect_uri' => $redirectUrl,
             ], $fetch);
             // A response without `scope` grants the requested scope (RFC 6749 §5.1). Recorded so a
             // step-up can keep it: `$scope` is what the authorization request asked for, because
@@ -157,8 +187,12 @@ final class Flow
             }
         }
 
+        if ($refreshOnly) {
+            return self::REDIRECT;
+        }
+
         $state = $provider->state();
-        [$authorizationUrl, $verifier] = self::startAuthorization($discovered['authorizationServerUrl'], $metadata, $client, $provider->redirectUrl, $scope, $state, $resource);
+        [$authorizationUrl, $verifier] = self::startAuthorization($discovered['authorizationServerUrl'], $metadata, $client, $redirectUrl, $scope, $state, $resource);
         $provider->saveCodeVerifier($verifier);
         $provider->redirectToAuthorization($authorizationUrl);
 

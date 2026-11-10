@@ -140,6 +140,10 @@ final class McpExtensionTest extends TestCase
         yield 'bad timeout' => [['command' => 'x', 'timeout' => 0], 'timeout must be a positive number'];
         yield 'bad headers' => [['url' => 'https://x/mcp', 'headers' => ['A' => 1]], 'headers must map names to strings'];
         yield 'bad callbackUrl' => [['url' => 'https://x/mcp', 'oauth' => ['callbackUrl' => 'https://evil/cb']], 'oauth.callbackUrl must be an http URI on localhost'];
+        yield 'bad clientRegistration' => [['url' => 'https://x/mcp', 'oauth' => ['clientRegistration' => 'magic']], 'oauth.clientRegistration must be "auto", "dcr", or "cimd"'];
+        yield 'cimd with a client' => [['url' => 'https://x/mcp', 'oauth' => ['clientRegistration' => 'cimd', 'clientId' => 'c']], 'cannot be combined with oauth.clientId or oauth.clientName'];
+        yield 'cimd on another callback' => [['url' => 'https://x/mcp', 'oauth' => ['clientRegistration' => 'cimd', 'callbackUrl' => 'http://localhost/oauth/cb']], 'requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback'];
+        yield 'empty clientName' => [['url' => 'https://x/mcp', 'oauth' => ['clientName' => ' ']], 'oauth.clientName must be a non-empty string'];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('badEntries')]
@@ -1175,6 +1179,123 @@ final class McpExtensionTest extends TestCase
         } finally {
             $server->stop();
         }
+    }
+
+    public function testASignInIdentifiesAsPigsClientMetadataDocumentWhereTheServerTakesOne(): void
+    {
+        // Upstream 908aa7b7: no client is registered with an authorization server that takes Client
+        // ID Metadata Documents; pig's document URL is the client id. It sends `iss`, so the plain
+        // document and the plain callback do.
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->issSupported = true;
+        $server->clientMetadataDocuments = true;
+
+        try {
+            $query = $this->signInThroughTheBrowser($server, []);
+
+            $this->assertSame('https://pigagent.dev/oauth/client.json', $query['client_id']);
+            $this->assertMatchesRegularExpression('#^http://127\.0\.0\.1:\d+/callback$#', $query['redirect_uri']);
+            $this->assertNull($server->registration, 'nothing was registered');
+            $this->assertSame('https://pigagent.dev/oauth/client.json', $server->tokenRequests[0]['client_id']);
+            $state = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true)['mcp__remote|' . $server->url()];
+            $this->assertArrayNotHasKey('clientInformation', $state, 'a document is not stored');
+            $this->assertSame($server->requireToken, $state['tokens']['access_token']);
+
+            // The refresh identifies as the document too, and still registers nothing.
+            $state['tokensExpireAt'] = 1;
+            file_put_contents($this->home . '/mcp-auth.json', json_encode(['mcp__remote|' . $server->url() => $state]));
+            $provider = (new \PigMcp\McpOauth($this->home . '/mcp-auth.json'))->authProvider('remote', $server->url(), static fn (): array => [], static function (): void {
+            });
+            $token = Async::run(static fn (): ?string => $provider->token());
+            $this->assertSame($server->requireToken, $token);
+            $this->assertSame(['refresh_token', 'https://pigagent.dev/oauth/client.json'], [$server->tokenRequests[1]['grant_type'], $server->tokenRequests[1]['client_id']]);
+            $this->assertNull($server->registration);
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testWithoutIssTheDocumentAndTheCallbackAreTheServersOwn(): void
+    {
+        // RFC 9700 section 4.4.2.2: with no `iss` to tell two authorization servers' responses
+        // apart, the redirect URI is, `/callback/<callback ID>`, and the document that lists it.
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->clientMetadataDocuments = true;
+        $id = \Pig\Mcp\Oauth\McpClientMetadataDocuments::callbackId($server->url());
+
+        try {
+            $query = $this->signInThroughTheBrowser($server, []);
+
+            $this->assertSame("https://pigagent.dev/oauth/{$id}/client.json", $query['client_id']);
+            $this->assertMatchesRegularExpression('#^http://127\.0\.0\.1:\d+/callback/' . preg_quote($id, '#') . '$#', $query['redirect_uri']);
+            $this->assertSame($query['redirect_uri'], $server->tokenRequests[0]['redirect_uri'], 'the exchange uses the same redirect URI');
+            $this->assertNull($server->registration);
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testDcrRegistersEvenWhereTheServerTakesDocuments(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->clientMetadataDocuments = true;
+
+        try {
+            $query = $this->signInThroughTheBrowser($server, ['clientRegistration' => 'dcr', 'clientName' => 'my-pig']);
+
+            $this->assertSame('client-1', $query['client_id']);
+            $this->assertSame('my-pig', $server->registration['client_name']);
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testCimdFailsWhereTheServerTakesNoDocuments(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+
+        try {
+            $this->expectExceptionMessage('does not support Client ID Metadata Documents for public clients');
+            $this->signInThroughTheBrowser($server, ['clientRegistration' => 'cimd']);
+        } finally {
+            $server->stop();
+        }
+    }
+
+    /**
+     * `McpOauth::signIn()` with the browser played: the code is minted for the authorization URL's
+     * PKCE challenge and brought back to its redirect URI.
+     *
+     * @param array<string, mixed> $settings
+     * @return array<string, string> the authorization URL's query
+     */
+    private function signInThroughTheBrowser(\Pig\Mcp\Test\FakeHttpMcpServer $server, array $settings): array
+    {
+        $credentials = new \PigMcp\McpOauth($this->home . '/mcp-auth.json');
+        $asked = [];
+
+        Async::run(static function () use ($server, $credentials, $settings, &$asked): void {
+            $credentials->signIn('remote', $server->url(), $settings, null, [
+                'showAuthorizationUrl' => static function (string $url) use ($server, &$asked): void {
+                    parse_str((string) parse_url($url, PHP_URL_QUERY), $asked);
+                    $redirect = $asked['redirect_uri'] . '?code=' . urlencode($server->issueCode($asked['code_challenge'])) . '&state=' . urlencode($asked['state'])
+                        . ($server->issSupported ? '&iss=' . urlencode('http://' . parse_url($server->url(), PHP_URL_HOST) . ':' . parse_url($server->url(), PHP_URL_PORT)) : '');
+                    Async::spawn(static fn () => (new \Pig\Ai\Http\HttpClient(timeout: 5.0))->send(new \Pig\Ai\Http\Request('GET', $redirect))->body->close());
+                },
+                'promptForRedirectUrl' => static function (\Pig\Async\AbortSignal $signal): ?string {
+                    $parked = new \Pig\Async\Deferred();
+                    $signal->onAbort(static fn () => $parked->isComplete() || $parked->complete(null));
+
+                    return $parked->future->await();
+                },
+            ], timeout: 5.0);
+        });
+
+        return $asked;
     }
 
     public function testAServerWithItsOwnAuthorizationHeaderDoesNotUseOauth(): void

@@ -27,11 +27,21 @@ final class McpOauthProvider
     /** @var array<string, mixed>|null a pre-registered client, which the store never overrides */
     private readonly ?array $configuredClient;
 
+    /**
+     * Upstream's `clientMetadataDocument()`: the Client ID Metadata Document to identify as instead
+     * of registering, asked when no client is stored, with the authorization server's metadata (null
+     * when it has none). Answers null to register. The document is not stored.
+     *
+     * @var (Closure(array<string, mixed>|null): (array{url: string, redirectUrl: string}|null))|null
+     */
+    public readonly ?Closure $clientMetadataDocument;
+
     private readonly OauthStateStore $store;
 
     /**
      * @param array<string, mixed> $clientMetadata
      * @param Closure(string): void $onRedirect
+     * @param (Closure(array<string, mixed>|null): (array{url: string, redirectUrl: string}|null))|null $clientMetadataDocument
      */
     public function __construct(
         string $serverUrl,
@@ -41,7 +51,9 @@ final class McpOauthProvider
         ?string $clientId = null,
         ?string $clientSecret = null,
         ?OauthStateStore $store = null,
+        ?Closure $clientMetadataDocument = null,
     ) {
+        $this->clientMetadataDocument = $clientMetadataDocument;
         $this->serverUrl = $serverUrl;
         $this->redirectUrl = $redirectUrl;
         $this->clientMetadata = [

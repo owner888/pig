@@ -348,6 +348,15 @@ final class McpCliTest extends TestCase
         $this->assertStringContainsString('--oauth-client-id only applies to HTTP servers', end($this->err));
     }
 
+    public function testAddTakesHowTheClientIdentifiesItself(): void
+    {
+        $this->assertSame(0, $this->mcp('add', 'a', '--url', 'https://x/mcp', '--oauth-client-registration', 'dcr', '--oauth-client-name', 'my-pig'));
+        $this->assertSame(['clientName' => 'my-pig', 'clientRegistration' => 'dcr'], $this->config()['mcpServers']['a']['oauth']);
+
+        $this->assertSame(1, $this->mcp('add', 'b', '--url', 'https://x/mcp', '--oauth-client-registration', 'cimd', '--oauth-client-id', 'c'));
+        $this->assertStringContainsString('cannot be combined with oauth.clientId', end($this->err));
+    }
+
     public function testListAsJsonAndTheUntrustedNote(): void
     {
         mkdir($this->cwd . '/.pig', 0o755, true);

@@ -102,9 +102,10 @@ final readonly class Changelog
      * hand-rolled version existed for.
      *
      * A string that is no kind of version — an empty setting, a typo — comes out below every
-     * release, so everything is new. That is the same end as upstream's `Number()` of a missing
-     * part and it is the right way round: showing the whole file once beats silently showing
-     * nothing because a settings file had a typo in it.
+     * release, so everything is new: showing the whole file once beats silently showing nothing
+     * because a settings file had a typo in it. Upstream (#11753) now ignores a pre-release suffix
+     * and shows nothing for such a string; the developer keeps this (`docs/dev/decisions.md`,
+     * "Changelog versions").
      *
      * @param list<self> $entries
      * @return list<self>

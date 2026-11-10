@@ -477,3 +477,15 @@ without writing to it (another project's is rebuilt for its directory with `Codi
 incognito: true, resume: …)`, which reads the file and keeps no store), and `/fork` and `/clone`
 refuse as they do for `--no-session`. `--incognito` cannot be combined with `--continue`,
 `--resume`, `--session`, `--session-id` or `--fork`: like an incognito window, it opens on nothing.
+
+## Changelog versions: `version_compare()`, not upstream's three numbers
+
+Which `CHANGELOG.md` entries are new since the version last seen — pig's own at startup, an
+extension's after an update — is `Changelog::newerThan()`, and it compares with `version_compare()`.
+Upstream (#11753) reads the first three numbers of the last-seen version and ignores the rest, and a
+version it cannot read marks the current one as seen and shows nothing. The developer keeps pig's:
+
+- **A pre-release is older than its release.** After `2.1.0-beta` the `2.1.0` entry is new, because
+  the release can carry entries the beta did not have; upstream treats the two as the same version.
+- **A setting that is no version shows everything once**, rather than nothing: a typo in
+  `settings.json` costs one long changelog instead of silently hiding every entry after it.

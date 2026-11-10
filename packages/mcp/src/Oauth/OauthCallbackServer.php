@@ -26,6 +26,9 @@ final class OauthCallbackServer
     /** @var array<string, Deferred> by `state` */
     private array $pending = [];
 
+    /** @var array<string, string> the path each `state` has to come back on, when the sign-in said */
+    private array $pendingPaths = [];
+
     /** @var array<string, string> timer per `state` */
     private array $timers = [];
 
@@ -44,11 +47,12 @@ final class OauthCallbackServer
 
     /**
      * @param resource $socket
+     * @param list<string> $paths every path that takes the callback
      */
     private function __construct(
         private mixed $socket,
         public readonly string $redirectUrl,
-        private readonly string $path,
+        private readonly array $paths,
         private readonly float $timeout,
     ) {
         $this->watcher = Loop::get()->onReadable($socket, $this->accept(...));
@@ -59,6 +63,11 @@ final class OauthCallbackServer
      *
      * `$redirectHost` is what goes in the redirect URL; `$host` is what is bound. They differ for
      * `localhost`, which is served on 127.0.0.1 because browsers fall back to it when ::1 refuses.
+     *
+     * `$extraPaths` take the callback too — upstream's `extraPaths`: the server-specific redirect
+     * URI of a Client ID Metadata Document, `<path>/<callback ID>`.
+     *
+     * @param list<string> $extraPaths
      */
     public static function listen(
         string $host = '127.0.0.1',
@@ -66,6 +75,7 @@ final class OauthCallbackServer
         int $port = 0,
         string $path = '/callback',
         float $timeout = 300.0,
+        array $extraPaths = [],
     ): self {
         $problem = null;
 
@@ -93,7 +103,7 @@ final class OauthCallbackServer
         $redirectHost ??= $host;
         $hostInUrl = str_contains($redirectHost, ':') ? "[{$redirectHost}]" : $redirectHost;
 
-        return new self($socket, "http://{$hostInUrl}:{$actualPort}{$path}", $path, $timeout);
+        return new self($socket, "http://{$hostInUrl}:{$actualPort}{$path}", [$path, ...$extraPaths], $timeout);
     }
 
     /**
@@ -101,9 +111,12 @@ final class OauthCallbackServer
      * authorization server refused, the callback was malformed, the wait timed out, or the
      * server was closed.
      *
+     * With `$path`, a response on another of the paths fails: a server-specific redirect URI is
+     * what tells two authorization servers' responses apart.
+     *
      * @return array{code: string, state: string, iss?: string}
      */
-    public function waitForCallback(string $state): array
+    public function waitForCallback(string $state, ?string $path = null): array
     {
         if (isset($this->pending[$state])) {
             throw new RuntimeException('OAuth state is already pending');
@@ -111,8 +124,13 @@ final class OauthCallbackServer
 
         $answer = new Deferred();
         $this->pending[$state] = $answer;
+
+        if ($path !== null) {
+            $this->pendingPaths[$state] = $path;
+        }
+
         $this->timers[$state] = Loop::get()->delay($this->timeout, function () use ($state, $answer): void {
-            unset($this->pending[$state], $this->timers[$state]);
+            unset($this->pending[$state], $this->timers[$state], $this->pendingPaths[$state]);
 
             if (!$answer->isComplete()) {
                 $answer->error(new RuntimeException('OAuth callback timed out'));
@@ -136,6 +154,7 @@ final class OauthCallbackServer
         }
 
         $this->pending = [];
+        $this->pendingPaths = [];
         $this->timers = [];
 
         if ($this->watcher !== null) {
@@ -207,8 +226,9 @@ final class OauthCallbackServer
         }
 
         $target = $match[1];
+        $path = (string) parse_url($target, PHP_URL_PATH);
 
-        if ((string) parse_url($target, PHP_URL_PATH) !== $this->path) {
+        if (!in_array($path, $this->paths, true)) {
             $this->reply($id, 404, false, 'Not found');
 
             return;
@@ -224,11 +244,19 @@ final class OauthCallbackServer
             return;
         }
 
-        unset($this->pending[$state]);
+        $expectedPath = $this->pendingPaths[$state] ?? null;
+        unset($this->pending[$state], $this->pendingPaths[$state]);
 
         if (isset($this->timers[$state])) {
             Loop::get()->cancel($this->timers[$state]);
             unset($this->timers[$state]);
+        }
+
+        if ($expectedPath !== null && $path !== $expectedPath) {
+            $this->reply($id, 400, false, 'Unexpected redirect URI');
+            $pending->error(new RuntimeException('The authorization response arrived on another redirect URI'));
+
+            return;
         }
 
         $error = is_string($query['error'] ?? null) ? $query['error'] : null;

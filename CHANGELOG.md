@@ -48,6 +48,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Added
 
 - Claude Fable 5.2 (and Mythos 5.2) uses per-message effort and mid-conversation system messages as 5.1 does, on Anthropic and through OpenRouter, and a request its safety classifiers refuse is answered by Claude Opus 5 through server-side fallback (upstream 0d1793c2).
+- MCP sign-in identifies pig with its Client ID Metadata Document, `https://pigagent.dev/oauth/client.json`, when the authorization server supports documents for public clients, instead of registering a client with every server; elsewhere it registers as before. An authorization server that sends no `iss` gets a document and callback path of its own (`/oauth/<id>/client.json`, `/callback/<id>`). `oauth.clientRegistration` chooses: `auto` (default), `dcr` to always register, `cimd` to always use the document. `oauth.clientName` sets the registered client's name (default `pig`) and makes `auto` register. `pig mcp add` takes `--oauth-client-registration` and `--oauth-client-name` (upstream 908aa7b7).
 
 ### Changed
 
@@ -77,6 +78,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - `auth.json` reached through a symlink and by its real path takes one lock, so two pigs no longer renew one token with the same refresh token (upstream #11787).
 - `pig config` uses the keys from `keybindings.json` (upstream #11788).
 - Alacritty is recognised by `TERM` or `ALACRITTY_WINDOW_ID` too, for hyperlinks (upstream #11777).
+- An MCP token refresh no longer registers an OAuth client or prepares a browser sign-in when it cannot refresh, which could spoil a sign-in in progress; a pasted redirect URL must be on the sign-in's own redirect URI, and a code is exchanged only by the sign-in that asked for it.
 
 ## [2.0.1] - 2026-11-10
 
