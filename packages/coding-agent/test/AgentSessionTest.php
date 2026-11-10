@@ -277,6 +277,23 @@ final class AgentSessionTest extends TestCase
         $this->assertSame([], $seen);
     }
 
+    public function testAQueuedMessageWithPicturesLeavesTheQueueWhenItIsDelivered(): void
+    {
+        // The message carries the image's hint after the text, the queue the text as typed: the
+        // delivered message is taken off the queue by what was typed, or it stays listed for ever.
+        $steered = false;
+        $session = $this->session(['one', 'two'], static function (Agent $agent) use (&$session, &$steered): void {
+            if (!$steered) {
+                $steered = true;
+                $session->steer('and this', [new ImageContent(base64_encode('not a picture'), 'image/tiff')]);
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame([], $session->queued());
+    }
+
     public function testClearingTheQueueHandsTheTextBack(): void
     {
         $session = $this->session(['one']);
@@ -903,6 +920,24 @@ final class AgentSessionTest extends TestCase
         // An unknown name is the text as it was typed.
         Async::run(static fn () => $session->prompt('/skill:nope'));
         $this->assertContains('/skill:nope', array_map(self::textOf(...), array_filter($session->messages(), static fn (mixed $m): bool => $m instanceof UserMessage)));
+    }
+
+    public function testTheSkillsHintFollowsTheToolsThatCanReadAFile(): void
+    {
+        // Upstream's `skillFileReadTool`: read, else bash; and no skills at all without either,
+        // since a skill nobody can open is an instruction that cannot be followed.
+        $skill = new Skill('review', 'Review code', '/skills/review/SKILL.md', '/skills/review', 'test');
+        $sections = function (array $tools) use ($skill): array {
+            $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+            $loadout = new ToolLoadout($agent, sys_get_temp_dir(), $tools, new CustomToolSet(), new ExtensionRunner(), [], [$skill]);
+            $loadout->apply();
+
+            return $loadout->systemPromptSections();
+        };
+
+        $this->assertStringContainsString('Use the read tool', $sections(['read', 'bash'])['skills']);
+        $this->assertStringContainsString('Use bash to load', $sections(['bash'])['skills']);
+        $this->assertArrayNotHasKey('skills', $sections(['grep']));
     }
 
     // ---- switching models ------------------------------------------------------------

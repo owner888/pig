@@ -94,7 +94,8 @@ final class XaiResponsesTest extends TestCase
         $head = $this->server()->receivedHead();
         $this->assertStringStartsWith('POST /responses HTTP/1.1', $head);
         $this->assertMatchesRegularExpression('/^authorization: Bearer xai-test-token\r?$/mi', $head);
-        $this->assertMatchesRegularExpression('/^session_id: pi-session-123\r?$/mi', $head);
+        $this->assertMatchesRegularExpression('/^session-id: pi-session-123\r?$/mi', $head);
+        $this->assertDoesNotMatchRegularExpression('/^session_id:/mi', $head);
 
         $body = $this->server()->receivedJson();
         $this->assertSame('grok-4.5', $body['model'] ?? null);

@@ -1573,6 +1573,14 @@ final class Anthropic
             'required' => $parameters['required'] ?? [],
         ];
 
+        // Upstream's: the shared definitions are kept so a property's `$ref` still resolves. Other
+        // root keywords stay out — Anthropic refuses a root `anyOf`/`oneOf`/`allOf` with a 400.
+        foreach (['$defs', 'definitions'] as $key) {
+            if (array_key_exists($key, $parameters)) {
+                $legacyInputSchema[$key] = $parameters[$key];
+            }
+        }
+
         $out = [
             'name' => $isOAuth ? ClaudeCode::nameOut($tool->name) : $tool->name,
             'description' => $tool->description,

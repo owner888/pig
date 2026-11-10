@@ -66,8 +66,8 @@ final readonly class OpenAiCompat
      * completions keys; `supportsExplicitPromptCacheMode` and `supportsMaxOutputTokens` are Responses
      * keys, which `detect()` says nothing about.
      *
-     * @param string|null $sessionAffinityFormat `openai` sends the session id as `session_id` and
-     *        `x-client-request-id`, `openai-nosession` as `x-client-request-id` alone, `openrouter`
+     * @param string|null $sessionAffinityFormat `openai` sends the session id as `session-id`
+     *        (`session_id` on completions) and `x-client-request-id`, `openai-nosession` as `x-client-request-id` alone, `openrouter`
      *        as `x-session-id` (default: `openrouter` for OpenRouter, else `openai`); on completions
      *        `x-session-affinity` goes with `x-client-request-id`, and only when
      *        `sendSessionAffinityHeaders` says so

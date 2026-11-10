@@ -649,6 +649,32 @@ final class AnthropicTest extends TestCase
         $this->assertSame(['path'], $body['tools'][0]['input_schema']['required']);
     }
 
+    /** Upstream #9557: a non-strict schema keeps the root definitions its properties `$ref`. */
+    public function testANonStrictSchemaKeepsTheDefinitionsItsPropertiesReferTo(): void
+    {
+        $settings = ['type' => 'object', 'properties' => ['verbose' => ['type' => 'boolean']]];
+
+        foreach (['$defs', 'definitions'] as $key) {
+            $tool = new Tool('configure', 'Configure', [
+                'type' => 'object',
+                'properties' => ['settings' => ['$ref' => "#/{$key}/Settings"]],
+                'required' => ['settings'],
+                $key => ['Settings' => $settings],
+                'anyOf' => [['required' => ['settings']]],
+            ]);
+
+            [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+
+            $this->assertArrayNotHasKey('strict', $body['tools'][0]);
+            $this->assertSame([
+                'type' => 'object',
+                'properties' => ['settings' => ['$ref' => "#/{$key}/Settings"]],
+                'required' => ['settings'],
+                $key => ['Settings' => $settings],
+            ], $body['tools'][0]['input_schema']);
+        }
+    }
+
     /**
      * Upstream's default is `supportsStrictTools: false`: a model whose compat does not say so —
      * an Anthropic-shaped endpoint of anybody else's — gets the same tool unchanged.

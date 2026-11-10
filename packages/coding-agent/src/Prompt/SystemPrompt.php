@@ -70,6 +70,8 @@ final class SystemPrompt
      * @param list<Skill>            $skills
      * @param array<string, string>  $toolSnippets
      * @param list<string>           $toolGuidelines
+     * @param 'read'|'bash'|'indirect'|null $skillReader the tool that loads a skill's file, as the
+     *        skills hint names it; null leaves the skills out, as nothing could load them
      * @return array<string, string>
      */
     public static function sections(
@@ -81,6 +83,7 @@ final class SystemPrompt
         array $skills = [],
         array $toolSnippets = [],
         array $toolGuidelines = [],
+        ?string $skillReader = 'read',
     ): array {
         $contextFiles ??= ContextFiles::load($cwd);
         $sections = [];
@@ -103,7 +106,7 @@ final class SystemPrompt
 
         // After the project's own instructions: a skill is a thing to reach for, and the
         // rules about how to work here apply whichever one is reached for.
-        $skillsPrompt = Skills::forPrompt($skills);
+        $skillsPrompt = $skillReader !== null ? Skills::forPrompt($skills, $skillReader) : '';
 
         if ($skillsPrompt !== '') {
             $sections['skills'] = substr($skillsPrompt, 2);

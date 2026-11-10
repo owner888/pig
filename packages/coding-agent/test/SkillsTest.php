@@ -487,6 +487,20 @@ final class SkillsTest extends TestCase
         // model cannot obey.
         $this->assertStringContainsString('<location>' . $skills[0]->path . '</location>', $prompt);
         $this->assertStringContainsString('Use the read tool', $prompt);
+        $this->assertStringContainsString("Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.", $prompt);
+    }
+
+    public function testTheHintNamesTheToolThatCanLoadTheFile(): void
+    {
+        // Upstream #8552 and c30840c2e: bash when there is no read, and no tool at all when the
+        // reader is reachable only through another tool.
+        $this->skill('home/.pig/agent/skills/tidy', "name: tidy\ndescription: tidy up a file");
+        [$skills] = $this->load();
+
+        $this->assertStringContainsString("Use bash to load a skill's file", Skills::forPrompt($skills, 'bash'));
+        $indirect = Skills::forPrompt($skills, 'indirect');
+        $this->assertStringContainsString("\nLoad a skill's file when the task matches its description.", $indirect);
+        $this->assertStringNotContainsString('Use the read tool', $indirect);
     }
 
     public function testADescriptionInChineseIsMeasuredInCharactersNotBytes(): void

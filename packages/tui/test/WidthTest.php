@@ -232,6 +232,13 @@ final class WidthTest extends TestCase
         $this->assertSame("\e[32mhi\e[0m   ", $padded);
     }
 
+    public function testASliceDoesNotCarryACursorMarkerFromBeforeIt(): void
+    {
+        // Upstream #9441: an APC is a command at its place, not a style the slice inherits.
+        $line = "a\x1b_pi:c\x07b\x1b[1mcd";
+        $this->assertSame("\x1b[1mc", Width::sliceByColumn($line, 2, 1));
+    }
+
     public function testSliceByColumnExtractsVisibleColumnRange(): void
     {
         $text = "hello \e[31mworld\e[0m!";

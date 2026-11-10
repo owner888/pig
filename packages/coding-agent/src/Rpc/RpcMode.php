@@ -270,6 +270,22 @@ final class RpcMode
         $this->report($this->customTools->notify('switch', $previous));
     }
 
+    /**
+     * Upstream #9126: a turn the shutdown interrupts is stopped and settled before the session is
+     * told and disposed, so the stopped tool's result and the aborted answer are saved — disposed
+     * first, the session file was let go with a tool call and no result for it. No time limit, as
+     * upstream has none: a second signal is the way out of a tool that ignores the abort.
+     */
+    private function settleTheTurn(): void
+    {
+        if ($this->session->isIdle()) {
+            return;
+        }
+
+        $settled = fn (): mixed => $this->session->abort()->await();
+        \Fiber::getCurrent() !== null ? $settled() : Async::run($settled);
+    }
+
     /** Whether the shutdown has begun — a signal from then on waits for it, and a second one does not. */
     private bool $stopping = false;
 
@@ -287,6 +303,7 @@ final class RpcMode
             $this->watcher = null;
         }
 
+        $this->settleTheTurn();
         $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->report($this->customTools?->notify('shutdown') ?? []);
         $this->session->dispose();

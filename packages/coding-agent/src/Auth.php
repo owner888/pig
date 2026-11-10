@@ -839,7 +839,9 @@ final class Auth
         }
 
         try {
-            return FileLock::hold(FileLock::pathFor($this->path), $renew);
+            // The lock beside the file the path leads to, so a pig that reaches it through a link
+            // and one that uses its real path take the same lock (upstream #11787).
+            return FileLock::hold(FileLock::pathFor(realpath($this->path) ?: $this->path), $renew);
         } catch (OauthError $problem) {
             throw $problem;
         } catch (Throwable $problem) {

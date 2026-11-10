@@ -284,7 +284,9 @@ final class Width
                 if ($currentCol >= $startCol && $currentCol < $endCol) {
                     $result .= $pendingAnsi . $value;
                     $pendingAnsi = '';
-                } elseif ($currentCol < $startCol) {
+                } elseif ($currentCol < $startCol && !str_starts_with($value, "\x1b_")) {
+                    // An APC (a cursor marker) is a one-off command at its place, not a style the
+                    // slice inherits: carried over, it puts the cursor where it never was (#9441).
                     $pendingAnsi .= $value;
                 }
                 continue;

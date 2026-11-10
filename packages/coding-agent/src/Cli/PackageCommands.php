@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Cli;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Extensions\BuiltinExtensions;
 use Pig\CodingAgent\Packages\PackageError;
 use Pig\CodingAgent\Packages\PackageManager;
@@ -14,6 +15,7 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\TuiMainScreen;
@@ -289,6 +291,9 @@ final class PackageCommands
         if ($themeError !== null) {
             fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.") . "\n");
         }
+
+        // Upstream #11788: the person's `keybindings.json`, so the list moves on the keys they set.
+        TuiKeybindings::setKeybindings(Keybindings::load($home)->tuiKeybindings());
 
         $terminal = new ProcessTerminal();
         $tui = new TuiMainScreen($terminal);

@@ -438,6 +438,26 @@ final class TuiMainScreenTest extends TestCase
         $tui->stop();
     }
 
+    public function testNoCursorMarkerReachesTheTerminal(): void
+    {
+        // Upstream #9441: a stale marker — a second one on the cursor's line, or one on a line
+        // above it — was written out as it was, and some terminals printed it.
+        $terminal = new VirtualTerminal(40, 10);
+        $tui = new TuiMainScreen($terminal);
+        $above = self::lines();
+        $above->lines = ['stale ' . TUI::CURSOR_MARKER . 'marker'];
+        $editor = self::lines();
+        $editor->lines = ['prompt ' . TUI::CURSOR_MARKER . 'x' . TUI::CURSOR_MARKER];
+        $tui->addChild($above);
+        $tui->addChild($editor);
+        $tui->start();
+        $terminal->waitForRender();
+
+        $this->assertStringNotContainsString(TUI::CURSOR_MARKER, $terminal->output());
+        $this->assertSame(['row' => 1, 'column' => 7], $terminal->cursor());
+        $tui->stop();
+    }
+
     public function testTheHardwareCursorGoesWhereTheFocusedComponentPutItsMarker(): void
     {
         $terminal = new VirtualTerminal(40, 10);

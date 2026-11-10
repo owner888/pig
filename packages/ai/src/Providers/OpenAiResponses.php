@@ -323,7 +323,7 @@ final class OpenAiResponses
 
         // Upstream's `createClient()`: the session id, when caching is on (`cacheSessionId`), as the
         // compat's `sessionAffinityFormat` names it — `x-session-id` for OpenRouter; otherwise
-        // `x-client-request-id`, and `session_id` too for the `openai` format. After the model's
+        // `x-client-request-id`, and `session-id` too for the `openai` format (#11793). After the model's
         // and Copilot's headers, as upstream assigns them.
         $sessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
 
@@ -335,7 +335,7 @@ final class OpenAiResponses
                 $headers['x-session-id'] = $sessionId;
             } else {
                 if ($format === 'openai') {
-                    $headers['session_id'] = $sessionId;
+                    $headers['session-id'] = $sessionId;
                 }
 
                 $headers['x-client-request-id'] = $sessionId;

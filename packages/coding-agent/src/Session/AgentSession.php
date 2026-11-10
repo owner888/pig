@@ -151,6 +151,15 @@ final class AgentSession
     /** @var list<string> follow-ups, likewise */
     private array $followUps = [];
 
+    /**
+     * What was typed for each message queued, by message. The queue lists the line as typed, the
+     * message carries what it expanded to — a template's body, an image's hints after the text —
+     * so the one delivered is taken off the queue by this, not by its text.
+     *
+     * @var \WeakMap<UserMessage, string>
+     */
+    private \WeakMap $queuedAs;
+
     private ?Closure $unsubscribeAgent = null;
 
     /** Upstream's `_cacheWarmer`; null until a mode with a next request turns it on. */
@@ -332,6 +341,7 @@ final class AgentSession
         // pig's `--incognito`: start private (`goIncognito()`). Implies there is no store.
         bool $incognito = false,
     ) {
+        $this->queuedAs = new \WeakMap();
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
@@ -1152,7 +1162,7 @@ final class AgentSession
         // redrawing the "3 messages waiting" line sees three, not four.
         if ($event instanceof MessageStartEvent && $event->message instanceof UserMessage) {
             $this->overflowRecoveryAttempted = false;
-            $this->dequeue(self::textOf($event->message));
+            $this->dequeue($this->queuedAs[$event->message] ?? self::textOf($event->message));
         }
 
         if ($event instanceof MessageEndEvent
@@ -2946,6 +2956,7 @@ final class AgentSession
         }
 
         $message = new UserMessage([new TextContent($body), ...$images]);
+        $this->queuedAs[$message] = $text;
 
         if ($behavior === 'steer') {
             $this->steering[] = $text;

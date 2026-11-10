@@ -668,12 +668,13 @@ final class OpenAiResponsesTest extends TestCase
     public function testTheSessionIsThePromptCacheKeyAndTheAffinityHeaders(): void
     {
         // Upstream: `prompt_cache_key` is the session id cut to 64 code points, and the client
-        // sends it as `session_id` and `x-client-request-id` for the `openai` format.
+        // sends it as `session-id` (#11793) and `x-client-request-id` for the `openai` format.
         $session = str_repeat('é', 70);
         [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', sessionId: $session));
 
         $this->assertSame(str_repeat('é', 64), $body['prompt_cache_key']);
-        $this->assertStringContainsString("session_id: {$session}", $head);
+        $this->assertStringContainsString("session-id: {$session}", $head);
+        $this->assertStringNotContainsString('session_id', $head);
         $this->assertStringContainsString("x-client-request-id: {$session}", $head);
         $this->assertArrayNotHasKey('prompt_cache_retention', $body);
 
@@ -685,7 +686,7 @@ final class OpenAiResponsesTest extends TestCase
         // OpenRouter's format is one header, `x-session-id`.
         [$head] = $this->capture($this->model(provider: 'openrouter'), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'));
         $this->assertStringContainsString('x-session-id: s1', $head);
-        $this->assertStringNotContainsString('session_id', $head);
+        $this->assertDoesNotMatchRegularExpression('/^session[-_]id:/mi', $head);
     }
 
     public function testLongRetentionIsTwentyFourHoursOrAThirtyMinuteExplicitCache(): void

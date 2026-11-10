@@ -585,6 +585,30 @@ final class AuthTest extends TestCase
         proc_close($other);
     }
 
+    public function testTheLockIsSharedWithAPigReachingTheFileThroughALink(): void
+    {
+        // Upstream #11787: `auth.json` linked into the agent directory from elsewhere, and another
+        // pig using it by its real path. Both must take one lock, or both renew with one refresh token.
+        $refreshed = 0;
+        ProviderRegistry::register(new ExtensionProvider('zzp-locked', 'Locked', [], oauth: self::flow('zzp-locked', $refreshed)));
+        $this->given('{}');
+        $real = $this->home . '/elsewhere/auth.json';
+        mkdir(dirname($real));
+        file_put_contents($real, '{"zzp-locked": {"type": "oauth", "refresh": "r-old", "access": "sk-expired", "expires": 1}}');
+        unlink($this->home . '/auth.json');
+        symlink($real, $this->home . '/auth.json');
+        $auth = $this->auth();
+
+        $fresh = json_encode(['zzp-locked' => ['type' => 'oauth', 'refresh' => 'r-rotated', 'access' => 'sk-from-the-other-pig', 'expires' => 9_000_000_000_000]]);
+        $other = self::otherPigRenewing($real, $fresh, 0.5);
+
+        $key = Async::run(static fn (): ?string => $auth->apiKey('zzp-locked'));
+
+        $this->assertSame('sk-from-the-other-pig', $key);
+        $this->assertSame(0, $refreshed);
+        proc_close($other);
+    }
+
     public function testARenewalNobodyElseIsDoingGoesAheadUnderTheLock(): void
     {
         $refreshed = 0;

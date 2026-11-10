@@ -198,8 +198,10 @@ final class Skills
      * path to read — a description with no path is an instruction the model cannot obey.
      *
      * @param list<Skill> $skills
+     * @param 'read'|'bash'|'indirect' $fileReadTool upstream's: the tool that loads a skill's file;
+     *        `indirect` names none, for a reader reachable only through another tool
      */
-    public static function forPrompt(array $skills): string
+    public static function forPrompt(array $skills, string $fileReadTool = 'read'): string
     {
         // Upstream's `formatSkillsForPrompt()`: a skill with `disable-model-invocation` is reached
         // only by `/skill:name`, so the model is not told about it.
@@ -213,7 +215,12 @@ final class Skills
             '',
             '',
             'The following skills provide specialized instructions for specific tasks.',
-            "Use the read tool to load a skill's file when the task matches its description.",
+            match ($fileReadTool) {
+                'read' => "Use the read tool to load a skill's file when the task matches its description.",
+                'bash' => "Use bash to load a skill's file when the task matches its description.",
+                default => "Load a skill's file when the task matches its description.",
+            },
+            "Resolve relative paths against the skill's directory (parent of SKILL.md). Use absolute paths in tool calls.",
             '',
             '<available_skills>',
         ];

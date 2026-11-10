@@ -214,7 +214,14 @@ final class ToolLoadout
             $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);
         }
 
-        $this->agent->setTools($this->prepared($tools, $active));
+        $declared = $this->prepared($tools, $active);
+        $this->agent->setTools($declared);
+        $declaredNames = array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $declared);
+        // Upstream's `skillFileReadTool`: the tool the skills hint names — `read`, else `bash` — and
+        // `indirect` (none named) when the reader is active but hidden behind another tool. With no
+        // reader at all the skills are left out, as nothing could load them.
+        $skillReader = array_values(array_intersect(['read', 'bash'], $declaredNames))[0]
+            ?? (array_intersect(['read', 'bash'], $active) !== [] ? 'indirect' : null);
 
         // Upstream's `_setActiveTools()`: a pending tool that is active now is pending no longer.
         foreach ($active as $name) {
@@ -233,6 +240,7 @@ final class ToolLoadout
             $this->skills,
             $snippets,
             $guidelines,
+            $skillReader,
         );
     }
 

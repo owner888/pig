@@ -18,6 +18,7 @@ use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\NoUi;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\Async\Async;
 use Pig\Async\Loop;
 use Throwable;
 
@@ -205,9 +206,26 @@ final class PrintMode
         }
     }
 
+    /**
+     * Upstream #9126: a turn the shutdown interrupts is stopped and settled before the session is
+     * told and disposed, so the stopped tool's result and the aborted answer are saved — disposed
+     * first, the session file was let go with a tool call and no result for it. No time limit, as
+     * upstream has none: a second signal is the way out of a tool that ignores the abort.
+     */
+    private function settleTheTurn(): void
+    {
+        if ($this->session->isIdle()) {
+            return;
+        }
+
+        $settled = fn (): mixed => $this->session->abort()->await();
+        \Fiber::getCurrent() !== null ? $settled() : Async::run($settled);
+    }
+
     private function stop(): void
     {
         $this->stopping = true;
+        $this->settleTheTurn();
         $this->extensionRunner?->emit(new SessionShutdownEvent());
         $this->customTools?->notify('shutdown');
         $this->session->dispose();

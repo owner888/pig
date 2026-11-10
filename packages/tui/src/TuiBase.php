@@ -1386,7 +1386,8 @@ abstract class TuiBase extends Container implements TUI
             $markerIndex = strpos($lines[$row], self::CURSOR_MARKER);
             if ($markerIndex !== false) {
                 $before = substr($lines[$row], 0, $markerIndex);
-                $lines[$row] = $before . substr($lines[$row], $markerIndex + strlen(self::CURSOR_MARKER));
+                // Every marker off the line: the first places the cursor, any other is stale (#9441).
+                $lines[$row] = str_replace(self::CURSOR_MARKER, '', $lines[$row]);
 
                 return ['row' => $row, 'col' => Width::visible($before)];
             }
@@ -1406,7 +1407,8 @@ abstract class TuiBase extends Container implements TUI
     {
         foreach ($lines as $index => $line) {
             if (!TerminalImage::isImageLine($line)) {
-                $lines[$index] = Width::normalizeTerminalOutput($line) . Width::SEGMENT_RESET;
+                // A cursor marker is the renderer's own bookkeeping and never meant for the terminal (#9441).
+                $lines[$index] = Width::normalizeTerminalOutput(str_replace(self::CURSOR_MARKER, '', $line)) . Width::SEGMENT_RESET;
             }
         }
 

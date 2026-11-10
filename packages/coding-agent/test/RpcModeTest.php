@@ -574,6 +574,25 @@ final class RpcModeTest extends TestCase
         }
     }
 
+    public function testAShutdownMidTurnSavesTheInterruptedTurnFirst(): void
+    {
+        // Upstream #9126: the session was disposed while the turn was still running, so what the
+        // abort settles — the stopped tool's result, the aborted answer — was never written.
+        $this->gate = new \Pig\Async\Deferred();
+        $this->start(answers: ['never finished'], store: true);
+        $this->send(['id' => 'p1', 'type' => 'prompt', 'message' => 'hi']);
+        $file = (new \ReflectionProperty($this->mode, 'session'))->getValue($this->mode)->store()->path;
+
+        // The scripted model does not hear the abort, as a real one's request does; let it go on.
+        $gate = $this->gate;
+        Loop::get()->defer(static fn () => $gate->complete(null));
+        $this->mode->stop();
+
+        $this->assertFileExists($file, 'nothing of the turn was saved');
+        $roles = array_map(static fn (string $line): ?string => json_decode($line, true)['message']['role'] ?? null, file($file, FILE_IGNORE_NEW_LINES) ?: []);
+        $this->assertSame(['user', 'assistant'], array_values(array_filter($roles, static fn (?string $role): bool => in_array($role, ['user', 'assistant'], true))));
+    }
+
     private function needsSignals(): void
     {
         if (!function_exists('pcntl_signal') || !function_exists('posix_kill')) {

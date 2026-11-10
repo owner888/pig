@@ -31,10 +31,10 @@ use Throwable;
  *
  * Progress is upstream's `LlamaProgress`, `{message, ratio?, detail?}`.
  *
- * `fetch()` is pig's `HttpClient`, one request per connection. A transport failure is worded as
- * Node's fetch words it — `fetch failed` — and upstream's `AbortSignal.timeout(15_000)` as its
- * `TimeoutError`, "The operation was aborted due to timeout", so `isConnectionError()` reads both as
- * upstream's does.
+ * `fetch()` is pig's `HttpClient`, one request per connection. A transport failure names the
+ * server and the cause, as upstream's `fetchServer()` does, and upstream's
+ * `AbortSignal.timeout(15_000)` is worded as its `TimeoutError`, "The operation was aborted due to
+ * timeout", so `isConnectionError()` reads it as upstream's does.
  *
  * @phpstan-type LlamaModelInfo array{id: string, status: array{value: string, args?: list<string>, failed?: bool, exit_code?: int, progress?: array<string, array{done: int|float, total: int|float}>}, aliases?: list<string>, architecture?: array{input_modalities?: list<string>, output_modalities?: list<string>}, source?: string, meta?: array{n_ctx?: int, n_ctx_train?: int, size?: int, ftype?: string}}
  * @phpstan-type LlamaProgress array{message: string, ratio?: float, detail?: string}
@@ -271,6 +271,17 @@ final class LlamaClient
     }
 
     /**
+     * Upstream's `fetchServer()` (#11779): a request that did not reach the server says which
+     * server and why, rather than `fetch failed` and nothing else.
+     */
+    private function unreachable(Throwable $error): RuntimeException
+    {
+        $cause = $error->getPrevious()?->getMessage() ?: $error->getMessage();
+
+        return new RuntimeException("Could not reach llama.cpp server at {$this->serverUrl}: {$cause}", previous: $error);
+    }
+
+    /**
      * Upstream's `request()`: JSON in and out, the key as a bearer token, fifteen seconds beside the
      * caller's signal, and a refusal as the server's `error.message` or `llama.cpp returned HTTP <status>`.
      */
@@ -307,7 +318,7 @@ final class LlamaClient
                 throw new RuntimeException('The operation was aborted due to timeout', previous: $error);
             }
 
-            throw new RuntimeException('fetch failed', previous: $error);
+            throw $this->unreachable($error);
         } finally {
             Loop::get()->cancel($timer);
             $unlink();
@@ -413,7 +424,11 @@ final class LlamaClient
             $headers['Authorization'] = "Bearer {$this->apiKey}";
         }
 
-        $response = (new HttpClient())->send(new Request('GET', "{$this->serverUrl}/models/sse", $headers), $signal);
+        try {
+            $response = (new HttpClient())->send(new Request('GET', "{$this->serverUrl}/models/sse", $headers), $signal);
+        } catch (Throwable $error) {
+            throw $signal?->aborted() === true ? $error : $this->unreachable($error);
+        }
 
         if (!$response->isSuccessful()) {
             $response->body->close();

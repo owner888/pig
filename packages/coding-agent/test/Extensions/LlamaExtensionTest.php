@@ -397,7 +397,12 @@ final class LlamaExtensionTest extends TestCase
         // Nothing listens on port 9 of the loopback.
         Async::run(static fn () => $extension->manage(new ExtensionContext('.', ui: new NoticingUi()), $ui, new LlamaClient('http://127.0.0.1:9')));
 
-        $this->assertSame(['http://127.0.0.1:9|Could not connect to the server.', 'http://127.0.0.1:9|Could not connect to the server.'], $ui->connectionErrorsShown);
+        // Upstream #11779: the server and the cause, where it was only `fetch failed` before.
+        $this->assertCount(2, $ui->connectionErrorsShown);
+
+        foreach ($ui->connectionErrorsShown as $shown) {
+            $this->assertMatchesRegularExpression('/^http:\/\/127\.0\.0\.1:9\|Could not reach llama\.cpp server at http:\/\/127\.0\.0\.1:9: .*refused/i', $shown);
+        }
     }
 
     public function testHuggingFaceSearchAndDetailsAreParsed(): void

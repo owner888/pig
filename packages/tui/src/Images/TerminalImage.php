@@ -145,7 +145,10 @@ final class TerminalImage
             return new TerminalCapabilities(null, true, true);
         }
 
-        if ($termProgram === 'alacritty' || $termProgram === 'vscode' || $termProgram === 'zed') {
+        // Alacritty sets no TERM_PROGRAM of its own; its TERM or ALACRITTY_WINDOW_ID names it (#11777).
+        $isAlacritty = $termProgram === 'alacritty' || str_starts_with($term, 'alacritty') || Env::isSet('ALACRITTY_WINDOW_ID');
+
+        if ($isAlacritty || $termProgram === 'vscode' || $termProgram === 'zed') {
             return new TerminalCapabilities(null, true, true);
         }
 

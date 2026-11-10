@@ -57,6 +57,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 - `grep` takes context lines from ripgrep's own output instead of reading every matched file whole: memory follows the output, not the size of the files, and a file in a Docker or SSH account's container or machine is no longer read separately. Overlapping context around nearby matches is shown once, and a lone CR inside a line is kept as content, as the read tool keeps it (upstream #11705).
 - `pig update --models` refreshes every provider's model catalog into `~/.pig/agent/models-store.json`, as `pi update --models` does, instead of running the generator of a git checkout (which did nothing for a Composer install and rewrote tracked files in a checkout). A provider whose login has gone stale is a warning naming `pig auth login <provider>`, and the other catalogs still refresh; the command fails only for other errors (upstream 6382d870).
 - A Docker or SSH account's conversations load only the extensions the admin lets such accounts have: `sandbox.extensions` in `settings.json`, by name as `disabledExtensions`, by default `pig-schedule` and `pig-tool-search`. An extension runs on the server as its user, so its own tools, commands or MCP servers (`pig-mcp`), or a sandboxed PHP script (`pig-codemode`), could otherwise reach what the container or the other machine keeps the account away from. Add `pig-antigravity`, say, to let those accounts use the Antigravity models.
+- The default model per provider follows upstream's newer models at the same or a lower price: Claude Opus 5.5 for Anthropic and Bedrock, `gpt-6.1-sol` for Azure, `gemini-4-argon` for Google and Vertex, Kimi K2.7 Code, MiniMax M3, GLM 5.3 and Qwen 3.8 Max where those were older versions (upstream d84123b3, b425754a).
+- OpenAI Responses sends the session id as `session-id` instead of `session_id` (upstream #11793).
+- The skills hint in the system prompt says to resolve a skill's relative paths against its directory, names `bash` as the reader when there is no `read` tool, and names no tool when the reader is reachable only through another one (codemode). With neither `read` nor `bash` active, the skills are left out of the prompt (upstream 705d047c, #8552, c30840c2).
+- A llama.cpp server that cannot be reached is named with the cause (`Could not reach llama.cpp server at http://…: …`) instead of `fetch failed` (upstream #11779).
 
 ### Fixed
 
@@ -66,6 +70,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - `find` inside a git repository uses `fd`'s git-aware ignores, so the repository's `.gitignore` stops at a nested repository instead of hiding its files (upstream #5960).
 - `find` can be stopped: an abort stops `fd`, and one during its setup no longer starts it (upstream #11974). A pattern starting with `-` is no longer read as an `fd` option, and results `fd` found before exiting non-zero are shown.
 - With several accounts, the extensions' panels (the Antigravity sign-ins) and their own endpoints were open to every account; they are the admin's now, as the API keys are.
+- A queued message with pictures, or one that was a prompt template, stayed in the queue list after it was delivered.
+- An RPC or print run shut down mid-turn now stops the turn and waits for it to settle before the session is closed, so the interrupted tool's result and the answer are saved (upstream #9126).
+- Anthropic: a non-strict tool schema keeps its root `$defs` / `definitions`, so a property's `$ref` still resolves (upstream 4a6a58eb).
+- A stale cursor marker could reach the terminal and show as stray characters (upstream #9441).
+- `auth.json` reached through a symlink and by its real path takes one lock, so two pigs no longer renew one token with the same refresh token (upstream #11787).
+- `pig config` uses the keys from `keybindings.json` (upstream #11788).
+- Alacritty is recognised by `TERM` or `ALACRITTY_WINDOW_ID` too, for hyperlinks (upstream #11777).
 
 ## [2.0.1] - 2026-11-10
 
