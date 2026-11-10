@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-10T05:44:43Z';
+    public const string GENERATED_AT = '2026-11-10T08:00:31Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -2194,7 +2194,7 @@ final class BuiltinCatalog
         'z-ai/glm-5-turbo' => ['Z.ai: GLM 5 Turbo', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
         'z-ai/glm-5.1' => ['Z.ai: GLM 5.1', Api::OpenAiCompletions, 202_752, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
         'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.006, 6.8, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
-        'z-ai/glm-5.2:batch' => ['Z.ai: GLM 5.2 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.573, 1.169, 0.194, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'z-ai/glm-5.2:batch' => ['Z.ai: GLM 5.2 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.527, 1.075, 0.178, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0699, 1.4, 0.0689, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.03, 0.061, 0.013, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2212,7 +2212,7 @@ final class BuiltinCatalog
         '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0434, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~google/gemini-flash-latest' => ['Google: Gemini Flash Latest', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.1539, 9.3388, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.152, 9.3388, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~openai/gpt-astra-latest' => ['OpenAI: GPT Astra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         '~openai/gpt-luna-latest' => ['OpenAI: GPT Luna Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         '~openai/gpt-mini-latest' => ['OpenAI: GPT Mini Latest', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
@@ -2303,6 +2303,15 @@ final class BuiltinCatalog
     /** Upstream #7989: the Individual plan's models on the China endpoint, from `alibaba-token-plan-cn`. */
     private const array QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'deepseek-v4-flash-0731' => ['DeepSeek V4 Flash 0731', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-v4-pro' => ['DeepSeek V4 Pro', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek-v4-pro-0813' => ['DeepSeek V4 Pro 0813', 1_000_000, 384_000, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'qwen3.6-flash' => ['Qwen3.6 Flash', 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
+        'qwen3.7-max' => ['Qwen3.7 Max', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
+        'qwen3.7-plus' => ['Qwen3.7 Plus', 1_000_000, 65_536, true, true, 0.0, 0.0, 0.0, 0.0],
+        'qwen3.8-flash' => ['Qwen3.8 Flash', 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
+        'qwen3.8-max' => ['Qwen3.8 Max', 1_000_000, 131_072, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         // <<< generated
     ];
 

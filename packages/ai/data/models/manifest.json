@@ -1,5 +1,5 @@
 {
-    "generatedAt": "2026-11-10T05:44:43Z",
+    "generatedAt": "2026-11-10T08:00:31Z",
     "providers": [
         "anthropic",
         "openai",
@@ -34,6 +34,7 @@
         "qwen-token-plan",
         "qwen-token-plan-cn",
         "qwen-token-plan-individual",
+        "qwen-token-plan-individual-cn",
         "together",
         "vercel-ai-gateway",
         "xiaomi",
