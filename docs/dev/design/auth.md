@@ -28,7 +28,7 @@ back. Copilot's is a **device flow**: pig asks GitHub for a pair of codes, shows
 over and over whether it has been typed in yet.
 
 The far end is `Providers\ClaudeCode`: an `sk-ant-oat` token goes out as a bearer token under
-**both** betas (`claude-code-20250219,oauth-2025-04-20`), `user-agent: claude-cli/2.1.280`,
+**both** betas (`claude-code-20250219,oauth-2025-04-20`), `user-agent: claude-cli/2.1.322`,
 `x-app: cli`, Claude Code's identity as the first system block — and **its tools spelled Claude
 Code's way**, `read` → `Read`, `bash` → `Bash`, on the declaration, on the calls already in the
 history, and mapped back to the name this request declared on the call that comes back. Upstream
