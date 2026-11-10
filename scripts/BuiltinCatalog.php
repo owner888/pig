@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-10T08:00:31Z';
+    public const string GENERATED_AT = '2026-11-10T08:54:35Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -1094,6 +1094,7 @@ final class BuiltinCatalog
         'cheap' => ['Cheap', 1_000_000, 131_072, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-fable-5-2' => ['Claude Fable 5.2', 1_000_000, 128_000, true, true, 8.0, 40.0, 0.2, 10.0, 'thinkingLevelMap' => ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4-5' => ['Claude Haiku 4.5', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
         'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
         'claude-opus-4-5' => ['Claude Opus 4.5', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
@@ -1102,7 +1103,7 @@ final class BuiltinCatalog
         'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-sonnet-4-5' => ['Claude Sonnet 4.5', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
         'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['xhigh' => 'xhigh', 'max' => 'max']],
-        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'deepseek-v4.1-flash' => ['DeepSeek V4.1 Flash', 1_000_000, 131_072, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-4-argon' => ['Gemini 4 Argon', 1_048_576, 32_768, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
@@ -1887,7 +1888,7 @@ final class BuiltinCatalog
         'deepseek/deepseek-v4-flash-vision-exp' => ['DeepSeek: DeepSeek V4 Flash Vision Exp', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.44, 1.32, 0.014, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_024_000, 384_000, true, false, 0.95526, 1.91052, 0.079605, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.111, 4.44, 0.097, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.051, 0.567, 0.018, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.006, 0.5, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.006, 0.5, 0.005, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash-1017:batch' => ['DeepSeek: DeepSeek V4.1 Flash 1017 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.011, 0.2, 0.002, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash:batch' => ['DeepSeek: DeepSeek V4.1 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.112, 0.336, 0.00336, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2212,7 +2213,7 @@ final class BuiltinCatalog
         '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0434, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~google/gemini-flash-latest' => ['Google: Gemini Flash Latest', Api::OpenAiCompletions, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.041667, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.152, 9.3388, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~moonshotai/kimi-latest' => ['MoonshotAI: Kimi Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.1824, 10.5601, 0.18, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~openai/gpt-astra-latest' => ['OpenAI: GPT Astra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
         '~openai/gpt-luna-latest' => ['OpenAI: GPT Luna Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
         '~openai/gpt-mini-latest' => ['OpenAI: GPT Mini Latest', Api::OpenAiCompletions, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
